@@ -93,4 +93,4 @@ CREATE TABLE IF NOT EXISTS dfe.dlq_events (
 ) ENGINE = MergeTree()
 ORDER BY (timestamp, original_topic)
 PARTITION BY toYYYYMM(timestamp)
-TTL timestamp + INTERVAL 30 DAY;
+TTL toDateTime(timestamp) + INTERVAL 30 DAY;

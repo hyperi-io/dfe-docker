@@ -6,7 +6,7 @@
 # License:   FSL-1.1-ALv2
 # Copyright: (c) 2026 HYPERI PTY LIMITED
 
-# Bare-metal config: receiver connects to Redpanda on localhost:19092
+# Bare-metal config: receiver connects to Kafka on localhost:19092
 # For Docker Compose, use receiver-docker.yaml instead
 
 server:

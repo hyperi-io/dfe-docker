@@ -5,7 +5,7 @@ Docker Compose deployment packaging for HyperI Data Forwarding Engine (DFE 2.2).
 ## Data Flow
 
 ```
-curl/Vector → dfe-receiver (:8080) → Redpanda → dfe-loader → ClickHouse (dfe.*)
+curl/Vector → dfe-receiver (:8080) → Kafka → dfe-loader → ClickHouse (dfe.*)
 ```
 
 ## Quickstart
@@ -19,7 +19,7 @@ curl/Vector → dfe-receiver (:8080) → Redpanda → dfe-loader → ClickHouse 
 
 ```bash
 cp .env.example .env          # Edit if needed (versions, ports)
-make up                       # Start receiver + loader + Redpanda + ClickHouse
+make up                       # Start receiver + loader + Kafka + ClickHouse
 make test                     # Send test events and verify ClickHouse
 make logs                     # Tail logs
 make down                     # Stop everything
@@ -28,10 +28,10 @@ make down                     # Stop everything
 ### 2. Bare-Metal — Infrastructure Only
 
 Use this to test locally-compiled receiver/loader binaries against containerised
-Redpanda and ClickHouse.
+Kafka and ClickHouse.
 
 ```bash
-make infra                    # Start Redpanda + ClickHouse only
+make infra                    # Start Kafka + ClickHouse only
 
 # In separate terminals:
 ./bin/dfe-receiver --config config/receiver.yaml
@@ -49,9 +49,9 @@ directories or download from JFrog.
 
 | Profile | Services | Use Case |
 |---------|----------|----------|
-| `infra` | Redpanda, ClickHouse | Bare-metal testing |
+| `infra` | Kafka, ClickHouse | Bare-metal testing |
 | `full` | infra + dfe-receiver + dfe-loader | Dockerised stack |
-| `ui` | Redpanda Console (:8081) | Kafka topic debugging |
+| `ui` | Kafbat UI (:8081) | Kafka topic debugging |
 
 ```bash
 docker compose --profile infra up -d
@@ -65,7 +65,7 @@ docker compose --profile full --profile ui up -d
 |--------|-------------|
 | `make infra` | Start infrastructure only |
 | `make up` | Start full stack |
-| `make up-ui` | Full stack + Redpanda Console |
+| `make up-ui` | Full stack + Kafbat UI |
 | `make test` | Send test events + verify |
 | `make verify` | Query ClickHouse row counts |
 | `make logs` | Tail service logs |
@@ -81,9 +81,9 @@ Config files are in `config/`:
 | File | Use |
 |------|-----|
 | `receiver.yaml` | Bare-metal (localhost:19092) |
-| `receiver-docker.yaml` | Docker Compose (redpanda:9092) |
+| `receiver-docker.yaml` | Docker Compose (kafka:9092) |
 | `loader.yaml` | Bare-metal (localhost:19092, localhost:9000) |
-| `loader-docker.yaml` | Docker Compose (redpanda:9092, clickhouse:9000) |
+| `loader-docker.yaml` | Docker Compose (kafka:9092, clickhouse:9000) |
 
 Docker Compose mounts the `-docker.yaml` variants into containers at
 `/etc/dfe/*.yaml`.
@@ -105,9 +105,8 @@ See [.env.example](.env.example) for available overrides:
 | 9091 | dfe-loader | Prometheus metrics |
 | 8123 | ClickHouse | HTTP API |
 | 9000 | ClickHouse | Native protocol |
-| 19092 | Redpanda | Kafka (external) |
-| 18082 | Redpanda | HTTP Proxy (external) |
-| 8081 | Redpanda Console | Web UI (profile: ui) |
+| 19092 | Kafka | Kafka protocol (external) |
+| 8081 | Kafbat UI | Web UI (profile: ui) |
 
 ## ClickHouse Schema
 

@@ -9,10 +9,10 @@
 # Usage:
 #   docker compose --profile infra up -d          # Infrastructure only (bare-metal testing)
 #   docker compose --profile full up -d           # Full stack (receiver + loader + infra)
-#   docker compose --profile full --profile ui up -d  # Full stack + Redpanda Console
+#   docker compose --profile full --profile ui up -d  # Full stack + Kafbat UI
 #
 # Data flow:
-#   curl/Vector -> dfe-receiver (:8080) -> Redpanda -> dfe-loader -> ClickHouse (dfe.*)
+#   curl/Vector -> dfe-receiver (:8080) -> Kafka -> dfe-loader -> ClickHouse (dfe.*)
 
 services:
   # ===========================================================================
@@ -29,7 +29,7 @@ services:
     environment:
       CLICKHOUSE_DB: dfe
       CLICKHOUSE_USER: default
-      CLICKHOUSE_PASSWORD: ""
+      CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT: "1"
     volumes:
       - clickhouse-data:/var/lib/clickhouse
       - ./clickhouse/init-dfe.sql:/docker-entrypoint-initdb.d/init.sql:ro
@@ -43,34 +43,38 @@ services:
         soft: 262144
         hard: 262144
 
-  redpanda:
-    image: redpandadata/redpanda:v24.2.1
-    container_name: dfe-redpanda
+  kafka:
+    image: apache/kafka:4.2.0
+    container_name: dfe-kafka
     profiles: ["infra", "full"]
-    command:
-      - redpanda
-      - start
-      - --kafka-addr internal://0.0.0.0:9092,external://0.0.0.0:19092
-      - --advertise-kafka-addr internal://redpanda:9092,external://localhost:19092
-      - --pandaproxy-addr internal://0.0.0.0:8082,external://0.0.0.0:18082
-      - --advertise-pandaproxy-addr internal://redpanda:8082,external://localhost:18082
-      - --rpc-addr redpanda:33145
-      - --advertise-rpc-addr redpanda:33145
-      - --mode dev-container
-      - --smp 1
-      - --memory 512M
-      - --reserve-memory 0M
-      - --overprovisioned
+    environment:
+      # KRaft combined mode (broker + controller in one node)
+      KAFKA_NODE_ID: "1"
+      KAFKA_PROCESS_ROLES: "broker,controller"
+      KAFKA_CONTROLLER_QUORUM_VOTERS: "1@kafka:29093"
+      # Listeners: internal (containers), external (host), controller (raft)
+      KAFKA_LISTENERS: "PLAINTEXT://:9092,PLAINTEXT_HOST://:19092,CONTROLLER://:29093"
+      KAFKA_ADVERTISED_LISTENERS: "PLAINTEXT://kafka:9092,PLAINTEXT_HOST://localhost:19092"
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: "CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT"
+      KAFKA_INTER_BROKER_LISTENER_NAME: "PLAINTEXT"
+      KAFKA_CONTROLLER_LISTENER_NAMES: "CONTROLLER"
+      # Single-node replication
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: "1"
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: "1"
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: "1"
+      KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: "0"
+      # Cluster ID (static for reproducible dev environment)
+      CLUSTER_ID: "dfe-docker-dev-cluster-01"
     ports:
       - "19092:19092"
-      - "18082:18082"
     volumes:
-      - redpanda-data:/var/lib/redpanda/data
+      - kafka-data:/var/lib/kafka/data
     healthcheck:
-      test: ["CMD", "rpk", "cluster", "health"]
+      test: ["CMD-SHELL", "/opt/kafka/bin/kafka-broker-api-versions.sh --bootstrap-server localhost:9092 > /dev/null 2>&1"]
       interval: 5s
       timeout: 5s
       retries: 10
+      start_period: 15s
 
   # ===========================================================================
   # DFE Services (profile: full)
@@ -81,7 +85,7 @@ services:
     container_name: dfe-receiver
     profiles: ["full"]
     depends_on:
-      redpanda:
+      kafka:
         condition: service_healthy
     ports:
       - "8080:8080"
@@ -97,7 +101,7 @@ services:
     container_name: dfe-loader
     profiles: ["full"]
     depends_on:
-      redpanda:
+      kafka:
         condition: service_healthy
       clickhouse:
         condition: service_healthy
@@ -110,21 +114,23 @@ services:
       LOADER_LOG_FORMAT: text
 
   # ===========================================================================
-  # Optional: Redpanda Console (profile: ui)
+  # Optional: Kafbat UI (profile: ui)
   # ===========================================================================
 
-  console:
-    image: redpandadata/console:v2.7.0
-    container_name: dfe-console
+  kafka-ui:
+    image: ghcr.io/kafbat/kafka-ui:v1.1.0
+    container_name: dfe-kafka-ui
     profiles: ["ui"]
     ports:
       - "8081:8080"
     environment:
-      KAFKA_BROKERS: redpanda:9092
+      DYNAMIC_CONFIG_ENABLED: "true"
+      KAFKA_CLUSTERS_0_NAME: "dfe-local"
+      KAFKA_CLUSTERS_0_BOOTSTRAPSERVERS: "kafka:9092"
     depends_on:
-      redpanda:
+      kafka:
         condition: service_healthy
 
 volumes:
   clickhouse-data:
-  redpanda-data:
+  kafka-data:

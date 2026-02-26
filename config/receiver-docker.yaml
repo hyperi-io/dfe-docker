@@ -6,7 +6,7 @@
 # License:   FSL-1.1-ALv2
 # Copyright: (c) 2026 HYPERI PTY LIMITED
 
-# Docker Compose config: receiver connects to Redpanda via internal DNS
+# Docker Compose config: receiver connects to Kafka via internal DNS
 # For bare-metal testing, use receiver.yaml instead
 
 server:
@@ -47,7 +47,7 @@ destinations:
 
 kafka:
   brokers:
-    - "redpanda:9092"
+    - "kafka:9092"
   client_id: "dfe-receiver"
   sasl:
     enabled: false

@@ -9,11 +9,11 @@
 .DEFAULT_GOAL := help
 
 # ---------------------------------------------------------------------------
-# Infrastructure only (Redpanda + ClickHouse)
+# Infrastructure only (Kafka + ClickHouse)
 # ---------------------------------------------------------------------------
 
 .PHONY: infra
-infra: ## Start infrastructure (Redpanda + ClickHouse)
+infra: ## Start infrastructure (Kafka + ClickHouse)
 	docker compose --profile infra up -d
 
 .PHONY: infra-logs
@@ -29,7 +29,7 @@ up: ## Start full stack (receiver + loader + infra)
 	docker compose --profile full up -d
 
 .PHONY: up-ui
-up-ui: ## Start full stack + Redpanda Console UI
+up-ui: ## Start full stack + Kafbat UI
 	docker compose --profile full --profile ui up -d
 
 .PHONY: logs
@@ -43,6 +43,10 @@ ps: ## Show running containers
 # ---------------------------------------------------------------------------
 # Testing
 # ---------------------------------------------------------------------------
+
+.PHONY: test-infra
+test-infra: ## Smoke test Kafka + ClickHouse infrastructure
+	./scripts/test-infra.sh
 
 .PHONY: test
 test: ## Send test events and verify ClickHouse

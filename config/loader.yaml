@@ -6,7 +6,7 @@
 # License:   FSL-1.1-ALv2
 # Copyright: (c) 2026 HYPERI PTY LIMITED
 
-# Bare-metal config: loader connects to Redpanda + ClickHouse on localhost
+# Bare-metal config: loader connects to Kafka + ClickHouse on localhost
 # For Docker Compose, use loader-docker.yaml instead
 
 kafka:
