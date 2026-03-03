@@ -1,3 +1,10 @@
+## [1.0.2](https://github.com/hyperi-io/dfe-docker/compare/v1.0.1...v1.0.2) (2026-03-03)
+
+
+### Bug Fixes
+
+* correct loader port mapping and add service healthchecks ([f3a6249](https://github.com/hyperi-io/dfe-docker/commit/f3a6249db9145ef96853f10d1511a6ea781d4a65))
+
 ## [1.0.1](https://github.com/hyperi-io/dfe-docker/compare/v1.0.0...v1.0.1) (2026-02-26)
 
 
