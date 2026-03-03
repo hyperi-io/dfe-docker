@@ -88,13 +88,18 @@ services:
       kafka:
         condition: service_healthy
     ports:
-      - "8080:8080"
-      - "9090:9090"
+      - "8080:8080"       # HTTP data ingest
+      - "9090:9090"       # Prometheus metrics
     volumes:
       - ./config/receiver-docker.yaml:/etc/dfe/receiver.yaml:ro
     environment:
       RECEIVER_LOG_LEVEL: "${LOG_LEVEL:-info}"
       RECEIVER_LOG_FORMAT: text
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://localhost:9090/healthz"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
 
   dfe-loader:
     image: ghcr.io/hyperi-io/dfe-loader:${DFE_LOADER_VERSION:-latest}
@@ -106,12 +111,18 @@ services:
       clickhouse:
         condition: service_healthy
     ports:
-      - "9091:9091"
+      # Host 9091 -> container 9090 (avoids conflict with receiver's 9090)
+      - "9091:9090"
     volumes:
       - ./config/loader-docker.yaml:/etc/dfe/loader.yaml:ro
     environment:
       LOADER_LOG_LEVEL: "${LOG_LEVEL:-info}"
       LOADER_LOG_FORMAT: text
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://localhost:9090/healthz"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
 
   # ===========================================================================
   # Optional: Kafbat UI (profile: ui)
