@@ -1,0 +1,71 @@
+# Project:   dfe-docker
+# File:      config/loader-grpc.yaml
+# Purpose:   dfe-loader config — gRPC transport server (DEFAULT, DFE_TRANSPORT=grpc)
+# Language:  YAML
+#
+# License:   FSL-1.1-ALv2
+# Copyright: (c) 2026 HYPERI PTY LIMITED
+
+# gRPC transport: loader listens on :50051 for DfeTransport/Push from dfe-receiver.
+# This is the target default architecture. Requires transport-grpc wired in dfe-loader
+# (see Step 10 in TODO.md). Used with the full compose profile.
+
+transport: "grpc"
+
+grpc:
+  listen: "0.0.0.0:50051"
+  subscribe: []
+  health_check: true
+  recv_buffer_size: 10000
+
+clickhouse:
+  hosts:
+    - "clickhouse:9000"    # Overridden by DFE_LOADER__CLICKHOUSE__HOSTS env var
+  database: dfe
+  username: default
+  password: ""
+  protocol: native
+
+routing:
+  db_fields: []
+  table_fields:
+    - event_category
+    - tags.event_category
+  default_db: dfe
+  default_table: common
+  category_to_table:
+    auth: auth_events
+    api: api_events
+    admin: admin_events
+    errors: error_events
+
+dlq:
+  mode: "file_only"
+  file_path: "/var/spool/dfe/dlq"
+
+buffer:
+  flush_bytes: 524288
+  flush_rows: 1000
+  flush_age_secs: 2
+
+memory:
+  limit_bytes: 67108864
+  pressure_threshold: 0.8
+
+metrics:
+  enabled: true
+  address: "0.0.0.0:9090"
+
+logging:
+  level: info
+  format: text
+
+timestamp_dq:
+  enabled: true
+  max_future_seconds: 600
+  invalid_action: replace_with_now
+  correct_known_bad: true
+
+schema:
+  cache_ttl_secs: 60
+  refresh_on_error: true

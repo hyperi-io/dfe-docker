@@ -1,13 +1,15 @@
 # Project:   dfe-docker
-# File:      config/loader-docker.yaml
-# Purpose:   dfe-loader config for Docker Compose (internal DNS)
+# File:      config/loader-kafka.yaml
+# Purpose:   dfe-loader config — Kafka transport consumer (opt-in interim, DFE_TRANSPORT=kafka)
 # Language:  YAML
 #
 # License:   FSL-1.1-ALv2
 # Copyright: (c) 2026 HYPERI PTY LIMITED
 
-# Docker Compose config: loader connects via internal DNS
-# For bare-metal testing, use loader.yaml instead
+# Kafka transport: loader consumes from Kafka broker (kafka:9092).
+# Used with full-kafka compose profile. For bare-metal testing use loader.yaml.
+#
+# When transport-grpc is wired in dfe-loader, switch to loader-grpc.yaml instead.
 
 kafka:
   brokers:

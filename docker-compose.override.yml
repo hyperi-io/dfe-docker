@@ -1,0 +1,39 @@
+# Project:   dfe-docker
+# File:      docker-compose.override.yml
+# Purpose:   Dev mode — builds images from local source instead of pulling registry
+# Language:  YAML
+#
+# License:   FSL-1.1-ALv2
+# Copyright: (c) 2026 HYPERI PTY LIMITED
+#
+# This file is auto-loaded by docker compose in dev (no flags needed).
+# CI and production use: docker compose -f docker-compose.yml ... (skips this file)
+#
+# Prereq: component repos must be checked out at /projects/dfe-receiver and
+# /projects/dfe-loader. The Dockerfiles do a full cargo build inside the container.
+# First build is slow (~5-10 min). Subsequent builds use Docker layer cache.
+
+services:
+  dfe-receiver:
+    build:
+      context: /projects/dfe-receiver
+      dockerfile: /projects/dfe-docker/docker/dfe-receiver.Dockerfile
+    image: dfe-receiver:local
+
+  dfe-receiver-kafka:
+    build:
+      context: /projects/dfe-receiver
+      dockerfile: /projects/dfe-docker/docker/dfe-receiver.Dockerfile
+    image: dfe-receiver:local
+
+  dfe-loader:
+    build:
+      context: /projects/dfe-loader
+      dockerfile: /projects/dfe-docker/docker/dfe-loader.Dockerfile
+    image: dfe-loader:local
+
+  dfe-loader-kafka:
+    build:
+      context: /projects/dfe-loader
+      dockerfile: /projects/dfe-docker/docker/dfe-loader.Dockerfile
+    image: dfe-loader:local

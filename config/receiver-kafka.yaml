@@ -1,13 +1,13 @@
 # Project:   dfe-docker
-# File:      config/receiver-docker.yaml
-# Purpose:   dfe-receiver config for Docker Compose (internal DNS)
+# File:      config/receiver-kafka.yaml
+# Purpose:   dfe-receiver config — Kafka transport (opt-in interim, DFE_TRANSPORT=kafka)
 # Language:  YAML
 #
 # License:   FSL-1.1-ALv2
 # Copyright: (c) 2026 HYPERI PTY LIMITED
 
-# Docker Compose config: receiver connects to Kafka via internal DNS
-# For bare-metal testing, use receiver.yaml instead
+# Kafka transport: receiver forwards events to Kafka broker (kafka:9092).
+# Used with full-kafka compose profile. For bare-metal testing use receiver.yaml.
 
 server:
   bind_address: "0.0.0.0:8080"
@@ -19,7 +19,12 @@ server:
     mode: "none"
 
 grpc:
-  enabled: false
+  enabled: true          # Vector protocol inbound on :6000
+  bind_address: "0.0.0.0:6000"
+  tls:
+    enabled: false       # Uncomment cert paths below to enable TLS
+    # cert_file: /etc/ssl/receiver.crt
+    # key_file: /etc/ssl/receiver.key
 
 validation:
   require_json: true

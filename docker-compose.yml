@@ -6,29 +6,40 @@
 # License:   FSL-1.1-ALv2
 # Copyright: (c) 2026 HYPERI PTY LIMITED
 #
-# Usage:
-#   docker compose --profile infra up -d          # Infrastructure only (bare-metal testing)
-#   docker compose --profile full up -d           # Full stack (receiver + loader + infra)
-#   docker compose --profile full --profile ui up -d  # Full stack + Kafbat UI
+# Profiles:
+#   clickhouse   — ClickHouse only (omit when CLICKHOUSE_HOST is set in .env)
+#   kafka        — Kafka KRaft + kafka-ui (opt-in interim transport)
+#   full         — dfe-receiver + dfe-loader via gRPC (DEFAULT, target architecture)
+#   full-kafka   — dfe-receiver + dfe-loader via Kafka (opt-in, works today)
+#   ui           — kafka-ui standalone (requires kafka profile)
+#   debug        — file-sink mode, no ClickHouse writes
 #
-# Data flow:
-#   curl/Vector -> dfe-receiver (:8080) -> Kafka -> dfe-loader -> ClickHouse (dfe.*)
+# Quick start (Kafka transport, works today):
+#   DFE_TRANSPORT=kafka make dev
+#
+# Dev build from source (requires docker-compose.override.yml — auto-loaded):
+#   make dev
+#
+# CI / registry images only (skip override):
+#   docker compose -f docker-compose.yml --profile clickhouse --profile full-kafka up -d
 
 services:
   # ===========================================================================
-  # Infrastructure (profile: infra)
+  # ClickHouse (profile: clickhouse)
+  # Omit this profile and set CLICKHOUSE_HOST in .env to use an external instance.
   # ===========================================================================
 
   clickhouse:
     image: clickhouse/clickhouse-server:24.8
     container_name: dfe-clickhouse
-    profiles: ["infra", "full"]
+    profiles: ["clickhouse"]
     ports:
       - "${CLICKHOUSE_NATIVE_PORT:-9000}:9000"
       - "${CLICKHOUSE_HTTP_PORT:-8123}:8123"
     environment:
       CLICKHOUSE_DB: dfe
       CLICKHOUSE_USER: default
+      CLICKHOUSE_PASSWORD: "${CLICKHOUSE_PASSWORD:-}"
       CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT: "1"
     volumes:
       - clickhouse-data:/var/lib/clickhouse
@@ -43,27 +54,28 @@ services:
         soft: 262144
         hard: 262144
 
+  # ===========================================================================
+  # Kafka KRaft (profile: kafka)
+  # Opt-in interim transport. Selected automatically when DFE_TRANSPORT=kafka.
+  # ===========================================================================
+
   kafka:
     image: apache/kafka:4.2.0
     container_name: dfe-kafka
-    profiles: ["infra", "full"]
+    profiles: ["kafka"]
     environment:
-      # KRaft combined mode (broker + controller in one node)
       KAFKA_NODE_ID: "1"
       KAFKA_PROCESS_ROLES: "broker,controller"
       KAFKA_CONTROLLER_QUORUM_VOTERS: "1@kafka:29093"
-      # Listeners: internal (containers), external (host), controller (raft)
       KAFKA_LISTENERS: "PLAINTEXT://:9092,PLAINTEXT_HOST://:19092,CONTROLLER://:29093"
       KAFKA_ADVERTISED_LISTENERS: "PLAINTEXT://kafka:9092,PLAINTEXT_HOST://localhost:19092"
       KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: "CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT"
       KAFKA_INTER_BROKER_LISTENER_NAME: "PLAINTEXT"
       KAFKA_CONTROLLER_LISTENER_NAMES: "CONTROLLER"
-      # Single-node replication
       KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: "1"
       KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: "1"
       KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: "1"
       KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: "0"
-      # Cluster ID (static for reproducible dev environment)
       CLUSTER_ID: "dfe-docker-dev-cluster-01"
     ports:
       - "19092:19092"
@@ -76,62 +88,10 @@ services:
       retries: 10
       start_period: 15s
 
-  # ===========================================================================
-  # DFE Services (profile: full)
-  # ===========================================================================
-
-  dfe-receiver:
-    image: ghcr.io/hyperi-io/dfe-receiver:${DFE_RECEIVER_VERSION:-latest}
-    container_name: dfe-receiver
-    profiles: ["full"]
-    depends_on:
-      kafka:
-        condition: service_healthy
-    ports:
-      - "8080:8080"       # HTTP data ingest
-      - "9090:9090"       # Prometheus metrics
-    volumes:
-      - ./config/receiver-docker.yaml:/etc/dfe/receiver.yaml:ro
-    environment:
-      RECEIVER_LOG_LEVEL: "${LOG_LEVEL:-info}"
-      RECEIVER_LOG_FORMAT: text
-    healthcheck:
-      test: ["CMD", "curl", "-sf", "http://localhost:9090/healthz"]
-      interval: 10s
-      timeout: 3s
-      retries: 5
-
-  dfe-loader:
-    image: ghcr.io/hyperi-io/dfe-loader:${DFE_LOADER_VERSION:-latest}
-    container_name: dfe-loader
-    profiles: ["full"]
-    depends_on:
-      kafka:
-        condition: service_healthy
-      clickhouse:
-        condition: service_healthy
-    ports:
-      # Host 9091 -> container 9090 (avoids conflict with receiver's 9090)
-      - "9091:9090"
-    volumes:
-      - ./config/loader-docker.yaml:/etc/dfe/loader.yaml:ro
-    environment:
-      LOADER_LOG_LEVEL: "${LOG_LEVEL:-info}"
-      LOADER_LOG_FORMAT: text
-    healthcheck:
-      test: ["CMD", "curl", "-sf", "http://localhost:9090/healthz"]
-      interval: 10s
-      timeout: 3s
-      retries: 5
-
-  # ===========================================================================
-  # Optional: Kafbat UI (profile: ui)
-  # ===========================================================================
-
   kafka-ui:
     image: ghcr.io/kafbat/kafka-ui:v1.1.0
     container_name: dfe-kafka-ui
-    profiles: ["ui"]
+    profiles: ["kafka", "ui"]
     ports:
       - "8081:8080"
     environment:
@@ -142,6 +102,111 @@ services:
       kafka:
         condition: service_healthy
 
+  # ===========================================================================
+  # dfe-loader (profiles: full, full-kafka, debug)
+  # Defined before dfe-receiver so receiver can depend_on loader (gRPC path).
+  # ===========================================================================
+
+  dfe-loader:
+    image: "${JFROG_REGISTRY:-jfrog.io/hyperi}/dfe-loader:${DFE_LOADER_VERSION:-latest}"
+    container_name: dfe-loader
+    profiles: ["full", "full-kafka", "debug"]
+    ports:
+      - "9091:9090"       # Prometheus metrics (host 9091 avoids clash with receiver)
+      - "50051:50051"     # DfeTransport gRPC server (receiver→loader internal)
+    volumes:
+      - ./config/loader-grpc.yaml:/etc/dfe/loader.yaml:ro
+    environment:
+      LOADER_LOG_LEVEL: "${LOADER_LOG_LEVEL:-info}"
+      LOADER_LOG_FORMAT: text
+      DFE_LOADER__CLICKHOUSE__HOSTS: "${CLICKHOUSE_HOST:-clickhouse}:${CLICKHOUSE_PORT:-9000}"
+    depends_on:
+      clickhouse:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://localhost:9090/health/live"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+
+  dfe-loader-kafka:
+    extends:
+      service: dfe-loader
+    profiles: ["full-kafka"]
+    volumes:
+      - ./config/loader-kafka.yaml:/etc/dfe/loader.yaml:ro
+    depends_on:
+      kafka:
+        condition: service_healthy
+      clickhouse:
+        condition: service_healthy
+
+  # ===========================================================================
+  # dfe-receiver (profiles: full, debug)
+  # ===========================================================================
+
+  dfe-receiver:
+    image: "${JFROG_REGISTRY:-jfrog.io/hyperi}/dfe-receiver:${DFE_RECEIVER_VERSION:-latest}"
+    container_name: dfe-receiver
+    profiles: ["full", "debug"]
+    ports:
+      - "8080:8080"       # HTTP data ingest
+      - "9090:9090"       # Prometheus metrics
+      - "6000:6000"       # gRPC inbound (Vector protocol, PushEvents)
+      # Uncomment to expose additional ingest protocols:
+      # - "4317:4317"     # OTLP gRPC
+      # - "4318:4318"     # OTLP HTTP
+      # - "5044:5044"     # Beats
+      # - "8088:8088"     # Splunk HEC
+    volumes:
+      - ./config/receiver-grpc.yaml:/etc/dfe-receiver/config.yaml:ro
+      # Uncomment to enable TLS on gRPC inbound (:6000):
+      # - ./certs/dev/receiver.crt:/etc/ssl/receiver.crt:ro
+      # - ./certs/dev/receiver.key:/etc/ssl/receiver.key:ro
+    environment:
+      RECEIVER_LOG_LEVEL: "${RECEIVER_LOG_LEVEL:-info}"
+      RECEIVER_LOG_FORMAT: text
+    depends_on:
+      dfe-loader:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://localhost:9090/health/live"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+
+  dfe-receiver-kafka:
+    extends:
+      service: dfe-receiver
+    profiles: ["full-kafka"]
+    volumes:
+      - ./config/receiver-kafka.yaml:/etc/dfe-receiver/config.yaml:ro
+    depends_on:
+      kafka:
+        condition: service_healthy
+
+  # ===========================================================================
+  # Debug services — file sinks, no ClickHouse writes (profile: debug)
+  # Requires FileSink support in dfe-receiver and dfe-loader (pre-wired, pending impl).
+  # ===========================================================================
+
+  dfe-receiver-debug:
+    extends:
+      service: dfe-receiver
+    profiles: ["debug"]
+    volumes:
+      - ./config/receiver-debug.yaml:/etc/dfe-receiver/config.yaml:ro
+      - dfe-debug:/var/spool/dfe
+
+  dfe-loader-debug:
+    extends:
+      service: dfe-loader
+    profiles: ["debug"]
+    volumes:
+      - ./config/loader-debug.yaml:/etc/dfe/loader.yaml:ro
+      - dfe-debug:/var/spool/dfe
+
 volumes:
   clickhouse-data:
   kafka-data:
+  dfe-debug:

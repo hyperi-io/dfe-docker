@@ -8,72 +8,121 @@
 
 .DEFAULT_GOAL := help
 
+# Read transport selection from .env (default: grpc)
+-include .env
+export
+DFE_TRANSPORT ?= grpc
+
+ifeq ($(DFE_TRANSPORT),kafka)
+  TRANSPORT_PROFILES = --profile clickhouse --profile kafka --profile full-kafka
+else
+  TRANSPORT_PROFILES = --profile clickhouse --profile full
+endif
+
+# ---------------------------------------------------------------------------
+# Dev (builds from local source via docker-compose.override.yml)
+# ---------------------------------------------------------------------------
+
+.PHONY: dev
+dev: build-local ## Build from source and start stack (DFE_TRANSPORT=grpc|kafka)
+	docker compose $(TRANSPORT_PROFILES) up -d
+
+.PHONY: build-local
+build-local: ## Build images from local source
+	docker compose build
+
+.PHONY: dev-logs
+dev-logs: ## Tail all service logs
+	docker compose logs -f
+
+# ---------------------------------------------------------------------------
+# CI / registry images (skips docker-compose.override.yml)
+# ---------------------------------------------------------------------------
+
+.PHONY: ci-up
+ci-up: ## Start stack using published registry images (no local build)
+	docker compose -f docker-compose.yml $(TRANSPORT_PROFILES) up -d
+
+.PHONY: pull
+pull: ## Pull latest images from registry
+	docker compose -f docker-compose.yml pull
+
 # ---------------------------------------------------------------------------
 # Infrastructure only (Kafka + ClickHouse)
 # ---------------------------------------------------------------------------
 
 .PHONY: infra
-infra: ## Start infrastructure (Kafka + ClickHouse)
-	docker compose --profile infra up -d
+infra: ## Start infrastructure services (Kafka + ClickHouse)
+	docker compose --profile clickhouse --profile kafka up -d
 
 .PHONY: infra-logs
 infra-logs: ## Tail infrastructure logs
-	docker compose --profile infra logs -f
+	docker compose --profile clickhouse --profile kafka logs -f
 
 # ---------------------------------------------------------------------------
-# Full stack (infrastructure + receiver + loader)
+# External ClickHouse (set CLICKHOUSE_HOST in .env, no Docker CH container)
 # ---------------------------------------------------------------------------
 
-.PHONY: up
-up: ## Start full stack (receiver + loader + infra)
-	docker compose --profile full up -d
+.PHONY: up-ext
+up-ext: ## Start stack using external ClickHouse (CLICKHOUSE_HOST must be set)
+	docker compose $(filter-out --profile clickhouse,$(TRANSPORT_PROFILES)) up -d
 
-.PHONY: up-ui
-up-ui: ## Start full stack + Kafbat UI
-	docker compose --profile full --profile ui up -d
+# ---------------------------------------------------------------------------
+# Debug mode (file sinks, no ClickHouse writes)
+# Requires FileSink support in dfe-receiver + dfe-loader (pre-wired, pending impl)
+# ---------------------------------------------------------------------------
 
-.PHONY: logs
-logs: ## Tail all service logs
-	docker compose --profile full logs -f
+.PHONY: debug
+debug: ## Start debug stack (file sinks to /var/spool/dfe/debug/)
+	docker compose --profile debug up -d
 
-.PHONY: ps
-ps: ## Show running containers
-	docker compose --profile full --profile ui ps
+.PHONY: debug-logs
+debug-logs: ## Tail debug stack logs
+	docker compose --profile debug logs -f
 
 # ---------------------------------------------------------------------------
 # Testing
 # ---------------------------------------------------------------------------
 
 .PHONY: test-infra
-test-infra: ## Smoke test Kafka + ClickHouse infrastructure
+test-infra: ## Smoke test infrastructure (Kafka + ClickHouse)
 	./scripts/test-infra.sh
 
 .PHONY: test
-test: ## Send test events and verify ClickHouse
+test: ## Send test events and verify in ClickHouse
 	./scripts/send-test-events.sh
 
+.PHONY: test-vector
+test-vector: ## Feed events via Vector (HTTP + gRPC inbound)
+	./scripts/test-vector.sh both
+
 .PHONY: verify
-verify: ## Query ClickHouse to check data
+verify: ## Query ClickHouse to check ingested data
 	./scripts/verify-clickhouse.sh
+
+# ---------------------------------------------------------------------------
+# Certificates (for gRPC TLS on :6000)
+# ---------------------------------------------------------------------------
+
+.PHONY: certs
+certs: ## Generate self-signed dev certs (ECDSA P-384)
+	./scripts/gen-dev-certs.sh
 
 # ---------------------------------------------------------------------------
 # Lifecycle
 # ---------------------------------------------------------------------------
 
+.PHONY: ps
+ps: ## Show running containers
+	docker compose ps
+
 .PHONY: down
 down: ## Stop all services
-	docker compose --profile full --profile ui down
+	docker compose down
 
 .PHONY: clean
 clean: ## Stop all services and remove volumes
-	docker compose --profile full --profile ui down -v
-
-.PHONY: restart
-restart: down up ## Restart full stack
-
-.PHONY: pull
-pull: ## Pull latest GHCR images
-	docker compose --profile full pull
+	docker compose down -v
 
 # ---------------------------------------------------------------------------
 # Help
