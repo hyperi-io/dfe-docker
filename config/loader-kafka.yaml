@@ -38,7 +38,7 @@ routing:
     - event_category
     - tags.event_category
   default_db: dfe
-  default_table: common
+  default_table: default
   category_to_table:
     auth: auth_events
     api: api_events
@@ -74,3 +74,6 @@ timestamp_dq:
 schema:
   cache_ttl_secs: 60
   refresh_on_error: true
+
+auto_init:
+  enabled: true
