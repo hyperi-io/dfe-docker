@@ -10,8 +10,9 @@
 #   bare-bones   - dfe-receiver + dfe-loader via gRPC (DEFAULT - no ClickHouse, no Kafka)
 #   full         - ClickHouse + dfe-receiver + dfe-loader via gRPC (DEFAULT - no Kafka)
 #   full-kafka   - ClickHouse + dfe-receiver + dfe-loader via Kafka (opt-in)
-#   ui           - Kafka-ui standalone (requires kafka profile)
-#   debug        — File-sink mode, no ClickHouse writes
+#   infra        - ClickHouse + Kafka only, no DFE services (for testing external connectivity)
+#   ui           - Kafka-ui standalone (requires kafka service)
+#   debug        - File-sink mode, no ClickHouse writes
 #
 # Quick start (Kafka transport, works today):
 #   DFE_TRANSPORT=kafka make dev
@@ -28,18 +29,20 @@
 # ===========================================================================
 
 x-loader-base: &loader-base
-  image: dfe-loader:${LOADER_VERSION:-latest}
+  image: dfe-loader:${DFE_LOADER_VERSION:-latest}
   build:
     context: images/loader
     args:
-      ARCHITECTURE: ${ARCHITECTURE:-linux-amd64}
+      ARCHITECTURE: ${IMAGE_ARCHITECTURE:-linux-amd64}
+      JFROG_USERNAME: ${JFROG_USERNAME:-}
       JFROG_TOKEN: ${JFROG_TOKEN}
-      VERSION: ${LOADER_VERSION:-latest}
+      REGISTRY: ${IMAGE_REGISTRY:-https://hypersec.jfrog.io/artifactory/hyperi-generic}
+      VERSION: ${DFE_LOADER_VERSION:-latest}
   ports:
     - "${DFE_LOADER_PROMETHEUS_PORT:-9091}:9090"
     - "${DFE_LOADER_GRPC_PORT:-50051}:50051"
   environment:
-    DFE_LOADER__CLICKHOUSE__HOSTS: "${CLICKHOUSE_HOST:-clickhouse}:${CLICKHOUSE_PORT:-9000}"
+    DFE_LOADER__CLICKHOUSE__HOSTS: "${CLICKHOUSE_HOST:-clickhouse}:${CLICKHOUSE_NATIVE_PORT:-9000}"
     LOADER_LOG_LEVEL: ${LOG_LEVEL:-info}
     LOADER_LOG_FORMAT: ${LOG_FORMAT:-text}
   healthcheck:
@@ -49,22 +52,24 @@ x-loader-base: &loader-base
     retries: 5
 
 x-receiver-base: &receiver-base
-  image: dfe-receiver:${RECEIVER_VERSION:-latest}
+  image: dfe-receiver:${DFE_RECEIVER_VERSION:-latest}
   build:
     context: images/receiver
     args:
-      ARCHITECTURE: ${ARCHITECTURE:-linux-amd64}
+      ARCHITECTURE: ${IMAGE_ARCHITECTURE:-linux-amd64}
+      JFROG_USERNAME: ${JFROG_USERNAME:-}
       JFROG_TOKEN: ${JFROG_TOKEN}
-      VERSION: ${RECEIVER_VERSION:-latest}
+      REGISTRY: ${IMAGE_REGISTRY:-https://hypersec.jfrog.io/artifactory/hyperi-generic}
+      VERSION: ${DFE_RECEIVER_VERSION:-latest}
   ports:
+    - "${DFE_RECEIVER_GRPC_PORT:-6000}:6000"
     - "${DFE_RECEIVER_HTTP_PORT:-8080}:8080"
     - "${DFE_RECEIVER_PROMETHEUS_PORT:-9090}:9090"
-    - "${DFE_RECEIVER_GRPC_PORT:-6000}:6000"
     # Uncomment to expose additional ingest protocols:
-    # - "${DFE_RECEIVER_OTLP_GRPC_PORT:-4317}:4317"
-    # - "${DFE_RECEIVER_OTLP_HTTP_PORT:-4318}:4318"
     # - "${DFE_RECEIVER_BEATS_PORT:-5044}:5044"
     # - "${DFE_RECEIVER_HEC_PORT:-8088}:8088"
+    # - "${DFE_RECEIVER_OTLP_GRPC_PORT:-4317}:4317"
+    # - "${DFE_RECEIVER_OTLP_HTTP_PORT:-4318}:4318"
   environment:
     RECEIVER_LOG_LEVEL: ${LOG_LEVEL:-info}
     RECEIVER_LOG_FORMAT: ${LOG_FORMAT:-text}
@@ -77,17 +82,17 @@ x-receiver-base: &receiver-base
 services:
 
   # ===========================================================================
-  # ClickHouse (profiles: full, full-kafka)
+  # ClickHouse (profiles: full, full-kafka, infra)
   # Use profile 'bare-bones' and set CLICKHOUSE_HOST in .env to use an external instance.
   # ===========================================================================
 
   clickhouse:
     image: clickhouse/clickhouse-server:${CLICKHOUSE_VERSION:-latest}
     container_name: dfe-clickhouse
-    profiles: ["full", "full-kafka"]
+    profiles: ["full", "full-kafka", "infra"]
     ports:
-      - "${CLICKHOUSE_NATIVE_PORT:-9000}:9000"
       - "${CLICKHOUSE_HTTP_PORT:-8123}:8123"
+      - "${CLICKHOUSE_NATIVE_PORT:-9000}:9000"
     environment:
       CLICKHOUSE_DB: ${CLICKHOUSE_DB:-dfe}
     volumes:
@@ -105,14 +110,14 @@ services:
         hard: 262144
 
   # ===========================================================================
-  # Kafka KRaft (profile: full-kafka)
+  # Kafka KRaft (profiles: full-kafka, infra)
   # Opt-in interim transport. Selected automatically when DFE_TRANSPORT=kafka.
   # ===========================================================================
 
   kafka:
     image: apache/kafka:${KAFKA_VERSION:-latest}
     container_name: dfe-kafka
-    profiles: ["full-kafka"]
+    profiles: ["full-kafka", "infra"]
     environment:
       CLUSTER_ID: ${KAFKA_CLUSTER_ID:-dfe-docker-dev-cluster-01}
       KAFKA_ADVERTISED_LISTENERS: ${KAFKA_ADVERTISED_LISTENERS:-PLAINTEXT://kafka:9092,PLAINTEXT_HOST://localhost:19092}
@@ -140,6 +145,28 @@ services:
       retries: 10
       start_period: 15s
 
+  kafka-init:
+    image: apache/kafka:${KAFKA_VERSION:-latest}
+    container_name: dfe-kafka-init
+    profiles: ["full-kafka", "infra"]
+    depends_on:
+      kafka:
+        condition: service_healthy
+    entrypoint: ["/bin/bash", "-c"]
+    command:
+      - |
+        topics="events auth_events api_events admin_events network_events dlq_events"
+        for topic in $$topics; do
+          /opt/kafka/bin/kafka-topics.sh \
+            --bootstrap-server kafka:9092 \
+            --create --if-not-exists \
+            --topic "$$topic" \
+            --partitions 1 \
+            --replication-factor 1
+        done
+        echo "All DFE topics created"
+    restart: "no"
+
   kafka-ui:
     image: ghcr.io/kafbat/kafka-ui:${KAFBAT_VERSION:-latest}
     container_name: dfe-kafka-ui
@@ -148,8 +175,8 @@ services:
       - "${KAFBAT_PORT:-8081}:8080"
     environment:
       DYNAMIC_CONFIG_ENABLED: ${KAFBAT_DYNAMIC_CONFIG_ENABLED:-true}
+      KAFKA_CLUSTERS_0_BOOTSTRAPSERVERS: ${KAFBAT_KAFKA_CLUSTERS_0_BOOTSTRAPSERVERS:-kafka:9092}
       KAFKA_CLUSTERS_0_NAME: ${KAFBAT_KAFKA_CLUSTERS_0_NAME:-dfe-local}
-      KAFKA_CLUSTERS_0_BOOTSTRAPSERVERS: ${KAFKA_CLUSTERS_0_BOOTSTRAPSERVERS:-kafka:9092}
     depends_on:
       kafka:
         condition: service_healthy
@@ -183,8 +210,8 @@ services:
     depends_on:
       clickhouse:
         condition: service_healthy
-      kafka:
-        condition: service_healthy
+      kafka-init:
+        condition: service_completed_successfully
     volumes:
       - ./config/loader-kafka.yaml:/etc/dfe/loader.yaml:ro
 
@@ -232,8 +259,8 @@ services:
     container_name: dfe-receiver-kafka
     profiles: ["full-kafka"]
     depends_on:
-      kafka:
-        condition: service_healthy
+      kafka-init:
+        condition: service_completed_successfully
     volumes:
       - ./config/receiver-kafka.yaml:/etc/dfe-receiver/config.yaml:ro
 

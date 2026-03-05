@@ -14,9 +14,9 @@ export
 DFE_TRANSPORT ?= grpc
 
 ifeq ($(DFE_TRANSPORT),kafka)
-  TRANSPORT_PROFILES = --profile clickhouse --profile kafka --profile full-kafka
+  TRANSPORT_PROFILES = --profile full-kafka
 else
-  TRANSPORT_PROFILES = --profile clickhouse --profile full
+  TRANSPORT_PROFILES = --profile full
 endif
 
 # ---------------------------------------------------------------------------
@@ -24,12 +24,12 @@ endif
 # ---------------------------------------------------------------------------
 
 .PHONY: dev
-dev: build-local ## Build from source and start stack (DFE_TRANSPORT=grpc|kafka)
-	docker compose $(TRANSPORT_PROFILES) up -d
+dev:
+	docker compose $(TRANSPORT_PROFILES) up --build -d
 
 .PHONY: build-local
 build-local: ## Build images from local source
-	docker compose build
+	docker compose $(TRANSPORT_PROFILES) build
 
 .PHONY: dev-logs
 dev-logs: ## Tail all service logs
@@ -53,11 +53,11 @@ pull: ## Pull latest images from registry
 
 .PHONY: infra
 infra: ## Start infrastructure services (Kafka + ClickHouse)
-	docker compose --profile clickhouse --profile kafka up -d
+	docker compose --profile infra up -d
 
 .PHONY: infra-logs
 infra-logs: ## Tail infrastructure logs
-	docker compose --profile clickhouse --profile kafka logs -f
+	docker compose --profile infra logs -f
 
 # ---------------------------------------------------------------------------
 # External ClickHouse (set CLICKHOUSE_HOST in .env, no Docker CH container)
@@ -65,7 +65,7 @@ infra-logs: ## Tail infrastructure logs
 
 .PHONY: up-ext
 up-ext: ## Start stack using external ClickHouse (CLICKHOUSE_HOST must be set)
-	docker compose $(filter-out --profile clickhouse,$(TRANSPORT_PROFILES)) up -d
+	docker compose --profile bare-bones up -d
 
 # ---------------------------------------------------------------------------
 # Debug mode (file sinks, no ClickHouse writes)
