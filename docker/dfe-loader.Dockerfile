@@ -9,21 +9,44 @@
 # For production: use the published JFrog image (docker-compose.yml default).
 # This Dockerfile is only used via docker-compose.override.yml in dev mode.
 #
-# Build context: /projects/dfe-loader (the component repo root)
+# Build context: PROJECTS_PATH (parent dir containing dfe-loader + hyperi-rustlib + clickhouse-arrow)
 
-FROM rust:1.82-slim AS builder
+FROM rust:latest AS builder
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
     pkg-config \
     libssl-dev \
+    libsasl2-dev \
+    cmake \
+    build-essential \
+    protobuf-compiler \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /build
 
-COPY Cargo.toml Cargo.lock ./
-COPY src ./src
+# Copy shared libraries
+COPY hyperi-rustlib /deps/hyperi-rustlib
+COPY clickhouse-arrow /deps/clickhouse-arrow
 
-RUN cargo build --release --features transport-grpc
+# Strip registry = "hyperi" from clickhouse-arrow's internal dep
+# (it already has path = "../clickhouse-arrow-derive", just needs registry removed)
+RUN find /deps/clickhouse-arrow -name Cargo.toml -exec \
+    sed -i 's|, registry = "hyperi"||g' {} +
+
+# Copy loader source
+COPY dfe-loader/Cargo.toml ./
+COPY dfe-loader/src ./src
+COPY dfe-loader/benches ./benches
+COPY dfe-loader/mappings ./mappings
+
+# Rewrite Cargo.toml: replace private registry refs with local paths.
+# Delete Cargo.lock so Cargo resolves fresh against the new paths.
+RUN sed -i \
+    -e 's|version = ">=1.13.0", registry = "hyperi"|path = "/deps/hyperi-rustlib"|' \
+    -e 's|version = ">=0.4.0", registry = "hyperi"|path = "/deps/clickhouse-arrow/clickhouse-arrow"|' \
+    Cargo.toml
+
+RUN cargo build --release
 
 RUN cp target/release/dfe-loader /usr/local/bin/
 

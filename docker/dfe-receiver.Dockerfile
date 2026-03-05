@@ -9,21 +9,43 @@
 # For production: use the published JFrog image (docker-compose.yml default).
 # This Dockerfile is only used via docker-compose.override.yml in dev mode.
 #
-# Build context: /projects/dfe-receiver (the component repo root)
+# Build context: PROJECTS_PATH (parent dir containing dfe-receiver + hyperi-rustlib)
 
-FROM rust:1.82-slim AS builder
+FROM rust:latest AS builder
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
     pkg-config \
     libssl-dev \
+    libsasl2-dev \
+    cmake \
+    build-essential \
+    protobuf-compiler \
+    libprotobuf-dev \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /build
 
-COPY Cargo.toml Cargo.lock ./
-COPY src ./src
+# Copy the shared library
+COPY hyperi-rustlib /deps/hyperi-rustlib
 
-RUN cargo build --release --features transport-grpc
+# Copy receiver source
+COPY dfe-receiver/Cargo.toml ./
+COPY dfe-receiver/build.rs ./build.rs
+COPY dfe-receiver/src ./src
+COPY dfe-receiver/proto ./proto
+COPY dfe-receiver/benches ./benches
+
+# Rewrite Cargo.toml: replace private registry refs with local paths,
+# remove optional plugin deps (not available locally).
+# Delete Cargo.lock so Cargo resolves fresh against the new paths.
+RUN sed -i \
+    -e 's|version = ">=1.13.0", registry = "hyperi"|path = "/deps/hyperi-rustlib"|' \
+    -e '/^dfe-plugin-loader.*registry = "hyperi"/d' \
+    -e '/^dfe-protocol-sdk.*registry = "hyperi"/d' \
+    -e '/^plugins = \[/d' \
+    Cargo.toml
+
+RUN cargo build --release
 
 RUN cp target/release/dfe-receiver /usr/local/bin/
 
