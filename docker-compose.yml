@@ -12,7 +12,8 @@
 #   full-kafka   - ClickHouse + dfe-receiver + dfe-loader via Kafka (opt-in)
 #   infra        - ClickHouse + Kafka only, no DFE services (for testing external connectivity)
 #   ui           - Kafka-ui standalone (requires kafka service)
-#   debug        - File-sink mode, no ClickHouse writes
+#   debug        - File-sink mode, no ClickHouse writes via gRPC (DEFAULT)
+#   debug-kafka  - File-sink mode, no ClickHouse writes via Kafka (opt-in)
 #
 # Quick start (Kafka transport, works today):
 #   DFE_TRANSPORT=kafka make dev

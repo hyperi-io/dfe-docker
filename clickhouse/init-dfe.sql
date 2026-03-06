@@ -9,7 +9,7 @@
 CREATE DATABASE IF NOT EXISTS dfe;
 
 -- Catch-all table for unrouted events
-CREATE TABLE IF NOT EXISTS dfe.common (
+CREATE TABLE IF NOT EXISTS dfe.default (
     timestamp DateTime64(3) DEFAULT now64(3),
     timestamp_load DateTime64(3) DEFAULT now64(3),
     event_category LowCardinality(String),

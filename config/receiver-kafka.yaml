@@ -32,12 +32,10 @@ validation:
   dlq_on_invalid: true
 
 routing:
-  topic_fields:
-    - "tags.event.category"
-    - "event_category"
-  default_topic: "events"
+  legacy_compat: true
+  default_source: "events"
   topic_suffix: ""
-  category_to_topic:
+  source_to_topic:
     auth: "auth_events"
     api: "api_events"
     admin: "admin_events"

@@ -48,6 +48,9 @@ routing:
     enabled: true
     topic_suffix: ".dlq"
 
+metadata:
+  remove_routing_fields: false
+
 buffer:
   flush_bytes: 524288
   flush_rows: 1000

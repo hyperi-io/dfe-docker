@@ -142,7 +142,7 @@ else
 fi
 
 # Test 9: Expected tables exist
-expected_tables=("common" "auth_events" "api_events" "admin_events" "error_events" "dlq_events")
+expected_tables=("default" "auth_events" "api_events" "admin_events" "error_events" "dlq_events")
 for table in "${expected_tables[@]}"; do
   table_exists=$(ch_query "SELECT count() FROM system.tables WHERE database = 'dfe' AND name = '${table}'" || echo "0")
   if [[ "${table_exists}" == "1" ]]; then
@@ -153,16 +153,16 @@ for table in "${expected_tables[@]}"; do
 done
 
 # Test 10: Insert and query a test row
-ch_query "INSERT INTO dfe.common (timestamp, metadata) VALUES (now64(3), '{\"test\":\"infra-smoke\"}')" || true
-count=$(ch_query "SELECT count() FROM dfe.common WHERE metadata LIKE '%infra-smoke%'" || echo "0")
+ch_query "INSERT INTO dfe.default (timestamp, metadata) VALUES (now64(3), '{\"test\":\"infra-smoke\"}')" || true
+count=$(ch_query "SELECT count() FROM dfe.default WHERE metadata LIKE '%infra-smoke%'" || echo "0")
 if [[ "${count}" -ge 1 ]] 2>/dev/null; then
-  pass "Insert + query round-trip works (dfe.common)"
+  pass "Insert + query round-trip works (dfe.default)"
 else
-  fail "Insert + query round-trip failed (dfe.common)"
+  fail "Insert + query round-trip failed (dfe.default)"
 fi
 
 # Cleanup test row
-ch_query "ALTER TABLE dfe.common DELETE WHERE metadata LIKE '%infra-smoke%'" 2>/dev/null || true
+ch_query "ALTER TABLE dfe.default DELETE WHERE metadata LIKE '%infra-smoke%'" 2>/dev/null || true
 
 echo ""
 

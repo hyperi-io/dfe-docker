@@ -245,7 +245,7 @@ Full breakdown of Kafka settings can be found [here](https://docs.confluent.io/p
 
 Tables are initialised via `clickhouse/init-dfe.sql`:
 
-- `dfe.common` — catch-all for unrouted events
+- `dfe.default` — catch-all for unrouted events
 - `dfe.auth_events` — authentication events
 - `dfe.api_events` — API request events
 - `dfe.admin_events` — administrative actions

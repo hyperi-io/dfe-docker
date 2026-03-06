@@ -14,7 +14,7 @@ export
 DFE_TRANSPORT ?= grpc
 
 ifeq ($(DFE_TRANSPORT),kafka)
-  TRANSPORT_PROFILES = --profile full-kafka
+  TRANSPORT_PROFILES = --profile full-kafka --profile ui
 else
   TRANSPORT_PROFILES = --profile full
 endif

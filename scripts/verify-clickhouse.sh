@@ -34,14 +34,14 @@ echo ""
 
 # Row counts per table
 echo "--- Row counts ---"
-for table in common auth_events api_events admin_events error_events dlq_events; do
+for table in default auth_events api_events admin_events error_events dlq_events; do
   count=$(query "SELECT count() FROM dfe.${table}" 2>/dev/null || echo "N/A")
   printf "  %-20s %s\n" "dfe.${table}" "${count}"
 done
 echo ""
 
 # Recent events from each table (last 5)
-for table in common auth_events api_events admin_events; do
+for table in default auth_events api_events admin_events; do
   count=$(query "SELECT count() FROM dfe.${table}" 2>/dev/null || echo "0")
   if [[ "${count}" -gt 0 ]] 2>/dev/null; then
     echo "--- Recent events: dfe.${table} (last 5) ---"

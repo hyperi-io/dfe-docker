@@ -50,7 +50,7 @@ curl -s -w "  HTTP %{http_code}\n" -X POST "${URL}" \
     "metadata": "{\"source\": \"test-script\"}"
   }'
 
-# Generic event (no category) — should route to common table
+# Generic event (no category) — should route to default table
 echo "Sending generic event (unrouted)..."
 curl -s -w "  HTTP %{http_code}\n" -X POST "${URL}" \
   -H "Content-Type: application/json" \
@@ -58,7 +58,7 @@ curl -s -w "  HTTP %{http_code}\n" -X POST "${URL}" \
     "timestamp": "'"$(date -u +%Y-%m-%dT%H:%M:%S.000Z)"'",
     "message": "Generic test event with no category",
     "source": "test-script",
-    "metadata": "{\"note\": \"should land in common table\"}"
+    "metadata": "{\"note\": \"should land in default table\"}"
   }'
 
 echo ""
