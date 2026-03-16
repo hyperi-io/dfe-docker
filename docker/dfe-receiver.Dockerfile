@@ -35,14 +35,19 @@ COPY dfe-receiver/src ./src
 COPY dfe-receiver/proto ./proto
 COPY dfe-receiver/benches ./benches
 
+# Rewrite dynamic-linking → cmake-build in hyperi-rustlib so rdkafka-sys
+# compiles librdkafka from bundled source instead of requiring system lib
+RUN sed -i 's|"dynamic-linking"|"cmake-build"|' /deps/hyperi-rustlib/Cargo.toml
+
 # Rewrite Cargo.toml: replace private registry refs with local paths,
 # remove optional plugin deps (not available locally).
 # Delete Cargo.lock so Cargo resolves fresh against the new paths.
 RUN sed -i \
-    -e 's|version = ">=1.13.0", registry = "hyperi"|path = "/deps/hyperi-rustlib"|' \
+    -e '/^hyperi-rustlib/s|version = "[^"]*"|path = "/deps/hyperi-rustlib"|' \
     -e '/^dfe-plugin-loader.*registry = "hyperi"/d' \
     -e '/^dfe-protocol-sdk.*registry = "hyperi"/d' \
     -e '/^plugins = \[/d' \
+    -e 's|"dynamic-linking"|"cmake-build"|' \
     Cargo.toml
 
 RUN cargo build --release

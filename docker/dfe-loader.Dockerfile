@@ -33,6 +33,10 @@ COPY clickhouse-arrow /deps/clickhouse-arrow
 RUN find /deps/clickhouse-arrow -name Cargo.toml -exec \
     sed -i 's|, registry = "hyperi"||g' {} +
 
+# Rewrite dynamic-linking → cmake-build in hyperi-rustlib so rdkafka-sys
+# compiles librdkafka from bundled source instead of requiring system lib
+RUN sed -i 's|"dynamic-linking"|"cmake-build"|' /deps/hyperi-rustlib/Cargo.toml
+
 # Copy loader source
 COPY dfe-loader/Cargo.toml ./
 COPY dfe-loader/src ./src
@@ -42,8 +46,9 @@ COPY dfe-loader/mappings ./mappings
 # Rewrite Cargo.toml: replace private registry refs with local paths.
 # Delete Cargo.lock so Cargo resolves fresh against the new paths.
 RUN sed -i \
-    -e 's|version = ">=1.13.0", registry = "hyperi"|path = "/deps/hyperi-rustlib"|' \
+    -e '/^hyperi-rustlib/s|version = "[^"]*"|path = "/deps/hyperi-rustlib"|' \
     -e 's|version = ">=0.4.0", registry = "hyperi"|path = "/deps/clickhouse-arrow/clickhouse-arrow"|' \
+    -e 's|"dynamic-linking"|"cmake-build"|' \
     Cargo.toml
 
 RUN cargo build --release
