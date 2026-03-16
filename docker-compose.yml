@@ -47,7 +47,7 @@ x-loader-base: &loader-base
     LOADER_LOG_LEVEL: ${LOG_LEVEL:-info}
     LOADER_LOG_FORMAT: ${LOG_FORMAT:-text}
   healthcheck:
-    test: ["CMD", "curl", "-sf", "http://localhost:9090/health/live"]
+    test: ["CMD", "curl", "-sf", "http://localhost:9090/health"]
     interval: 10s
     timeout: 3s
     retries: 5
@@ -75,7 +75,7 @@ x-receiver-base: &receiver-base
     RECEIVER_LOG_LEVEL: ${LOG_LEVEL:-info}
     RECEIVER_LOG_FORMAT: ${LOG_FORMAT:-text}
   healthcheck:
-    test: ["CMD", "curl", "-sf", "http://localhost:9090/health/live"]
+    test: ["CMD", "curl", "-sf", "http://localhost:9090/health"]
     interval: 10s
     timeout: 3s
     retries: 5
@@ -146,28 +146,6 @@ services:
       retries: 10
       start_period: 15s
 
-  kafka-init:
-    image: apache/kafka:${KAFKA_VERSION:-latest}
-    container_name: dfe-kafka-init
-    profiles: ["full-kafka", "infra"]
-    depends_on:
-      kafka:
-        condition: service_healthy
-    entrypoint: ["/bin/bash", "-c"]
-    command:
-      - |
-        topics="events auth_events api_events admin_events network_events dlq_events"
-        for topic in $$topics; do
-          /opt/kafka/bin/kafka-topics.sh \
-            --bootstrap-server kafka:9092 \
-            --create --if-not-exists \
-            --topic "$$topic" \
-            --partitions 1 \
-            --replication-factor 1
-        done
-        echo "All DFE topics created"
-    restart: "no"
-
   kafka-ui:
     image: ghcr.io/kafbat/kafka-ui:${KAFBAT_VERSION:-latest}
     container_name: dfe-kafka-ui
@@ -211,8 +189,6 @@ services:
     depends_on:
       clickhouse:
         condition: service_healthy
-      kafka-init:
-        condition: service_completed_successfully
     volumes:
       - ./config/loader-kafka.yaml:/etc/dfe/loader.yaml:ro
 
@@ -259,9 +235,6 @@ services:
     <<: *receiver-base
     container_name: dfe-receiver-kafka
     profiles: ["full-kafka"]
-    depends_on:
-      kafka-init:
-        condition: service_completed_successfully
     volumes:
       - ./config/receiver-kafka.yaml:/etc/dfe-receiver/config.yaml:ro
 

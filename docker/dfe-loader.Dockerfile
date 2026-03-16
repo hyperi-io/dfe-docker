@@ -17,6 +17,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     pkg-config \
     libssl-dev \
     libsasl2-dev \
+    libzstd-dev \
+    libclang-dev \
     cmake \
     build-essential \
     protobuf-compiler \
@@ -35,7 +37,7 @@ RUN find /deps/clickhouse-arrow -name Cargo.toml -exec \
 
 # Rewrite dynamic-linking → cmake-build in hyperi-rustlib so rdkafka-sys
 # compiles librdkafka from bundled source instead of requiring system lib
-RUN sed -i 's|"dynamic-linking"|"cmake-build"|' /deps/hyperi-rustlib/Cargo.toml
+RUN sed -i 's|"dynamic-linking"|"cmake-build", "zstd", "zstd-pkg-config"|' /deps/hyperi-rustlib/Cargo.toml
 
 # Copy loader source
 COPY dfe-loader/Cargo.toml ./
@@ -43,12 +45,13 @@ COPY dfe-loader/src ./src
 COPY dfe-loader/benches ./benches
 COPY dfe-loader/mappings ./mappings
 
-# Rewrite Cargo.toml: replace private registry refs with local paths.
+# Rewrite Cargo.toml: replace private registry refs with local paths,
+# add zstd-pkg-config feature so librdkafka links system libzstd.
 # Delete Cargo.lock so Cargo resolves fresh against the new paths.
 RUN sed -i \
     -e '/^hyperi-rustlib/s|version = "[^"]*"|path = "/deps/hyperi-rustlib"|' \
     -e 's|version = ">=0.4.0", registry = "hyperi"|path = "/deps/clickhouse-arrow/clickhouse-arrow"|' \
-    -e 's|"dynamic-linking"|"cmake-build"|' \
+    -e 's|"dynamic-linking", "ssl", "sasl"|"cmake-build", "ssl", "sasl", "zstd", "zstd-pkg-config"|' \
     Cargo.toml
 
 RUN cargo build --release
@@ -65,13 +68,15 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 COPY --from=builder /usr/local/bin/dfe-loader /usr/local/bin/
 
-RUN useradd --create-home --uid 10001 appuser
+RUN useradd --create-home --uid 10001 appuser \
+    && mkdir -p /var/spool/dfe/dlq \
+    && chown -R appuser:appuser /var/spool/dfe
 USER appuser
 
 EXPOSE 9090 50051
 
 HEALTHCHECK --interval=30s --timeout=3s \
-    CMD curl -sf http://localhost:9090/health/live || exit 1
+    CMD curl -sf http://localhost:9090/health || exit 1
 
 ENTRYPOINT ["dfe-loader"]
 CMD ["--config", "/etc/dfe/loader.yaml"]

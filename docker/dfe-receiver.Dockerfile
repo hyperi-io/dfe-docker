@@ -17,6 +17,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     pkg-config \
     libssl-dev \
     libsasl2-dev \
+    libzstd-dev \
+    libclang-dev \
     cmake \
     build-essential \
     protobuf-compiler \
@@ -37,10 +39,11 @@ COPY dfe-receiver/benches ./benches
 
 # Rewrite dynamic-linking → cmake-build in hyperi-rustlib so rdkafka-sys
 # compiles librdkafka from bundled source instead of requiring system lib
-RUN sed -i 's|"dynamic-linking"|"cmake-build"|' /deps/hyperi-rustlib/Cargo.toml
+RUN sed -i 's|"dynamic-linking"|"cmake-build", "zstd", "zstd-pkg-config"|' /deps/hyperi-rustlib/Cargo.toml
 
 # Rewrite Cargo.toml: replace private registry refs with local paths,
-# remove optional plugin deps (not available locally).
+# remove optional plugin deps (not available locally),
+# add zstd-pkg-config feature so librdkafka links system libzstd.
 # Delete Cargo.lock so Cargo resolves fresh against the new paths.
 RUN sed -i \
     -e '/^hyperi-rustlib/s|version = "[^"]*"|path = "/deps/hyperi-rustlib"|' \
@@ -48,6 +51,7 @@ RUN sed -i \
     -e '/^dfe-protocol-sdk.*registry = "hyperi"/d' \
     -e '/^plugins = \[/d' \
     -e 's|"dynamic-linking"|"cmake-build"|' \
+    -e 's|"cmake-build", "ssl", "sasl"|"cmake-build", "ssl", "sasl", "zstd", "zstd-pkg-config"|' \
     Cargo.toml
 
 RUN cargo build --release
@@ -70,7 +74,7 @@ USER appuser
 EXPOSE 9090 8080 6000 4317 4318 5044 8088
 
 HEALTHCHECK --interval=30s --timeout=3s \
-    CMD curl -sf http://localhost:9090/health/live || exit 1
+    CMD curl -sf http://localhost:9090/health || exit 1
 
 ENTRYPOINT ["dfe-receiver"]
 CMD ["--config", "/etc/dfe-receiver/config.yaml"]
