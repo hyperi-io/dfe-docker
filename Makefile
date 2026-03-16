@@ -10,7 +10,6 @@
 
 # Read transport selection from .env (default: grpc)
 -include .env
-export
 DFE_TRANSPORT ?= grpc
 
 ifeq ($(DFE_TRANSPORT),kafka)
