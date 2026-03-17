@@ -15,68 +15,18 @@ kafka:
   brokers:
     - "kafka:9092"
   group: dfe-loader
-  topics:
-    - "events"
-    - "auth_events"
-    - "api_events"
-    - "admin_events"
-    - "network_events"
-    - "dlq_events"
-  client_id: dfe-loader
+  topic_regex: ".*_land"
 
 clickhouse:
   hosts:
     - "clickhouse:9000"
   database: dfe
-  username: default
-  password: ""
   protocol: native
 
 routing:
-  db_fields: []
-  table_fields:
-    - event_category
-    - tags.event_category
   default_db: dfe
   default_table: default
-  category_to_table:
-    auth: auth_events
-    api: api_events
-    admin: admin_events
-    errors: error_events
-  dlq:
-    enabled: true
-    topic_suffix: ".dlq"
-
-metadata:
-  remove_routing_fields: false
-
-buffer:
-  flush_bytes: 524288
-  flush_rows: 1000
-  flush_age_secs: 2
-
-memory:
-  limit_bytes: 67108864
-  pressure_threshold: 0.8
 
 metrics:
   enabled: true
-  address: "0.0.0.0:9091"
-
-logging:
-  level: info
-  format: text
-
-timestamp_dq:
-  enabled: true
-  max_future_seconds: 600
-  invalid_action: replace_with_now
-  correct_known_bad: true
-
-schema:
-  cache_ttl_secs: 60
-  refresh_on_error: true
-
-auto_init:
-  enabled: true
+  address: "0.0.0.0:9090"
