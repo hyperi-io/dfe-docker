@@ -35,6 +35,7 @@ x-loader-base: &loader-base
     context: images/loader
     args:
       ARCHITECTURE: ${IMAGE_ARCHITECTURE:-linux-amd64}
+      PLATFORM: ${IMAGE_PLATFORM:-linux/amd64}
       REGISTRY: ${IMAGE_REGISTRY:-https://downloads.hyperi.io}
       VERSION: ${DFE_LOADER_VERSION:-latest}
   ports:
@@ -56,6 +57,7 @@ x-receiver-base: &receiver-base
     context: images/receiver
     args:
       ARCHITECTURE: ${IMAGE_ARCHITECTURE:-linux-amd64}
+      PLATFORM: ${IMAGE_PLATFORM:-linux/amd64}
       REGISTRY: ${IMAGE_REGISTRY:-https://downloads.hyperi.io}
       VERSION: ${DFE_RECEIVER_VERSION:-latest}
   ports:

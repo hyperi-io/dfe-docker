@@ -153,6 +153,7 @@ See [.env.example](.env.example) for available overrides:
 | Variable Name | Use | Default |
 |---------------|-----|---------|
 | `IMAGE_ARCHITECTURE` | Architecture of the image to use | `linux-amd64` |
+| `IMAGE_PLATFORM` | Docker platform for base image (must match ARCHITECTURE). Use `linux/amd64` when using x86_64 binaries on Apple Silicon. | `linux/amd64` |
 | `IMAGE_REGISTRY` | Registry holding the image | `jfrog.io/hyperi` |
 | `JFROG_USERNAME` | JFrog authentication username ||
 | `JFROG_TOKEN` | JFrog authentication access token ||
