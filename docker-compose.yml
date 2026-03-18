@@ -35,9 +35,7 @@ x-loader-base: &loader-base
     context: images/loader
     args:
       ARCHITECTURE: ${IMAGE_ARCHITECTURE:-linux-amd64}
-      JFROG_USERNAME: ${JFROG_USERNAME:-}
-      JFROG_TOKEN: ${JFROG_TOKEN}
-      REGISTRY: ${IMAGE_REGISTRY:-https://hypersec.jfrog.io/artifactory/hyperi-generic}
+      REGISTRY: ${IMAGE_REGISTRY:-https://downloads.hyperi.io}
       VERSION: ${DFE_LOADER_VERSION:-latest}
   ports:
     - "${DFE_LOADER_PROMETHEUS_PORT:-9091}:9090"
@@ -58,9 +56,7 @@ x-receiver-base: &receiver-base
     context: images/receiver
     args:
       ARCHITECTURE: ${IMAGE_ARCHITECTURE:-linux-amd64}
-      JFROG_USERNAME: ${JFROG_USERNAME:-}
-      JFROG_TOKEN: ${JFROG_TOKEN}
-      REGISTRY: ${IMAGE_REGISTRY:-https://hypersec.jfrog.io/artifactory/hyperi-generic}
+      REGISTRY: ${IMAGE_REGISTRY:-https://downloads.hyperi.io}
       VERSION: ${DFE_RECEIVER_VERSION:-latest}
   ports:
     - "${DFE_RECEIVER_GRPC_PORT:-6000}:6000"
