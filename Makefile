@@ -40,7 +40,7 @@ dev-logs: ## Tail all service logs
 
 .PHONY: ci-up
 ci-up: ## Start stack using published registry images (no local build)
-	docker compose -f docker-compose.yml $(TRANSPORT_PROFILES) up -d
+	docker compose down -v && docker compose -f docker-compose.yml $(TRANSPORT_PROFILES) up -d --build
 
 .PHONY: pull
 pull: ## Pull latest images from registry
@@ -90,6 +90,10 @@ test-infra: ## Smoke test infrastructure (Kafka + ClickHouse)
 .PHONY: test
 test: ## Send test events and verify in ClickHouse
 	./scripts/send-test-events.sh
+
+.PHONY: test-e2e
+test-e2e: ## End-to-end test executor
+	./scripts/test-e2e.sh
 
 .PHONY: test-vector
 test-vector: ## Feed events via Vector (HTTP + gRPC inbound)
