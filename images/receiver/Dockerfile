@@ -1,12 +1,10 @@
 ARG ARCHITECTURE
 FROM --platform=${ARCHITECTURE} debian:trixie-slim AS receiver_download
-ARG ARCHITECTURE
 ARG REGISTRY
 ARG VERSION
 RUN apt-get update && apt-get install -y curl ca-certificates && rm -rf /var/lib/apt/lists/*
-RUN ARCH_HYPHEN=$(echo "${ARCHITECTURE}" | tr '/' '-') \
-    && curl -fL \
-      "${REGISTRY}/dfe-receiver/${VERSION}/dfe-receiver-release-${ARCH_HYPHEN}" \
+RUN curl -fL \
+      "${REGISTRY}/dfe-receiver/${VERSION}/dfe-receiver-release-linux-$(dpkg --print-architecture)" \
       -o /dfe-receiver \
     && chmod +x /dfe-receiver
 
