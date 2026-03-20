@@ -19,7 +19,7 @@ kafka:
 
 clickhouse:
   hosts:
-    - "clickhouse:8123"
+    - "clickhouse:9000"
   database: dfe
   protocol: native
 

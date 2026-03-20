@@ -127,6 +127,12 @@ Config files are in `config/`:
 
 See [.env.example](.env.example) for available overrides:
 
+#### Architecture
+
+| Variable Name | Use | Default |
+|---------------|-----|---------|
+| `IMAGE_ARCHITECTURE` | Architecture of the image to use | `linux/amd64` |
+
 ### Dev Builds
 
 | Variable Name | Use | Default |
@@ -147,16 +153,6 @@ See [.env.example](.env.example) for available overrides:
 |---------------|-----|---------|
 | `LOG_LEVEL` | Level of logging in loader/receiver (trace|debug|info|warn|error) | `info` |
 | `LOG_FORMAT` | Format of logging | `text` |
-
-#### Registry
-
-| Variable Name | Use | Default |
-|---------------|-----|---------|
-| `IMAGE_ARCHITECTURE` | Architecture of the image to use | `linux-amd64` |
-| `IMAGE_PLATFORM` | Docker platform for base image (must match ARCHITECTURE). Use `linux/amd64` when using x86_64 binaries on Apple Silicon. | `linux/amd64` |
-| `IMAGE_REGISTRY` | Registry holding the image | `jfrog.io/hyperi` |
-| `JFROG_USERNAME` | JFrog authentication username ||
-| `JFROG_TOKEN` | JFrog authentication access token ||
 
 #### DFE Loader
 
