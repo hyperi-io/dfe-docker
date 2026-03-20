@@ -1,0 +1,1000 @@
+{"event_category":"api","endpoint":"/api/v1/roles","method":"GET","status_code":200,"response_time_ms":42,"request_id":"req-b0174","user_id":"usr-a046","ip_address":"10.10.3.92"}
+{"event_category":"api","endpoint":"/api/v1/sources","method":"GET","status_code":400,"response_time_ms":2,"request_id":"req-b0147","user_id":"usr-a038","ip_address":"10.10.10.55"}
+{"event_category":"api","endpoint":"/api/v1/sources","method":"POST","status_code":202,"response_time_ms":4,"request_id":"req-b0037","user_id":"usr-a033","ip_address":"10.10.7.130"}
+{"event_category":"network","event_type":"firewall_drop","src_ip":"198.112.3.19","dst_ip":"10.10.7.130","src_port":57359,"dst_port":8443,"protocol":"TCP","bytes_sent":2374,"bytes_received":0}
+{"event_category":"network","event_type":"firewall_drop","src_ip":"203.134.91.130","dst_ip":"10.10.7.36","src_port":38807,"dst_port":53,"protocol":"TCP","bytes_sent":8012,"bytes_received":0}
+{"message":"ingest rate: 10863 events/sec","source":"clickhouse","level":"info","host":"node-03"}
+{"event_category":"api","endpoint":"/api/v1/roles","method":"GET","status_code":500,"response_time_ms":5000,"request_id":"req-b0220","user_id":"usr-a045","ip_address":"10.10.13.153"}
+{"message":"garbage collection took 3528ms","source":"backup","level":"debug","host":"node-01"}
+{"event_category":"api","endpoint":"/api/v1/alerts","method":"POST","status_code":200,"response_time_ms":3,"request_id":"req-b0135","user_id":"usr-a004","ip_address":"10.10.4.131"}
+{"event_category":"auth","event_type":"logout","user_id":"usr-a032","username":"alice@acme.io","ip_address":"10.10.15.24","user_agent":"Mozilla/5.0 (iPhone; CPU iPhone OS 17_0)","success":1}
+{"event_category":"admin","action":"create_dashboard","admin_user_id":"adm-c003","target_user_id":"usr-a040","target_resource":"system_config","details":"modified threshold for high-cpu alert","ip_address":"10.10.7.36"}
+{"event_category":"auth","event_type":"logout","user_id":"usr-a004","username":"xena@acme.io","ip_address":"10.10.1.187","user_agent":"httpx/0.27","success":1}
+{"event_category":"auth","event_type":"token_refresh","user_id":"usr-a020","username":"chloe@acme.io","ip_address":"10.10.18.72","user_agent":"Mozilla/5.0 (Macintosh; ARM Mac OS X)","success":1}
+{"message":"batch insert completed: 14465 rows","source":"runtime","level":"info","host":"db-01"}
+{"event_category":"network","event_type":"firewall_drop","src_ip":"185.61.126.58","dst_ip":"10.10.7.36","src_port":39691,"dst_port":6000,"protocol":"TCP","bytes_sent":2144,"bytes_received":0}
+{"message":"tls handshake completed","source":"cert-monitor","level":"info","host":"node-01"}
+{"message":"certificate expiry in 56 days","source":"backup","level":"warning","host":"node-01"}
+{"event_category":"network","event_type":"firewall_drop","src_ip":"203.136.174.29","dst_ip":"10.10.18.109","src_port":46763,"dst_port":8443,"protocol":"TCP","bytes_sent":5136,"bytes_received":0}
+{"message":"scheduled maintenance window starting","source":"dfe-receiver","level":"info","host":"db-01"}
+{"event_category":"api","endpoint":"/api/v1/health","method":"GET","status_code":404,"response_time_ms":2,"request_id":"req-b0163","user_id":"usr-a004","ip_address":"10.10.17.138"}
+{"event_category":"auth","event_type":"sso_login","user_id":"usr-a050","username":"vic@acme.io","ip_address":"10.10.20.118","user_agent":"Mozilla/5.0 (iPhone; CPU iPhone OS 17_0)","success":1}
+{"event_category":"api","endpoint":"/api/v1/events/search","method":"POST","status_code":400,"response_time_ms":5000,"request_id":"req-b0051","user_id":"usr-a002","ip_address":"10.10.20.19"}
+{"event_category":"network","event_type":"connection","src_ip":"10.10.7.36","dst_ip":"10.10.7.36","src_port":41195,"dst_port":53,"protocol":"TCP","bytes_sent":8036,"bytes_received":2748}
+{"event_category":"auth","event_type":"session_expired","user_id":"usr-a027","username":"uma@acme.io","ip_address":"10.10.6.181","user_agent":"Mozilla/5.0 (Windows NT 11.0)","success":1}
+{"event_category":"network","event_type":"connection","src_ip":"10.10.1.8","dst_ip":"10.10.7.36","src_port":32167,"dst_port":5044,"protocol":"TCP","bytes_sent":446,"bytes_received":30146}
+{"event_category":"admin","action":"create_user","admin_user_id":"adm-c008","target_user_id":"usr-a046","target_resource":"pipelines","details":"created ops overview dashboard","ip_address":"10.10.3.174"}
+{"event_category":"auth","event_type":"logout","user_id":"usr-a027","username":"finn@acme.io","ip_address":"10.10.2.99","user_agent":"Mozilla/5.0 (Linux; Android 14)","success":0}
+{"event_category":"auth","event_type":"session_expired","user_id":"usr-a050","username":"finn@acme.io","ip_address":"10.10.17.76","user_agent":"Mozilla/5.0 (iPhone; CPU iPhone OS 17_0)","success":1}
+{"message":"http listener ready on :8080","source":"scheduler","level":"info","host":"node-02"}
+{"message":"compaction started on default","source":"scheduler","level":"info","host":"node-03"}
+{"event_category":"admin","action":"delete_pipeline","admin_user_id":"adm-c001","target_user_id":"usr-a046","target_resource":"pipelines","details":"modified threshold for high-cpu alert","ip_address":"10.10.3.174"}
+{"message":"tls handshake completed","source":"runtime","level":"info","host":"node-03"}
+{"event_category":"admin","action":"create_source","admin_user_id":"adm-c006","target_user_id":"usr-a026","target_resource":"api_keys","details":"restarted dfe-loader after config change","ip_address":"10.10.1.8"}
+{"event_category":"api","endpoint":"/api/v1/events","method":"POST","status_code":400,"response_time_ms":5000,"request_id":"req-b0076","user_id":"usr-a017","ip_address":"10.10.8.63"}
+{"event_category":"admin","action":"create_dashboard","admin_user_id":"adm-c002","target_user_id":"usr-a046","target_resource":"roles","details":"created new analyst account","ip_address":"10.10.7.36"}
+{"event_category":"network","event_type":"dns_query","src_ip":"10.10.1.59","dst_ip":"10.10.8.63","src_port":52461,"dst_port":5044,"protocol":"UDP","bytes_sent":2974,"bytes_received":24643}
+{"event_category":"api","endpoint":"/api/v1/events/search","method":"POST","status_code":200,"response_time_ms":9,"request_id":"req-b0106","user_id":"","ip_address":"10.10.12.227"}
+{"event_category":"auth","event_type":"api_key_created","user_id":"usr-a033","username":"frank@acme.io","ip_address":"10.10.17.76","user_agent":"httpx/0.27","success":1}
+{"event_category":"api","endpoint":"/api/v1/events/search","method":"POST","status_code":200,"response_time_ms":36,"request_id":"req-b0187","user_id":"usr-a037","ip_address":"10.10.8.192"}
+{"event_category":"admin","action":"enable_user","admin_user_id":"adm-c007","target_user_id":"usr-a021","target_resource":"system_config","details":"rotated production api key","ip_address":"10.10.3.174"}
+{"event_category":"api","endpoint":"/api/v1/health","method":"GET","status_code":200,"response_time_ms":17,"request_id":"req-b0061","user_id":"usr-a042","ip_address":"10.10.10.55"}
+{"event_category":"admin","action":"disable_user","admin_user_id":"adm-c006","target_user_id":"usr-a014","target_resource":"system_config","details":"added beats input on port 5044","ip_address":"10.10.3.174"}
+{"event_category":"admin","action":"restart_service","admin_user_id":"adm-c007","target_user_id":"usr-a018","target_resource":"services","details":"promoted to admin","ip_address":"10.10.3.174"}
+{"event_category":"api","endpoint":"/api/v1/dashboards","method":"GET","status_code":200,"response_time_ms":24,"request_id":"req-b0224","user_id":"usr-a027","ip_address":"10.10.17.23"}
+{"event_category":"auth","event_type":"password_change","user_id":"usr-a033","username":"wade@acme.io","ip_address":"10.10.10.27","user_agent":"httpx/0.27","success":1}
+{"message":"scheduled maintenance window starting","source":"runtime","level":"info","host":"db-01"}
+{"event_category":"network","event_type":"connection","src_ip":"10.10.18.109","dst_ip":"10.10.18.109","src_port":58719,"dst_port":3389,"protocol":"TCP","bytes_sent":7970,"bytes_received":5514}
+{"event_category":"api","endpoint":"/api/v1/events/search","method":"POST","status_code":404,"response_time_ms":2,"request_id":"req-b0013","user_id":"usr-a027","ip_address":"10.10.8.17"}
+{"message":"scheduled maintenance window starting","source":"cert-monitor","level":"info","host":"node-03"}
+{"event_category":"api","endpoint":"/api/v1/alerts","method":"POST","status_code":201,"response_time_ms":31,"request_id":"req-b0083","user_id":"usr-a003","ip_address":"10.10.11.155"}
+{"event_category":"auth","event_type":"password_reset","user_id":"usr-a020","username":"yara@acme.io","ip_address":"10.10.10.55","user_agent":"Mozilla/5.0 (Macintosh; Intel Mac OS X)","success":1}
+{"message":"slow query detected: 1724ms on auth_events","source":"monitoring","level":"warning","host":"node-01"}
+{"event_category":"api","endpoint":"/api/v1/events/export","method":"POST","status_code":400,"response_time_ms":2,"request_id":"req-b0208","user_id":"usr-a020","ip_address":"10.10.7.198"}
+{"event_category":"api","endpoint":"/api/v1/roles","method":"GET","status_code":200,"response_time_ms":14,"request_id":"req-b0101","user_id":"usr-a045","ip_address":"10.10.20.128"}
+{"message":"scheduled maintenance window starting","source":"dfe-receiver","level":"info","host":"node-03"}
+{"message":"buffer utilisation at 55%","source":"clickhouse","level":"debug","host":"db-01"}
+{"event_category":"admin","action":"delete_user","admin_user_id":"adm-c004","target_user_id":"usr-a009","target_resource":"pipelines","details":"removed deprecated csv pipeline","ip_address":"10.10.17.23"}
+{"event_category":"auth","event_type":"api_key_created","user_id":"usr-a039","username":"derek@acme.io","ip_address":"10.10.1.207","user_agent":"Mozilla/5.0 (Macintosh; ARM Mac OS X)","success":1}
+{"message":"buffer utilisation at 66%","source":"clickhouse","level":"debug","host":"node-02"}
+{"event_category":"api","endpoint":"/api/v1/events/stream","method":"GET","status_code":500,"response_time_ms":1,"request_id":"req-b0018","user_id":"usr-a028","ip_address":"10.10.7.115"}
+{"message":"certificate expiry in 16 days","source":"runtime","level":"warning","host":"node-03"}
+{"message":"config reload triggered by file change","source":"scheduler","level":"info","host":"db-01"}
+{"event_category":"api","endpoint":"/api/v1/pipelines","method":"GET","status_code":200,"response_time_ms":42,"request_id":"req-b0079","user_id":"usr-a050","ip_address":"10.10.6.234"}
+{"event_category":"api","endpoint":"/api/v1/dashboards","method":"GET","status_code":202,"response_time_ms":10,"request_id":"req-b0124","user_id":"usr-a046","ip_address":"10.10.8.117"}
+{"event_category":"api","endpoint":"/api/v1/events/export","method":"POST","status_code":200,"response_time_ms":29,"request_id":"req-b0063","user_id":"usr-a028","ip_address":"10.10.17.51"}
+{"event_category":"network","event_type":"firewall_drop","src_ip":"185.61.126.58","dst_ip":"10.10.2.56","src_port":61118,"dst_port":6000,"protocol":"TCP","bytes_sent":7254,"bytes_received":0}
+{"event_category":"api","endpoint":"/api/v1/roles","method":"GET","status_code":200,"response_time_ms":26,"request_id":"req-b0221","user_id":"usr-a036","ip_address":"10.10.20.214"}
+{"event_category":"admin","action":"delete_source","admin_user_id":"adm-c004","target_user_id":"usr-a047","target_resource":"services","details":"rotated production api key","ip_address":"10.10.8.63"}
+{"event_category":"api","endpoint":"/api/v1/sources","method":"POST","status_code":200,"response_time_ms":39,"request_id":"req-b0090","user_id":"usr-a011","ip_address":"10.10.1.207"}
+{"event_category":"network","event_type":"firewall_drop","src_ip":"192.157.122.15","dst_ip":"10.10.3.174","src_port":64975,"dst_port":443,"protocol":"TCP","bytes_sent":6291,"bytes_received":0}
+{"message":"schema migration applied: v2.2.11430","source":"scheduler","level":"info","host":"node-03"}
+{"message":"garbage collection took 512ms","source":"runtime","level":"debug","host":"node-01"}
+{"event_category":"admin","action":"export_audit_log","admin_user_id":"adm-c001","target_user_id":"usr-a001","target_resource":"api_keys","details":"changed retention to 90 days","ip_address":"10.10.18.109"}
+{"event_category":"api","endpoint":"/api/v1/health","method":"GET","status_code":200,"response_time_ms":28,"request_id":"req-b0009","user_id":"usr-a039","ip_address":"10.10.2.12"}
+{"event_category":"network","event_type":"connection","src_ip":"10.10.17.23","dst_ip":"10.10.3.174","src_port":53607,"dst_port":22,"protocol":"TCP","bytes_sent":3521,"bytes_received":24264}
+{"event_category":"api","endpoint":"/api/v1/pipelines","method":"PUT","status_code":201,"response_time_ms":7,"request_id":"req-b0126","user_id":"usr-a016","ip_address":"10.10.6.234"}
+{"event_category":"api","endpoint":"/api/v1/events/search","method":"POST","status_code":200,"response_time_ms":28,"request_id":"req-b0003","user_id":"usr-a048","ip_address":"10.10.19.163"}
+{"event_category":"network","event_type":"connection","src_ip":"10.10.11.57","dst_ip":"10.10.7.130","src_port":53384,"dst_port":50051,"protocol":"TCP","bytes_sent":5484,"bytes_received":19362}
+{"message":"dead letter queue: 12114 messages pending","source":"scheduler","level":"warning","host":"db-01"}
+{"message":"garbage collection took 3909ms","source":"scheduler","level":"debug","host":"db-01"}
+{"event_category":"auth","event_type":"mfa_challenge","user_id":"usr-a047","username":"frank@acme.io","ip_address":"10.10.2.219","user_agent":"Mozilla/5.0 (iPad; CPU OS 17_0)","success":1}
+{"event_category":"network","event_type":"connection","src_ip":"10.10.15.24","dst_ip":"10.10.18.109","src_port":53252,"dst_port":9000,"protocol":"TCP","bytes_sent":1474,"bytes_received":7815}
+{"event_category":"network","event_type":"connection","src_ip":"10.10.12.227","dst_ip":"10.10.8.63","src_port":56818,"dst_port":8080,"protocol":"TCP","bytes_sent":2115,"bytes_received":20080}
+{"event_category":"network","event_type":"connection","src_ip":"10.10.2.98","dst_ip":"10.10.2.56","src_port":51127,"dst_port":8080,"protocol":"TCP","bytes_sent":6264,"bytes_received":11606}
+{"event_category":"admin","action":"delete_pipeline","admin_user_id":"adm-c004","target_user_id":"usr-a028","target_resource":"pipelines","details":"exported 30-day audit log","ip_address":"10.10.3.174"}
+{"event_category":"admin","action":"delete_user","admin_user_id":"adm-c010","target_user_id":"usr-a023","target_resource":"services","details":"added beats input on port 5044","ip_address":"10.10.7.130"}
+{"event_category":"network","event_type":"firewall_drop","src_ip":"192.222.80.117","dst_ip":"10.10.17.23","src_port":61636,"dst_port":443,"protocol":"TCP","bytes_sent":3565,"bytes_received":0}
+{"message":"grpc keepalive ping sent","source":"backup","level":"debug","host":"node-01"}
+{"event_category":"auth","event_type":"logout","user_id":"usr-a040","username":"derek@acme.io","ip_address":"10.10.17.57","user_agent":"httpx/0.27","success":1}
+{"event_category":"admin","action":"update_role","admin_user_id":"adm-c008","target_user_id":"usr-a030","target_resource":"services","details":"re-enabled after password reset","ip_address":"10.10.20.29"}
+{"event_category":"api","endpoint":"/api/v1/sources","method":"GET","status_code":200,"response_time_ms":14,"request_id":"req-b0219","user_id":"usr-a048","ip_address":"10.10.18.72"}
+{"event_category":"api","endpoint":"/api/v1/events","method":"DELETE","status_code":200,"response_time_ms":18,"request_id":"req-b0010","user_id":"usr-a049","ip_address":"10.10.3.98"}
+{"event_category":"auth","event_type":"login","user_id":"usr-a015","username":"vera@acme.io","ip_address":"10.10.4.64","user_agent":"Mozilla/5.0 (iPhone; CPU iPhone OS 17_0)","success":1}
+{"event_category":"network","event_type":"connection","src_ip":"10.10.20.128","dst_ip":"10.10.0.190","src_port":38480,"dst_port":6000,"protocol":"TCP","bytes_sent":3584,"bytes_received":20822}
+{"event_category":"admin","action":"delete_user","admin_user_id":"adm-c007","target_user_id":"usr-a043","target_resource":"system_config","details":"rotated production api key","ip_address":"10.10.3.174"}
+{"event_category":"auth","event_type":"logout","user_id":"usr-a037","username":"eve@acme.io","ip_address":"10.10.8.192","user_agent":"Mozilla/5.0 (Windows NT 11.0)","success":1}
+{"event_category":"api","endpoint":"/api/v1/roles","method":"GET","status_code":201,"response_time_ms":29,"request_id":"req-b0068","user_id":"usr-a006","ip_address":"10.10.8.63"}
+{"event_category":"auth","event_type":"sso_login","user_id":"usr-a050","username":"gina@acme.io","ip_address":"10.10.20.29","user_agent":"httpx/0.27","success":0}
+{"event_category":"auth","event_type":"password_change","user_id":"usr-a015","username":"oscar@acme.io","ip_address":"10.10.2.12","user_agent":"Mozilla/5.0 (Linux; Android 14)","success":1}
+{"event_category":"api","endpoint":"/api/v1/health","method":"GET","status_code":200,"response_time_ms":48,"request_id":"req-b0225","user_id":"usr-a002","ip_address":"10.10.6.181"}
+{"event_category":"network","event_type":"firewall_drop","src_ip":"192.222.80.117","dst_ip":"10.10.0.190","src_port":62381,"dst_port":9000,"protocol":"TCP","bytes_sent":7809,"bytes_received":0}
+{"event_category":"admin","action":"enable_user","admin_user_id":"adm-c003","target_user_id":"usr-a048","target_resource":"alerts","details":"changed retention to 90 days","ip_address":"10.10.20.29"}
+{"message":"scheduled maintenance window starting","source":"backup","level":"info","host":"node-01"}
+{"message":"certificate expiry in 19 days","source":"dfe-receiver","level":"warning","host":"node-02"}
+{"message":"connection pool at 80% capacity","source":"dfe-loader","level":"info","host":"node-03"}
+{"message":"scheduled maintenance window starting","source":"monitoring","level":"info","host":"node-03"}
+{"event_category":"network","event_type":"dns_query","src_ip":"10.10.8.254","dst_ip":"10.10.18.109","src_port":61286,"dst_port":3389,"protocol":"UDP","bytes_sent":70,"bytes_received":1300}
+{"event_category":"api","endpoint":"/api/v1/pipelines","method":"GET","status_code":200,"response_time_ms":33,"request_id":"req-b0140","user_id":"usr-a003","ip_address":"10.10.3.174"}
+{"event_category":"api","endpoint":"/api/v1/health","method":"GET","status_code":200,"response_time_ms":9,"request_id":"req-b0110","user_id":"usr-a042","ip_address":"10.10.7.130"}
+{"message":"partition merge completed for network_events","source":"cert-monitor","level":"info","host":"node-01"}
+{"event_category":"api","endpoint":"/api/v1/events","method":"DELETE","status_code":400,"response_time_ms":5000,"request_id":"req-b0202","user_id":"usr-a050","ip_address":"10.10.8.63"}
+{"event_category":"auth","event_type":"token_refresh","user_id":"usr-a011","username":"jake@acme.io","ip_address":"10.10.0.190","user_agent":"Mozilla/5.0 (X11; Ubuntu; Linux x86_64)","success":1}
+{"message":"tls handshake completed","source":"scheduler","level":"info","host":"db-01"}
+{"message":"grpc keepalive ping sent","source":"dfe-loader","level":"debug","host":"node-02"}
+{"event_category":"admin","action":"restart_service","admin_user_id":"adm-c010","target_user_id":"usr-a025","target_resource":"dashboards","details":"removed deprecated csv pipeline","ip_address":"10.10.7.130"}
+{"event_category":"auth","event_type":"sso_login","user_id":"usr-a030","username":"dave@acme.io","ip_address":"10.10.11.155","user_agent":"Mozilla/5.0 (X11; Ubuntu; Linux x86_64)","success":1}
+{"event_category":"auth","event_type":"logout","user_id":"usr-a014","username":"xena@acme.io","ip_address":"10.10.18.103","user_agent":"Mozilla/5.0 (Windows NT 11.0)","success":1}
+{"event_category":"auth","event_type":"token_refresh","user_id":"usr-a010","username":"sam@acme.io","ip_address":"10.10.13.153","user_agent":"Mozilla/5.0 (Windows NT 11.0)","success":1}
+{"event_category":"auth","event_type":"token_refresh","user_id":"usr-a002","username":"kira@acme.io","ip_address":"10.10.5.137","user_agent":"Mozilla/5.0 (Linux; Android 14)","success":0}
+{"event_category":"api","endpoint":"/api/v1/pipelines","method":"GET","status_code":200,"response_time_ms":30,"request_id":"req-b0040","user_id":"usr-a029","ip_address":"10.10.15.24"}
+{"event_category":"admin","action":"delete_pipeline","admin_user_id":"adm-c006","target_user_id":"usr-a031","target_resource":"services","details":"exported 30-day audit log","ip_address":"10.10.17.23"}
+{"message":"kafka consumer lag: 588 messages","source":"cert-monitor","level":"info","host":"node-03"}
+{"event_category":"auth","event_type":"session_expired","user_id":"usr-a047","username":"remy@acme.io","ip_address":"10.10.20.128","user_agent":"Mozilla/5.0 (Windows NT 10.0)","success":1}
+{"event_category":"auth","event_type":"login","user_id":"usr-a006","username":"blake@acme.io","ip_address":"10.10.20.214","user_agent":"curl/8.7.1","success":1}
+{"event_category":"admin","action":"delete_user","admin_user_id":"adm-c003","target_user_id":"usr-a015","target_resource":"services","details":"removed inactive account","ip_address":"10.10.18.109"}
+{"event_category":"api","endpoint":"/api/v1/pipelines","method":"PUT","status_code":200,"response_time_ms":49,"request_id":"req-b0137","user_id":"usr-a040","ip_address":"10.10.2.99"}
+{"message":"schema migration applied: v2.2.2887","source":"backup","level":"info","host":"node-03"}
+{"event_category":"network","event_type":"firewall_drop","src_ip":"198.142.248.55","dst_ip":"10.10.20.29","src_port":41386,"dst_port":50051,"protocol":"TCP","bytes_sent":7201,"bytes_received":0}
+{"event_category":"api","endpoint":"/api/v1/alerts","method":"POST","status_code":201,"response_time_ms":8,"request_id":"req-b0100","user_id":"usr-a050","ip_address":"10.10.6.181"}
+{"event_category":"admin","action":"create_source","admin_user_id":"adm-c006","target_user_id":"usr-a030","target_resource":"retention_policies","details":"restarted dfe-loader after config change","ip_address":"10.10.7.130"}
+{"event_category":"admin","action":"create_dashboard","admin_user_id":"adm-c004","target_user_id":"usr-a021","target_resource":"pipelines","details":"enabled gRPC transport","ip_address":"10.10.17.23"}
+{"event_category":"admin","action":"delete_pipeline","admin_user_id":"adm-c010","target_user_id":"usr-a027","target_resource":"api_keys","details":"onboarded new security engineer","ip_address":"10.10.8.63"}
+{"message":"new client connected from 10.10.8.63","source":"dfe-receiver","level":"info","host":"node-01"}
+{"event_category":"auth","event_type":"logout","user_id":"usr-a005","username":"sara@acme.io","ip_address":"10.10.17.76","user_agent":"Mozilla/5.0 (Linux; Android 14)","success":1}
+{"event_category":"api","endpoint":"/api/v1/config","method":"GET","status_code":201,"response_time_ms":34,"request_id":"req-b0044","user_id":"usr-a024","ip_address":"10.10.19.163"}
+{"event_category":"api","endpoint":"/api/v1/health","method":"GET","status_code":200,"response_time_ms":36,"request_id":"req-b0191","user_id":"usr-a044","ip_address":"10.10.3.98"}
+{"event_category":"admin","action":"update_alert_rule","admin_user_id":"adm-c007","target_user_id":"usr-a019","target_resource":"audit","details":"removed inactive account","ip_address":"10.10.7.36"}
+{"message":"schema migration applied: v2.2.1394","source":"dfe-receiver","level":"info","host":"node-02"}
+{"event_category":"network","event_type":"connection","src_ip":"10.10.20.41","dst_ip":"10.10.18.109","src_port":50944,"dst_port":9000,"protocol":"TCP","bytes_sent":5940,"bytes_received":898}
+{"event_category":"api","endpoint":"/api/v1/dashboards","method":"GET","status_code":200,"response_time_ms":40,"request_id":"req-b0234","user_id":"usr-a043","ip_address":"10.10.20.128"}
+{"event_category":"network","event_type":"firewall_drop","src_ip":"198.142.248.55","dst_ip":"10.10.3.174","src_port":40945,"dst_port":8080,"protocol":"TCP","bytes_sent":6780,"bytes_received":0}
+{"event_category":"api","endpoint":"/api/v1/events/stream","method":"GET","status_code":500,"response_time_ms":2,"request_id":"req-b0021","user_id":"usr-a019","ip_address":"10.10.20.214"}
+{"event_category":"admin","action":"update_role","admin_user_id":"adm-c004","target_user_id":"usr-a036","target_resource":"dashboards","details":"removed unused splunk hec input","ip_address":"10.10.7.130"}
+{"event_category":"network","event_type":"dns_query","src_ip":"10.10.8.254","dst_ip":"10.10.8.63","src_port":56327,"dst_port":443,"protocol":"UDP","bytes_sent":3274,"bytes_received":29213}
+{"event_category":"auth","event_type":"logout","user_id":"usr-a032","username":"bob@acme.io","ip_address":"10.10.13.153","user_agent":"DFE-SDK/2.2","success":1}
+{"event_category":"admin","action":"delete_source","admin_user_id":"adm-c004","target_user_id":"usr-a023","target_resource":"services","details":"removed deprecated csv pipeline","ip_address":"10.10.18.109"}
+{"event_category":"auth","event_type":"token_refresh","user_id":"usr-a023","username":"olive@acme.io","ip_address":"10.10.10.216","user_agent":"python-httpx/0.27","success":1}
+{"event_category":"api","endpoint":"/api/v1/alerts","method":"GET","status_code":202,"response_time_ms":4,"request_id":"req-b0020","user_id":"usr-a014","ip_address":"10.10.7.222"}
+{"event_category":"auth","event_type":"token_refresh","user_id":"usr-a023","username":"xena@acme.io","ip_address":"10.10.7.42","user_agent":"PostmanRuntime/7.36","success":0}
+{"message":"compaction started on default","source":"dfe-loader","level":"info","host":"node-02"}
+{"event_category":"network","event_type":"connection","src_ip":"10.10.17.57","dst_ip":"10.10.1.8","src_port":54920,"dst_port":8080,"protocol":"TCP","bytes_sent":4515,"bytes_received":8345}
+{"event_category":"network","event_type":"connection","src_ip":"10.10.4.64","dst_ip":"10.10.3.174","src_port":38989,"dst_port":3389,"protocol":"TCP","bytes_sent":6836,"bytes_received":29510}
+{"message":"connection pool at 68% capacity","source":"monitoring","level":"info","host":"db-01"}
+{"event_category":"admin","action":"export_audit_log","admin_user_id":"adm-c001","target_user_id":"usr-a008","target_resource":"system_config","details":"created ops overview dashboard","ip_address":"10.10.1.8"}
+{"message":"slow query detected: 4387ms on auth_events","source":"backup","level":"warning","host":"db-01"}
+{"event_category":"api","endpoint":"/api/v1/pipelines","method":"GET","status_code":200,"response_time_ms":40,"request_id":"req-b0108","user_id":"usr-a005","ip_address":"10.10.3.98"}
+{"event_category":"api","endpoint":"/api/v1/events/export","method":"POST","status_code":200,"response_time_ms":26,"request_id":"req-b0170","user_id":"usr-a012","ip_address":"10.10.2.219"}
+{"event_category":"admin","action":"delete_user","admin_user_id":"adm-c008","target_user_id":"usr-a017","target_resource":"api_keys","details":"promoted to admin","ip_address":"10.10.1.8"}
+{"event_category":"auth","event_type":"api_key_created","user_id":"usr-a003","username":"nina@acme.io","ip_address":"10.10.20.159","user_agent":"httpx/0.27","success":1}
+{"event_category":"network","event_type":"connection","src_ip":"10.10.3.250","dst_ip":"10.10.17.23","src_port":44636,"dst_port":53,"protocol":"TCP","bytes_sent":3476,"bytes_received":25888}
+{"event_category":"api","endpoint":"/api/v1/users","method":"GET","status_code":200,"response_time_ms":34,"request_id":"req-b0231","user_id":"usr-a005","ip_address":"10.10.18.109"}
+{"event_category":"api","endpoint":"/api/v1/pipelines","method":"PUT","status_code":201,"response_time_ms":4,"request_id":"req-b0210","user_id":"usr-a042","ip_address":"10.10.5.137"}
+{"event_category":"admin","action":"update_alert_rule","admin_user_id":"adm-c003","target_user_id":"usr-a027","target_resource":"dashboards","details":"created ops overview dashboard","ip_address":"10.10.7.36"}
+{"message":"upstream connection restored","source":"dfe-loader","level":"info","host":"node-03"}
+{"message":"retry succeeded after 14259 attempts","source":"scheduler","level":"info","host":"node-03"}
+{"event_category":"auth","event_type":"session_expired","user_id":"usr-a050","username":"amber@acme.io","ip_address":"10.10.12.153","user_agent":"python-httpx/0.27","success":1}
+{"event_category":"network","event_type":"firewall_drop","src_ip":"198.142.248.55","dst_ip":"10.10.2.56","src_port":57498,"dst_port":8080,"protocol":"TCP","bytes_sent":3427,"bytes_received":0}
+{"message":"compaction started on auth_events","source":"runtime","level":"info","host":"node-03"}
+{"event_category":"network","event_type":"dns_query","src_ip":"10.10.2.98","dst_ip":"10.10.1.8","src_port":32487,"dst_port":8080,"protocol":"UDP","bytes_sent":492,"bytes_received":7686}
+{"event_category":"auth","event_type":"login","user_id":"usr-a003","username":"pat@acme.io","ip_address":"10.10.8.207","user_agent":"PostmanRuntime/7.36","success":1}
+{"message":"partition merge completed for admin_events","source":"backup","level":"info","host":"node-03"}
+{"event_category":"api","endpoint":"/api/v1/roles","method":"GET","status_code":201,"response_time_ms":32,"request_id":"req-b0189","user_id":"usr-a033","ip_address":"10.10.10.103"}
+{"message":"connection pool at 28% capacity","source":"runtime","level":"info","host":"node-01"}
+{"event_category":"network","event_type":"dns_query","src_ip":"10.10.19.163","dst_ip":"10.10.3.174","src_port":49270,"dst_port":5044,"protocol":"UDP","bytes_sent":7005,"bytes_received":3923}
+{"event_category":"api","endpoint":"/api/v1/dashboards","method":"GET","status_code":200,"response_time_ms":6,"request_id":"req-b0089","user_id":"usr-a043","ip_address":"10.10.2.219"}
+{"event_category":"auth","event_type":"api_key_created","user_id":"usr-a029","username":"gina@acme.io","ip_address":"10.10.3.40","user_agent":"Mozilla/5.0 (Macintosh; Intel Mac OS X)","success":1}
+{"event_category":"api","endpoint":"/api/v1/events/search","method":"POST","status_code":201,"response_time_ms":41,"request_id":"req-b0031","user_id":"usr-a034","ip_address":"10.10.4.68"}
+{"event_category":"auth","event_type":"password_change","user_id":"usr-a003","username":"frank@acme.io","ip_address":"10.10.8.117","user_agent":"Mozilla/5.0 (iPhone; CPU iPhone OS 17_0)","success":1}
+{"event_category":"admin","action":"create_dashboard","admin_user_id":"adm-c004","target_user_id":"usr-a004","target_resource":"pipelines","details":"promoted to admin","ip_address":"10.10.18.109"}
+{"event_category":"api","endpoint":"/api/v1/dashboards","method":"GET","status_code":403,"response_time_ms":5000,"request_id":"req-b0165","user_id":"usr-a044","ip_address":"10.10.5.179"}
+{"event_category":"api","endpoint":"/api/v1/events","method":"DELETE","status_code":202,"response_time_ms":10,"request_id":"req-b0096","user_id":"usr-a029","ip_address":"10.10.19.163"}
+{"event_category":"api","endpoint":"/api/v1/events","method":"POST","status_code":201,"response_time_ms":11,"request_id":"req-b0166","user_id":"usr-a042","ip_address":"10.10.18.225"}
+{"event_category":"auth","event_type":"password_change","user_id":"usr-a027","username":"sam@acme.io","ip_address":"10.10.8.254","user_agent":"PostmanRuntime/7.36","success":1}
+{"message":"schema migration applied: v2.2.5219","source":"dfe-loader","level":"info","host":"node-02"}
+{"event_category":"api","endpoint":"/api/v1/health","method":"GET","status_code":400,"response_time_ms":5000,"request_id":"req-b0094","user_id":"usr-a009","ip_address":"10.10.2.56"}
+{"event_category":"network","event_type":"firewall_drop","src_ip":"203.173.10.151","dst_ip":"10.10.17.23","src_port":47656,"dst_port":3389,"protocol":"TCP","bytes_sent":4987,"bytes_received":0}
+{"event_category":"api","endpoint":"/api/v1/sources","method":"POST","status_code":200,"response_time_ms":10,"request_id":"req-b0069","user_id":"usr-a008","ip_address":"10.10.9.253"}
+{"message":"certificate expiry in 42 days","source":"clickhouse","level":"warning","host":"node-02"}
+{"event_category":"network","event_type":"connection","src_ip":"10.10.2.219","dst_ip":"10.10.20.29","src_port":50887,"dst_port":53,"protocol":"TCP","bytes_sent":7828,"bytes_received":3495}
+{"event_category":"api","endpoint":"/api/v1/users","method":"GET","status_code":201,"response_time_ms":34,"request_id":"req-b0153","user_id":"usr-a021","ip_address":"10.10.2.98"}
+{"event_category":"auth","event_type":"api_key_created","user_id":"usr-a016","username":"grace@acme.io","ip_address":"10.10.19.163","user_agent":"Mozilla/5.0 (X11; Ubuntu; Linux x86_64)","success":0}
+{"event_category":"network","event_type":"dns_query","src_ip":"10.10.15.24","dst_ip":"10.10.7.36","src_port":40659,"dst_port":5044,"protocol":"UDP","bytes_sent":635,"bytes_received":26252}
+{"message":"grpc keepalive ping sent","source":"cert-monitor","level":"debug","host":"node-03"}
+{"event_category":"api","endpoint":"/api/v1/events/stream","method":"GET","status_code":200,"response_time_ms":44,"request_id":"req-b0059","user_id":"usr-a030","ip_address":"10.10.9.253"}
+{"event_category":"api","endpoint":"/api/v1/events/stream","method":"GET","status_code":201,"response_time_ms":48,"request_id":"req-b0169","user_id":"usr-a012","ip_address":"10.10.17.57"}
+{"message":"certificate expiry in 73 days","source":"backup","level":"warning","host":"node-03"}
+{"event_category":"network","event_type":"connection","src_ip":"10.10.11.91","dst_ip":"10.10.8.63","src_port":54606,"dst_port":9000,"protocol":"TCP","bytes_sent":6028,"bytes_received":2521}
+{"event_category":"api","endpoint":"/api/v1/health","method":"GET","status_code":403,"response_time_ms":1,"request_id":"req-b0180","user_id":"usr-a042","ip_address":"10.10.20.19"}
+{"event_category":"auth","event_type":"sso_login","user_id":"usr-a023","username":"amber@acme.io","ip_address":"10.10.6.234","user_agent":"PostmanRuntime/7.36","success":1}
+{"event_category":"api","endpoint":"/api/v1/config","method":"GET","status_code":200,"response_time_ms":30,"request_id":"req-b0184","user_id":"usr-a027","ip_address":"10.10.18.103"}
+{"event_category":"admin","action":"disable_user","admin_user_id":"adm-c007","target_user_id":"usr-a021","target_resource":"alerts","details":"exported 30-day audit log","ip_address":"10.10.7.130"}
+{"event_category":"auth","event_type":"login","user_id":"usr-a002","username":"ella@acme.io","ip_address":"10.10.8.254","user_agent":"Mozilla/5.0 (Linux; Android 14)","success":1}
+{"message":"system health check passed","source":"dfe-loader","level":"info","host":"node-02"}
+{"event_category":"admin","action":"delete_user","admin_user_id":"adm-c010","target_user_id":"usr-a042","target_resource":"audit","details":"removed deprecated csv pipeline","ip_address":"10.10.17.23"}
+{"event_category":"api","endpoint":"/api/v1/events/export","method":"POST","status_code":200,"response_time_ms":37,"request_id":"req-b0129","user_id":"usr-a013","ip_address":"10.10.6.246"}
+{"event_category":"auth","event_type":"token_refresh","user_id":"usr-a032","username":"gina@acme.io","ip_address":"10.10.2.12","user_agent":"Mozilla/5.0 (Linux; Android 14)","success":1}
+{"event_category":"api","endpoint":"/api/v1/sources","method":"POST","status_code":400,"response_time_ms":2,"request_id":"req-b0120","user_id":"usr-a040","ip_address":"10.10.7.36"}
+{"event_category":"api","endpoint":"/api/v1/roles","method":"GET","status_code":200,"response_time_ms":4,"request_id":"req-b0181","user_id":"usr-a030","ip_address":"10.10.3.98"}
+{"event_category":"network","event_type":"firewall_drop","src_ip":"192.157.122.15","dst_ip":"10.10.7.130","src_port":36822,"dst_port":5044,"protocol":"TCP","bytes_sent":1184,"bytes_received":0}
+{"event_category":"admin","action":"enable_user","admin_user_id":"adm-c008","target_user_id":"usr-a007","target_resource":"retention_policies","details":"created ops overview dashboard","ip_address":"10.10.17.23"}
+{"event_category":"admin","action":"create_pipeline","admin_user_id":"adm-c010","target_user_id":"usr-a041","target_resource":"alerts","details":"enabled gRPC transport","ip_address":"10.10.18.109"}
+{"event_category":"auth","event_type":"mfa_challenge","user_id":"usr-a028","username":"pat@acme.io","ip_address":"10.10.17.138","user_agent":"Mozilla/5.0 (Linux; Android 14)","success":1}
+{"event_category":"api","endpoint":"/api/v1/events/export","method":"POST","status_code":204,"response_time_ms":41,"request_id":"req-b0176","user_id":"usr-a028","ip_address":"10.10.4.68"}
+{"message":"dead letter queue: 3920 messages pending","source":"clickhouse","level":"warning","host":"node-03"}
+{"message":"disk usage at 55% on /data volume","source":"scheduler","level":"warning","host":"node-02"}
+{"event_category":"network","event_type":"connection","src_ip":"10.10.18.225","dst_ip":"10.10.3.174","src_port":35174,"dst_port":3389,"protocol":"TCP","bytes_sent":7427,"bytes_received":28045}
+{"event_category":"api","endpoint":"/api/v1/sources","method":"POST","status_code":200,"response_time_ms":24,"request_id":"req-b0085","user_id":"usr-a026","ip_address":"10.10.1.207"}
+{"message":"clickhouse flush completed: 11924 rows in 1927ms","source":"backup","level":"info","host":"node-02"}
+{"message":"http listener ready on :8080","source":"dfe-loader","level":"info","host":"node-02"}
+{"event_category":"api","endpoint":"/api/v1/pipelines","method":"PUT","status_code":200,"response_time_ms":10,"request_id":"req-b0007","user_id":"usr-a015","ip_address":"10.10.17.108"}
+{"event_category":"api","endpoint":"/api/v1/health","method":"GET","status_code":200,"response_time_ms":3,"request_id":"req-b0193","user_id":"usr-a023","ip_address":"10.10.2.56"}
+{"event_category":"network","event_type":"firewall_drop","src_ip":"203.136.174.29","dst_ip":"10.10.17.23","src_port":59661,"dst_port":8080,"protocol":"TCP","bytes_sent":5079,"bytes_received":0}
+{"event_category":"api","endpoint":"/api/v1/events","method":"POST","status_code":200,"response_time_ms":3,"request_id":"req-b0082","user_id":"usr-a020","ip_address":"10.10.4.68"}
+{"event_category":"admin","action":"create_source","admin_user_id":"adm-c002","target_user_id":"usr-a037","target_resource":"api_keys","details":"changed retention to 90 days","ip_address":"10.10.2.56"}
+{"event_category":"network","event_type":"dns_query","src_ip":"10.10.6.172","dst_ip":"10.10.1.8","src_port":46514,"dst_port":50051,"protocol":"UDP","bytes_sent":3855,"bytes_received":9964}
+{"event_category":"api","endpoint":"/api/v1/users","method":"GET","status_code":202,"response_time_ms":12,"request_id":"req-b0112","user_id":"usr-a028","ip_address":"10.10.20.118"}
+{"message":"schema migration applied: v2.2.5355","source":"dfe-receiver","level":"info","host":"node-01"}
+{"event_category":"admin","action":"update_role","admin_user_id":"adm-c003","target_user_id":"usr-a028","target_resource":"retention_policies","details":"onboarded new security engineer","ip_address":"10.10.2.56"}
+{"event_category":"api","endpoint":"/api/v1/events/export","method":"POST","status_code":200,"response_time_ms":21,"request_id":"req-b0188","user_id":"usr-a008","ip_address":"10.10.1.187"}
+{"event_category":"auth","event_type":"mfa_challenge","user_id":"usr-a007","username":"quinn@acme.io","ip_address":"10.10.7.115","user_agent":"Mozilla/5.0 (Macintosh; Intel Mac OS X)","success":1}
+{"message":"clickhouse flush completed: 9271 rows in 1202ms","source":"monitoring","level":"info","host":"node-02"}
+{"event_category":"admin","action":"create_user","admin_user_id":"adm-c002","target_user_id":"usr-a047","target_resource":"retention_policies","details":"re-enabled after password reset","ip_address":"10.10.0.190"}
+{"event_category":"auth","event_type":"logout","user_id":"usr-a030","username":"sara@acme.io","ip_address":"10.10.12.21","user_agent":"Mozilla/5.0 (iPhone; CPU iPhone OS 17_0)","success":1}
+{"event_category":"api","endpoint":"/api/v1/roles","method":"GET","status_code":200,"response_time_ms":1,"request_id":"req-b0233","user_id":"usr-a033","ip_address":"10.10.8.17"}
+{"event_category":"api","endpoint":"/api/v1/events/export","method":"POST","status_code":200,"response_time_ms":27,"request_id":"req-b0123","user_id":"usr-a030","ip_address":"10.10.1.187"}
+{"event_category":"admin","action":"delete_source","admin_user_id":"adm-c006","target_user_id":"usr-a034","target_resource":"services","details":"added beats input on port 5044","ip_address":"10.10.8.63"}
+{"event_category":"network","event_type":"dns_query","src_ip":"10.10.2.99","dst_ip":"10.10.7.36","src_port":38551,"dst_port":22,"protocol":"UDP","bytes_sent":5905,"bytes_received":5879}
+{"message":"partition merge completed for auth_events","source":"clickhouse","level":"info","host":"node-03"}
+{"event_category":"auth","event_type":"api_key_created","user_id":"usr-a043","username":"ella@acme.io","ip_address":"10.10.18.103","user_agent":"Mozilla/5.0 (X11; Ubuntu; Linux x86_64)","success":1}
+{"event_category":"auth","event_type":"session_expired","user_id":"usr-a008","username":"xena@acme.io","ip_address":"10.10.3.92","user_agent":"Mozilla/5.0 (Windows NT 11.0)","success":1}
+{"message":"http listener ready on :8080","source":"monitoring","level":"info","host":"node-03"}
+{"message":"memory usage: 2726MB / 1024MB","source":"runtime","level":"info","host":"node-01"}
+{"message":"kafka consumer lag: 14382 messages","source":"runtime","level":"info","host":"node-01"}
+{"message":"ingest rate: 2102 events/sec","source":"scheduler","level":"info","host":"node-01"}
+{"event_category":"network","event_type":"firewall_drop","src_ip":"198.40.43.188","dst_ip":"10.10.8.63","src_port":34065,"dst_port":53,"protocol":"TCP","bytes_sent":1703,"bytes_received":0}
+{"event_category":"auth","event_type":"login","user_id":"usr-a020","username":"uri@acme.io","ip_address":"10.10.8.192","user_agent":"Mozilla/5.0 (Windows NT 10.0)","success":1}
+{"event_category":"admin","action":"update_config","admin_user_id":"adm-c002","target_user_id":"usr-a021","target_resource":"api_keys","details":"set api_events TTL to 30 days","ip_address":"10.10.8.63"}
+{"event_category":"admin","action":"update_role","admin_user_id":"adm-c010","target_user_id":"usr-a038","target_resource":"alerts","details":"promoted to admin","ip_address":"10.10.20.29"}
+{"event_category":"admin","action":"create_dashboard","admin_user_id":"adm-c008","target_user_id":"usr-a027","target_resource":"retention_policies","details":"exported 30-day audit log","ip_address":"10.10.8.63"}
+{"message":"compaction started on admin_events","source":"monitoring","level":"info","host":"node-02"}
+{"event_category":"network","event_type":"connection","src_ip":"10.10.9.253","dst_ip":"10.10.2.56","src_port":52535,"dst_port":3389,"protocol":"TCP","bytes_sent":2195,"bytes_received":12615}
+{"event_category":"admin","action":"create_user","admin_user_id":"adm-c006","target_user_id":"usr-a001","target_resource":"audit","details":"removed deprecated csv pipeline","ip_address":"10.10.3.174"}
+{"event_category":"admin","action":"update_role","admin_user_id":"adm-c009","target_user_id":"usr-a001","target_resource":"api_keys","details":"restarted dfe-loader after config change","ip_address":"10.10.8.63"}
+{"event_category":"admin","action":"create_user","admin_user_id":"adm-c007","target_user_id":"usr-a013","target_resource":"system_config","details":"set api_events TTL to 30 days","ip_address":"10.10.8.63"}
+{"event_category":"auth","event_type":"logout","user_id":"usr-a013","username":"leon@acme.io","ip_address":"10.10.20.159","user_agent":"Mozilla/5.0 (Macintosh; Intel Mac OS X)","success":1}
+{"event_category":"api","endpoint":"/api/v1/sources","method":"POST","status_code":200,"response_time_ms":14,"request_id":"req-b0052","user_id":"usr-a050","ip_address":"10.10.20.128"}
+{"message":"compaction started on network_events","source":"clickhouse","level":"info","host":"node-03"}
+{"event_category":"api","endpoint":"/api/v1/dashboards","method":"GET","status_code":200,"response_time_ms":44,"request_id":"req-b0002","user_id":"usr-a005","ip_address":"10.10.17.51"}
+{"message":"disk usage at 37% on /data volume","source":"clickhouse","level":"warning","host":"db-01"}
+{"event_category":"api","endpoint":"/api/v1/users","method":"GET","status_code":204,"response_time_ms":30,"request_id":"req-b0071","user_id":"usr-a008","ip_address":"10.10.12.227"}
+{"event_category":"auth","event_type":"session_expired","user_id":"usr-a034","username":"sara@acme.io","ip_address":"10.10.8.207","user_agent":"Mozilla/5.0 (iPad; CPU OS 17_0)","success":1}
+{"event_category":"api","endpoint":"/api/v1/pipelines","method":"PUT","status_code":200,"response_time_ms":36,"request_id":"req-b0162","user_id":"usr-a009","ip_address":"10.10.17.108"}
+{"event_category":"admin","action":"enable_user","admin_user_id":"adm-c003","target_user_id":"usr-a004","target_resource":"sources","details":"set api_events TTL to 30 days","ip_address":"10.10.7.36"}
+{"event_category":"auth","event_type":"login","user_id":"usr-a027","username":"uma@acme.io","ip_address":"10.10.18.225","user_agent":"python-httpx/0.27","success":0}
+{"event_category":"admin","action":"update_role","admin_user_id":"adm-c008","target_user_id":"usr-a019","target_resource":"alerts","details":"restarted dfe-loader after config change","ip_address":"10.10.0.190"}
+{"event_category":"network","event_type":"dns_query","src_ip":"10.10.18.103","dst_ip":"10.10.2.56","src_port":54503,"dst_port":8080,"protocol":"UDP","bytes_sent":407,"bytes_received":29452}
+{"event_category":"admin","action":"update_retention","admin_user_id":"adm-c007","target_user_id":"usr-a025","target_resource":"roles","details":"onboarded new security engineer","ip_address":"10.10.7.36"}
+{"message":"slow query detected: 2479ms on network_events","source":"runtime","level":"warning","host":"node-03"}
+{"event_category":"auth","event_type":"token_refresh","user_id":"usr-a001","username":"sam@acme.io","ip_address":"10.10.1.187","user_agent":"Mozilla/5.0 (Linux; Android 14)","success":1}
+{"message":"retry succeeded after 3323 attempts","source":"dfe-receiver","level":"info","host":"node-01"}
+{"event_category":"api","endpoint":"/api/v1/alerts","method":"GET","status_code":202,"response_time_ms":26,"request_id":"req-b0029","user_id":"usr-a026","ip_address":"10.10.3.98"}
+{"event_category":"admin","action":"restart_service","admin_user_id":"adm-c007","target_user_id":"usr-a018","target_resource":"system_config","details":"created new analyst account","ip_address":"10.10.17.23"}
+{"message":"upstream connection restored","source":"clickhouse","level":"info","host":"node-02"}
+{"event_category":"api","endpoint":"/api/v1/sources","method":"POST","status_code":200,"response_time_ms":20,"request_id":"req-b0156","user_id":"usr-a046","ip_address":"10.10.1.187"}
+{"event_category":"auth","event_type":"token_refresh","user_id":"usr-a030","username":"sara@acme.io","ip_address":"10.10.18.110","user_agent":"Mozilla/5.0 (Windows NT 10.0)","success":1}
+{"event_category":"api","endpoint":"/api/v1/events","method":"DELETE","status_code":200,"response_time_ms":3,"request_id":"req-b0119","user_id":"usr-a050","ip_address":"10.10.15.24"}
+{"message":"config reload triggered by file change","source":"monitoring","level":"info","host":"db-01"}
+{"message":"retry succeeded after 9347 attempts","source":"backup","level":"info","host":"db-01"}
+{"event_category":"api","endpoint":"/api/v1/events","method":"GET","status_code":400,"response_time_ms":3,"request_id":"req-b0046","user_id":"usr-a022","ip_address":"10.10.20.180"}
+{"event_category":"admin","action":"create_dashboard","admin_user_id":"adm-c007","target_user_id":"usr-a032","target_resource":"users","details":"removed deprecated csv pipeline","ip_address":"10.10.18.109"}
+{"event_category":"auth","event_type":"logout","user_id":"usr-a024","username":"sara@acme.io","ip_address":"10.10.12.21","user_agent":"Mozilla/5.0 (Macintosh; ARM Mac OS X)","success":1}
+{"event_category":"api","endpoint":"/api/v1/alerts","method":"GET","status_code":200,"response_time_ms":21,"request_id":"req-b0027","user_id":"usr-a040","ip_address":"10.10.8.17"}
+{"event_category":"api","endpoint":"/api/v1/roles","method":"GET","status_code":403,"response_time_ms":2,"request_id":"req-b0105","user_id":"usr-a033","ip_address":"10.10.3.250"}
+{"event_category":"admin","action":"delete_user","admin_user_id":"adm-c005","target_user_id":"usr-a017","target_resource":"system_config","details":"created new analyst account","ip_address":"10.10.18.109"}
+{"event_category":"network","event_type":"connection","src_ip":"10.10.14.138","dst_ip":"10.10.7.36","src_port":38269,"dst_port":443,"protocol":"TCP","bytes_sent":3500,"bytes_received":2631}
+{"event_category":"admin","action":"update_role","admin_user_id":"adm-c002","target_user_id":"usr-a050","target_resource":"pipelines","details":"re-enabled after password reset","ip_address":"10.10.8.63"}
+{"event_category":"auth","event_type":"logout","user_id":"usr-a022","username":"derek@acme.io","ip_address":"10.10.7.130","user_agent":"Mozilla/5.0 (Windows NT 10.0)","success":1}
+{"message":"clickhouse flush completed: 7764 rows in 1131ms","source":"dfe-loader","level":"info","host":"node-01"}
+{"message":"http listener ready on :8080","source":"dfe-loader","level":"info","host":"db-01"}
+{"event_category":"auth","event_type":"logout","user_id":"usr-a044","username":"dave@acme.io","ip_address":"10.10.8.254","user_agent":"python-httpx/0.27","success":1}
+{"event_category":"auth","event_type":"logout","user_id":"usr-a039","username":"yuri@acme.io","ip_address":"10.10.6.246","user_agent":"Mozilla/5.0 (iPhone; CPU iPhone OS 17_0)","success":1}
+{"message":"upstream connection restored","source":"dfe-receiver","level":"info","host":"db-01"}
+{"message":"slow query detected: 2509ms on default","source":"dfe-receiver","level":"warning","host":"db-01"}
+{"message":"http listener ready on :8080","source":"cert-monitor","level":"info","host":"node-01"}
+{"event_category":"api","endpoint":"/api/v1/events/export","method":"POST","status_code":403,"response_time_ms":2,"request_id":"req-b0056","user_id":"usr-a003","ip_address":"10.10.20.177"}
+{"message":"certificate expiry in 32 days","source":"runtime","level":"warning","host":"node-03"}
+{"event_category":"admin","action":"create_source","admin_user_id":"adm-c004","target_user_id":"usr-a035","target_resource":"alerts","details":"locked after 5 failed logins","ip_address":"10.10.1.8"}
+{"event_category":"api","endpoint":"/api/v1/events","method":"DELETE","status_code":201,"response_time_ms":38,"request_id":"req-b0209","user_id":"usr-a012","ip_address":"10.10.10.216"}
+{"event_category":"auth","event_type":"mfa_challenge","user_id":"usr-a012","username":"lara@acme.io","ip_address":"10.10.19.7","user_agent":"curl/8.7.1","success":0}
+{"message":"scheduled maintenance window starting","source":"dfe-receiver","level":"info","host":"node-02"}
+{"event_category":"auth","event_type":"api_key_created","user_id":"usr-a043","username":"eve@acme.io","ip_address":"10.10.20.118","user_agent":"httpx/0.27","success":1}
+{"message":"tls handshake completed","source":"dfe-loader","level":"info","host":"node-01"}
+{"event_category":"api","endpoint":"/api/v1/roles","method":"GET","status_code":200,"response_time_ms":15,"request_id":"req-b0030","user_id":"usr-a050","ip_address":"10.10.10.27"}
+{"event_category":"admin","action":"create_pipeline","admin_user_id":"adm-c006","target_user_id":"usr-a002","target_resource":"retention_policies","details":"changed retention to 90 days","ip_address":"10.10.3.174"}
+{"event_category":"api","endpoint":"/api/v1/events","method":"DELETE","status_code":200,"response_time_ms":35,"request_id":"req-b0235","user_id":"usr-a027","ip_address":"10.10.0.190"}
+{"message":"partition merge completed for default","source":"dfe-receiver","level":"info","host":"db-01"}
+{"event_category":"api","endpoint":"/api/v1/events","method":"DELETE","status_code":200,"response_time_ms":25,"request_id":"req-b0128","user_id":"usr-a027","ip_address":"10.10.20.159"}
+{"event_category":"auth","event_type":"password_change","user_id":"usr-a020","username":"uma@acme.io","ip_address":"10.10.7.130","user_agent":"Mozilla/5.0 (X11; Linux x86_64)","success":1}
+{"event_category":"api","endpoint":"/api/v1/config","method":"GET","status_code":200,"response_time_ms":42,"request_id":"req-b0244","user_id":"usr-a037","ip_address":"10.10.20.180"}
+{"message":"slow query detected: 3598ms on api_events","source":"runtime","level":"warning","host":"db-01"}
+{"event_category":"admin","action":"update_retention","admin_user_id":"adm-c010","target_user_id":"usr-a038","target_resource":"roles","details":"added syslog ingest pipeline","ip_address":"10.10.17.23"}
+{"event_category":"admin","action":"restart_service","admin_user_id":"adm-c004","target_user_id":"usr-a030","target_resource":"roles","details":"added beats input on port 5044","ip_address":"10.10.1.8"}
+{"event_category":"api","endpoint":"/api/v1/pipelines","method":"GET","status_code":200,"response_time_ms":49,"request_id":"req-b0139","user_id":"usr-a013","ip_address":"10.10.13.153"}
+{"event_category":"admin","action":"update_config","admin_user_id":"adm-c010","target_user_id":"usr-a044","target_resource":"roles","details":"rotated production api key","ip_address":"10.10.2.56"}
+{"event_category":"network","event_type":"firewall_drop","src_ip":"192.222.80.117","dst_ip":"10.10.17.23","src_port":52460,"dst_port":9000,"protocol":"TCP","bytes_sent":964,"bytes_received":0}
+{"message":"buffer utilisation at 79%","source":"scheduler","level":"debug","host":"db-01"}
+{"event_category":"auth","event_type":"login","user_id":"usr-a050","username":"maya@acme.io","ip_address":"10.10.12.227","user_agent":"PostmanRuntime/7.36","success":0}
+{"event_category":"auth","event_type":"session_expired","user_id":"usr-a042","username":"alice@acme.io","ip_address":"10.10.18.103","user_agent":"Mozilla/5.0 (iPhone; CPU iPhone OS 17_0)","success":0}
+{"event_category":"auth","event_type":"password_change","user_id":"usr-a031","username":"quinn@acme.io","ip_address":"10.10.20.159","user_agent":"PostmanRuntime/7.36","success":1}
+{"message":"kafka consumer lag: 10177 messages","source":"runtime","level":"info","host":"node-01"}
+{"event_category":"api","endpoint":"/api/v1/events/search","method":"POST","status_code":200,"response_time_ms":29,"request_id":"req-b0127","user_id":"usr-a010","ip_address":"10.10.20.180"}
+{"event_category":"auth","event_type":"password_change","user_id":"usr-a014","username":"theo@acme.io","ip_address":"10.10.11.148","user_agent":"DFE-SDK/2.2","success":1}
+{"message":"batch insert completed: 13679 rows","source":"dfe-receiver","level":"info","host":"node-03"}
+{"event_category":"auth","event_type":"password_change","user_id":"usr-a016","username":"pete@acme.io","ip_address":"10.10.20.128","user_agent":"Mozilla/5.0 (Macintosh; ARM Mac OS X)","success":1}
+{"event_category":"network","event_type":"connection","src_ip":"10.10.8.192","dst_ip":"10.10.1.8","src_port":53494,"dst_port":8443,"protocol":"TCP","bytes_sent":2491,"bytes_received":27766}
+{"event_category":"api","endpoint":"/api/v1/events/search","method":"POST","status_code":201,"response_time_ms":35,"request_id":"req-b0075","user_id":"usr-a025","ip_address":"10.10.18.225"}
+{"event_category":"network","event_type":"dns_query","src_ip":"10.10.18.109","dst_ip":"10.10.7.130","src_port":34667,"dst_port":5044,"protocol":"UDP","bytes_sent":7318,"bytes_received":6438}
+{"message":"scheduled backup completed successfully","source":"cert-monitor","level":"info","host":"node-03"}
+{"event_category":"admin","action":"delete_source","admin_user_id":"adm-c006","target_user_id":"usr-a044","target_resource":"users","details":"removed inactive account","ip_address":"10.10.0.190"}
+{"event_category":"network","event_type":"firewall_drop","src_ip":"185.108.102.183","dst_ip":"10.10.3.174","src_port":38449,"dst_port":8080,"protocol":"TCP","bytes_sent":3174,"bytes_received":0}
+{"event_category":"auth","event_type":"logout","user_id":"usr-a029","username":"hugo@acme.io","ip_address":"10.10.8.17","user_agent":"Mozilla/5.0 (X11; Linux x86_64)","success":1}
+{"event_category":"admin","action":"export_audit_log","admin_user_id":"adm-c003","target_user_id":"usr-a003","target_resource":"dashboards","details":"removed unused splunk hec input","ip_address":"10.10.7.130"}
+{"event_category":"admin","action":"create_source","admin_user_id":"adm-c009","target_user_id":"usr-a024","target_resource":"services","details":"removed inactive account","ip_address":"10.10.1.8"}
+{"message":"memory usage: 8780MB / 1024MB","source":"cert-monitor","level":"info","host":"db-01"}
+{"event_category":"network","event_type":"connection","src_ip":"10.10.20.41","dst_ip":"10.10.20.29","src_port":37085,"dst_port":443,"protocol":"TCP","bytes_sent":427,"bytes_received":22665}
+{"event_category":"api","endpoint":"/api/v1/sources","method":"GET","status_code":200,"response_time_ms":22,"request_id":"req-b0215","user_id":"usr-a029","ip_address":"10.10.19.163"}
+{"message":"dead letter queue: 191 messages pending","source":"dfe-receiver","level":"warning","host":"node-03"}
+{"event_category":"network","event_type":"dns_query","src_ip":"10.10.15.24","dst_ip":"10.10.1.8","src_port":35768,"dst_port":5044,"protocol":"UDP","bytes_sent":3694,"bytes_received":10420}
+{"event_category":"network","event_type":"firewall_drop","src_ip":"203.136.174.29","dst_ip":"10.10.2.56","src_port":58364,"dst_port":6000,"protocol":"TCP","bytes_sent":3988,"bytes_received":0}
+{"event_category":"auth","event_type":"token_refresh","user_id":"usr-a028","username":"uma@acme.io","ip_address":"10.10.20.159","user_agent":"PostmanRuntime/7.36","success":0}
+{"event_category":"auth","event_type":"token_refresh","user_id":"usr-a041","username":"derek@acme.io","ip_address":"10.10.11.148","user_agent":"httpx/0.27","success":1}
+{"event_category":"api","endpoint":"/api/v1/dashboards","method":"GET","status_code":200,"response_time_ms":30,"request_id":"req-b0172","user_id":"usr-a009","ip_address":"10.10.20.118"}
+{"message":"schema migration applied: v2.2.12588","source":"dfe-receiver","level":"info","host":"node-02"}
+{"message":"kafka consumer lag: 6754 messages","source":"monitoring","level":"info","host":"node-01"}
+{"event_category":"api","endpoint":"/api/v1/alerts","method":"GET","status_code":200,"response_time_ms":50,"request_id":"req-b0195","user_id":"usr-a050","ip_address":"10.10.17.57"}
+{"event_category":"network","event_type":"firewall_drop","src_ip":"203.136.174.29","dst_ip":"10.10.2.56","src_port":63870,"dst_port":6000,"protocol":"TCP","bytes_sent":5582,"bytes_received":0}
+{"message":"config reload triggered by file change","source":"cert-monitor","level":"info","host":"node-03"}
+{"event_category":"network","event_type":"firewall_drop","src_ip":"203.152.101.40","dst_ip":"10.10.0.190","src_port":59428,"dst_port":9000,"protocol":"TCP","bytes_sent":7806,"bytes_received":0}
+{"message":"buffer utilisation at 47%","source":"scheduler","level":"debug","host":"node-01"}
+{"event_category":"api","endpoint":"/api/v1/roles","method":"GET","status_code":200,"response_time_ms":36,"request_id":"req-b0104","user_id":"usr-a020","ip_address":"10.10.6.246"}
+{"event_category":"network","event_type":"connection","src_ip":"10.10.6.246","dst_ip":"10.10.0.190","src_port":57264,"dst_port":6000,"protocol":"TCP","bytes_sent":3986,"bytes_received":26352}
+{"event_category":"auth","event_type":"password_reset","user_id":"usr-a012","username":"ivan@acme.io","ip_address":"10.10.18.110","user_agent":"Mozilla/5.0 (iPad; CPU OS 17_0)","success":1}
+{"event_category":"api","endpoint":"/api/v1/users","method":"GET","status_code":201,"response_time_ms":25,"request_id":"req-b0159","user_id":"usr-a023","ip_address":"10.10.13.88"}
+{"event_category":"network","event_type":"dns_query","src_ip":"10.10.7.198","dst_ip":"10.10.2.56","src_port":60025,"dst_port":443,"protocol":"UDP","bytes_sent":6475,"bytes_received":23015}
+{"event_category":"admin","action":"enable_user","admin_user_id":"adm-c007","target_user_id":"usr-a010","target_resource":"system_config","details":"removed inactive account","ip_address":"10.10.2.56"}
+{"message":"buffer utilisation at 80%","source":"scheduler","level":"debug","host":"db-01"}
+{"event_category":"api","endpoint":"/api/v1/dashboards","method":"GET","status_code":200,"response_time_ms":1,"request_id":"req-b0011","user_id":"usr-a010","ip_address":"10.10.4.131"}
+{"event_category":"admin","action":"delete_source","admin_user_id":"adm-c002","target_user_id":"usr-a002","target_resource":"dashboards","details":"promoted to admin","ip_address":"10.10.20.29"}
+{"event_category":"api","endpoint":"/api/v1/config","method":"GET","status_code":400,"response_time_ms":2,"request_id":"req-b0167","user_id":"usr-a021","ip_address":"10.10.9.253"}
+{"event_category":"network","event_type":"firewall_drop","src_ip":"203.173.10.151","dst_ip":"10.10.8.63","src_port":54887,"dst_port":22,"protocol":"TCP","bytes_sent":5040,"bytes_received":0}
+{"event_category":"network","event_type":"dns_query","src_ip":"10.10.3.174","dst_ip":"10.10.7.130","src_port":42446,"dst_port":22,"protocol":"UDP","bytes_sent":5983,"bytes_received":23439}
+{"message":"scheduled backup completed successfully","source":"backup","level":"info","host":"db-01"}
+{"message":"ingest rate: 11862 events/sec","source":"cert-monitor","level":"info","host":"node-03"}
+{"message":"scheduled backup completed successfully","source":"clickhouse","level":"info","host":"node-03"}
+{"message":"buffer utilisation at 91%","source":"dfe-loader","level":"debug","host":"node-03"}
+{"message":"upstream connection restored","source":"runtime","level":"info","host":"node-01"}
+{"event_category":"api","endpoint":"/api/v1/events","method":"DELETE","status_code":200,"response_time_ms":26,"request_id":"req-b0131","user_id":"usr-a030","ip_address":"10.10.17.76"}
+{"event_category":"admin","action":"update_retention","admin_user_id":"adm-c001","target_user_id":"usr-a043","target_resource":"alerts","details":"modified threshold for high-cpu alert","ip_address":"10.10.2.56"}
+{"event_category":"api","endpoint":"/api/v1/health","method":"GET","status_code":200,"response_time_ms":44,"request_id":"req-b0016","user_id":"usr-a018","ip_address":"10.10.1.207"}
+{"event_category":"network","event_type":"connection","src_ip":"10.10.8.180","dst_ip":"10.10.18.109","src_port":49356,"dst_port":9000,"protocol":"TCP","bytes_sent":354,"bytes_received":18025}
+{"event_category":"network","event_type":"firewall_drop","src_ip":"198.142.248.55","dst_ip":"10.10.8.63","src_port":42336,"dst_port":5044,"protocol":"TCP","bytes_sent":4473,"bytes_received":0}
+{"event_category":"auth","event_type":"session_expired","user_id":"usr-a027","username":"wade@acme.io","ip_address":"10.10.18.110","user_agent":"DFE-SDK/2.2","success":1}
+{"message":"upstream connection restored","source":"monitoring","level":"info","host":"node-02"}
+{"event_category":"api","endpoint":"/api/v1/config","method":"GET","status_code":200,"response_time_ms":27,"request_id":"req-b0150","user_id":"usr-a027","ip_address":"10.10.1.187"}
+{"event_category":"network","event_type":"firewall_drop","src_ip":"192.157.122.15","dst_ip":"10.10.2.56","src_port":33996,"dst_port":3389,"protocol":"TCP","bytes_sent":6736,"bytes_received":0}
+{"event_category":"auth","event_type":"token_refresh","user_id":"usr-a041","username":"oscar@acme.io","ip_address":"10.10.17.51","user_agent":"Mozilla/5.0 (Linux; Android 14)","success":0}
+{"event_category":"auth","event_type":"login","user_id":"usr-a004","username":"leon@acme.io","ip_address":"10.10.10.55","user_agent":"Mozilla/5.0 (X11; Ubuntu; Linux x86_64)","success":0}
+{"message":"scheduled maintenance window starting","source":"scheduler","level":"info","host":"db-01"}
+{"event_category":"api","endpoint":"/api/v1/events/export","method":"POST","status_code":200,"response_time_ms":3,"request_id":"req-b0067","user_id":"usr-a031","ip_address":"10.10.5.179"}
+{"event_category":"admin","action":"update_config","admin_user_id":"adm-c003","target_user_id":"usr-a048","target_resource":"pipelines","details":"granted read-only access to dashboards","ip_address":"10.10.8.63"}
+{"message":"system health check passed","source":"runtime","level":"info","host":"node-03"}
+{"event_category":"api","endpoint":"/api/v1/health","method":"GET","status_code":200,"response_time_ms":39,"request_id":"req-b0055","user_id":"usr-a010","ip_address":"10.10.6.246"}
+{"message":"connection pool at 59% capacity","source":"dfe-receiver","level":"info","host":"node-02"}
+{"event_category":"network","event_type":"connection","src_ip":"10.10.11.91","dst_ip":"10.10.3.174","src_port":50378,"dst_port":53,"protocol":"TCP","bytes_sent":6936,"bytes_received":16173}
+{"message":"batch insert completed: 1434 rows","source":"clickhouse","level":"info","host":"node-01"}
+{"event_category":"api","endpoint":"/api/v1/roles","method":"GET","status_code":400,"response_time_ms":2,"request_id":"req-b0218","user_id":"usr-a014","ip_address":"10.10.11.42"}
+{"event_category":"auth","event_type":"password_change","user_id":"usr-a027","username":"grace@acme.io","ip_address":"10.10.1.59","user_agent":"Mozilla/5.0 (iPad; CPU OS 17_0)","success":1}
+{"message":"connection pool at 65% capacity","source":"backup","level":"info","host":"node-03"}
+{"event_category":"auth","event_type":"login","user_id":"usr-a017","username":"grace@acme.io","ip_address":"10.10.20.41","user_agent":"Mozilla/5.0 (Linux; Android 14)","success":1}
+{"message":"tls handshake completed","source":"backup","level":"info","host":"node-01"}
+{"event_category":"network","event_type":"connection","src_ip":"10.10.11.57","dst_ip":"10.10.8.63","src_port":49253,"dst_port":8080,"protocol":"TCP","bytes_sent":3888,"bytes_received":4256}
+{"event_category":"api","endpoint":"/api/v1/events/search","method":"POST","status_code":200,"response_time_ms":28,"request_id":"req-b0001","user_id":"usr-a043","ip_address":"10.10.11.148"}
+{"event_category":"network","event_type":"connection","src_ip":"10.10.3.250","dst_ip":"10.10.20.29","src_port":52371,"dst_port":22,"protocol":"TCP","bytes_sent":6830,"bytes_received":20827}
+{"event_category":"network","event_type":"connection","src_ip":"10.10.11.42","dst_ip":"10.10.1.8","src_port":30746,"dst_port":53,"protocol":"TCP","bytes_sent":1749,"bytes_received":8240}
+{"event_category":"api","endpoint":"/api/v1/config","method":"GET","status_code":500,"response_time_ms":5000,"request_id":"req-b0035","user_id":"usr-a041","ip_address":"10.10.8.117"}
+{"event_category":"auth","event_type":"session_expired","user_id":"usr-a048","username":"vic@acme.io","ip_address":"10.10.8.180","user_agent":"python-httpx/0.27","success":1}
+{"event_category":"auth","event_type":"sso_login","user_id":"usr-a022","username":"remy@acme.io","ip_address":"10.10.20.159","user_agent":"Mozilla/5.0 (iPhone; CPU iPhone OS 17_0)","success":1}
+{"event_category":"api","endpoint":"/api/v1/health","method":"GET","status_code":201,"response_time_ms":13,"request_id":"req-b0155","user_id":"usr-a018","ip_address":"10.10.11.57"}
+{"event_category":"api","endpoint":"/api/v1/sources","method":"POST","status_code":201,"response_time_ms":2,"request_id":"req-b0145","user_id":"usr-a022","ip_address":"10.10.7.115"}
+{"message":"buffer utilisation at 11%","source":"dfe-loader","level":"debug","host":"node-01"}
+{"event_category":"admin","action":"create_source","admin_user_id":"adm-c004","target_user_id":"usr-a047","target_resource":"audit","details":"exported 30-day audit log","ip_address":"10.10.7.130"}
+{"event_category":"api","endpoint":"/api/v1/sources","method":"POST","status_code":403,"response_time_ms":2,"request_id":"req-b0213","user_id":"usr-a004","ip_address":"10.10.11.57"}
+{"event_category":"auth","event_type":"password_change","user_id":"usr-a049","username":"iris@acme.io","ip_address":"10.10.3.174","user_agent":"curl/8.7.1","success":1}
+{"event_category":"api","endpoint":"/api/v1/events/export","method":"POST","status_code":201,"response_time_ms":19,"request_id":"req-b0206","user_id":"usr-a047","ip_address":"10.10.15.24"}
+{"message":"memory usage: 6679MB / 1024MB","source":"runtime","level":"info","host":"db-01"}
+{"message":"tls handshake completed","source":"scheduler","level":"info","host":"node-03"}
+{"event_category":"api","endpoint":"/api/v1/events","method":"DELETE","status_code":400,"response_time_ms":1,"request_id":"req-b0243","user_id":"usr-a011","ip_address":"10.10.19.7"}
+{"event_category":"network","event_type":"firewall_drop","src_ip":"185.35.64.33","dst_ip":"10.10.2.56","src_port":43556,"dst_port":5044,"protocol":"TCP","bytes_sent":7817,"bytes_received":0}
+{"event_category":"auth","event_type":"logout","user_id":"usr-a035","username":"ivan@acme.io","ip_address":"10.10.8.40","user_agent":"Mozilla/5.0 (Windows NT 11.0)","success":1}
+{"event_category":"api","endpoint":"/api/v1/events/stream","method":"GET","status_code":200,"response_time_ms":8,"request_id":"req-b0070","user_id":"usr-a016","ip_address":"10.10.17.57"}
+{"message":"dead letter queue: 2599 messages pending","source":"backup","level":"warning","host":"db-01"}
+{"event_category":"network","event_type":"dns_query","src_ip":"10.10.13.153","dst_ip":"10.10.7.36","src_port":47930,"dst_port":3389,"protocol":"UDP","bytes_sent":7925,"bytes_received":11298}
+{"message":"scheduled maintenance window starting","source":"runtime","level":"info","host":"db-01"}
+{"event_category":"network","event_type":"firewall_drop","src_ip":"198.142.248.55","dst_ip":"10.10.0.190","src_port":59524,"dst_port":5044,"protocol":"TCP","bytes_sent":5426,"bytes_received":0}
+{"event_category":"auth","event_type":"sso_login","user_id":"usr-a048","username":"hugo@acme.io","ip_address":"10.10.7.115","user_agent":"python-httpx/0.27","success":1}
+{"event_category":"admin","action":"create_user","admin_user_id":"adm-c007","target_user_id":"usr-a002","target_resource":"pipelines","details":"onboarded new security engineer","ip_address":"10.10.17.23"}
+{"event_category":"auth","event_type":"password_change","user_id":"usr-a011","username":"jake@acme.io","ip_address":"10.10.10.216","user_agent":"Mozilla/5.0 (X11; Ubuntu; Linux x86_64)","success":1}
+{"event_category":"auth","event_type":"password_reset","user_id":"usr-a045","username":"kira@acme.io","ip_address":"10.10.7.42","user_agent":"Mozilla/5.0 (Windows NT 11.0)","success":0}
+{"message":"http listener ready on :8080","source":"backup","level":"info","host":"db-01"}
+{"message":"scheduled maintenance window starting","source":"scheduler","level":"info","host":"node-03"}
+{"message":"schema migration applied: v2.2.14463","source":"scheduler","level":"info","host":"node-03"}
+{"event_category":"network","event_type":"firewall_drop","src_ip":"192.250.9.29","dst_ip":"10.10.17.23","src_port":30922,"dst_port":22,"protocol":"TCP","bytes_sent":6232,"bytes_received":0}
+{"event_category":"network","event_type":"connection","src_ip":"10.10.5.137","dst_ip":"10.10.3.174","src_port":49301,"dst_port":9000,"protocol":"TCP","bytes_sent":1487,"bytes_received":23946}
+{"event_category":"auth","event_type":"token_refresh","user_id":"usr-a040","username":"sara@acme.io","ip_address":"10.10.5.179","user_agent":"httpx/0.27","success":1}
+{"event_category":"network","event_type":"firewall_drop","src_ip":"198.40.43.188","dst_ip":"10.10.0.190","src_port":55396,"dst_port":9000,"protocol":"TCP","bytes_sent":3071,"bytes_received":0}
+{"event_category":"api","endpoint":"/api/v1/events","method":"DELETE","status_code":200,"response_time_ms":9,"request_id":"req-b0190","user_id":"usr-a027","ip_address":"10.10.8.17"}
+{"event_category":"api","endpoint":"/api/v1/events/export","method":"POST","status_code":200,"response_time_ms":44,"request_id":"req-b0182","user_id":"usr-a045","ip_address":"10.10.18.72"}
+{"event_category":"api","endpoint":"/api/v1/events","method":"DELETE","status_code":200,"response_time_ms":9,"request_id":"req-b0232","user_id":"usr-a015","ip_address":"10.10.2.56"}
+{"event_category":"auth","event_type":"logout","user_id":"usr-a020","username":"pat@acme.io","ip_address":"10.10.18.72","user_agent":"Mozilla/5.0 (X11; Ubuntu; Linux x86_64)","success":1}
+{"message":"batch insert completed: 68 rows","source":"backup","level":"info","host":"db-01"}
+{"event_category":"api","endpoint":"/api/v1/pipelines","method":"PUT","status_code":200,"response_time_ms":26,"request_id":"req-b0098","user_id":"usr-a042","ip_address":"10.10.7.198"}
+{"event_category":"admin","action":"update_role","admin_user_id":"adm-c008","target_user_id":"usr-a039","target_resource":"retention_policies","details":"increased max body size to 20MB","ip_address":"10.10.18.109"}
+{"event_category":"api","endpoint":"/api/v1/config","method":"GET","status_code":200,"response_time_ms":16,"request_id":"req-b0178","user_id":"usr-a017","ip_address":"10.10.7.42"}
+{"event_category":"admin","action":"create_pipeline","admin_user_id":"adm-c006","target_user_id":"usr-a016","target_resource":"audit","details":"removed deprecated csv pipeline","ip_address":"10.10.1.8"}
+{"message":"garbage collection took 774ms","source":"scheduler","level":"debug","host":"node-03"}
+{"message":"slow query detected: 243ms on auth_events","source":"cert-monitor","level":"warning","host":"db-01"}
+{"event_category":"admin","action":"rotate_api_key","admin_user_id":"adm-c009","target_user_id":"usr-a027","target_resource":"api_keys","details":"created ops overview dashboard","ip_address":"10.10.0.190"}
+{"message":"slow query detected: 3420ms on auth_events","source":"clickhouse","level":"warning","host":"node-02"}
+{"event_category":"network","event_type":"firewall_drop","src_ip":"192.222.80.117","dst_ip":"10.10.17.23","src_port":46820,"dst_port":8080,"protocol":"TCP","bytes_sent":5933,"bytes_received":0}
+{"event_category":"admin","action":"disable_user","admin_user_id":"adm-c008","target_user_id":"usr-a019","target_resource":"system_config","details":"locked after 5 failed logins","ip_address":"10.10.17.23"}
+{"event_category":"auth","event_type":"api_key_created","user_id":"usr-a029","username":"lara@acme.io","ip_address":"10.10.18.109","user_agent":"Mozilla/5.0 (iPhone; CPU iPhone OS 17_0)","success":0}
+{"message":"kafka consumer lag: 1482 messages","source":"dfe-receiver","level":"info","host":"node-03"}
+{"event_category":"api","endpoint":"/api/v1/events/stream","method":"GET","status_code":400,"response_time_ms":2,"request_id":"req-b0164","user_id":"usr-a007","ip_address":"10.10.20.177"}
+{"message":"buffer utilisation at 27%","source":"runtime","level":"debug","host":"db-01"}
+{"message":"dead letter queue: 8705 messages pending","source":"scheduler","level":"warning","host":"node-02"}
+{"event_category":"admin","action":"disable_user","admin_user_id":"adm-c006","target_user_id":"usr-a046","target_resource":"alerts","details":"set api_events TTL to 30 days","ip_address":"10.10.7.130"}
+{"event_category":"api","endpoint":"/api/v1/dashboards","method":"GET","status_code":201,"response_time_ms":18,"request_id":"req-b0087","user_id":"usr-a047","ip_address":"10.10.10.216"}
+{"message":"clickhouse flush completed: 3289 rows in 2227ms","source":"monitoring","level":"info","host":"node-01"}
+{"event_category":"auth","event_type":"api_key_created","user_id":"usr-a025","username":"bob@acme.io","ip_address":"10.10.12.227","user_agent":"PostmanRuntime/7.36","success":1}
+{"event_category":"admin","action":"disable_user","admin_user_id":"adm-c005","target_user_id":"usr-a046","target_resource":"dashboards","details":"removed inactive account","ip_address":"10.10.7.36"}
+{"event_category":"admin","action":"export_audit_log","admin_user_id":"adm-c006","target_user_id":"usr-a049","target_resource":"alerts","details":"changed retention to 90 days","ip_address":"10.10.8.63"}
+{"event_category":"auth","event_type":"session_expired","user_id":"usr-a029","username":"uri@acme.io","ip_address":"10.10.7.222","user_agent":"curl/8.7.1","success":0}
+{"event_category":"api","endpoint":"/api/v1/events/search","method":"POST","status_code":201,"response_time_ms":42,"request_id":"req-b0117","user_id":"usr-a038","ip_address":"10.10.1.221"}
+{"event_category":"network","event_type":"firewall_drop","src_ip":"203.169.36.132","dst_ip":"10.10.7.36","src_port":55486,"dst_port":50051,"protocol":"TCP","bytes_sent":4217,"bytes_received":0}
+{"event_category":"auth","event_type":"token_refresh","user_id":"usr-a001","username":"judy@acme.io","ip_address":"10.10.0.195","user_agent":"Mozilla/5.0 (X11; Ubuntu; Linux x86_64)","success":1}
+{"message":"system health check passed","source":"dfe-receiver","level":"info","host":"node-01"}
+{"message":"buffer utilisation at 74%","source":"cert-monitor","level":"debug","host":"node-01"}
+{"event_category":"auth","event_type":"api_key_created","user_id":"usr-a001","username":"yuri@acme.io","ip_address":"10.10.0.195","user_agent":"httpx/0.27","success":0}
+{"event_category":"admin","action":"disable_user","admin_user_id":"adm-c010","target_user_id":"usr-a043","target_resource":"sources","details":"promoted to admin","ip_address":"10.10.7.130"}
+{"event_category":"auth","event_type":"api_key_created","user_id":"usr-a015","username":"yuri@acme.io","ip_address":"10.10.13.88","user_agent":"DFE-SDK/2.2","success":0}
+{"event_category":"network","event_type":"connection","src_ip":"10.10.0.195","dst_ip":"10.10.1.8","src_port":61989,"dst_port":8080,"protocol":"TCP","bytes_sent":7303,"bytes_received":13540}
+{"message":"scheduled maintenance window starting","source":"monitoring","level":"info","host":"db-01"}
+{"event_category":"auth","event_type":"mfa_challenge","user_id":"usr-a005","username":"iris@acme.io","ip_address":"10.10.3.174","user_agent":"PostmanRuntime/7.36","success":1}
+{"event_category":"api","endpoint":"/api/v1/dashboards","method":"GET","status_code":200,"response_time_ms":26,"request_id":"req-b0177","user_id":"usr-a012","ip_address":"10.10.5.179"}
+{"event_category":"auth","event_type":"token_refresh","user_id":"usr-a001","username":"iris@acme.io","ip_address":"10.10.18.72","user_agent":"Mozilla/5.0 (Macintosh; ARM Mac OS X)","success":1}
+{"event_category":"admin","action":"update_role","admin_user_id":"adm-c009","target_user_id":"usr-a048","target_resource":"api_keys","details":"removed inactive account","ip_address":"10.10.0.190"}
+{"event_category":"api","endpoint":"/api/v1/events/export","method":"POST","status_code":200,"response_time_ms":43,"request_id":"req-b0118","user_id":"usr-a037","ip_address":"10.10.17.23"}
+{"message":"retry succeeded after 11919 attempts","source":"monitoring","level":"info","host":"node-03"}
+{"event_category":"api","endpoint":"/api/v1/alerts","method":"POST","status_code":201,"response_time_ms":50,"request_id":"req-b0151","user_id":"usr-a048","ip_address":"10.10.1.8"}
+{"event_category":"admin","action":"delete_source","admin_user_id":"adm-c002","target_user_id":"usr-a009","target_resource":"dashboards","details":"rotated production api key","ip_address":"10.10.2.56"}
+{"event_category":"network","event_type":"dns_query","src_ip":"10.10.7.130","dst_ip":"10.10.7.36","src_port":52728,"dst_port":22,"protocol":"UDP","bytes_sent":1407,"bytes_received":20910}
+{"event_category":"api","endpoint":"/api/v1/dashboards","method":"GET","status_code":201,"response_time_ms":39,"request_id":"req-b0207","user_id":"usr-a016","ip_address":"10.10.7.222"}
+{"event_category":"api","endpoint":"/api/v1/events/stream","method":"GET","status_code":500,"response_time_ms":3,"request_id":"req-b0095","user_id":"usr-a025","ip_address":"10.10.4.131"}
+{"event_category":"network","event_type":"connection","src_ip":"10.10.3.250","dst_ip":"10.10.3.174","src_port":50018,"dst_port":53,"protocol":"TCP","bytes_sent":3503,"bytes_received":29407}
+{"event_category":"api","endpoint":"/api/v1/events/export","method":"POST","status_code":200,"response_time_ms":46,"request_id":"req-b0114","user_id":"usr-a023","ip_address":"10.10.4.64"}
+{"event_category":"api","endpoint":"/api/v1/pipelines","method":"PUT","status_code":403,"response_time_ms":3,"request_id":"req-b0158","user_id":"usr-a008","ip_address":"10.10.15.24"}
+{"event_category":"auth","event_type":"token_refresh","user_id":"usr-a019","username":"leon@acme.io","ip_address":"10.10.1.221","user_agent":"httpx/0.27","success":1}
+{"message":"tls handshake completed","source":"runtime","level":"info","host":"node-01"}
+{"message":"garbage collection took 65ms","source":"dfe-loader","level":"debug","host":"db-01"}
+{"event_category":"auth","event_type":"logout","user_id":"usr-a049","username":"chloe@acme.io","ip_address":"10.10.10.27","user_agent":"python-httpx/0.27","success":1}
+{"event_category":"admin","action":"create_source","admin_user_id":"adm-c009","target_user_id":"usr-a044","target_resource":"roles","details":"added syslog ingest pipeline","ip_address":"10.10.18.109"}
+{"message":"compaction started on admin_events","source":"runtime","level":"info","host":"node-03"}
+{"event_category":"auth","event_type":"sso_login","user_id":"usr-a015","username":"jake@acme.io","ip_address":"10.10.20.19","user_agent":"Mozilla/5.0 (Macintosh; Intel Mac OS X)","success":1}
+{"event_category":"api","endpoint":"/api/v1/config","method":"GET","status_code":201,"response_time_ms":22,"request_id":"req-b0154","user_id":"usr-a044","ip_address":"10.10.6.181"}
+{"event_category":"admin","action":"restart_service","admin_user_id":"adm-c006","target_user_id":"usr-a007","target_resource":"roles","details":"created new analyst account","ip_address":"10.10.3.174"}
+{"message":"partition merge completed for auth_events","source":"scheduler","level":"info","host":"node-01"}
+{"message":"connection pool at 56% capacity","source":"dfe-receiver","level":"info","host":"node-03"}
+{"event_category":"api","endpoint":"/api/v1/users","method":"GET","status_code":200,"response_time_ms":20,"request_id":"req-b0122","user_id":"usr-a005","ip_address":"10.10.1.8"}
+{"event_category":"api","endpoint":"/api/v1/roles","method":"GET","status_code":200,"response_time_ms":20,"request_id":"req-b0241","user_id":"usr-a042","ip_address":"10.10.3.174"}
+{"message":"connection pool at 78% capacity","source":"dfe-receiver","level":"info","host":"db-01"}
+{"event_category":"api","endpoint":"/api/v1/roles","method":"GET","status_code":200,"response_time_ms":26,"request_id":"req-b0125","user_id":"usr-a049","ip_address":"10.10.19.163"}
+{"event_category":"admin","action":"update_role","admin_user_id":"adm-c010","target_user_id":"usr-a002","target_resource":"pipelines","details":"set api_events TTL to 30 days","ip_address":"10.10.20.29"}
+{"message":"schema migration applied: v2.2.12225","source":"cert-monitor","level":"info","host":"node-03"}
+{"message":"garbage collection took 1307ms","source":"backup","level":"debug","host":"db-01"}
+{"message":"schema migration applied: v2.2.12537","source":"scheduler","level":"info","host":"node-03"}
+{"event_category":"admin","action":"export_audit_log","admin_user_id":"adm-c009","target_user_id":"usr-a048","target_resource":"services","details":"rotated production api key","ip_address":"10.10.0.190"}
+{"event_category":"api","endpoint":"/api/v1/alerts","method":"GET","status_code":200,"response_time_ms":15,"request_id":"req-b0205","user_id":"usr-a049","ip_address":"10.10.1.8"}
+{"message":"dead letter queue: 13063 messages pending","source":"scheduler","level":"warning","host":"node-02"}
+{"event_category":"admin","action":"delete_user","admin_user_id":"adm-c003","target_user_id":"usr-a046","target_resource":"alerts","details":"promoted to admin","ip_address":"10.10.20.29"}
+{"event_category":"api","endpoint":"/api/v1/users","method":"GET","status_code":200,"response_time_ms":48,"request_id":"req-b0161","user_id":"usr-a014","ip_address":"10.10.8.207"}
+{"event_category":"api","endpoint":"/api/v1/events","method":"GET","status_code":200,"response_time_ms":38,"request_id":"req-b0248","user_id":"usr-a049","ip_address":"10.10.14.98"}
+{"event_category":"auth","event_type":"mfa_challenge","user_id":"usr-a030","username":"noel@acme.io","ip_address":"10.10.8.192","user_agent":"Mozilla/5.0 (X11; Linux x86_64)","success":0}
+{"event_category":"api","endpoint":"/api/v1/dashboards","method":"GET","status_code":200,"response_time_ms":29,"request_id":"req-b0196","user_id":"usr-a025","ip_address":"10.10.19.7"}
+{"event_category":"api","endpoint":"/api/v1/sources","method":"GET","status_code":200,"response_time_ms":29,"request_id":"req-b0038","user_id":"usr-a004","ip_address":"10.10.19.163"}
+{"event_category":"api","endpoint":"/api/v1/events/stream","method":"GET","status_code":200,"response_time_ms":10,"request_id":"req-b0033","user_id":"usr-a013","ip_address":"10.10.2.98"}
+{"event_category":"admin","action":"create_pipeline","admin_user_id":"adm-c009","target_user_id":"usr-a025","target_resource":"sources","details":"removed unused splunk hec input","ip_address":"10.10.8.63"}
+{"event_category":"admin","action":"restart_service","admin_user_id":"adm-c005","target_user_id":"usr-a022","target_resource":"services","details":"increased max body size to 20MB","ip_address":"10.10.8.63"}
+{"event_category":"api","endpoint":"/api/v1/events/stream","method":"GET","status_code":200,"response_time_ms":2,"request_id":"req-b0099","user_id":"usr-a032","ip_address":"10.10.4.64"}
+{"event_category":"admin","action":"update_config","admin_user_id":"adm-c003","target_user_id":"usr-a007","target_resource":"system_config","details":"created ops overview dashboard","ip_address":"10.10.1.8"}
+{"event_category":"api","endpoint":"/api/v1/dashboards","method":"GET","status_code":201,"response_time_ms":48,"request_id":"req-b0093","user_id":"usr-a002","ip_address":"10.10.13.88"}
+{"event_category":"api","endpoint":"/api/v1/events/search","method":"POST","status_code":200,"response_time_ms":26,"request_id":"req-b0240","user_id":"usr-a037","ip_address":"10.10.20.159"}
+{"message":"ingest rate: 13179 events/sec","source":"runtime","level":"info","host":"node-01"}
+{"message":"slow query detected: 1674ms on default","source":"clickhouse","level":"warning","host":"node-03"}
+{"event_category":"api","endpoint":"/api/v1/events","method":"GET","status_code":200,"response_time_ms":34,"request_id":"req-b0113","user_id":"usr-a020","ip_address":"10.10.10.27"}
+{"event_category":"admin","action":"create_user","admin_user_id":"adm-c010","target_user_id":"usr-a013","target_resource":"retention_policies","details":"increased max body size to 20MB","ip_address":"10.10.18.109"}
+{"event_category":"network","event_type":"connection","src_ip":"10.10.8.40","dst_ip":"10.10.8.63","src_port":43126,"dst_port":22,"protocol":"TCP","bytes_sent":3384,"bytes_received":32412}
+{"message":"partition merge completed for default","source":"monitoring","level":"info","host":"node-01"}
+{"event_category":"network","event_type":"dns_query","src_ip":"10.10.6.172","dst_ip":"10.10.8.63","src_port":46951,"dst_port":8080,"protocol":"UDP","bytes_sent":2367,"bytes_received":963}
+{"message":"grpc keepalive ping sent","source":"cert-monitor","level":"debug","host":"db-01"}
+{"event_category":"admin","action":"update_config","admin_user_id":"adm-c009","target_user_id":"usr-a009","target_resource":"audit","details":"removed deprecated csv pipeline","ip_address":"10.10.0.190"}
+{"event_category":"auth","event_type":"password_reset","user_id":"usr-a031","username":"derek@acme.io","ip_address":"10.10.18.103","user_agent":"Mozilla/5.0 (Windows NT 10.0)","success":1}
+{"message":"new client connected from 10.10.3.174","source":"backup","level":"info","host":"node-01"}
+{"event_category":"api","endpoint":"/api/v1/alerts","method":"GET","status_code":400,"response_time_ms":1,"request_id":"req-b0217","user_id":"usr-a013","ip_address":"10.10.3.40"}
+{"message":"clickhouse flush completed: 10314 rows in 3657ms","source":"clickhouse","level":"info","host":"db-01"}
+{"event_category":"auth","event_type":"mfa_challenge","user_id":"usr-a030","username":"blake@acme.io","ip_address":"10.10.2.98","user_agent":"python-httpx/0.27","success":1}
+{"event_category":"api","endpoint":"/api/v1/pipelines","method":"PUT","status_code":400,"response_time_ms":5000,"request_id":"req-b0047","user_id":"usr-a017","ip_address":"10.10.13.153"}
+{"event_category":"admin","action":"delete_source","admin_user_id":"adm-c009","target_user_id":"usr-a033","target_resource":"roles","details":"increased max body size to 20MB","ip_address":"10.10.0.190"}
+{"event_category":"admin","action":"disable_user","admin_user_id":"adm-c007","target_user_id":"usr-a011","target_resource":"system_config","details":"added beats input on port 5044","ip_address":"10.10.3.174"}
+{"event_category":"admin","action":"delete_user","admin_user_id":"adm-c002","target_user_id":"usr-a018","target_resource":"sources","details":"added syslog ingest pipeline","ip_address":"10.10.18.109"}
+{"event_category":"admin","action":"delete_pipeline","admin_user_id":"adm-c003","target_user_id":"usr-a012","target_resource":"audit","details":"enabled gRPC transport","ip_address":"10.10.18.109"}
+{"event_category":"api","endpoint":"/api/v1/config","method":"GET","status_code":202,"response_time_ms":44,"request_id":"req-b0204","user_id":"usr-a016","ip_address":"10.10.17.23"}
+{"event_category":"api","endpoint":"/api/v1/events","method":"POST","status_code":201,"response_time_ms":47,"request_id":"req-b0236","user_id":"usr-a035","ip_address":"10.10.9.253"}
+{"message":"scheduled backup completed successfully","source":"dfe-receiver","level":"info","host":"node-03"}
+{"event_category":"admin","action":"delete_user","admin_user_id":"adm-c005","target_user_id":"usr-a042","target_resource":"system_config","details":"added syslog ingest pipeline","ip_address":"10.10.7.36"}
+{"event_category":"admin","action":"create_dashboard","admin_user_id":"adm-c002","target_user_id":"usr-a001","target_resource":"roles","details":"added beats input on port 5044","ip_address":"10.10.7.36"}
+{"message":"grpc keepalive ping sent","source":"scheduler","level":"debug","host":"node-02"}
+{"event_category":"auth","event_type":"token_refresh","user_id":"usr-a026","username":"jake@acme.io","ip_address":"10.10.0.195","user_agent":"Mozilla/5.0 (Windows NT 11.0)","success":1}
+{"event_category":"api","endpoint":"/api/v1/config","method":"GET","status_code":201,"response_time_ms":42,"request_id":"req-b0228","user_id":"usr-a017","ip_address":"10.10.20.128"}
+{"event_category":"auth","event_type":"password_change","user_id":"usr-a005","username":"jake@acme.io","ip_address":"10.10.20.180","user_agent":"Mozilla/5.0 (X11; Linux x86_64)","success":1}
+{"event_category":"network","event_type":"connection","src_ip":"10.10.20.118","dst_ip":"10.10.1.8","src_port":62495,"dst_port":9000,"protocol":"TCP","bytes_sent":645,"bytes_received":24686}
+{"event_category":"api","endpoint":"/api/v1/roles","method":"GET","status_code":200,"response_time_ms":6,"request_id":"req-b0028","user_id":"usr-a007","ip_address":"10.10.20.159"}
+{"event_category":"api","endpoint":"/api/v1/pipelines","method":"GET","status_code":200,"response_time_ms":15,"request_id":"req-b0245","user_id":"usr-a045","ip_address":"10.10.4.131"}
+{"event_category":"api","endpoint":"/api/v1/pipelines","method":"PUT","status_code":200,"response_time_ms":24,"request_id":"req-b0136","user_id":"usr-a005","ip_address":"10.10.7.42"}
+{"event_category":"api","endpoint":"/api/v1/events/search","method":"POST","status_code":201,"response_time_ms":50,"request_id":"req-b0054","user_id":"usr-a043","ip_address":"10.10.11.91"}
+{"event_category":"api","endpoint":"/api/v1/events/stream","method":"GET","status_code":200,"response_time_ms":9,"request_id":"req-b0053","user_id":"usr-a005","ip_address":"10.10.2.219"}
+{"event_category":"api","endpoint":"/api/v1/health","method":"GET","status_code":201,"response_time_ms":17,"request_id":"req-b0239","user_id":"usr-a018","ip_address":"10.10.14.98"}
+{"event_category":"network","event_type":"firewall_drop","src_ip":"203.117.34.232","dst_ip":"10.10.8.63","src_port":62691,"dst_port":443,"protocol":"TCP","bytes_sent":4376,"bytes_received":0}
+{"event_category":"api","endpoint":"/api/v1/alerts","method":"POST","status_code":200,"response_time_ms":12,"request_id":"req-b0086","user_id":"usr-a045","ip_address":"10.10.12.227"}
+{"event_category":"admin","action":"update_config","admin_user_id":"adm-c010","target_user_id":"usr-a013","target_resource":"dashboards","details":"onboarded new security engineer","ip_address":"10.10.8.63"}
+{"event_category":"admin","action":"create_dashboard","admin_user_id":"adm-c002","target_user_id":"usr-a008","target_resource":"system_config","details":"re-enabled after password reset","ip_address":"10.10.3.174"}
+{"event_category":"admin","action":"restart_service","admin_user_id":"adm-c003","target_user_id":"usr-a006","target_resource":"pipelines","details":"re-enabled after password reset","ip_address":"10.10.18.109"}
+{"message":"partition merge completed for api_events","source":"runtime","level":"info","host":"node-01"}
+{"event_category":"admin","action":"delete_pipeline","admin_user_id":"adm-c003","target_user_id":"usr-a042","target_resource":"audit","details":"added syslog ingest pipeline","ip_address":"10.10.0.190"}
+{"message":"scheduled backup completed successfully","source":"cert-monitor","level":"info","host":"db-01"}
+{"message":"disk usage at 33% on /data volume","source":"monitoring","level":"warning","host":"db-01"}
+{"message":"tls handshake completed","source":"backup","level":"info","host":"db-01"}
+{"event_category":"network","event_type":"dns_query","src_ip":"10.10.20.19","dst_ip":"10.10.20.29","src_port":44609,"dst_port":5044,"protocol":"UDP","bytes_sent":2751,"bytes_received":18419}
+{"event_category":"auth","event_type":"api_key_created","user_id":"usr-a037","username":"kira@acme.io","ip_address":"10.10.2.219","user_agent":"python-httpx/0.27","success":1}
+{"event_category":"api","endpoint":"/api/v1/roles","method":"GET","status_code":200,"response_time_ms":6,"request_id":"req-b0103","user_id":"usr-a043","ip_address":"10.10.6.172"}
+{"event_category":"network","event_type":"connection","src_ip":"10.10.11.42","dst_ip":"10.10.17.23","src_port":58686,"dst_port":6000,"protocol":"TCP","bytes_sent":2229,"bytes_received":28849}
+{"event_category":"api","endpoint":"/api/v1/roles","method":"GET","status_code":200,"response_time_ms":34,"request_id":"req-b0152","user_id":"usr-a036","ip_address":"10.10.20.214"}
+{"event_category":"auth","event_type":"token_refresh","user_id":"usr-a030","username":"pete@acme.io","ip_address":"10.10.20.177","user_agent":"Mozilla/5.0 (Macintosh; Intel Mac OS X)","success":1}
+{"event_category":"network","event_type":"dns_query","src_ip":"10.10.17.76","dst_ip":"10.10.20.29","src_port":61143,"dst_port":53,"protocol":"UDP","bytes_sent":7380,"bytes_received":12268}
+{"message":"slow query detected: 1264ms on default","source":"monitoring","level":"warning","host":"db-01"}
+{"event_category":"admin","action":"rotate_api_key","admin_user_id":"adm-c005","target_user_id":"usr-a043","target_resource":"system_config","details":"enabled gRPC transport","ip_address":"10.10.18.109"}
+{"message":"http listener ready on :8080","source":"monitoring","level":"info","host":"node-01"}
+{"event_category":"admin","action":"create_source","admin_user_id":"adm-c004","target_user_id":"usr-a005","target_resource":"pipelines","details":"added syslog ingest pipeline","ip_address":"10.10.7.130"}
+{"event_category":"api","endpoint":"/api/v1/events/search","method":"POST","status_code":200,"response_time_ms":39,"request_id":"req-b0088","user_id":"usr-a035","ip_address":"10.10.2.219"}
+{"message":"dead letter queue: 12335 messages pending","source":"backup","level":"warning","host":"node-02"}
+{"event_category":"auth","event_type":"mfa_challenge","user_id":"usr-a016","username":"lara@acme.io","ip_address":"10.10.20.177","user_agent":"Mozilla/5.0 (X11; Linux x86_64)","success":1}
+{"event_category":"auth","event_type":"session_expired","user_id":"usr-a018","username":"ivan@acme.io","ip_address":"10.10.9.253","user_agent":"Mozilla/5.0 (Macintosh; ARM Mac OS X)","success":0}
+{"message":"slow query detected: 2271ms on admin_events","source":"scheduler","level":"warning","host":"node-01"}
+{"event_category":"network","event_type":"firewall_drop","src_ip":"203.117.34.232","dst_ip":"10.10.7.130","src_port":44679,"dst_port":22,"protocol":"TCP","bytes_sent":4284,"bytes_received":0}
+{"message":"dead letter queue: 13236 messages pending","source":"scheduler","level":"warning","host":"node-02"}
+{"message":"clickhouse flush completed: 9864 rows in 974ms","source":"runtime","level":"info","host":"db-01"}
+{"event_category":"network","event_type":"dns_query","src_ip":"10.10.19.163","dst_ip":"10.10.8.63","src_port":59214,"dst_port":443,"protocol":"UDP","bytes_sent":2188,"bytes_received":14473}
+{"event_category":"admin","action":"delete_pipeline","admin_user_id":"adm-c006","target_user_id":"usr-a040","target_resource":"sources","details":"restarted dfe-loader after config change","ip_address":"10.10.1.8"}
+{"event_category":"auth","event_type":"password_change","user_id":"usr-a010","username":"iris@acme.io","ip_address":"10.10.10.55","user_agent":"Mozilla/5.0 (iPad; CPU OS 17_0)","success":1}
+{"event_category":"api","endpoint":"/api/v1/users","method":"GET","status_code":200,"response_time_ms":24,"request_id":"req-b0183","user_id":"usr-a015","ip_address":"10.10.5.179"}
+{"event_category":"api","endpoint":"/api/v1/users","method":"GET","status_code":400,"response_time_ms":2,"request_id":"req-b0197","user_id":"usr-a008","ip_address":"10.10.2.98"}
+{"message":"dead letter queue: 9830 messages pending","source":"cert-monitor","level":"warning","host":"db-01"}
+{"event_category":"admin","action":"create_source","admin_user_id":"adm-c007","target_user_id":"usr-a020","target_resource":"retention_policies","details":"promoted to admin","ip_address":"10.10.17.23"}
+{"event_category":"api","endpoint":"/api/v1/events/search","method":"POST","status_code":200,"response_time_ms":32,"request_id":"req-b0022","user_id":"usr-a012","ip_address":"10.10.0.195"}
+{"event_category":"auth","event_type":"session_expired","user_id":"usr-a044","username":"yara@acme.io","ip_address":"10.10.8.117","user_agent":"httpx/0.27","success":1}
+{"message":"partition merge completed for network_events","source":"clickhouse","level":"info","host":"node-03"}
+{"message":"http listener ready on :8080","source":"monitoring","level":"info","host":"node-01"}
+{"event_category":"network","event_type":"dns_query","src_ip":"10.10.20.214","dst_ip":"10.10.7.36","src_port":51685,"dst_port":53,"protocol":"UDP","bytes_sent":444,"bytes_received":16675}
+{"message":"tls handshake completed","source":"cert-monitor","level":"info","host":"node-02"}
+{"message":"garbage collection took 707ms","source":"dfe-loader","level":"debug","host":"node-02"}
+{"event_category":"network","event_type":"dns_query","src_ip":"10.10.7.42","dst_ip":"10.10.8.63","src_port":33576,"dst_port":443,"protocol":"UDP","bytes_sent":5302,"bytes_received":30681}
+{"message":"new client connected from 10.10.18.109","source":"clickhouse","level":"info","host":"node-02"}
+{"event_category":"api","endpoint":"/api/v1/alerts","method":"POST","status_code":200,"response_time_ms":43,"request_id":"req-b0005","user_id":"usr-a047","ip_address":"10.10.18.109"}
+{"event_category":"api","endpoint":"/api/v1/dashboards","method":"GET","status_code":201,"response_time_ms":32,"request_id":"req-b0223","user_id":"usr-a007","ip_address":"10.10.18.225"}
+{"event_category":"api","endpoint":"/api/v1/pipelines","method":"GET","status_code":400,"response_time_ms":2,"request_id":"req-b0043","user_id":"usr-a016","ip_address":"10.10.1.207"}
+{"message":"scheduled backup completed successfully","source":"monitoring","level":"info","host":"node-02"}
+{"event_category":"api","endpoint":"/api/v1/health","method":"GET","status_code":200,"response_time_ms":49,"request_id":"req-b0034","user_id":"usr-a012","ip_address":"10.10.12.227"}
+{"event_category":"admin","action":"enable_user","admin_user_id":"adm-c010","target_user_id":"usr-a015","target_resource":"system_config","details":"changed retention to 90 days","ip_address":"10.10.7.36"}
+{"event_category":"auth","event_type":"login","user_id":"usr-a011","username":"amber@acme.io","ip_address":"10.10.10.103","user_agent":"python-httpx/0.27","success":1}
+{"event_category":"api","endpoint":"/api/v1/events/export","method":"POST","status_code":200,"response_time_ms":5,"request_id":"req-b0036","user_id":"usr-a029","ip_address":"10.10.7.222"}
+{"message":"system health check passed","source":"runtime","level":"info","host":"node-03"}
+{"event_category":"api","endpoint":"/api/v1/events/export","method":"POST","status_code":201,"response_time_ms":4,"request_id":"req-b0004","user_id":"usr-a043","ip_address":"10.10.18.72"}
+{"event_category":"api","endpoint":"/api/v1/events/export","method":"POST","status_code":200,"response_time_ms":47,"request_id":"req-b0230","user_id":"usr-a012","ip_address":"10.10.18.110"}
+{"event_category":"api","endpoint":"/api/v1/events","method":"GET","status_code":200,"response_time_ms":28,"request_id":"req-b0134","user_id":"usr-a017","ip_address":"10.10.20.19"}
+{"message":"batch insert completed: 6252 rows","source":"monitoring","level":"info","host":"node-01"}
+{"event_category":"admin","action":"update_retention","admin_user_id":"adm-c004","target_user_id":"usr-a046","target_resource":"roles","details":"promoted to admin","ip_address":"10.10.3.174"}
+{"event_category":"api","endpoint":"/api/v1/users","method":"GET","status_code":200,"response_time_ms":21,"request_id":"req-b0041","user_id":"usr-a033","ip_address":"10.10.8.40"}
+{"message":"garbage collection took 3898ms","source":"dfe-receiver","level":"debug","host":"db-01"}
+{"event_category":"auth","event_type":"sso_login","user_id":"usr-a045","username":"rosa@acme.io","ip_address":"10.10.20.118","user_agent":"Mozilla/5.0 (X11; Ubuntu; Linux x86_64)","success":1}
+{"message":"clickhouse flush completed: 1566 rows in 527ms","source":"monitoring","level":"info","host":"node-01"}
+{"event_category":"admin","action":"update_config","admin_user_id":"adm-c006","target_user_id":"usr-a023","target_resource":"retention_policies","details":"removed unused splunk hec input","ip_address":"10.10.8.63"}
+{"event_category":"auth","event_type":"mfa_challenge","user_id":"usr-a036","username":"blake@acme.io","ip_address":"10.10.0.195","user_agent":"Mozilla/5.0 (X11; Linux x86_64)","success":1}
+{"event_category":"network","event_type":"firewall_drop","src_ip":"203.173.10.151","dst_ip":"10.10.8.63","src_port":50734,"dst_port":9000,"protocol":"TCP","bytes_sent":6413,"bytes_received":0}
+{"event_category":"network","event_type":"connection","src_ip":"10.10.10.103","dst_ip":"10.10.3.174","src_port":43722,"dst_port":9000,"protocol":"TCP","bytes_sent":4752,"bytes_received":25114}
+{"event_category":"admin","action":"restart_service","admin_user_id":"adm-c007","target_user_id":"usr-a038","target_resource":"audit","details":"promoted to admin","ip_address":"10.10.3.174"}
+{"event_category":"auth","event_type":"sso_login","user_id":"usr-a046","username":"finn@acme.io","ip_address":"10.10.8.254","user_agent":"Mozilla/5.0 (Windows NT 11.0)","success":1}
+{"message":"retry succeeded after 4484 attempts","source":"backup","level":"info","host":"node-02"}
+{"event_category":"network","event_type":"firewall_drop","src_ip":"203.134.91.130","dst_ip":"10.10.20.29","src_port":45855,"dst_port":22,"protocol":"TCP","bytes_sent":4036,"bytes_received":0}
+{"message":"scheduled maintenance window starting","source":"dfe-loader","level":"info","host":"node-02"}
+{"event_category":"api","endpoint":"/api/v1/dashboards","method":"GET","status_code":200,"response_time_ms":26,"request_id":"req-b0143","user_id":"usr-a038","ip_address":"10.10.11.91"}
+{"message":"scheduled backup completed successfully","source":"clickhouse","level":"info","host":"node-02"}
+{"event_category":"api","endpoint":"/api/v1/config","method":"GET","status_code":200,"response_time_ms":3,"request_id":"req-b0246","user_id":"usr-a044","ip_address":"10.10.7.198"}
+{"event_category":"api","endpoint":"/api/v1/health","method":"GET","status_code":202,"response_time_ms":6,"request_id":"req-b0015","user_id":"usr-a010","ip_address":"10.10.6.246"}
+{"event_category":"api","endpoint":"/api/v1/sources","method":"GET","status_code":400,"response_time_ms":1,"request_id":"req-b0092","user_id":"usr-a043","ip_address":"10.10.8.254"}
+{"event_category":"api","endpoint":"/api/v1/config","method":"GET","status_code":200,"response_time_ms":13,"request_id":"req-b0173","user_id":"usr-a022","ip_address":"10.10.6.246"}
+{"event_category":"auth","event_type":"session_expired","user_id":"usr-a012","username":"derek@acme.io","ip_address":"10.10.18.109","user_agent":"Mozilla/5.0 (X11; Ubuntu; Linux x86_64)","success":1}
+{"event_category":"auth","event_type":"token_refresh","user_id":"usr-a047","username":"gina@acme.io","ip_address":"10.10.3.98","user_agent":"httpx/0.27","success":1}
+{"event_category":"auth","event_type":"password_reset","user_id":"usr-a019","username":"maya@acme.io","ip_address":"10.10.8.180","user_agent":"Mozilla/5.0 (Windows NT 11.0)","success":1}
+{"message":"certificate expiry in 16 days","source":"monitoring","level":"warning","host":"node-03"}
+{"event_category":"network","event_type":"connection","src_ip":"10.10.18.103","dst_ip":"10.10.18.109","src_port":56429,"dst_port":50051,"protocol":"TCP","bytes_sent":677,"bytes_received":15107}
+{"event_category":"admin","action":"restart_service","admin_user_id":"adm-c008","target_user_id":"","target_resource":"pipelines","details":"granted read-only access to dashboards","ip_address":"10.10.1.8"}
+{"message":"grpc keepalive ping sent","source":"dfe-receiver","level":"debug","host":"db-01"}
+{"event_category":"auth","event_type":"password_reset","user_id":"usr-a041","username":"blake@acme.io","ip_address":"10.10.7.115","user_agent":"Mozilla/5.0 (X11; Ubuntu; Linux x86_64)","success":1}
+{"event_category":"auth","event_type":"session_expired","user_id":"usr-a050","username":"vera@acme.io","ip_address":"10.10.14.138","user_agent":"Mozilla/5.0 (Linux; Android 14)","success":1}
+{"event_category":"auth","event_type":"login","user_id":"usr-a045","username":"xena@acme.io","ip_address":"10.10.17.108","user_agent":"DFE-SDK/2.2","success":1}
+{"message":"http listener ready on :8080","source":"scheduler","level":"info","host":"node-01"}
+{"event_category":"api","endpoint":"/api/v1/dashboards","method":"GET","status_code":200,"response_time_ms":24,"request_id":"req-b0014","user_id":"usr-a047","ip_address":"10.10.20.214"}
+{"event_category":"admin","action":"update_role","admin_user_id":"adm-c007","target_user_id":"usr-a044","target_resource":"retention_policies","details":"added syslog ingest pipeline","ip_address":"10.10.3.174"}
+{"message":"http listener ready on :8080","source":"scheduler","level":"info","host":"node-03"}
+{"event_category":"admin","action":"export_audit_log","admin_user_id":"adm-c002","target_user_id":"usr-a041","target_resource":"roles","details":"removed deprecated csv pipeline","ip_address":"10.10.2.56"}
+{"event_category":"admin","action":"update_config","admin_user_id":"adm-c008","target_user_id":"usr-a040","target_resource":"dashboards","details":"removed inactive account","ip_address":"10.10.3.174"}
+{"event_category":"api","endpoint":"/api/v1/events","method":"DELETE","status_code":200,"response_time_ms":20,"request_id":"req-b0171","user_id":"usr-a039","ip_address":"10.10.17.108"}
+{"event_category":"network","event_type":"firewall_drop","src_ip":"203.117.34.232","dst_ip":"10.10.3.174","src_port":50572,"dst_port":8443,"protocol":"TCP","bytes_sent":5214,"bytes_received":0}
+{"event_category":"auth","event_type":"token_refresh","user_id":"usr-a020","username":"oscar@acme.io","ip_address":"10.10.18.72","user_agent":"python-httpx/0.27","success":1}
+{"event_category":"admin","action":"delete_source","admin_user_id":"adm-c007","target_user_id":"usr-a008","target_resource":"pipelines","details":"exported 30-day audit log","ip_address":"10.10.7.130"}
+{"event_category":"auth","event_type":"password_reset","user_id":"usr-a006","username":"sara@acme.io","ip_address":"10.10.15.24","user_agent":"curl/8.7.1","success":0}
+{"event_category":"auth","event_type":"api_key_created","user_id":"usr-a046","username":"yara@acme.io","ip_address":"10.10.20.41","user_agent":"Mozilla/5.0 (X11; Ubuntu; Linux x86_64)","success":1}
+{"event_category":"api","endpoint":"/api/v1/events","method":"POST","status_code":200,"response_time_ms":7,"request_id":"req-b0042","user_id":"usr-a046","ip_address":"10.10.19.7"}
+{"event_category":"admin","action":"update_config","admin_user_id":"adm-c004","target_user_id":"usr-a034","target_resource":"pipelines","details":"enabled gRPC transport","ip_address":"10.10.1.8"}
+{"event_category":"auth","event_type":"mfa_challenge","user_id":"usr-a028","username":"rosa@acme.io","ip_address":"10.10.6.234","user_agent":"Mozilla/5.0 (Windows NT 11.0)","success":0}
+{"event_category":"api","endpoint":"/api/v1/roles","method":"GET","status_code":400,"response_time_ms":5000,"request_id":"req-b0229","user_id":"usr-a011","ip_address":"10.10.8.180"}
+{"event_category":"api","endpoint":"/api/v1/roles","method":"GET","status_code":403,"response_time_ms":5000,"request_id":"req-b0157","user_id":"usr-a031","ip_address":"10.10.6.172"}
+{"event_category":"api","endpoint":"/api/v1/alerts","method":"POST","status_code":403,"response_time_ms":5000,"request_id":"req-b0109","user_id":"usr-a050","ip_address":"10.10.20.177"}
+{"event_category":"network","event_type":"dns_query","src_ip":"10.10.2.56","dst_ip":"10.10.0.190","src_port":55434,"dst_port":8443,"protocol":"UDP","bytes_sent":3287,"bytes_received":18153}
+{"event_category":"auth","event_type":"password_reset","user_id":"usr-a032","username":"wendy@acme.io","ip_address":"10.10.6.181","user_agent":"Mozilla/5.0 (iPad; CPU OS 17_0)","success":1}
+{"event_category":"network","event_type":"firewall_drop","src_ip":"203.169.36.132","dst_ip":"10.10.3.174","src_port":48449,"dst_port":53,"protocol":"TCP","bytes_sent":1977,"bytes_received":0}
+{"message":"config reload triggered by file change","source":"backup","level":"info","host":"db-01"}
+{"message":"certificate expiry in 73 days","source":"dfe-loader","level":"warning","host":"node-02"}
+{"event_category":"network","event_type":"dns_query","src_ip":"10.10.5.179","dst_ip":"10.10.8.63","src_port":58630,"dst_port":5044,"protocol":"UDP","bytes_sent":5350,"bytes_received":10460}
+{"message":"garbage collection took 1967ms","source":"clickhouse","level":"debug","host":"db-01"}
+{"event_category":"network","event_type":"firewall_drop","src_ip":"198.242.124.201","dst_ip":"10.10.1.8","src_port":53808,"dst_port":5044,"protocol":"TCP","bytes_sent":966,"bytes_received":0}
+{"event_category":"auth","event_type":"session_expired","user_id":"usr-a048","username":"amber@acme.io","ip_address":"10.10.3.40","user_agent":"python-httpx/0.27","success":1}
+{"message":"partition merge completed for network_events","source":"cert-monitor","level":"info","host":"db-01"}
+{"message":"system health check passed","source":"runtime","level":"info","host":"node-03"}
+{"event_category":"admin","action":"update_role","admin_user_id":"adm-c010","target_user_id":"usr-a039","target_resource":"api_keys","details":"removed deprecated csv pipeline","ip_address":"10.10.20.29"}
+{"message":"grpc keepalive ping sent","source":"dfe-loader","level":"debug","host":"node-02"}
+{"event_category":"api","endpoint":"/api/v1/health","method":"GET","status_code":404,"response_time_ms":3,"request_id":"req-b0078","user_id":"usr-a003","ip_address":"10.10.8.180"}
+{"message":"tls handshake completed","source":"clickhouse","level":"info","host":"node-02"}
+{"event_category":"auth","event_type":"mfa_challenge","user_id":"usr-a027","username":"eve@acme.io","ip_address":"10.10.18.225","user_agent":"DFE-SDK/2.2","success":0}
+{"event_category":"api","endpoint":"/api/v1/users","method":"GET","status_code":200,"response_time_ms":5,"request_id":"req-b0012","user_id":"usr-a048","ip_address":"10.10.7.36"}
+{"event_category":"auth","event_type":"password_change","user_id":"usr-a049","username":"olive@acme.io","ip_address":"10.10.1.207","user_agent":"DFE-SDK/2.2","success":1}
+{"event_category":"admin","action":"update_role","admin_user_id":"adm-c005","target_user_id":"usr-a003","target_resource":"roles","details":"created new analyst account","ip_address":"10.10.17.23"}
+{"event_category":"api","endpoint":"/api/v1/events/stream","method":"GET","status_code":200,"response_time_ms":15,"request_id":"req-b0227","user_id":"usr-a037","ip_address":"10.10.20.159"}
+{"message":"config reload triggered by file change","source":"monitoring","level":"info","host":"node-03"}
+{"event_category":"network","event_type":"dns_query","src_ip":"10.10.1.187","dst_ip":"10.10.1.8","src_port":51666,"dst_port":50051,"protocol":"UDP","bytes_sent":54,"bytes_received":481}
+{"message":"grpc keepalive ping sent","source":"runtime","level":"debug","host":"node-03"}
+{"event_category":"auth","event_type":"token_refresh","user_id":"usr-a039","username":"jake@acme.io","ip_address":"10.10.0.190","user_agent":"Mozilla/5.0 (X11; Ubuntu; Linux x86_64)","success":0}
+{"event_category":"auth","event_type":"password_change","user_id":"usr-a008","username":"frank@acme.io","ip_address":"10.10.14.138","user_agent":"httpx/0.27","success":1}
+{"event_category":"auth","event_type":"password_reset","user_id":"usr-a031","username":"zach@acme.io","ip_address":"10.10.1.8","user_agent":"Mozilla/5.0 (Windows NT 10.0)","success":1}
+{"event_category":"auth","event_type":"login","user_id":"usr-a035","username":"frank@acme.io","ip_address":"10.10.17.76","user_agent":"Mozilla/5.0 (Windows NT 10.0)","success":1}
+{"message":"scheduled backup completed successfully","source":"runtime","level":"info","host":"node-03"}
+{"message":"retry succeeded after 12254 attempts","source":"runtime","level":"info","host":"node-02"}
+{"message":"dead letter queue: 1388 messages pending","source":"scheduler","level":"warning","host":"node-03"}
+{"event_category":"auth","event_type":"sso_login","user_id":"usr-a043","username":"rosa@acme.io","ip_address":"10.10.0.190","user_agent":"curl/8.7.1","success":0}
+{"event_category":"api","endpoint":"/api/v1/events/search","method":"POST","status_code":201,"response_time_ms":29,"request_id":"req-b0186","user_id":"usr-a005","ip_address":"10.10.4.131"}
+{"event_category":"network","event_type":"connection","src_ip":"10.10.18.109","dst_ip":"10.10.18.109","src_port":62174,"dst_port":9000,"protocol":"TCP","bytes_sent":478,"bytes_received":11887}
+{"event_category":"network","event_type":"connection","src_ip":"10.10.11.91","dst_ip":"10.10.0.190","src_port":57162,"dst_port":443,"protocol":"TCP","bytes_sent":7622,"bytes_received":20814}
+{"event_category":"auth","event_type":"session_expired","user_id":"usr-a004","username":"sam@acme.io","ip_address":"10.10.0.195","user_agent":"httpx/0.27","success":0}
+{"event_category":"auth","event_type":"session_expired","user_id":"usr-a039","username":"wade@acme.io","ip_address":"10.10.5.179","user_agent":"PostmanRuntime/7.36","success":1}
+{"event_category":"auth","event_type":"password_reset","user_id":"usr-a037","username":"quinn@acme.io","ip_address":"10.10.17.23","user_agent":"python-httpx/0.27","success":1}
+{"event_category":"admin","action":"update_alert_rule","admin_user_id":"adm-c009","target_user_id":"usr-a016","target_resource":"audit","details":"onboarded new security engineer","ip_address":"10.10.20.29"}
+{"event_category":"api","endpoint":"/api/v1/sources","method":"POST","status_code":201,"response_time_ms":25,"request_id":"req-b0050","user_id":"usr-a009","ip_address":"10.10.17.138"}
+{"event_category":"api","endpoint":"/api/v1/users","method":"GET","status_code":201,"response_time_ms":22,"request_id":"req-b0250","user_id":"usr-a049","ip_address":"10.10.5.179"}
+{"event_category":"auth","event_type":"mfa_challenge","user_id":"usr-a018","username":"quinn@acme.io","ip_address":"10.10.10.55","user_agent":"DFE-SDK/2.2","success":1}
+{"event_category":"admin","action":"export_audit_log","admin_user_id":"adm-c001","target_user_id":"usr-a024","target_resource":"pipelines","details":"set api_events TTL to 30 days","ip_address":"10.10.7.130"}
+{"event_category":"api","endpoint":"/api/v1/events/stream","method":"GET","status_code":200,"response_time_ms":49,"request_id":"req-b0179","user_id":"usr-a022","ip_address":"10.10.7.222"}
+{"event_category":"auth","event_type":"token_refresh","user_id":"usr-a048","username":"leon@acme.io","ip_address":"10.10.5.137","user_agent":"PostmanRuntime/7.36","success":1}
+{"event_category":"api","endpoint":"/api/v1/pipelines","method":"PUT","status_code":201,"response_time_ms":38,"request_id":"req-b0226","user_id":"usr-a019","ip_address":"10.10.8.40"}
+{"event_category":"network","event_type":"connection","src_ip":"10.10.1.8","dst_ip":"10.10.7.36","src_port":47496,"dst_port":9000,"protocol":"TCP","bytes_sent":8089,"bytes_received":9455}
+{"event_category":"api","endpoint":"/api/v1/roles","method":"GET","status_code":500,"response_time_ms":5000,"request_id":"req-b0081","user_id":"usr-a019","ip_address":"10.10.8.207"}
+{"event_category":"network","event_type":"dns_query","src_ip":"10.10.8.254","dst_ip":"10.10.1.8","src_port":47814,"dst_port":3389,"protocol":"UDP","bytes_sent":5683,"bytes_received":27938}
+{"message":"clickhouse flush completed: 121 rows in 541ms","source":"runtime","level":"info","host":"node-01"}
+{"message":"tls handshake completed","source":"scheduler","level":"info","host":"node-03"}
+{"event_category":"auth","event_type":"mfa_challenge","user_id":"usr-a035","username":"yara@acme.io","ip_address":"10.10.8.17","user_agent":"Mozilla/5.0 (iPad; CPU OS 17_0)","success":1}
+{"message":"batch insert completed: 3514 rows","source":"monitoring","level":"info","host":"node-02"}
+{"event_category":"network","event_type":"dns_query","src_ip":"10.10.10.103","dst_ip":"10.10.8.63","src_port":39055,"dst_port":3389,"protocol":"UDP","bytes_sent":4967,"bytes_received":23002}
+{"event_category":"api","endpoint":"/api/v1/sources","method":"POST","status_code":400,"response_time_ms":5000,"request_id":"req-b0019","user_id":"usr-a003","ip_address":"10.10.3.250"}
+{"event_category":"api","endpoint":"/api/v1/config","method":"GET","status_code":201,"response_time_ms":30,"request_id":"req-b0130","user_id":"usr-a020","ip_address":"10.10.12.227"}
+{"event_category":"auth","event_type":"session_expired","user_id":"usr-a049","username":"yara@acme.io","ip_address":"10.10.8.17","user_agent":"Mozilla/5.0 (iPad; CPU OS 17_0)","success":0}
+{"event_category":"admin","action":"delete_source","admin_user_id":"adm-c010","target_user_id":"usr-a011","target_resource":"api_keys","details":"locked after 5 failed logins","ip_address":"10.10.3.174"}
+{"event_category":"admin","action":"restart_service","admin_user_id":"adm-c002","target_user_id":"usr-a003","target_resource":"retention_policies","details":"removed inactive account","ip_address":"10.10.8.63"}
+{"event_category":"network","event_type":"connection","src_ip":"10.10.4.68","dst_ip":"10.10.7.130","src_port":37715,"dst_port":53,"protocol":"TCP","bytes_sent":965,"bytes_received":25779}
+{"event_category":"auth","event_type":"sso_login","user_id":"usr-a038","username":"olive@acme.io","ip_address":"10.10.20.128","user_agent":"Mozilla/5.0 (Macintosh; Intel Mac OS X)","success":1}
+{"event_category":"api","endpoint":"/api/v1/config","method":"GET","status_code":202,"response_time_ms":42,"request_id":"req-b0133","user_id":"usr-a019","ip_address":"10.10.8.192"}
+{"event_category":"api","endpoint":"/api/v1/sources","method":"POST","status_code":200,"response_time_ms":12,"request_id":"req-b0212","user_id":"usr-a016","ip_address":"10.10.3.250"}
+{"message":"disk usage at 64% on /data volume","source":"clickhouse","level":"warning","host":"node-01"}
+{"message":"certificate expiry in 88 days","source":"monitoring","level":"warning","host":"node-03"}
+{"event_category":"api","endpoint":"/api/v1/events","method":"DELETE","status_code":201,"response_time_ms":45,"request_id":"req-b0237","user_id":"usr-a028","ip_address":"10.10.2.98"}
+{"message":"connection pool at 36% capacity","source":"runtime","level":"info","host":"db-01"}
+{"message":"slow query detected: 1926ms on admin_events","source":"backup","level":"warning","host":"node-02"}
+{"event_category":"api","endpoint":"/api/v1/alerts","method":"POST","status_code":201,"response_time_ms":26,"request_id":"req-b0026","user_id":"usr-a019","ip_address":"10.10.7.115"}
+{"event_category":"network","event_type":"dns_query","src_ip":"10.10.7.115","dst_ip":"10.10.3.174","src_port":56048,"dst_port":5044,"protocol":"UDP","bytes_sent":4038,"bytes_received":29387}
+{"event_category":"network","event_type":"firewall_drop","src_ip":"192.204.191.113","dst_ip":"10.10.7.130","src_port":36621,"dst_port":22,"protocol":"TCP","bytes_sent":2504,"bytes_received":0}
+{"message":"grpc keepalive ping sent","source":"scheduler","level":"debug","host":"node-01"}
+{"event_category":"auth","event_type":"token_refresh","user_id":"usr-a010","username":"judy@acme.io","ip_address":"10.10.7.130","user_agent":"Mozilla/5.0 (X11; Linux x86_64)","success":1}
+{"message":"system health check passed","source":"cert-monitor","level":"info","host":"node-02"}
+{"event_category":"auth","event_type":"login","user_id":"usr-a050","username":"xena@acme.io","ip_address":"10.10.15.24","user_agent":"Mozilla/5.0 (Linux; Android 14)","success":1}
+{"event_category":"network","event_type":"firewall_drop","src_ip":"192.157.122.15","dst_ip":"10.10.20.29","src_port":64501,"dst_port":5044,"protocol":"TCP","bytes_sent":37,"bytes_received":0}
+{"event_category":"auth","event_type":"api_key_created","user_id":"usr-a036","username":"noel@acme.io","ip_address":"10.10.3.250","user_agent":"httpx/0.27","success":1}
+{"message":"dead letter queue: 11189 messages pending","source":"cert-monitor","level":"warning","host":"node-03"}
+{"event_category":"admin","action":"update_alert_rule","admin_user_id":"adm-c008","target_user_id":"usr-a007","target_resource":"system_config","details":"set api_events TTL to 30 days","ip_address":"10.10.20.29"}
+{"event_category":"auth","event_type":"token_refresh","user_id":"usr-a031","username":"vera@acme.io","ip_address":"10.10.3.40","user_agent":"DFE-SDK/2.2","success":1}
+{"event_category":"api","endpoint":"/api/v1/sources","method":"GET","status_code":200,"response_time_ms":17,"request_id":"req-b0115","user_id":"usr-a041","ip_address":"10.10.18.103"}
+{"event_category":"auth","event_type":"mfa_challenge","user_id":"usr-a013","username":"bob@acme.io","ip_address":"10.10.17.23","user_agent":"Mozilla/5.0 (Windows NT 11.0)","success":0}
+{"message":"partition merge completed for auth_events","source":"scheduler","level":"info","host":"node-01"}
+{"event_category":"auth","event_type":"token_refresh","user_id":"usr-a003","username":"finn@acme.io","ip_address":"10.10.7.115","user_agent":"Mozilla/5.0 (Macintosh; Intel Mac OS X)","success":1}
+{"event_category":"auth","event_type":"password_reset","user_id":"usr-a037","username":"leon@acme.io","ip_address":"10.10.20.41","user_agent":"Mozilla/5.0 (X11; Linux x86_64)","success":1}
+{"message":"config reload triggered by file change","source":"scheduler","level":"info","host":"node-03"}
+{"event_category":"network","event_type":"firewall_drop","src_ip":"185.128.5.175","dst_ip":"10.10.1.8","src_port":38671,"dst_port":9000,"protocol":"TCP","bytes_sent":4956,"bytes_received":0}
+{"event_category":"network","event_type":"firewall_drop","src_ip":"198.242.124.201","dst_ip":"10.10.0.190","src_port":58367,"dst_port":50051,"protocol":"TCP","bytes_sent":3979,"bytes_received":0}
+{"event_category":"api","endpoint":"/api/v1/users","method":"GET","status_code":403,"response_time_ms":5000,"request_id":"req-b0049","user_id":"usr-a039","ip_address":"10.10.19.7"}
+{"event_category":"auth","event_type":"mfa_challenge","user_id":"usr-a025","username":"noel@acme.io","ip_address":"10.10.4.131","user_agent":"Mozilla/5.0 (iPhone; CPU iPhone OS 17_0)","success":1}
+{"event_category":"network","event_type":"dns_query","src_ip":"10.10.6.181","dst_ip":"10.10.7.36","src_port":47600,"dst_port":6000,"protocol":"UDP","bytes_sent":536,"bytes_received":5016}
+{"event_category":"admin","action":"rotate_api_key","admin_user_id":"adm-c008","target_user_id":"usr-a024","target_resource":"sources","details":"created ops overview dashboard","ip_address":"10.10.7.130"}
+{"message":"slow query detected: 2188ms on api_events","source":"scheduler","level":"warning","host":"node-02"}
+{"message":"partition merge completed for admin_events","source":"clickhouse","level":"info","host":"node-02"}
+{"message":"slow query detected: 2570ms on auth_events","source":"runtime","level":"warning","host":"db-01"}
+{"event_category":"auth","event_type":"session_expired","user_id":"usr-a009","username":"leon@acme.io","ip_address":"10.10.11.42","user_agent":"PostmanRuntime/7.36","success":1}
+{"message":"system health check passed","source":"backup","level":"info","host":"node-01"}
+{"event_category":"auth","event_type":"api_key_created","user_id":"usr-a021","username":"xena@acme.io","ip_address":"10.10.5.137","user_agent":"Mozilla/5.0 (iPhone; CPU iPhone OS 17_0)","success":1}
+{"event_category":"api","endpoint":"/api/v1/sources","method":"GET","status_code":200,"response_time_ms":42,"request_id":"req-b0039","user_id":"usr-a040","ip_address":"10.10.20.41"}
+{"event_category":"admin","action":"rotate_api_key","admin_user_id":"adm-c005","target_user_id":"usr-a032","target_resource":"sources","details":"onboarded new security engineer","ip_address":"10.10.1.8"}
+{"message":"retry succeeded after 11913 attempts","source":"dfe-receiver","level":"info","host":"node-01"}
+{"event_category":"admin","action":"update_role","admin_user_id":"adm-c005","target_user_id":"usr-a006","target_resource":"services","details":"modified threshold for high-cpu alert","ip_address":"10.10.8.63"}
+{"event_category":"network","event_type":"connection","src_ip":"10.10.14.138","dst_ip":"10.10.20.29","src_port":63071,"dst_port":9000,"protocol":"TCP","bytes_sent":1040,"bytes_received":12076}
+{"event_category":"admin","action":"restart_service","admin_user_id":"adm-c007","target_user_id":"usr-a042","target_resource":"dashboards","details":"added syslog ingest pipeline","ip_address":"10.10.3.174"}
+{"event_category":"admin","action":"create_user","admin_user_id":"adm-c010","target_user_id":"usr-a042","target_resource":"system_config","details":"created ops overview dashboard","ip_address":"10.10.17.23"}
+{"message":"certificate expiry in 6 days","source":"clickhouse","level":"warning","host":"db-01"}
+{"event_category":"network","event_type":"dns_query","src_ip":"10.10.2.56","dst_ip":"10.10.17.23","src_port":48119,"dst_port":22,"protocol":"UDP","bytes_sent":7089,"bytes_received":9136}
+{"event_category":"api","endpoint":"/api/v1/users","method":"GET","status_code":200,"response_time_ms":32,"request_id":"req-b0017","user_id":"usr-a027","ip_address":"10.10.2.12"}
+{"event_category":"auth","event_type":"token_refresh","user_id":"usr-a049","username":"kira@acme.io","ip_address":"10.10.17.23","user_agent":"DFE-SDK/2.2","success":1}
+{"event_category":"api","endpoint":"/api/v1/events/search","method":"POST","status_code":201,"response_time_ms":47,"request_id":"req-b0216","user_id":"usr-a004","ip_address":"10.10.2.12"}
+{"event_category":"auth","event_type":"api_key_created","user_id":"usr-a043","username":"noel@acme.io","ip_address":"10.10.8.117","user_agent":"httpx/0.27","success":1}
+{"event_category":"network","event_type":"dns_query","src_ip":"10.10.20.41","dst_ip":"10.10.7.130","src_port":51092,"dst_port":8443,"protocol":"UDP","bytes_sent":7252,"bytes_received":12668}
+{"message":"slow query detected: 1787ms on default","source":"monitoring","level":"warning","host":"node-02"}
+{"event_category":"auth","event_type":"api_key_created","user_id":"usr-a036","username":"xena@acme.io","ip_address":"10.10.1.207","user_agent":"curl/8.7.1","success":1}
+{"event_category":"api","endpoint":"/api/v1/events/export","method":"POST","status_code":201,"response_time_ms":41,"request_id":"req-b0148","user_id":"usr-a010","ip_address":"10.10.20.159"}
+{"event_category":"auth","event_type":"token_refresh","user_id":"usr-a005","username":"wendy@acme.io","ip_address":"10.10.4.68","user_agent":"Mozilla/5.0 (Linux; Android 14)","success":1}
+{"event_category":"auth","event_type":"password_reset","user_id":"usr-a021","username":"quinn@acme.io","ip_address":"10.10.14.98","user_agent":"Mozilla/5.0 (Windows NT 10.0)","success":1}
+{"event_category":"admin","action":"create_dashboard","admin_user_id":"adm-c002","target_user_id":"usr-a002","target_resource":"roles","details":"re-enabled after password reset","ip_address":"10.10.2.56"}
+{"event_category":"admin","action":"create_source","admin_user_id":"adm-c004","target_user_id":"usr-a003","target_resource":"users","details":"removed deprecated csv pipeline","ip_address":"10.10.2.56"}
+{"event_category":"admin","action":"update_config","admin_user_id":"adm-c004","target_user_id":"usr-a014","target_resource":"dashboards","details":"re-enabled after password reset","ip_address":"10.10.7.130"}
+{"event_category":"api","endpoint":"/api/v1/sources","method":"POST","status_code":200,"response_time_ms":41,"request_id":"req-b0116","user_id":"usr-a040","ip_address":"10.10.8.192"}
+{"message":"slow query detected: 3179ms on default","source":"scheduler","level":"warning","host":"node-02"}
+{"message":"upstream connection restored","source":"backup","level":"info","host":"node-02"}
+{"event_category":"auth","event_type":"sso_login","user_id":"usr-a030","username":"dave@acme.io","ip_address":"10.10.1.187","user_agent":"PostmanRuntime/7.36","success":1}
+{"event_category":"api","endpoint":"/api/v1/events","method":"POST","status_code":500,"response_time_ms":1,"request_id":"req-b0199","user_id":"usr-a030","ip_address":"10.10.18.110"}
+{"event_category":"admin","action":"delete_pipeline","admin_user_id":"adm-c007","target_user_id":"usr-a012","target_resource":"retention_policies","details":"onboarded new security engineer","ip_address":"10.10.8.63"}
+{"event_category":"api","endpoint":"/api/v1/sources","method":"POST","status_code":200,"response_time_ms":27,"request_id":"req-b0045","user_id":"usr-a044","ip_address":"10.10.20.41"}
+{"event_category":"network","event_type":"dns_query","src_ip":"10.10.1.8","dst_ip":"10.10.20.29","src_port":39680,"dst_port":6000,"protocol":"UDP","bytes_sent":5804,"bytes_received":30119}
+{"event_category":"network","event_type":"firewall_drop","src_ip":"192.82.0.154","dst_ip":"10.10.7.130","src_port":41380,"dst_port":9000,"protocol":"TCP","bytes_sent":880,"bytes_received":0}
+{"event_category":"auth","event_type":"logout","user_id":"usr-a004","username":"olive@acme.io","ip_address":"10.10.10.216","user_agent":"PostmanRuntime/7.36","success":1}
+{"message":"clickhouse flush completed: 14166 rows in 2530ms","source":"clickhouse","level":"info","host":"node-03"}
+{"event_category":"auth","event_type":"password_reset","user_id":"usr-a015","username":"bob@acme.io","ip_address":"10.10.11.155","user_agent":"Mozilla/5.0 (Linux; Android 14)","success":1}
+{"event_category":"auth","event_type":"sso_login","user_id":"usr-a025","username":"remy@acme.io","ip_address":"10.10.8.40","user_agent":"Mozilla/5.0 (Macintosh; ARM Mac OS X)","success":0}
+{"event_category":"auth","event_type":"password_change","user_id":"usr-a032","username":"eve@acme.io","ip_address":"10.10.19.7","user_agent":"Mozilla/5.0 (iPad; CPU OS 17_0)","success":1}
+{"message":"upstream connection restored","source":"backup","level":"info","host":"node-03"}
+{"event_category":"api","endpoint":"/api/v1/events/search","method":"POST","status_code":200,"response_time_ms":11,"request_id":"req-b0249","user_id":"usr-a037","ip_address":"10.10.7.42"}
+{"message":"garbage collection took 3314ms","source":"clickhouse","level":"debug","host":"node-02"}
+{"event_category":"auth","event_type":"token_refresh","user_id":"usr-a042","username":"noel@acme.io","ip_address":"10.10.8.192","user_agent":"DFE-SDK/2.2","success":1}
+{"event_category":"admin","action":"update_config","admin_user_id":"adm-c004","target_user_id":"usr-a020","target_resource":"roles","details":"locked after 5 failed logins","ip_address":"10.10.17.23"}
+{"message":"upstream connection restored","source":"clickhouse","level":"info","host":"node-02"}
+{"message":"tls handshake completed","source":"scheduler","level":"info","host":"db-01"}
+{"event_category":"network","event_type":"connection","src_ip":"10.10.13.88","dst_ip":"10.10.7.130","src_port":36566,"dst_port":8080,"protocol":"TCP","bytes_sent":4641,"bytes_received":25608}
+{"event_category":"auth","event_type":"token_refresh","user_id":"usr-a029","username":"leon@acme.io","ip_address":"10.10.10.216","user_agent":"Mozilla/5.0 (iPhone; CPU iPhone OS 17_0)","success":1}
+{"message":"config reload triggered by file change","source":"dfe-loader","level":"info","host":"node-02"}
+{"message":"scheduled backup completed successfully","source":"backup","level":"info","host":"node-03"}
+{"event_category":"api","endpoint":"/api/v1/events","method":"DELETE","status_code":200,"response_time_ms":36,"request_id":"req-b0107","user_id":"usr-a024","ip_address":"10.10.6.234"}
+{"event_category":"auth","event_type":"mfa_challenge","user_id":"usr-a005","username":"rosa@acme.io","ip_address":"10.10.12.153","user_agent":"httpx/0.27","success":1}
+{"message":"http listener ready on :8080","source":"dfe-receiver","level":"info","host":"node-02"}
+{"message":"batch insert completed: 11045 rows","source":"backup","level":"info","host":"db-01"}
+{"event_category":"auth","event_type":"sso_login","user_id":"usr-a021","username":"maya@acme.io","ip_address":"10.10.4.68","user_agent":"Mozilla/5.0 (Macintosh; Intel Mac OS X)","success":1}
+{"event_category":"admin","action":"update_retention","admin_user_id":"adm-c010","target_user_id":"usr-a016","target_resource":"retention_policies","details":"re-enabled after password reset","ip_address":"10.10.7.130"}
+{"event_category":"auth","event_type":"login","user_id":"usr-a018","username":"theo@acme.io","ip_address":"10.10.19.163","user_agent":"Mozilla/5.0 (Windows NT 11.0)","success":1}
+{"event_category":"api","endpoint":"/api/v1/dashboards","method":"GET","status_code":201,"response_time_ms":24,"request_id":"req-b0008","user_id":"usr-a049","ip_address":"10.10.7.198"}
+{"message":"buffer utilisation at 51%","source":"dfe-loader","level":"debug","host":"node-03"}
+{"event_category":"api","endpoint":"/api/v1/dashboards","method":"GET","status_code":200,"response_time_ms":49,"request_id":"req-b0097","user_id":"usr-a037","ip_address":"10.10.5.179"}
+{"message":"http listener ready on :8080","source":"monitoring","level":"info","host":"node-02"}
+{"message":"grpc keepalive ping sent","source":"dfe-receiver","level":"debug","host":"node-02"}
+{"event_category":"admin","action":"restart_service","admin_user_id":"adm-c010","target_user_id":"usr-a045","target_resource":"pipelines","details":"exported 30-day audit log","ip_address":"10.10.17.23"}
+{"event_category":"auth","event_type":"logout","user_id":"usr-a020","username":"kira@acme.io","ip_address":"10.10.17.23","user_agent":"Mozilla/5.0 (iPad; CPU OS 17_0)","success":1}
+{"event_category":"api","endpoint":"/api/v1/events","method":"GET","status_code":201,"response_time_ms":45,"request_id":"req-b0149","user_id":"usr-a013","ip_address":"10.10.8.63"}
+{"event_category":"admin","action":"update_retention","admin_user_id":"adm-c009","target_user_id":"usr-a050","target_resource":"sources","details":"enabled gRPC transport","ip_address":"10.10.18.109"}
+{"event_category":"api","endpoint":"/api/v1/events","method":"POST","status_code":404,"response_time_ms":3,"request_id":"req-b0175","user_id":"usr-a037","ip_address":"10.10.11.155"}
+{"event_category":"auth","event_type":"password_reset","user_id":"usr-a006","username":"vera@acme.io","ip_address":"10.10.20.177","user_agent":"Mozilla/5.0 (Macintosh; ARM Mac OS X)","success":1}
+{"event_category":"network","event_type":"dns_query","src_ip":"10.10.18.109","dst_ip":"10.10.8.63","src_port":44045,"dst_port":50051,"protocol":"UDP","bytes_sent":5335,"bytes_received":7440}
+{"event_category":"network","event_type":"firewall_drop","src_ip":"198.112.3.19","dst_ip":"10.10.7.130","src_port":61001,"dst_port":443,"protocol":"TCP","bytes_sent":1442,"bytes_received":0}
+{"event_category":"auth","event_type":"password_change","user_id":"usr-a008","username":"ivan@acme.io","ip_address":"10.10.6.234","user_agent":"httpx/0.27","success":1}
+{"event_category":"api","endpoint":"/api/v1/pipelines","method":"PUT","status_code":200,"response_time_ms":45,"request_id":"req-b0211","user_id":"usr-a027","ip_address":"10.10.8.40"}
+{"event_category":"api","endpoint":"/api/v1/config","method":"GET","status_code":200,"response_time_ms":44,"request_id":"req-b0111","user_id":"usr-a009","ip_address":"10.10.18.103"}
+{"event_category":"network","event_type":"dns_query","src_ip":"10.10.8.40","dst_ip":"10.10.7.36","src_port":30609,"dst_port":53,"protocol":"UDP","bytes_sent":3479,"bytes_received":21745}
+{"event_category":"api","endpoint":"/api/v1/events/export","method":"POST","status_code":202,"response_time_ms":33,"request_id":"req-b0142","user_id":"usr-a021","ip_address":"10.10.2.99"}
+{"event_category":"api","endpoint":"/api/v1/users","method":"GET","status_code":200,"response_time_ms":50,"request_id":"req-b0168","user_id":"usr-a042","ip_address":"10.10.15.24"}
+{"event_category":"admin","action":"update_role","admin_user_id":"adm-c009","target_user_id":"usr-a035","target_resource":"dashboards","details":"added syslog ingest pipeline","ip_address":"10.10.3.174"}
+{"event_category":"admin","action":"export_audit_log","admin_user_id":"adm-c005","target_user_id":"usr-a030","target_resource":"alerts","details":"changed retention to 90 days","ip_address":"10.10.0.190"}
+{"message":"scheduled backup completed successfully","source":"backup","level":"info","host":"db-01"}
+{"event_category":"admin","action":"update_role","admin_user_id":"adm-c010","target_user_id":"usr-a007","target_resource":"services","details":"locked after 5 failed logins","ip_address":"10.10.17.23"}
+{"message":"clickhouse flush completed: 9828 rows in 324ms","source":"backup","level":"info","host":"node-01"}
+{"event_category":"network","event_type":"connection","src_ip":"10.10.4.68","dst_ip":"10.10.0.190","src_port":36638,"dst_port":53,"protocol":"TCP","bytes_sent":5310,"bytes_received":7638}
+{"event_category":"api","endpoint":"/api/v1/pipelines","method":"PUT","status_code":200,"response_time_ms":5,"request_id":"req-b0194","user_id":"usr-a003","ip_address":"10.10.9.253"}
+{"message":"http listener ready on :8080","source":"dfe-receiver","level":"info","host":"node-01"}
+{"event_category":"api","endpoint":"/api/v1/events/stream","method":"GET","status_code":500,"response_time_ms":3,"request_id":"req-b0032","user_id":"usr-a047","ip_address":"10.10.13.88"}
+{"message":"disk usage at 92% on /data volume","source":"scheduler","level":"warning","host":"node-03"}
+{"message":"disk usage at 68% on /data volume","source":"dfe-loader","level":"warning","host":"node-02"}
+{"message":"retry succeeded after 9252 attempts","source":"runtime","level":"info","host":"node-02"}
+{"message":"partition merge completed for auth_events","source":"dfe-loader","level":"info","host":"node-01"}
+{"message":"upstream connection restored","source":"scheduler","level":"info","host":"node-01"}
+{"message":"grpc keepalive ping sent","source":"backup","level":"debug","host":"node-02"}
+{"event_category":"api","endpoint":"/api/v1/alerts","method":"GET","status_code":200,"response_time_ms":36,"request_id":"req-b0214","user_id":"usr-a025","ip_address":"10.10.20.159"}
+{"event_category":"api","endpoint":"/api/v1/pipelines","method":"GET","status_code":201,"response_time_ms":43,"request_id":"req-b0247","user_id":"usr-a012","ip_address":"10.10.8.117"}
+{"event_category":"admin","action":"disable_user","admin_user_id":"adm-c006","target_user_id":"usr-a036","target_resource":"sources","details":"created ops overview dashboard","ip_address":"10.10.7.36"}
+{"event_category":"admin","action":"export_audit_log","admin_user_id":"adm-c010","target_user_id":"usr-a004","target_resource":"api_keys","details":"created new analyst account","ip_address":"10.10.1.8"}
+{"message":"kafka consumer lag: 1264 messages","source":"dfe-loader","level":"info","host":"node-02"}
+{"event_category":"network","event_type":"connection","src_ip":"10.10.12.227","dst_ip":"10.10.20.29","src_port":36726,"dst_port":3389,"protocol":"TCP","bytes_sent":3409,"bytes_received":1238}
+{"event_category":"admin","action":"create_source","admin_user_id":"adm-c002","target_user_id":"usr-a042","target_resource":"api_keys","details":"added beats input on port 5044","ip_address":"10.10.0.190"}
+{"event_category":"auth","event_type":"password_reset","user_id":"usr-a007","username":"mike@acme.io","ip_address":"10.10.11.155","user_agent":"Mozilla/5.0 (X11; Ubuntu; Linux x86_64)","success":1}
+{"event_category":"admin","action":"update_role","admin_user_id":"adm-c004","target_user_id":"usr-a042","target_resource":"retention_policies","details":"added syslog ingest pipeline","ip_address":"10.10.0.190"}
+{"message":"config reload triggered by file change","source":"clickhouse","level":"info","host":"node-03"}
+{"event_category":"api","endpoint":"/api/v1/events/search","method":"POST","status_code":200,"response_time_ms":7,"request_id":"req-b0138","user_id":"usr-a024","ip_address":"10.10.11.91"}
+{"event_category":"network","event_type":"dns_query","src_ip":"10.10.17.23","dst_ip":"10.10.0.190","src_port":47145,"dst_port":22,"protocol":"UDP","bytes_sent":133,"bytes_received":23151}
+{"event_category":"auth","event_type":"password_reset","user_id":"usr-a040","username":"finn@acme.io","ip_address":"10.10.1.221","user_agent":"Mozilla/5.0 (Windows NT 10.0)","success":1}
+{"event_category":"api","endpoint":"/api/v1/sources","method":"POST","status_code":200,"response_time_ms":1,"request_id":"req-b0073","user_id":"usr-a016","ip_address":"10.10.15.24"}
+{"event_category":"api","endpoint":"/api/v1/alerts","method":"GET","status_code":201,"response_time_ms":25,"request_id":"req-b0200","user_id":"usr-a016","ip_address":"10.10.8.17"}
+{"event_category":"network","event_type":"firewall_drop","src_ip":"203.134.91.130","dst_ip":"10.10.18.109","src_port":64723,"dst_port":53,"protocol":"TCP","bytes_sent":3416,"bytes_received":0}
+{"event_category":"auth","event_type":"api_key_created","user_id":"usr-a035","username":"bob@acme.io","ip_address":"10.10.7.115","user_agent":"Mozilla/5.0 (iPhone; CPU iPhone OS 17_0)","success":1}
+{"event_category":"auth","event_type":"sso_login","user_id":"usr-a031","username":"mike@acme.io","ip_address":"10.10.20.180","user_agent":"Mozilla/5.0 (Macintosh; Intel Mac OS X)","success":1}
+{"event_category":"network","event_type":"connection","src_ip":"10.10.2.56","dst_ip":"10.10.3.174","src_port":63213,"dst_port":3389,"protocol":"TCP","bytes_sent":1143,"bytes_received":25639}
+{"event_category":"network","event_type":"connection","src_ip":"10.10.4.68","dst_ip":"10.10.17.23","src_port":48525,"dst_port":53,"protocol":"TCP","bytes_sent":5638,"bytes_received":3606}
+{"event_category":"auth","event_type":"login","user_id":"usr-a002","username":"uma@acme.io","ip_address":"10.10.1.8","user_agent":"Mozilla/5.0 (iPhone; CPU iPhone OS 17_0)","success":1}
+{"event_category":"admin","action":"update_alert_rule","admin_user_id":"adm-c007","target_user_id":"usr-a007","target_resource":"audit","details":"rotated production api key","ip_address":"10.10.3.174"}
+{"event_category":"auth","event_type":"api_key_created","user_id":"usr-a009","username":"eve@acme.io","ip_address":"10.10.20.159","user_agent":"Mozilla/5.0 (iPad; CPU OS 17_0)","success":1}
+{"message":"kafka consumer lag: 8530 messages","source":"clickhouse","level":"info","host":"node-02"}
+{"message":"dead letter queue: 5985 messages pending","source":"cert-monitor","level":"warning","host":"node-01"}
+{"event_category":"api","endpoint":"/api/v1/dashboards","method":"GET","status_code":400,"response_time_ms":2,"request_id":"req-b0057","user_id":"usr-a040","ip_address":"10.10.9.253"}
+{"event_category":"network","event_type":"dns_query","src_ip":"10.10.0.190","dst_ip":"10.10.2.56","src_port":36977,"dst_port":443,"protocol":"UDP","bytes_sent":3152,"bytes_received":4826}
+{"event_category":"admin","action":"export_audit_log","admin_user_id":"adm-c002","target_user_id":"","target_resource":"system_config","details":"changed retention to 90 days","ip_address":"10.10.20.29"}
+{"event_category":"auth","event_type":"login","user_id":"usr-a012","username":"quinn@acme.io","ip_address":"10.10.5.137","user_agent":"Mozilla/5.0 (iPad; CPU OS 17_0)","success":1}
+{"event_category":"auth","event_type":"token_refresh","user_id":"usr-a027","username":"frank@acme.io","ip_address":"10.10.18.225","user_agent":"Mozilla/5.0 (X11; Linux x86_64)","success":1}
+{"event_category":"auth","event_type":"password_change","user_id":"usr-a013","username":"wendy@acme.io","ip_address":"10.10.3.98","user_agent":"PostmanRuntime/7.36","success":1}
+{"event_category":"auth","event_type":"logout","user_id":"usr-a031","username":"eve@acme.io","ip_address":"10.10.8.254","user_agent":"Mozilla/5.0 (Macintosh; ARM Mac OS X)","success":1}
+{"event_category":"api","endpoint":"/api/v1/dashboards","method":"GET","status_code":200,"response_time_ms":2,"request_id":"req-b0066","user_id":"usr-a007","ip_address":"10.10.11.42"}
+{"event_category":"network","event_type":"connection","src_ip":"10.10.11.155","dst_ip":"10.10.0.190","src_port":55748,"dst_port":50051,"protocol":"TCP","bytes_sent":3776,"bytes_received":27082}
+{"event_category":"admin","action":"delete_pipeline","admin_user_id":"adm-c006","target_user_id":"usr-a002","target_resource":"audit","details":"added beats input on port 5044","ip_address":"10.10.1.8"}
+{"event_category":"auth","event_type":"password_reset","user_id":"usr-a039","username":"yuri@acme.io","ip_address":"10.10.4.64","user_agent":"Mozilla/5.0 (Linux; Android 14)","success":1}
+{"event_category":"network","event_type":"dns_query","src_ip":"10.10.8.207","dst_ip":"10.10.3.174","src_port":54140,"dst_port":5044,"protocol":"UDP","bytes_sent":4169,"bytes_received":13071}
+{"event_category":"network","event_type":"connection","src_ip":"10.10.10.216","dst_ip":"10.10.0.190","src_port":49303,"dst_port":6000,"protocol":"TCP","bytes_sent":3966,"bytes_received":6606}
+{"event_category":"api","endpoint":"/api/v1/users","method":"GET","status_code":200,"response_time_ms":5,"request_id":"req-b0024","user_id":"usr-a048","ip_address":"10.10.17.23"}
+{"event_category":"api","endpoint":"/api/v1/events/search","method":"POST","status_code":200,"response_time_ms":25,"request_id":"req-b0242","user_id":"usr-a036","ip_address":"10.10.18.225"}
+{"message":"schema migration applied: v2.2.2486","source":"backup","level":"info","host":"node-03"}
+{"event_category":"admin","action":"disable_user","admin_user_id":"adm-c002","target_user_id":"usr-a001","target_resource":"system_config","details":"created new analyst account","ip_address":"10.10.8.63"}
+{"event_category":"auth","event_type":"sso_login","user_id":"usr-a022","username":"pete@acme.io","ip_address":"10.10.19.7","user_agent":"PostmanRuntime/7.36","success":1}
+{"event_category":"auth","event_type":"logout","user_id":"usr-a043","username":"karl@acme.io","ip_address":"10.10.17.76","user_agent":"Mozilla/5.0 (Windows NT 10.0)","success":1}
+{"message":"certificate expiry in 71 days","source":"dfe-receiver","level":"warning","host":"node-01"}
+{"event_category":"network","event_type":"firewall_drop","src_ip":"203.173.10.151","dst_ip":"10.10.8.63","src_port":61102,"dst_port":6000,"protocol":"TCP","bytes_sent":4548,"bytes_received":0}
+{"message":"grpc keepalive ping sent","source":"clickhouse","level":"debug","host":"node-01"}
+{"event_category":"api","endpoint":"/api/v1/events/stream","method":"GET","status_code":200,"response_time_ms":5,"request_id":"req-b0203","user_id":"usr-a039","ip_address":"10.10.3.174"}
+{"event_category":"network","event_type":"firewall_drop","src_ip":"192.82.0.154","dst_ip":"10.10.7.130","src_port":58455,"dst_port":9000,"protocol":"TCP","bytes_sent":470,"bytes_received":0}
+{"event_category":"api","endpoint":"/api/v1/sources","method":"POST","status_code":202,"response_time_ms":20,"request_id":"req-b0006","user_id":"usr-a007","ip_address":"10.10.15.24"}
+{"event_category":"admin","action":"create_pipeline","admin_user_id":"adm-c004","target_user_id":"usr-a025","target_resource":"services","details":"granted read-only access to dashboards","ip_address":"10.10.1.8"}
+{"event_category":"auth","event_type":"login","user_id":"usr-a038","username":"frank@acme.io","ip_address":"10.10.10.216","user_agent":"Mozilla/5.0 (Windows NT 10.0)","success":0}
+{"event_category":"admin","action":"create_dashboard","admin_user_id":"adm-c004","target_user_id":"usr-a005","target_resource":"api_keys","details":"removed unused splunk hec input","ip_address":"10.10.7.130"}
+{"event_category":"auth","event_type":"api_key_created","user_id":"usr-a042","username":"dave@acme.io","ip_address":"10.10.14.98","user_agent":"Mozilla/5.0 (iPhone; CPU iPhone OS 17_0)","success":1}
+{"event_category":"api","endpoint":"/api/v1/health","method":"GET","status_code":201,"response_time_ms":2,"request_id":"req-b0072","user_id":"usr-a046","ip_address":"10.10.13.88"}
+{"message":"compaction started on auth_events","source":"dfe-receiver","level":"info","host":"node-02"}
+{"event_category":"api","endpoint":"/api/v1/alerts","method":"GET","status_code":201,"response_time_ms":24,"request_id":"req-b0065","user_id":"usr-a025","ip_address":"10.10.19.7"}
+{"event_category":"auth","event_type":"token_refresh","user_id":"usr-a046","username":"pat@acme.io","ip_address":"10.10.2.12","user_agent":"Mozilla/5.0 (iPad; CPU OS 17_0)","success":1}
+{"event_category":"api","endpoint":"/api/v1/events/export","method":"POST","status_code":403,"response_time_ms":3,"request_id":"req-b0141","user_id":"usr-a034","ip_address":"10.10.8.17"}
+{"event_category":"api","endpoint":"/api/v1/pipelines","method":"GET","status_code":200,"response_time_ms":34,"request_id":"req-b0198","user_id":"usr-a047","ip_address":"10.10.3.250"}
+{"event_category":"api","endpoint":"/api/v1/roles","method":"GET","status_code":200,"response_time_ms":26,"request_id":"req-b0192","user_id":"usr-a001","ip_address":"10.10.14.138"}
+{"event_category":"auth","event_type":"password_reset","user_id":"usr-a010","username":"eve@acme.io","ip_address":"10.10.17.57","user_agent":"Mozilla/5.0 (Linux; Android 14)","success":1}
+{"message":"clickhouse flush completed: 9845 rows in 1174ms","source":"clickhouse","level":"info","host":"node-02"}
+{"message":"tls handshake completed","source":"runtime","level":"info","host":"db-01"}
+{"event_category":"auth","event_type":"api_key_created","user_id":"usr-a004","username":"oscar@acme.io","ip_address":"10.10.2.56","user_agent":"DFE-SDK/2.2","success":0}
+{"message":"grpc keepalive ping sent","source":"runtime","level":"debug","host":"node-03"}
+{"event_category":"auth","event_type":"login","user_id":"usr-a041","username":"tina@acme.io","ip_address":"10.10.1.207","user_agent":"Mozilla/5.0 (X11; Linux x86_64)","success":1}
+{"event_category":"api","endpoint":"/api/v1/events/stream","method":"GET","status_code":200,"response_time_ms":23,"request_id":"req-b0064","user_id":"usr-a027","ip_address":"10.10.18.109"}
+{"event_category":"api","endpoint":"/api/v1/events/stream","method":"GET","status_code":201,"response_time_ms":23,"request_id":"req-b0132","user_id":"usr-a004","ip_address":"10.10.9.253"}
+{"message":"garbage collection took 820ms","source":"backup","level":"debug","host":"node-02"}
+{"message":"scheduled maintenance window starting","source":"cert-monitor","level":"info","host":"node-01"}
+{"event_category":"network","event_type":"connection","src_ip":"10.10.20.128","dst_ip":"10.10.17.23","src_port":41588,"dst_port":22,"protocol":"TCP","bytes_sent":5229,"bytes_received":1964}
+{"event_category":"network","event_type":"connection","src_ip":"10.10.20.180","dst_ip":"10.10.20.29","src_port":30633,"dst_port":9000,"protocol":"TCP","bytes_sent":5466,"bytes_received":21271}
+{"event_category":"api","endpoint":"/api/v1/events/search","method":"POST","status_code":200,"response_time_ms":34,"request_id":"req-b0238","user_id":"usr-a016","ip_address":"10.10.11.155"}
+{"message":"connection pool at 58% capacity","source":"runtime","level":"info","host":"node-02"}
+{"event_category":"api","endpoint":"/api/v1/sources","method":"GET","status_code":200,"response_time_ms":50,"request_id":"req-b0084","user_id":"usr-a042","ip_address":"10.10.11.42"}
+{"event_category":"admin","action":"create_source","admin_user_id":"adm-c008","target_user_id":"usr-a010","target_resource":"roles","details":"locked after 5 failed logins","ip_address":"10.10.18.109"}
+{"event_category":"network","event_type":"dns_query","src_ip":"10.10.20.128","dst_ip":"10.10.2.56","src_port":54504,"dst_port":443,"protocol":"UDP","bytes_sent":4253,"bytes_received":25999}
+{"event_category":"auth","event_type":"password_reset","user_id":"usr-a010","username":"ivan@acme.io","ip_address":"10.10.18.225","user_agent":"httpx/0.27","success":1}
+{"event_category":"network","event_type":"firewall_drop","src_ip":"198.40.43.188","dst_ip":"10.10.2.56","src_port":41997,"dst_port":22,"protocol":"TCP","bytes_sent":5393,"bytes_received":0}
+{"event_category":"admin","action":"create_dashboard","admin_user_id":"adm-c009","target_user_id":"usr-a003","target_resource":"api_keys","details":"onboarded new security engineer","ip_address":"10.10.7.130"}
+{"event_category":"api","endpoint":"/api/v1/events/stream","method":"GET","status_code":200,"response_time_ms":9,"request_id":"req-b0102","user_id":"usr-a029","ip_address":"10.10.2.98"}
+{"event_category":"api","endpoint":"/api/v1/alerts","method":"POST","status_code":201,"response_time_ms":34,"request_id":"req-b0060","user_id":"usr-a011","ip_address":"10.10.8.207"}
+{"event_category":"auth","event_type":"logout","user_id":"usr-a012","username":"remy@acme.io","ip_address":"10.10.7.36","user_agent":"Mozilla/5.0 (Windows NT 10.0)","success":1}
+{"event_category":"network","event_type":"dns_query","src_ip":"10.10.17.57","dst_ip":"10.10.8.63","src_port":37409,"dst_port":9000,"protocol":"UDP","bytes_sent":5735,"bytes_received":23867}
+{"event_category":"auth","event_type":"login","user_id":"usr-a019","username":"oscar@acme.io","ip_address":"10.10.9.253","user_agent":"python-httpx/0.27","success":1}
+{"message":"config reload triggered by file change","source":"dfe-loader","level":"info","host":"node-02"}
+{"event_category":"auth","event_type":"api_key_created","user_id":"usr-a016","username":"bob@acme.io","ip_address":"10.10.2.98","user_agent":"Mozilla/5.0 (iPhone; CPU iPhone OS 17_0)","success":1}
+{"message":"memory usage: 12226MB / 1024MB","source":"dfe-loader","level":"info","host":"node-02"}
+{"event_category":"admin","action":"restart_service","admin_user_id":"adm-c007","target_user_id":"usr-a008","target_resource":"services","details":"re-enabled after password reset","ip_address":"10.10.7.36"}
+{"event_category":"network","event_type":"firewall_drop","src_ip":"192.250.9.29","dst_ip":"10.10.3.174","src_port":56837,"dst_port":8443,"protocol":"TCP","bytes_sent":196,"bytes_received":0}
+{"message":"clickhouse flush completed: 8028 rows in 2666ms","source":"runtime","level":"info","host":"node-03"}
+{"message":"ingest rate: 174 events/sec","source":"dfe-receiver","level":"info","host":"node-03"}
+{"message":"disk usage at 52% on /data volume","source":"clickhouse","level":"warning","host":"db-01"}
+{"event_category":"api","endpoint":"/api/v1/config","method":"GET","status_code":500,"response_time_ms":2,"request_id":"req-b0185","user_id":"usr-a044","ip_address":"10.10.20.41"}
+{"event_category":"auth","event_type":"logout","user_id":"usr-a015","username":"derek@acme.io","ip_address":"10.10.18.72","user_agent":"httpx/0.27","success":1}
+{"event_category":"network","event_type":"dns_query","src_ip":"10.10.12.227","dst_ip":"10.10.18.109","src_port":53018,"dst_port":8443,"protocol":"UDP","bytes_sent":3106,"bytes_received":3387}
+{"message":"memory usage: 10780MB / 1024MB","source":"clickhouse","level":"info","host":"node-01"}
+{"event_category":"auth","event_type":"password_change","user_id":"usr-a018","username":"pat@acme.io","ip_address":"10.10.6.234","user_agent":"curl/8.7.1","success":1}
+{"event_category":"auth","event_type":"session_expired","user_id":"usr-a031","username":"pete@acme.io","ip_address":"10.10.1.207","user_agent":"Mozilla/5.0 (iPhone; CPU iPhone OS 17_0)","success":1}
+{"event_category":"network","event_type":"firewall_drop","src_ip":"203.169.36.132","dst_ip":"10.10.20.29","src_port":35956,"dst_port":6000,"protocol":"TCP","bytes_sent":7922,"bytes_received":0}
+{"event_category":"auth","event_type":"api_key_created","user_id":"usr-a027","username":"uma@acme.io","ip_address":"10.10.17.108","user_agent":"PostmanRuntime/7.36","success":1}
+{"event_category":"network","event_type":"firewall_drop","src_ip":"192.222.80.117","dst_ip":"10.10.7.36","src_port":58948,"dst_port":50051,"protocol":"TCP","bytes_sent":7514,"bytes_received":0}
+{"event_category":"network","event_type":"connection","src_ip":"10.10.15.24","dst_ip":"10.10.18.109","src_port":32122,"dst_port":9000,"protocol":"TCP","bytes_sent":4966,"bytes_received":10491}
+{"event_category":"api","endpoint":"/api/v1/alerts","method":"GET","status_code":201,"response_time_ms":46,"request_id":"req-b0023","user_id":"usr-a033","ip_address":"10.10.11.57"}
+{"message":"config reload triggered by file change","source":"scheduler","level":"info","host":"node-02"}
+{"message":"scheduled backup completed successfully","source":"dfe-receiver","level":"info","host":"node-01"}
+{"event_category":"network","event_type":"firewall_drop","src_ip":"198.112.3.19","dst_ip":"10.10.3.174","src_port":47001,"dst_port":3389,"protocol":"TCP","bytes_sent":3346,"bytes_received":0}
+{"event_category":"network","event_type":"connection","src_ip":"10.10.7.115","dst_ip":"10.10.2.56","src_port":53913,"dst_port":8080,"protocol":"TCP","bytes_sent":3092,"bytes_received":23150}
+{"event_category":"auth","event_type":"sso_login","user_id":"usr-a033","username":"jake@acme.io","ip_address":"10.10.10.103","user_agent":"Mozilla/5.0 (Windows NT 10.0)","success":1}
+{"event_category":"auth","event_type":"token_refresh","user_id":"usr-a006","username":"oscar@acme.io","ip_address":"10.10.8.254","user_agent":"python-httpx/0.27","success":1}
+{"event_category":"network","event_type":"firewall_drop","src_ip":"203.134.91.130","dst_ip":"10.10.0.190","src_port":52530,"dst_port":8443,"protocol":"TCP","bytes_sent":3423,"bytes_received":0}
+{"event_category":"auth","event_type":"token_refresh","user_id":"usr-a014","username":"gina@acme.io","ip_address":"10.10.20.128","user_agent":"Mozilla/5.0 (iPhone; CPU iPhone OS 17_0)","success":0}
+{"event_category":"auth","event_type":"logout","user_id":"usr-a045","username":"yara@acme.io","ip_address":"10.10.3.174","user_agent":"PostmanRuntime/7.36","success":1}
+{"event_category":"auth","event_type":"sso_login","user_id":"usr-a033","username":"grace@acme.io","ip_address":"10.10.7.115","user_agent":"PostmanRuntime/7.36","success":1}
+{"event_category":"api","endpoint":"/api/v1/roles","method":"GET","status_code":200,"response_time_ms":15,"request_id":"req-b0058","user_id":"usr-a020","ip_address":"10.10.18.225"}
+{"event_category":"api","endpoint":"/api/v1/dashboards","method":"GET","status_code":200,"response_time_ms":3,"request_id":"req-b0091","user_id":"usr-a040","ip_address":"10.10.1.59"}
+{"event_category":"network","event_type":"connection","src_ip":"10.10.8.207","dst_ip":"10.10.7.36","src_port":49043,"dst_port":22,"protocol":"TCP","bytes_sent":7578,"bytes_received":22096}
+{"event_category":"api","endpoint":"/api/v1/alerts","method":"GET","status_code":200,"response_time_ms":30,"request_id":"req-b0025","user_id":"usr-a021","ip_address":"10.10.15.24"}
+{"event_category":"api","endpoint":"/api/v1/sources","method":"GET","status_code":200,"response_time_ms":19,"request_id":"req-b0160","user_id":"usr-a023","ip_address":"10.10.1.207"}
+{"event_category":"admin","action":"create_pipeline","admin_user_id":"adm-c007","target_user_id":"usr-a046","target_resource":"audit","details":"added syslog ingest pipeline","ip_address":"10.10.18.109"}
+{"event_category":"network","event_type":"connection","src_ip":"10.10.12.227","dst_ip":"10.10.7.36","src_port":43090,"dst_port":53,"protocol":"TCP","bytes_sent":6843,"bytes_received":17206}
+{"event_category":"auth","event_type":"login","user_id":"usr-a041","username":"judy@acme.io","ip_address":"10.10.8.40","user_agent":"DFE-SDK/2.2","success":1}
+{"event_category":"admin","action":"update_role","admin_user_id":"adm-c002","target_user_id":"usr-a009","target_resource":"roles","details":"increased max body size to 20MB","ip_address":"10.10.18.109"}
+{"message":"disk usage at 90% on /data volume","source":"clickhouse","level":"warning","host":"node-01"}
+{"event_category":"api","endpoint":"/api/v1/sources","method":"POST","status_code":200,"response_time_ms":30,"request_id":"req-b0222","user_id":"usr-a020","ip_address":"10.10.6.181"}
+{"event_category":"auth","event_type":"mfa_challenge","user_id":"usr-a034","username":"dave@acme.io","ip_address":"10.10.4.68","user_agent":"Mozilla/5.0 (Macintosh; Intel Mac OS X)","success":0}
+{"event_category":"auth","event_type":"api_key_created","user_id":"usr-a025","username":"remy@acme.io","ip_address":"10.10.8.254","user_agent":"python-httpx/0.27","success":1}
+{"message":"upstream connection restored","source":"monitoring","level":"info","host":"db-01"}
+{"event_category":"auth","event_type":"token_refresh","user_id":"usr-a025","username":"derek@acme.io","ip_address":"10.10.9.253","user_agent":"Mozilla/5.0 (Linux; Android 14)","success":1}
+{"message":"connection pool at 50% capacity","source":"dfe-loader","level":"info","host":"node-02"}
+{"event_category":"auth","event_type":"login","user_id":"usr-a014","username":"leon@acme.io","ip_address":"10.10.18.110","user_agent":"Mozilla/5.0 (X11; Linux x86_64)","success":1}
+{"event_category":"admin","action":"create_user","admin_user_id":"adm-c001","target_user_id":"usr-a001","target_resource":"pipelines","details":"removed inactive account","ip_address":"10.10.1.8"}
+{"event_category":"api","endpoint":"/api/v1/config","method":"GET","status_code":400,"response_time_ms":3,"request_id":"req-b0121","user_id":"usr-a031","ip_address":"10.10.20.159"}
+{"event_category":"auth","event_type":"login","user_id":"usr-a002","username":"vic@acme.io","ip_address":"10.10.20.159","user_agent":"Mozilla/5.0 (Windows NT 10.0)","success":1}
+{"event_category":"network","event_type":"dns_query","src_ip":"10.10.2.219","dst_ip":"10.10.3.174","src_port":60426,"dst_port":443,"protocol":"UDP","bytes_sent":849,"bytes_received":26710}
+{"event_category":"network","event_type":"connection","src_ip":"10.10.10.27","dst_ip":"10.10.18.109","src_port":31253,"dst_port":50051,"protocol":"TCP","bytes_sent":1869,"bytes_received":23891}
+{"event_category":"api","endpoint":"/api/v1/alerts","method":"GET","status_code":201,"response_time_ms":20,"request_id":"req-b0146","user_id":"usr-a039","ip_address":"10.10.18.225"}
+{"event_category":"admin","action":"create_pipeline","admin_user_id":"adm-c008","target_user_id":"usr-a005","target_resource":"pipelines","details":"removed deprecated csv pipeline","ip_address":"10.10.0.190"}
+{"event_category":"auth","event_type":"sso_login","user_id":"usr-a015","username":"vic@acme.io","ip_address":"10.10.8.17","user_agent":"Mozilla/5.0 (Linux; Android 14)","success":1}
+{"message":"tls handshake completed","source":"monitoring","level":"info","host":"node-02"}
+{"event_category":"network","event_type":"firewall_drop","src_ip":"185.84.135.136","dst_ip":"10.10.17.23","src_port":31848,"dst_port":22,"protocol":"TCP","bytes_sent":7794,"bytes_received":0}
+{"event_category":"network","event_type":"firewall_drop","src_ip":"192.250.9.29","dst_ip":"10.10.20.29","src_port":30270,"dst_port":50051,"protocol":"TCP","bytes_sent":1885,"bytes_received":0}
+{"message":"compaction started on admin_events","source":"dfe-loader","level":"info","host":"node-02"}
+{"event_category":"api","endpoint":"/api/v1/events/export","method":"POST","status_code":200,"response_time_ms":6,"request_id":"req-b0048","user_id":"usr-a023","ip_address":"10.10.3.98"}
+{"message":"batch insert completed: 8239 rows","source":"backup","level":"info","host":"db-01"}
+{"event_category":"network","event_type":"connection","src_ip":"10.10.7.222","dst_ip":"10.10.3.174","src_port":59879,"dst_port":8443,"protocol":"TCP","bytes_sent":4917,"bytes_received":17238}
+{"message":"compaction started on auth_events","source":"dfe-receiver","level":"info","host":"node-03"}
+{"event_category":"admin","action":"rotate_api_key","admin_user_id":"adm-c006","target_user_id":"usr-a025","target_resource":"alerts","details":"removed deprecated csv pipeline","ip_address":"10.10.17.23"}
+{"event_category":"api","endpoint":"/api/v1/dashboards","method":"GET","status_code":200,"response_time_ms":18,"request_id":"req-b0201","user_id":"usr-a047","ip_address":"10.10.7.115"}
+{"event_category":"admin","action":"rotate_api_key","admin_user_id":"adm-c001","target_user_id":"usr-a050","target_resource":"alerts","details":"removed inactive account","ip_address":"10.10.1.8"}
+{"event_category":"network","event_type":"dns_query","src_ip":"10.10.7.222","dst_ip":"10.10.7.36","src_port":39825,"dst_port":8443,"protocol":"UDP","bytes_sent":6302,"bytes_received":7938}
+{"event_category":"api","endpoint":"/api/v1/dashboards","method":"GET","status_code":201,"response_time_ms":7,"request_id":"req-b0062","user_id":"usr-a019","ip_address":"10.10.19.7"}
+{"event_category":"auth","event_type":"logout","user_id":"usr-a019","username":"mike@acme.io","ip_address":"10.10.2.219","user_agent":"Mozilla/5.0 (Windows NT 11.0)","success":1}
+{"message":"dead letter queue: 9086 messages pending","source":"cert-monitor","level":"warning","host":"node-02"}
+{"event_category":"api","endpoint":"/api/v1/alerts","method":"GET","status_code":200,"response_time_ms":43,"request_id":"req-b0074","user_id":"usr-a034","ip_address":"10.10.20.19"}
+{"event_category":"api","endpoint":"/api/v1/dashboards","method":"GET","status_code":200,"response_time_ms":23,"request_id":"req-b0077","user_id":"usr-a047","ip_address":"10.10.17.108"}
+{"event_category":"api","endpoint":"/api/v1/pipelines","method":"PUT","status_code":201,"response_time_ms":35,"request_id":"req-b0144","user_id":"usr-a046","ip_address":"10.10.4.131"}
+{"event_category":"api","endpoint":"/api/v1/roles","method":"GET","status_code":201,"response_time_ms":41,"request_id":"req-b0080","user_id":"usr-a009","ip_address":"10.10.2.56"}
+{"message":"kafka consumer lag: 5914 messages","source":"monitoring","level":"info","host":"db-01"}
+{"event_category":"network","event_type":"firewall_drop","src_ip":"203.117.34.232","dst_ip":"10.10.7.130","src_port":56027,"dst_port":6000,"protocol":"TCP","bytes_sent":870,"bytes_received":0}
+{"message":"memory usage: 1437MB / 1024MB","source":"clickhouse","level":"info","host":"node-03"}
+{"event_category":"network","event_type":"connection","src_ip":"10.10.11.42","dst_ip":"10.10.7.36","src_port":42450,"dst_port":3389,"protocol":"TCP","bytes_sent":5743,"bytes_received":18221}

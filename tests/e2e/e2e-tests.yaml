@@ -1,0 +1,27 @@
+# Project:   dfe-docker
+# File:      tests/e2e/e2e-tests.yaml
+# Purpose:   Declarative e2e test definitions for the DFE Docker stack
+# Language:  YAML
+#
+# License:   FSL-1.1-ALv2
+# Copyright: (c) 2026 HYPERI PTY LIMITED
+
+# Each test brings up the stack with a given mode and transport, samples events
+# from the data file, sends them to the receiver, and verifies they land in the
+# expected ClickHouse tables. Kafka tests also verify expected topics exist.
+
+defaults:
+  mode: dev
+  sample_size: 100
+  data_file: tests/e2e/data/events.jsonl
+  settle_seconds: 8
+
+tests:
+  - name: simple-kafka
+    architecture: kafka
+    receiver_config: config/receiver-kafka.yaml
+    loader_config: config/loader-kafka.yaml
+    expected_topics:
+      - default_land
+    expected_tables:
+      - dfe.default
