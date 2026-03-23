@@ -4,7 +4,7 @@ ARG REGISTRY
 ARG VERSION
 RUN apt-get update && apt-get install -y curl ca-certificates && rm -rf /var/lib/apt/lists/*
 RUN curl -fL \
-      "${REGISTRY}/dfe-loader/${VERSION}/dfe-loader-release-linux-$(dpkg --print-architecture)" \
+      "${REGISTRY}/dfe-loader/${VERSION}/dfe-loader-linux-$(dpkg --print-architecture)" \
       -o /dfe-loader \
     && chmod +x /dfe-loader
 

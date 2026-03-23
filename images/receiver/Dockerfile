@@ -4,7 +4,7 @@ ARG REGISTRY
 ARG VERSION
 RUN apt-get update && apt-get install -y curl ca-certificates && rm -rf /var/lib/apt/lists/*
 RUN curl -fL \
-      "${REGISTRY}/dfe-receiver/${VERSION}/dfe-receiver-release-linux-$(dpkg --print-architecture)" \
+      "${REGISTRY}/dfe-receiver/${VERSION}/dfe-receiver-linux-$(dpkg --print-architecture)" \
       -o /dfe-receiver \
     && chmod +x /dfe-receiver
 
