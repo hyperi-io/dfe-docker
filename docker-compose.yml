@@ -142,6 +142,25 @@ services:
       retries: 10
       start_period: 15s
 
+  kafka-init:
+    image: apache/kafka:${KAFKA_VERSION:-latest}
+    container_name: dfe-kafka-init
+    profiles: ["full-kafka", "infra"]
+    depends_on:
+      kafka:
+        condition: service_healthy
+    entrypoint: ["/bin/bash", "-c"]
+    command:
+      - |
+        /opt/kafka/bin/kafka-topics.sh \
+          --bootstrap-server kafka:9092 \
+          --create --if-not-exists \
+          --topic "default_land" \
+          --partitions 1 \
+          --replication-factor 1
+        done
+    restart: "no"
+
   kafka-ui:
     image: ghcr.io/kafbat/kafka-ui:${KAFBAT_VERSION:-latest}
     container_name: dfe-kafka-ui
@@ -184,6 +203,8 @@ services:
     profiles: ["full-kafka"]
     depends_on:
       clickhouse:
+        condition: service_healthy
+      kafka:
         condition: service_healthy
     volumes:
       - ./config/loader-kafka.yaml:/etc/dfe/loader.yaml:ro
@@ -231,6 +252,9 @@ services:
     <<: *receiver-base
     container_name: dfe-receiver-kafka
     profiles: ["full-kafka"]
+    depends_on:
+      kafka:
+        condition: service_healthy
     volumes:
       - ./config/receiver-kafka.yaml:/etc/dfe-receiver/config.yaml:ro
 
