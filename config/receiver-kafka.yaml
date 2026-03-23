@@ -1,16 +1,10 @@
 # Project:   dfe-docker
 # File:      config/receiver-kafka.yaml
-# Purpose:   dfe-receiver config — Kafka transport (opt-in interim, DFE_TRANSPORT=kafka)
+# Purpose:   dfe-receiver config — Kafka transport (DFE_TRANSPORT=kafka)
 # Language:  YAML
 #
 # License:   FSL-1.1-ALv2
 # Copyright: (c) 2026 HYPERI PTY LIMITED
-
-# Kafka transport: receiver forwards events to Kafka broker (kafka:9092).
-# Used with full-kafka compose profile. For bare-metal testing use receiver.yaml.
-
-server:
-  bind_address: "0.0.0.0:8080"
 
 kafka:
   brokers:

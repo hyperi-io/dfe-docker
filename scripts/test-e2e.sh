@@ -20,9 +20,6 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 readonly SCRIPT_DIR
 PROJECT_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
 readonly PROJECT_DIR
-SCRIPT_NAME="$(basename "${0}")"
-readonly SCRIPT_NAME
-
 : "${TEST_CONFIG:=${PROJECT_DIR}/tests/e2e/e2e-tests.yaml}"
 : "${RECEIVER_HEALTH_URL:=http://localhost:9090/metrics}"
 : "${RECEIVER_INGEST_URL:=http://localhost:8080}"
@@ -60,19 +57,28 @@ cleanup() {
     rm -f "${PROJECT_DIR}/.tmp/docker-compose.e2e.yaml"
 }
 
+if [[ -t 1 ]]; then
+    _green=$'\033[32m' _red=$'\033[31m' _yellow=$'\033[33m' _reset=$'\033[0m'
+else
+    _green="" _red="" _yellow="" _reset=""
+fi
+
 pass() {
-    echo "    PASS: ${1}"
+    echo "${_green}PASS${_reset}: ${1}"
     passed=$((passed + 1))
+    echo ""
 }
 
 fail() {
-    echo "    FAIL: ${1}"
+    echo "${_red}FAIL${_reset}: ${1}"
     failed=$((failed + 1))
+    echo ""
 }
 
 skip_test() {
-    echo "    SKIP: ${1}"
+    echo "${_yellow}SKIP${_reset}: ${1}"
     skipped=$((skipped + 1))
+    echo ""
 }
 
 ch_query() {
@@ -119,37 +125,31 @@ wait_for_service() {
     return 1
 }
 
-# Determine which compose service names are active for a given architecture.
-service_names_for_architecture() {
-    local architecture="${1}"
-    case "${architecture}" in
-        kafka) echo "dfe-receiver-kafka dfe-loader-kafka" ;;
-        grpc)  echo "dfe-receiver dfe-loader" ;;
-        *)     die "Unknown architecture: ${architecture}" ;;
+# Map a compose profile to its receiver and loader service names.
+services_for_profile() {
+    local profile="${1}"
+    case "${profile}" in
+        full-kafka) echo "dfe-receiver-kafka dfe-loader-kafka" ;;
+        full)       echo "dfe-receiver dfe-loader" ;;
+        bare-bones) echo "dfe-receiver-bare-bones dfe-loader-bare-bones" ;;
+        debug)      echo "dfe-receiver-debug dfe-loader-debug" ;;
+        *)          die "Unknown profile: ${profile}" ;;
     esac
 }
 
 # Generate a compose override that mounts the test-specified configs.
 generate_compose_override() {
-    local architecture="${1}"
+    local profile="${1}"
     local receiver_config="${2}"
     local loader_config="${3}"
     local override_file="${PROJECT_DIR}/.tmp/docker-compose.e2e.yaml"
 
     mkdir -p "${PROJECT_DIR}/.tmp"
 
-    local receiver_svc
-    local loader_svc
-    case "${architecture}" in
-        kafka)
-            receiver_svc="dfe-receiver-kafka"
-            loader_svc="dfe-loader-kafka"
-            ;;
-        grpc)
-            receiver_svc="dfe-receiver"
-            loader_svc="dfe-loader"
-            ;;
-    esac
+    local services
+    services=$(services_for_profile "${profile}")
+    local receiver_svc="${services%% *}"
+    local loader_svc="${services##* }"
 
     # Export vars for yq strenv() — yq uses env vars, not --arg like jq
     export YQ_RSVC="${receiver_svc}"
@@ -168,27 +168,22 @@ generate_compose_override() {
 
 stack_up() {
     local mode="${1}"
-    local architecture="${2}"
+    local profile="${2}"
     local receiver_config="${3}"
     local loader_config="${4}"
 
     log "Starting stack..."
     log_debug "  - Mode: ${mode}"
-    log_debug "  - Architecture: ${architecture}"
+    log_debug "  - Profile: ${profile}"
     log_debug "  - Receiver Config: ${receiver_config}"
     log_debug "  - Loader Config: ${loader_config}"
 
     cd "${PROJECT_DIR}"
 
-    local profiles=()
-    case "${architecture}" in
-        kafka) profiles=(--profile full-kafka --profile ui) ;;
-        grpc)  profiles=(--profile full) ;;
-        *)     die "Unknown architecture: ${architecture}" ;;
-    esac
+    local profiles=(--profile "${profile}")
 
     local override_file
-    override_file=$(generate_compose_override "${architecture}" "${receiver_config}" "${loader_config}")
+    override_file=$(generate_compose_override "${profile}" "${receiver_config}" "${loader_config}")
 
     local compose_files=(-f docker-compose.yml)
     case "${mode}" in
@@ -228,10 +223,19 @@ stack_up() {
     esac
 }
 
-stack_down() {
-    log "Stopping stack..."
+compose_down_all() {
     cd "${PROJECT_DIR}"
-    make down > /dev/null 2>&1 || true
+    local profile_flags=()
+    local p
+    while IFS= read -r p; do
+        [[ -n "${p}" ]] && profile_flags+=(--profile "${p}")
+    done < <(yq -r '[.services[].profiles[]?] | unique | .[]' docker-compose.yml 2>/dev/null)
+    docker compose "${profile_flags[@]}" down --remove-orphans > /dev/null 2>&1 || true
+}
+
+stack_down() {
+    log_debug "Stopping stack..."
+    compose_down_all
 }
 
 dump_logs() {
@@ -244,7 +248,7 @@ dump_logs() {
 }
 
 wait_for_stack() {
-    local architecture="${1}"
+    local profile="${1}"
 
     wait_for_service "ClickHouse" "${CLICKHOUSE_URL}/ping" 30 || return 1
     wait_for_service "dfe-receiver" "${RECEIVER_HEALTH_URL}" 30 || return 1
@@ -252,34 +256,27 @@ wait_for_stack() {
     log_debug "Waiting for loader to connect to ClickHouse..."
     sleep 3
 
-    if [[ "${architecture}" == "kafka" ]]; then
-        log_debug "Kafka architecture: extra settle time for consumer group"
+    if [[ "${profile}" == *kafka* ]]; then
+        log_debug "Kafka profile: extra settle time for consumer group"
         sleep 5
     fi
 
     return 0
 }
 
-# Truncate all expected tables so each test starts clean.
-clean_tables() {
-    local tables_raw="${1}"
-    log_debug "Cleaning tables..."
-    local table
-    while IFS= read -r table; do
-        [[ -z "${table}" ]] && continue
-        ch_query "TRUNCATE TABLE IF EXISTS ${table}" || true
-    done <<< "${tables_raw}"
+# Truncate dfe.default so each test starts clean.
+clean_table() {
+    log_debug "Cleaning dfe.default..."
+    ch_query "TRUNCATE TABLE IF EXISTS dfe.default" || true
     sleep 1
 }
 
-# Send sampled events from the data file.
-# Sets sent_counts (space-separated "table:count" pairs) for verify_tables.
+# Send sampled events from the data file. Sets total_sent for verify_table.
 send_events() {
     local test_name="${1}"
     local marker="${2}"
     local data_file="${3}"
     local sample_size="${4}"
-    local architecture="${5}"
     local url="${RECEIVER_INGEST_URL}/ingest"
 
     local resolved_data
@@ -301,10 +298,8 @@ send_events() {
     mkdir -p "${PROJECT_DIR}/.tmp"
     shuf -n "${count}" "${resolved_data}" > "${sampled_file}"
 
-    # Track per-category counts dynamically
-    sent_counts=""
+    total_sent=0
     local send_errors=0
-    local total_sent=0
 
     local ts
     ts="$(date -u +%Y-%m-%dT%H:%M:%S.000Z)"
@@ -317,9 +312,6 @@ send_events() {
             '. + {"timestamp": $ts, "metadata": ("{\"marker\": \"" + $marker + "\"}")}' \
             <<< "${line}")
 
-        local category
-        category=$(jq -r '.event_category // empty' <<< "${line}")
-
         local http_code
         http_code=$(curl -s -o /dev/null -w "%{http_code}" -X POST "${url}" \
             -H "Content-Type: application/json" \
@@ -330,27 +322,10 @@ send_events() {
             send_errors=$((send_errors + 1))
         fi
 
-        # Increment count for this category
-        local found=false
-        local new_counts=""
-        local pair
-        for pair in ${sent_counts}; do
-            local k="${pair%%:*}"
-            local v="${pair#*:}"
-            if [[ "${k}" == "${category}" ]]; then
-                v=$((v + 1))
-                found=true
-            fi
-            new_counts="${new_counts} ${k}:${v}"
-        done
-        if [[ "${found}" == "false" ]]; then
-            new_counts="${new_counts} ${category}:1"
-        fi
-        sent_counts="${new_counts}"
         total_sent=$((total_sent + 1))
     done < "${sampled_file}"
 
-    log "Sent ${total_sent} events (errors=${send_errors}): ${sent_counts}"
+    log "Sent ${total_sent} events (errors = ${send_errors})"
 
     if [[ ${send_errors} -eq 0 ]]; then
         pass "[${test_name}] All ${total_sent} ingest requests returned 2xx"
@@ -359,77 +334,39 @@ send_events() {
     fi
 }
 
-# Map event_category values to ClickHouse table names.
-# Mirrors the routing.source_to_topic config in the receiver.
-category_to_table() {
-    local category="${1}"
-    case "${category}" in
-        auth)    echo "dfe.auth_events" ;;
-        api)     echo "dfe.api_events" ;;
-        admin)   echo "dfe.admin_events" ;;
-        network) echo "dfe.network_events" ;;
-        *)       echo "dfe.default" ;;
-    esac
-}
-
-# Look up the sent count for a category from sent_counts.
-get_sent_count() {
-    local category="${1}"
-    local pair
-    for pair in ${sent_counts}; do
-        local k="${pair%%:*}"
-        if [[ "${k}" == "${category}" ]]; then
-            echo "${pair#*:}"
-            return
-        fi
-    done
-    echo "0"
-}
-
-# Verify events landed in the expected ClickHouse tables.
-verify_tables() {
+# Verify events landed in dfe.default.
+verify_table() {
     local test_name="${1}"
     local marker="${2}"
-    local expected_tables="${3}"
+    local expected="${total_sent}"
 
-    log "Verifying events in ClickHouse (marker: ${marker})..."
+    log "Verifying events in ClickHouse dfe.default (marker: ${marker})..."
 
-    local table
-    while IFS= read -r table; do
-        [[ -z "${table}" ]] && continue
-
-        # Derive category from table name for count lookup
-        local category
-        case "${table}" in
-            dfe.auth_events)    category="auth" ;;
-            dfe.api_events)     category="api" ;;
-            dfe.admin_events)   category="admin" ;;
-            dfe.network_events) category="network" ;;
-            dfe.default)        category="" ;;
-            *)                  category="__unknown__" ;;
-        esac
-
-        local expected
-        expected=$(get_sent_count "${category}")
-
-        if [[ ${expected} -eq 0 ]]; then
-            skip_test "[${test_name}] No events sent for ${table} — skipping"
-            continue
-        fi
-
-        local actual
-        actual=$(ch_query "SELECT count() FROM ${table} WHERE metadata LIKE '%${marker}%'" || echo "0")
+    local actual="0"
+    local attempt=1
+    while [[ ${attempt} -le 3 ]]; do
+        actual=$(ch_query "SELECT count() FROM dfe.default WHERE metadata LIKE '%${marker}%'" || echo "0")
         actual=$(echo "${actual}" | tr -d '[:space:]')
 
         if [[ "${actual}" -ge "${expected}" ]] 2>/dev/null; then
-            pass "[${test_name}] ${table}: ${actual}/${expected}"
-        else
-            fail "[${test_name}] ${table}: expected ${expected}, got ${actual}"
+            break
         fi
-    done <<< "${expected_tables}"
+
+        if [[ ${attempt} -lt 3 ]]; then
+            log "    Attempt ${attempt}/3: got ${actual}/${expected}, retrying in 10s..."
+            sleep 10
+        fi
+        attempt=$((attempt + 1))
+    done
+
+    if [[ "${actual}" -ge "${expected}" ]] 2>/dev/null; then
+        pass "[${test_name}] dfe.default: ${actual}/${expected}"
+    else
+        fail "[${test_name}] dfe.default: expected ${expected}, got ${actual}"
+    fi
 }
 
-# Verify expected Kafka topics exist (kafka architecture only).
+# Verify expected Kafka topics exist (kafka profiles only).
 verify_topics() {
     local test_name="${1}"
     local expected_topics="${2}"
@@ -459,22 +396,18 @@ run_test() {
     name=$(cfg_get "${idx}" "name")
     local mode
     mode=$(cfg_get "${idx}" "mode")
-    local architecture
-    architecture=$(cfg_get "${idx}" "architecture")
+    local profile
+    profile=$(cfg_get "${idx}" "profile")
     local sample_size
     sample_size=$(cfg_get "${idx}" "sample_size")
     local data_file
     data_file=$(cfg_get "${idx}" "data_file")
-    local settle_seconds
-    settle_seconds=$(cfg_get "${idx}" "settle_seconds")
     local receiver_config
     receiver_config=$(cfg_get "${idx}" "receiver_config")
     local loader_config
     loader_config=$(cfg_get "${idx}" "loader_config")
     local marker="${test_run_id}-${name}"
 
-    local expected_tables
-    expected_tables=$(cfg_list "${idx}" "expected_tables")
     local expected_topics
     expected_topics=$(cfg_list "${idx}" "expected_topics")
 
@@ -487,36 +420,33 @@ run_test() {
     echo "--------------------------------------------"
     echo "E2E Test: ${name}"
     echo "  - Mode: ${mode}"
-    echo "  - Architecture: ${architecture}"
+    echo "  - Profile: ${profile}"
     echo "  - Data File: ${data_file}"
     echo "  - Sample Size: ${sample_size}"
     echo "  - Receiver Config: ${receiver_config}"
     echo "  - Loader Config: ${loader_config}"
     echo "--------------------------------------------"
 
-    if ! stack_up "${mode}" "${architecture}" "${receiver_config}" "${loader_config}"; then
+    if ! stack_up "${mode}" "${profile}" "${receiver_config}" "${loader_config}"; then
         fail "[${name}] Stack failed to start"
         stack_down
         return
     fi
 
-    if ! wait_for_stack "${architecture}"; then
+    if ! wait_for_stack "${profile}"; then
         fail "[${name}] Stack did not become healthy"
         dump_logs
         stack_down
         return
     fi
 
-    clean_tables "${expected_tables}"
+    clean_table
 
-    send_events "${name}" "${marker}" "${data_file}" "${sample_size}" "${architecture}"
+    send_events "${name}" "${marker}" "${data_file}" "${sample_size}"
 
-    log "Waiting ${settle_seconds}s for loader flush..."
-    sleep "${settle_seconds}"
+    verify_table "${name}" "${marker}"
 
-    verify_tables "${name}" "${marker}" "${expected_tables}"
-
-    if [[ "${architecture}" == "kafka" ]] && [[ -n "${expected_topics}" ]]; then
+    if [[ "${profile}" == *kafka* ]] && [[ -n "${expected_topics}" ]]; then
         verify_topics "${name}" "${expected_topics}"
     fi
 
@@ -544,8 +474,7 @@ main() {
     trap cleanup EXIT
 
     # Silently tear down any existing stack before starting
-    cd "${PROJECT_DIR}"
-    make down > /dev/null 2>&1 || true
+    compose_down_all
 
     local test_count
     test_count=$(yq -r '.tests | length' "${TEST_CONFIG}")
@@ -579,10 +508,14 @@ main() {
         done
     fi
 
+    echo "================= Results =================="
     echo ""
-    echo "============================================"
-    local total=$((passed + failed + skipped))
-    echo "  Results: ${passed} passed, ${failed} failed, ${skipped} skipped (${total} total)"
+    echo "Passed:     ${passed}"
+    echo "Failed:     ${failed}"
+    echo "Skipped:    ${skipped}"
+    echo "Total:      $((passed + failed + skipped))"
+    echo "End Time:   $(date +%Y-%m-%dT%H:%M:%S%:z)"
+    echo ""
     echo "============================================"
 
     if [[ ${failed} -gt 0 ]]; then

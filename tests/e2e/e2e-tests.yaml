@@ -6,22 +6,27 @@
 # License:   FSL-1.1-ALv2
 # Copyright: (c) 2026 HYPERI PTY LIMITED
 
-# Each test brings up the stack with a given mode and transport, samples events
-# from the data file, sends them to the receiver, and verifies they land in the
-# expected ClickHouse tables. Kafka tests also verify expected topics exist.
+# Each test brings up the stack with a given compose profile, samples events
+# from the data file, sends them to the receiver, and verifies they land in
+# dfe.default. Kafka profiles also verify expected topics exist.
+#
+# Available profiles: full, full-kafka, bare-bones, debug
 
 defaults:
-  mode: dev
+  mode: ci
+  profile: full-kafka
   sample_size: 100
   data_file: tests/e2e/data/events.jsonl
-  settle_seconds: 8
 
 tests:
   - name: simple-kafka
-    architecture: kafka
+    profile: full-kafka
     receiver_config: config/receiver-kafka.yaml
     loader_config: config/loader-kafka.yaml
     expected_topics:
       - default_land
-    expected_tables:
-      - dfe.default
+
+  - name: simple-grpc
+    profile: full
+    receiver_config: config/receiver-grpc.yaml
+    loader_config: config/loader-grpc.yaml

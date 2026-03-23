@@ -45,7 +45,7 @@ x-loader-base: &loader-base
     LOADER_LOG_LEVEL: ${LOG_LEVEL:-info}
     LOADER_LOG_FORMAT: ${LOG_FORMAT:-text}
   healthcheck:
-    test: ["CMD", "curl", "-sf", "http://localhost:9090/metrics"]
+    test: ["CMD-SHELL", "bash -c 'echo > /dev/tcp/localhost/9090'"]
     interval: 10s
     timeout: 3s
     retries: 5
@@ -71,7 +71,7 @@ x-receiver-base: &receiver-base
     RECEIVER_LOG_LEVEL: ${LOG_LEVEL:-info}
     RECEIVER_LOG_FORMAT: ${LOG_FORMAT:-text}
   healthcheck:
-    test: ["CMD", "curl", "-sf", "http://localhost:9090/metrics"]
+    test: ["CMD-SHELL", "bash -c 'echo > /dev/tcp/localhost/9090'"]
     interval: 10s
     timeout: 3s
     retries: 5
@@ -158,7 +158,6 @@ services:
           --topic "default_land" \
           --partitions 1 \
           --replication-factor 1
-        done
     restart: "no"
 
   kafka-ui:
@@ -204,8 +203,8 @@ services:
     depends_on:
       clickhouse:
         condition: service_healthy
-      kafka:
-        condition: service_healthy
+      kafka-init:
+        condition: service_completed_successfully
     volumes:
       - ./config/loader-kafka.yaml:/etc/dfe/loader.yaml:ro
 

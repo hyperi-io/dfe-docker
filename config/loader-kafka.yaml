@@ -1,15 +1,10 @@
 # Project:   dfe-docker
 # File:      config/loader-kafka.yaml
-# Purpose:   dfe-loader config — Kafka transport consumer (opt-in interim, DFE_TRANSPORT=kafka)
+# Purpose:   dfe-loader config — Kafka transport consumer (DFE_TRANSPORT=kafka)
 # Language:  YAML
 #
 # License:   FSL-1.1-ALv2
 # Copyright: (c) 2026 HYPERI PTY LIMITED
-
-# Kafka transport: loader consumes from Kafka broker (kafka:9092).
-# Used with full-kafka compose profile. For bare-metal testing use loader.yaml.
-#
-# When transport-grpc is wired in dfe-loader, switch to loader-grpc.yaml instead.
 
 kafka:
   brokers:
@@ -21,12 +16,3 @@ clickhouse:
   hosts:
     - "clickhouse:8123"
   database: dfe
-  protocol: native
-
-routing:
-  default_db: dfe
-  default_table: default
-
-metrics:
-  enabled: true
-  address: "0.0.0.0:9090"
