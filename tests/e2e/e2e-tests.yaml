@@ -6,17 +6,18 @@
 # License:   FSL-1.1-ALv2
 # Copyright: (c) 2026 HYPERI PTY LIMITED
 
-# Each test brings up the stack with a given compose profile, samples events
-# from the data file, sends them to the receiver, and verifies they land in
-# dfe.default. Kafka profiles also verify expected topics exist.
+# Each test brings up the stack with a given compose profile, sends events
+# from the data file to the receiver, and verifies they land in dfe.default.
+# If sample_size is set, a random sample is taken; otherwise the full file
+# is used. Kafka profiles also verify expected topics exist.
 #
 # Available profiles: full, full-kafka, bare-bones, debug
 
 defaults:
+  data_file: tests/e2e/data/events.jsonl
   mode: ci
   profile: full-kafka
-  sample_size: 100
-  data_file: tests/e2e/data/events.jsonl
+  teardown: true
 
 tests:
   - name: simple-kafka

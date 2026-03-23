@@ -21,10 +21,10 @@ readonly SCRIPT_DIR
 PROJECT_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
 readonly PROJECT_DIR
 : "${TEST_CONFIG:=${PROJECT_DIR}/tests/e2e/e2e-tests.yaml}"
-: "${RECEIVER_HEALTH_URL:=http://localhost:9090/metrics}"
-: "${RECEIVER_INGEST_URL:=http://localhost:8080}"
-: "${CLICKHOUSE_URL:=http://localhost:8123}"
-: "${KAFKA_BROKER:=localhost:19092}"
+: "${RECEIVER_HEALTH_URL:=http://localhost:${DFE_RECEIVER_PROMETHEUS_PORT:-9090}/metrics}"
+: "${RECEIVER_INGEST_URL:=http://localhost:${DFE_RECEIVER_HTTP_PORT:-8080}}"
+: "${CLICKHOUSE_URL:=http://localhost:${CLICKHOUSE_HTTP_PORT:-8123}}"
+: "${KAFKA_BROKER:=localhost:${KAFKA_EXTERNAL_PORT:-19092}}"
 : "${LOG_LEVEL:=info}"
 LOG_LEVEL="$(echo "${LOG_LEVEL}" | tr '[:upper:]' '[:lower:]')"
 
@@ -66,13 +66,11 @@ fi
 pass() {
     echo "${_green}PASS${_reset}: ${1}"
     passed=$((passed + 1))
-    echo ""
 }
 
 fail() {
     echo "${_red}FAIL${_reset}: ${1}"
     failed=$((failed + 1))
-    echo ""
 }
 
 skip_test() {
@@ -91,11 +89,11 @@ cfg_get() {
     local idx="${1}"
     local field="${2}"
     local val
-    val=$(yq -r ".tests[${idx}].${field} // null" "${TEST_CONFIG}")
-    if [[ "${val}" == "null" ]]; then
-        val=$(yq -r ".defaults.${field} // null" "${TEST_CONFIG}")
+    val=$(yq -r ".tests[${idx}].${field} | select(. != null)" "${TEST_CONFIG}")
+    if [[ -z "${val}" ]]; then
+        val=$(yq -r ".defaults.${field} | select(. != null)" "${TEST_CONFIG}")
     fi
-    echo "${val}"
+    [[ -n "${val}" ]] && echo "${val}" || echo "null"
 }
 
 # Read a list field as newline-separated values.
@@ -285,31 +283,32 @@ send_events() {
 
     local pool_size
     pool_size=$(wc -l < "${resolved_data}")
-    local count="${sample_size}"
-    if [[ ${count} -gt ${pool_size} ]]; then
-        count=${pool_size}
-    fi
-
-    log "Sampling '${count}' events from pool of '${pool_size}'..."
-    log_debug "  - Marker: ${marker}"
 
     local sampled_file
     sampled_file="${PROJECT_DIR}/.tmp/sampled-events.jsonl"
     mkdir -p "${PROJECT_DIR}/.tmp"
-    shuf -n "${count}" "${resolved_data}" > "${sampled_file}"
+
+    if [[ -z "${sample_size}" ]]; then
+        log "Sending all ${pool_size} events from data file..."
+        cp "${resolved_data}" "${sampled_file}"
+    else
+        local count="${sample_size}"
+        if [[ ${count} -gt ${pool_size} ]]; then
+            count=${pool_size}
+        fi
+        log "Sampling ${count} events from pool of ${pool_size}..."
+        shuf -n "${count}" "${resolved_data}" > "${sampled_file}"
+    fi
+    log_debug "  - Marker: ${marker}"
 
     total_sent=0
     local send_errors=0
 
-    local ts
-    ts="$(date -u +%Y-%m-%dT%H:%M:%S.000Z)"
-
     while IFS= read -r line; do
         local enriched
         enriched=$(jq -c \
-            --arg ts "${ts}" \
             --arg marker "${marker}" \
-            '. + {"timestamp": $ts, "metadata": ("{\"marker\": \"" + $marker + "\"}")}' \
+            '. + {"metadata": ("{\"marker\": \"" + $marker + "\"}")}' \
             <<< "${line}")
 
         local http_code
@@ -340,7 +339,7 @@ verify_table() {
     local marker="${2}"
     local expected="${total_sent}"
 
-    log "Verifying events in ClickHouse dfe.default (marker: ${marker})..."
+    log "Verifying events in ClickHouse 'dfe.default' (marker: '${marker}')..."
 
     local actual="0"
     local attempt=1
@@ -349,20 +348,23 @@ verify_table() {
         actual=$(echo "${actual}" | tr -d '[:space:]')
 
         if [[ "${actual}" -ge "${expected}" ]] 2>/dev/null; then
+            log "    Attempt ${attempt}/3: got ${actual}/${expected}"
             break
         fi
 
         if [[ ${attempt} -lt 3 ]]; then
             log "    Attempt ${attempt}/3: got ${actual}/${expected}, retrying in 10s..."
             sleep 10
+        else
+            log "    Attempt ${attempt}/3: got ${actual}/${expected}"
         fi
         attempt=$((attempt + 1))
     done
 
     if [[ "${actual}" -ge "${expected}" ]] 2>/dev/null; then
-        pass "[${test_name}] dfe.default: ${actual}/${expected}"
+        pass "[${test_name}] 'dfe.default': ${actual}/${expected}"
     else
-        fail "[${test_name}] dfe.default: expected ${expected}, got ${actual}"
+        fail "[${test_name}] 'dfe.default': expected ${expected}, got ${actual}"
     fi
 }
 
@@ -381,9 +383,9 @@ verify_topics() {
     while IFS= read -r topic; do
         [[ -z "${topic}" ]] && continue
         if echo "${existing_topics}" | grep -qxF "${topic}"; then
-            pass "[${test_name}] Kafka topic exists: ${topic}"
+            pass "[${test_name}] Kafka topic exists: '${topic}'"
         else
-            fail "[${test_name}] Kafka topic missing: ${topic}"
+            fail "[${test_name}] Kafka topic missing: '${topic}'"
         fi
     done <<< "${expected_topics}"
 }
@@ -400,12 +402,16 @@ run_test() {
     profile=$(cfg_get "${idx}" "profile")
     local sample_size
     sample_size=$(cfg_get "${idx}" "sample_size")
+    [[ "${sample_size}" != "null" ]] || sample_size=""
     local data_file
     data_file=$(cfg_get "${idx}" "data_file")
     local receiver_config
     receiver_config=$(cfg_get "${idx}" "receiver_config")
     local loader_config
     loader_config=$(cfg_get "${idx}" "loader_config")
+    local teardown
+    teardown=$(cfg_get "${idx}" "teardown")
+    [[ "${teardown}" != "null" ]] || teardown="true"
     local marker="${test_run_id}-${name}"
 
     local expected_topics
@@ -417,52 +423,60 @@ run_test() {
     [[ -f "${PROJECT_DIR}/${loader_config}" ]] || die "loader_config not found: ${loader_config}"
 
     echo ""
-    echo "--------------------------------------------"
+    echo "------------------------------------------------------------"
     echo "E2E Test: ${name}"
     echo "  - Mode: ${mode}"
     echo "  - Profile: ${profile}"
     echo "  - Data File: ${data_file}"
-    echo "  - Sample Size: ${sample_size}"
+    [[ -z "${sample_size}" ]] || echo "  - Sample Size: ${sample_size}"
     echo "  - Receiver Config: ${receiver_config}"
     echo "  - Loader Config: ${loader_config}"
-    echo "--------------------------------------------"
+    [[ "${teardown}" == "true" ]] || echo "  - Teardown: false"
+    echo "------------------------------------------------------------"
 
     if ! stack_up "${mode}" "${profile}" "${receiver_config}" "${loader_config}"; then
         fail "[${name}] Stack failed to start"
-        stack_down
+        [[ "${teardown}" != "true" ]] || stack_down
         return
     fi
 
     if ! wait_for_stack "${profile}"; then
         fail "[${name}] Stack did not become healthy"
         dump_logs
-        stack_down
+        [[ "${teardown}" != "true" ]] || stack_down
         return
     fi
 
     clean_table
 
     send_events "${name}" "${marker}" "${data_file}" "${sample_size}"
+    echo ""
 
     verify_table "${name}" "${marker}"
 
     if [[ "${profile}" == *kafka* ]] && [[ -n "${expected_topics}" ]]; then
+        echo ""
         verify_topics "${name}" "${expected_topics}"
     fi
 
     dump_logs
-    stack_down
+    if [[ "${teardown}" == "true" ]]; then
+        stack_down
+    else
+        log "Teardown disabled — stack left running for '${name}'"
+    fi
+    echo "------------------------------------------------------------"
 }
 
 main() {
-    echo "===== DFE Docker End-to-End Test Suite ====="
+    echo "============= DFE Docker End-to-End Test Suite ============="
     echo ""
     echo "Config:     ${TEST_CONFIG}"
     echo "Run ID:     ${test_run_id}"
     echo "Log level:  ${LOG_LEVEL}"
     echo "Start Time: $(date +%Y-%m-%dT%H:%M:%S%:z)"
     echo ""
-    echo "============================================"
+    echo "============================================================"
 
     require_command curl
     require_command jq
@@ -508,7 +522,8 @@ main() {
         done
     fi
 
-    echo "================= Results =================="
+    echo ""
+    echo "========================== Results ========================="
     echo ""
     echo "Passed:     ${passed}"
     echo "Failed:     ${failed}"
@@ -516,7 +531,7 @@ main() {
     echo "Total:      $((passed + failed + skipped))"
     echo "End Time:   $(date +%Y-%m-%dT%H:%M:%S%:z)"
     echo ""
-    echo "============================================"
+    echo "============================================================"
 
     if [[ ${failed} -gt 0 ]]; then
         exit 1

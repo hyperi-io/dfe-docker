@@ -92,8 +92,8 @@ test: ## Send test events and verify in ClickHouse
 	./scripts/send-test-events.sh
 
 .PHONY: test-e2e
-test-e2e: ## End-to-end test executor
-	./scripts/test-e2e.sh
+test-e2e: ## End-to-end test executor (pass test names via E2E_TESTS)
+	@./scripts/test-e2e.sh $(E2E_TESTS)
 
 .PHONY: test-vector
 test-vector: ## Feed events via Vector (HTTP + gRPC inbound)

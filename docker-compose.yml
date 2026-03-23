@@ -170,9 +170,6 @@ services:
       DYNAMIC_CONFIG_ENABLED: ${KAFBAT_DYNAMIC_CONFIG_ENABLED:-true}
       KAFKA_CLUSTERS_0_BOOTSTRAPSERVERS: ${KAFBAT_KAFKA_CLUSTERS_0_BOOTSTRAPSERVERS:-kafka:9092}
       KAFKA_CLUSTERS_0_NAME: ${KAFBAT_KAFKA_CLUSTERS_0_NAME:-dfe-local}
-    depends_on:
-      kafka:
-        condition: service_healthy
 
   # ===========================================================================
   # dfe-loader (profiles: bare-bones, full, full-kafka, debug)
