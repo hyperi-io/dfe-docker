@@ -20,4 +20,5 @@ coverage/
 certs/
 
 # AI agent working files (not committed)
+.claude/settings.local.json
 docs/superpowers/
