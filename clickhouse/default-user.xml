@@ -1,13 +1,4 @@
 <clickhouse>
-  <users>
-    <default>
-      <networks>
-        <ip>::/0</ip>
-      </networks>
-      <profile>default</profile>
-      <access_management>1</access_management>
-    </default>
-  </users>
   <profiles>
     <default>
       <date_time_input_format>best_effort</date_time_input_format>

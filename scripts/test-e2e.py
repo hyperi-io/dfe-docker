@@ -44,7 +44,6 @@ PROJECT_DIR = Path(__file__).resolve().parent.parent
 TMP_DIR = PROJECT_DIR / ".tmp" / ".test-e2e"
 RUN_ID = f"e2e-{datetime.now(timezone.utc).strftime("%Y%m%d%H%M%S")}"
 
-
 # ------------------------------------------------------------------------------
 # Config Related
 # - Supported config values
@@ -57,6 +56,28 @@ DEFAULTS = {
 }
 
 # ------------------------------------------------------------------------------
+# Load Dotenv Function
+# - Loads a .env file into os.environ (existing env vars take precedence)
+# ------------------------------------------------------------------------------
+def load_dotenv(file_path):
+    try:
+        with open(file_path) as file:
+            for line in file:
+                line = line.strip()
+                if (not(line) or line.startswith("#")):
+                    continue
+                key, seperator, value = line.partition("=")
+                if not(seperator):
+                    continue
+                value = value.strip().strip('"').strip("'")
+                os.environ.setdefault(key.strip(), value)
+    except FileNotFoundError:
+        LOGGER.info(f"No '.env' file found at '{file_path}'. Skipping dotenv loading")
+        pass
+
+load_dotenv(PROJECT_DIR / ".env")
+
+# ------------------------------------------------------------------------------
 # Endpoint Related
 # - Configurable URLs for services, with appropriate defaults
 # ------------------------------------------------------------------------------
@@ -64,6 +85,8 @@ CLICKHOUSE_URL = os.environ.get(
     "CLICKHOUSE_URL",
     f"http://localhost:{os.environ.get("CLICKHOUSE_HTTP_PORT", "8123")}",
 )
+CLICKHOUSE_USERNAME = os.environ.get("CLICKHOUSE_USERNAME", "default")
+CLICKHOUSE_PASSWORD = os.environ.get("CLICKHOUSE_PASSWORD", "")
 DFE_LOADER_HEALTH_URL = os.environ.get(
     "DFE_LOADER_HEALTH_URL",
     f"http://localhost:{os.environ.get("DFE_LOADER_PROMETHEUS_PORT", "9091")}/health/ready",
@@ -219,12 +242,14 @@ def ch_query(sql):
     LOGGER.debug(f"Executing ClickHouse query: `{sql}`")
     data = sql.encode()
     request = Request(CLICKHOUSE_URL, data = data, method = "POST")
+    request.add_header("X-ClickHouse-User", CLICKHOUSE_USERNAME)
+    request.add_header("X-ClickHouse-Key", CLICKHOUSE_PASSWORD)
     try:
         with urlopen(request, timeout = 10) as response:
             return response.read().decode().strip()
-    except Exception:
+    except Exception as e:
+        LOGGER.debug(f"ClickHouse query failed. Error message: {e}")
         return ""
-
 
 # ==============================================================================
 # Config Functions
