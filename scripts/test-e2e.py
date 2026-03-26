@@ -66,8 +66,8 @@ def load_dotenv(file_path):
                 line = line.strip()
                 if (not(line) or line.startswith("#")):
                     continue
-                key, seperator, value = line.partition("=")
-                if not(seperator):
+                key, separator, value = line.partition("=")
+                if not(separator):
                     continue
                 value = value.strip().strip('"').strip("'")
                 os.environ.setdefault(key.strip(), value)
@@ -568,7 +568,7 @@ def send_events(ctx, test_name, marker, data_file_name):
     LOGGER.info(f"Sent {ctx.total_sent} events (errors = {send_errors})")
 
     if (send_errors == 0):
-        mark_pass(ctx, f"[{test_name}] All {ctx.total_sent} ingest requests succesful (200 response codes)")
+        mark_pass(ctx, f"[{test_name}] All {ctx.total_sent} ingest requests successful (200 response codes)")
     else:
         mark_fail(ctx, f"[{test_name}] {send_errors}/{ctx.total_sent} ingest requests failed (non-200 response codes)")
 
@@ -608,8 +608,8 @@ def verify_topics(ctx, test_name, expected_topics):
     LOGGER.info("Verifying Kafka topics...")
     
     base_cmd = ["docker", "compose", "exec", "-T", "kafka", "/opt/kafka/bin/kafka-topics.sh", "--bootstrap-server", "kafka:9092", "--list"]
-    result = run_cmd(base_cmd, check = False, capture = not(LOG_LEVEL == "DEBUG"))
-    topics = result.stdout.strip().splitlines() if (result.returncode == 0) else []
+    result = run_cmd(base_cmd, check = False, capture = True)
+    topics = result.stdout.strip().splitlines() if (result.returncode == 0 and result.stdout) else []
 
     for topic in expected_topics:
         if not(topic):
@@ -805,7 +805,7 @@ def main():
     # Post test execution cleanup
     cleanup()
     
-    # Capture end time for test suite completion and calcualte duration
+    # Capture end time for test suite completion and calculate duration
     end_time = datetime.now().astimezone()
     duration = end_time - start_time
     
