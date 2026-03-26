@@ -488,7 +488,7 @@ def dump_logs():
 # ------------------------------------------------------------------------------
 def wait_for_service(name, url, max_attempts = 30):
     LOGGER.info(f"Waiting for '{name}' at '{url}'...")
-    time.sleep(5)
+    time.sleep(2)
     for attempt in range(1, max_attempts + 1):
         try:
             http_get(url, timeout = 3)
