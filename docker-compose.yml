@@ -46,7 +46,7 @@ x-loader-base: &loader-base
     LOADER_LOG_LEVEL: ${LOG_LEVEL:-info}
     LOADER_LOG_FORMAT: ${LOG_FORMAT:-text}
   healthcheck:
-    test: ["CMD-SHELL", "bash -c 'echo > /dev/tcp/localhost/9090'"]
+    test: ["CMD", "curl", "-sf", "http://localhost:9090/health/ready"]
     interval: 10s
     timeout: 3s
     retries: 5
@@ -72,7 +72,7 @@ x-receiver-base: &receiver-base
     RECEIVER_LOG_LEVEL: ${LOG_LEVEL:-info}
     RECEIVER_LOG_FORMAT: ${LOG_FORMAT:-text}
   healthcheck:
-    test: ["CMD-SHELL", "bash -c 'echo > /dev/tcp/localhost/9090'"]
+    test: ["CMD", "curl", "-sf", "http://localhost:9090/health/ready"]
     interval: 10s
     timeout: 3s
     retries: 5

@@ -9,7 +9,7 @@ RUN curl -fL \
     && chmod +x /dfe-receiver
 
 FROM --platform=${ARCHITECTURE} debian:trixie-slim
-RUN apt-get update && apt-get install -y libssl3 libsasl2-2 librdkafka1 ca-certificates && rm -rf /var/lib/apt/lists/*
+RUN apt-get update && apt-get install -y libssl3 libsasl2-2 librdkafka1 ca-certificates curl netcat-openbsd && rm -rf /var/lib/apt/lists/*
 COPY --from=receiver_download /dfe-receiver /usr/local/bin/dfe-receiver
 EXPOSE 9090
 ENTRYPOINT ["dfe-receiver"]
