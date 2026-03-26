@@ -8,9 +8,9 @@
 
 kafka:
   brokers:
-    - "kafka:9092"
+    - kafka:9092
 
 routing:
   source_rules:
-    - field: "_source"
-      mode: "key_value_use"
+    - field: _source
+      mode: key_value_use

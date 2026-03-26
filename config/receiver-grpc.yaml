@@ -13,12 +13,12 @@ grpc:
 
 routing:
   source_rules:
-    - field: "_source"
-      mode: "key_value_use"
+    - field: _source
+      mode: key_value_use
 
 destinations:
-  default: "loader"
+  default: loader
 
 loader:
-  transport: "grpc"
-  grpc_endpoint: "http://dfe-loader:50051"
+  transport: grpc
+  grpc_endpoint: http://dfe-loader:50051

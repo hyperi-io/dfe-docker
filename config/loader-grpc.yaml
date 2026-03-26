@@ -8,12 +8,17 @@
 
 # gRPC transport: loader listens on :50051 for DFETransport/Push from dfe-receiver.
 
-transport: "grpc"
-
-grpc:
-  listen: "0.0.0.0:50051"
+transport: grpc
 
 clickhouse:
   hosts:
-    - "clickhouse:8123"
+    - clickhouse:8123
   database: dfe
+  protocol: http
+
+grpc:
+  listen: 0.0.0.0:50051
+
+routing:
+  dlq:
+    enabled: false

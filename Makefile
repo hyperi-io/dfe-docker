@@ -40,11 +40,18 @@ dev-logs: ## Tail all service logs
 
 .PHONY: ci-up
 ci-up: ## Start stack using published registry images (no local build)
-	docker compose down -v && docker compose -f docker-compose.yml $(TRANSPORT_PROFILES) up -d --build
+	docker compose -f docker-compose.yml $(TRANSPORT_PROFILES) build --no-cache --pull
+	docker compose -f docker-compose.yml $(TRANSPORT_PROFILES) up -d
 
 .PHONY: pull
 pull: ## Pull latest images from registry
 	docker compose -f docker-compose.yml pull
+
+.PHONY: rebuild
+rebuild: ## Force rebuild DFE images (removes old, pulls fresh)
+	docker rmi -f dfe-loader:$${DFE_LOADER_VERSION:-latest} dfe-receiver:$${DFE_RECEIVER_VERSION:-latest} 2>/dev/null
+	docker compose -f docker-compose.yml $(TRANSPORT_PROFILES) build --no-cache --pull
+	docker compose -f docker-compose.yml $(TRANSPORT_PROFILES) up -d
 
 # ---------------------------------------------------------------------------
 # Infrastructure only (Kafka + ClickHouse)
@@ -93,7 +100,7 @@ test: ## Send test events and verify in ClickHouse
 
 .PHONY: test-e2e
 test-e2e: ## End-to-end test executor (pass test names via E2E_TESTS)
-	@./scripts/test-e2e.sh $(E2E_TESTS)
+	@python3 ./scripts/test-e2e.py $(E2E_TESTS)
 
 .PHONY: test-vector
 test-vector: ## Feed events via Vector (HTTP + gRPC inbound)

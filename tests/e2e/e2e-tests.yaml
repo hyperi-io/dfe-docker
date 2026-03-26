@@ -13,7 +13,7 @@
 #
 # Available profiles: full, full-kafka, bare-bones, debug
 
-defaults:
+global:
   data_file: tests/e2e/data/events.jsonl
   mode: ci
   profile: full-kafka
@@ -31,3 +31,4 @@ tests:
     profile: full
     receiver_config: config/receiver-grpc.yaml
     loader_config: config/loader-grpc.yaml
+    teardown: false
