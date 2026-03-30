@@ -41,7 +41,7 @@ from urllib.request import Request, urlopen
 # - Paths and identifiers for the project and test run
 # ------------------------------------------------------------------------------
 PROJECT_DIR = Path(__file__).resolve().parent.parent
-TMP_DIR = PROJECT_DIR / ".tmp" / ".test-e2e"
+TMP_DIR = PROJECT_DIR / ".tmp"
 RUN_ID = f"e2e-{datetime.now(timezone.utc).strftime("%Y%m%d%H%M%S")}"
 
 # ------------------------------------------------------------------------------
@@ -50,9 +50,16 @@ RUN_ID = f"e2e-{datetime.now(timezone.utc).strftime("%Y%m%d%H%M%S")}"
 # ------------------------------------------------------------------------------
 MODES = ["dev", "ci"]
 DEFAULTS = {
-    "mode": "ci",
-    "profile": "full",
-    "teardown": True
+    "global": {
+        "data_file": "tests/e2e/data/events.jsonl",
+        "mode": "ci",
+        "persistent_services": ["clickhouse"],
+        "profile": "full"
+    },
+    "clickhouse": {
+        "drop_database": True,
+        "table_ddl_file_path": "clickhouse/base_table_ddl.sql"
+    }
 }
 
 # ------------------------------------------------------------------------------
@@ -145,7 +152,9 @@ class TestCase:
     database: str
     table: str
     marker: str
-    teardown: bool = True
+    ch_drop_database: str
+    ch_table_ddl_file_path: str
+    persistent_services: list[str] = field(default_factory = list)
     expected_topics: list[str] = field(default_factory = list)
 
 # ------------------------------------------------------------------------------
@@ -268,17 +277,19 @@ def load_config(path):
 # Get Config
 # - Gets a config field for a test, with fallback to defaults
 # ------------------------------------------------------------------------------
-def get_config(config, index, field, default_value = None, required = False, is_list = False):
-    test_value = config["tests"][index].get(field)
+def get_config(config, path, default_value = None, required = False, is_list = False):
+    path = path.split(".") if ("." in path) else [path]
+    test_value = config
+    for key in path:
+        if (isinstance(test_value, dict) and key in test_value):
+            test_value = test_value[key]
+        else:
+            test_value = None
+            break
     if (test_value is not None):
         if (is_list):
             return test_value if (isinstance(test_value, list)) else []
         return test_value
-    global_value = config.get("global", {}).get(field)
-    if (global_value is not None):
-        if (is_list):
-            return global_value if (isinstance(test_value, list)) else []
-        return global_value
     if (is_list):
         default_value = DEFAULTS.get(field)
         if (default_value is not None):
@@ -287,8 +298,29 @@ def get_config(config, index, field, default_value = None, required = False, is_
     if (default_value is not None):
         return default_value
     if (required):
-        error(f"Test '{config['tests'][index].get('name', f'index {index}')}' missing required field '{field}'")
+        error(f"Test '{config.get("name")}' missing required field at '{path}'")
     return None
+
+# ------------------------------------------------------------------------------
+# Generate Temporary Loader Config
+# - Generates a temporary loader config file with the tests database and table
+# ------------------------------------------------------------------------------
+def generate_tmp_loader_config(loader_config, database, table):
+    TMP_DIR.mkdir(parents = True, exist_ok = True)
+
+    with open(PROJECT_DIR / loader_config) as config_file:
+        config = yaml.safe_load(config_file)
+
+    config.setdefault("clickhouse", {})["database"] = database
+    config.setdefault("routing", {})["default_db"] = database
+    config.setdefault("routing", {})["default_table"] = table
+
+    generated_path = TMP_DIR / f"loader-{RUN_ID}-{table}.yaml"
+    with open(generated_path, "w") as generated_file:
+        yaml.safe_dump(config, generated_file, default_flow_style = False)
+
+    LOGGER.debug(f"Generated loader config: '{generated_path}'")
+    return str(generated_path.relative_to(PROJECT_DIR))
 
 
 # ==============================================================================
@@ -329,9 +361,9 @@ def generate_compose_override(profile, receiver_config, loader_config):
     services = services_for_profile(profile)
     receiver_service = next(service for service in services if (service.startswith("dfe-receiver")))
     loader_service = next(service for service in services if (service.startswith("dfe-loader")))
-    
-    TMP_DIR.mkdir(exist_ok = True)
-    override_file = TMP_DIR / "docker-compose.e2e.yaml"
+
+    TMP_DIR.mkdir(parents = True, exist_ok = True)
+    override_file = TMP_DIR / f"docker-compose.{RUN_ID}.e2e.yaml"
 
     content = (
         "services:\n"
@@ -399,7 +431,7 @@ def run_cmd(args, check = True, capture = False, cwd = None):
 # Stack Up
 # - Starts the Docker stack with the appropriate compose files and profile
 # ------------------------------------------------------------------------------
-def stack_up(mode, profile, receiver_config, loader_config):
+def stack_up(mode, profile, receiver_config, loader_config, expected_topics = None):
     LOGGER.info("Starting stack...")
     LOGGER.debug(f"Services for profile '{profile}':")
     for service in services_for_profile(profile):
@@ -414,8 +446,40 @@ def stack_up(mode, profile, receiver_config, loader_config):
         compose_files += ["-f", "docker-compose.override.yml"]
 
     compose_files += ["-f", override_file]
-    profile_flags = ["--profile", profile]
 
+    # Kafka profiles: bring up infra first, create topics, then start the full profile.
+    # The loader fails on startup if no matching topics exist on the broker.
+    if ("kafka" in profile and expected_topics):
+        infra_cmd = ["docker", "compose"] + compose_files + ["--profile", "infra"]
+        infra_up = infra_cmd + ["up", "-d"]
+        if (mode == "dev"):
+            infra_up += ["--build"]
+        elif (mode == "ci"):
+            build_result = run_cmd(infra_cmd + ["build", "--no-cache", "--pull"], check = False, capture = not(LOG_LEVEL == "DEBUG"))
+            if (build_result.returncode != 0):
+                filtered = filter_build_output(build_result.stderr or build_result.stdout or "")
+                LOGGER.error(f"Docker compose build failed: {filtered if (filtered) else (build_result.stderr or build_result.stdout)}")
+                return False
+
+        LOGGER.info("Starting 'Kafka' infrastructure...")
+        infra_result = run_cmd(infra_up, check = False, capture = not(LOG_LEVEL == "DEBUG"))
+        if (infra_result.returncode != 0):
+            filtered = filter_build_output(infra_result.stderr or infra_result.stdout or "")
+            LOGGER.error(f"'Kafka' infrastructure failed to start: {filtered if (filtered) else (infra_result.stderr or infra_result.stdout)}")
+            return False
+
+        LOGGER.info("Waiting for 'Kafka' to be healthy...")
+        wait_cmd = ["docker", "compose"] + compose_files + ["--profile", "infra", "up", "--wait", "--wait-timeout", "60", "-d"]
+        wait_result = run_cmd(wait_cmd, check = False, capture = not(LOG_LEVEL == "DEBUG"))
+        if (wait_result.returncode != 0):
+            LOGGER.error("'Kafka' broker not healthy within timeout")
+            return False
+        LOGGER.info("'Kafka' is healthy")
+
+        if not(create_topics(expected_topics)):
+            return False
+
+    profile_flags = ["--profile", profile]
     base_cmd = ["docker", "compose"] + compose_files + profile_flags
     build_args = base_cmd + ["build", "--no-cache", "--pull"]
     up_args = base_cmd + ["up", "-d"]
@@ -428,7 +492,7 @@ def stack_up(mode, profile, receiver_config, loader_config):
             return False
     elif (mode == "dev"):
         up_args += ["--build"]
-    
+
     up_result = run_cmd(up_args, check = False, capture = not(LOG_LEVEL == "DEBUG"))
     if (up_result.returncode != 0):
         filtered = filter_build_output(up_result.stderr or up_result.stdout or "")
@@ -451,17 +515,37 @@ def stack_is_up():
 # Stack Down
 # - Stops the Docker stack
 # ------------------------------------------------------------------------------
-def stack_down():
+def stack_down(keep_services = None):
     base_cmd = ["docker", "compose"]
-    LOGGER.info("Stopping stack...")
 
     profiles = parse_compose_profiles()
     profile_flags = []
     for profile in profiles:
         profile_flags += ["--profile", profile]
-    
-    down_args = base_cmd + profile_flags + ["down", "--remove-orphans"]
-    run_cmd(down_args, check = False, capture = not(LOG_LEVEL == "DEBUG"))
+
+    if (keep_services):
+        all_services = set()
+        for services in profiles.values():
+            all_services.update(services)
+        stop_services = [service for service in all_services if (service not in keep_services)]
+
+        if not(stop_services):
+            LOGGER.info("All running services are in persistent_services, skipping teardown")
+            return
+        
+        if (len(keep_services) > 1):
+            keep_services_str = f"{", ".join(keep_services[:-1])} and {keep_services[-1]}"
+        else:
+            keep_services_str = keep_services[0]
+        LOGGER.info(f"Stopping services (keeping {keep_services_str})...")
+        stop_args = base_cmd + profile_flags + ["stop"] + stop_services
+        run_cmd(stop_args, check = False, capture = not(LOG_LEVEL == "DEBUG"))
+        rm_args = base_cmd + profile_flags + ["rm", "-f"] + stop_services
+        run_cmd(rm_args, check = False, capture = not(LOG_LEVEL == "DEBUG"))
+    else:
+        LOGGER.info("Stopping stack...")
+        down_args = base_cmd + profile_flags + ["down", "--remove-orphans"]
+        run_cmd(down_args, check = False, capture = not(LOG_LEVEL == "DEBUG"))
 
 # ------------------------------------------------------------------------------
 # Dump Logs
@@ -522,6 +606,23 @@ def wait_for_stack():
 # ==============================================================================
 
 # ------------------------------------------------------------------------------
+# Create Table
+# - Creates the ClickHouse database/table before each test run
+# ------------------------------------------------------------------------------
+def create_table(database, table, ch_table_ddl_file_path):
+    query = f"CREATE DATABASE IF NOT EXISTS {database}"
+    LOGGER.debug(f"Creating database '{database}' with `{query}`...")
+    ch_query(query)
+    time.sleep(1)
+    
+    with open(ch_table_ddl_file_path, 'r') as ddl_file:
+        ddl_template = ddl_file.read()
+    query = ddl_template.replace("{database}", database).replace("{table}", table)
+    LOGGER.debug(f"Creating table '{database}.{table}' with `{query}`...")
+    ch_query(query)
+    time.sleep(1)
+
+# ------------------------------------------------------------------------------
 # Truncate Table
 # - Truncates the ClickHouse table before each test run
 # ------------------------------------------------------------------------------
@@ -535,10 +636,10 @@ def clean_table(database, table):
 # Send Events
 # - Reads events from a file and sends to the receiver
 # ---------------------------------------------------------------------------
-def send_events(ctx, test_name, marker, data_file_name):
+def send_events(ctx, test_name, marker, data_file_name, database, table):
     data_file_path = PROJECT_DIR / data_file_name
     if not(data_file_path.exists()):
-        error(test_name, f"Data file '{data_file_path}' could not be found")
+        error(f"Data file '{data_file_path}' could not be found", test_name)
 
     events = data_file_path.read_text().splitlines()
     num_events = len(events)
@@ -551,7 +652,8 @@ def send_events(ctx, test_name, marker, data_file_name):
 
     for line in events:
         event = json.loads(line)
-        event["metadata"] = json.dumps({"marker": marker, "test_name": test_name})
+        event["_source"] = table
+        event["_tags"] = json.dumps({"marker": marker, "test_name": test_name})
         enriched = json.dumps(event, separators = (",", ":"))
 
         try:
@@ -582,7 +684,8 @@ def verify_table(ctx, test_name, database, table, marker, max_attempts = 3):
 
     actual = 0
     for attempt in range(1, max_attempts + 1):
-        raw = ch_query(f"SELECT count() FROM {database}.{table} WHERE metadata LIKE '%{marker}%'")
+        # TODO: CHANGE TO JSON OBJECT ONCE TAGS BACK TO JSON
+        raw = ch_query(f"SELECT count() FROM {database}.{table} WHERE JSONExtractString(_tags, 'marker') == '{marker}'")
         try:
             actual = int(raw.strip())
         except (ValueError, AttributeError):
@@ -601,11 +704,40 @@ def verify_table(ctx, test_name, database, table, marker, max_attempts = 3):
         mark_fail(ctx, f"[{test_name}] '{database}.{table}': Expected {expected}, got {actual}")
 
 # ---------------------------------------------------------------------------
+# Create Topics
+# - Pre-creates expected Kafka topics before dfe-loader starts consuming
+# ---------------------------------------------------------------------------
+def create_topics(expected_topics):
+    if not(expected_topics):
+        return True
+
+    LOGGER.info(f"Creating {len(expected_topics)} 'Kafka' topic{"s" if (len(expected_topics) > 1) else ""}...")
+    for topic in expected_topics:
+        if not(topic):
+            continue
+        LOGGER.debug(f"Creating topic: '{topic}'...")
+        create_cmd = [
+            "docker", "compose", "exec", "-T", "kafka",
+            "/opt/kafka/bin/kafka-topics.sh",
+            "--bootstrap-server", "kafka:9092",
+            "--create", "--if-not-exists",
+            "--topic", topic,
+            "--partitions", "1",
+            "--replication-factor", "1",
+        ]
+        result = run_cmd(create_cmd, check = False, capture = True)
+        if (result.returncode != 0):
+            LOGGER.error(f"Failed to create topic '{topic}': {result.stderr or result.stdout}")
+            return False
+    LOGGER.info(f"{len(expected_topics)} topic{"s" if (len(expected_topics) > 1) else ""} created")
+    return True
+
+# ---------------------------------------------------------------------------
 # Verify Topics
 # - Checks if the expected Kafka topics exist in the Kafka container
 # ---------------------------------------------------------------------------
 def verify_topics(ctx, test_name, expected_topics):
-    LOGGER.info("Verifying Kafka topics...")
+    LOGGER.info("Verifying 'Kafka' topics...")
     
     base_cmd = ["docker", "compose", "exec", "-T", "kafka", "/opt/kafka/bin/kafka-topics.sh", "--bootstrap-server", "kafka:9092", "--list"]
     result = run_cmd(base_cmd, check = False, capture = True)
@@ -615,9 +747,9 @@ def verify_topics(ctx, test_name, expected_topics):
         if not(topic):
             continue
         if (topic in topics):
-            mark_pass(ctx, f"[{test_name}] Kafka topic '{topic}' exists")
+            mark_pass(ctx, f"[{test_name}] 'Kafka' topic '{topic}' exists")
         else:
-            mark_fail(ctx, f"[{test_name}] Kafka topic '{topic}' not found")
+            mark_fail(ctx, f"[{test_name}] 'Kafka' topic '{topic}' not found")
 
 
 # ==============================================================================
@@ -629,19 +761,20 @@ def verify_topics(ctx, test_name, expected_topics):
 # Resolve Test Case
 # - Builds a TestCase object from the config
 # ------------------------------------------------------------------------------
-def resolve_test_case(config, index):
-    test_name = get_config(config, index, "name", required = True)
+def resolve_test_case(test_config, global_config):
+    test_name = get_config(test_config, "name", required = True)
     return TestCase(
         name = test_name,
-        mode = get_config(config, index, "mode", default_value = DEFAULTS["mode"], required = True),
-        profile = get_config(config, index, "profile", default_value = DEFAULTS["profile"], required = True),
-        data_file = get_config(config, index, "data_file", required = True),
-        receiver_config = get_config(config, index, "receiver_config", required = True),
-        loader_config = get_config(config, index, "loader_config", required = True),
-        database = "dfe",
-        table = "default",
-        teardown = get_config(config, index, "teardown", default_value = DEFAULTS["teardown"], required = True),
-        expected_topics = get_config(config, index, "expected_topics", required = False, is_list = True),
+        mode = get_config(global_config, "mode", default_value = DEFAULTS.get("global", {}).get("mode", None)),
+        profile = get_config(test_config, "profile", default_value = get_config(global_config, "profile", default_value = DEFAULTS.get("global", {}).get("profile", None)), required = True),
+        data_file = get_config(test_config, "data_file", default_value = get_config(global_config, "data_file", default_value = DEFAULTS.get("global", {}).get("data_file", None)), required = True),
+        receiver_config = get_config(test_config, "receiver_config", required = True),
+        loader_config = get_config(test_config, "loader_config", required = True),
+        database = get_config(test_config, "database", default_value = RUN_ID, required = True).replace("-", "_"),
+        table = get_config(test_config, "table", default_value = test_name, required = True).replace("-", "_"),
+        ch_drop_database = get_config(global_config, "clickhouse.drop_database", default_value = DEFAULTS.get("clickhouse", {}.get("drop_database", None)), required = True),
+        ch_table_ddl_file_path = get_config(test_config, "clickhouse.table_ddl_file_path", default_value = get_config(global_config, "clickhouse.table_ddl_file_path", default_value = DEFAULTS.get("clickhouse", {}).get("table_ddl_file_path", None)), required = True),
+        expected_topics = get_config(test_config, "expected_topics", required = False, is_list = True),
         marker = f"{RUN_ID}-{test_name}"
     )
 
@@ -649,7 +782,7 @@ def resolve_test_case(config, index):
 # Run Test
 # - Executes the test flow for a given TestCase
 # ------------------------------------------------------------------------------
-def run_test(ctx, test):
+def run_test(ctx, test, persistent_services):
     # Ensure configuration files exist
     if not (PROJECT_DIR / test.receiver_config).exists():
         error(f"Receiver configuration '{PROJECT_DIR / test.receiver_config}' not found")
@@ -665,28 +798,34 @@ def run_test(ctx, test):
     print(f"  - Data File: {test.data_file}")
     print(f"  - Receiver Config: {test.receiver_config}")
     print(f"  - Loader Config: {test.loader_config}")
-    if not(test.teardown):
-        print(f"  - Teardown: {test.teardown}")
+    if (test.database != RUN_ID.replace("-", "_")):
+        print(f"  - ClickHouse Database: {test.database}")
+    if (test.table != test.name.replace("-", "_")):
+        print(f"  - ClickHouse Table: {test.table}")
     print("------------------------------------------------------------")
 
-    # Start the stack with the appropriate configuration for the test
-    if not(stack_up(test.mode, test.profile, test.receiver_config, test.loader_config)):
+    # Generate a per-run loader config with the test database and table
+    loader_config = generate_tmp_loader_config(test.loader_config, test.database, test.table)
+
+    # Start the stack (Kafka profiles: infra first, create topics, then full stack)
+    if not(stack_up(test.mode, test.profile, test.receiver_config, loader_config, test.expected_topics)):
         mark_fail(ctx, f"[{test.name}] Stack failed to start")
-        if (test.teardown):
-            stack_down()
+        stack_down(keep_services = persistent_services or None)
         return
 
     # Wait for the stack to be healthy before proceeding
     if not(wait_for_stack()):
         mark_fail(ctx, f"[{test.name}] Stack failed to reach healthy state")
         dump_logs()
-        if (test.teardown):
-            stack_down()
+        stack_down(keep_services = persistent_services or None)
         return
 
+    # Create the ClickHouse database and table for the test
+    create_table(test.database, test.table, test.ch_table_ddl_file_path)
+    
     # Clean the ClickHouse table to ensure fresh state and send events
     clean_table(test.database, test.table)
-    send_events(ctx, test.name, test.marker, test.data_file)
+    send_events(ctx, test.name, test.marker, test.data_file, test.database, test.table)
     
     # Verify the events have been ingested into ClickHouse with the correct marker
     print()
@@ -700,10 +839,8 @@ def run_test(ctx, test):
     # Dump container logs for debugging purposes, then tear down the stack if configured to do so
     dump_logs()
     print()
-    if (test.teardown and stack_is_up()):
-        stack_down()
-    else:
-        LOGGER.info(f"Teardown disabled - stack left running for '{test.name}'")
+    if (stack_is_up()):
+        stack_down(keep_services = persistent_services or None)
 
     # Print footer for test separation in logs
     print("------------------------------------------------------------")
@@ -714,13 +851,15 @@ def run_test(ctx, test):
 
 # ------------------------------------------------------------------------------
 # Cleanup
-# - Removes any temporary files created during the test run
+# - Removes any temporary files and databases created during the test run
 # ------------------------------------------------------------------------------
-def cleanup():
+def cleanup(clickhouse_config):
     if (TMP_DIR.exists()):
         for path in TMP_DIR.iterdir():
             path.unlink()
         TMP_DIR.rmdir()
+    if (clickhouse_config.get("drop_database", False)):
+        ch_query(f"DROP DATABASE IF EXISTS {RUN_ID.replace("-", "_")}")
 
 # ------------------------------------------------------------------------------
 # Error
@@ -781,9 +920,10 @@ def main():
     config = load_config(TEST_CONFIG)
 
     # Tear down any existing stack before starting
+    persistent_services = config.get("global", {}).get("persistent_services", None) or DEFAULTS.get("global", {}).get("persistent_services", None) or None
     if (stack_is_up()):
         print()
-        stack_down()
+        stack_down(persistent_services)
     
     # Run test based on CLI args or run all if no args provided
     test_count = len(config.get("tests", []))
@@ -793,17 +933,17 @@ def main():
             exists = False
             for index in range(test_count):
                 if (config["tests"][index].get("name") == test_name):
-                    run_test(ctx, resolve_test_case(config, index))
+                    run_test(ctx, resolve_test_case(config["tests"][index], config.get("global", {})), persistent_services)
                     exists = True
                     break
             if not(exists):
                 mark_skip(ctx, f"Test name '{test_name}' could not be found in config '{TEST_CONFIG}'")
     else:
         for index in range(test_count):
-            run_test(ctx, resolve_test_case(config, index))
+            run_test(ctx, resolve_test_case(config["tests"][index], config.get("global", {})), persistent_services)
     
     # Post test execution cleanup
-    cleanup()
+    cleanup(config.get("clickhouse", {}))
     
     # Capture end time for test suite completion and calculate duration
     end_time = datetime.now().astimezone()

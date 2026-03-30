@@ -15,9 +15,15 @@
 
 global:
   data_file: tests/e2e/data/events.jsonl
-  mode: ci
+  mode: dev
   profile: full-kafka
-  teardown: true
+  persistent_services:
+    - clickhouse
+    - kafka-ui
+
+clickhouse:
+  drop_database: false
+  table_ddl_file_path: clickhouse/base_table_ddl.sql
 
 tests:
   - name: simple-kafka
@@ -26,9 +32,9 @@ tests:
     loader_config: config/loader-kafka.yaml
     expected_topics:
       - default_land
+      - simple_kafka_land
 
   - name: simple-grpc
     profile: full
     receiver_config: config/receiver-grpc.yaml
     loader_config: config/loader-grpc.yaml
-    teardown: false

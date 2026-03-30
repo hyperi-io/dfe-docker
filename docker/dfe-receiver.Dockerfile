@@ -54,9 +54,11 @@ RUN sed -i \
     -e 's|"cmake-build", "ssl", "sasl"|"cmake-build", "ssl", "sasl", "zstd", "zstd-pkg-config"|' \
     Cargo.toml
 
-RUN cargo build --release
-
-RUN cp target/release/dfe-receiver /usr/local/bin/
+# Cache mount keeps compiled deps across builds; source changes trigger recompile
+# but dep crates stay cached in /cache/cargo-target (~30s rebuild vs ~3min full).
+RUN --mount=type=cache,id=dfe-receiver-target,target=/cache/cargo-target \
+    CARGO_TARGET_DIR=/cache/cargo-target cargo build --release \
+    && cp /cache/cargo-target/release/dfe-receiver /usr/local/bin/
 
 FROM ubuntu:24.04
 
