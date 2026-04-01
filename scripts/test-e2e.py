@@ -50,12 +50,10 @@ TMP_DIR = PROJECT_DIR / ".tmp"
 # ------------------------------------------------------------------------------
 MODES = ["dev", "ci"]
 DEFAULTS = {
-    "global": {
-        "data_file": "tests/e2e/data/events.jsonl",
-        "mode": "ci",
-        "persistent_services": ["clickhouse"],
-        "profile": "full"
-    },
+    "data_file": "tests/e2e/data/events.jsonl",
+    "mode": "ci",
+    "persistent_services": ["clickhouse"],
+    "profiles": ["full"],
     "clickhouse": {
         "drop_database": True,
         "table_ddl_file_path": "clickhouse/base_table_ddl.sql"
@@ -102,6 +100,10 @@ DFE_RECEIVER_HEALTH_URL = os.environ.get(
     "DFE_RECEIVER_HEALTH_URL",
     f"http://localhost:{os.environ.get("DFE_RECEIVER_PROMETHEUS_PORT", "9090")}/health/ready",
 )
+DFE_ARCHIVER_HEALTH_URL = os.environ.get(
+    "DFE_ARCHIVER_HEALTH_URL",
+    f"http://localhost:{os.environ.get("DFE_ARCHIVER_PROMETHEUS_PORT", "9093")}/health/ready",
+)
 DFE_RECEIVER_INGEST_URL = os.environ.get(
     "DFE_RECEIVER_INGEST_URL",
     f"http://localhost:{os.environ.get("DFE_RECEIVER_HTTP_PORT", "8080")}/ingest",
@@ -144,15 +146,16 @@ class TestContext:
 @dataclass
 class TestCase:
     name: str
-    profile: str
+    profiles: list[str]
     data_file: str
-    receiver_config: str
-    loader_config: str
     database: str
     table: str
     marker: str
     ch_drop_database: str
     ch_table_ddl_file_path: str
+    archiver_config: str | None = None
+    loader_config: str | None = None
+    receiver_config: str | None = None
     persistent_services: list[str] = field(default_factory = list)
     expected_topics: list[str] = field(default_factory = list)
 
@@ -274,36 +277,28 @@ def load_config(path):
 
 # ------------------------------------------------------------------------------
 # Get Config
-# - Gets a config field for a test, with fallback to defaults
+# - Resolves a config value: test_config → global_config → DEFAULTS
+#   Each tier is searched independently — no merging or combining
 # ------------------------------------------------------------------------------
-def get_config(config, path, default_value = None, required = False, is_list = False):
-    path = path.split(".") if ("." in path) else [path]
-    test_value = config
-    for key in path:
-        if (isinstance(test_value, dict) and key in test_value):
-            test_value = test_value[key]
-        else:
-            test_value = None
-            break
-    if (test_value is not None):
-        if (is_list):
-            return test_value if (isinstance(test_value, list)) else []
-        return test_value
-    if (is_list):
-        default_value = DEFAULTS
-        for key in path:
-            if (isinstance(default_value, dict) and key in default_value):
-                default_value = default_value[key]
+def get_config(path, test_config, global_config, default_value = None, required = False, is_list = False):
+    keys = path.split(".") if ("." in path) else [path]
+    for config in [test_config, global_config, DEFAULTS]:
+        value = config
+        for key in keys:
+            if (isinstance(value, dict) and key in value):
+                value = value[key]
             else:
-                default_value = None
+                value = None
                 break
-        if (default_value is not None):
-            return default_value if (isinstance(default_value, list)) else []
+        if (value is not None):
+            if (is_list):
+                return value if (isinstance(value, list)) else []
+            return value
     if (default_value is not None):
         return default_value
     if (required):
-        error(f"Test '{config.get("name")}' missing required field at '{path}'")
-    return None
+        error(f"Missing required config field '{path}'")
+    return [] if (is_list) else None
 
 # ------------------------------------------------------------------------------
 # Generate Temporary Loader Config
@@ -348,36 +343,65 @@ def parse_compose_profiles():
     return profile_map
 
 # ------------------------------------------------------------------------------
-# Services for Profile
-# - Returns the list of services associated with a given profile
+# Services for Profiles
+# - Returns the deduplicated list of services associated with the given profiles
 # ------------------------------------------------------------------------------
-def services_for_profile(profile):
+def services_for_profiles(profiles):
     profile_map = parse_compose_profiles()
-    if (profile not in profile_map):
-        error(f"Unknown profile: '{profile}'")
-    return profile_map[profile]
+    services = []
+    seen = set()
+    for profile in profiles:
+        if (profile not in profile_map):
+            error(f"Unknown profile: '{profile}'")
+        for service in profile_map[profile]:
+            if (service not in seen):
+                seen.add(service)
+                services.append(service)
+    return services
+
+# ------------------------------------------------------------------------------
+# Has Service
+# - Checks if a given service type is present in the resolved services for profiles
+# ------------------------------------------------------------------------------
+def has_service(profiles, prefix):
+    return any(service.startswith(prefix) for service in services_for_profiles(profiles))
 
 # ------------------------------------------------------------------------------
 # Generate Compose Override
 # - Creates a temp docker-compose override file to mount test-specific configs
 # ------------------------------------------------------------------------------
-def generate_compose_override(profile, receiver_config, loader_config):
-    services = services_for_profile(profile)
-    receiver_service = next(service for service in services if (service.startswith("dfe-receiver")))
-    loader_service = next(service for service in services if (service.startswith("dfe-loader")))
+def generate_compose_override(profiles, archiver_config, receiver_config, loader_config):
+    services = services_for_profiles(profiles)
 
     TMP_DIR.mkdir(parents = True, exist_ok = True)
     override_file = TMP_DIR / f"docker-compose.{RUN_ID}.e2e.yaml"
 
-    content = (
-        "services:\n"
-        f"  {receiver_service}:\n"
-        f"    volumes:\n"
-        f"      - ./{receiver_config}:/etc/dfe-receiver/config.yaml:ro\n"
-        f"  {loader_service}:\n"
-        f"    volumes:\n"
-        f"      - ./{loader_config}:/etc/dfe/loader.yaml:ro\n"
-    )
+    content = "services:\n"
+
+    if (archiver_config):
+        archiver_service = next(service for service in services if (service.startswith("dfe-archiver")))
+        content += (
+            f"  {archiver_service}:\n"
+            f"    volumes:\n"
+            f"      - ./{archiver_config}:/etc/dfe-archiver/config.yaml:ro\n"
+        )
+
+    if (receiver_config):
+        receiver_service = next(service for service in services if (service.startswith("dfe-receiver")))
+        content += (
+            f"  {receiver_service}:\n"
+            f"    volumes:\n"
+            f"      - ./{receiver_config}:/etc/dfe-receiver/config.yaml:ro\n"
+        )
+
+    if (loader_config):
+        loader_service = next(service for service in services if (service.startswith("dfe-loader")))
+        content += (
+            f"  {loader_service}:\n"
+            f"    volumes:\n"
+            f"      - ./{loader_config}:/etc/dfe/loader.yaml:ro\n"
+        )
+
     override_file.write_text(content)
     LOGGER.debug(f"Generated compose override: '{override_file}'")
     return str(override_file)
@@ -422,8 +446,7 @@ def filter_build_output(text):
 # ------------------------------------------------------------------------------
 def build_images(mode, profiles):
     services = set()
-    for profile in profiles:
-        services.update(services_for_profile(profile))
+    services.update(services_for_profiles(profiles))
 
     # Deduplicate to base image names as multiple compose services share the same
     image_to_service = {}
@@ -481,13 +504,13 @@ def run_cmd(args, check = True, capture = False, cwd = None):
 # Stack Up
 # - Starts the Docker stack with the appropriate compose files and profile
 # ------------------------------------------------------------------------------
-def stack_up(mode, profile, receiver_config, loader_config, expected_topics = None):
+def stack_up(mode, profiles, archiver_config, receiver_config, loader_config, expected_topics = None):
     LOGGER.info("Starting stack...")
-    LOGGER.debug(f"Services for profile '{profile}':")
-    for service in services_for_profile(profile):
+    LOGGER.debug(f"Services for profiles '{profiles}':")
+    for service in services_for_profiles(profiles):
         LOGGER.debug(f"  - {service}")
 
-    override_file = generate_compose_override(profile, receiver_config, loader_config)
+    override_file = generate_compose_override(profiles, archiver_config, receiver_config, loader_config)
 
     compose_files = ["-f", "docker-compose.yml"]
     if (mode not in MODES):
@@ -499,29 +522,32 @@ def stack_up(mode, profile, receiver_config, loader_config, expected_topics = No
 
     # Kafka profiles: bring up infra first, create topics, then start the full profile.
     # The loader fails on startup if no matching topics exist on the broker.
-    if ("kafka" in profile and expected_topics):
+    has_kafka = any("kafka" in profile for profile in profiles)
+    if (has_kafka and expected_topics):
         infra_cmd = ["docker", "compose"] + compose_files + ["--profile", "infra"]
         infra_up = infra_cmd + ["up", "-d"]
 
-        LOGGER.info("Starting 'Kafka' infrastructure...")
+        LOGGER.info("Preparing 'Kafka' service...")
         infra_result = run_cmd(infra_up, check = False, capture = not(LOG_LEVEL == "DEBUG"))
         if (infra_result.returncode != 0):
             filtered = filter_build_output(infra_result.stderr or infra_result.stdout or "")
             LOGGER.error(f"'Kafka' infrastructure failed to start: {filtered if (filtered) else (infra_result.stderr or infra_result.stdout)}")
             return False
 
-        LOGGER.info("Waiting for 'Kafka' to be healthy...")
+        LOGGER.debug("Waiting for 'Kafka' to be healthy...")
         wait_cmd = ["docker", "compose"] + compose_files + ["--profile", "infra", "up", "--wait", "--wait-timeout", "60", "-d"]
         wait_result = run_cmd(wait_cmd, check = False, capture = not(LOG_LEVEL == "DEBUG"))
         if (wait_result.returncode != 0):
             LOGGER.error("'Kafka' broker not healthy within timeout")
             return False
-        LOGGER.info("'Kafka' is healthy")
+        LOGGER.debug("'Kafka' is healthy")
 
         if not(create_topics(expected_topics)):
             return False
 
-    profile_flags = ["--profile", profile]
+    profile_flags = []
+    for profile in profiles:
+        profile_flags += ["--profile", profile]
     base_cmd = ["docker", "compose"] + compose_files + profile_flags
     up_args = base_cmd + ["up", "-d"]
 
@@ -620,12 +646,22 @@ def wait_for_service(name, url, max_attempts = 30):
 # Wait For Stack
 # - Waits for all required services in the stack to become healthy
 # ------------------------------------------------------------------------------
-def wait_for_stack():
-    required_services = {
-        "ClickHouse": f"{CLICKHOUSE_URL}/ping",
-        "dfe-loader": f"{DFE_LOADER_HEALTH_URL}",
-        "dfe-receiver": f"{DFE_RECEIVER_HEALTH_URL}"
+def wait_for_stack(profiles):
+    services = services_for_profiles(profiles)
+
+    health_checks = {
+        "clickhouse": ("ClickHouse", f"{CLICKHOUSE_URL}/ping"),
+        "dfe-archiver": ("dfe-archiver", DFE_ARCHIVER_HEALTH_URL),
+        "dfe-loader": ("dfe-loader", DFE_LOADER_HEALTH_URL),
+        "dfe-receiver": ("dfe-receiver", DFE_RECEIVER_HEALTH_URL),
     }
+
+    required_services = {}
+    for service in services:
+        for prefix, (name, url) in health_checks.items():
+            if (service.startswith(prefix) and name not in required_services):
+                required_services[name] = url
+
     for name, url in required_services.items():
         if not(wait_for_service(name, url)):
             return False
@@ -713,6 +749,7 @@ def send_events(ctx, test_name, marker, data_file_name, database, table):
 def verify_table(ctx, test_name, database, table, marker, max_attempts = 3):
     expected = ctx.total_sent
     LOGGER.info(f"Verifying events in ClickHouse table '{database}.{table}' (marker: '{marker}')...")
+    time.sleep(5)
 
     actual = 0
     for attempt in range(1, max_attempts + 1):
@@ -727,8 +764,8 @@ def verify_table(ctx, test_name, database, table, marker, max_attempts = 3):
             LOGGER.info(f"    Attempt {attempt}/{max_attempts}: got {actual}/{expected}")
             break
         else:
-            LOGGER.info(f"    Attempt {attempt}/{max_attempts}: got {actual}/{expected}, retrying in 10s...")
-            time.sleep(10)
+            LOGGER.info(f"    Attempt {attempt}/{max_attempts}: got {actual}/{expected}, retrying in 5s...")
+            time.sleep(5)
 
     if (actual >= expected):
         mark_pass(ctx, f"[{test_name}] '{database}.{table}': {actual}/{expected}")
@@ -743,7 +780,7 @@ def create_topics(expected_topics):
     if not(expected_topics):
         return True
 
-    LOGGER.info(f"Creating {len(expected_topics)} 'Kafka' topic{"s" if (len(expected_topics) > 1) else ""}...")
+    LOGGER.debug(f"Creating {len(expected_topics)} 'Kafka' topic{"s" if (len(expected_topics) > 1) else ""}...")
     for topic in expected_topics:
         if not(topic):
             continue
@@ -761,7 +798,7 @@ def create_topics(expected_topics):
         if (result.returncode != 0):
             LOGGER.error(f"Failed to create topic '{topic}': {result.stderr or result.stdout}")
             return False
-    LOGGER.info(f"{len(expected_topics)} topic{"s" if (len(expected_topics) > 1) else ""} created")
+    LOGGER.debug(f"{len(expected_topics)} topic{"s" if (len(expected_topics) > 1) else ""} created")
     return True
 
 # ---------------------------------------------------------------------------
@@ -794,18 +831,25 @@ def verify_topics(ctx, test_name, expected_topics):
 # - Builds a TestCase object from the config
 # ------------------------------------------------------------------------------
 def resolve_test_case(test_config, global_config):
-    test_name = get_config(test_config, "name", required = True)
+    test_name = get_config("name", test_config, global_config, required = True)
+    profiles = get_config("profiles", test_config, global_config, required = True, is_list = True)
+
+    has_archiver = has_service(profiles, "dfe-archiver")
+    has_loader = has_service(profiles, "dfe-loader")
+    has_receiver = has_service(profiles, "dfe-receiver")
+
     return TestCase(
         name = test_name,
-        profile = get_config(test_config, "profile", default_value = get_config(global_config, "profile", default_value = DEFAULTS.get("global", {}).get("profile", None)), required = True),
-        data_file = get_config(test_config, "data_file", default_value = get_config(global_config, "data_file", default_value = DEFAULTS.get("global", {}).get("data_file", None)), required = True),
-        receiver_config = get_config(test_config, "receiver_config", required = True),
-        loader_config = get_config(test_config, "loader_config", required = True),
-        database = get_config(test_config, "database", default_value = RUN_ID, required = True).replace("-", "_"),
-        table = get_config(test_config, "table", default_value = test_name, required = True).replace("-", "_"),
-        ch_drop_database = get_config(global_config, "clickhouse.drop_database", default_value = DEFAULTS.get("clickhouse", {}).get("drop_database", None), required = True),
-        ch_table_ddl_file_path = get_config(test_config, "clickhouse.table_ddl_file_path", default_value = get_config(global_config, "clickhouse.table_ddl_file_path", default_value = DEFAULTS.get("clickhouse", {}).get("table_ddl_file_path", None)), required = True),
-        expected_topics = get_config(test_config, "expected_topics", required = False, is_list = True),
+        profiles = profiles,
+        data_file = get_config("data_file", test_config, global_config, required = True),
+        archiver_config = get_config("archiver_config", test_config, global_config, required = has_archiver),
+        loader_config = get_config("loader_config", test_config, global_config, required = has_loader),
+        receiver_config = get_config("receiver_config", test_config, global_config, required = has_receiver),
+        database = get_config("database", test_config, global_config, default_value = RUN_ID).replace("-", "_"),
+        table = get_config("table", test_config, global_config, default_value = test_name).replace("-", "_"),
+        ch_drop_database = get_config("clickhouse.drop_database", test_config, global_config, required = True),
+        ch_table_ddl_file_path = get_config("clickhouse.table_ddl_file_path", test_config, global_config, required = True),
+        expected_topics = get_config("expected_topics", test_config, global_config, is_list = True),
         marker = f"{RUN_ID}-{test_name}"
     )
 
@@ -814,20 +858,26 @@ def resolve_test_case(test_config, global_config):
 # - Executes the test flow for a given TestCase
 # ------------------------------------------------------------------------------
 def run_test(ctx, mode, test, persistent_services):
-    # Ensure configuration files exist
-    if not (PROJECT_DIR / test.receiver_config).exists():
+    # Ensure configuration files exist for services used by this test
+    if (test.archiver_config and not (PROJECT_DIR / test.archiver_config).exists()):
+        error(f"Archiver configuration '{PROJECT_DIR / test.archiver_config}' not found")
+    if (test.receiver_config and not (PROJECT_DIR / test.receiver_config).exists()):
         error(f"Receiver configuration '{PROJECT_DIR / test.receiver_config}' not found")
-    if not (PROJECT_DIR / test.loader_config).exists():
+    if (test.loader_config and not (PROJECT_DIR / test.loader_config).exists()):
         error(f"Loader configuration '{PROJECT_DIR / test.loader_config}' not found")
 
     # Print header with test details and configuration for visibility
     print()
     print("------------------------------------------------------------")
     print(f"E2E Test: {test.name}")
-    print(f"  - Profile: {test.profile}")
+    print(f"  - Profiles: {', '.join(test.profiles)}")
     print(f"  - Data File: {test.data_file}")
-    print(f"  - Receiver Config: {test.receiver_config}")
-    print(f"  - Loader Config: {test.loader_config}")
+    if (test.archiver_config):
+        print(f"  - Archiver Config: {test.archiver_config}")
+    if (test.receiver_config):
+        print(f"  - Receiver Config: {test.receiver_config}")
+    if (test.loader_config):
+        print(f"  - Loader Config: {test.loader_config}")
     if (test.database != RUN_ID.replace("-", "_")):
         print(f"  - ClickHouse Database: {test.database}")
     if (test.table != test.name.replace("-", "_")):
@@ -835,16 +885,16 @@ def run_test(ctx, mode, test, persistent_services):
     print("------------------------------------------------------------")
 
     # Generate a per-run loader config with the test database and table
-    loader_config = generate_tmp_loader_config(test.loader_config, test.database, test.table)
+    loader_config = generate_tmp_loader_config(test.loader_config, test.database, test.table) if (test.loader_config) else None
 
     # Start the stack (Kafka profiles: infra first, create topics, then full stack)
-    if not(stack_up(mode, test.profile, test.receiver_config, loader_config, test.expected_topics)):
+    if not(stack_up(mode, test.profiles, test.archiver_config, test.receiver_config, loader_config, test.expected_topics)):
         mark_fail(ctx, f"[{test.name}] Stack failed to start")
         stack_down(keep_services = persistent_services or None)
         return
 
     # Wait for the stack to be healthy before proceeding
-    if not(wait_for_stack()):
+    if not(wait_for_stack(test.profiles)):
         mark_fail(ctx, f"[{test.name}] Stack failed to reach healthy state")
         dump_logs()
         stack_down(keep_services = persistent_services or None)
@@ -861,8 +911,8 @@ def run_test(ctx, mode, test, persistent_services):
     print()
     verify_table(ctx, test.name, test.database, test.table, test.marker)
 
-    # If profile has Kafka and expected topics are defined, verify the topics exist in Kafka
-    if ("kafka" in test.profile and test.expected_topics):
+    # If any profile has Kafka and expected topics are defined, verify the topics exist
+    if (any("kafka" in profile for profile in test.profiles) and test.expected_topics):
         print()
         verify_topics(ctx, test.name, test.expected_topics)
 
@@ -949,19 +999,25 @@ def main():
         error(f"Test configuration file '{TEST_CONFIG}' could not be found")
     config = load_config(TEST_CONFIG)
 
+    # Build global_config from the config sections (global + clickhouse) so that
+    # get_config can resolve dotted paths like "clickhouse.drop_database"
+    global_config = config.get("global", {}).copy()
+    global_config["clickhouse"] = config.get("clickhouse", {})
+
     # Tear down any existing stack before starting
-    persistent_services = config.get("global", {}).get("persistent_services", None) or DEFAULTS.get("global", {}).get("persistent_services", None) or None
+    persistent_services = get_config("persistent_services", {}, global_config)
     if (stack_is_up()):
         print()
         stack_down(persistent_services)
-    
-    mode = config.get("global", {}).get("mode", None) or DEFAULTS.get("global", {}).get("mode", None) or None
+
+    mode = get_config("mode", {}, global_config)
 
     # Extract unique profiles from the test config to determine which images to build
-    global_profile = config.get("global", {}).get("profile", DEFAULTS.get("global", {}).get("profile"))
+    global_profiles = get_config("profiles", {}, global_config, is_list = True)
     test_profiles = set()
     for test in config.get("tests", []):
-        test_profiles.add(test.get("profile", global_profile))
+        for profile in test.get("profiles", global_profiles):
+            test_profiles.add(profile)
 
     # Build all DFE images once upfront - subsequent tests only restart containers
     build_images(mode, test_profiles)
@@ -974,17 +1030,17 @@ def main():
             exists = False
             for index in range(test_count):
                 if (config["tests"][index].get("name") == test_name):
-                    run_test(ctx, mode, resolve_test_case(config["tests"][index], config.get("global", {})), persistent_services)
+                    run_test(ctx, mode, resolve_test_case(config["tests"][index], global_config), persistent_services)
                     exists = True
                     break
             if not(exists):
                 mark_skip(ctx, f"Test name '{test_name}' could not be found in config '{TEST_CONFIG}'")
     else:
         for index in range(test_count):
-            run_test(ctx, mode, resolve_test_case(config["tests"][index], config.get("global", {})), persistent_services)
-    
+            run_test(ctx, mode, resolve_test_case(config["tests"][index], global_config), persistent_services)
+
     # Post test execution cleanup
-    cleanup(config.get("clickhouse", {}))
+    cleanup(global_config.get("clickhouse", {}))
     
     # Capture end time for test suite completion and calculate duration
     end_time = datetime.now().astimezone()
