@@ -11,12 +11,13 @@
 # If sample_size is set, a random sample is taken; otherwise the full file
 # is used. Kafka profiles also verify expected topics exist.
 #
-# Available profiles: full, full-kafka, bare-bones, debug
+# Available profiles (list per test): full, full-kafka, bare-bones, debug
 
 global:
   data_file: tests/e2e/data/events.jsonl
   mode: ci
-  profile: full-kafka
+  profiles:
+    - full-kafka
   persistent_services:
     - clickhouse
     - kafka-ui
@@ -26,15 +27,26 @@ clickhouse:
   table_ddl_file_path: clickhouse/base_table_ddl.sql
 
 tests:
+  - name: simple-receiver-to-loader-grpc
+    profiles:
+      - full
+    loader_config: config/loader-grpc.yaml
+    receiver_config: config/receiver-grpc.yaml
+
   - name: simple-receiver-to-loader-kafka
-    profile: full-kafka
-    receiver_config: config/receiver-kafka.yaml
     loader_config: config/loader-kafka.yaml
+    receiver_config: config/receiver-kafka.yaml
     expected_topics:
       - default_land
       - simple_receiver_to_loader_kafka_land
 
-  - name: simple-receiver-to-loader-grpc
-    profile: full
-    receiver_config: config/receiver-grpc.yaml
-    loader_config: config/loader-grpc.yaml
+  - name: simple-receiver-to-loader-kafka-with-archiver
+    profiles:
+      - full-kafka
+      - archiver
+    archiver_config: config/archiver-kafka.yaml
+    loader_config: config/loader-kafka.yaml
+    receiver_config: config/receiver-kafka.yaml
+    expected_topics:
+      - default_land
+      - simple_receiver_to_loader_kafka_with_archiver_land
