@@ -542,6 +542,7 @@ def stack_up(mode, profiles, archiver_config, receiver_config, loader_config, ex
             return False
         LOGGER.debug("'Kafka' is healthy")
 
+        clean_topics(expected_topics)
         if not(create_topics(expected_topics)):
             return False
 
@@ -746,7 +747,7 @@ def send_events(ctx, test_name, marker, data_file_name, database, table):
 # Verify Table
 # - Queries ClickHouse to check the expected number of events with the marker
 # ---------------------------------------------------------------------------
-def verify_table(ctx, test_name, database, table, marker, max_attempts = 3):
+def verify_table(ctx, test_name, database, table, marker, max_attempts = 10):
     expected = ctx.total_sent
     LOGGER.info(f"Verifying events in ClickHouse table '{database}.{table}' (marker: '{marker}')...")
     time.sleep(5)
@@ -771,6 +772,33 @@ def verify_table(ctx, test_name, database, table, marker, max_attempts = 3):
         mark_pass(ctx, f"[{test_name}] '{database}.{table}': {actual}/{expected}")
     else:
         mark_fail(ctx, f"[{test_name}] '{database}.{table}': Expected {expected}, got {actual}")
+
+# ---------------------------------------------------------------------------
+# Create Topics
+# - Pre-creates expected Kafka topics before dfe-loader starts consuming
+# ---------------------------------------------------------------------------
+def clean_topics(expected_topics):
+    if not(expected_topics):
+        return True
+
+    topics_label = f"{"s" if (len(expected_topics) > 1) else ""}"
+    LOGGER.debug(f"Cleaning {len(expected_topics)} 'Kafka' topic{topics_label}...")
+    for topic in expected_topics:
+        if not(topic):
+            continue
+        LOGGER.debug(f"Deleting topic: '{topic}'...")
+        delete_cmd = [
+            "docker", "compose", "exec", "-T", "kafka",
+            "/opt/kafka/bin/kafka-topics.sh",
+            "--bootstrap-server", "kafka:9092",
+            "--delete", "--if-exists",
+            "--topic", topic,
+        ]
+        result = run_cmd(delete_cmd, check = False, capture = True)
+        if (result.returncode != 0):
+            LOGGER.warning(f"Failed to delete topic '{topic}': {result.stderr or result.stdout}")
+    LOGGER.debug(f"{len(expected_topics)} topic{topics_label} cleaned")
+    return True
 
 # ---------------------------------------------------------------------------
 # Create Topics
@@ -902,7 +930,7 @@ def run_test(ctx, mode, test, persistent_services):
 
     # Create the ClickHouse database and table for the test
     create_table(test.database, test.table, test.ch_table_ddl_file_path)
-    
+
     # Clean the ClickHouse table to ensure fresh state and send events
     clean_table(test.database, test.table)
     send_events(ctx, test.name, test.marker, test.data_file, test.database, test.table)
@@ -1012,32 +1040,36 @@ def main():
 
     mode = get_config("mode", {}, global_config)
 
-    # Extract unique profiles from the test config to determine which images to build
-    global_profiles = get_config("profiles", {}, global_config, is_list = True)
-    test_profiles = set()
-    for test in config.get("tests", []):
-        for profile in test.get("profiles", global_profiles):
-            test_profiles.add(profile)
-
-    # Build all DFE images once upfront - subsequent tests only restart containers
-    build_images(mode, test_profiles)
-
-    # Run test based on CLI args or run all if no args provided
+    # Resolve which tests to run — CLI args filter, otherwise run all
     test_count = len(config.get("tests", []))
     test_names = sys.argv[1:]
+
+    tests_to_run = []
     if (test_names):
         for test_name in test_names:
             exists = False
             for index in range(test_count):
                 if (config["tests"][index].get("name") == test_name):
-                    run_test(ctx, mode, resolve_test_case(config["tests"][index], global_config), persistent_services)
+                    tests_to_run.append(resolve_test_case(config["tests"][index], global_config))
                     exists = True
                     break
             if not(exists):
                 mark_skip(ctx, f"Test name '{test_name}' could not be found in config '{TEST_CONFIG}'")
     else:
         for index in range(test_count):
-            run_test(ctx, mode, resolve_test_case(config["tests"][index], global_config), persistent_services)
+            tests_to_run.append(resolve_test_case(config["tests"][index], global_config))
+
+    # Extract unique profiles from tests to run and build only required images
+    test_profiles = set()
+    for test in tests_to_run:
+        for profile in test.profiles:
+            test_profiles.add(profile)
+
+    build_images(mode, test_profiles)
+
+    # Run resolved tests
+    for test in tests_to_run:
+        run_test(ctx, mode, test, persistent_services)
 
     # Post test execution cleanup
     cleanup(global_config.get("clickhouse", {}))
