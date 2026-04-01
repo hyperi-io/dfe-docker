@@ -6,14 +6,19 @@
 # License:   FSL-1.1-ALv2
 # Copyright: (c) 2026 HYPERI PTY LIMITED
 #
-# Profiles:
-#   bare-bones   - dfe-receiver + dfe-loader via gRPC (DEFAULT - no ClickHouse, no Kafka)
-#   full         - ClickHouse + dfe-receiver + dfe-loader via gRPC (DEFAULT - no Kafka)
-#   full-kafka   - ClickHouse + dfe-receiver + dfe-loader via Kafka (opt-in)
-#   infra        - ClickHouse + Kafka only, no DFE services (for testing external connectivity)
-#   ui           - Kafka-ui standalone (requires kafka service)
-#   debug        - File-sink mode, no ClickHouse writes via gRPC (DEFAULT)
-#   debug-kafka  - File-sink mode, no ClickHouse writes via Kafka (opt-in)
+# Profile\Service | ClickHouse  | Kafka | Kafka UI  | dfe-archiver  | dfe-loader  | dfe-receiver  |
+# ----------------|-------------|-------|-----------|---------------|-------------|---------------|
+# full            |      X      |       |           |               |      X      |       X       |
+# full-kafka      |      X      |   X   |           |               |      X      |       X       |
+# ui              |             |       |     X     |               |             |               |
+# dfe             |             |       |           |       X       |      X      |       X       |
+# infra           |      X      |   X   |           |               |             |               |
+# archiver        |             |       |           |       X       |             |               |
+# archiver-kafka  |             |   X   |           |       X       |             |               |
+# loader          |             |       |           |               |      X      |               |
+# loader-kafka    |             |   X   |           |               |      X      |               |
+# receiver        |             |       |           |               |             |       X       |
+# receiver-kafka  |             |   X   |           |               |             |       X       |
 #
 # Quick start (Kafka transport, works today):
 #   DFE_TRANSPORT=kafka make dev
@@ -99,8 +104,8 @@ x-receiver-base: &receiver-base
 services:
 
   # ===========================================================================
-  # ClickHouse (profiles: full, full-kafka, infra)
-  # Use profile 'bare-bones' and set CLICKHOUSE_HOST in .env to use an external instance.
+  # ClickHouse
+  # Set CLICKHOUSE_HOST in .env to use an external instance.
   # ===========================================================================
 
   clickhouse:
@@ -130,14 +135,14 @@ services:
         hard: 262144
 
   # ===========================================================================
-  # Kafka KRaft (profiles: full-kafka, infra)
+  # Kafka KRaft
   # Opt-in interim transport. Selected automatically when DFE_TRANSPORT=kafka.
   # ===========================================================================
 
   kafka:
     image: apache/kafka:${KAFKA_VERSION:-latest}
     container_name: dfe-kafka
-    profiles: ["full-kafka", "infra"]
+    profiles: ["full-kafka", "infra", "loader-kafka", "receiver-kafka", "archiver-kafka"]
     environment:
       CLUSTER_ID: ${KAFKA_CLUSTER_ID:-dfe-docker-dev-cluster-01}
       KAFKA_ADVERTISED_LISTENERS: ${KAFKA_ADVERTISED_LISTENERS:-PLAINTEXT://kafka:9092,PLAINTEXT_HOST://localhost:19092}
@@ -165,6 +170,11 @@ services:
       retries: 10
       start_period: 15s
 
+  # ===========================================================================
+  # Kafka UI
+  # Opt-in UI for Kafka cluster.
+  # ===========================================================================
+
   kafka-ui:
     image: ghcr.io/kafbat/kafka-ui:${KAFBAT_VERSION:-latest}
     container_name: dfe-kafka-ui
@@ -177,14 +187,22 @@ services:
       KAFKA_CLUSTERS_0_NAME: ${KAFBAT_KAFKA_CLUSTERS_0_NAME:-dfe-local}
 
   # ===========================================================================
-  # dfe-archiver (profiles: full-kafka)
+  # dfe-archiver
   # Only supports Kafka input transport.
   # ===========================================================================
 
+  dfe-archiver:
+    <<: *archiver-base
+    container_name: dfe-archiver
+    profiles: ["dfe", "archiver"]
+    volumes:
+      - ./config/archiver-kafka.yaml:/etc/dfe-archiver/config.yaml:ro
+      - archiver-data:/var/data/archive
+  
   dfe-archiver-kafka:
     <<: *archiver-base
     container_name: dfe-archiver-kafka
-    profiles: ["full-kafka"]
+    profiles: ["archiver-kafka"]
     depends_on:
       kafka:
         condition: service_healthy
@@ -193,69 +211,35 @@ services:
       - archiver-data:/var/data/archive
 
   # ===========================================================================
-  # dfe-loader (profiles: bare-bones, full, full-kafka, debug)
+  # dfe-loader
   # Defined before dfe-receiver so receiver can depend_on loader (gRPC path).
   # ===========================================================================
-
-  dfe-loader-bare-bones:
-    <<: *loader-base
-    container_name: dfe-loader-bare-bones
-    profiles: ["bare-bones"]
-    volumes:
-      - ./config/loader-grpc.yaml:/etc/dfe/loader.yaml:ro
 
   dfe-loader:
     <<: *loader-base
     container_name: dfe-loader
-    profiles: ["full"]
-    depends_on:
-      clickhouse:
-        condition: service_healthy
+    profiles: ["full", "dfe", "loader"]
     volumes:
       - ./config/loader-grpc.yaml:/etc/dfe/loader.yaml:ro
 
   dfe-loader-kafka:
     <<: *loader-base
     container_name: dfe-loader-kafka
-    profiles: ["full-kafka"]
+    profiles: ["full-kafka", "loader-kafka"]
     depends_on:
-      clickhouse:
-        condition: service_healthy
       kafka:
         condition: service_healthy
     volumes:
       - ./config/loader-kafka.yaml:/etc/dfe/loader.yaml:ro
 
-  dfe-loader-debug:
-    # Requires FileSink support (pre-wired, pending impl)
-    <<: *loader-base
-    container_name: dfe-loader-debug
-    profiles: ["debug"]
-    volumes:
-      - ./config/loader-debug.yaml:/etc/dfe/loader.yaml:ro
-      - dfe-debug:/var/spool/dfe
-
   # ===========================================================================
-  # dfe-receiver (profiles: bare-bones, full, full-kafka, debug)
+  # dfe-receiver
   # ===========================================================================
-
-  dfe-receiver-bare-bones:
-    <<: *receiver-base
-    container_name: dfe-receiver-bare-bones
-    profiles: ["bare-bones"]
-    depends_on:
-      dfe-loader-bare-bones:
-        condition: service_healthy
-    volumes:
-      - ./config/receiver-grpc.yaml:/etc/dfe-receiver/config.yaml:ro
-      # Uncomment to enable TLS on gRPC inbound (:6000):
-      # - ./certs/dev/receiver.crt:/etc/ssl/receiver.crt:ro
-      # - ./certs/dev/receiver.key:/etc/ssl/receiver.key:ro
 
   dfe-receiver:
     <<: *receiver-base
     container_name: dfe-receiver
-    profiles: ["full"]
+    profiles: ["full", "dfe"]
     depends_on:
       dfe-loader:
         condition: service_healthy
@@ -265,27 +249,25 @@ services:
       # - ./certs/dev/receiver.crt:/etc/ssl/receiver.crt:ro
       # - ./certs/dev/receiver.key:/etc/ssl/receiver.key:ro
 
+  dfe-receiver-no-loader:
+    <<: *receiver-base
+    container_name: dfe-receiver
+    profiles: ["receiver"]
+    volumes:
+      - ./config/receiver-grpc.yaml:/etc/dfe-receiver/config.yaml:ro
+      # Uncomment to enable TLS on gRPC inbound (:6000):
+      # - ./certs/dev/receiver.crt:/etc/ssl/receiver.crt:ro
+      # - ./certs/dev/receiver.key:/etc/ssl/receiver.key:ro
+
   dfe-receiver-kafka:
     <<: *receiver-base
     container_name: dfe-receiver-kafka
-    profiles: ["full-kafka"]
+    profiles: ["full-kafka", "receiver-kafka"]
     depends_on:
       kafka:
         condition: service_healthy
     volumes:
       - ./config/receiver-kafka.yaml:/etc/dfe-receiver/config.yaml:ro
-
-  dfe-receiver-debug:
-    # Requires FileSink support (pre-wired, pending impl)
-    <<: *receiver-base
-    container_name: dfe-receiver-debug
-    profiles: ["debug"]
-    depends_on:
-      dfe-loader-debug:
-        condition: service_healthy
-    volumes:
-      - ./config/receiver-debug.yaml:/etc/dfe-receiver/config.yaml:ro
-      - dfe-debug:/var/spool/dfe
 
 volumes:
   archiver-data:
