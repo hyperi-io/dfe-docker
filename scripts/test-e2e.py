@@ -41,8 +41,8 @@ from urllib.request import Request, urlopen
 # - Paths and identifiers for the project and test run
 # ------------------------------------------------------------------------------
 PROJECT_DIR = Path(__file__).resolve().parent.parent
-TMP_DIR = PROJECT_DIR / ".tmp"
 RUN_ID = f"e2e-{datetime.now(timezone.utc).strftime("%Y%m%d%H%M%S")}"
+TMP_DIR = PROJECT_DIR / ".tmp"
 
 # ------------------------------------------------------------------------------
 # Config Related
@@ -144,7 +144,6 @@ class TestContext:
 @dataclass
 class TestCase:
     name: str
-    mode: str
     profile: str
     data_file: str
     receiver_config: str
@@ -291,10 +290,15 @@ def get_config(config, path, default_value = None, required = False, is_list = F
             return test_value if (isinstance(test_value, list)) else []
         return test_value
     if (is_list):
-        default_value = DEFAULTS.get(field)
+        default_value = DEFAULTS
+        for key in path:
+            if (isinstance(default_value, dict) and key in default_value):
+                default_value = default_value[key]
+            else:
+                default_value = None
+                break
         if (default_value is not None):
-            return default_value if (isinstance(test_value, list)) else []
-        return []
+            return default_value if (isinstance(default_value, list)) else []
     if (default_value is not None):
         return default_value
     if (required):
@@ -386,18 +390,18 @@ def generate_compose_override(profile, receiver_config, loader_config):
 
 # ------------------------------------------------------------------------------
 # Filter Build Output
-# - Runs a subprocess command with logging and error handling
+# - Filters Docker build output to show only relevant lines
 # ------------------------------------------------------------------------------
 def filter_build_output(text):
     if not(text):
         return ""
     output_lines = []
-    
+
     for line in text.splitlines():
         stripped_line = line.strip()
         if not(stripped_line):
             continue
-        
+
         # Step Headers: "#N [service stage N/M] CMD"
         if (stripped_line.startswith("#") and " [" in stripped_line and "]" in stripped_line):
             output_lines.append(line)
@@ -411,6 +415,52 @@ def filter_build_output(text):
         elif ((stripped_line.startswith("ERROR:")) or ("process" in stripped_line and "did not complete successfully" in stripped_line)):
             output_lines.append(line)
     return "\n".join(output_lines)
+
+# ------------------------------------------------------------------------------
+# Build Images
+# - Builds DFE service images once on startup
+# ------------------------------------------------------------------------------
+def build_images(mode, profiles):
+    services = set()
+    for profile in profiles:
+        services.update(services_for_profile(profile))
+
+    # Deduplicate to base image names as multiple compose services share the same
+    image_to_service = {}
+    for service in sorted(service for service in services if service.startswith("dfe-")):
+        base_name = service.split("-kafka")[0].split("-bare-bones")[0].split("-debug")[0]
+        if (base_name not in image_to_service):
+            image_to_service[base_name] = service
+    dfe_services = list(image_to_service.values())
+
+    if not(dfe_services):
+        LOGGER.info("No DFE services to build")
+        return
+
+    image_names = sorted(image_to_service.keys())
+    if (len(image_names) > 1):
+        services_str = f"'{"', '".join(image_names[:-1])}' and '{image_names[-1]}'"
+    else:
+        services_str = f"'{image_names[0]}'"
+    LOGGER.info(f"Building images for {services_str}...")
+
+    compose_files = ["-f", "docker-compose.yml"]
+    if (mode == "dev" and (PROJECT_DIR / "docker-compose.override.yml").exists()):
+        compose_files += ["-f", "docker-compose.override.yml"]
+
+    profile_flags = []
+    for profile in profiles:
+        profile_flags += ["--profile", profile]
+
+    base_cmd = ["docker", "compose"] + compose_files + profile_flags
+    build_args = base_cmd + ["build"] + dfe_services
+    if (mode == "ci"):
+        build_args += ["--no-cache", "--pull"]
+
+    build_result = run_cmd(build_args, check = False, capture = not(LOG_LEVEL == "DEBUG"))
+    if (build_result.returncode != 0):
+        filtered = filter_build_output(build_result.stderr or build_result.stdout or "")
+        error(f"Docker image build failed: {filtered if (filtered) else (build_result.stderr or build_result.stdout)}")
 
 # ------------------------------------------------------------------------------
 # Run Command
@@ -452,14 +502,6 @@ def stack_up(mode, profile, receiver_config, loader_config, expected_topics = No
     if ("kafka" in profile and expected_topics):
         infra_cmd = ["docker", "compose"] + compose_files + ["--profile", "infra"]
         infra_up = infra_cmd + ["up", "-d"]
-        if (mode == "dev"):
-            infra_up += ["--build"]
-        elif (mode == "ci"):
-            build_result = run_cmd(infra_cmd + ["build", "--no-cache", "--pull"], check = False, capture = not(LOG_LEVEL == "DEBUG"))
-            if (build_result.returncode != 0):
-                filtered = filter_build_output(build_result.stderr or build_result.stdout or "")
-                LOGGER.error(f"Docker compose build failed: {filtered if (filtered) else (build_result.stderr or build_result.stdout)}")
-                return False
 
         LOGGER.info("Starting 'Kafka' infrastructure...")
         infra_result = run_cmd(infra_up, check = False, capture = not(LOG_LEVEL == "DEBUG"))
@@ -481,24 +523,14 @@ def stack_up(mode, profile, receiver_config, loader_config, expected_topics = No
 
     profile_flags = ["--profile", profile]
     base_cmd = ["docker", "compose"] + compose_files + profile_flags
-    build_args = base_cmd + ["build", "--no-cache", "--pull"]
     up_args = base_cmd + ["up", "-d"]
-
-    if (mode == "ci"):
-        build_result = run_cmd(build_args, check = False, capture = not(LOG_LEVEL == "DEBUG"))
-        if (build_result.returncode != 0):
-            filtered = filter_build_output(build_result.stderr or build_result.stdout or "")
-            LOGGER.error(f"Docker compose build failed: {filtered if (filtered) else (build_result.stderr or build_result.stdout)}")
-            return False
-    elif (mode == "dev"):
-        up_args += ["--build"]
 
     up_result = run_cmd(up_args, check = False, capture = not(LOG_LEVEL == "DEBUG"))
     if (up_result.returncode != 0):
         filtered = filter_build_output(up_result.stderr or up_result.stdout or "")
         LOGGER.error(f"Docker compose up failed: {filtered if (filtered) else (up_result.stderr or up_result.stdout)}")
         return False
-    return (up_result.returncode == 0)
+    return True
 
 # ------------------------------------------------------------------------------
 # Stack Is Up
@@ -765,14 +797,13 @@ def resolve_test_case(test_config, global_config):
     test_name = get_config(test_config, "name", required = True)
     return TestCase(
         name = test_name,
-        mode = get_config(global_config, "mode", default_value = DEFAULTS.get("global", {}).get("mode", None)),
         profile = get_config(test_config, "profile", default_value = get_config(global_config, "profile", default_value = DEFAULTS.get("global", {}).get("profile", None)), required = True),
         data_file = get_config(test_config, "data_file", default_value = get_config(global_config, "data_file", default_value = DEFAULTS.get("global", {}).get("data_file", None)), required = True),
         receiver_config = get_config(test_config, "receiver_config", required = True),
         loader_config = get_config(test_config, "loader_config", required = True),
         database = get_config(test_config, "database", default_value = RUN_ID, required = True).replace("-", "_"),
         table = get_config(test_config, "table", default_value = test_name, required = True).replace("-", "_"),
-        ch_drop_database = get_config(global_config, "clickhouse.drop_database", default_value = DEFAULTS.get("clickhouse", {}.get("drop_database", None)), required = True),
+        ch_drop_database = get_config(global_config, "clickhouse.drop_database", default_value = DEFAULTS.get("clickhouse", {}).get("drop_database", None), required = True),
         ch_table_ddl_file_path = get_config(test_config, "clickhouse.table_ddl_file_path", default_value = get_config(global_config, "clickhouse.table_ddl_file_path", default_value = DEFAULTS.get("clickhouse", {}).get("table_ddl_file_path", None)), required = True),
         expected_topics = get_config(test_config, "expected_topics", required = False, is_list = True),
         marker = f"{RUN_ID}-{test_name}"
@@ -782,7 +813,7 @@ def resolve_test_case(test_config, global_config):
 # Run Test
 # - Executes the test flow for a given TestCase
 # ------------------------------------------------------------------------------
-def run_test(ctx, test, persistent_services):
+def run_test(ctx, mode, test, persistent_services):
     # Ensure configuration files exist
     if not (PROJECT_DIR / test.receiver_config).exists():
         error(f"Receiver configuration '{PROJECT_DIR / test.receiver_config}' not found")
@@ -793,7 +824,6 @@ def run_test(ctx, test, persistent_services):
     print()
     print("------------------------------------------------------------")
     print(f"E2E Test: {test.name}")
-    print(f"  - Mode: {test.mode}")
     print(f"  - Profile: {test.profile}")
     print(f"  - Data File: {test.data_file}")
     print(f"  - Receiver Config: {test.receiver_config}")
@@ -808,7 +838,7 @@ def run_test(ctx, test, persistent_services):
     loader_config = generate_tmp_loader_config(test.loader_config, test.database, test.table)
 
     # Start the stack (Kafka profiles: infra first, create topics, then full stack)
-    if not(stack_up(test.mode, test.profile, test.receiver_config, loader_config, test.expected_topics)):
+    if not(stack_up(mode, test.profile, test.receiver_config, loader_config, test.expected_topics)):
         mark_fail(ctx, f"[{test.name}] Stack failed to start")
         stack_down(keep_services = persistent_services or None)
         return
@@ -925,6 +955,17 @@ def main():
         print()
         stack_down(persistent_services)
     
+    mode = config.get("global", {}).get("mode", None) or DEFAULTS.get("global", {}).get("mode", None) or None
+
+    # Extract unique profiles from the test config to determine which images to build
+    global_profile = config.get("global", {}).get("profile", DEFAULTS.get("global", {}).get("profile"))
+    test_profiles = set()
+    for test in config.get("tests", []):
+        test_profiles.add(test.get("profile", global_profile))
+
+    # Build all DFE images once upfront - subsequent tests only restart containers
+    build_images(mode, test_profiles)
+
     # Run test based on CLI args or run all if no args provided
     test_count = len(config.get("tests", []))
     test_names = sys.argv[1:]
@@ -933,14 +974,14 @@ def main():
             exists = False
             for index in range(test_count):
                 if (config["tests"][index].get("name") == test_name):
-                    run_test(ctx, resolve_test_case(config["tests"][index], config.get("global", {})), persistent_services)
+                    run_test(ctx, mode, resolve_test_case(config["tests"][index], config.get("global", {})), persistent_services)
                     exists = True
                     break
             if not(exists):
                 mark_skip(ctx, f"Test name '{test_name}' could not be found in config '{TEST_CONFIG}'")
     else:
         for index in range(test_count):
-            run_test(ctx, resolve_test_case(config["tests"][index], config.get("global", {})), persistent_services)
+            run_test(ctx, mode, resolve_test_case(config["tests"][index], config.get("global", {})), persistent_services)
     
     # Post test execution cleanup
     cleanup(config.get("clickhouse", {}))
