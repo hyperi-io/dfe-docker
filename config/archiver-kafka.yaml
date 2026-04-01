@@ -1,0 +1,14 @@
+# Project:   dfe-docker
+# File:      config/archiver-kafka.yaml
+# Purpose:   dfe-archiver config — Kafka data archiver (DFE_TRANSPORT=kafka)
+# Language:  YAML
+#
+# License:   FSL-1.1-ALv2
+# Copyright: (c) 2026 HYPERI PTY LIMITED
+
+kafka:
+  brokers:
+    - kafka:9092
+  topics:
+    - default_land
+    - simple_receiver_to_loader_kafka_land
