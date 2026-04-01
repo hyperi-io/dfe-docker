@@ -104,6 +104,14 @@ DFE_ARCHIVER_HEALTH_URL = os.environ.get(
     "DFE_ARCHIVER_HEALTH_URL",
     f"http://localhost:{os.environ.get("DFE_ARCHIVER_PROMETHEUS_PORT", "9093")}/health/ready",
 )
+DFE_FETCHER_HEALTH_URL = os.environ.get(
+    "DFE_FETCHER_HEALTH_URL",
+    f"http://localhost:{os.environ.get("DFE_FETCHER_PROMETHEUS_PORT", "9094")}/health/ready",
+)
+DFE_FETCHER_INGEST_URL = os.environ.get(
+    "DFE_FETCHER_INGEST_URL",
+    f"http://localhost:{os.environ.get("DFE_FETCHER_INGEST_PORT", "8082")}/ingest",
+)
 DFE_RECEIVER_INGEST_URL = os.environ.get(
     "DFE_RECEIVER_INGEST_URL",
     f"http://localhost:{os.environ.get("DFE_RECEIVER_HTTP_PORT", "8080")}/ingest",
@@ -154,6 +162,7 @@ class TestCase:
     ch_drop_database: str
     ch_table_ddl_file_path: str
     archiver_config: str | None = None
+    fetcher_config: str | None = None
     loader_config: str | None = None
     receiver_config: str | None = None
     persistent_services: list[str] = field(default_factory = list)
@@ -370,7 +379,7 @@ def has_service(profiles, prefix):
 # Generate Compose Override
 # - Creates a temp docker-compose override file to mount test-specific configs
 # ------------------------------------------------------------------------------
-def generate_compose_override(profiles, archiver_config, receiver_config, loader_config):
+def generate_compose_override(profiles, archiver_config, fetcher_config, receiver_config, loader_config):
     services = services_for_profiles(profiles)
 
     TMP_DIR.mkdir(parents = True, exist_ok = True)
@@ -384,6 +393,14 @@ def generate_compose_override(profiles, archiver_config, receiver_config, loader
             f"  {archiver_service}:\n"
             f"    volumes:\n"
             f"      - ./{archiver_config}:/etc/dfe-archiver/config.yaml:ro\n"
+        )
+
+    if (fetcher_config):
+        fetcher_service = next(service for service in services if (service.startswith("dfe-fetcher")))
+        content += (
+            f"  {fetcher_service}:\n"
+            f"    volumes:\n"
+            f"      - ./{fetcher_config}:/etc/dfe-fetcher/config.yaml:ro\n"
         )
 
     if (receiver_config):
@@ -451,7 +468,7 @@ def build_images(mode, profiles):
     # Deduplicate to base image names as multiple compose services share the same
     image_to_service = {}
     for service in sorted(service for service in services if service.startswith("dfe-")):
-        base_name = service.split("-kafka")[0].split("-bare-bones")[0].split("-debug")[0]
+        base_name = service.split("-kafka")[0].split("-no-loader")[0]
         if (base_name not in image_to_service):
             image_to_service[base_name] = service
     dfe_services = list(image_to_service.values())
@@ -504,13 +521,13 @@ def run_cmd(args, check = True, capture = False, cwd = None):
 # Stack Up
 # - Starts the Docker stack with the appropriate compose files and profile
 # ------------------------------------------------------------------------------
-def stack_up(mode, profiles, archiver_config, receiver_config, loader_config, expected_topics = None):
+def stack_up(mode, profiles, archiver_config, fetcher_config, receiver_config, loader_config, expected_topics = None):
     LOGGER.info("Starting stack...")
     LOGGER.debug(f"Services for profiles '{profiles}':")
     for service in services_for_profiles(profiles):
         LOGGER.debug(f"  - {service}")
 
-    override_file = generate_compose_override(profiles, archiver_config, receiver_config, loader_config)
+    override_file = generate_compose_override(profiles, archiver_config, fetcher_config, receiver_config, loader_config)
 
     compose_files = ["-f", "docker-compose.yml"]
     if (mode not in MODES):
@@ -653,6 +670,7 @@ def wait_for_stack(profiles):
     health_checks = {
         "clickhouse": ("ClickHouse", f"{CLICKHOUSE_URL}/ping"),
         "dfe-archiver": ("dfe-archiver", DFE_ARCHIVER_HEALTH_URL),
+        "dfe-fetcher": ("dfe-fetcher", DFE_FETCHER_HEALTH_URL),
         "dfe-loader": ("dfe-loader", DFE_LOADER_HEALTH_URL),
         "dfe-receiver": ("dfe-receiver", DFE_RECEIVER_HEALTH_URL),
     }
@@ -705,7 +723,7 @@ def clean_table(database, table):
 # Send Events
 # - Reads events from a file and sends to the receiver
 # ---------------------------------------------------------------------------
-def send_events(ctx, test_name, marker, data_file_name, database, table):
+def send_events(ctx, test_name, marker, data_file_name, database, table, ingest_url):
     data_file_path = PROJECT_DIR / data_file_name
     if not(data_file_path.exists()):
         error(f"Data file '{data_file_path}' could not be found", test_name)
@@ -713,7 +731,7 @@ def send_events(ctx, test_name, marker, data_file_name, database, table):
     events = data_file_path.read_text().splitlines()
     num_events = len(events)
 
-    LOGGER.info(f"Sending {num_events} events from data file...")
+    LOGGER.info(f"Sending {num_events} events to '{ingest_url}'...")
     LOGGER.debug(f"Marker: '{marker}'")
 
     ctx.total_sent = 0
@@ -726,7 +744,7 @@ def send_events(ctx, test_name, marker, data_file_name, database, table):
         enriched = json.dumps(event, separators = (",", ":"))
 
         try:
-            status = http_post(DFE_RECEIVER_INGEST_URL, enriched)
+            status = http_post(ingest_url, enriched)
         except Exception:
             status = 0
 
@@ -863,6 +881,7 @@ def resolve_test_case(test_config, global_config):
     profiles = get_config("profiles", test_config, global_config, required = True, is_list = True)
 
     has_archiver = has_service(profiles, "dfe-archiver")
+    has_fetcher = has_service(profiles, "dfe-fetcher")
     has_loader = has_service(profiles, "dfe-loader")
     has_receiver = has_service(profiles, "dfe-receiver")
 
@@ -871,6 +890,7 @@ def resolve_test_case(test_config, global_config):
         profiles = profiles,
         data_file = get_config("data_file", test_config, global_config, required = True),
         archiver_config = get_config("archiver_config", test_config, global_config, required = has_archiver),
+        fetcher_config = get_config("fetcher_config", test_config, global_config, required = has_fetcher),
         loader_config = get_config("loader_config", test_config, global_config, required = has_loader),
         receiver_config = get_config("receiver_config", test_config, global_config, required = has_receiver),
         database = get_config("database", test_config, global_config, default_value = RUN_ID).replace("-", "_"),
@@ -889,6 +909,8 @@ def run_test(ctx, mode, test, persistent_services):
     # Ensure configuration files exist for services used by this test
     if (test.archiver_config and not (PROJECT_DIR / test.archiver_config).exists()):
         error(f"Archiver configuration '{PROJECT_DIR / test.archiver_config}' not found")
+    if (test.fetcher_config and not (PROJECT_DIR / test.fetcher_config).exists()):
+        error(f"Fetcher configuration '{PROJECT_DIR / test.fetcher_config}' not found")
     if (test.receiver_config and not (PROJECT_DIR / test.receiver_config).exists()):
         error(f"Receiver configuration '{PROJECT_DIR / test.receiver_config}' not found")
     if (test.loader_config and not (PROJECT_DIR / test.loader_config).exists()):
@@ -902,6 +924,8 @@ def run_test(ctx, mode, test, persistent_services):
     print(f"  - Data File: {test.data_file}")
     if (test.archiver_config):
         print(f"  - Archiver Config: {test.archiver_config}")
+    if (test.fetcher_config):
+        print(f"  - Fetcher Config: {test.fetcher_config}")
     if (test.receiver_config):
         print(f"  - Receiver Config: {test.receiver_config}")
     if (test.loader_config):
@@ -916,7 +940,7 @@ def run_test(ctx, mode, test, persistent_services):
     loader_config = generate_tmp_loader_config(test.loader_config, test.database, test.table) if (test.loader_config) else None
 
     # Start the stack (Kafka profiles: infra first, create topics, then full stack)
-    if not(stack_up(mode, test.profiles, test.archiver_config, test.receiver_config, loader_config, test.expected_topics)):
+    if not(stack_up(mode, test.profiles, test.archiver_config, test.fetcher_config, test.receiver_config, loader_config, test.expected_topics)):
         mark_fail(ctx, f"[{test.name}] Stack failed to start")
         stack_down(keep_services = persistent_services or None)
         return
@@ -933,7 +957,8 @@ def run_test(ctx, mode, test, persistent_services):
 
     # Clean the ClickHouse table to ensure fresh state and send events
     clean_table(test.database, test.table)
-    send_events(ctx, test.name, test.marker, test.data_file, test.database, test.table)
+    ingest_url = f"{DFE_FETCHER_INGEST_URL}/{test.table}" if (test.fetcher_config and not test.receiver_config) else DFE_RECEIVER_INGEST_URL
+    send_events(ctx, test.name, test.marker, test.data_file, test.database, test.table, ingest_url)
     
     # Verify the events have been ingested into ClickHouse with the correct marker
     print()

@@ -30,10 +30,14 @@ tests:
   - name: simple-receiver-to-loader-grpc
     profiles:
       - full
+      - receiver
     loader_config: config/loader-grpc.yaml
     receiver_config: config/receiver-grpc.yaml
 
   - name: simple-receiver-to-loader-kafka
+    profiles:
+      - full-kafka
+      - receiver-kafka
     loader_config: config/loader-kafka.yaml
     receiver_config: config/receiver-kafka.yaml
     expected_topics:
@@ -43,6 +47,7 @@ tests:
   - name: simple-receiver-to-loader-kafka-with-archiver
     profiles:
       - full-kafka
+      - receiver-kafka
       - archiver
     archiver_config: config/archiver-kafka.yaml
     loader_config: config/loader-kafka.yaml
@@ -50,3 +55,20 @@ tests:
     expected_topics:
       - default_land
       - simple_receiver_to_loader_kafka_with_archiver_land
+
+  - name: simple-fetcher-to-loader
+    profiles:
+      - full
+      - fetcher
+    fetcher_config: config/fetcher-aws-grpc.yaml
+    loader_config: config/loader-grpc.yaml
+
+  - name: simple-fetcher-to-loader-kafka
+    profiles:
+      - full-kafka
+      - fetcher-kafka
+    fetcher_config: config/fetcher-aws-kafka.yaml
+    loader_config: config/loader-kafka.yaml
+    expected_topics:
+      - default_land
+      - simple_fetcher_to_loader_kafka_land

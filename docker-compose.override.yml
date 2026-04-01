@@ -28,6 +28,18 @@ services:
       dockerfile: ${PROJECTS_PATH:-/projects}/dfe-docker/docker/dfe-receiver.Dockerfile
     image: dfe-receiver:local
 
+  dfe-fetcher:
+    build:
+      context: ${PROJECTS_PATH:-/projects}
+      dockerfile: ${PROJECTS_PATH:-/projects}/dfe-docker/docker/dfe-fetcher.Dockerfile
+    image: dfe-fetcher:local
+
+  dfe-fetcher-kafka:
+    build:
+      context: ${PROJECTS_PATH:-/projects}
+      dockerfile: ${PROJECTS_PATH:-/projects}/dfe-docker/docker/dfe-fetcher.Dockerfile
+    image: dfe-fetcher:local
+
   dfe-loader:
     build:
       context: ${PROJECTS_PATH:-/projects}

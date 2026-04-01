@@ -6,19 +6,21 @@
 # License:   FSL-1.1-ALv2
 # Copyright: (c) 2026 HYPERI PTY LIMITED
 #
-# Profile\Service | ClickHouse  | Kafka | Kafka UI  | dfe-archiver  | dfe-loader  | dfe-receiver  |
-# ----------------|-------------|-------|-----------|---------------|-------------|---------------|
-# full            |      X      |       |           |               |      X      |       X       |
-# full-kafka      |      X      |   X   |           |               |      X      |       X       |
-# ui              |             |       |     X     |               |             |               |
-# dfe             |             |       |           |       X       |      X      |       X       |
-# infra           |      X      |   X   |           |               |             |               |
-# archiver        |             |       |           |       X       |             |               |
-# archiver-kafka  |             |   X   |           |       X       |             |               |
-# loader          |             |       |           |               |      X      |               |
-# loader-kafka    |             |   X   |           |               |      X      |               |
-# receiver        |             |       |           |               |             |       X       |
-# receiver-kafka  |             |   X   |           |               |             |       X       |
+# Profile\Service | ClickHouse  | Kafka | Kafka UI  | dfe-archiver  | dfe-fetcher  | dfe-loader  | dfe-receiver  |
+# ----------------|-------------|-------|-----------|---------------|--------------|-------------|---------------|
+# full            |      X      |       |           |               |              |      X      |               |
+# full-kafka      |      X      |   X   |           |               |              |      X      |               |
+# ui              |             |       |     X     |               |              |             |               |
+# dfe             |             |       |           |       X       |       X      |      X      |       X       |
+# infra           |      X      |   X   |           |               |              |             |               |
+# archiver        |             |       |           |       X       |              |             |               |
+# archiver-kafka  |             |   X   |           |       X       |              |             |               |
+# fetcher         |             |       |           |               |       X      |             |               |
+# fetcher-kafka   |             |   X   |           |               |       X      |             |               |
+# loader          |             |       |           |               |              |      X      |               |
+# loader-kafka    |             |   X   |           |               |              |      X      |               |
+# receiver        |             |       |           |               |              |             |       X       |
+# receiver-kafka  |             |   X   |           |               |              |             |       X       |
 #
 # Quick start (Kafka transport, works today):
 #   DFE_TRANSPORT=kafka make dev
@@ -47,6 +49,29 @@ x-archiver-base: &archiver-base
   environment:
     ARCHIVER_LOG_LEVEL: ${LOG_LEVEL:-info}
     ARCHIVER_LOG_FORMAT: ${LOG_FORMAT:-text}
+  healthcheck:
+    test: ["CMD", "curl", "-sf", "http://localhost:9090/health/ready"]
+    interval: 10s
+    timeout: 3s
+    retries: 5
+
+x-fetcher-base: &fetcher-base
+  image: dfe-fetcher:${DFE_FETCHER_VERSION:-latest}
+  build:
+    context: images/fetcher
+    args:
+      ARCHITECTURE: ${IMAGE_ARCHITECTURE:-linux/amd64}
+      REGISTRY: ${IMAGE_REGISTRY:-https://downloads.hyperi.io}
+      VERSION: ${DFE_FETCHER_VERSION:-latest}
+  ports:
+    - ${DFE_FETCHER_INGEST_PORT:-8082}:8080
+    - ${DFE_FETCHER_PROMETHEUS_PORT:-9094}:9090
+  environment:
+    FETCHER_LOG_LEVEL: ${LOG_LEVEL:-info}
+    FETCHER_LOG_FORMAT: ${LOG_FORMAT:-text}
+    AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID:-}
+    AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY:-}
+    DFE_FETCHER_SOURCES__AWS__REGION: ${AWS_REGION:-us-east-1}
   healthcheck:
     test: ["CMD", "curl", "-sf", "http://localhost:9090/health/ready"]
     interval: 10s
@@ -211,6 +236,32 @@ services:
       - archiver-data:/var/data/archive
 
   # ===========================================================================
+  # dfe-fetcher
+  # ===========================================================================
+
+  dfe-fetcher:
+    <<: *fetcher-base
+    container_name: dfe-fetcher
+    profiles: ["dfe", "fetcher"]
+    depends_on:
+      dfe-loader:
+        condition: service_healthy
+    volumes:
+      - ./config/fetcher-grpc.yaml:/etc/dfe-fetcher/config.yaml:ro
+      - fetcher-data:/var/lib/dfe-fetcher
+
+  dfe-fetcher-kafka:
+    <<: *fetcher-base
+    container_name: dfe-fetcher-kafka
+    profiles: ["fetcher-kafka"]
+    depends_on:
+      kafka:
+        condition: service_healthy
+    volumes:
+      - ./config/fetcher-kafka.yaml:/etc/dfe-fetcher/config.yaml:ro
+      - fetcher-data:/var/lib/dfe-fetcher
+
+  # ===========================================================================
   # dfe-loader
   # Defined before dfe-receiver so receiver can depend_on loader (gRPC path).
   # ===========================================================================
@@ -239,7 +290,7 @@ services:
   dfe-receiver:
     <<: *receiver-base
     container_name: dfe-receiver
-    profiles: ["full", "dfe"]
+    profiles: ["dfe"]
     depends_on:
       dfe-loader:
         condition: service_healthy
@@ -262,7 +313,7 @@ services:
   dfe-receiver-kafka:
     <<: *receiver-base
     container_name: dfe-receiver-kafka
-    profiles: ["full-kafka", "receiver-kafka"]
+    profiles: ["receiver-kafka"]
     depends_on:
       kafka:
         condition: service_healthy
@@ -273,4 +324,5 @@ volumes:
   archiver-data:
   clickhouse-data:
   dfe-debug:
+  fetcher-data:
   kafka-data:

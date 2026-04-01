@@ -1,0 +1,20 @@
+# Project:   dfe-docker
+# File:      config/fetcher-grpc.yaml
+# Purpose:   dfe-fetcher config — gRPC transport (default, DFE_TRANSPORT=grpc)
+# Language:  YAML
+#
+# License:   FSL-1.1-ALv2
+# Copyright: (c) 2026 HYPERI PTY LIMITED
+
+output:
+  type: grpc
+  grpc:
+    endpoint: http://dfe-loader:50051
+
+sources:
+  aws:
+    enabled: true
+    access_key_id: env:AWS_ACCESS_KEY_ID
+    secret_access_key: env:AWS_SECRET_ACCESS_KEY
+    services:
+      - name: cloudtrail
