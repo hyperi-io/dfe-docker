@@ -773,7 +773,7 @@ def verify_table(ctx, test_name, database, table, marker, max_attempts = 10):
     actual = 0
     for attempt in range(1, max_attempts + 1):
         # TODO: CHANGE TO JSON OBJECT ONCE TAGS BACK TO JSON
-        raw = ch_query(f"SELECT count() FROM {database}.{table} WHERE JSONExtractString(_tags, 'marker') == '{marker}'")
+        raw = ch_query(f"SELECT count() FROM {database}.{table} WHERE _tags.marker == '{marker}'")
         try:
             actual = int(raw.strip())
         except (ValueError, AttributeError):
