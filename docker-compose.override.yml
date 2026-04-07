@@ -40,6 +40,18 @@ services:
       dockerfile: ${PROJECTS_PATH:-/projects}/dfe-docker/docker/dfe-fetcher.Dockerfile
     image: dfe-fetcher:local
 
+  dfe-archiver:
+    build:
+      context: ${PROJECTS_PATH:-/projects}
+      dockerfile: ${PROJECTS_PATH:-/projects}/dfe-docker/docker/dfe-archiver.Dockerfile
+    image: dfe-archiver:local
+
+  dfe-archiver-kafka:
+    build:
+      context: ${PROJECTS_PATH:-/projects}
+      dockerfile: ${PROJECTS_PATH:-/projects}/dfe-docker/docker/dfe-archiver.Dockerfile
+    image: dfe-archiver:local
+
   dfe-loader:
     build:
       context: ${PROJECTS_PATH:-/projects}

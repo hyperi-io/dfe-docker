@@ -29,6 +29,7 @@ WORKDIR /build
 # Copy shared libraries
 COPY hyperi-rustlib /deps/hyperi-rustlib
 COPY clickhouse-arrow /deps/clickhouse-arrow
+COPY clickhouse-rs /deps/clickhouse-rs
 
 # Strip registry = "hyperi" from clickhouse-arrow's internal dep
 # (it already has path = "../clickhouse-arrow-derive", just needs registry removed)
@@ -52,6 +53,7 @@ RUN sed -i \
     -e '/^hyperi-rustlib/s|version = "[^"]*"|path = "/deps/hyperi-rustlib"|' \
     -e 's|version = ">=0.4.0", registry = "hyperi"|path = "/deps/clickhouse-arrow/clickhouse-arrow"|' \
     -e 's|"dynamic-linking", "ssl", "sasl"|"cmake-build", "ssl", "sasl", "zstd", "zstd-pkg-config"|' \
+    -e 's|clickhouse = { git = "[^"]*", branch = "[^"]*" }|clickhouse = { path = "/deps/clickhouse-rs" }|' \
     Cargo.toml
 
 # Cache mount keeps compiled deps across builds; source changes trigger recompile
