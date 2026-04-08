@@ -15,7 +15,7 @@
 
 global:
   data_file: tests/e2e/data/events.jsonl
-  mode: ci
+  mode: dev
   profiles:
     - full-kafka
   persistent_services:
@@ -67,6 +67,7 @@ tests:
     profiles:
       - full-kafka
       - fetcher-kafka
+      - ui
     fetcher_config: config/fetcher-aws-kafka.yaml
     loader_config: config/loader-kafka.yaml
     expected_topics:

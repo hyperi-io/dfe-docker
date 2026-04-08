@@ -521,13 +521,13 @@ def run_cmd(args, check = True, capture = False, cwd = None):
 # Stack Up
 # - Starts the Docker stack with the appropriate compose files and profile
 # ------------------------------------------------------------------------------
-def stack_up(mode, profiles, archiver_config, fetcher_config, receiver_config, loader_config, expected_topics = None):
+def stack_up(mode, test, loader_config):
     LOGGER.info("Starting stack...")
-    LOGGER.debug(f"Services for profiles '{profiles}':")
-    for service in services_for_profiles(profiles):
+    LOGGER.debug(f"Services for profiles '{test.profiles}':")
+    for service in services_for_profiles(test.profiles):
         LOGGER.debug(f"  - {service}")
 
-    override_file = generate_compose_override(profiles, archiver_config, fetcher_config, receiver_config, loader_config)
+    override_file = generate_compose_override(test.profiles, test.archiver_config, test.fetcher_config, test.receiver_config, loader_config)
 
     compose_files = ["-f", "docker-compose.yml"]
     if (mode not in MODES):
@@ -537,10 +537,16 @@ def stack_up(mode, profiles, archiver_config, fetcher_config, receiver_config, l
 
     compose_files += ["-f", override_file]
 
+    # Create the ClickHouse database and table as well as clean ready for the test so it can pre-warm
+    if (test.database and test.table and test.ch_table_ddl_file_path):
+        LOGGER.info("Preparing 'ClickHouse' service...")
+        create_table(test.database, test.table, test.ch_table_ddl_file_path)
+        clean_table(test.database, test.table)
+
     # Kafka profiles: bring up infra first, create topics, then start the full profile.
     # The loader fails on startup if no matching topics exist on the broker.
-    has_kafka = any("kafka" in profile for profile in profiles)
-    if (has_kafka and expected_topics):
+    has_kafka = any("kafka" in profile for profile in test.profiles)
+    if (has_kafka and test.expected_topics):
         infra_cmd = ["docker", "compose"] + compose_files + ["--profile", "infra"]
         infra_up = infra_cmd + ["up", "-d"]
 
@@ -559,12 +565,12 @@ def stack_up(mode, profiles, archiver_config, fetcher_config, receiver_config, l
             return False
         LOGGER.debug("'Kafka' is healthy")
 
-        clean_topics(expected_topics)
-        if not(create_topics(expected_topics)):
+        clean_topics(test.expected_topics)
+        if not(create_topics(test.expected_topics)):
             return False
 
     profile_flags = []
-    for profile in profiles:
+    for profile in test.profiles:
         profile_flags += ["--profile", profile]
     base_cmd = ["docker", "compose"] + compose_files + profile_flags
     up_args = base_cmd + ["up", "-d"]
@@ -940,7 +946,7 @@ def run_test(ctx, mode, test, persistent_services):
     loader_config = generate_tmp_loader_config(test.loader_config, test.database, test.table) if (test.loader_config) else None
 
     # Start the stack (Kafka profiles: infra first, create topics, then full stack)
-    if not(stack_up(mode, test.profiles, test.archiver_config, test.fetcher_config, test.receiver_config, loader_config, test.expected_topics)):
+    if not(stack_up(mode, test, loader_config)):
         mark_fail(ctx, f"[{test.name}] Stack failed to start")
         stack_down(keep_services = persistent_services or None)
         return
@@ -951,12 +957,6 @@ def run_test(ctx, mode, test, persistent_services):
         dump_logs()
         stack_down(keep_services = persistent_services or None)
         return
-
-    # Create the ClickHouse database and table for the test
-    create_table(test.database, test.table, test.ch_table_ddl_file_path)
-
-    # Clean the ClickHouse table to ensure fresh state and send events
-    clean_table(test.database, test.table)
     ingest_url = f"{DFE_FETCHER_INGEST_URL}/{test.table}" if (test.fetcher_config and not test.receiver_config) else DFE_RECEIVER_INGEST_URL
     send_events(ctx, test.name, test.marker, test.data_file, test.database, test.table, ingest_url)
     
