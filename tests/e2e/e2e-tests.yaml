@@ -24,7 +24,7 @@ global:
 
 clickhouse:
   drop_database: false
-  table_ddl_file_path: clickhouse/base_table_ddl.sql
+  table_ddl_file_path: clickhouse/ddls/base_table_ddl.sql
 
 tests:
   - name: simple-receiver-to-loader-grpc
@@ -68,6 +68,8 @@ tests:
       - full-kafka
       - fetcher-kafka
       - ui
+    clickhouse:
+      table_ddl_file_path: clickhouse/ddls/aws_cloudtrail_ddl.sql
     fetcher_config: config/fetcher-aws-kafka.yaml
     loader_config: config/loader-kafka.yaml
     expected_topics:
