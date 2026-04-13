@@ -125,14 +125,7 @@ wait_for_service() {
 
 # Map a compose profile to its receiver and loader service names.
 services_for_profile() {
-    local profile="${1}"
-    case "${profile}" in
-        full-kafka) echo "dfe-receiver-kafka dfe-loader-kafka" ;;
-        full)       echo "dfe-receiver dfe-loader" ;;
-        bare-bones) echo "dfe-receiver-bare-bones dfe-loader-bare-bones" ;;
-        debug)      echo "dfe-receiver-debug dfe-loader-debug" ;;
-        *)          die "Unknown profile: ${profile}" ;;
-    esac
+    echo "dfe-receiver dfe-loader"
 }
 
 # Generate a compose override that mounts the test-specified configs.

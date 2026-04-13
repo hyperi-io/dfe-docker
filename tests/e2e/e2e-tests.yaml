@@ -10,8 +10,7 @@
 # from the data file to the receiver, and verifies they land in dfe.default.
 # If sample_size is set, a random sample is taken; otherwise the full file
 # is used. Kafka profiles also verify expected topics exist.
-#
-# Available profiles (list per test): full, full-kafka, bare-bones, debug
+# Refer to docker-compose.yml for available profiles.
 
 global:
   data_file: tests/e2e/data/events.jsonl
@@ -37,7 +36,7 @@ tests:
   - name: simple-receiver-to-loader-kafka
     profiles:
       - full-kafka
-      - receiver-kafka
+      - receiver
     loader_config: config/loader-kafka.yaml
     receiver_config: config/receiver-kafka.yaml
     expected_topics:
@@ -47,7 +46,7 @@ tests:
   - name: simple-receiver-to-loader-kafka-with-archiver
     profiles:
       - full-kafka
-      - receiver-kafka
+      - receiver
       - archiver
     archiver_config: config/archiver-kafka.yaml
     loader_config: config/loader-kafka.yaml
@@ -66,7 +65,7 @@ tests:
   - name: simple-fetcher-to-loader-kafka
     profiles:
       - full-kafka
-      - fetcher-kafka
+      - fetcher
       - ui
     clickhouse:
       table_ddl_file_path: clickhouse/ddls/aws_cloudtrail_ddl.sql

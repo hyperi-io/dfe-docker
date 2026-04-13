@@ -8,14 +8,37 @@
 
 .DEFAULT_GOAL := help
 
-# Read transport selection from .env (default: grpc)
--include .env
-DFE_TRANSPORT ?= grpc
+# Read config from .env.
+# Command-line values override .env values.
+_CLI_DFE_PROFILES  := $(DFE_PROFILES)
+_CLI_DFE_TRANSPORT := $(DFE_TRANSPORT)
 
-ifeq ($(DFE_TRANSPORT),kafka)
-  TRANSPORT_PROFILES = --profile full-kafka --profile ui
+-include .env
+ifdef _CLI_DFE_TRANSPORT
+  DFE_TRANSPORT := $(_CLI_DFE_TRANSPORT)
+endif
+ifdef _CLI_DFE_PROFILES
+  DFE_PROFILES := $(_CLI_DFE_PROFILES)
+endif
+DFE_TRANSPORT ?= kafka
+
+# gRPC transport: override config file env vars (kafka is default)
+ifeq ($(DFE_TRANSPORT),grpc)
+  export DFE_ARCHIVER_CONFIG  ?= archiver-kafka.yaml
+  export DFE_FETCHER_CONFIG   ?= fetcher-aws-grpc.yaml
+  export DFE_LOADER_CONFIG    ?= loader-grpc.yaml
+  export DFE_RECEIVER_CONFIG  ?= receiver-grpc.yaml
+endif
+
+# Profile selection: DFE_PROFILES overrides the default profile set.
+#   DFE_PROFILES=archiver,infra make dev  - start only archiver + infra
+#   DFE_PROFILES=receiver,loader make dev - start only receiver + loader
+ifdef DFE_PROFILES
+  COMPOSE_PROFILES = $(foreach p,$(subst $(shell echo ','), ,$(subst ",,$(DFE_PROFILES))),--profile $(p))
+else ifeq ($(DFE_TRANSPORT),grpc)
+  COMPOSE_PROFILES = --profile full
 else
-  TRANSPORT_PROFILES = --profile full
+  COMPOSE_PROFILES = --profile full-kafka --profile ui
 endif
 
 # ---------------------------------------------------------------------------
@@ -24,11 +47,11 @@ endif
 
 .PHONY: dev
 dev:
-	docker compose $(TRANSPORT_PROFILES) up --build -d
+	docker compose $(COMPOSE_PROFILES) up --build -d
 
 .PHONY: build-local
 build-local: ## Build images from local source
-	docker compose $(TRANSPORT_PROFILES) build
+	docker compose $(COMPOSE_PROFILES) build
 
 .PHONY: dev-logs
 dev-logs: ## Tail all service logs
@@ -40,8 +63,8 @@ dev-logs: ## Tail all service logs
 
 .PHONY: ci-up
 ci-up: ## Start stack using published registry images (no local build)
-	docker compose -f docker-compose.yml $(TRANSPORT_PROFILES) build --no-cache --pull
-	docker compose -f docker-compose.yml $(TRANSPORT_PROFILES) up -d
+	docker compose -f docker-compose.yml $(COMPOSE_PROFILES) build --no-cache --pull
+	docker compose -f docker-compose.yml $(COMPOSE_PROFILES) up -d
 
 .PHONY: pull
 pull: ## Pull latest images from registry
@@ -50,8 +73,8 @@ pull: ## Pull latest images from registry
 .PHONY: rebuild
 rebuild: ## Force rebuild DFE images (removes old, pulls fresh)
 	docker rmi -f dfe-loader:$${DFE_LOADER_VERSION:-latest} dfe-receiver:$${DFE_RECEIVER_VERSION:-latest} 2>/dev/null
-	docker compose -f docker-compose.yml $(TRANSPORT_PROFILES) build --no-cache --pull
-	docker compose -f docker-compose.yml $(TRANSPORT_PROFILES) up -d
+	docker compose -f docker-compose.yml $(COMPOSE_PROFILES) build --no-cache --pull
+	docker compose -f docker-compose.yml $(COMPOSE_PROFILES) up -d
 
 # ---------------------------------------------------------------------------
 # Infrastructure only (Kafka + ClickHouse)
