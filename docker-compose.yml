@@ -6,32 +6,28 @@
 # License:   FSL-1.1-ALv2
 # Copyright: (c) 2026 HYPERI PTY LIMITED
 #
-# Profile\Service | ClickHouse  | Kafka | Kafka UI  | dfe-archiver  | dfe-fetcher  | dfe-loader  | dfe-receiver  |
-# ----------------|-------------|-------|-----------|---------------|--------------|-------------|---------------|
-# full            |      X      |       |           |               |              |      X      |               |
-# full-kafka      |      X      |   X   |           |               |              |      X      |               |
-# ui              |             |       |     X     |               |              |             |               |
-# dfe             |             |       |           |       X       |       X      |      X      |       X       |
-# infra           |      X      |   X   |           |               |              |             |               |
-# archiver        |             |       |           |       X       |              |             |               |
-# fetcher         |             |       |           |               |       X      |             |               |
-# loader          |             |       |           |               |              |      X      |               |
-# receiver        |             |       |           |               |              |             |       X       |
+# Profile    | Service
+# -----------|----------------
+# clickhouse | ClickHouse
+# kafka      | Apache Kafka KRaft
+# ui         | Kafka UI (Kafbat)
+# archiver   | dfe-archiver
+# fetcher    | dfe-fetcher
+# loader     | dfe-loader
+# receiver   | dfe-receiver
 #
-# Config file selection via env vars (set automatically by Makefile based on DFE_TRANSPORT):
-#   DFE_ARCHIVER_CONFIG  - default: archiver-kafka.yaml
-#   DFE_FETCHER_CONFIG   - default: fetcher-aws-kafka.yaml  (grpc: fetcher-aws-grpc.yaml)
-#   DFE_LOADER_CONFIG    - default: loader-kafka.yaml       (grpc: loader-grpc.yaml)
-#   DFE_RECEIVER_CONFIG  - default: receiver-kafka.yaml     (grpc: receiver-grpc.yaml)
+# Service selection is controlled by services.yaml at repo root.
+# Config file paths are set per-profile in services.yaml.
 #
 # Quick start:
-#   DFE_TRANSPORT=kafka make dev
+#   make dev                          # uses active_profile from services.yaml
+#   DFE_PROFILE=grpc-full make dev    # override profile
 #
 # Dev build from source (requires docker-compose.override.yml - auto-loaded):
 #   make dev
 #
 # CI / registry images only (skip override):
-#   docker compose -f docker-compose.yml --profile full-kafka up --build -d
+#   docker compose -f docker-compose.yml --profile clickhouse --profile kafka --profile loader up -d
 
 # ===========================================================================
 # Base DFE Services
@@ -138,7 +134,7 @@ services:
   clickhouse:
     image: clickhouse/clickhouse-server:${CLICKHOUSE_VERSION:-latest}
     container_name: dfe-clickhouse
-    profiles: ["full", "full-kafka", "infra"]
+    profiles: ["clickhouse"]
     ports:
       - ${CLICKHOUSE_HTTP_PORT:-8123}:8123
       - ${CLICKHOUSE_NATIVE_PORT:-9000}:9000
@@ -169,7 +165,7 @@ services:
   kafka:
     image: apache/kafka:${KAFKA_VERSION:-latest}
     container_name: dfe-kafka
-    profiles: ["full-kafka", "infra"]
+    profiles: ["kafka"]
     environment:
       CLUSTER_ID: ${KAFKA_CLUSTER_ID:-dfe-docker-dev-cluster-01}
       KAFKA_ADVERTISED_LISTENERS: ${KAFKA_ADVERTISED_LISTENERS:-PLAINTEXT://kafka:9092,PLAINTEXT_HOST://localhost:19092}
@@ -198,6 +194,26 @@ services:
       start_period: 15s
 
   # ===========================================================================
+  # Kafka Init
+  # Creates default topics on first start so consumers don't fail on empty broker.
+  # ===========================================================================
+
+  kafka-init:
+    image: apache/kafka:${KAFKA_VERSION:-latest}
+    container_name: dfe-kafka-init
+    profiles: ["kafka"]
+    depends_on:
+      kafka:
+        condition: service_healthy
+    entrypoint: ["/bin/bash", "-c"]
+    command:
+      - |
+        /opt/kafka/bin/kafka-topics.sh --bootstrap-server kafka:9092 \
+          --create --if-not-exists --topic default_land \
+          --partitions 1 --replication-factor 1
+    restart: no
+
+  # ===========================================================================
   # Kafka UI
   # Opt-in UI for Kafka cluster.
   # ===========================================================================
@@ -221,10 +237,10 @@ services:
   dfe-archiver:
     <<: *archiver-base
     container_name: dfe-archiver
-    profiles: ["dfe", "archiver"]
+    profiles: ["archiver"]
     depends_on:
-      kafka:
-        condition: service_healthy
+      kafka-init:
+        condition: service_completed_successfully
         required: false
     volumes:
       - ./config/${DFE_ARCHIVER_CONFIG:-archiver-kafka.yaml}:/etc/dfe-archiver/config.yaml:ro
@@ -237,13 +253,13 @@ services:
   dfe-fetcher:
     <<: *fetcher-base
     container_name: dfe-fetcher
-    profiles: ["dfe", "fetcher"]
+    profiles: ["fetcher"]
     depends_on:
       dfe-loader:
         condition: service_healthy
         required: false
-      kafka:
-        condition: service_healthy
+      kafka-init:
+        condition: service_completed_successfully
         required: false
     volumes:
       - ./config/${DFE_FETCHER_CONFIG:-fetcher-aws-kafka.yaml}:/etc/dfe-fetcher/config.yaml:ro
@@ -257,10 +273,10 @@ services:
   dfe-loader:
     <<: *loader-base
     container_name: dfe-loader
-    profiles: ["full", "full-kafka", "dfe", "loader"]
+    profiles: ["loader"]
     depends_on:
-      kafka:
-        condition: service_healthy
+      kafka-init:
+        condition: service_completed_successfully
         required: false
     volumes:
       - ./config/${DFE_LOADER_CONFIG:-loader-kafka.yaml}:/etc/dfe/loader.yaml:ro
@@ -272,13 +288,13 @@ services:
   dfe-receiver:
     <<: *receiver-base
     container_name: dfe-receiver
-    profiles: ["dfe", "receiver"]
+    profiles: ["receiver"]
     depends_on:
       dfe-loader:
         condition: service_healthy
         required: false
-      kafka:
-        condition: service_healthy
+      kafka-init:
+        condition: service_completed_successfully
         required: false
     volumes:
       - ./config/${DFE_RECEIVER_CONFIG:-receiver-kafka.yaml}:/etc/dfe-receiver/config.yaml:ro

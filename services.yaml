@@ -1,0 +1,52 @@
+# Project:   dfe-docker
+# File:      services.yaml
+# Purpose:   DFE service profiles - defines transport and enabled services
+# Language:  YAML
+#
+# License:   FSL-1.1-ALv2
+# Copyright: (c) 2026 HYPERI PTY LIMITED
+#
+# Each profile declares a transport mode and which DFE services to start.
+# Presence = enabled: if a service is listed, it starts. If absent, it does not.
+#
+# Active profile is overridden by DFE_PROFILE env var:
+#   DFE_PROFILE=grpc-full make dev
+#
+# config_path is relative to the config/ directory.
+
+active_profile: kafka-full
+
+profiles:
+  kafka-minimal:
+    transport: kafka
+    services:
+      dfe-loader:
+        config_path: loader-kafka.yaml
+
+  kafka-full:
+    transport: kafka
+    services:
+      dfe-archiver:
+        config_path: archiver-kafka.yaml
+      dfe-fetcher:
+        config_path: fetcher-aws-kafka.yaml
+      dfe-loader:
+        config_path: loader-kafka.yaml
+      dfe-receiver:
+        config_path: receiver-kafka.yaml
+
+  grpc-minimal:
+    transport: grpc
+    services:
+      dfe-loader:
+        config_path: loader-grpc.yaml
+  
+  grpc-full:
+    transport: grpc
+    services:
+      dfe-fetcher:
+        config_path: fetcher-aws-grpc.yaml
+      dfe-loader:
+        config_path: loader-grpc.yaml
+      dfe-receiver:
+        config_path: receiver-grpc.yaml

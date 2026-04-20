@@ -16,7 +16,9 @@ global:
   data_file: tests/e2e/data/events.jsonl
   mode: dev
   profiles:
-    - full-kafka
+    - clickhouse
+    - kafka
+    - loader
   persistent_services:
     - clickhouse
     - kafka-ui
@@ -28,14 +30,17 @@ clickhouse:
 tests:
   - name: simple-receiver-to-loader-grpc
     profiles:
-      - full
+      - clickhouse
+      - loader
       - receiver
     loader_config: config/loader-grpc.yaml
     receiver_config: config/receiver-grpc.yaml
 
   - name: simple-receiver-to-loader-kafka
     profiles:
-      - full-kafka
+      - clickhouse
+      - kafka
+      - loader
       - receiver
     loader_config: config/loader-kafka.yaml
     receiver_config: config/receiver-kafka.yaml
@@ -45,7 +50,9 @@ tests:
 
   - name: simple-receiver-to-loader-kafka-with-archiver
     profiles:
-      - full-kafka
+      - clickhouse
+      - kafka
+      - loader
       - receiver
       - archiver
     archiver_config: config/archiver-kafka.yaml
@@ -57,16 +64,19 @@ tests:
 
   - name: simple-fetcher-to-loader
     profiles:
-      - full
+      - clickhouse
+      - loader
       - fetcher
     fetcher_config: config/fetcher-aws-grpc.yaml
     loader_config: config/loader-grpc.yaml
 
   - name: simple-fetcher-to-loader-kafka
     profiles:
-      - full-kafka
-      - fetcher
+      - clickhouse
+      - kafka
       - ui
+      - loader
+      - fetcher
     clickhouse:
       table_ddl_file_path: clickhouse/ddls/aws_cloudtrail_ddl.sql
     fetcher_config: config/fetcher-aws-kafka.yaml

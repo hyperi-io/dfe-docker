@@ -8,38 +8,14 @@
 
 .DEFAULT_GOAL := help
 
-# Read config from .env.
-# Command-line values override .env values.
-_CLI_DFE_PROFILES  := $(DFE_PROFILES)
-_CLI_DFE_TRANSPORT := $(DFE_TRANSPORT)
-
+# Read .env for port vars, credentials, versions (NOT profile/config)
 -include .env
-ifdef _CLI_DFE_TRANSPORT
-  DFE_TRANSPORT := $(_CLI_DFE_TRANSPORT)
-endif
-ifdef _CLI_DFE_PROFILES
-  DFE_PROFILES := $(_CLI_DFE_PROFILES)
-endif
-DFE_TRANSPORT ?= kafka
 
-# gRPC transport: override config file env vars (kafka is default)
-ifeq ($(DFE_TRANSPORT),grpc)
-  export DFE_ARCHIVER_CONFIG  ?= archiver-kafka.yaml
-  export DFE_FETCHER_CONFIG   ?= fetcher-aws-grpc.yaml
-  export DFE_LOADER_CONFIG    ?= loader-grpc.yaml
-  export DFE_RECEIVER_CONFIG  ?= receiver-grpc.yaml
-endif
-
-# Profile selection: DFE_PROFILES overrides the default profile set.
-#   DFE_PROFILES=archiver,infra make dev  - start only archiver + infra
-#   DFE_PROFILES=receiver,loader make dev - start only receiver + loader
-ifdef DFE_PROFILES
-  COMPOSE_PROFILES = $(foreach p,$(subst $(shell echo ','), ,$(subst ",,$(DFE_PROFILES))),--profile $(p))
-else ifeq ($(DFE_TRANSPORT),grpc)
-  COMPOSE_PROFILES = --profile full
-else
-  COMPOSE_PROFILES = --profile full-kafka --profile ui
-endif
+# Resolve active profile from services.yaml (override: DFE_PROFILE env var)
+# .profile.mk is created by resolve-profile.py
+# This is because $(shell) collapses newlines and we need to set multiple variables (PROFILE_FLAGS, PROFILE_NAME)
+$(shell python3 scripts/resolve-profile.py)
+include .profile.mk
 
 # ---------------------------------------------------------------------------
 # Dev (builds from local source via docker-compose.override.yml)
@@ -47,11 +23,11 @@ endif
 
 .PHONY: dev
 dev:
-	docker compose $(COMPOSE_PROFILES) up --build -d
+	docker compose $(PROFILE_FLAGS) up --build -d
 
 .PHONY: build-local
 build-local: ## Build images from local source
-	docker compose $(COMPOSE_PROFILES) build
+	docker compose $(PROFILE_FLAGS) build
 
 .PHONY: dev-logs
 dev-logs: ## Tail all service logs
@@ -61,10 +37,10 @@ dev-logs: ## Tail all service logs
 # CI / registry images (skips docker-compose.override.yml)
 # ---------------------------------------------------------------------------
 
-.PHONY: ci-up
-ci-up: ## Start stack using published registry images (no local build)
-	docker compose -f docker-compose.yml $(COMPOSE_PROFILES) build --no-cache --pull
-	docker compose -f docker-compose.yml $(COMPOSE_PROFILES) up -d
+.PHONY: ci
+ci: ## Start stack using published registry images (no local build)
+	docker compose -f docker-compose.yml $(PROFILE_FLAGS) build --no-cache --pull
+	docker compose -f docker-compose.yml $(PROFILE_FLAGS) up -d
 
 .PHONY: pull
 pull: ## Pull latest images from registry
@@ -73,8 +49,8 @@ pull: ## Pull latest images from registry
 .PHONY: rebuild
 rebuild: ## Force rebuild DFE images (removes old, pulls fresh)
 	docker rmi -f dfe-loader:$${DFE_LOADER_VERSION:-latest} dfe-receiver:$${DFE_RECEIVER_VERSION:-latest} 2>/dev/null
-	docker compose -f docker-compose.yml $(COMPOSE_PROFILES) build --no-cache --pull
-	docker compose -f docker-compose.yml $(COMPOSE_PROFILES) up -d
+	docker compose -f docker-compose.yml $(PROFILE_FLAGS) build --no-cache --pull
+	docker compose -f docker-compose.yml $(PROFILE_FLAGS) up -d
 
 # ---------------------------------------------------------------------------
 # Infrastructure only (Kafka + ClickHouse)
@@ -82,32 +58,11 @@ rebuild: ## Force rebuild DFE images (removes old, pulls fresh)
 
 .PHONY: infra
 infra: ## Start infrastructure services (Kafka + ClickHouse)
-	docker compose --profile infra up -d
+	docker compose --profile clickhouse --profile kafka up -d
 
 .PHONY: infra-logs
 infra-logs: ## Tail infrastructure logs
-	docker compose --profile infra logs -f
-
-# ---------------------------------------------------------------------------
-# External ClickHouse (set CLICKHOUSE_HOST in .env, no Docker CH container)
-# ---------------------------------------------------------------------------
-
-.PHONY: up-ext
-up-ext: ## Start stack using external ClickHouse (CLICKHOUSE_HOST must be set)
-	docker compose --profile bare-bones up -d
-
-# ---------------------------------------------------------------------------
-# Debug mode (file sinks, no ClickHouse writes)
-# Requires FileSink support in dfe-receiver + dfe-loader (pre-wired, pending impl)
-# ---------------------------------------------------------------------------
-
-.PHONY: debug
-debug: ## Start debug stack (file sinks to /var/spool/dfe/debug/)
-	docker compose --profile debug up -d
-
-.PHONY: debug-logs
-debug-logs: ## Tail debug stack logs
-	docker compose --profile debug logs -f
+	docker compose --profile clickhouse --profile kafka logs -f
 
 # ---------------------------------------------------------------------------
 # Testing

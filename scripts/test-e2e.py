@@ -53,7 +53,7 @@ DEFAULTS = {
     "data_file": "tests/e2e/data/events.jsonl",
     "mode": "ci",
     "persistent_services": ["clickhouse"],
-    "profiles": ["full"],
+    "profiles": ["clickhouse", "loader"],
     "clickhouse": {
         "drop_database": True,
         "table_ddl_file_path": "clickhouse/base_table_ddl.sql"
@@ -547,7 +547,7 @@ def stack_up(mode, test, loader_config):
     # The loader fails on startup if no matching topics exist on the broker.
     has_kafka = any("kafka" in profile for profile in test.profiles)
     if (has_kafka and test.expected_topics):
-        infra_cmd = ["docker", "compose"] + compose_files + ["--profile", "infra"]
+        infra_cmd = ["docker", "compose"] + compose_files + ["--profile", "clickhouse", "--profile", "kafka"]
         infra_up = infra_cmd + ["up", "-d"]
 
         LOGGER.info("Preparing 'Kafka' service...")
@@ -558,7 +558,7 @@ def stack_up(mode, test, loader_config):
             return False
 
         LOGGER.debug("Waiting for 'Kafka' to be healthy...")
-        wait_cmd = ["docker", "compose"] + compose_files + ["--profile", "infra", "up", "--wait", "--wait-timeout", "60", "-d"]
+        wait_cmd = ["docker", "compose"] + compose_files + ["--profile", "clickhouse", "--profile", "kafka", "up", "--wait", "--wait-timeout", "60", "-d"]
         wait_result = run_cmd(wait_cmd, check = False, capture = not(LOG_LEVEL == "DEBUG"))
         if (wait_result.returncode != 0):
             LOGGER.error("'Kafka' broker not healthy within timeout")

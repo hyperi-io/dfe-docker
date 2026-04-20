@@ -17,6 +17,7 @@ out/
 test-results/
 coverage/
 .tmp/
+.profile.mk
 certs/
 
 # AI agent working files (not committed)
