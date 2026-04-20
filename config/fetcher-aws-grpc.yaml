@@ -1,6 +1,6 @@
 # Project:   dfe-docker
-# File:      config/fetcher-grpc.yaml
-# Purpose:   dfe-fetcher config — gRPC transport (default, DFE_TRANSPORT=grpc)
+# File:      config/fetcher-aws-grpc.yaml
+# Purpose:   dfe-fetcher AWS config — gRPC transport (DFE_TRANSPORT=grpc)
 # Language:  YAML
 #
 # License:   FSL-1.1-ALv2

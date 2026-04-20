@@ -1,6 +1,6 @@
 # Project:   dfe-docker
-# File:      config/fetcher-kafka.yaml
-# Purpose:   dfe-fetcher config — Kafka transport (DFE_TRANSPORT=kafka)
+# File:      config/fetcher-aws-kafka.yaml
+# Purpose:   dfe-fetcher AWS config — Kafka transport (DFE_TRANSPORT=kafka)
 # Language:  YAML
 #
 # License:   FSL-1.1-ALv2
