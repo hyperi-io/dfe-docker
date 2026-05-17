@@ -6,123 +6,23 @@
 # License:   FSL-1.1-ALv2
 # Copyright: (c) 2026 HYPERI PTY LIMITED
 #
-# Profile    | Service
-# -----------|----------------
-# clickhouse | ClickHouse
-# kafka      | Apache Kafka KRaft
-# ui         | Kafka UI (Kafbat)
-# archiver   | dfe-archiver
-# fetcher    | dfe-fetcher
-# loader     | dfe-loader
-# receiver   | dfe-receiver
+# Profile    | Services
+# -----------|---------------------
+# clickhouse | clickhouse
+# kafka      | kafka, kafka-init
+# ui         | kafka-ui
 #
-# Service selection is controlled by services.yaml at repo root.
-# Config file paths are set per-profile in services.yaml.
+# DFE services have no profile and are started by name. Which ones run is controlled by service_profiles.yaml at the repo root. Config paths are also set there.
 #
 # Quick start:
-#   make dev                          # uses active_profile from services.yaml
+#   make dev                          # uses active_profile from service_profiles.yaml
 #   DFE_PROFILE=grpc-full make dev    # override profile
 #
 # Dev build from source (requires docker-compose.override.yml - auto-loaded):
 #   make dev
 #
 # CI / registry images only (skip override):
-#   docker compose -f docker-compose.yml --profile clickhouse --profile kafka --profile loader up -d
-
-# ===========================================================================
-# Base DFE Services
-# Allows different configs to be used on different profiles
-# ===========================================================================
-
-x-archiver-base: &archiver-base
-  image: dfe-archiver:${DFE_ARCHIVER_VERSION:-latest}
-  build:
-    context: images/archiver
-    args:
-      ARCHITECTURE: ${IMAGE_ARCHITECTURE:-linux/amd64}
-      REGISTRY: ${IMAGE_REGISTRY:-https://downloads.hyperi.io}
-      VERSION: ${DFE_ARCHIVER_VERSION:-latest}
-  ports:
-    - ${DFE_ARCHIVER_PROMETHEUS_PORT:-9093}:9090
-  environment:
-    LOG_LEVEL: ${LOG_LEVEL:-info}
-    LOG_FORMAT: ${LOG_FORMAT:-text}
-  healthcheck:
-    test: ["CMD", "curl", "-sf", "http://localhost:9090/health/ready"]
-    interval: 10s
-    timeout: 3s
-    retries: 5
-
-x-fetcher-base: &fetcher-base
-  image: dfe-fetcher:${DFE_FETCHER_VERSION:-latest}
-  build:
-    context: images/fetcher
-    args:
-      ARCHITECTURE: ${IMAGE_ARCHITECTURE:-linux/amd64}
-      REGISTRY: ${IMAGE_REGISTRY:-https://downloads.hyperi.io}
-      VERSION: ${DFE_FETCHER_VERSION:-latest}
-  ports:
-    - ${DFE_FETCHER_INGEST_PORT:-8082}:8080
-    - ${DFE_FETCHER_PROMETHEUS_PORT:-9094}:9090
-  environment:
-    LOG_LEVEL: ${LOG_LEVEL:-info}
-    LOG_FORMAT: ${LOG_FORMAT:-text}
-    AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID:-}
-    AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY:-}
-    DFE_FETCHER_SOURCES__AWS__REGION: ${AWS_REGION:-us-east-1}
-  healthcheck:
-    test: ["CMD", "curl", "-sf", "http://localhost:9090/health/ready"]
-    interval: 10s
-    timeout: 3s
-    retries: 5
-
-x-loader-base: &loader-base
-  image: dfe-loader:${DFE_LOADER_VERSION:-latest}
-  build:
-    context: images/loader
-    args:
-      ARCHITECTURE: ${IMAGE_ARCHITECTURE:-linux/amd64}
-      REGISTRY: ${IMAGE_REGISTRY:-https://downloads.hyperi.io}
-      VERSION: ${DFE_LOADER_VERSION:-latest}
-  ports:
-    - ${DFE_LOADER_PROMETHEUS_PORT:-9091}:9090
-    - ${DFE_LOADER_GRPC_PORT:-50051}:50051
-  environment:
-    DFE_LOADER_CLICKHOUSE__USERNAME: ${CLICKHOUSE_USERNAME:-default}
-    DFE_LOADER_CLICKHOUSE__PASSWORD: ${CLICKHOUSE_PASSWORD:-}
-    LOG_LEVEL: ${LOG_LEVEL:-info}
-    LOG_FORMAT: ${LOG_FORMAT:-text}
-  healthcheck:
-    test: ["CMD", "curl", "-sf", "http://localhost:9090/health/ready"]
-    interval: 10s
-    timeout: 3s
-    retries: 5
-
-x-receiver-base: &receiver-base
-  image: dfe-receiver:${DFE_RECEIVER_VERSION:-latest}
-  build:
-    context: images/receiver
-    args:
-      ARCHITECTURE: ${IMAGE_ARCHITECTURE:-linux/amd64}
-      REGISTRY: ${IMAGE_REGISTRY:-https://downloads.hyperi.io}
-      VERSION: ${DFE_RECEIVER_VERSION:-latest}
-  ports:
-    - ${DFE_RECEIVER_GRPC_PORT:-6000}:6000
-    - ${DFE_RECEIVER_HTTP_PORT:-8080}:8080
-    - ${DFE_RECEIVER_PROMETHEUS_PORT:-9090}:9090
-    # Uncomment to expose additional ingest protocols:
-    # - ${DFE_RECEIVER_BEATS_PORT:-5044}:5044
-    # - ${DFE_RECEIVER_HEC_PORT:-8088}:8088
-    # - ${DFE_RECEIVER_OTLP_GRPC_PORT:-4317}:4317
-    # - ${DFE_RECEIVER_OTLP_HTTP_PORT:-4318}:4318
-  environment:
-    LOG_LEVEL: ${LOG_LEVEL:-info}
-    LOG_FORMAT: ${LOG_FORMAT:-text}
-  healthcheck:
-    test: ["CMD", "curl", "-sf", "http://localhost:9090/health/ready"]
-    interval: 10s
-    timeout: 3s
-    retries: 5
+#   docker compose -f docker-compose.yml --profile clickhouse --profile kafka up -d dfe-loader
 
 services:
 
@@ -235,25 +135,41 @@ services:
   # ===========================================================================
 
   dfe-archiver:
-    <<: *archiver-base
+    image: ${IMAGE_REGISTRY:-ghcr.io/hyperi-io}/dfe-archiver:${DFE_ARCHIVER_VERSION:-latest}
     container_name: dfe-archiver
-    profiles: ["archiver"]
+    ports:
+      - ${DFE_ARCHIVER_PROMETHEUS_PORT:-9093}:9090
+    environment:
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+      LOG_FORMAT: ${LOG_FORMAT:-text}
     depends_on:
       kafka-init:
         condition: service_completed_successfully
         required: false
     volumes:
-      - ./config/${DFE_ARCHIVER_CONFIG:-archiver-kafka.yaml}:/etc/dfe-archiver/config.yaml:ro
-      - archiver-data:/var/data/archive
+      - ./config/${DFE_ARCHIVER_CONFIG:-archiver/kafka.yaml}:/etc/dfe/archiver.yaml:ro
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://localhost:9090/health/ready"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
 
   # ===========================================================================
   # dfe-fetcher
   # ===========================================================================
 
   dfe-fetcher:
-    <<: *fetcher-base
+    image: ${IMAGE_REGISTRY:-ghcr.io/hyperi-io}/dfe-fetcher:${DFE_FETCHER_VERSION:-latest}
     container_name: dfe-fetcher
-    profiles: ["fetcher"]
+    ports:
+      - ${DFE_FETCHER_INGEST_PORT:-8082}:8080
+      - ${DFE_FETCHER_PROMETHEUS_PORT:-9094}:9090
+    environment:
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+      LOG_FORMAT: ${LOG_FORMAT:-text}
+      AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID:-}
+      AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY:-}
+      DFE_FETCHER_SOURCES__AWS__REGION: ${AWS_REGION:-us-east-1}
     depends_on:
       dfe-loader:
         condition: service_healthy
@@ -262,8 +178,12 @@ services:
         condition: service_completed_successfully
         required: false
     volumes:
-      - ./config/${DFE_FETCHER_CONFIG:-fetcher-aws-kafka.yaml}:/etc/dfe-fetcher/config.yaml:ro
-      - fetcher-data:/var/lib/dfe-fetcher
+      - ./config/${DFE_FETCHER_CONFIG:-fetcher/aws-kafka.yaml}:/etc/dfe/fetcher.yaml:ro
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://localhost:9090/health/ready"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
 
   # ===========================================================================
   # dfe-loader
@@ -271,24 +191,47 @@ services:
   # ===========================================================================
 
   dfe-loader:
-    <<: *loader-base
+    image: ${IMAGE_REGISTRY:-ghcr.io/hyperi-io}/dfe-loader:${DFE_LOADER_VERSION:-latest}
     container_name: dfe-loader
-    profiles: ["loader"]
+    ports:
+      - ${DFE_LOADER_PROMETHEUS_PORT:-9091}:9090
+      - ${DFE_LOADER_GRPC_PORT:-50051}:50051
+    environment:
+      DFE_LOADER_CLICKHOUSE__USERNAME: ${CLICKHOUSE_USERNAME:-default}
+      DFE_LOADER_CLICKHOUSE__PASSWORD: ${CLICKHOUSE_PASSWORD:-}
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+      LOG_FORMAT: ${LOG_FORMAT:-text}
     depends_on:
       kafka-init:
         condition: service_completed_successfully
         required: false
     volumes:
-      - ./config/${DFE_LOADER_CONFIG:-loader-kafka.yaml}:/etc/dfe/loader.yaml:ro
+      - ./config/${DFE_LOADER_CONFIG:-loader/kafka.yaml}:/etc/dfe/loader.yaml:ro
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://localhost:9090/health/ready"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
 
   # ===========================================================================
   # dfe-receiver
   # ===========================================================================
 
   dfe-receiver:
-    <<: *receiver-base
+    image: ${IMAGE_REGISTRY:-ghcr.io/hyperi-io}/dfe-receiver:${DFE_RECEIVER_VERSION:-latest}
     container_name: dfe-receiver
-    profiles: ["receiver"]
+    ports:
+      - ${DFE_RECEIVER_GRPC_PORT:-6000}:6000
+      - ${DFE_RECEIVER_HTTP_PORT:-8080}:8080
+      - ${DFE_RECEIVER_PROMETHEUS_PORT:-9090}:9090
+      # Uncomment to expose additional ingest protocols:
+      # - ${DFE_RECEIVER_BEATS_PORT:-5044}:5044
+      # - ${DFE_RECEIVER_HEC_PORT:-8088}:8088
+      # - ${DFE_RECEIVER_OTLP_GRPC_PORT:-4317}:4317
+      # - ${DFE_RECEIVER_OTLP_HTTP_PORT:-4318}:4318
+    environment:
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+      LOG_FORMAT: ${LOG_FORMAT:-text}
     depends_on:
       dfe-loader:
         condition: service_healthy
@@ -297,14 +240,71 @@ services:
         condition: service_completed_successfully
         required: false
     volumes:
-      - ./config/${DFE_RECEIVER_CONFIG:-receiver-kafka.yaml}:/etc/dfe-receiver/config.yaml:ro
+      - ./config/${DFE_RECEIVER_CONFIG:-receiver/kafka.yaml}:/etc/dfe-receiver/config.yaml:ro
       # Uncomment to enable TLS on gRPC inbound (:6000):
       # - ./certs/dev/receiver.crt:/etc/ssl/receiver.crt:ro
       # - ./certs/dev/receiver.key:/etc/ssl/receiver.key:ro
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://localhost:9090/health/ready"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+
+  # ===========================================================================
+  # dfe-transform-vector
+  # ===========================================================================
+
+  dfe-transform-vector:
+    image: ${IMAGE_REGISTRY:-ghcr.io/hyperi-io}/dfe-transform-vector:${DFE_TRANSFORM_VECTOR_VERSION:-latest}
+    container_name: dfe-transform-vector
+    ports:
+      - ${DFE_TRANSFORM_VECTOR_PROMETHEUS_PORT:-9095}:9090
+      - ${DFE_TRANSFORM_VECTOR_API_PORT:-8686}:8686
+    environment:
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+      LOG_FORMAT: ${LOG_FORMAT:-text}
+    depends_on:
+      kafka-init:
+        condition: service_completed_successfully
+        required: false
+    volumes:
+      - ./config/${DFE_TRANSFORM_VECTOR_CONFIG:-transform-vector/kafka.yaml}:/etc/dfe/config.yaml:ro
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://localhost:9090/health/ready"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+
+  # ===========================================================================
+  # dfe-transform-vrl
+  # ===========================================================================
+
+  dfe-transform-vrl:
+    image: ${IMAGE_REGISTRY:-ghcr.io/hyperi-io}/dfe-transform-vrl:${DFE_TRANSFORM_VRL_VERSION:-latest}
+    container_name: dfe-transform-vrl
+    ports:
+      - ${DFE_TRANSFORM_VRL_PROMETHEUS_PORT:-9096}:9090
+    environment:
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+      LOG_FORMAT: ${LOG_FORMAT:-text}
+      # Workaround: dfe-transform-vrl double-starts a metrics server on the
+      # same port as hyperi-rustlib's auto-started one. Move VRL's duplicate
+      # to 9091 (internal-only) so rustlib's 9090 server keeps serving the
+      # published port and healthcheck. See TODO.md `dfe-transform-vrl` issues.
+      DFE_TRANSFORM_METRICS_ADDRESS: "0.0.0.0:9091"
+    depends_on:
+      kafka-init:
+        condition: service_completed_successfully
+        required: false
+    volumes:
+      - ./config/${DFE_TRANSFORM_VRL_CONFIG:-transform-vrl/kafka.yaml}:/etc/dfe/config.yaml:ro
+      - ./config/transform-vrl/transforms:/etc/dfe/transforms:ro
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://localhost:9090/health/ready"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
 
 volumes:
-  archiver-data:
   clickhouse-data:
-  dfe-debug:
-  fetcher-data:
   kafka-data:

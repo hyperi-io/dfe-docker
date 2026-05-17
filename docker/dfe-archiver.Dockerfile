@@ -1,12 +1,12 @@
-#  Project:   dfe-docker
-#  File:      docker/dfe-archiver.Dockerfile
-#  Purpose:   Dev build — compiles dfe-archiver from source (not for production)
-#  Language:  Dockerfile
+# Project:   dfe-docker
+# File:      docker/dfe-archiver.Dockerfile
+# Purpose:   Dev build - compiles dfe-archiver from source (not for production)
+# Language:  Dockerfile
 #
-#  License:   FSL-1.1-ALv2
-#  Copyright: (c) 2026 HYPERI PTY LIMITED
+# License:   FSL-1.1-ALv2
+# Copyright: (c) 2026 HYPERI PTY LIMITED
 #
-# For production: use the published JFrog image (docker-compose.yml default).
+# For production: use the published GHCR image (docker-compose.yml default).
 # This Dockerfile is only used via docker-compose.override.yml in dev mode.
 #
 # Build context: PROJECTS_PATH (parent dir containing dfe-archiver + hyperi-rustlib)
