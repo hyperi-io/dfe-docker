@@ -1,6 +1,6 @@
 # Project:   dfe-docker
-# File:      config/receiver-kafka.yaml
-# Purpose:   dfe-receiver config — Kafka transport (DFE_TRANSPORT=kafka)
+# File:      config/receiver/kafka.yaml
+# Purpose:   dfe-receiver config - Kafka transport (DFE_TRANSPORT=kafka)
 # Language:  YAML
 #
 # License:   FSL-1.1-ALv2

@@ -1,6 +1,6 @@
 # Project:   dfe-docker
 # File:      config/loader-ext-ch.yaml
-# Purpose:   dfe-loader config — external ClickHouse (ClickHouse Cloud / on-prem TLS)
+# Purpose:   dfe-loader config - external ClickHouse (ClickHouse Cloud / on-prem TLS)
 # Language:  YAML
 #
 # License:   FSL-1.1-ALv2

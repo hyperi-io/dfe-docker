@@ -1,0 +1,24 @@
+# Project:   dfe-docker
+# File:      config/loader/kafka.yaml
+# Purpose:   dfe-loader config - Kafka transport consumer (DFE_TRANSPORT=kafka)
+# Language:  YAML
+#
+# License:   FSL-1.1-ALv2
+# Copyright: (c) 2026 HYPERI PTY LIMITED
+
+clickhouse:
+  hosts:
+    - clickhouse:8123
+  database: dfe
+  protocol: http
+
+kafka:
+  brokers:
+    - kafka:9092
+  group: dfe-loader
+  topics:
+    - default_load
+
+routing:
+  dlq:
+    enabled: false

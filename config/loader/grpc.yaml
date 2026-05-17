@@ -1,6 +1,6 @@
 # Project:   dfe-docker
-# File:      config/loader-grpc.yaml
-# Purpose:   dfe-loader config — gRPC transport server (default, DFE_TRANSPORT=grpc)
+# File:      config/loader/grpc.yaml
+# Purpose:   dfe-loader config - gRPC transport server (default, DFE_TRANSPORT=grpc)
 # Language:  YAML
 #
 # License:   FSL-1.1-ALv2

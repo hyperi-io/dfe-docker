@@ -1,6 +1,6 @@
 # Project:   dfe-docker
 # File:      config/receiver-debug.yaml
-# Purpose:   dfe-receiver config — file sink debug mode (no forwarding)
+# Purpose:   dfe-receiver config - file sink debug mode (no forwarding)
 # Language:  YAML
 #
 # License:   FSL-1.1-ALv2

@@ -1,6 +1,6 @@
 # Project:   dfe-docker
 # File:      config/loader-debug.yaml
-# Purpose:   dfe-loader config — file sink debug mode (no ClickHouse writes)
+# Purpose:   dfe-loader config - file sink debug mode (no ClickHouse writes)
 # Language:  YAML
 #
 # License:   FSL-1.1-ALv2

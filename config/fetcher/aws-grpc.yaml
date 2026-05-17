@@ -1,15 +1,15 @@
 # Project:   dfe-docker
-# File:      config/fetcher-aws-kafka.yaml
-# Purpose:   dfe-fetcher AWS config — Kafka transport (DFE_TRANSPORT=kafka)
+# File:      config/fetcher/aws-grpc.yaml
+# Purpose:   dfe-fetcher AWS config - gRPC transport (DFE_TRANSPORT=grpc)
 # Language:  YAML
 #
 # License:   FSL-1.1-ALv2
 # Copyright: (c) 2026 HYPERI PTY LIMITED
 
 output:
-  kafka:
-    brokers:
-      - kafka:9092
+  type: grpc
+  grpc:
+    endpoint: http://dfe-loader:50051
 
 sources:
   aws:

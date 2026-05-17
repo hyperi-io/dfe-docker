@@ -1,6 +1,6 @@
 # Project:   dfe-docker
-# File:      config/archiver-kafka.yaml
-# Purpose:   dfe-archiver config — Kafka data archiver (DFE_TRANSPORT=kafka)
+# File:      config/archiver/kafka.yaml
+# Purpose:   dfe-archiver config - Kafka data archiver (DFE_TRANSPORT=kafka)
 # Language:  YAML
 #
 # License:   FSL-1.1-ALv2
