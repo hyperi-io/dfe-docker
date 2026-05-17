@@ -1,11 +1,11 @@
 -- HyperI DFE aws_cloudtrail 2026-04-08 10:55:17 UTC
 CREATE TABLE IF NOT EXISTS {database}.{table}
 (
-    `_timestamp_load` DateTime64(3,'UTC') DEFAULT now64(3) COMMENT '@generated: now64(3) — Insertion timestamp (ms precision)' CODEC(Delta, LZ4),
-    `_timestamp` DateTime64(3,'UTC') COMMENT '@source: timestamp | now() — Event timestamp from source data' CODEC(Delta, ZSTD(1)),
-    `_uuid` Nullable(UUID) DEFAULT generateUUIDv7() COMMENT '@generated: generateUUIDv7() — Time-ordered unique event identifier',
-    `_org_id` LowCardinality(String) COMMENT '@source: org_id — Tenant/organisation identifier' CODEC(ZSTD(1)),
-    `_json` Nullable(JSON) COMMENT '@captured: raw_payload as JSON — Original event payload as structured JSON' CODEC(ZSTD(3)),
+    `_timestamp_load` DateTime64(3,'UTC') DEFAULT now64(3) COMMENT '@generated: now64(3) - Insertion timestamp (ms precision)' CODEC(Delta, LZ4),
+    `_timestamp` DateTime64(3,'UTC') COMMENT '@source: timestamp | now() - Event timestamp from source data' CODEC(Delta, ZSTD(1)),
+    `_uuid` Nullable(UUID) DEFAULT generateUUIDv7() COMMENT '@generated: generateUUIDv7() - Time-ordered unique event identifier',
+    `_org_id` LowCardinality(String) COMMENT '@source: org_id - Tenant/organisation identifier' CODEC(ZSTD(1)),
+    `_json` Nullable(JSON) COMMENT '@captured: raw_payload as JSON - Original event payload as structured JSON' CODEC(ZSTD(3)),
     `event_id` Nullable(String) COMMENT 'Unique CloudTrail event identifier | @renamed:EventId' CODEC(ZSTD(1)),
     `event_name` LowCardinality(Nullable(String)) COMMENT 'API action name (e.g. ConsoleLogin, AssumeRole) | @renamed:EventName' CODEC(ZSTD(1)),
     `event_time` Nullable(DateTime64(3,'UTC')) COMMENT 'When the API call occurred | @renamed:EventTime' CODEC(Delta, ZSTD(1)),
