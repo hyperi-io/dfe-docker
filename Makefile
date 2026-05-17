@@ -11,7 +11,7 @@
 # Read .env for port vars, credentials, versions (NOT profile/config)
 -include .env
 
-# Resolve active profile from services.yaml (override: DFE_PROFILE env var)
+# Resolve active profile from service_profiles.yaml (override: DFE_PROFILE env var)
 # .profile.mk is created by resolve-profile.py
 # This is because $(shell) collapses newlines and we need to set multiple variables (PROFILE_FLAGS, PROFILE_NAME)
 $(shell python3 scripts/resolve-profile.py)
@@ -23,11 +23,11 @@ include .profile.mk
 
 .PHONY: dev
 dev:
-	docker compose $(PROFILE_FLAGS) up --build -d
+	docker compose $(PROFILE_FLAGS) up --build -d $(DFE_SERVICES)
 
 .PHONY: build-local
 build-local: ## Build images from local source
-	docker compose $(PROFILE_FLAGS) build
+	docker compose $(PROFILE_FLAGS) build $(DFE_SERVICES)
 
 .PHONY: dev-logs
 dev-logs: ## Tail all service logs
@@ -39,8 +39,8 @@ dev-logs: ## Tail all service logs
 
 .PHONY: ci
 ci: ## Start stack using published registry images (no local build)
-	docker compose -f docker-compose.yml $(PROFILE_FLAGS) build --no-cache --pull
-	docker compose -f docker-compose.yml $(PROFILE_FLAGS) up -d
+	docker compose -f docker-compose.yml $(PROFILE_FLAGS) build --no-cache --pull $(DFE_SERVICES)
+	docker compose -f docker-compose.yml $(PROFILE_FLAGS) up -d $(DFE_SERVICES)
 
 .PHONY: pull
 pull: ## Pull latest images from registry
@@ -49,8 +49,8 @@ pull: ## Pull latest images from registry
 .PHONY: rebuild
 rebuild: ## Force rebuild DFE images (removes old, pulls fresh)
 	docker rmi -f dfe-loader:$${DFE_LOADER_VERSION:-latest} dfe-receiver:$${DFE_RECEIVER_VERSION:-latest} 2>/dev/null
-	docker compose -f docker-compose.yml $(PROFILE_FLAGS) build --no-cache --pull
-	docker compose -f docker-compose.yml $(PROFILE_FLAGS) up -d
+	docker compose -f docker-compose.yml $(PROFILE_FLAGS) build --no-cache --pull $(DFE_SERVICES)
+	docker compose -f docker-compose.yml $(PROFILE_FLAGS) up -d $(DFE_SERVICES)
 
 # ---------------------------------------------------------------------------
 # Infrastructure only (Kafka + ClickHouse)

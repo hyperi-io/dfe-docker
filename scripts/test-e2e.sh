@@ -49,7 +49,7 @@ die() {
 }
 
 require_command() {
-    command -v "${1}" > /dev/null 2>&1 || die "${1} not found — install it first"
+    command -v "${1}" > /dev/null 2>&1 || die "${1} not found - install it first"
 }
 
 cleanup() {
@@ -142,7 +142,7 @@ generate_compose_override() {
     local receiver_svc="${services%% *}"
     local loader_svc="${services##* }"
 
-    # Export vars for yq strenv() — yq uses env vars, not --arg like jq
+    # Export vars for yq strenv() - yq uses env vars, not --arg like jq
     export YQ_RSVC="${receiver_svc}"
     export YQ_LSVC="${loader_svc}"
     export YQ_RCFG="./${receiver_config}:/etc/dfe-receiver/config.yaml:ro"
@@ -456,7 +456,7 @@ run_test() {
     if [[ "${teardown}" == "true" ]]; then
         stack_down
     else
-        log "Teardown disabled — stack left running for '${name}'"
+        log "Teardown disabled - stack left running for '${name}'"
     fi
     echo "------------------------------------------------------------"
 }

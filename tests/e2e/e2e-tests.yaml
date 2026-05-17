@@ -6,19 +6,16 @@
 # License:   FSL-1.1-ALv2
 # Copyright: (c) 2026 HYPERI PTY LIMITED
 
-# Each test brings up the stack with a given compose profile, sends events
-# from the data file to the receiver, and verifies they land in dfe.default.
-# If sample_size is set, a random sample is taken; otherwise the full file
-# is used. Kafka profiles also verify expected topics exist.
-# Refer to docker-compose.yml for available profiles.
+# Each test references a profile from service_profiles.yaml. The profile declares which
+# DFE services run and their config paths. The runner adds infra automatically
+# (clickhouse always; kafka + ui when transport is kafka).
+#
+# Per-service config overrides can be set via `config_overrides`, keyed by
+# service name (e.g. dfe-loader: config/custom.yaml).
 
 global:
   data_file: tests/e2e/data/events.jsonl
   mode: dev
-  profiles:
-    - clickhouse
-    - kafka
-    - loader
   persistent_services:
     - clickhouse
     - kafka-ui
@@ -29,58 +26,27 @@ clickhouse:
 
 tests:
   - name: simple-receiver-to-loader-grpc
-    profiles:
-      - clickhouse
-      - loader
-      - receiver
-    loader_config: config/loader-grpc.yaml
-    receiver_config: config/receiver-grpc.yaml
+    profile: grpc-receiver
 
   - name: simple-receiver-to-loader-kafka
-    profiles:
-      - clickhouse
-      - kafka
-      - loader
-      - receiver
-    loader_config: config/loader-kafka.yaml
-    receiver_config: config/receiver-kafka.yaml
+    profile: kafka-receiver
     expected_topics:
       - default_land
       - simple_receiver_to_loader_kafka_land
 
   - name: simple-receiver-to-loader-kafka-with-archiver
-    profiles:
-      - clickhouse
-      - kafka
-      - loader
-      - receiver
-      - archiver
-    archiver_config: config/archiver-kafka.yaml
-    loader_config: config/loader-kafka.yaml
-    receiver_config: config/receiver-kafka.yaml
+    profile: kafka-receiver-archiver
     expected_topics:
       - default_land
       - simple_receiver_to_loader_kafka_with_archiver_land
 
   - name: simple-fetcher-to-loader
-    profiles:
-      - clickhouse
-      - loader
-      - fetcher
-    fetcher_config: config/fetcher-aws-grpc.yaml
-    loader_config: config/loader-grpc.yaml
+    profile: grpc-fetcher
 
   - name: simple-fetcher-to-loader-kafka
-    profiles:
-      - clickhouse
-      - kafka
-      - ui
-      - loader
-      - fetcher
+    profile: kafka-fetcher
     clickhouse:
       table_ddl_file_path: clickhouse/ddls/aws_cloudtrail_ddl.sql
-    fetcher_config: config/fetcher-aws-kafka.yaml
-    loader_config: config/loader-kafka.yaml
     expected_topics:
       - default_land
       - simple_fetcher_to_loader_kafka_land

@@ -1,15 +1,15 @@
 #!/usr/bin/env python3
 #  Project:      dfe-docker
 #  File:         resolve-profile.py
-#  Purpose:      Read services.yaml and output Make-consumable profile variables
+#  Purpose:      Read service_profiles.yaml and output Make-consumable profile variables
 #  Language:     Python
 #
 #  License:      FSL-1.1-ALv2
 #  Copyright:    (c) 2026 HYPERI PTY LIMITED
 
-"""Resolve DFE service profile from services.yaml.
+"""Resolve DFE service profile from service_profiles.yaml.
 
-Reads services.yaml, resolves the active profile (overridable via DFE_PROFILE
+Reads service_profiles.yaml, resolves the active profile (overridable via DFE_PROFILE
 env var), validates config paths exist, and outputs Make-consumable export
 lines to stdout. Errors go to stderr.
 """
@@ -19,17 +19,17 @@ import sys
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
-SERVICES_FILE = REPO_ROOT / "services.yaml"
+SERVICE_PROFILES_FILE = REPO_ROOT / "service_profiles.yaml"
 CONFIG_DIR = REPO_ROOT / "config"
 PROFILE_MK = REPO_ROOT / ".profile.mk"
 
-KNOWN_SERVICES = {"dfe-archiver", "dfe-fetcher", "dfe-loader", "dfe-receiver"}
-
-SERVICE_TO_PROFILE = {
-    "dfe-archiver": "archiver",
-    "dfe-fetcher": "fetcher",
-    "dfe-loader": "loader",
-    "dfe-receiver": "receiver",
+KNOWN_SERVICES = {
+    "dfe-archiver",
+    "dfe-fetcher",
+    "dfe-loader", 
+    "dfe-receiver",
+    "dfe-transform-vector",
+    "dfe-transform-vrl"
 }
 
 SERVICE_TO_CONFIG_VAR = {
@@ -37,6 +37,8 @@ SERVICE_TO_CONFIG_VAR = {
     "dfe-fetcher": "DFE_FETCHER_CONFIG",
     "dfe-loader": "DFE_LOADER_CONFIG",
     "dfe-receiver": "DFE_RECEIVER_CONFIG",
+    "dfe-transform-vector": "DFE_TRANSFORM_VECTOR_CONFIG",
+    "dfe-transform-vrl": "DFE_TRANSFORM_VRL_CONFIG"
 }
 
 UNSUPPORTED_PATTERNS = [
@@ -118,11 +120,11 @@ def resolve_profile(data):
     """Resolve active profile and return (transport, services_dict)."""
     active = os.environ.get("DFE_PROFILE", "") or data.get("active_profile", "")
     if not active:
-        die("no active profile: set active_profile in services.yaml or DFE_PROFILE env var")
+        die("no active profile: set active_profile in service_profiles.yaml or DFE_PROFILE env var")
 
     profiles = data.get("profiles")
     if not profiles or not isinstance(profiles, dict):
-        die("services.yaml missing 'profiles' section")
+        die("service_profiles.yaml missing 'profiles' section")
 
     if active not in profiles:
         available = ", ".join(sorted(profiles.keys()))
@@ -150,24 +152,22 @@ def resolve_profile(data):
 
 
 def main():
-    if not SERVICES_FILE.is_file():
-        die(f"services.yaml not found at {SERVICES_FILE}")
+    if not SERVICE_PROFILES_FILE.is_file():
+        die(f"service_profiles.yaml not found at {SERVICE_PROFILES_FILE}")
 
-    data = parse_yaml(SERVICES_FILE.read_text())
+    data = parse_yaml(SERVICE_PROFILES_FILE.read_text())
     transport, services = resolve_profile(data)
 
-    # Build compose profile flags
+    # Build infra compose profile flags (DFE services have no profile and are started by name)
     profiles = ["clickhouse"]
     if transport == "kafka":
         profiles.extend(["kafka", "ui"])
-
-    for svc_name in services:
-        profiles.append(SERVICE_TO_PROFILE[svc_name])
 
     # Write makefile fragment ($(shell) collapses newlines, so we write a file)
     lines = []
     profile_flags = " ".join(f"--profile {p}" for p in profiles)
     lines.append(f"export PROFILE_FLAGS := {profile_flags}")
+    lines.append(f"export DFE_SERVICES := {' '.join(sorted(services.keys()))}")
 
     for svc_name, svc_conf in services.items():
         var_name = SERVICE_TO_CONFIG_VAR[svc_name]
