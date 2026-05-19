@@ -22,7 +22,7 @@ include .profile.mk
 # ---------------------------------------------------------------------------
 
 .PHONY: dev
-dev:
+dev: down
 	docker compose $(PROFILE_FLAGS) up --build -d $(DFE_SERVICES)
 
 .PHONY: build-local
@@ -38,7 +38,7 @@ dev-logs: ## Tail all service logs
 # ---------------------------------------------------------------------------
 
 .PHONY: ci
-ci: ## Start stack using published registry images (no local build)
+ci: down ## Start stack using published registry images (no local build)
 	docker compose -f docker-compose.yml $(PROFILE_FLAGS) build --no-cache --pull $(DFE_SERVICES)
 	docker compose -f docker-compose.yml $(PROFILE_FLAGS) up -d $(DFE_SERVICES)
 
@@ -105,12 +105,12 @@ ps: ## Show running containers
 	docker compose ps
 
 .PHONY: down
-down: ## Stop all services
-	docker compose down
+down: ## Stop and remove all containers across every profile
+	docker compose -f docker-compose.yml --profile "*" down --remove-orphans
 
 .PHONY: clean
 clean: ## Stop all services and remove volumes
-	docker compose down -v
+	docker compose -f docker-compose.yml --profile "*" down -v --remove-orphans
 
 # ---------------------------------------------------------------------------
 # Help

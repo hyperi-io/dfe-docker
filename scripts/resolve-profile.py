@@ -9,9 +9,8 @@
 
 """Resolve DFE service profile from service_profiles.yaml.
 
-Reads service_profiles.yaml, resolves the active profile (overridable via DFE_PROFILE
-env var), validates config paths exist, and outputs Make-consumable export
-lines to stdout. Errors go to stderr.
+Reads service_profiles.yaml, resolves the active profile (overridable via DFE_PROFILE env var), validates config paths exist and outputs Make-consumable export lines to stdout. Errors go to stderr.
+If KAFBAT_ENABLED, adds the `ui` profile to the PROFILE_FLAGS.
 """
 
 import os
@@ -22,6 +21,9 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 SERVICE_PROFILES_FILE = REPO_ROOT / "service_profiles.yaml"
 CONFIG_DIR = REPO_ROOT / "config"
 PROFILE_MK = REPO_ROOT / ".profile.mk"
+DOTENV_FILE = REPO_ROOT / ".env"
+
+FALSY = {"", "0", "false", "no", "off"}
 
 KNOWN_SERVICES = {
     "dfe-archiver",
@@ -58,6 +60,28 @@ def die(msg):
     # Remove stale .profile.mk so Make fails on include
     PROFILE_MK.unlink(missing_ok=True)
     sys.exit(1)
+
+
+def load_dotenv():
+    """Merge .env into os.environ. Existing env vars take precedence."""
+    if not DOTENV_FILE.is_file():
+        return
+    for raw in DOTENV_FILE.read_text(encoding="utf-8", errors="replace").splitlines():
+        line = raw.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, _, value = line.partition("=")
+        key = key.strip()
+        value = value.strip().strip('"').strip("'")
+        os.environ.setdefault(key, value)
+
+
+def env_truthy(name, default):
+    """Return True unless the env var is explicitly set to a falsy value."""
+    raw = os.environ.get(name)
+    if raw is None:
+        return default
+    return raw.strip().lower() not in FALSY
 
 
 def parse_yaml(text):
@@ -155,13 +179,16 @@ def main():
     if not SERVICE_PROFILES_FILE.is_file():
         die(f"service_profiles.yaml not found at {SERVICE_PROFILES_FILE}")
 
-    data = parse_yaml(SERVICE_PROFILES_FILE.read_text())
+    load_dotenv()
+    data = parse_yaml(SERVICE_PROFILES_FILE.read_text(encoding="utf-8", errors="replace"))
     transport, services = resolve_profile(data)
 
     # Build infra compose profile flags (DFE services have no profile and are started by name)
     profiles = ["clickhouse"]
     if transport == "kafka":
-        profiles.extend(["kafka", "ui"])
+        profiles.append("kafka")
+        if env_truthy("KAFBAT_ENABLED", default=True):
+            profiles.append("ui")
 
     # Write makefile fragment ($(shell) collapses newlines, so we write a file)
     lines = []

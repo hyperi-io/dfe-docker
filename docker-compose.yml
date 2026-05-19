@@ -205,6 +205,9 @@ services:
       LOG_LEVEL: ${LOG_LEVEL:-info}
       LOG_FORMAT: ${LOG_FORMAT:-text}
     depends_on:
+      clickhouse:
+        condition: service_healthy
+        required: false
       kafka-init:
         condition: service_completed_successfully
         required: false

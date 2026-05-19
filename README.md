@@ -62,11 +62,7 @@ DFE_PROFILE=grpc-full make dev   # Override profile
 | `kafka`      | Apache Kafka KRaft | Kafka transport       |
 | `ui`         | Kafbat UI (:8081)  | Web UI for Kafka      |
 
-Infrastructure profiles are activated automatically based on the selected application profile. The `ui` profile can be added manually:
-
-```bash
-docker compose --profile ui up -d
-```
+Infrastructure profiles are activated automatically based on the selected application profile. The `ui` profile is on by default when transport is `kafka`. Opt out by setting `KAFBAT_ENABLED=false` in `.env`.
 
 ## Make Commands
 
@@ -223,6 +219,7 @@ See [.env.example](.env.example) for available overrides.
 
 | Variable                                         | Use                                                                                  | Default                                                             |
 |--------------------------------------------------|--------------------------------------------------------------------------------------|---------------------------------------------------------------------|
+| `KAFBAT_ENABLED`                                 | Toggle to turn on Kafbat                                                             | `true`                                                              |
 | `KAFBAT_VERSION`                                 | Version of Kafbat to use                                                             | `latest`                                                            |
 | `KAFBAT_DYNAMIC_CONFIG_ENABLED`                  | Toggle runtime config changes                                                        | `true`                                                              |
 | `KAFBAT_KAFKA_CLUSTERS_0_BOOTSTRAPSERVERS`       | Kafka bootstrap server                                                               | `kafka:9092`                                                        |
