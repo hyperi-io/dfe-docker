@@ -15,10 +15,13 @@
 
 global:
   data_file: tests/e2e/data/events.jsonl
-  mode: dev
+  mode: ci
   persistent_services:
     - clickhouse
     - kafka-ui
+    - kafka
+    - dfe-fetcher
+    - dfe-loader
 
 clickhouse:
   drop_database: false
