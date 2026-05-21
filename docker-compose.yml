@@ -147,8 +147,12 @@ services:
       kafka-init:
         condition: service_completed_successfully
         required: false
+    # Archiver creates ./.tmp at startup; root WORKDIR isn't writable by appuser.
+    working_dir: /home/appuser
     volumes:
       - ./config/${DFE_ARCHIVER_CONFIG:-archiver/kafka.yaml}:/etc/dfe/archiver.yaml:ro
+      - archiver-data:/var/data/archive
+      - dlq-spool:/var/spool/dfe
     healthcheck:
       test: ["CMD", "curl", "-sf", "http://localhost:9090/health/ready"]
       interval: 10s
@@ -181,6 +185,7 @@ services:
         required: false
     volumes:
       - ./config/${DFE_FETCHER_CONFIG:-fetcher/aws-kafka.yaml}:/etc/dfe/fetcher.yaml:ro
+      - dlq-spool:/var/spool/dfe
     healthcheck:
       test: ["CMD", "curl", "-sf", "http://localhost:9090/health/ready"]
       interval: 10s
@@ -213,6 +218,7 @@ services:
         required: false
     volumes:
       - ./config/${DFE_LOADER_CONFIG:-loader/kafka.yaml}:/etc/dfe/loader.yaml:ro
+      - dlq-spool:/var/spool/dfe
     healthcheck:
       test: ["CMD", "curl", "-sf", "http://localhost:9090/health/ready"]
       interval: 10s
@@ -248,6 +254,7 @@ services:
         required: false
     volumes:
       - ./config/${DFE_RECEIVER_CONFIG:-receiver/kafka.yaml}:/etc/dfe-receiver/config.yaml:ro
+      - dlq-spool:/var/spool/dfe
       # Uncomment to enable TLS on gRPC inbound (:6000):
       # - ./certs/dev/receiver.crt:/etc/ssl/receiver.crt:ro
       # - ./certs/dev/receiver.key:/etc/ssl/receiver.key:ro
@@ -276,7 +283,7 @@ services:
         condition: service_completed_successfully
         required: false
     volumes:
-      - ./config/${DFE_TRANSFORM_VECTOR_CONFIG:-transform-vector/kafka.yaml}:/etc/dfe/config.yaml:ro
+      - ./config/${DFE_TRANSFORM_VECTOR_CONFIG:-transform-vector/kafka.yaml}:/etc/dfe-transform-vector/config.yaml:ro
     healthcheck:
       test: ["CMD", "curl", "-sf", "http://localhost:9090/health/ready"]
       interval: 10s
@@ -317,3 +324,5 @@ services:
 volumes:
   clickhouse-data:
   kafka-data:
+  archiver-data:
+  dlq-spool:

@@ -39,3 +39,15 @@ services:
       context: ${PROJECTS_PATH:-/projects}
       dockerfile: ${PROJECTS_PATH:-/projects}/dfe-docker/docker/dfe-loader.Dockerfile
     image: dfe-loader:local
+
+  dfe-transform-vector:
+    build:
+      context: ${PROJECTS_PATH:-/projects}
+      dockerfile: ${PROJECTS_PATH:-/projects}/dfe-docker/docker/dfe-transform-vector.Dockerfile
+    image: dfe-transform-vector:local
+
+  dfe-transform-vrl:
+    build:
+      context: ${PROJECTS_PATH:-/projects}
+      dockerfile: ${PROJECTS_PATH:-/projects}/dfe-docker/docker/dfe-transform-vrl.Dockerfile
+    image: dfe-transform-vrl:local

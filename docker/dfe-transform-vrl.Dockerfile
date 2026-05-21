@@ -1,6 +1,6 @@
 # Project:   dfe-docker
-# File:      docker/dfe-receiver.Dockerfile
-# Purpose:   Dev build - compiles dfe-receiver from source (not for production)
+# File:      docker/dfe-transform-vrl.Dockerfile
+# Purpose:   Dev build - compiles dfe-transform-vrl from source (not for production)
 # Language:  Dockerfile
 #
 # License:   FSL-1.1-ALv2
@@ -9,7 +9,7 @@
 # For production: use the published GHCR image (docker-compose.yml default).
 # This Dockerfile is only used via docker-compose.override.yml in dev mode.
 #
-# Build context: PROJECTS_PATH (parent dir containing dfe-receiver + hyperi-rustlib)
+# Build context: PROJECTS_PATH (parent dir containing dfe-transform-vrl + hyperi-rustlib)
 
 FROM rust:latest AS builder
 
@@ -22,45 +22,32 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     cmake \
     build-essential \
     protobuf-compiler \
-    libprotobuf-dev \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /build
 
-# Copy the shared library
+# Shared library (path dep)
 COPY hyperi-rustlib /deps/hyperi-rustlib
 
-# Copy receiver source
-COPY dfe-receiver/Cargo.toml ./
-COPY dfe-receiver/build.rs ./build.rs
-COPY dfe-receiver/src ./src
-COPY dfe-receiver/proto ./proto
-COPY dfe-receiver/benches ./benches
-
-# Rewrite dynamic-linking → cmake-build in hyperi-rustlib so rdkafka-sys
+# Rewrite dynamic-linking -> cmake-build in hyperi-rustlib so rdkafka-sys
 # compiles librdkafka from bundled source instead of requiring system lib
 RUN sed -i 's|"dynamic-linking"|"cmake-build", "zstd", "zstd-pkg-config"|' /deps/hyperi-rustlib/Cargo.toml
 
-# Rewrite Cargo.toml: replace private registry refs with local paths,
-# remove optional plugin deps (not available locally),
-# add zstd-pkg-config feature so librdkafka links system libzstd.
-# Delete Cargo.lock so Cargo resolves fresh against the new paths.
-RUN sed -i \
-    -e '/^hyperi-rustlib/s|version = "[^"]*"|path = "/deps/hyperi-rustlib"|' \
-    -e '/^dfe-plugin-loader.*registry = "hyperi"/d' \
-    -e '/^dfe-protocol-sdk.*registry = "hyperi"/d' \
-    -e '/^plugins = \[/d' \
-    -e 's|"cmake-build", "ssl", "sasl"|"cmake-build", "ssl", "sasl", "zstd", "zstd-pkg-config"|' \
-    Cargo.toml
+# Transform-vrl source
+COPY dfe-transform-vrl/Cargo.toml ./
+COPY dfe-transform-vrl/src ./src
+
+# Repoint hyperi-rustlib at the local checkout
+RUN sed -i '/^hyperi-rustlib/s|version = "[^"]*"|path = "/deps/hyperi-rustlib"|' Cargo.toml
 
 # Cache mount keeps compiled deps across builds; source changes trigger recompile
 # but dep crates stay cached in /cache/cargo-target (~30s rebuild vs ~3min full).
-RUN --mount=type=cache,id=dfe-receiver-target,target=/cache/cargo-target \
+RUN --mount=type=cache,id=dfe-transform-vrl-target,target=/cache/cargo-target \
     CARGO_TARGET_DIR=/cache/cargo-target cargo build --release \
-    && cp /cache/cargo-target/release/dfe-receiver /usr/local/bin/
+    && cp /cache/cargo-target/release/dfe-transform-vrl /usr/local/bin/
 
-# Runtime stage mirrors ../dfe-receiver/Dockerfile
-FROM ubuntu:24.04@sha256:186072bba1b2f436cbb91ef2567abca677337cfc786c86e107d25b7072feef0c
+# Runtime stage mirrors ../dfe-transform-vrl/Dockerfile
+FROM ubuntu:24.04
 
 LABEL io.hyperi.profile="production"
 
@@ -73,20 +60,20 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
        https://packages.confluent.io/clients/deb noble main" \
        > /etc/apt/sources.list.d/confluent-clients.list \
     && apt-get update && apt-get install -y --no-install-recommends \
-       librdkafka1 libssl3 zlib1g libzstd1 \
+       librdkafka1 libssl3 zlib1g \
     && rm -rf /var/lib/apt/lists/*
 
-COPY --from=builder /usr/local/bin/dfe-receiver /usr/local/bin/dfe-receiver
-RUN chmod +x /usr/local/bin/dfe-receiver
+COPY --from=builder /usr/local/bin/dfe-transform-vrl /usr/local/bin/dfe-transform-vrl
+RUN chmod +x /usr/local/bin/dfe-transform-vrl
 
 # Ubuntu 24.04 ships with ubuntu user at UID 1000 - remove before creating appuser
 RUN userdel -r ubuntu && useradd --create-home --uid 1000 appuser
 USER appuser
 
-EXPOSE 9090 8080 6000 4317 4318 5044 8088 9091 514 6514 24224 12201
+EXPOSE 9090 9000
 
 HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
     CMD curl -sf http://localhost:9090/health/live > /dev/null || exit 1
 
-ENTRYPOINT ["dfe-receiver"]
-CMD ["--config", "/etc/dfe-receiver/config.yaml"]
+ENTRYPOINT ["dfe-transform-vrl"]
+CMD ["--config", "/etc/dfe/config.yaml"]

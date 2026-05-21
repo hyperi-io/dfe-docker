@@ -14,7 +14,7 @@
 #
 # config_path is relative to the config/ directory.
 
-active_profile: kafka-receiver-transform-vrl
+active_profile: kafka-full-transform-vrl
 
 profiles:
   kafka-minimal:
@@ -53,9 +53,11 @@ profiles:
       dfe-transform-vector:
         config_path: transform-vector/kafka.yaml
 
-  kafka-receiver-transform-vrl:
+  kafka-full-transform-vrl:
     transport: kafka
     services:
+      dfe-fetcher:
+        config_path: fetcher/aws-kafka.yaml
       dfe-loader:
         config_path: loader/kafka-load.yaml
       dfe-receiver:

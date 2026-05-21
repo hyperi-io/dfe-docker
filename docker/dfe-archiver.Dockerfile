@@ -50,22 +50,31 @@ RUN --mount=type=cache,id=dfe-archiver-target,target=/cache/cargo-target \
     CARGO_TARGET_DIR=/cache/cargo-target cargo build --release \
     && cp /cache/cargo-target/release/dfe-archiver /usr/local/bin/
 
+# Runtime stage mirrors ../dfe-archiver/Dockerfile
 FROM ubuntu:24.04
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    ca-certificates \
-    curl \
-    netcat-openbsd \
+        ca-certificates curl netcat-openbsd iputils-ping gnupg \
+    && curl -fsSL https://packages.confluent.io/clients/deb/archive.key \
+       | gpg --dearmor -o /usr/share/keyrings/confluent-clients.gpg \
+    && echo "deb [signed-by=/usr/share/keyrings/confluent-clients.gpg] \
+       https://packages.confluent.io/clients/deb noble main" \
+       > /etc/apt/sources.list.d/confluent-clients.list \
+    && apt-get update && apt-get install -y --no-install-recommends \
+       librdkafka1 libssl3 libzstd1 zlib1g \
     && rm -rf /var/lib/apt/lists/*
 
-COPY --from=builder /usr/local/bin/dfe-archiver /usr/local/bin/
+COPY --from=builder /usr/local/bin/dfe-archiver /usr/local/bin/dfe-archiver
+RUN chmod +x /usr/local/bin/dfe-archiver
 
-RUN mkdir -p /var/data/archive
+RUN userdel -r ubuntu 2>/dev/null || true \
+    && useradd --create-home --uid 1000 appuser
+USER appuser
 
 EXPOSE 9090
 
-HEALTHCHECK --interval=30s --timeout=3s \
-    CMD curl -sf http://localhost:9090/health || exit 1
+HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
+    CMD curl -sf http://localhost:9090/healthz > /dev/null || exit 1
 
 ENTRYPOINT ["dfe-archiver"]
-CMD ["--config", "/etc/dfe-archiver/config.yaml"]
+CMD ["--config", "/etc/dfe/archiver.yaml"]

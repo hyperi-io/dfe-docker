@@ -185,16 +185,23 @@ def main():
 
     # Build infra compose profile flags (DFE services have no profile and are started by name)
     profiles = ["clickhouse"]
+    ui_enabled = False
     if transport == "kafka":
         profiles.append("kafka")
         if env_truthy("KAFBAT_ENABLED", default=True):
             profiles.append("ui")
+            ui_enabled = True
 
     # Write makefile fragment ($(shell) collapses newlines, so we write a file)
     lines = []
     profile_flags = " ".join(f"--profile {p}" for p in profiles)
     lines.append(f"export PROFILE_FLAGS := {profile_flags}")
-    lines.append(f"export DFE_SERVICES := {' '.join(sorted(services.keys()))}")
+    # Named services list: DFE services (no compose profile) plus kafka-ui when enabled.
+    # `compose up <name>` ignores profile gating for profile-bound services we want to start.
+    service_list = sorted(services.keys())
+    if ui_enabled:
+        service_list.append("kafka-ui")
+    lines.append(f"export DFE_SERVICES := {' '.join(service_list)}")
 
     for svc_name, svc_conf in services.items():
         var_name = SERVICE_TO_CONFIG_VAR[svc_name]

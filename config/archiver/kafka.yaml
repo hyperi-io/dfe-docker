@@ -11,4 +11,3 @@ kafka:
     - kafka:9092
   topics:
     - default_land
-    - simple_receiver_to_loader_kafka_land
