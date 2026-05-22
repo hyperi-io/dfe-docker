@@ -24,3 +24,12 @@ certs/
 .claude/settings.local.json
 docs/superpowers/
 .claude/.ai-version
+
+# Local working files (not committed)
+.claude/
+hyperi-ai/
+.mcp.json
+STATE.md
+CLAUDE.md
+TODO.md
+.ai-version
