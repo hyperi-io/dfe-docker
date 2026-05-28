@@ -13,12 +13,26 @@ See the architecture diagram in [docs/SCOPE.md](docs/SCOPE.md#architecture).
 - Docker and Docker Compose v2
 - Python 3
 
+### Initialisation
+
+DFE services accept environment variable overrides that are isolated per container (e.g. `DFE_ARCHIVER_DLQ_ENABLED=false`). To create the local env files from the committed templates:
+
+```bash
+make init
+```
+
+This creates `.env` from `.env.example` and `env/<service>.env` for every template found under `env.example/`. The `.env` file and the entire `env/` directory are gitignored meaning your local edits stay local. The committed templates (`.env.example` and everything under `env.example/`) are tracked, so edits there propagate to everyone.
+
+Re-running `make init` is safe with existing files being skipped.
+
+> **Note**: Anything explicitly listed in a service's `environment:` block in `docker-compose.yml` takes precedence over the same key in `env/<service>.env`. Use the per-service file for *new* overrides that the compose file does not already forward. For example: `LOG_LEVEL` is set by compose's `environment:` block, so adding `LOG_LEVEL=debug` to `env/fetcher.env` will have no effect - but `DFE_ARCHIVER_DLQ_ENABLED` is not forwarded by compose, so setting it in the per-service file will reach the container.
+
 ### 1. CI Mode (Uses GHCR Images)
 
 ```bash
-cp .env.example .env   # Edit if needed (versions, ports)
-make dev               # Uses active_profile from service_profiles.yaml
-make down              # Stop everything
+make init   # Edit .env files as needed (versions, ports)
+make dev    # Uses active_profile from service_profiles.yaml
+make down   # Stop everything
 ```
 
 ### 2. Dev Mode (Requires Repositories Cloned Locally)
@@ -26,9 +40,9 @@ make down              # Stop everything
 Refer to [docs/SCOPE.md](docs/SCOPE.md#source-repositories) for the required repositories.
 
 ```bash
-cp .env.example .env   # Edit if needed (versions, ports)
-make dev               # Uses active_profile from service_profiles.yaml
-make down              # Stop everything
+make init   # Edit .env files as needed (versions, ports)
+make dev    # Uses active_profile from service_profiles.yaml
+make down   # Stop everything
 ```
 
 ## Service Profiles

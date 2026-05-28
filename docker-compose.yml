@@ -140,6 +140,9 @@ services:
     profiles: ["dfe"]
     ports:
       - ${DFE_ARCHIVER_PROMETHEUS_PORT:-9093}:9090
+    env_file:
+      - path: env/archiver.env
+        required: false
     environment:
       LOG_LEVEL: ${LOG_LEVEL:-info}
       LOG_FORMAT: ${LOG_FORMAT:-text}
@@ -170,12 +173,12 @@ services:
     ports:
       - ${DFE_FETCHER_INGEST_PORT:-8082}:8080
       - ${DFE_FETCHER_PROMETHEUS_PORT:-9094}:9090
+    env_file:
+      - path: env/fetcher.env
+        required: false
     environment:
       LOG_LEVEL: ${LOG_LEVEL:-info}
       LOG_FORMAT: ${LOG_FORMAT:-text}
-      AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID:-}
-      AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY:-}
-      DFE_FETCHER_SOURCES__AWS__REGION: ${AWS_REGION:-us-east-1}
     depends_on:
       dfe-loader:
         condition: service_healthy
@@ -204,9 +207,12 @@ services:
     ports:
       - ${DFE_LOADER_PROMETHEUS_PORT:-9091}:9090
       - ${DFE_LOADER_GRPC_PORT:-50051}:50051
+    env_file:
+      - path: env/loader.env
+        required: false
     environment:
-      DFE_LOADER_CLICKHOUSE__USERNAME: ${CLICKHOUSE_USERNAME:-default}
-      DFE_LOADER_CLICKHOUSE__PASSWORD: ${CLICKHOUSE_PASSWORD:-}
+      CLICKHOUSE_USERNAME: ${CLICKHOUSE_USERNAME:-default}
+      CLICKHOUSE_PASSWORD: ${CLICKHOUSE_PASSWORD:-}
       LOG_LEVEL: ${LOG_LEVEL:-info}
       LOG_FORMAT: ${LOG_FORMAT:-text}
     depends_on:
@@ -242,6 +248,9 @@ services:
       # - ${DFE_RECEIVER_HEC_PORT:-8088}:8088
       # - ${DFE_RECEIVER_OTLP_GRPC_PORT:-4317}:4317
       # - ${DFE_RECEIVER_OTLP_HTTP_PORT:-4318}:4318
+    env_file:
+      - path: env/receiver.env
+        required: false
     environment:
       LOG_LEVEL: ${LOG_LEVEL:-info}
       LOG_FORMAT: ${LOG_FORMAT:-text}
@@ -275,6 +284,9 @@ services:
     ports:
       - ${DFE_TRANSFORM_VECTOR_PROMETHEUS_PORT:-9095}:9090
       - ${DFE_TRANSFORM_VECTOR_API_PORT:-8686}:8686
+    env_file:
+      - path: env/transform-vector.env
+        required: false
     environment:
       LOG_LEVEL: ${LOG_LEVEL:-info}
       LOG_FORMAT: ${LOG_FORMAT:-text}
@@ -300,21 +312,19 @@ services:
     profiles: ["dfe"]
     ports:
       - ${DFE_TRANSFORM_VRL_PROMETHEUS_PORT:-9096}:9090
+    env_file:
+      - path: env/transform-vrl.env
+        required: false
     environment:
       LOG_LEVEL: ${LOG_LEVEL:-info}
       LOG_FORMAT: ${LOG_FORMAT:-text}
-      # Workaround: dfe-transform-vrl double-starts a metrics server on the
-      # same port as hyperi-rustlib's auto-started one. Move VRL's duplicate
-      # to 9091 (internal-only) so rustlib's 9090 server keeps serving the
-      # published port and healthcheck. See TODO.md `dfe-transform-vrl` issues.
-      DFE_TRANSFORM_METRICS_ADDRESS: "0.0.0.0:9091"
     depends_on:
       kafka-init:
         condition: service_completed_successfully
         required: false
     volumes:
-      - ./config/${DFE_TRANSFORM_VRL_CONFIG:-transform-vrl/kafka.yaml}:/etc/dfe/config.yaml:ro
-      - ./config/transform-vrl/transforms:/etc/dfe/transforms:ro
+      - ./config/${DFE_TRANSFORM_VRL_CONFIG:-transform-vrl/kafka.yaml}:/etc/dfe-transform-vrl/config.yaml:ro
+      - ./config/transform-vrl/transforms:/etc/dfe-transform-vrl/transforms:ro
     healthcheck:
       test: ["CMD", "curl", "-sf", "http://localhost:9090/health/ready"]
       interval: 10s

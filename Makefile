@@ -18,6 +18,31 @@ $(shell python3 scripts/resolve-profile.py)
 include .profile.mk
 
 # ---------------------------------------------------------------------------
+# Initialisation
+# ---------------------------------------------------------------------------
+
+.PHONY: init
+init: ## Create .env and per-service env/<service>.env files from templates
+	@if [ -f .env ]; then \
+		echo "  .env: skipped (exists)"; \
+	else \
+		cp .env.example .env; \
+		echo "  .env: created"; \
+	fi
+	@mkdir -p env
+	@for src in env.example/*.env; do \
+		[ -e "$$src" ] || { echo "  env.example/ has no *.env templates"; exit 1; }; \
+		name=$$(basename "$$src"); \
+		dst="env/$$name"; \
+		if [ -f "$$dst" ]; then \
+			echo "  $$name: skipped (exists)"; \
+		else \
+			cp "$$src" "$$dst"; \
+			echo "  $$name: created"; \
+		fi; \
+	done
+
+# ---------------------------------------------------------------------------
 # Dev (builds from local source via docker-compose.override.yml)
 # ---------------------------------------------------------------------------
 
