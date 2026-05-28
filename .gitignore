@@ -33,3 +33,6 @@ STATE.md
 CLAUDE.md
 TODO.md
 .ai-version
+
+# Per-service env files: env/
+env/
