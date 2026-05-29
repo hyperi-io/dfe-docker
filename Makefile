@@ -82,12 +82,12 @@ rebuild: ## Force rebuild DFE images (removes old, pulls fresh)
 # ---------------------------------------------------------------------------
 
 .PHONY: infra
-infra: ## Start infrastructure services (Kafka + ClickHouse)
-	docker compose --profile clickhouse --profile kafka up -d
+infra: ## Start infrastructure services (Kafka backend + ClickHouse, respects KAFKA_BACKEND)
+	docker compose $(PROFILE_FLAGS) up -d
 
 .PHONY: infra-logs
-infra-logs: ## Tail infrastructure logs
-	docker compose --profile clickhouse --profile kafka logs -f
+infra-logs: ## Tail infrastructure logs (respects KAFKA_BACKEND)
+	docker compose $(PROFILE_FLAGS) logs -f
 
 # ---------------------------------------------------------------------------
 # Testing
