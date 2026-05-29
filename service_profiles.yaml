@@ -3,7 +3,7 @@
 # Purpose:   DFE service profiles - defines transport and enabled services
 # Language:  YAML
 #
-# License:   FSL-1.1-ALv2
+# License:   BUSL-1.1
 # Copyright: (c) 2026 HYPERI PTY LIMITED
 #
 # Each profile declares a transport mode and which DFE services to start.

@@ -3,7 +3,7 @@
 # Purpose:   dfe-receiver config - file sink debug mode (no forwarding)
 # Language:  YAML
 #
-# License:   FSL-1.1-ALv2
+# License:   BUSL-1.1
 # Copyright: (c) 2026 HYPERI PTY LIMITED
 
 # Debug mode: writes events to JSONL files instead of forwarding downstream.

@@ -3,7 +3,7 @@
 # Purpose:   dfe-loader config for local/bare-metal testing (localhost ports)
 # Language:  YAML
 #
-# License:   FSL-1.1-ALv2
+# License:   BUSL-1.1
 # Copyright: (c) 2026 HYPERI PTY LIMITED
 
 # Bare-metal config: loader connects to Kafka + ClickHouse on localhost

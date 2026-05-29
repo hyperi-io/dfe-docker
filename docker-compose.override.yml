@@ -3,7 +3,7 @@
 # Purpose:   Dev mode - builds images from local source instead of pulling registry
 # Language:  YAML
 #
-# License:   FSL-1.1-ALv2
+# License:   BUSL-1.1
 # Copyright: (c) 2026 HYPERI PTY LIMITED
 #
 # This file is auto-loaded by docker compose in dev (no flags needed).

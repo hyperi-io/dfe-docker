@@ -3,7 +3,7 @@
 # Purpose:   dfe-receiver config for bare-metal testing (localhost ports)
 # Language:  YAML
 #
-# License:   FSL-1.1-ALv2
+# License:   BUSL-1.1
 # Copyright: (c) 2026 HYPERI PTY LIMITED
 
 # Bare-metal config: receiver connects to Kafka on localhost:19092
