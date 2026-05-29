@@ -11,6 +11,7 @@
 
 Reads service_profiles.yaml, resolves the active profile (overridable via DFE_PROFILE env var), validates config paths exist and outputs Make-consumable export lines to stdout. Errors go to stderr.
 If KAFBAT_ENABLED, adds the `ui` profile to the PROFILE_FLAGS.
+For kafka transport, KAFKA_BACKEND selects the backend (defaults to redpanda)
 """
 
 import os
@@ -24,6 +25,12 @@ PROFILE_MK = REPO_ROOT / ".profile.mk"
 DOTENV_FILE = REPO_ROOT / ".env"
 
 FALSY = {"", "0", "false", "no", "off"}
+
+KAFKA_BACKENDS = {
+    "redpanda": "kafka-redpanda",
+    "apache": "kafka-apache",
+}
+DEFAULT_KAFKA_BACKEND = "redpanda"
 
 KNOWN_SERVICES = {
     "dfe-archiver",
@@ -187,7 +194,11 @@ def main():
     profiles = ["clickhouse"]
     ui_enabled = False
     if transport == "kafka":
-        profiles.append("kafka")
+        backend = os.environ.get("KAFKA_BACKEND", DEFAULT_KAFKA_BACKEND).strip().lower()
+        if backend not in KAFKA_BACKENDS:
+            available = ", ".join(sorted(KAFKA_BACKENDS.keys()))
+            die(f"KAFKA_BACKEND '{backend}' invalid. Available: {available}")
+        profiles.append(KAFKA_BACKENDS[backend])
         if env_truthy("KAFBAT_ENABLED", default=True):
             profiles.append("ui")
             ui_enabled = True

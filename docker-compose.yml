@@ -6,23 +6,28 @@
 # License:   FSL-1.1-ALv2
 # Copyright: (c) 2026 HYPERI PTY LIMITED
 #
-# Profile    | Services
-# -----------|---------------------
-# clickhouse | clickhouse
-# kafka      | kafka, kafka-init
-# ui         | kafka-ui
+# Profile        | Services                   | Notes                                      |
+# ---------------|----------------------------|--------------------------------------------|
+# clickhouse     | clickhouse                 |                                            |
+# kafka-redpanda | kafka-redpanda, kafka-init | Redpanda (default); fits 4 GB CI runners   |
+# kafka-apache   | kafka-apache, kafka-init   | Apache Kafka (opt-in); compat + safety net |
+# ui             | kafka-ui                   |                                            |
+#
+# The kafka-* profiles are mutually exclusive. All expose the network alias `kafka` on the same host ports, so only one can be active at a time.
+# Downstream services and configs always address `kafka:9092` and work with either backend.
 #
 # DFE services have no profile and are started by name. Which ones run is controlled by service_profiles.yaml at the repo root. Config paths are also set there.
 #
 # Quick start:
-#   make dev                          # uses active_profile from service_profiles.yaml
-#   DFE_PROFILE=grpc-full make dev    # override profile
+#   make dev                         # Uses active_profile from service_profiles.yaml
+#   DFE_PROFILE=grpc-full make dev   # Override profile
+#   KAFKA_BACKEND=apache make dev    # Override Kafka backend
 #
 # Dev build from source (requires docker-compose.override.yml - auto-loaded):
 #   make dev
 #
 # CI / registry images only (skip override):
-#   docker compose -f docker-compose.yml --profile clickhouse --profile kafka up -d dfe-loader
+#   docker compose -f docker-compose.yml --profile clickhouse --profile kafka-redpanda up -d dfe-loader
 
 services:
 
@@ -58,14 +63,51 @@ services:
         hard: 262144
 
   # ===========================================================================
-  # Kafka KRaft
-  # Opt-in interim transport. Selected automatically when DFE_TRANSPORT=kafka.
+  # Kafka (Redpanda)
+  # Default Kafka-API broker (mutually exclusive with other kafka-* services)
   # ===========================================================================
 
-  kafka:
-    image: apache/kafka:${KAFKA_VERSION:-latest}
-    container_name: dfe-kafka
-    profiles: ["kafka"]
+  kafka-redpanda:
+    image: docker.redpanda.com/redpandadata/redpanda:${REDPANDA_VERSION:-latest}
+    container_name: dfe-kafka-redpanda
+    profiles: ["kafka-redpanda"]
+    networks:
+      default:
+        aliases:
+          - kafka
+    command:
+      - redpanda
+      - start
+      - --mode=dev-container
+      - --smp=1
+      - --memory=${REDPANDA_MEMORY:-1G}
+      - --kafka-addr=internal://0.0.0.0:9092,external://0.0.0.0:19092
+      - --advertise-kafka-addr=internal://kafka:9092,external://localhost:19092
+    ports:
+      - ${KAFKA_PLAINTEXT_PORT:-9092}:9092
+      - ${KAFKA_PLAINTEXT_HOST_PORT:-19092}:19092
+    volumes:
+      - kafka-redpanda-data:/var/lib/redpanda/data
+    healthcheck:
+      test: ["CMD-SHELL", "rpk cluster health | grep -q 'Healthy:.*true'"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 15s
+
+  # ===========================================================================
+  # Apache Kafka
+  # Opt-in Kafka alternative (mutually exclusive with other kafka-* services)
+  # ===========================================================================
+
+  kafka-apache:
+    image: apache/kafka:${APACHE_KAFKA_VERSION:-latest}
+    container_name: dfe-kafka-apache
+    profiles: ["kafka-apache"]
+    networks:
+      default:
+        aliases:
+          - kafka
     environment:
       CLUSTER_ID: ${KAFKA_CLUSTER_ID:-dfe-docker-dev-cluster-01}
       KAFKA_ADVERTISED_LISTENERS: ${KAFKA_ADVERTISED_LISTENERS:-PLAINTEXT://kafka:9092,PLAINTEXT_HOST://localhost:19092}
@@ -85,7 +127,7 @@ services:
       - ${KAFKA_PLAINTEXT_PORT:-9092}:9092
       - ${KAFKA_PLAINTEXT_HOST_PORT:-19092}:19092
     volumes:
-      - kafka-data:/var/lib/kafka/data
+      - kafka-apache-data:/var/lib/kafka/data
     healthcheck:
       test: ["CMD-SHELL", "/opt/kafka/bin/kafka-broker-api-versions.sh --bootstrap-server localhost:9092 > /dev/null 2>&1"]
       interval: 5s
@@ -95,23 +137,31 @@ services:
 
   # ===========================================================================
   # Kafka Init
-  # Creates default topics on first start so consumers don't fail on empty broker.
+  # Pre-creates default topics so consumers don't fail on an empty broker.
   # ===========================================================================
 
   kafka-init:
-    image: apache/kafka:${KAFKA_VERSION:-latest}
+    image: docker.redpanda.com/redpandadata/redpanda:${REDPANDA_VERSION:-latest}
     container_name: dfe-kafka-init
-    profiles: ["kafka"]
+    profiles: ["kafka-apache", "kafka-redpanda"]
     depends_on:
-      kafka:
+      kafka-apache:
         condition: service_healthy
-    entrypoint: ["/bin/bash", "-c"]
+        required: false
+      kafka-redpanda:
+        condition: service_healthy
+        required: false
+    entrypoint: ["/bin/sh", "-c"]
     command:
       - |
-        /opt/kafka/bin/kafka-topics.sh --bootstrap-server kafka:9092 \
-          --create --if-not-exists --topic default_land \
-          --partitions 1 --replication-factor 1
-    restart: no
+        for i in $$(seq 1 30); do
+          rpk topic describe default_land -X brokers=kafka:9092 >/dev/null 2>&1 && exit 0
+          rpk topic create default_land --partitions 1 --replicas 1 -X brokers=kafka:9092 2>&1 || true
+          sleep 1
+        done
+        echo "FAILED: default_land topic not created after 30s" >&2
+        exit 1
+    restart: "no"
 
   # ===========================================================================
   # Kafka UI
@@ -333,6 +383,7 @@ services:
 
 volumes:
   clickhouse-data:
-  kafka-data:
+  kafka-redpanda-data:
+  kafka-apache-data:
   archiver-data:
   dlq-spool:

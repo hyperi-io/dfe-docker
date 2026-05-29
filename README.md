@@ -49,9 +49,12 @@ make down   # Stop everything
 
 Service selection is controlled by `service_profiles.yaml` at the repo root. Each profile declares a transport mode and which DFE services to start. You can override the active profile via the `DFE_PROFILE` env var.
 
+For `kafka` transport profiles, the Kafka backend is selected via `KAFKA_BACKEND` (default `redpanda`).
+
 ```bash
 make dev                         # Uses active_profile from service_profiles.yaml
 DFE_PROFILE=grpc-full make dev   # Override profile
+KAFKA_BACKEND=apache make dev    # Override Kafka backend
 ```
 
 ### Application Profiles (service_profiles.yaml)
@@ -70,13 +73,16 @@ DFE_PROFILE=grpc-full make dev   # Override profile
 
 ### Infrastructure Profiles (docker-compose.yml)
 
-| Profile      | Service            | Use Case              |
-|--------------|--------------------|-----------------------|
-| `clickhouse` | ClickHouse         | Local analytics store |
-| `kafka`      | Apache Kafka KRaft | Kafka transport       |
-| `ui`         | Kafbat UI (:8081)  | Web UI for Kafka      |
+| Profile          | Service             | Use Case                                                |
+|------------------|---------------------|---------------------------------------------------------|
+| `clickhouse`     | ClickHouse          | Local analytics store                                   |
+| `kafka-apache`   | Apache Kafka KRaft  | Kafka transport (opt-in - Real-Kafka compat + fallback) |
+| `kafka-redpanda` | Redpanda            | Kafka transport (default - fits 4 GB CI runners)        |
+| `ui`             | Kafbat UI (:8081)   | Web UI for Kafka                                        |
 
 Infrastructure profiles are activated automatically based on the selected application profile. The `ui` profile is on by default when transport is `kafka`. Opt out by setting `KAFBAT_ENABLED=false` in `.env`.
+
+All `kafka-*` profiles are **mutually exclusive**. They expose the network alias `kafka` on the same host ports, so only one can run at a time. Downstream services and configs always address `kafka:9092` and work with either backend.
 
 ## Make Commands
 
@@ -207,11 +213,19 @@ See [.env.example](.env.example) for available overrides.
 | `CLICKHOUSE_NATIVE_PORT`                         | ClickHouse native protocol port                                                      | `9000`                                                              |
 | `CLICKHOUSE_DB`                                  | ClickHouse initialisation database                                                   | `dfe`                                                               |
 
-### Kafka
+### Kafka - General
 
 | Variable                                         | Use                                                                                  | Default                                                             |
 |--------------------------------------------------|--------------------------------------------------------------------------------------|---------------------------------------------------------------------|
-| `KAFKA_VERSION`                                  | Version of Kafka to use                                                              | `latest`                                                            |
+| `KAFKA_BACKEND`                                  | Kafka backend for `kafka` transport profiles                                         | `redpanda`                                                          |
+| `KAFKA_PLAINTEXT_HOST_PORT`                      | Kafka plaintext host port (host-facing)                                              | `19092`                                                             |
+| `KAFKA_PLAINTEXT_PORT`                           | Kafka plaintext port (in-network)                                                    | `9092`                                                              |
+
+### Apache Kafka
+
+| Variable                                         | Use                                                                                  | Default                                                             |
+|--------------------------------------------------|--------------------------------------------------------------------------------------|---------------------------------------------------------------------|
+| `APACHE_KAFKA_VERSION`                           | Version of Apache Kafka to use                                                       | `latest`                                                            |
 | `KAFKA_ADVERTISED_LISTENERS`                     | Listener addresses advertised to clients/brokers                                     | `PLAINTEXT://kafka:9092,PLAINTEXT_HOST://localhost:19092`           |
 | `KAFKA_AUTO_CREATE_TOPICS_ENABLE`                | Toggle auto creation of topics                                                       | `true`                                                              |
 | `KAFKA_CLUSTER_ID`                               | Name of the Kafka cluster                                                            | `dfe-docker-dev-cluster-01`                                         |
@@ -223,11 +237,16 @@ See [.env.example](.env.example) for available overrides.
 | `KAFKA_LISTENERS`                                | List of listeners                                                                    | `PLAINTEXT://:9092,PLAINTEXT_HOST://:19092,CONTROLLER://:29092`     |
 | `KAFKA_NODE_ID`                                  | Node ID associated with the roles                                                    | `1`                                                                 |
 | `KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR`         | Replication factor for the offsets topic                                             | `1`                                                                 |
-| `KAFKA_PLAINTEXT_PORT`                           | Kafka plaintext port                                                                 | `9092`                                                              |
-| `KAFKA_PLAINTEXT_HOST_PORT`                      | Kafka plaintext host port                                                            | `19092`                                                             |
 | `KAFKA_PROCESS_ROLES`                            | Roles the process will use                                                           | `broker,controller`                                                 |
 | `KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR` | Replication factor for the transaction topic                                         | `1`                                                                 |
 | `KAFKA_TRANSACTION_STATE_LOG_MIN_ISR`            | Minimum ISR for transaction topic                                                    | `1`                                                                 |
+
+### Kafka Redpanda
+
+| Variable                                         | Use                                                                                  | Default                                                             |
+|--------------------------------------------------|--------------------------------------------------------------------------------------|---------------------------------------------------------------------|
+| `REDPANDA_VERSION`                               | Version of Redpanda to use                                                           | `latest`                                                            |
+| `REDPANDA_MEMORY`                                | Memory cap for the Redpanda broker (Seastar reserves this up front)                  | `1G`                                                                |
 
 ### Kafka UI (Kafbat)
 
@@ -253,12 +272,12 @@ See [.env.example](.env.example) for available overrides.
 | 9000  | ClickHouse           | Native protocol    |
 | 9090  | dfe-receiver         | Prometheus metrics |
 | 9091  | dfe-loader           | Prometheus metrics |
-| 9092  | Kafka                | Plaintext          |
+| 9092  | Kafka (any backend)  | Plaintext          |
 | 9093  | dfe-archiver         | Prometheus metrics |
 | 9094  | dfe-fetcher          | Prometheus metrics |
 | 9095  | dfe-transform-vector | Prometheus metrics |
 | 9096  | dfe-transform-vrl    | Prometheus metrics |
-| 19092 | Kafka                | Plaintext host     |
+| 19092 | Kafka (any backend)  | Plaintext host     |
 | 50051 | dfe-loader           | gRPC               |
 
 Additional receiver ports (commented out by default in docker-compose.yml):
