@@ -4,7 +4,7 @@
 # Purpose:   Generate self-signed dev certs for dfe-receiver gRPC TLS (:6000)
 # Language:  Bash
 #
-# License:   FSL-1.1-ALv2
+# License:   BUSL-1.1
 # Copyright: (c) 2026 HYPERI PTY LIMITED
 
 set -euo pipefail

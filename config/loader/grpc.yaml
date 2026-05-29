@@ -3,7 +3,7 @@
 # Purpose:   dfe-loader config - gRPC transport server (default, DFE_TRANSPORT=grpc)
 # Language:  YAML
 #
-# License:   FSL-1.1-ALv2
+# License:   BUSL-1.1
 # Copyright: (c) 2026 HYPERI PTY LIMITED
 
 # gRPC transport: loader listens on :50051 for DFETransport/Push from dfe-receiver.

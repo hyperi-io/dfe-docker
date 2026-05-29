@@ -4,7 +4,7 @@
 #  Purpose:      Read service_profiles.yaml and output Make-consumable profile variables
 #  Language:     Python
 #
-#  License:      FSL-1.1-ALv2
+#  License:      BUSL-1.1
 #  Copyright:    (c) 2026 HYPERI PTY LIMITED
 
 """Resolve DFE service profile from service_profiles.yaml.

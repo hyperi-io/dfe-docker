@@ -298,4 +298,4 @@ Images are published from the component repos:
 
 ## Licence
 
-FSL-1.1-ALv2 - see [LICENSE](LICENSE) for details.
+BUSL-1.1 - see [LICENSE](LICENSE) for details.

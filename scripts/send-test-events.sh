@@ -4,7 +4,7 @@
 # Purpose:   Send test events to dfe-receiver and verify they land in ClickHouse
 # Language:  Bash
 #
-# License:   FSL-1.1-ALv2
+# License:   BUSL-1.1
 # Copyright: (c) 2026 HYPERI PTY LIMITED
 
 set -euo pipefail

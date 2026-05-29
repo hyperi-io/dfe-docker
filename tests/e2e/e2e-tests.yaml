@@ -3,7 +3,7 @@
 # Purpose:   Declarative e2e test definitions for the DFE Docker stack
 # Language:  YAML
 #
-# License:   FSL-1.1-ALv2
+# License:   BUSL-1.1
 # Copyright: (c) 2026 HYPERI PTY LIMITED
 
 # Each test references a profile from service_profiles.yaml. The profile declares which
