@@ -1,0 +1,8 @@
+{
+  "app_name": "dfe-transform-vrl",
+  "default_config": {
+    "transforms": { "dir": "/etc/dfe-transform-vrl/transforms" },
+    "pipeline": { "name": "default", "batch_size": 1000 },
+    "metrics": { "address": "0.0.0.0:9090" }
+  }
+}

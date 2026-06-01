@@ -1,0 +1,142 @@
+# Project:   dfe-docker
+# File:      .github/workflows/sync-component-defaults.yml
+# Purpose:   Daily: detect new DFE component images, generate
+#            config/<comp>/default/defaults_v<version>.yaml, open one PR.
+#
+# License:   BUSL-1.1
+# Copyright: (c) 2026 HYPERI PTY LIMITED
+name: Sync component defaults
+
+on:
+  schedule:
+    - cron: "0 23 * * *"   # 09:00 UTC+10 (GitHub cron is UTC; best-effort)
+  workflow_dispatch:
+    inputs:
+      component:
+        description: "Optional: limit to a single component name (e.g. loader)"
+        type: string
+        required: false
+
+concurrency:
+  group: component-defaults-sync
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  matrix:
+    runs-on: ubuntu-latest
+    outputs:
+      list: ${{ steps.build.outputs.list }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: build
+        run: |
+          set -euo pipefail
+          sel='${{ inputs.component }}'
+          if [ -n "$sel" ]; then
+            list="$(yq -o=json -I=0 "[.components[] | select(.name == \"$sel\")]" .github/component-defaults.yml)"
+            if [ "$list" = "[]" ]; then
+              echo "::error::no component named '$sel' in .github/component-defaults.yml"; exit 1
+            fi
+          else
+            list="$(yq -o=json -I=0 '.components' .github/component-defaults.yml)"
+          fi
+          echo "list=$list" >> "$GITHUB_OUTPUT"
+
+  discover:
+    needs: matrix
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        component: ${{ fromJson(needs.matrix.outputs.list) }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Generate defaults for ${{ matrix.component.name }}
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/stage
+          # `bash` invocation avoids depending on the committed +x bit.
+          bash ./scripts/sync-component-defaults.sh run \
+            "${{ matrix.component.name }}" \
+            "${{ matrix.component.image }}" \
+            "${{ matrix.component.repo }}" \
+            "${{ matrix.component.binary }}" \
+            "$PWD/config" \
+            /tmp/stage
+      - name: Upload generated files
+        uses: actions/upload-artifact@v4
+        with:
+          name: defaults-${{ matrix.component.name }}   # unique per leg
+          path: /tmp/stage                              # single root: config/... + status-<name>.json
+          if-no-files-found: ignore
+          retention-days: 3
+
+  open-pr:
+    needs: discover
+    if: ${{ !cancelled() }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Download all generated defaults
+        uses: actions/download-artifact@v4
+        with:
+          pattern: defaults-*
+          path: /tmp/artifacts
+          merge-multiple: true
+      - name: Assemble tree + PR body
+        id: assemble
+        run: |
+          set -euo pipefail
+          # Copy generated config files into the working tree (if any).
+          if [ -d /tmp/artifacts/config ]; then
+            cp -r /tmp/artifacts/config/. config/
+          fi
+          # Anything to commit? The generated files are UNTRACKED, so stage
+          # first — plain `git diff` cannot see new files.
+          git add -A config/
+          if git diff --cached --quiet; then
+            echo "changed=false" >> "$GITHUB_OUTPUT"; exit 0
+          fi
+          echo "changed=true" >> "$GITHUB_OUTPUT"
+          # Build PR body table + detect validation failures.
+          body=$'## Component defaults sync\n\n| Component | Version | Validation |\n|---|---|---|\n'
+          needs_attention=false
+          shopt -s nullglob
+          for f in /tmp/artifacts/status-*.json; do
+            n=$(yq -p=json '.name' "$f"); v=$(yq -p=json '.version' "$f")
+            s=$(yq -p=json '.state' "$f"); val=$(yq -p=json '.validation' "$f")
+            [ "$s" = "generated" ] || continue
+            if [ "$val" = "fail" ]; then needs_attention=true; val="⚠️ NEEDS ATTENTION"; fi
+            body+="| $n | $v | $val |"$'\n'
+          done
+          if [ "$needs_attention" = true ]; then
+            body+=$'\n> ⚠️ One or more components failed `config-check` against their own generated defaults. Review before merge.\n'
+          fi
+          { echo "body<<EOF"; echo "$body"; echo "EOF"; } >> "$GITHUB_OUTPUT"
+          echo "needs_attention=$needs_attention" >> "$GITHUB_OUTPUT"
+      - name: Ensure labels exist
+        if: steps.assemble.outputs.changed == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          for l in dependencies automated needs-attention; do
+            gh label create "$l" --repo "${{ github.repository }}" >/dev/null 2>&1 || true
+          done
+      - name: Create / update PR
+        if: steps.assemble.outputs.changed == 'true'
+        uses: peter-evans/create-pull-request@v7
+        with:
+          branch: chore/component-defaults-sync
+          title: "chore: sync component defaults"
+          body: ${{ steps.assemble.outputs.body }}
+          commit-message: "chore: sync component defaults"
+          labels: >-
+            dependencies,automated${{ steps.assemble.outputs.needs_attention == 'true' && ',needs-attention' || '' }}
+          delete-branch: false

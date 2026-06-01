@@ -1,0 +1,38 @@
+# Project:   dfe-docker
+# File:      .github/component-defaults.yml
+# Purpose:   Manifest of DFE component images used by the component-defaults
+#            sync workflow to detect new releases and generate default configs.
+#
+# License:   BUSL-1.1
+# Copyright: (c) 2026 HYPERI PTY LIMITED
+
+components:
+  - name:   archiver
+    image:  ghcr.io/hyperi-io/dfe-archiver
+    repo:   hyperi-io/dfe-archiver
+    binary: dfe-archiver
+
+  - name:   fetcher
+    image:  ghcr.io/hyperi-io/dfe-fetcher
+    repo:   hyperi-io/dfe-fetcher
+    binary: dfe-fetcher
+
+  - name:   loader
+    image:  ghcr.io/hyperi-io/dfe-loader
+    repo:   hyperi-io/dfe-loader
+    binary: dfe-loader
+
+  - name:   receiver
+    image:  ghcr.io/hyperi-io/dfe-receiver
+    repo:   hyperi-io/dfe-receiver
+    binary: dfe-receiver
+
+  - name:   transform-vector
+    image:  ghcr.io/hyperi-io/dfe-transform-vector
+    repo:   hyperi-io/dfe-transform-vector
+    binary: dfe-transform-vector
+
+  - name:   transform-vrl
+    image:  ghcr.io/hyperi-io/dfe-transform-vrl
+    repo:   hyperi-io/dfe-transform-vrl
+    binary: dfe-transform-vrl
