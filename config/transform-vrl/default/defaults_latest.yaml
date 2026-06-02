@@ -1,0 +1,64 @@
+# AUTO-GENERATED — do not edit by hand.
+# Source: dfe-transform-vrl Config::default() @ main (043af64)
+# Method: serde serialization of the Rust struct default (not the deployment-contract default_config)
+enrichment_tables: []
+health:
+  address: 0.0.0.0:9000
+logging:
+  format: json
+  level: info
+metrics:
+  address: 0.0.0.0:9090
+pipeline:
+  batch_size: 1000
+  batch_timeout_ms: 100
+  name: default
+scaling:
+  pressure_threshold: 0.8
+sink:
+  brokers:
+    - localhost:9092
+  compression: zstd
+  key_field: ""
+  librdkafka_options: {}
+  max_buffer_bytes: 67108864
+  message_timeout_ms: 300000
+  sasl:
+    enabled: false
+    mechanism: scram_sha_512
+    password: ""
+    username: ""
+  tls:
+    ca_cert_file: null
+    cert_file: null
+    enabled: false
+    key_file: null
+    skip_verify: false
+  topic: ""
+source:
+  auto_offset_reset: latest
+  brokers:
+    - localhost:9092
+  commit_interval_ms: 5000
+  format: auto
+  group_id: dfe-transform-vrl
+  librdkafka_options: {}
+  max_buffer_bytes: 67108864
+  sasl:
+    enabled: false
+    mechanism: scram_sha_512
+    password: ""
+    username: ""
+  session_timeout_ms: 30000
+  statistics_interval_ms: 5000
+  tls:
+    ca_cert_file: null
+    cert_file: null
+    enabled: false
+    key_file: null
+    skip_verify: false
+  topics:
+    - events
+transforms:
+  dir: null
+  files: null

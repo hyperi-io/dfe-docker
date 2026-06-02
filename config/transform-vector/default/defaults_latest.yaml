@@ -1,0 +1,84 @@
+# AUTO-GENERATED — do not edit by hand.
+# Source: dfe-transform-vector Config::default() @ main (c6f318d)
+# Method: serde serialization of the Rust struct default (not the deployment-contract default_config)
+dfe_source: null
+health:
+  address: 0.0.0.0:9000
+logging:
+  format: json
+  level: info
+metrics:
+  address: 0.0.0.0:9090
+  vector_metrics_address: 127.0.0.1:9598
+pipeline:
+  name: default
+reload:
+  enabled: true
+  poll_interval_secs: 30
+scaling:
+  pressure_threshold: 0.8
+sink:
+  batch:
+    max_bytes: null
+    max_events: 10000
+    timeout_secs: 1
+  brokers:
+    - localhost:9092
+  buffer:
+    max_events: null
+    max_size: null
+    type: memory
+    when_full: block
+  compression: none
+  encoding: json
+  key_field: ""
+  librdkafka_options: {}
+  message_timeout_ms: 300000
+  sasl:
+    enabled: false
+    mechanism: scram_sha_512
+    password: ""
+    username: ""
+  socket_timeout_ms: 60000
+  tls:
+    ca_cert_file: null
+    cert_file: null
+    enabled: false
+    key_file: null
+    skip_verify: false
+  topic: ""
+source:
+  auto_offset_reset: largest
+  brokers:
+    - localhost:9092
+  commit_interval_ms: 5000
+  decoding:
+    codec: json
+  drain_timeout_ms: null
+  group_id: dfe-transform-vector
+  librdkafka_options: {}
+  sasl:
+    enabled: false
+    mechanism: scram_sha_512
+    password: ""
+    username: ""
+  session_timeout_ms: 30000
+  tls:
+    ca_cert_file: null
+    cert_file: null
+    enabled: false
+    key_file: null
+    skip_verify: false
+  topic_lag_metric: true
+  topics:
+    - events
+transforms:
+  dir: null
+  files: null
+vector:
+  api_address: 0.0.0.0:8686
+  binary: /usr/local/bin/vector
+  data_dir: /var/lib/vector
+  log_level: info
+  version: ""
+  version_check: strict

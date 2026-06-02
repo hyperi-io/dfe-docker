@@ -1,0 +1,64 @@
+# AUTO-GENERATED — do not edit by hand.
+# Source: dfe-archiver Config::default() @ main (6e3bcc1)
+# Method: serde serialization of the Rust struct default (not the deployment-contract default_config)
+archive:
+  azure: null
+  destination: file:///var/data/archive
+  file_extension: jsonl
+  gcs: null
+  max_writers: 1024
+  minio: null
+  multipart_chunk_size: 8388608
+  path_template: '{year}/{month}/{day}/{hour}'
+  roll_interval_secs: 3600
+  roll_size_bytes: 1073741824
+  s3: null
+buffer:
+  backpressure_pause_secs: 5
+  flush_age_secs: 60
+  flush_bytes: 67108864
+  flush_records: 100000
+  writer_parallelism: 4
+compression:
+  codec: zstd
+  enabled: true
+  level: 3
+dlq:
+  batch_size: 256
+  enabled: true
+  file:
+    compress_rotated: true
+    enabled: true
+    max_age_days: 30
+    path: /var/spool/dfe/dlq
+    rotation: hourly
+  flush_interval_ms: 100
+  mode: cascade
+  queue_capacity: 10000
+kafka:
+  batch_size: 10000
+  brokers:
+    - localhost:9092
+  group_id: dfe-archiver
+  max_poll_interval_ms: 300000
+  sasl_mechanism: null
+  sasl_password: null
+  sasl_username: null
+  security_protocol: PLAINTEXT
+  session_timeout_ms: 30000
+  topics: []
+memory:
+  limit_bytes: 536870912
+  pressure_threshold: 0.8
+  tracking_enabled: true
+metrics:
+  address: 0.0.0.0:9090
+  enabled: true
+  path: /metrics
+routing:
+  default_segment: unknown
+  expression_fields: []
+  mode: topic
+scaling:
+  enabled: true
+  memory_gate_threshold: 0.8

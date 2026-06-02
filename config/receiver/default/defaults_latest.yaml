@@ -1,0 +1,311 @@
+# AUTO-GENERATED — do not edit by hand.
+# Source: dfe-receiver Config::default() @ main (57858d7)
+# Method: serde serialization of the Rust struct default (not the deployment-contract default_config)
+buffer:
+  memory_limit: 0
+  pressure_threshold: 0.8
+  spillover:
+    enabled: false
+    max_usage_percent: 0.8
+    path: /var/spool/dfe-receiver
+    poll_interval_secs: 5
+config_reload_secs: 0
+destinations:
+  default: kafka
+  rules: []
+file_sink:
+  enabled: false
+  path: /tmp/dfe-receiver-debug.ndjson
+flow:
+  bind_address: 0.0.0.0
+  channel_capacity: 4096
+  enabled: false
+  experimental: true
+  ip_filter: null
+  netflow:
+    enabled: true
+    template_cache:
+      max_exporters: 10000
+      max_per_exporter: 1000
+    topic: netflow_land
+  output:
+    max_records_per_packet: 200
+    mode: canonical
+  ports:
+    - 2055
+    - 4739
+    - 6343
+  rate_limit:
+    burst: 0
+    cache_size: 0
+    enabled: false
+    packets_per_second: 0
+  recv_buffer_bytes: 8388608
+  sflow:
+    enabled: true
+    topic: sflow_land
+  split: null
+fluent:
+  bind_address: 0.0.0.0:24224
+  enabled: false
+  max_message_size: 33554432
+  tls:
+    ca_file: null
+    ca_secret: null
+    cert_file: null
+    cert_secret: null
+    client_auth: none
+    enabled: false
+    key_file: null
+    key_secret: null
+    refresh_interval_secs: 3600
+gelf:
+  bind_address: 0.0.0.0:12201
+  enabled: false
+  max_message_size: 1048576
+  tls:
+    ca_file: null
+    ca_secret: null
+    cert_file: null
+    cert_secret: null
+    client_auth: none
+    enabled: false
+    key_file: null
+    key_secret: null
+    refresh_interval_secs: 3600
+grpc:
+  auth:
+    accepted_headers: []
+    bearer:
+      refresh_interval_secs: 300
+      secret_source: null
+      tokens: []
+    header_name: ""
+    header_values: []
+    include_common_header: true
+    mode: none
+  bind_address: 0.0.0.0:6000
+  enabled: false
+  tls:
+    ca_file: null
+    ca_secret: null
+    cert_file: null
+    cert_secret: null
+    client_auth: none
+    enabled: false
+    key_file: null
+    key_secret: null
+    refresh_interval_secs: 3600
+kafka:
+  brokers: []
+  client_id: dfe-receiver
+  librdkafka_overrides:
+    statistics.interval.ms: "5000"
+  producer:
+    acks: all
+    batch_messages: 10000
+    batch_size: 8388608
+    compression: lz4
+    linger_ms: 20
+    retries: 5
+  sasl: null
+  tls:
+    ca_file: null
+    cert_file: null
+    enabled: false
+    key_file: null
+loader:
+  address: dfe-loader:9000
+  grpc_endpoint: null
+  timeout_ms: 5000
+  transport: kafka
+lumberjack:
+  auth:
+    accepted_headers: []
+    bearer:
+      refresh_interval_secs: 300
+      secret_source: null
+      tokens: []
+    header_name: ""
+    header_values: []
+    include_common_header: true
+    mode: none
+  bind_address: 0.0.0.0:5044
+  enabled: false
+  tls:
+    ca_file: null
+    ca_secret: null
+    cert_file: null
+    cert_secret: null
+    client_auth: none
+    enabled: false
+    key_file: null
+    key_secret: null
+    refresh_interval_secs: 3600
+metrics:
+  address: 0.0.0.0:9090
+  enabled: true
+otlp:
+  auth:
+    accepted_headers: []
+    bearer:
+      refresh_interval_secs: 300
+      secret_source: null
+      tokens: []
+    header_name: ""
+    header_values: []
+    include_common_header: true
+    mode: none
+  enabled: false
+  grpc_bind_address: 0.0.0.0:4317
+  http_bind_address: 0.0.0.0:4318
+  mode: hyperdx
+  tls:
+    ca_file: null
+    ca_secret: null
+    cert_file: null
+    cert_secret: null
+    client_auth: none
+    enabled: false
+    key_file: null
+    key_secret: null
+    refresh_interval_secs: 3600
+prometheus_rw:
+  auth:
+    accepted_headers: []
+    bearer:
+      refresh_interval_secs: 300
+      secret_source: null
+      tokens: []
+    header_name: ""
+    header_values: []
+    include_common_header: true
+    mode: none
+  bind_address: 0.0.0.0:9091
+  enabled: false
+  max_body_size: 10485760
+  mode: native
+  request_timeout_ms: 30000
+  tls:
+    ca_file: null
+    ca_secret: null
+    cert_file: null
+    cert_secret: null
+    client_auth: none
+    enabled: false
+    key_file: null
+    key_secret: null
+    refresh_interval_secs: 3600
+routing:
+  default_source: default
+  dlq:
+    enabled: true
+    file_enabled: true
+    file_path: /var/spool/dfe/dlq
+    kafka_enabled: true
+    mode: cascade
+    topic: dlq_land
+    topic_suffix: .dlq
+  legacy_compat: false
+  source_rules: []
+  source_to_topic: {}
+  topic_suffix: _land
+scaling:
+  enabled: true
+  memory_gate_threshold: 0.8
+  saturation_connections: 1000
+  saturation_queue_depth: 10000
+  saturation_request_rate: 100000
+  saturation_spill: 1000
+  weight_connections: 0.1
+  weight_memory: 0.25
+  weight_queue_depth: 0.25
+  weight_request_rate: 0.3
+  weight_spill: 0.1
+server:
+  auth:
+    accepted_headers: []
+    bearer:
+      refresh_interval_secs: 300
+      secret_source: null
+      tokens: []
+    header_name: ""
+    header_values: []
+    include_common_header: true
+    mode: none
+  bind_address: 0.0.0.0:8080
+  ip_filter:
+    cidrs: []
+    mode: disabled
+  max_body_size: 10485760
+  max_concurrent_requests: 10000
+  rate_limit:
+    burst: 500
+    enabled: false
+    requests_per_second: 100
+  request_timeout_ms: 30000
+  tls:
+    ca_file: null
+    ca_secret: null
+    cert_file: null
+    cert_secret: null
+    client_auth: none
+    enabled: false
+    key_file: null
+    key_secret: null
+    refresh_interval_secs: 3600
+splunk_hec:
+  auth:
+    accepted_headers: []
+    bearer:
+      refresh_interval_secs: 300
+      secret_source: null
+      tokens: []
+    header_name: ""
+    header_values: []
+    include_common_header: true
+    mode: none
+  bind_address: 0.0.0.0:8088
+  enabled: false
+  max_body_size: 10485760
+  request_timeout_ms: 30000
+  tls:
+    ca_file: null
+    ca_secret: null
+    cert_file: null
+    cert_secret: null
+    client_auth: none
+    enabled: false
+    key_file: null
+    key_secret: null
+    refresh_interval_secs: 3600
+syslog:
+  auth:
+    accepted_headers: []
+    bearer:
+      refresh_interval_secs: 300
+      secret_source: null
+      tokens: []
+    header_name: ""
+    header_values: []
+    include_common_header: true
+    mode: none
+  enabled: false
+  max_message_size: 65536
+  tcp_bind_address: 0.0.0.0:514
+  tls:
+    ca_file: null
+    ca_secret: null
+    cert_file: null
+    cert_secret: null
+    client_auth: none
+    enabled: false
+    key_file: null
+    key_secret: null
+    refresh_interval_secs: 3600
+  tls_bind_address: 0.0.0.0:6514
+  udp_bind_address: 0.0.0.0:514
+validation:
+  dlq_on_invalid: true
+  require_json: true
+  required_fields: []

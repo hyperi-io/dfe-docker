@@ -1,0 +1,187 @@
+# AUTO-GENERATED — do not edit by hand.
+# Source: dfe-fetcher Config::default() @ main (2708e32)
+# Method: serde serialization of the Rust struct default (not the deployment-contract default_config)
+buffer:
+  memory_limit: 0
+  pressure_threshold: 0.8
+config_reload_secs: 0
+cursor:
+  default_window_hours: 1
+  directory: ""
+dlq:
+  batch_size: 256
+  enabled: true
+  file:
+    compress_rotated: true
+    enabled: true
+    max_age_days: 30
+    path: /var/spool/dfe/dlq
+    rotation: hourly
+  flush_interval_ms: 100
+  mode: cascade
+  queue_capacity: 10000
+extractors:
+  containers: []
+  plugins:
+    directory: null
+  vector:
+    enabled: false
+    grpc_bind_address: 0.0.0.0:6000
+    instances: []
+ingest:
+  auth_token: null
+  bind_address: 0.0.0.0:8080
+  enabled: true
+  max_body_size: 10485760
+instance_id: null
+kafka:
+  brokers: []
+  client_id: dfe-fetcher
+  producer:
+    acks: all
+    batch_messages: 10000
+    batch_size: 8388608
+    compression: lz4
+    linger_ms: 20
+    retries: 5
+  sasl: null
+  tls:
+    ca_file: null
+    cert_file: null
+    enabled: false
+    key_file: null
+  topic_suffix: _land
+metrics:
+  address: 0.0.0.0:9090
+  enabled: true
+output:
+  grpc: null
+  kafka: null
+  topic_suffix: null
+  type: kafka
+scaling:
+  enabled: true
+  memory_gate_threshold: 0.8
+scheduler:
+  default_interval_secs: 300
+  jitter_percent: 10
+  max_concurrent_fetches: 10
+sources:
+  aws:
+    access_key_id: null
+    assume_role_arn: null
+    credential_secret: null
+    enabled: false
+    filter: null
+    interval_secs: null
+    region: us-east-1
+    secret_access_key: null
+    services: []
+    topic: aws
+  azure:
+    client_id: null
+    client_secret: null
+    credential_secret: null
+    enabled: false
+    filter: null
+    interval_secs: null
+    services: []
+    subscription_id: null
+    tenant_id: null
+    topic: azure
+  bitwarden:
+    enabled: false
+    filter: null
+    services: []
+    topic: bitwarden
+  cloudflare:
+    enabled: false
+    filter: null
+    services: []
+    topic: cloudflare
+  crates_io:
+    crates: []
+    enabled: false
+    filter: null
+    topic: crates_io
+  crowdstrike:
+    enabled: false
+    filter: null
+    services: []
+    topic: crowdstrike
+  duo:
+    enabled: false
+    filter: null
+    services: []
+    topic: duo
+  gcp:
+    credential_secret: null
+    enabled: false
+    filter: null
+    interval_secs: null
+    project_id: null
+    service_account_key: null
+    services: []
+    topic: gcp
+  gcp_pubsub:
+    enabled: false
+    filter: null
+    subscriptions: []
+    topic: gcp_pubsub
+  github:
+    enabled: false
+    filter: null
+    services: []
+    topic: github
+  go_modules:
+    enabled: false
+    filter: null
+    modules: []
+    topic: go_modules
+  google_workspace:
+    enabled: false
+    filter: null
+    services: []
+    topic: google_workspace
+  m365:
+    client_id: null
+    client_secret: null
+    credential_secret: null
+    enabled: false
+    filter: null
+    interval_secs: null
+    services: []
+    tenant_id: null
+    topic: m365
+  object_store:
+    backends: []
+    enabled: false
+    filter: null
+    topic: object_store
+  okta:
+    enabled: false
+    filter: null
+    services: []
+    topic: okta
+    use_ssws_header: true
+  onepassword:
+    enabled: false
+    filter: null
+    services: []
+    topic: onepassword
+  pypi:
+    enabled: false
+    filter: null
+    packages: []
+    topic: pypi
+  salesforce:
+    enabled: false
+    filter: null
+    services: []
+    topic: salesforce
+  slack:
+    enabled: false
+    filter: null
+    services: []
+    topic: slack
+unwrap_nested_json: true

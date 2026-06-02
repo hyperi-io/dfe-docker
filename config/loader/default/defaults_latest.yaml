@@ -1,0 +1,213 @@
+# AUTO-GENERATED — do not edit by hand.
+# Source: dfe-loader Config::default() @ main (46d18da)
+# Method: serde serialization of the Rust struct default (not the deployment-contract default_config)
+batch_processing:
+  format: auto
+  known_fields:
+    - _table
+    - _timestamp
+    - _source
+    - host
+    - source_type
+    - event_type
+  max_chunk_size: 10000
+  memory_pressure_pause_ms: 50
+  parse_error_action: dlq
+  pre_route_filters: []
+  routing_field: null
+buffer:
+  flush_age_secs: 5
+  flush_bytes: 1048576
+  flush_rows: 20000
+clickhouse:
+  database: default
+  hosts:
+    - localhost:9000
+  password: ''
+  protocol: native
+  tables: []
+  tls: null
+  username: default
+coercion:
+  array_to_json: true
+  default_timezone: UTC
+  null_handling: default
+  null_strings:
+    - "null"
+    - "NULL"
+    - "Null"
+    - None
+    - nil
+    - undefined
+    - \N
+    - <null>
+    - NA
+    - N/A
+    - n/a
+    - NaN
+  strict: false
+  timezone_fields:
+    - tags_collector_timezone
+  type_mappings: {}
+  unknown_type_fallback: String
+column_directives:
+  global: {}
+  tables: {}
+computed_columns:
+  columns: {}
+  overrides: {}
+enrichment:
+  ip_fields:
+    - src_ip
+    - client_ip
+    - ip
+    - source_ip
+  reputation:
+    blocklist_files: []
+    cache_capacity: 100000
+    enabled: false
+  risk_scoring:
+    enabled: false
+    preset: global
+field_mapping:
+  builtin: none
+  default_action: rename
+  enabled: false
+  files: []
+  overrides: {}
+field_sanitization:
+  collapse_underscores: true
+  collision_strategy: last_wins
+  handle_numeric_prefix: true
+  numeric_prefix: col_
+  strip_at_prefix: true
+  trim_underscores: true
+geoip:
+  asn_db_path: null
+  auto_download:
+    data_dir: /var/lib/dfe/geoip
+    enabled: true
+    ipinfo_token: null
+    max_age_days: 30
+    maxmind_account_id: null
+    maxmind_license_key: null
+  cache_capacity: 100000
+  city_db_path: null
+  enabled: false
+  provider: db_ip_lite
+grpc:
+  compression: false
+  default_topic: default_land
+  listen: null
+  max_message_size: 16777216
+  recv_buffer_size: 10000
+  recv_timeout_ms: 100
+hot_reload:
+  debounce_ms: 500
+  enabled: false
+  poll_interval_secs: 5
+kafka:
+  brokers:
+    - localhost:9092
+  client_id: clickhouse-loader
+  group: clickhouse-loader
+  librdkafka_overrides:
+    statistics.interval.ms: "0"
+  sasl: null
+  tls: null
+  topic_regex: null
+  topics: []
+keda:
+  activation_lag_threshold: 0
+  cooldown_period: 300
+  cpu_enabled: true
+  cpu_threshold: 80
+  enabled: true
+  kafka_lag_threshold: 1000
+  max_replicas: 10
+  min_replicas: 1
+  polling_interval: 15
+logging:
+  format: json
+  level: info
+memory:
+  limit_bytes: 0
+  pressure_threshold: 0.8
+metadata:
+  capture_json: true
+  capture_mode: full
+  capture_raw: true
+  capture_source: true
+  collector_timestamp_path: tags.collector.timestamp
+  disable_json_tables: []
+  disable_raw_tables: []
+  drop_tags: false
+  enabled: true
+  extract_timestamp_collector: true
+  inject_timestamp_load: true
+  json_output: _json
+  raw_output: _raw
+  raw_source_fields:
+    - logoriginal
+  remove_routing_fields: true
+  source_fields:
+    - _source
+  source_output: _source
+  table_capture_modes: {}
+  tags_fields:
+    - tags
+    - _tags
+    - meta
+    - metadata.tags
+  tags_output: _tags
+metrics:
+  address: 0.0.0.0:9090
+  enabled: true
+payload:
+  format: auto
+  mismatch_threshold: 10
+  pipeline_mode: json_primary
+routing:
+  compat_v2_source: false
+  db_fields: []
+  default_db: dfe
+  default_table: default
+  dlq:
+    enabled: true
+    file_enabled: true
+    file_path: /var/spool/dfe/dlq
+    kafka_enabled: true
+    mode: cascade
+    topic_suffix: .dlq
+  mapping_file: null
+  org_id_field: org_id
+  org_routes: []
+  rules: []
+  source_to_table: {}
+  table_fields:
+    - _source
+  topic_suffixes:
+    - _land
+    - _load
+scaling:
+  enabled: true
+  memory_gate_threshold: 0.8
+  saturation_buffer_depth: 10000
+  saturation_errors: 100
+  saturation_insert_latency: 5
+  saturation_kafka_lag: 100000
+  weight_buffer_depth: 0.25
+  weight_errors: 0.1
+  weight_insert_latency: 0.15
+  weight_kafka_lag: 0.35
+  weight_memory: 0.15
+schema:
+  cache_ttl_secs: 300
+  refresh_on_error: true
+timestamp_dq:
+  correct_known_bad: true
+  enabled: true
+  invalid_action: replace_with_now
+  max_future_seconds: 600
+  max_past_seconds: 0
+transport: ""
