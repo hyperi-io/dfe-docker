@@ -11,7 +11,7 @@
 #
 # Build context: PROJECTS_PATH (parent dir containing dfe-transform-vrl + hyperi-rustlib)
 
-FROM rust:latest AS builder
+FROM rust:latest@sha256:4fd8406017c992f7b8ab55a2f99a1d56aeb1d7ecd255850dfa04239a88601f73 AS builder
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
     pkg-config \
@@ -47,7 +47,7 @@ RUN --mount=type=cache,id=dfe-transform-vrl-target,target=/cache/cargo-target \
     && cp /cache/cargo-target/release/dfe-transform-vrl /usr/local/bin/
 
 # Runtime stage mirrors ../dfe-transform-vrl/Dockerfile
-FROM ubuntu:24.04
+FROM ubuntu:24.04@sha256:786a8b558f7be160c6c8c4a54f9a57274f3b4fb1491cf65146521ae77ff1dc54
 
 LABEL io.hyperi.profile="production"
 

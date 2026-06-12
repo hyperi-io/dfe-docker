@@ -11,7 +11,7 @@
 #
 # Build context: PROJECTS_PATH (parent dir containing dfe-archiver + hyperi-rustlib)
 
-FROM rust:latest AS builder
+FROM rust:latest@sha256:4fd8406017c992f7b8ab55a2f99a1d56aeb1d7ecd255850dfa04239a88601f73 AS builder
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
     pkg-config \
@@ -51,7 +51,7 @@ RUN --mount=type=cache,id=dfe-archiver-target,target=/cache/cargo-target \
     && cp /cache/cargo-target/release/dfe-archiver /usr/local/bin/
 
 # Runtime stage mirrors ../dfe-archiver/Dockerfile
-FROM ubuntu:24.04
+FROM ubuntu:24.04@sha256:786a8b558f7be160c6c8c4a54f9a57274f3b4fb1491cf65146521ae77ff1dc54
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
         ca-certificates curl netcat-openbsd iputils-ping gnupg \
