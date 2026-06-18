@@ -10,9 +10,21 @@
   "prConcurrentLimit": 10,
   "commitMessagePrefix": "chore(deps):",
   "dependencyDashboard": true,
+  "minimumReleaseAge": "7 days",
+  "internalChecksFilter": "strict",
+  "customManagers": [
+    {
+      "customType": "regex",
+      "description": "Pin public image tag@digest values in .env.example",
+      "managerFilePatterns": ["/(^|/)\\.env\\.example$/"],
+      "matchStrings": [
+        "[A-Z0-9_]+_VERSION=(?<currentValue>[^@\\s]+)@(?<currentDigest>sha256:[a-f0-9]+)\\s+# renovate: datasource=(?<datasource>\\S+) depName=(?<depName>\\S+)"
+      ]
+    }
+  ],
   "packageRules": [
     {
-      "description": "Automerge patch and digest updates when CI passes",
+      "description": "Automerge patch and digest updates when CI passes (after the 7-day window)",
       "matchUpdateTypes": ["patch", "digest"],
       "automerge": true
     },
@@ -23,8 +35,8 @@
       "automerge": true
     },
     {
-      "description": "Group Docker image updates",
-      "matchManagers": ["dockerfile", "docker-compose"],
+      "description": "Group all Docker image updates regardless of where they are pinned",
+      "matchDatasources": ["docker"],
       "groupName": "docker-images"
     }
   ]
