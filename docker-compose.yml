@@ -37,7 +37,9 @@ services:
   # ===========================================================================
 
   clickhouse:
-    image: clickhouse/clickhouse-server:${CLICKHOUSE_VERSION:-latest}
+    # Public image pinned to tag@digest via CLICKHOUSE_VERSION in .env (template: .env.example).
+    # Renovate keeps that pin current; the value is required so we never silently run unpinned.
+    image: clickhouse/clickhouse-server:${CLICKHOUSE_VERSION:?set CLICKHOUSE_VERSION (see .env.example) or run make init}
     container_name: dfe-clickhouse
     profiles: ["clickhouse"]
     ports:
@@ -68,7 +70,7 @@ services:
   # ===========================================================================
 
   kafka-redpanda:
-    image: docker.redpanda.com/redpandadata/redpanda:${REDPANDA_VERSION:-latest}
+    image: docker.redpanda.com/redpandadata/redpanda:${REDPANDA_VERSION:?set REDPANDA_VERSION (see .env.example) or run make init}
     container_name: dfe-kafka-redpanda
     profiles: ["kafka-redpanda"]
     networks:
@@ -101,7 +103,8 @@ services:
   # ===========================================================================
 
   kafka-apache:
-    image: apache/kafka:${APACHE_KAFKA_VERSION:-latest}
+    # Public image pinned to tag@digest via APACHE_KAFKA_VERSION in .env (template: .env.example).
+    image: apache/kafka:${APACHE_KAFKA_VERSION:?set APACHE_KAFKA_VERSION (see .env.example) or run make init}
     container_name: dfe-kafka-apache
     profiles: ["kafka-apache"]
     networks:
@@ -141,7 +144,7 @@ services:
   # ===========================================================================
 
   kafka-init:
-    image: docker.redpanda.com/redpandadata/redpanda:${REDPANDA_VERSION:-latest}
+    image: docker.redpanda.com/redpandadata/redpanda:${REDPANDA_VERSION:?set REDPANDA_VERSION (see .env.example) or run make init}
     container_name: dfe-kafka-init
     profiles: ["kafka-apache", "kafka-redpanda"]
     depends_on:
@@ -169,7 +172,8 @@ services:
   # ===========================================================================
 
   kafka-ui:
-    image: ghcr.io/kafbat/kafka-ui:${KAFBAT_VERSION:-latest}
+    # Public image pinned to tag@digest via KAFBAT_VERSION in .env (template: .env.example).
+    image: ghcr.io/kafbat/kafka-ui:${KAFBAT_VERSION:?set KAFBAT_VERSION (see .env.example) or run make init}
     container_name: dfe-kafka-ui
     profiles: ["ui"]
     ports:

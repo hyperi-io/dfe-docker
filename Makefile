@@ -8,6 +8,9 @@
 
 .DEFAULT_GOAL := help
 
+# Bootstrap .env from the template on first use. docker-compose.yml pins public images via REQUIRED version vars (no `latest` fallback), so every compose command needs .env present. `make init` additionally sets up env/<service>.env.
+$(shell test -f .env || cp .env.example .env)
+
 # Read .env for port vars, credentials, versions (NOT profile/config)
 -include .env
 
