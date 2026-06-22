@@ -11,6 +11,8 @@ clickhouse:
     - clickhouse:8123
   database: dfe
   protocol: http
+  username: env:CLICKHOUSE_USERNAME
+  password: env:CLICKHOUSE_PASSWORD
 
 kafka:
   brokers:

@@ -14,4 +14,4 @@ CREATE TABLE IF NOT EXISTS {database}.{table}
 ENGINE = MergeTree()
 ORDER BY (_org_id, _timestamp_load, _uuid)
 PARTITION BY (toYYYYMM(_timestamp_load), _org_id)
-SETTINGS index_granularity = 8192
+SETTINGS index_granularity = 8192;
