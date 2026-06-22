@@ -14,7 +14,7 @@
 #
 # config_path is relative to the config/ directory.
 
-active_profile: kafka-full-transform-vrl
+active_profile: kafka-fetcher
 
 profiles:
   kafka-minimal:
