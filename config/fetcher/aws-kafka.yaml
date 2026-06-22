@@ -15,6 +15,7 @@ sources:
   aws:
     enabled: true
     access_key_id: env:AWS_ACCESS_KEY_ID
+    region: us-west-2
     secret_access_key: env:AWS_SECRET_ACCESS_KEY
     services:
       - name: cloudtrail
