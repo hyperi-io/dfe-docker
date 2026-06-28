@@ -51,7 +51,7 @@ RUN --mount=type=cache,id=dfe-archiver-target,target=/cache/cargo-target \
     && cp /cache/cargo-target/release/dfe-archiver /usr/local/bin/
 
 # Runtime stage mirrors ../dfe-archiver/Dockerfile
-FROM ubuntu:24.04@sha256:786a8b558f7be160c6c8c4a54f9a57274f3b4fb1491cf65146521ae77ff1dc54
+FROM ubuntu:26.04@sha256:53958ec7b67c2c9355df922dd08dbf0360611f8c3cdb656875e81873db9ffdba
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
         ca-certificates curl netcat-openbsd iputils-ping gnupg \
