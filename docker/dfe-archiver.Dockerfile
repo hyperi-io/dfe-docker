@@ -11,7 +11,7 @@
 #
 # Build context: PROJECTS_PATH (parent dir containing dfe-archiver + hyperi-rustlib)
 
-FROM rust:latest@sha256:c6811167278337db5f3b0234964ced5f538f154a2a20f09ec03721d7411c933d AS builder
+FROM rust:latest@sha256:6df234c1eb92b0545468fab8c18fc5f9adfb994e7d4f67d81d45fe2fcabf5657 AS builder
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
     pkg-config \
