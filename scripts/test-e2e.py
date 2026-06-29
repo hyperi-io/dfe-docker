@@ -91,7 +91,10 @@ def load_dotenv(file_path):
                 key, separator, value = line.partition("=")
                 if not(separator):
                     continue
-                value = value.strip().strip('"').strip("'")
+                value = value.strip()
+                if (value and value[0] not in ("'", '"')):
+                    value = value.split(" #", 1)[0].strip()
+                value = value.strip('"').strip("'")
                 os.environ.setdefault(key.strip(), value)
     except FileNotFoundError:
         LOGGER.info(f"No '.env' file found at '{file_path}'. Skipping dotenv loading")

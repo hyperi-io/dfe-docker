@@ -175,7 +175,7 @@ services:
     # Public image pinned to tag@digest via KAFBAT_VERSION in .env (template: .env.example).
     image: ghcr.io/kafbat/kafka-ui:${KAFBAT_VERSION:?set KAFBAT_VERSION (see .env.example) or run make init}
     container_name: dfe-kafka-ui
-    profiles: ["ui"]
+    profiles: ["kafka-ui"]
     ports:
       - ${KAFBAT_PORT:-8081}:8080
     environment:

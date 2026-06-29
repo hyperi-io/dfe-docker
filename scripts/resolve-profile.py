@@ -9,81 +9,67 @@
 
 """Resolve DFE service profile from service_profiles.yaml.
 
-Reads service_profiles.yaml, resolves the active profile (overridable via DFE_PROFILE env var), validates config paths exist and outputs Make-consumable export lines to stdout. Errors go to stderr.
-If KAFBAT_ENABLED, adds the `ui` profile to the PROFILE_FLAGS.
-For kafka transport, KAFKA_BACKEND selects the backend (defaults to redpanda)
+Reads service_profiles.yaml, resolves the active profile (overridable via DFE_PROFILE env var), validates config paths exist and writes to the .profile.mk file.
+If KAFBAT_ENABLED, adds the `kafka-ui` profile to the PROFILE_FLAGS.
+For kafka transport, KAFKA_BACKEND selects the backend (defaults to redpanda).
 """
 
+from __future__ import annotations
+
 import os
-import sys
 from pathlib import Path
 
-REPO_ROOT = Path(__file__).resolve().parent.parent
-SERVICE_PROFILES_FILE = REPO_ROOT / "service_profiles.yaml"
-CONFIG_DIR = REPO_ROOT / "config"
-PROFILE_MK = REPO_ROOT / ".profile.mk"
-DOTENV_FILE = REPO_ROOT / ".env"
+from _common import (
+    CONFIG_DIR,
+    DOTENV_FILE,
+    FALSY,
+    PROFILE_MK,
+    SERVICE_PROFILES_FILE,
+    _print,
+    _rel_path,
+)
 
-FALSY = {"", "0", "false", "no", "off"}
+PROFILE_ENV_VAR = "DFE_PROFILE"
+PROFILE_ACTIVE_YAML_FIELD = "active_profile"
+PROFILE_LIST_YAML_FIELD = "profiles"
+PROFILE_SERVICE_CONFIG_YAML_FIELD = "config_path"
 
-KAFKA_BACKENDS = {
+SERVICE_KAFKA_DEFAULT = "redpanda"
+SERVICE_KAFKA_OPTIONS = {
     "redpanda": "kafka-redpanda",
     "apache": "kafka-apache",
 }
-DEFAULT_KAFKA_BACKEND = "redpanda"
-
-KNOWN_SERVICES = {
-    "dfe-archiver",
-    "dfe-fetcher",
-    "dfe-loader", 
-    "dfe-receiver",
-    "dfe-transform-vector",
-    "dfe-transform-vrl"
-}
-
 SERVICE_TO_CONFIG_VAR = {
     "dfe-archiver": "DFE_ARCHIVER_CONFIG",
     "dfe-fetcher": "DFE_FETCHER_CONFIG",
     "dfe-loader": "DFE_LOADER_CONFIG",
     "dfe-receiver": "DFE_RECEIVER_CONFIG",
     "dfe-transform-vector": "DFE_TRANSFORM_VECTOR_CONFIG",
-    "dfe-transform-vrl": "DFE_TRANSFORM_VRL_CONFIG"
+    "dfe-transform-vrl": "DFE_TRANSFORM_VRL_CONFIG",
 }
-
-UNSUPPORTED_PATTERNS = [
-    ("- ", "lists (- item)"),
-    ("| ", "multi-line strings (|)"),
-    ("> ", "multi-line strings (>)"),
-    ("{", "flow syntax ({)"),
-    ("[", "flow syntax ([)"),
-    ("&", "anchors (&)"),
-    ("*", "aliases (*)"),
-    ("!!", "tags (!!)"),
+SERVICES = [
+    "dfe-archiver",
+    "dfe-fetcher",
+    "dfe-loader",
+    "dfe-receiver",
+    "dfe-transform-vector",
+    "dfe-transform-vrl",
 ]
 
-
-def die(msg):
-    print(f"resolve-profile: {msg}", file=sys.stderr)
-    # Remove stale .profile.mk so Make fails on include
-    PROFILE_MK.unlink(missing_ok=True)
-    sys.exit(1)
+TRANSPORT_TYPES = ["grpc", "kafka"]
 
 
-def load_dotenv():
-    """Merge .env into os.environ. Existing env vars take precedence."""
-    if not DOTENV_FILE.is_file():
-        return
-    for raw in DOTENV_FILE.read_text(encoding="utf-8", errors="replace").splitlines():
-        line = raw.strip()
-        if not line or line.startswith("#") or "=" not in line:
-            continue
-        key, _, value = line.partition("=")
-        key = key.strip()
-        value = value.strip().strip('"').strip("'")
-        os.environ.setdefault(key, value)
+class _ProfileError(Exception):
+    """Raised when the active profile cannot be resolved or validated."""
+
+    def __init__(self, *, header: str | None = None, msg: str) -> None:
+        """Carry the failure header and message for reporting at the boundary."""
+        super().__init__(msg)
+        self.header = header
+        self.msg = msg
 
 
-def env_truthy(name, default):
+def _env_truthy(*, default: bool, name: str) -> bool:
     """Return True unless the env var is explicitly set to a falsy value."""
     raw = os.environ.get(name)
     if raw is None:
@@ -91,135 +77,160 @@ def env_truthy(name, default):
     return raw.strip().lower() not in FALSY
 
 
-def parse_yaml(text):
+def _load_dotenv() -> None:
+    """Merge .env into os.environ. Existing env vars take precedence."""
+    if not (DOTENV_FILE.is_file()):
+        return
+    for raw in DOTENV_FILE.read_text(encoding="utf-8", errors="replace").splitlines():
+        line = raw.strip()
+        if not (line) or (line.startswith("#")) or ("=" not in line):
+            continue
+        key, _, value = line.partition("=")
+        key = key.strip()
+        value = value.strip()
+        if value and value[0] not in ("'", '"'):
+            value = value.split(" #", 1)[0].strip()
+        value = value.strip('"').strip("'")
+        os.environ.setdefault(key, value)
+
+
+def _parse_yaml(*, text: str) -> dict[str, object]:
     """Parse a minimal YAML subset into nested dicts with string values."""
     root = {}
     stack = [(root, -1)]
 
     for line_num, raw_line in enumerate(text.splitlines(), 1):
-        # Strip trailing comments preceded by space (" #").
-        # Bare "#" inside a value (e.g. "secret#123") is preserved.
-        comment_pos = raw_line.find(" #")
-        if comment_pos >= 0:
-            line = raw_line[:comment_pos].rstrip()
-        elif raw_line.lstrip().startswith("#"):
-            continue
-        else:
-            line = raw_line.rstrip()
-
-        if not line or line.isspace():
+        line = raw_line.strip()
+        if not (line) or (line.isspace()) or (line.startswith("#")):
             continue
 
-        stripped = line.lstrip()
-
-        # Check for unsupported syntax
-        for pattern, desc in UNSUPPORTED_PATTERNS:
-            if stripped.startswith(pattern):
-                die(f"line {line_num}: unsupported syntax: {desc}")
-
-        # Check for quoted strings
-        if ": " in stripped:
-            val_part = stripped.split(": ", 1)[1]
-            if val_part and val_part[0] in ('"', "'"):
-                die(f"line {line_num}: unsupported syntax: quoted strings")
-
-        indent = len(line) - len(line.lstrip())
-
-        # Pop stack to find parent at correct indent level
+        indent = len(raw_line) - len(raw_line.lstrip())
         while len(stack) > 1 and stack[-1][1] >= indent:
             stack.pop()
-
         parent = stack[-1][0]
 
-        if ": " in stripped:
-            # key: value
-            key, value = stripped.split(": ", 1)
+        if ": " in line:
+            key, value = line.split(": ", 1)
+            value = value.strip('"')
             parent[key] = value
-        elif stripped.endswith(":"):
-            # key: (start of nested map)
-            key = stripped[:-1]
+        elif line.endswith(":"):
+            key = line[:-1]
             child = {}
             parent[key] = child
             stack.append((child, indent))
         else:
-            die(f"line {line_num}: cannot parse: {stripped}")
-
+            raise _ProfileError(msg=f"Line {line_num} cannot be parsed: {line!r}")
     return root
 
 
-def resolve_profile(data):
+def _resolve_profile(*, data: dict[str, object]) -> tuple[str, dict[str, object]]:
     """Resolve active profile and return (transport, services_dict)."""
-    active = os.environ.get("DFE_PROFILE", "") or data.get("active_profile", "")
-    if not active:
-        die("no active profile: set active_profile in service_profiles.yaml or DFE_PROFILE env var")
+    active_profile = os.environ.get(PROFILE_ENV_VAR, "") or data.get(
+        PROFILE_ACTIVE_YAML_FIELD, None
+    )
+    if not (active_profile):
+        raise _ProfileError(
+            msg=f"No active profile. Set {PROFILE_ACTIVE_YAML_FIELD!r} in {Path(SERVICE_PROFILES_FILE).name!r} or use the {PROFILE_ENV_VAR!r} environment variable"
+        )
 
-    profiles = data.get("profiles")
-    if not profiles or not isinstance(profiles, dict):
-        die("service_profiles.yaml missing 'profiles' section")
+    profiles = data.get(PROFILE_LIST_YAML_FIELD)
+    if not (profiles) or not (isinstance(profiles, dict)):
+        raise _ProfileError(
+            msg=f"{Path(SERVICE_PROFILES_FILE).name!r} missing {PROFILE_LIST_YAML_FIELD!r} section"
+        )
 
-    if active not in profiles:
-        available = ", ".join(sorted(profiles.keys()))
-        die(f"profile '{active}' not found. Available: {available}")
+    if active_profile not in profiles:
+        available_profiles = [f"- {profile_name}" for profile_name in profiles.keys()]
+        raise _ProfileError(
+            msg=f"Profile {active_profile!r} not found. Available profiles:\n{'\n'.join(available_profiles)}"
+        )
 
-    profile = profiles[active]
+    _print(msg=f"Using profile {active_profile!r}...")
+    profile = profiles[active_profile]
     transport = profile.get("transport", "")
-    if transport not in ("kafka", "grpc"):
-        die(f"profile '{active}': transport must be 'kafka' or 'grpc', got '{transport}'")
+    if transport not in TRANSPORT_TYPES:
+        raise _ProfileError(
+            header=active_profile,
+            msg=f"Transport type {transport!r} unknown. Available transport types:\n{'\n'.join([f'- {transport_type}' for transport_type in TRANSPORT_TYPES])}",
+        )
 
     services = profile.get("services", {})
-    if not services:
-        die(f"profile '{active}': no services defined")
+    if not (services):
+        raise _ProfileError(header=active_profile, msg="Undefined services")
 
-    for svc_name, svc_conf in services.items():
-        if svc_name not in KNOWN_SERVICES:
-            die(f"profile '{active}': unknown service '{svc_name}'")
-        if not isinstance(svc_conf, dict) or "config_path" not in svc_conf:
-            die(f"profile '{active}': service '{svc_name}' missing config_path")
-        config_file = CONFIG_DIR / svc_conf["config_path"]
-        if not config_file.is_file():
-            die(f"profile '{active}': config file not found: config/{svc_conf['config_path']}")
+    for service_name, service_config in services.items():
+        if service_name not in SERVICES:
+            raise _ProfileError(
+                header=active_profile,
+                msg=f"Service {service_name!r} unknown. Available services:\n{'\n'.join([f'- {service}' for service in SERVICES])}",
+            )
+        if not (isinstance(service_config, dict)) or (
+            PROFILE_SERVICE_CONFIG_YAML_FIELD not in service_config
+        ):
+            raise _ProfileError(
+                header=active_profile,
+                msg=f"Missing {PROFILE_SERVICE_CONFIG_YAML_FIELD!r} value for service {service_name!r}",
+            )
+        config_file = CONFIG_DIR / service_config[PROFILE_SERVICE_CONFIG_YAML_FIELD]
+        if not (config_file.is_file()):
+            raise _ProfileError(
+                header=active_profile,
+                msg=f"Config file {_rel_path(path=config_file)!r} not found.",
+            )
 
     return transport, services
 
 
-def main():
-    if not SERVICE_PROFILES_FILE.is_file():
-        die(f"service_profiles.yaml not found at {SERVICE_PROFILES_FILE}")
+def main() -> int:
+    try:
+        if not (SERVICE_PROFILES_FILE.is_file()):
+            raise _ProfileError(
+                header=_rel_path(path=SERVICE_PROFILES_FILE),
+                msg=f"File not found at {_rel_path(path=SERVICE_PROFILES_FILE)!r}",
+            )
 
-    load_dotenv()
-    data = parse_yaml(SERVICE_PROFILES_FILE.read_text(encoding="utf-8", errors="replace"))
-    transport, services = resolve_profile(data)
+        _load_dotenv()
+        data = _parse_yaml(
+            text=SERVICE_PROFILES_FILE.read_text(encoding="utf-8", errors="replace")
+        )
+        transport, services = _resolve_profile(data=data)
 
-    # Build infra compose profile flags (DFE services have no profile and are started by name)
-    profiles = ["clickhouse"]
-    ui_enabled = False
-    if transport == "kafka":
-        backend = os.environ.get("KAFKA_BACKEND", DEFAULT_KAFKA_BACKEND).strip().lower()
-        if backend not in KAFKA_BACKENDS:
-            available = ", ".join(sorted(KAFKA_BACKENDS.keys()))
-            die(f"KAFKA_BACKEND '{backend}' invalid. Available: {available}")
-        profiles.append(KAFKA_BACKENDS[backend])
-        if env_truthy("KAFBAT_ENABLED", default=True):
-            profiles.append("ui")
-            ui_enabled = True
+        # Build infra compose profile flags
+        profiles = ["clickhouse"]
+        kafka_ui_enabled = False
+        if transport == "kafka":
+            backend = (
+                os.environ.get("KAFKA_BACKEND", SERVICE_KAFKA_DEFAULT).strip().lower()
+            )
+            if backend not in SERVICE_KAFKA_OPTIONS:
+                raise _ProfileError(
+                    msg=f"Kafka backend {backend!r} unknown. Available Kafka backends:\n{'\n'.join([f'- {option}' for option in SERVICE_KAFKA_OPTIONS])}",
+                )
+            profiles.append(SERVICE_KAFKA_OPTIONS[backend])
+            if _env_truthy(default=True, name="KAFBAT_ENABLED"):
+                profiles.append("kafka-ui")
+                kafka_ui_enabled = True
 
-    # Write makefile fragment ($(shell) collapses newlines, so we write a file)
-    lines = []
-    profile_flags = " ".join(f"--profile {p}" for p in profiles)
-    lines.append(f"export PROFILE_FLAGS := {profile_flags}")
-    # Named services list: DFE services (no compose profile) plus kafka-ui when enabled.
-    # `compose up <name>` ignores profile gating for profile-bound services we want to start.
-    service_list = sorted(services.keys())
-    if ui_enabled:
-        service_list.append("kafka-ui")
-    lines.append(f"export DFE_SERVICES := {' '.join(service_list)}")
+        # Write to .profile.mk ($(shell) collapses newlines)
+        lines = []
+        profile_flags = " ".join(f"--profile {profile}" for profile in profiles)
+        lines.append(f"export PROFILE_FLAGS := {profile_flags}")
+        service_list = sorted(services.keys())
+        if kafka_ui_enabled:
+            service_list.append("kafka-ui")
+        lines.append(f"export DFE_SERVICES := {' '.join(service_list)}")
 
-    for svc_name, svc_conf in services.items():
-        var_name = SERVICE_TO_CONFIG_VAR[svc_name]
-        lines.append(f"export {var_name} := {svc_conf['config_path']}")
+        for service_name, service_config in services.items():
+            var_name = SERVICE_TO_CONFIG_VAR[service_name]
+            lines.append(f"export {var_name} := {service_config['config_path']}")
 
-    PROFILE_MK.write_text("\n".join(lines) + "\n")
+        PROFILE_MK.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    except _ProfileError as error:
+        PROFILE_MK.unlink(missing_ok=True)
+        _print(header=error.header, msg=error.msg)
+        return 1
+    return 0
 
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())
