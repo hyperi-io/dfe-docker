@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 #  Project:      dfe-docker
-#  File:         resolve-profile.py
+#  File:         scripts/resolve_profile.py
 #  Purpose:      Read service_profiles.yaml and output Make-consumable profile variables
 #  Language:     Python
 #

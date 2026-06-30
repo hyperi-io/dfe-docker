@@ -20,7 +20,7 @@ ifneq (,$(filter-out $(BOOTSTRAP_GOALS),$(or $(MAKECMDGOALS),help)))
 endif
 
 .profile.mk: service_profiles.yaml .env
-	@python3 scripts/resolve-profile.py
+	@python3 scripts/resolve_profile.py
 
 .env:
 	@python3 scripts/init.py
@@ -38,14 +38,15 @@ init: ## Create .env and per-service env/<service>.env files from templates
 # ---------------------------------------------------------------------------
 
 .PHONY: dev
-dev: down ## Pull infra images, build and start local DFE images
+dev: down ## Build local DFE images from source and start the dev stack
 	docker compose $(PROFILE_FLAGS) pull
-	docker compose $(PROFILE_FLAGS) up --build -d $(DFE_SERVICES)
+	python3 scripts/build_dev_images.py $(DFE_SERVICES)
+	docker compose $(PROFILE_FLAGS) up -d $(DFE_SERVICES)
 
 .PHONY: dev-build
-dev-build: ## Pull infra images and build local DFE images
+dev-build: ## Build local DFE images from source (no start)
 	docker compose $(PROFILE_FLAGS) pull
-	docker compose $(PROFILE_FLAGS) build $(DFE_SERVICES)
+	python3 scripts/build_dev_images.py $(DFE_SERVICES)
 
 # ---------------------------------------------------------------------------
 # CI / registry images (skips docker-compose.override.yml)

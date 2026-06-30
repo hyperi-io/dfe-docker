@@ -41,6 +41,7 @@ DOTENV_TEMPLATE = REPO_ROOT / ".env.example"
 ENV_DIR = REPO_ROOT / "env"
 ENV_TEMPLATE_DIR = REPO_ROOT / "env.example"
 PROFILE_MK = REPO_ROOT / ".profile.mk"
+RUST_BUILDER = REPO_ROOT / "docker" / "dfe-rust-builder.Dockerfile"
 SERVICE_PROFILES_FILE = REPO_ROOT / "service_profiles.yaml"
 
 
