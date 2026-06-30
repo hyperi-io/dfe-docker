@@ -29,6 +29,9 @@ from _common import (
     _rel_path,
 )
 
+CORE_ENABLED_ENV_VAR = "DFE_CORE_ENABLED"
+CORE_SERVICES = ["dfe-ui"]
+
 PROFILE_ENV_VAR = "DFE_PROFILE"
 PROFILE_ACTIVE_YAML_FIELD = "active_profile"
 PROFILE_LIST_YAML_FIELD = "profiles"
@@ -218,6 +221,8 @@ def main() -> int:
         service_list = sorted(services.keys())
         if kafka_ui_enabled:
             service_list.append("kafka-ui")
+        if _env_truthy(default=True, name=CORE_ENABLED_ENV_VAR):
+            service_list.extend(CORE_SERVICES)
         lines.append(f"export DFE_SERVICES := {' '.join(service_list)}")
 
         for service_name, service_config in services.items():
