@@ -385,9 +385,73 @@ services:
       timeout: 3s
       retries: 5
 
+  # ===========================================================================
+  # dfe-engine
+  # ===========================================================================
+
+  dfe-engine:
+    image: ${IMAGE_REGISTRY:-ghcr.io/hyperi-io}/dfe-engine:${DFE_ENGINE_VERSION:-latest}
+    container_name: dfe-engine
+    profiles: ["core"]
+    ports:
+      - ${DFE_ENGINE_PORT:-8003}:8000
+    env_file:
+      - path: env/dfe-engine.env
+        required: false
+    environment:
+      DFE_CLICKHOUSE_HOST: ${DFE_CLICKHOUSE_HOST:-clickhouse}
+      DFE_CLICKHOUSE_PORT: "9000"
+      DFE_CLICKHOUSE_SECURE: "false"
+      DFE_CLICKHOUSE_DATABASE: ${CLICKHOUSE_DB:-default}
+      DFE_ADMIN_PASSWORD: ${DFE_ADMIN_PASSWORD:-changeme}
+      DFE_API_JWT_SECRET: ${DFE_API_JWT_SECRET:-dev-secret-key-change-in-production}
+      DFE_AUTH_ENABLED: ${DFE_AUTH_ENABLED:-false}
+      DFE_CONFIG_DIR: ${DFE_CONFIG_DIR:-/app/config}
+      DFE_SCHEMAS_DIR: ${DFE_SCHEMAS_DIR:-/app/schemas}
+    volumes:
+      - dfe-engine-config:/app/config
+    depends_on:
+      clickhouse:
+        condition: service_healthy
+        required: false
+    working_dir: /home/appuser
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://localhost:8000/health/ready"]
+      interval: 10s
+      timeout: 3s
+      start_period: 30s
+      retries: 5
+
+  # ===========================================================================
+  # dfe-ui
+  # ===========================================================================
+
+  dfe-ui:
+    image: ${IMAGE_REGISTRY:-ghcr.io/hyperi-io}/dfe-ui:${DFE_UI_VERSION:-latest}
+    container_name: dfe-ui
+    profiles: ["core"]
+    ports:
+      - ${DFE_UI_PORT:-3000}:3000
+    env_file:
+      - path: env/dfe-ui.env
+        required: false
+    environment:
+      NODE_ENV: production
+      INTERNAL_API_URL: ${DFE_UI_INTERNAL_API_URL:-http://dfe-engine:8000}
+      NEXTAUTH_URL: ${DFE_UI_NEXTAUTH_URL:-http://localhost:3000}
+      NEXTAUTH_SECRET: ${DFE_UI_NEXTAUTH_SECRET:-dev-only-insecure-secret}
+      NEXT_PUBLIC_API_URL: ${DFE_UI_API_URL:-http://localhost:8003}
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://localhost:3000/').then(() => process.exit(0)).catch(() => process.exit(1))"]
+      interval: 10s
+      timeout: 3s
+      start_period: 30s
+      retries: 5
+
 volumes:
   clickhouse-data:
   kafka-redpanda-data:
   kafka-apache-data:
   archiver-data:
   dlq-spool:
+  dfe-engine-config:

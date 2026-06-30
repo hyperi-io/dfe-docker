@@ -1,6 +1,6 @@
 # Project:   dfe-docker
 # File:      docker-compose.override.yml
-# Purpose:   Dev mode - builds images from local source instead of pulling registry
+# Purpose:   Dev mode - run locally built images instead of the registry ones
 # Language:  YAML
 #
 # License:   BUSL-1.1
@@ -9,45 +9,37 @@
 # This file is auto-loaded by docker compose in dev (no flags needed).
 # CI and production use: docker compose -f docker-compose.yml ... (skips this file)
 #
-# Prereq: component repos (dfe-receiver, dfe-loader, hyperi-rustlib) must be
-# checked out under PROJECTS_PATH (default: /projects).
-# Set PROJECTS_PATH in .env to override. The Dockerfiles do a full cargo build
-# inside the container. First build is slow (~5-10 min). Subsequent builds use
-# Docker layer cache.
+# The <service>:local images are built by `make dev` / `make dev-build` via
+# scripts/build_dev_images.py: each rust component is compiled from local source
+# with docker/dfe-rust-builder.Dockerfile, then packaged by the component's OWN
+# committed Dockerfile (single source of truth for runtime). dfe-ui builds from its
+# own Next.js standalone Dockerfile. Prereq: the component repos are checked out
+# under PROJECTS_PATH (default: /projects; see .env).
 
 services:
   dfe-receiver:
-    build:
-      context: ${PROJECTS_PATH:-/projects}
-      dockerfile: ${PROJECTS_PATH:-/projects}/dfe-docker/docker/dfe-receiver.Dockerfile
     image: dfe-receiver:local
 
   dfe-fetcher:
-    build:
-      context: ${PROJECTS_PATH:-/projects}
-      dockerfile: ${PROJECTS_PATH:-/projects}/dfe-docker/docker/dfe-fetcher.Dockerfile
     image: dfe-fetcher:local
 
   dfe-archiver:
-    build:
-      context: ${PROJECTS_PATH:-/projects}
-      dockerfile: ${PROJECTS_PATH:-/projects}/dfe-docker/docker/dfe-archiver.Dockerfile
     image: dfe-archiver:local
 
   dfe-loader:
-    build:
-      context: ${PROJECTS_PATH:-/projects}
-      dockerfile: ${PROJECTS_PATH:-/projects}/dfe-docker/docker/dfe-loader.Dockerfile
     image: dfe-loader:local
 
   dfe-transform-vector:
-    build:
-      context: ${PROJECTS_PATH:-/projects}
-      dockerfile: ${PROJECTS_PATH:-/projects}/dfe-docker/docker/dfe-transform-vector.Dockerfile
     image: dfe-transform-vector:local
 
   dfe-transform-vrl:
-    build:
-      context: ${PROJECTS_PATH:-/projects}
-      dockerfile: ${PROJECTS_PATH:-/projects}/dfe-docker/docker/dfe-transform-vrl.Dockerfile
     image: dfe-transform-vrl:local
+
+  dfe-engine:
+    image: dfe-engine:local
+    volumes:
+      - ${PROJECTS_PATH:-/projects}/dfe-engine/config:/app/config
+      - ${PROJECTS_PATH:-/projects}/dfe-engine/schemas:/app/schemas
+
+  dfe-ui:
+    image: dfe-ui:local

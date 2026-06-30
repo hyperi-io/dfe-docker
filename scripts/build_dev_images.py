@@ -35,7 +35,7 @@ RUST_COMPONENTS = [
     "dfe-transform-vector",
     "dfe-transform-vrl",
 ]
-SELF_CONTAINED_COMPONENTS = ["dfe-ui"]
+SELF_CONTAINED_COMPONENTS = ["dfe-engine", "dfe-ui"]
 STAGE_EXCLUDES = [
     "target",
     ".git",
@@ -81,7 +81,7 @@ def _docker_build(*, context: Path, dockerfile: Path, service: str) -> None:
     service_tag = f"{service}:{IMAGE_TAG}"
     _print(
         header=service,
-        msg=f"Packaging {service_tag!r} via {dockerfile!r}...",
+        msg=f"Packaging {service_tag!r} via {str(dockerfile)!r}...",
     )
     _run(
         args=["docker", "build", "-f", str(dockerfile), "-t", service_tag, str(context)]
@@ -94,7 +94,7 @@ def _export_rust_binary(*, repo: Path, service: str, workdir: Path) -> Path:
     src = workdir / "src"
     _stage_source(dest=src, repo=repo)
     bindir.mkdir()
-    _print(header=service, msg=f"Building binary from {repo!r}")
+    _print(header=service, msg=f"Building binary from {str(repo)!r}")
     _run(
         args=[
             "docker",
