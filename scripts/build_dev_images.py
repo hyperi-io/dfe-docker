@@ -23,10 +23,9 @@ import sys
 import tempfile
 from pathlib import Path
 
-from _common import REPO_ROOT, RUST_BUILDER, _print
+from _common import PROJECTS_PATH, RUST_BUILDER, _print
 
 IMAGE_TAG = "local"
-PROJECTS_PATH = REPO_ROOT.parent
 RUST_COMPONENTS = [
     "dfe-archiver",
     "dfe-fetcher",

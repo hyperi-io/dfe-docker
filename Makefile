@@ -78,7 +78,7 @@ infra: ## Start infrastructure services
 
 .PHONY: test-e2e
 test-e2e: ## End-to-end test executor (pass test names via E2E_TESTS)
-	@python3 ./scripts/test-e2e.py $(E2E_TESTS)
+	@python3 ./scripts/test_e2e.py $(E2E_TESTS)
 
 # ---------------------------------------------------------------------------
 # Lifecycle

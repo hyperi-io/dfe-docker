@@ -396,18 +396,18 @@ services:
     ports:
       - ${DFE_ENGINE_PORT:-8003}:8000
     env_file:
-      - path: env/dfe-engine.env
+      - path: env/engine.env
         required: false
     environment:
-      DFE_CLICKHOUSE_HOST: ${DFE_CLICKHOUSE_HOST:-clickhouse}
-      DFE_CLICKHOUSE_PORT: "9000"
-      DFE_CLICKHOUSE_SECURE: "false"
+      DFE_CLICKHOUSE_HOST: ${CLICKHOUSE_HOST:-clickhouse}
+      DFE_CLICKHOUSE_PORT: ${CLICKHOUSE_HTTP_PORT:-8123}
+      DFE_CLICKHOUSE_NATIVE_PORT: ${CLICKHOUSE_NATIVE_PORT:-9000}
       DFE_CLICKHOUSE_DATABASE: ${CLICKHOUSE_DB:-default}
-      DFE_ADMIN_PASSWORD: ${DFE_ADMIN_PASSWORD:-changeme}
-      DFE_API_JWT_SECRET: ${DFE_API_JWT_SECRET:-dev-secret-key-change-in-production}
-      DFE_AUTH_ENABLED: ${DFE_AUTH_ENABLED:-false}
-      DFE_CONFIG_DIR: ${DFE_CONFIG_DIR:-/app/config}
-      DFE_SCHEMAS_DIR: ${DFE_SCHEMAS_DIR:-/app/schemas}
+      DFE_CLICKHOUSE_USERNAME: ${CLICKHOUSE_USERNAME:-default}
+      DFE_CLICKHOUSE_PASSWORD: ${CLICKHOUSE_PASSWORD:-}
+      DFE_ADMIN_PASSWORD: ${DFE_ENGINE_ADMIN_PASSWORD:-changeme}
+      DFE_CONFIG_DIR: ${DFE_ENGINE_CONFIG_DIR:-/app/config}
+      DFE_SCHEMAS_DIR: ${DFE_ENGINE_SCHEMAS_DIR:-/app/schemas}
     volumes:
       - dfe-engine-config:/app/config
     depends_on:
@@ -433,14 +433,10 @@ services:
     ports:
       - ${DFE_UI_PORT:-3000}:3000
     env_file:
-      - path: env/dfe-ui.env
+      - path: env/ui.env
         required: false
     environment:
-      NODE_ENV: production
-      INTERNAL_API_URL: ${DFE_UI_INTERNAL_API_URL:-http://dfe-engine:8000}
-      NEXTAUTH_URL: ${DFE_UI_NEXTAUTH_URL:-http://localhost:3000}
-      NEXTAUTH_SECRET: ${DFE_UI_NEXTAUTH_SECRET:-dev-only-insecure-secret}
-      NEXT_PUBLIC_API_URL: ${DFE_UI_API_URL:-http://localhost:8003}
+      NODE_ENV: ${DFE_UI_NODE_ENV:-production}
     healthcheck:
       test: ["CMD", "node", "-e", "fetch('http://localhost:3000/').then(() => process.exit(0)).catch(() => process.exit(1))"]
       interval: 10s
