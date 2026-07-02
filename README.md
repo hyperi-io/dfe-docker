@@ -31,7 +31,7 @@ Re-running `make init` is safe with existing files being skipped.
 
 ```bash
 make init   # Edit .env files as needed (versions, ports)
-make dev    # Uses active_profile from service_profiles.yaml
+make ci     # Uses active_profile from service_profiles.yaml
 make down   # Stop everything
 ```
 
@@ -47,7 +47,7 @@ make down   # Stop everything
 
 ## Service Profiles
 
-Service selection is controlled by `service_profiles.yaml` at the repo root. Each profile declares a transport mode and which DFE services to start. You can override the active profile via the `DFE_PROFILE` env var.
+Service selection is controlled by `service_profiles.yaml` at the repo root. Each profile declares a transport mode and which DFE services to start. The `active_profile` field is used to define the profile set and can be overridden with the `DFE_PROFILE` env var.
 
 For `kafka` transport profiles, the Kafka backend is selected via `KAFKA_BACKEND` (default `redpanda`).
 
@@ -59,17 +59,19 @@ KAFKA_BACKEND=apache make dev    # Override Kafka backend
 
 ### Application Profiles (service_profiles.yaml)
 
-| Profile                   | Transport | dfe-archiver | dfe-fetcher | dfe-loader | dfe-receiver |
-|---------------------------|-----------|:------------:|:-----------:|:----------:|:------------:|
-| `kafka-minimal`           | Kafka     |              |             |     X      |              |
-| `kafka-full`              | Kafka     |      X       |      X      |     X      |      X       |
-| `kafka-receiver`          | Kafka     |              |             |     X      |      X       |
-| `kafka-receiver-archiver` | Kafka     |      X       |             |     X      |      X       |
-| `kafka-fetcher`           | Kafka     |              |      X      |     X      |              |
-| `grpc-minimal`            | gRPC      |              |             |     X      |              |
-| `grpc-full`               | gRPC      |              |      X      |     X      |      X       |
-| `grpc-receiver`           | gRPC      |              |             |     X      |      X       |
-| `grpc-fetcher`            | gRPC      |              |      X      |     X      |              |
+| Profile                           | Transport | dfe-archiver | dfe-fetcher | dfe-loader | dfe-receiver | dfe-transform-vrl | dfe-transform-vector |
+|-----------------------------------|-----------|:------------:|:-----------:|:----------:|:------------:|:-----------------:|:--------------------:|
+| `kafka-fetcher`                   | Kafka     |              |      X      |     X      |              |                   |                      |
+| `kafka-full`                      | Kafka     |      X       |      X      |     X      |      X       |                   |                      |
+| `kafka-full-transform-vrl`        | Kafka     |              |      X      |     X      |      X       |         X         |                      |
+| `kafka-minimal`                   | Kafka     |              |             |     X      |              |                   |                      |
+| `kafka-receiver`                  | Kafka     |              |             |     X      |      X       |                   |                      |
+| `kafka-receiver-archiver`         | Kafka     |      X       |             |     X      |      X       |                   |                      |
+| `kafka-receiver-transform-vector` | Kafka     |              |             |     X      |      X       |                   |           X          |
+| `grpc-fetcher`                    | gRPC      |              |      X      |     X      |              |                   |                      |
+| `grpc-full`                       | gRPC      |              |      X      |     X      |      X       |                   |                      |
+| `grpc-minimal`                    | gRPC      |              |             |     X      |              |                   |                      |
+| `grpc-receiver`                   | gRPC      |              |             |     X      |      X       |                   |                      |
 
 ### Infrastructure Profiles (docker-compose.yml)
 
@@ -78,44 +80,45 @@ KAFKA_BACKEND=apache make dev    # Override Kafka backend
 | `clickhouse`     | ClickHouse          | Local analytics store                                   |
 | `kafka-apache`   | Apache Kafka KRaft  | Kafka transport (opt-in - Real-Kafka compat + fallback) |
 | `kafka-redpanda` | Redpanda            | Kafka transport (default - fits 4 GB CI runners)        |
-| `ui`             | Kafbat UI (:8081)   | Web UI for Kafka                                        |
+| `kafka-ui`       | Kafbat UI (:8081)   | Web UI for Kafka                                        |
 
-Infrastructure profiles are activated automatically based on the selected application profile. The `ui` profile is on by default when transport is `kafka`. Opt out by setting `KAFBAT_ENABLED=false` in `.env`.
+Infrastructure profiles are activated automatically based on the selected application profile. The `kafka-ui` profile is on by default when transport is `kafka`. Opt out by setting `KAFBAT_ENABLED=false` in `.env`.
 
 All `kafka-*` profiles are **mutually exclusive**. They expose the network alias `kafka` on the same host ports, so only one can run at a time. Downstream services and configs always address `kafka:9092` and work with either backend.
+
+### DFE Core Components (Engine + UI)
+
+| Component    | Port | Purpose                     |
+|--------------|------|-----------------------------|
+| `dfe-engine` | 8003 | Config + schema API backend |
+| `dfe-ui`     | 3000 | Web console frontend        |
+
+`dfe-engine` (config/schema API backend) and `dfe-ui` (web console frontend) are independent of the transport/infra profiles. They start alongside whichever profile is active and are toggled as a pair by env var `DFE_CORE_ENABLED` (defaults to `true`). Set this to `false` to run without the core components.
+
+In `dev` mode, they build from each repo's own Dockerfile (not the shared Rust builder) so the engine and UI source repos must be present under `PROJECTS_PATH`.
 
 ## Make Commands
 
 ### Services
 
-| Command            | Description                                 |
-|--------------------|---------------------------------------------|
-| `make dev`         | Build from local source and start stack     |
-| `make build-local` | Build images from local source              |
-| `make ci`          | Start stack using published registry images |
-| `make pull`        | Pull latest images from registry            |
-| `make infra`       | Start infrastructure only                   |
-| `make certs`       | Create self-signed dev certs                |
-| `make ps`          | Show running containers                     |
-| `make down`        | Stop all services                           |
-| `make clean`       | Stop all services and remove volumes        |
-
-### Logging
-
-| Command            | Description                                 |
-|--------------------|---------------------------------------------|
-| `make dev-logs`    | Tail all service logs                       |
-| `make infra-logs`  | Tail infrastructure logs                    |
+| Command            | Description                                                        |
+|--------------------|--------------------------------------------------------------------|
+| `make init`        | Create .env and per-service .env files from templates              |
+| `make dev`         | Build local DFE images from source and start the stack             |
+| `make dev-build`   | Build local DFE images from source (no start)                      |
+| `make ci`          | Pull and start infra and registry DFE images                       |
+| `make ci-pull`     | Pull infra and registry DFE images (no start)                      |
+| `make infra`       | Start infrastructure services                                      |
+| `make ps`          | Show running containers                                            |
+| `make down`        | Stop and remove all containers across every profile                |
+| `make clean`       | Stop and remove all containers and volumes across every profile    |
+| `make help`        | Show the help message                                              |
 
 ### Testing
 
-| Command            | Description                                 |
-|--------------------|---------------------------------------------|
-| `make test-infra`  | Smoke test infrastructure                   |
-| `make test`        | Send test events and verify in ClickHouse   |
-| `make test-e2e`    | End-to-end test executor                    |
-| `make test-vector` | Feed events via Vector                      |
-| `make verify`      | Query ClickHouse to check ingested data     |
+| Command            | Description                                                       |
+|--------------------|-------------------------------------------------------------------|
+| `make test-e2e`    | End-to-end test executor                                          |
 
 ## Configuration
 
@@ -135,6 +138,7 @@ See [.env.example](.env.example) for available overrides.
 
 | Variable                                         | Use                                                                                  | Default                                                             |
 |--------------------------------------------------|--------------------------------------------------------------------------------------|---------------------------------------------------------------------|
+| `DOCKER_DEFAULT_PLATFORM`                        | Image architecture to pull from docker (if not wanting automatic determination)      | -                                                                   |
 | `IMAGE_REGISTRY`                                 | OCI registry hosting published `dfe-*` images                                        | `ghcr.io/hyperi-io`                                                 |
 
 ### Dev Builds
@@ -202,16 +206,19 @@ See [.env.example](.env.example) for available overrides.
 | Variable                                         | Use                                                                                  | Default                                                             |
 |--------------------------------------------------|--------------------------------------------------------------------------------------|---------------------------------------------------------------------|
 | `DFE_TRANSFORM_VRL_VERSION`                      | Version of dfe-transform-vrl to use                                                  | `latest`                                                            |
+| `DFE_TRANSFORM_VRL_PROMETHEUS_PORT`              | Transform VRL Prometheus port                                                        | `9096`                                                              |
 
 ### ClickHouse
 
 | Variable                                         | Use                                                                                  | Default                                                             |
 |--------------------------------------------------|--------------------------------------------------------------------------------------|---------------------------------------------------------------------|
-| `CLICKHOUSE_VERSION`                             | Version of ClickHouse to use                                                         | `latest`                                                            |
+| `CLICKHOUSE_VERSION`                             | Version of ClickHouse to use                                                         | latest known working version *(managed by renovate)*                |
 | `CLICKHOUSE_HOST`                                | External ClickHouse host (skips Docker container)                                    | `clickhouse`                                                        |
 | `CLICKHOUSE_HTTP_PORT`                           | ClickHouse HTTP port                                                                 | `8123`                                                              |
 | `CLICKHOUSE_NATIVE_PORT`                         | ClickHouse native protocol port                                                      | `9000`                                                              |
-| `CLICKHOUSE_DB`                                  | ClickHouse initialisation database                                                   | `dfe`                                                               |
+| `CLICKHOUSE_DB`                                  | ClickHouse initialisation database                                                   | `default`                                                           |
+| `CLICKHOUSE_USERNAME`                            | ClickHouse username to connect with                                                  | `default`                                                           |
+| `CLICKHOUSE_PASSWORD`                            | ClickHouse password associated to user                                               | -                                                                   |
 
 ### Kafka - General
 
@@ -225,7 +232,7 @@ See [.env.example](.env.example) for available overrides.
 
 | Variable                                         | Use                                                                                  | Default                                                             |
 |--------------------------------------------------|--------------------------------------------------------------------------------------|---------------------------------------------------------------------|
-| `APACHE_KAFKA_VERSION`                           | Version of Apache Kafka to use                                                       | `latest`                                                            |
+| `APACHE_KAFKA_VERSION`                           | Version of Apache Kafka to use                                                       | latest known working version *(managed by renovate)*                |
 | `KAFKA_ADVERTISED_LISTENERS`                     | Listener addresses advertised to clients/brokers                                     | `PLAINTEXT://kafka:9092,PLAINTEXT_HOST://localhost:19092`           |
 | `KAFKA_AUTO_CREATE_TOPICS_ENABLE`                | Toggle auto creation of topics                                                       | `true`                                                              |
 | `KAFKA_CLUSTER_ID`                               | Name of the Kafka cluster                                                            | `dfe-docker-dev-cluster-01`                                         |
@@ -245,7 +252,7 @@ See [.env.example](.env.example) for available overrides.
 
 | Variable                                         | Use                                                                                  | Default                                                             |
 |--------------------------------------------------|--------------------------------------------------------------------------------------|---------------------------------------------------------------------|
-| `REDPANDA_VERSION`                               | Version of Redpanda to use                                                           | `latest`                                                            |
+| `REDPANDA_VERSION`                               | Version of Redpanda to use                                                           | latest known working version *(managed by renovate)*                |
 | `REDPANDA_MEMORY`                                | Memory cap for the Redpanda broker (Seastar reserves this up front)                  | `1G`                                                                |
 
 ### Kafka UI (Kafbat)
@@ -253,17 +260,33 @@ See [.env.example](.env.example) for available overrides.
 | Variable                                         | Use                                                                                  | Default                                                             |
 |--------------------------------------------------|--------------------------------------------------------------------------------------|---------------------------------------------------------------------|
 | `KAFBAT_ENABLED`                                 | Toggle to turn on Kafbat                                                             | `true`                                                              |
-| `KAFBAT_VERSION`                                 | Version of Kafbat to use                                                             | `latest`                                                            |
+| `KAFBAT_VERSION`                                 | Version of Kafbat to use                                                             | latest known working version *(managed by renovate)*                |
 | `KAFBAT_DYNAMIC_CONFIG_ENABLED`                  | Toggle runtime config changes                                                        | `true`                                                              |
 | `KAFBAT_KAFKA_CLUSTERS_0_BOOTSTRAPSERVERS`       | Kafka bootstrap server                                                               | `kafka:9092`                                                        |
 | `KAFBAT_KAFKA_CLUSTERS_0_NAME`                   | Kafka cluster name                                                                   | `dfe-local`                                                         |
 | `KAFBAT_PORT`                                    | Kafbat port                                                                          | `8081`                                                              |
 
+## Core DFE Components
+
+| Variable                                         | Use                                                                                  | Default                                                             |
+|--------------------------------------------------|--------------------------------------------------------------------------------------|---------------------------------------------------------------------|
+| `DFE_CORE_ENABLED`                               | Toggle to turn on core components                                                    | `true`                                                              |
+| `DFE_ENGINE_VERSION`                             | Version of dfe-engine to use                                                         | `latest`                                                            |
+| `DFE_ENGINE_PORT`                                | Port used by dfe-engine                                                              | `8003`                                                              |
+| `DFE_ENGINE_ADMIN_PASSWORD`                      | Local admin user password                                                            | `changeme`                                                          |
+| `DFE_ENGINE_CONFIG_DIR`                          | Path to config directory                                                             | `/app/config`                                                       |
+| `DFE_ENGINE_SCHEMAS_DIR`                         | Path to schemas directory                                                            | `/app/schemas`                                                      |
+| `DFE_UI_VERSION`                                 | Version of dfe-ui to use                                                             | `latest`                                                            |
+| `DFE_UI_PORT`                                    | Port used by dfe-ui                                                                  | `3000`                                                              |
+| `DFE_UI_NODE_ENV`                                | Node environment of dfe-ui                                                           | `production`                                                        |
+
 ## Default Ports
 
 | Port  | Service              | Protocol           |
 |-------|----------------------|--------------------|
+| 3000  | dfe-ui               | Web UI             |
 | 6000  | dfe-receiver         | gRPC               |
+| 8003  | dfe-engine           | HTTP API           |
 | 8080  | dfe-receiver         | HTTP ingest        |
 | 8081  | Kafbat               | Web UI             |
 | 8082  | dfe-fetcher          | HTTP ingest        |
@@ -285,16 +308,23 @@ Additional receiver ports (commented out by default in docker-compose.yml):
 
 ## ClickHouse Schema
 
-Tables are initialised via `clickhouse/init-dfe.sql`:
+Databases/tables are initialised via `clickhouse/init-dfe.sql`:
 
+- `dfe` - master database for all DFE related tables
 - `dfe.default` - catch-all for unrouted events
 
 ## Container Images
 
 Images are published from the component repos:
 
-- `ghcr.io/hyperi-io/dfe-receiver` - see `dfe-receiver/docs/CONTAINER-PUBLISHING.md`
-- `ghcr.io/hyperi-io/dfe-loader` - see `dfe-loader/docs/CONTAINER-PUBLISHING.md`
+- `ghcr.io/hyperi-io/dfe-archiver`
+- `ghcr.io/hyperi-io/dfe-engine`
+- `ghcr.io/hyperi-io/dfe-fetcher`
+- `ghcr.io/hyperi-io/dfe-loader`
+- `ghcr.io/hyperi-io/dfe-receiver`
+- `ghcr.io/hyperi-io/dfe-transform-vector`
+- `ghcr.io/hyperi-io/dfe-transform-vrl`
+- `ghcr.io/hyperi-io/dfe-ui` - COMING SOON
 
 ## Licence
 

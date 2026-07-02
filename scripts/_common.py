@@ -35,12 +35,15 @@ FALSY = {"", "0", "false", "no", "off"}
 
 # Repo constants
 REPO_ROOT = __find_repo_root()
+BASELINE_DIR = REPO_ROOT / "env.example" / "upstream-keys"
 CONFIG_DIR = REPO_ROOT / "config"
 DOTENV_FILE = REPO_ROOT / ".env"
 DOTENV_TEMPLATE = REPO_ROOT / ".env.example"
 ENV_DIR = REPO_ROOT / "env"
 ENV_TEMPLATE_DIR = REPO_ROOT / "env.example"
 PROFILE_MK = REPO_ROOT / ".profile.mk"
+PROJECTS_PATH = REPO_ROOT.parent
+RUST_BUILDER = REPO_ROOT / "docker" / "dfe-rust-builder.Dockerfile"
 SERVICE_PROFILES_FILE = REPO_ROOT / "service_profiles.yaml"
 
 

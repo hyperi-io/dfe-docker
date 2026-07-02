@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 #  Project:      dfe-docker
-#  File:         resolve-profile.py
+#  File:         scripts/resolve_profile.py
 #  Purpose:      Read service_profiles.yaml and output Make-consumable profile variables
 #  Language:     Python
 #
@@ -28,6 +28,9 @@ from _common import (
     _print,
     _rel_path,
 )
+
+CORE_ENABLED_ENV_VAR = "DFE_CORE_ENABLED"
+CORE_SERVICES = ["dfe-engine", "dfe-ui"]
 
 PROFILE_ENV_VAR = "DFE_PROFILE"
 PROFILE_ACTIVE_YAML_FIELD = "active_profile"
@@ -218,6 +221,8 @@ def main() -> int:
         service_list = sorted(services.keys())
         if kafka_ui_enabled:
             service_list.append("kafka-ui")
+        if _env_truthy(default=True, name=CORE_ENABLED_ENV_VAR):
+            service_list.extend(CORE_SERVICES)
         lines.append(f"export DFE_SERVICES := {' '.join(service_list)}")
 
         for service_name, service_config in services.items():
