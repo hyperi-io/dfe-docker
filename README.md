@@ -1,6 +1,6 @@
 # dfe-docker
 
-Docker Compose deployment packaging for HyperI Data Forwarding Engine (DFE 2.2).
+Docker Compose deployment packaging for HyperI Data Fusion Engine.
 
 ## Architecture
 
