@@ -19,7 +19,7 @@ ifneq (,$(filter-out $(BOOTSTRAP_GOALS),$(or $(MAKECMDGOALS),help)))
     include .profile.mk
 endif
 
-.profile.mk: service_profiles.yaml .env
+.profile.mk: service_profiles.yaml .env scripts/resolve_profile.py
 	@python3 scripts/resolve_profile.py
 
 .env:
