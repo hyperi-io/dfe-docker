@@ -49,8 +49,6 @@ services:
       CLICKHOUSE_PASSWORD: ${CLICKHOUSE_PASSWORD:-}
       CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT: 1
     volumes:
-      - clickhouse-data:/var/lib/clickhouse
-      - ./clickhouse/init-dfe.sql:/docker-entrypoint-initdb.d/init.sql:ro
       - ./clickhouse/default-user.xml:/etc/clickhouse-server/users.d/default-custom.xml:ro
     healthcheck:
       test: ["CMD-SHELL", "clickhouse-client --password \"$$CLICKHOUSE_PASSWORD\" --query \"SELECT 1 FROM system.databases WHERE name = '\"$$CLICKHOUSE_DB\"'\""]
@@ -400,11 +398,12 @@ services:
       DFE_CLICKHOUSE_DATABASE: ${CLICKHOUSE_DB:-default}
       DFE_CLICKHOUSE_USERNAME: ${CLICKHOUSE_USERNAME:-default}
       DFE_CLICKHOUSE_PASSWORD: ${CLICKHOUSE_PASSWORD:-}
-      DFE_ADMIN_PASSWORD: ${DFE_ENGINE_ADMIN_PASSWORD:-changeme}
+      DFE_CLICKHOUSE_SECURE: ${CLICKHOUSE_SECURE:-false}
       DFE_CONFIG_DIR: ${DFE_ENGINE_CONFIG_DIR:-/app/config}
       DFE_SCHEMAS_DIR: ${DFE_ENGINE_SCHEMAS_DIR:-/app/schemas}
     volumes:
-      - dfe-engine-config:/app/config
+      - dfe-engine-config:${DFE_ENGINE_CONFIG_DIR:-/app/config}
+      - dfe-engine-schemas:${DFE_ENGINE_SCHEMAS_DIR:-/app/schemas}
     depends_on:
       clickhouse:
         condition: service_healthy
@@ -471,3 +470,4 @@ volumes:
   archiver-data:
   dlq-spool:
   dfe-engine-config:
+  dfe-engine-schemas:
