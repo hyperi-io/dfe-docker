@@ -30,7 +30,7 @@ from _common import (
 )
 
 CORE_ENABLED_ENV_VAR = "DFE_CORE_ENABLED"
-CORE_SERVICES = ["dfe-engine", "dfe-ui"]
+CORE_SERVICES = ["dfe-engine", "dfe-ui", "dfe-proxy"]
 
 PROFILE_ENV_VAR = "DFE_PROFILE"
 PROFILE_ACTIVE_YAML_FIELD = "active_profile"
