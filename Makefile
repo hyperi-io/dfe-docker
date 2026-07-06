@@ -17,6 +17,16 @@ BOOTSTRAP_GOALS := init help
 # Resolve the active profile only when a goal actually needs the compose stack
 ifneq (,$(filter-out $(BOOTSTRAP_GOALS),$(or $(MAKECMDGOALS),help)))
     include .profile.mk
+    SERVICES ?=
+    ifeq ($(strip $(SERVICES)),)
+        ACTIVE_SERVICES := $(DFE_SERVICES)
+    else
+        INVALID_SERVICES := $(filter-out $(DFE_SERVICES),$(SERVICES))
+        ifneq ($(INVALID_SERVICES),)
+            $(error 'SERVICES' contains names not in the resolved stack: $(INVALID_SERVICES). Available: $(DFE_SERVICES))
+        endif
+        ACTIVE_SERVICES := $(filter $(SERVICES),$(DFE_SERVICES))
+    endif
 endif
 
 .profile.mk: service_profiles.yaml .env scripts/resolve_profile.py
@@ -40,13 +50,13 @@ init: ## Create .env and per-service env/<service>.env files from templates
 .PHONY: dev
 dev: down ## Build local DFE images from source and start the dev stack
 	docker compose $(PROFILE_FLAGS) pull
-	python3 scripts/build_dev_images.py $(DFE_SERVICES)
-	docker compose $(PROFILE_FLAGS) up -d $(DFE_SERVICES)
+	python3 scripts/build_dev_images.py $(ACTIVE_SERVICES)
+	docker compose $(PROFILE_FLAGS) up -d $(ACTIVE_SERVICES)
 
 .PHONY: dev-build
 dev-build: ## Build local DFE images from source (no start)
 	docker compose $(PROFILE_FLAGS) pull
-	python3 scripts/build_dev_images.py $(DFE_SERVICES)
+	python3 scripts/build_dev_images.py $(ACTIVE_SERVICES)
 
 # ---------------------------------------------------------------------------
 # CI / registry images (skips docker-compose.override.yml)
@@ -55,13 +65,13 @@ dev-build: ## Build local DFE images from source (no start)
 .PHONY: ci
 ci: down  ## Pull and start infra and registry DFE images
 	docker compose -f docker-compose.yml $(PROFILE_FLAGS) pull
-	docker compose -f docker-compose.yml $(PROFILE_FLAGS) pull $(DFE_SERVICES)
-	docker compose -f docker-compose.yml $(PROFILE_FLAGS) up -d $(DFE_SERVICES)
+	docker compose -f docker-compose.yml $(PROFILE_FLAGS) pull $(ACTIVE_SERVICES)
+	docker compose -f docker-compose.yml $(PROFILE_FLAGS) up -d $(ACTIVE_SERVICES)
 
 .PHONY: ci-pull
 ci-pull: ## Pull infra and registry DFE images
 	docker compose -f docker-compose.yml $(PROFILE_FLAGS) pull
-	docker compose -f docker-compose.yml $(PROFILE_FLAGS) pull $(DFE_SERVICES)
+	docker compose -f docker-compose.yml $(PROFILE_FLAGS) pull $(ACTIVE_SERVICES)
 
 # ---------------------------------------------------------------------------
 # Infrastructure only (Kafka + ClickHouse)
@@ -89,8 +99,8 @@ ps: ## Show running containers
 	docker compose ps
 
 .PHONY: down
-down: ## Stop and remove all containers across every profile
-	docker compose -f docker-compose.yml --profile "*" down --remove-orphans
+down: ## Stop and remove the active (or SERVICES-selected) containers
+	docker compose -f docker-compose.yml $(PROFILE_FLAGS) down $(ACTIVE_SERVICES)
 
 .PHONY: clean
 clean: ## Stop and remove all containers and volumes across every profile

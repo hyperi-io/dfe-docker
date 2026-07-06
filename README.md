@@ -57,6 +57,13 @@ DFE_PROFILE=grpc-full make dev   # Override profile
 KAFKA_BACKEND=apache make dev    # Override Kafka backend
 ```
 
+To start only a subset of the resolved profile for a single invocation, pass `SERVICES` (space-separated). It also works with `make ci`. An empty `SERVICES` (the default) starts the whole profile; a name that is not part of the resolved stack is a hard error.
+
+```bash
+make dev SERVICES="dfe-loader dfe-ui"   # Start dev images of dfe-loader and dfe-ui only
+make ci  SERVICES="dfe-loader dfe-ui"   # Same, against registry images
+```
+
 ### Application Profiles (service_profiles.yaml)
 
 | Profile                           | Transport | dfe-archiver | dfe-fetcher | dfe-loader | dfe-receiver | dfe-transform-vrl | dfe-transform-vector |
@@ -110,7 +117,7 @@ In `dev` mode, they build from each repo's own Dockerfile (not the shared Rust b
 | `make ci-pull`     | Pull infra and registry DFE images (no start)                      |
 | `make infra`       | Start infrastructure services                                      |
 | `make ps`          | Show running containers                                            |
-| `make down`        | Stop and remove all containers across every profile                |
+| `make down`        | Stop and remove containers (based on active or `SERVICES` subset)  |
 | `make clean`       | Stop and remove all containers and volumes across every profile    |
 | `make help`        | Show the help message                                              |
 
