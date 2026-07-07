@@ -236,7 +236,9 @@ def main() -> int:
             var_name = SERVICE_TO_CONFIG_VAR[service_name]
             lines.append(f"export {var_name} := {service_config['config_path']}")
 
-        PROFILE_MK.write_text("\n".join(lines) + "\n", encoding="utf-8")
+        new_content = "\n".join(lines) + "\n"
+        if not (PROFILE_MK.exists()) or PROFILE_MK.read_text(encoding="utf-8") != new_content:
+            PROFILE_MK.write_text(new_content, encoding="utf-8")
     except _ProfileError as error:
         PROFILE_MK.unlink(missing_ok=True)
         _print(header=error.header, msg=error.msg)

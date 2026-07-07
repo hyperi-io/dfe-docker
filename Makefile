@@ -35,8 +35,11 @@ ifneq (,$(filter-out $(BOOTSTRAP_GOALS),$(or $(MAKECMDGOALS),help)))
     endif
 endif
 
-.profile.mk: service_profiles.yaml .env scripts/resolve_profile.py
+.profile.mk: FORCE
 	@python3 scripts/resolve_profile.py
+
+.PHONY: FORCE
+FORCE:
 
 .env:
 	@python3 scripts/init.py
