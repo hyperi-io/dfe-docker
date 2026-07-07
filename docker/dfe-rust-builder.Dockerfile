@@ -12,7 +12,7 @@
 #
 # Post-scalo-2.10: components depend on the published `scalo` crate (no local hyperi-rustlib), so there are no sibling-dep COPYs or Cargo.toml rewrites. rdkafka uses dynamic-linking against librdkafka-dev from the Confluent apt repo, matching the runtime image's Confluent librdkafka1 soname (mirrors hyperi-ci's build recipe).
 
-ARG RUST_IMAGE=rust:latest@sha256:6df234c1eb92b0545468fab8c18fc5f9adfb994e7d4f67d81d45fe2fcabf5657
+ARG RUST_IMAGE=rust:latest@sha256:1f0dbad1df66647807e6952d1db85d0b2bda7606cb2139d82517e4f009967376
 FROM ${RUST_IMAGE} AS builder
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
