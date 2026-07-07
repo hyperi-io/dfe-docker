@@ -1,0 +1,19 @@
+[
+  {
+    "id": "dfe-default",
+    "name": "DFE Default",
+    "kind": "log",
+    "connection": "local",
+    "from": {
+      "databaseName": "dfe",
+      "tableName": "default"
+    },
+    "timestampValueExpression": "_timestamp",
+    "displayedTimestampValueExpression": "_timestamp",
+    "implicitColumnExpression": "_json",
+    "bodyExpression": "_json",
+    "serviceNameExpression": "_source",
+    "eventAttributesExpression": "_json",
+    "defaultTableSelectExpression": "_timestamp,_source,_json"
+  }
+]

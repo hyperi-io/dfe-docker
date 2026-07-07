@@ -34,7 +34,9 @@ RUST_COMPONENTS = [
     "dfe-transform-vector",
     "dfe-transform-vrl",
 ]
-SELF_CONTAINED_COMPONENTS = ["dfe-engine", "dfe-ui"]
+SELF_CONTAINED_COMPONENTS = ["dfe-engine", "dfe-ui", "hyperdx"]
+SERVICE_BUILD_ARGS = {"hyperdx": {"NEXT_PUBLIC_IS_LOCAL_MODE": "true"}}
+SERVICE_REPO_DIRS = {"hyperdx": "hyperi-hyperdx"}
 STAGE_EXCLUDES = [
     "target",
     ".git",
@@ -59,7 +61,7 @@ class _BuilderError(Exception):
 
 def _build_image(*, service: str) -> None:
     """Build an image for a service."""
-    repo = PROJECTS_PATH / service
+    repo = PROJECTS_PATH / SERVICE_REPO_DIRS.get(service, service)
     dockerfile = repo / "Dockerfile"
     if not (dockerfile.is_file()):
         raise _BuilderError(header=service, msg=f"Missing Dockerfile at {dockerfile!r}")
@@ -82,8 +84,20 @@ def _docker_build(*, context: Path, dockerfile: Path, service: str) -> None:
         header=service,
         msg=f"Packaging {service_tag!r} via {str(dockerfile)!r}...",
     )
+    build_args = []
+    for name, value in SERVICE_BUILD_ARGS.get(service, {}).items():
+        build_args.extend(["--build-arg", f"{name}={value}"])
     _run(
-        args=["docker", "build", "-f", str(dockerfile), "-t", service_tag, str(context)]
+        args=[
+            "docker",
+            "build",
+            "-f",
+            str(dockerfile),
+            "-t",
+            service_tag,
+            *build_args,
+            str(context),
+        ]
     )
 
 

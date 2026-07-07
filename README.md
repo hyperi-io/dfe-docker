@@ -55,6 +55,7 @@ For `kafka` transport profiles, the Kafka backend is selected via `KAFKA_BACKEND
 make dev                         # Uses active_profile from service_profiles.yaml
 DFE_PROFILE=grpc-full make dev   # Override profile
 KAFKA_BACKEND=apache make dev    # Override Kafka backend
+DFE_HYPERDX_ENABLED=1 make dev   # Also start the HyperDX observability stack
 ```
 
 To start only a subset of the resolved profile for a single invocation, pass `SERVICES` (space-separated). It also works with `make ci`. An empty `SERVICES` (the default) starts the whole profile; a name that is not part of the resolved stack is a hard error.
@@ -287,16 +288,35 @@ See [.env.example](.env.example) for available overrides.
 | `DFE_UI_PORT`                                    | Port used by dfe-ui                                                                  | `3000`                                                              |
 | `DFE_UI_NODE_ENV`                                | Node environment of dfe-ui                                                           | `production`                                                        |
 
+## HyperDX (opt-in observability)
+
+Off by default. `DFE_HYPERDX_ENABLED=true` starts `hyperdx` (API + App) plus its `hyperdx-ferretdb` and `hyperdx-postgres` dependencies, sharing the always-on ClickHouse.
+
+| Variable                                         | Use                                                                                  | Default                                                             |
+|--------------------------------------------------|--------------------------------------------------------------------------------------|---------------------------------------------------------------------|
+| `DFE_HYPERDX_ENABLED`                            | Toggle to start HyperDX + FerretDB + Postgres                                        | `false`                                                             |
+| `DFE_HYPERDX_VERSION`                            | Version of hyperi-hyperdx to use                                                     | `latest`                                                            |
+| `DFE_HYPERDX_API_PORT`                           | HyperDX API host port                                                                | `8000`                                                              |
+| `DFE_HYPERDX_APP_PORT`                           | HyperDX App UI host port                                                             | `8090`                                                              |
+| `DFE_HYPERDX_APP_URL`                            | Base URL the browser uses to reach HyperDX                                           | `http://localhost`                                                  |
+| `HYPERDX_THEME`                                  | UI theme (NEXT_PUBLIC_THEME)                                                         | `dfe`                                                               |
+| `HYPERDX_POSTGRES_USER`                          | FerretDB/Postgres user                                                               | `hyperdx`                                                           |
+| `HYPERDX_POSTGRES_PASSWORD`                      | FerretDB/Postgres password                                                           | `hyperdx`                                                           |
+| `HYPERDX_FERRETDB_VERSION`                       | FerretDB image version                                                               | latest known working version *(managed by renovate)*                |
+| `HYPERDX_POSTGRES_VERSION`                       | Postgres/DocumentDB image version                                                    | latest known working version *(managed by renovate)*                |
+
 ## Default Ports
 
 | Port  | Service              | Protocol           |
 |-------|----------------------|--------------------|
 | 3000  | dfe-ui               | Web UI             |
 | 6000  | dfe-receiver         | gRPC               |
+| 8000  | hyperdx              | API                |
 | 8003  | dfe-engine           | HTTP API           |
 | 8080  | dfe-receiver         | HTTP ingest        |
 | 8081  | Kafbat               | Web UI             |
 | 8082  | dfe-fetcher          | HTTP ingest        |
+| 8090  | hyperdx              | App UI             |
 | 8123  | ClickHouse           | HTTP API           |
 | 8686  | dfe-transform-vector | Vector API         |
 | 9000  | ClickHouse           | Native protocol    |
