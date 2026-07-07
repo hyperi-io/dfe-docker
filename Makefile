@@ -11,6 +11,12 @@
 # Non-fatal: init creates .env, so it must not exist on a fresh checkout
 -include .env
 
+# Host UID/GID passed to dev containers (docker-compose.override.yml) that write
+# to bind-mounted host dirs (dfe-engine config/schemas), so files are owned by
+# the host user rather than the image user and writes don't hit permission errors.
+export DFE_DEV_UID := $(shell id -u)
+export DFE_DEV_GID := $(shell id -g)
+
 # Goals that work without a resolved service profile
 BOOTSTRAP_GOALS := init help
 

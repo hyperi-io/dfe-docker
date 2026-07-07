@@ -37,6 +37,10 @@ services:
 
   dfe-engine:
     image: dfe-engine:local
+    user: "${DFE_DEV_UID:-1000}:${DFE_DEV_GID:-1000}"
+    working_dir: /app
+    environment:
+      HOME: /tmp
     volumes:
       - ${PROJECTS_PATH:-/projects}/dfe-engine/config:${DFE_ENGINE_CONFIG_DIR:-/app/config}
       - ${PROJECTS_PATH:-/projects}/dfe-engine/schemas:${DFE_ENGINE_SCHEMAS_DIR:-/app/schemas}
