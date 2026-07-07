@@ -43,3 +43,6 @@ services:
 
   dfe-ui:
     image: dfe-ui:local
+
+  hyperdx:
+    image: hyperdx:local
