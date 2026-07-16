@@ -18,7 +18,7 @@ export DFE_DEV_UID := $(shell id -u)
 export DFE_DEV_GID := $(shell id -g)
 
 # Goals that work without a resolved service profile
-BOOTSTRAP_GOALS := init help
+BOOTSTRAP_GOALS := init help stack
 
 # Resolve the active profile only when a goal actually needs the compose stack
 ifneq (,$(filter-out $(BOOTSTRAP_GOALS),$(or $(MAKECMDGOALS),help)))
@@ -51,6 +51,10 @@ FORCE:
 .PHONY: init
 init: ## Create .env and per-service env/<service>.env files from templates
 	@python3 scripts/init.py
+
+.PHONY: stack
+stack: .env ## Pin image versions into .env from the DFE stack SSoT (VERSION=X.Y.Z[-rc.N])
+	@python3 scripts/stack.py $(VERSION)
 
 # ---------------------------------------------------------------------------
 # Dev (builds from local source via docker-compose.override.yml)

@@ -37,7 +37,7 @@ services:
   # ===========================================================================
 
   clickhouse:
-    image: clickhouse/clickhouse-server:${CLICKHOUSE_VERSION:?set CLICKHOUSE_VERSION (see .env.example) or run make init}
+    image: clickhouse/clickhouse-server:${CLICKHOUSE_VERSION:?run 'make stack VERSION=X.Y.Z' to pin CLICKHOUSE_VERSION}
     container_name: dfe-clickhouse
     profiles: ["clickhouse"]
     ports:
@@ -66,7 +66,7 @@ services:
   # ===========================================================================
 
   kafka-redpanda:
-    image: docker.redpanda.com/redpandadata/redpanda:${REDPANDA_VERSION:?set REDPANDA_VERSION (see .env.example) or run make init}
+    image: docker.redpanda.com/redpandadata/redpanda:${REDPANDA_VERSION:?run 'make stack VERSION=X.Y.Z' to pin REDPANDA_VERSION}
     container_name: dfe-kafka-redpanda
     profiles: ["kafka-redpanda"]
     networks:
@@ -99,7 +99,7 @@ services:
   # ===========================================================================
 
   kafka-apache:
-    image: apache/kafka:${APACHE_KAFKA_VERSION:?set APACHE_KAFKA_VERSION (see .env.example) or run make init}
+    image: apache/kafka:${APACHE_KAFKA_VERSION:?run 'make stack VERSION=X.Y.Z' to pin APACHE_KAFKA_VERSION}
     container_name: dfe-kafka-apache
     profiles: ["kafka-apache"]
     networks:
@@ -139,7 +139,7 @@ services:
   # ===========================================================================
 
   kafka-init:
-    image: docker.redpanda.com/redpandadata/redpanda:${REDPANDA_VERSION:?set REDPANDA_VERSION (see .env.example) or run make init}
+    image: docker.redpanda.com/redpandadata/redpanda:${REDPANDA_VERSION:?run 'make stack VERSION=X.Y.Z' to pin REDPANDA_VERSION}
     container_name: dfe-kafka-init
     profiles: ["kafka-apache", "kafka-redpanda"]
     depends_on:
@@ -167,7 +167,7 @@ services:
   # ===========================================================================
 
   kafka-ui:
-    image: ghcr.io/kafbat/kafka-ui:${KAFBAT_VERSION:?set KAFBAT_VERSION (see .env.example) or run make init}
+    image: ghcr.io/kafbat/kafka-ui:${KAFBAT_VERSION:?run 'make stack VERSION=X.Y.Z' to pin KAFBAT_VERSION}
     container_name: dfe-kafka-ui
     profiles: ["kafka-ui"]
     ports:
@@ -183,7 +183,7 @@ services:
   # ===========================================================================
 
   dfe-archiver:
-    image: ${IMAGE_REGISTRY:-ghcr.io/hyperi-io}/dfe-archiver:${DFE_ARCHIVER_VERSION:-latest}
+    image: ${IMAGE_REGISTRY:-ghcr.io/hyperi-io}/dfe-archiver:${DFE_ARCHIVER_VERSION:?run 'make stack VERSION=X.Y.Z' to pin DFE_ARCHIVER_VERSION}
     container_name: dfe-archiver
     profiles: ["dfe"]
     ports:
@@ -214,7 +214,7 @@ services:
   # ===========================================================================
 
   dfe-fetcher:
-    image: ${IMAGE_REGISTRY:-ghcr.io/hyperi-io}/dfe-fetcher:${DFE_FETCHER_VERSION:-latest}
+    image: ${IMAGE_REGISTRY:-ghcr.io/hyperi-io}/dfe-fetcher:${DFE_FETCHER_VERSION:?run 'make stack VERSION=X.Y.Z' to pin DFE_FETCHER_VERSION}
     container_name: dfe-fetcher
     profiles: ["dfe"]
     ports:
@@ -248,7 +248,7 @@ services:
   # ===========================================================================
 
   dfe-loader:
-    image: ${IMAGE_REGISTRY:-ghcr.io/hyperi-io}/dfe-loader:${DFE_LOADER_VERSION:-latest}
+    image: ${IMAGE_REGISTRY:-ghcr.io/hyperi-io}/dfe-loader:${DFE_LOADER_VERSION:?run 'make stack VERSION=X.Y.Z' to pin DFE_LOADER_VERSION}
     container_name: dfe-loader
     profiles: ["dfe"]
     ports:
@@ -283,7 +283,7 @@ services:
   # ===========================================================================
 
   dfe-receiver:
-    image: ${IMAGE_REGISTRY:-ghcr.io/hyperi-io}/dfe-receiver:${DFE_RECEIVER_VERSION:-latest}
+    image: ${IMAGE_REGISTRY:-ghcr.io/hyperi-io}/dfe-receiver:${DFE_RECEIVER_VERSION:?run 'make stack VERSION=X.Y.Z' to pin DFE_RECEIVER_VERSION}
     container_name: dfe-receiver
     profiles: ["dfe"]
     ports:
@@ -325,7 +325,7 @@ services:
   # ===========================================================================
 
   dfe-transform-vector:
-    image: ${IMAGE_REGISTRY:-ghcr.io/hyperi-io}/dfe-transform-vector:${DFE_TRANSFORM_VECTOR_VERSION:-latest}
+    image: ${IMAGE_REGISTRY:-ghcr.io/hyperi-io}/dfe-transform-vector:${DFE_TRANSFORM_VECTOR_VERSION:?run 'make stack VERSION=X.Y.Z' to pin DFE_TRANSFORM_VECTOR_VERSION}
     container_name: dfe-transform-vector
     profiles: ["dfe"]
     ports:
@@ -354,7 +354,7 @@ services:
   # ===========================================================================
 
   dfe-transform-vrl:
-    image: ${IMAGE_REGISTRY:-ghcr.io/hyperi-io}/dfe-transform-vrl:${DFE_TRANSFORM_VRL_VERSION:-latest}
+    image: ${IMAGE_REGISTRY:-ghcr.io/hyperi-io}/dfe-transform-vrl:${DFE_TRANSFORM_VRL_VERSION:?run 'make stack VERSION=X.Y.Z' to pin DFE_TRANSFORM_VRL_VERSION}
     container_name: dfe-transform-vrl
     profiles: ["dfe"]
     ports:
@@ -380,10 +380,14 @@ services:
 
   # ===========================================================================
   # dfe-engine
+  # dfe-schemas rides INSIDE this image: /app/schemas is baked into dfe-engine
+  # (pinned by DFE_ENGINE_VERSION) and seeds the dfe-engine-schemas named volume
+  # on first run; the engine auto-creates the CH objects at startup. So a pinned
+  # stack needs no separate dfe-schemas docker pin -- DFE_ENGINE_VERSION covers it.
   # ===========================================================================
 
   dfe-engine:
-    image: ${IMAGE_REGISTRY:-ghcr.io/hyperi-io}/dfe-engine:${DFE_ENGINE_VERSION:-latest}
+    image: ${IMAGE_REGISTRY:-ghcr.io/hyperi-io}/dfe-engine:${DFE_ENGINE_VERSION:?run 'make stack VERSION=X.Y.Z' to pin DFE_ENGINE_VERSION}
     container_name: dfe-engine
     profiles: ["core"]
     ports:
@@ -421,7 +425,7 @@ services:
   # ===========================================================================
 
   dfe-ui:
-    image: ${IMAGE_REGISTRY:-ghcr.io/hyperi-io}/dfe-ui:${DFE_UI_VERSION:-latest}
+    image: ${IMAGE_REGISTRY:-ghcr.io/hyperi-io}/dfe-ui:${DFE_UI_VERSION:?run 'make stack VERSION=X.Y.Z' to pin DFE_UI_VERSION}
     container_name: dfe-ui
     profiles: ["core"]
     env_file:
@@ -443,7 +447,7 @@ services:
   # ===========================================================================
 
   dfe-proxy:
-    image: nginx:${DFE_PROXY_VERSION:?set DFE_PROXY_VERSION (see .env.example) or run make init}
+    image: nginx:${DFE_PROXY_VERSION:?run 'make stack VERSION=X.Y.Z' to pin DFE_PROXY_VERSION}
     container_name: dfe-proxy
     profiles: ["core"]
     ports:
@@ -470,7 +474,7 @@ services:
   # ===========================================================================
 
   hyperdx-postgres:
-    image: ghcr.io/ferretdb/postgres-documentdb:${HYPERDX_POSTGRES_VERSION:-17-0.107.0-ferretdb-2.7.0@sha256:2386795ec2aa7ae559304361979f1dc5708d383ee9020ae63dadc2940dfe58f7}
+    image: ghcr.io/ferretdb/postgres-documentdb:${HYPERDX_POSTGRES_VERSION:?run 'make stack VERSION=X.Y.Z' to pin HYPERDX_POSTGRES_VERSION}
     container_name: dfe-hyperdx-postgres
     profiles: ["hyperdx"]
     environment:
@@ -486,7 +490,7 @@ services:
       retries: 10
 
   hyperdx-ferretdb:
-    image: ghcr.io/ferretdb/ferretdb:${HYPERDX_FERRETDB_VERSION:-2.7.0@sha256:5706414241eb84f0515512c37b46db0f1b1eac9e5ceb7e4c2523211c184b1985}
+    image: ghcr.io/ferretdb/ferretdb:${HYPERDX_FERRETDB_VERSION:?run 'make stack VERSION=X.Y.Z' to pin HYPERDX_FERRETDB_VERSION}
     container_name: dfe-hyperdx-ferretdb
     profiles: ["hyperdx"]
     environment:
@@ -497,6 +501,13 @@ services:
     restart: on-failure
 
   hyperdx:
+    # The dfe-hyperdx fork is not yet published, so the DFE stack SSoT emits
+    # DFE_HYPERDX_VERSION as a comment, not a value -- `make stack` cannot pin
+    # it. Compose interpolates every service (profiles do not gate it), so a
+    # `:?` hard-fail here would abort even the default non-hyperdx path. This is
+    # the ONE DFE-owned image still on a soft default; flip it to
+    # `:?run 'make stack VERSION=X.Y.Z' to pin DFE_HYPERDX_VERSION` once the
+    # fork publishes and versions.yaml gains content.dfe-hyperdx.
     image: ${IMAGE_REGISTRY:-ghcr.io/hyperi-io}/hyperi-hyperdx:${DFE_HYPERDX_VERSION:-latest}
     container_name: dfe-hyperdx
     profiles: ["hyperdx"]

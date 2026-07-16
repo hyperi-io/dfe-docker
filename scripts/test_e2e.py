@@ -142,6 +142,26 @@ TEST_CONFIG = Path(os.environ.get(
 ))
 
 # ------------------------------------------------------------------------------
+# Kafka Backend
+# - Mirrors scripts/resolve_profile.py: KAFKA_BACKEND selects BOTH the compose
+#   profile and the broker service for kafka-transport tests. Profile name and
+#   service name are identical (service 'kafka-redpanda' lives in profile
+#   'kafka-redpanda'; likewise 'kafka-apache'). The in-network alias is always
+#   'kafka:9092', so downstream services and `--bootstrap-server` address that,
+#   but `docker compose exec` needs the real SERVICE name -> KAFKA_SERVICE.
+#   Unknown backend falls back to redpanda (the stack default).
+# ------------------------------------------------------------------------------
+KAFKA_BACKEND = os.environ.get("KAFKA_BACKEND", "redpanda").strip().lower()
+KAFKA_BACKEND_PROFILES = {
+    "redpanda": "kafka-redpanda",
+    "apache": "kafka-apache",
+}
+KAFKA_BACKEND_PROFILE = KAFKA_BACKEND_PROFILES.get(KAFKA_BACKEND, "kafka-redpanda")
+KAFKA_SERVICE = KAFKA_BACKEND_PROFILE
+KAFKA_UI_PROFILE = "kafka-ui"
+KAFKA_BOOTSTRAP = "kafka:9092"
+
+# ------------------------------------------------------------------------------
 # Logging Related
 # - Custom log levels for test results (skip/pass/fail) and coloured output
 # ------------------------------------------------------------------------------
@@ -171,7 +191,7 @@ class TestContext:
 # Test Case
 # - Represents a single test case with required parameters and defaults
 #   - profile: service_profiles.yaml profile name (e.g. kafka-receiver)
-#   - compose_profiles: resolved compose profiles including infra (clickhouse, kafka, ui)
+#   - compose_profiles: resolved compose profiles including infra (clickhouse, kafka backend profile, kafka-ui)
 #   - services: resolved {dfe-service: project-relative config path}
 # ------------------------------------------------------------------------------
 @dataclass
@@ -375,7 +395,7 @@ def load_services_yaml():
 # ------------------------------------------------------------------------------
 # Resolve Services Profile
 # - Resolve a service_profiles.yaml profile into (compose_profiles, services_dict)
-#   - compose_profiles always includes 'clickhouse'; 'kafka' + 'ui' when transport=kafka
+#   - compose_profiles always includes 'clickhouse'; kafka backend profile + 'kafka-ui' when transport=kafka
 #   - services_dict maps {dfe-service: project-relative config path}
 # ------------------------------------------------------------------------------
 def resolve_services_profile(profile_name):
@@ -396,7 +416,7 @@ def resolve_services_profile(profile_name):
 
     compose_profiles = ["clickhouse"]
     if (transport == "kafka"):
-        compose_profiles += ["kafka", "ui"]
+        compose_profiles += [KAFKA_BACKEND_PROFILE, KAFKA_UI_PROFILE]
 
     services = {}
     for svc_name, svc_conf in raw_services.items():
@@ -574,9 +594,9 @@ def stack_up(mode, test, services):
 
     # Kafka profiles: bring up infra first, create topics, then start the full profile.
     # The loader fails on startup if no matching topics exist on the broker.
-    has_kafka = ("kafka" in test.compose_profiles)
+    has_kafka = (KAFKA_BACKEND_PROFILE in test.compose_profiles)
     if (has_kafka and test.expected_topics):
-        infra_cmd = ["docker", "compose"] + compose_files + ["--profile", "clickhouse", "--profile", "kafka"]
+        infra_cmd = ["docker", "compose"] + compose_files + ["--profile", "clickhouse", "--profile", KAFKA_BACKEND_PROFILE]
         infra_up = infra_cmd + ["up", "-d"]
 
         LOGGER.info("Preparing 'Kafka' service...")
@@ -587,7 +607,7 @@ def stack_up(mode, test, services):
             return False
 
         LOGGER.debug("Waiting for 'Kafka' to be healthy...")
-        wait_cmd = ["docker", "compose"] + compose_files + ["--profile", "clickhouse", "--profile", "kafka", "up", "--wait", "--wait-timeout", "60", "-d"]
+        wait_cmd = ["docker", "compose"] + compose_files + ["--profile", "clickhouse", "--profile", KAFKA_BACKEND_PROFILE, "up", "--wait", "--wait-timeout", "60", "-d"]
         wait_result = run_cmd(wait_cmd, check = False, capture = not(LOG_LEVEL == "DEBUG"))
         if (wait_result.returncode != 0):
             LOGGER.error("'Kafka' broker not healthy within timeout")
@@ -822,6 +842,73 @@ def verify_table(ctx, test_name, database, table, marker, max_attempts = 10):
         mark_fail(ctx, f"[{test_name}] '{database}.{table}': Expected {expected}, got {actual}")
 
 # ---------------------------------------------------------------------------
+# Kafka Topic Commands
+# - Backend-aware topic ops. The broker service name AND the CLI both differ by
+#   backend: redpanda ships `rpk`, Apache Kafka ships kafka-topics.sh. Each is
+#   execed inside the running broker service (KAFKA_SERVICE) and addresses the
+#   in-network alias 'kafka:9092'. Mirrors scripts/resolve_profile.py.
+# ---------------------------------------------------------------------------
+def _topic_exec_base():
+    return ["docker", "compose", "exec", "-T", KAFKA_SERVICE]
+
+def _topic_create_cmd(topic):
+    if (KAFKA_BACKEND == "apache"):
+        return _topic_exec_base() + [
+            "/opt/kafka/bin/kafka-topics.sh",
+            "--bootstrap-server", KAFKA_BOOTSTRAP,
+            "--create", "--if-not-exists",
+            "--topic", topic,
+            "--partitions", "1",
+            "--replication-factor", "1",
+        ]
+    return _topic_exec_base() + [
+        "rpk", "topic", "create", topic,
+        "--partitions", "1",
+        "--replicas", "1",
+        "-X", f"brokers={KAFKA_BOOTSTRAP}",
+    ]
+
+def _topic_delete_cmd(topic):
+    if (KAFKA_BACKEND == "apache"):
+        return _topic_exec_base() + [
+            "/opt/kafka/bin/kafka-topics.sh",
+            "--bootstrap-server", KAFKA_BOOTSTRAP,
+            "--delete", "--if-exists",
+            "--topic", topic,
+        ]
+    return _topic_exec_base() + [
+        "rpk", "topic", "delete", topic,
+        "-X", f"brokers={KAFKA_BOOTSTRAP}",
+    ]
+
+def _topic_list_cmd():
+    if (KAFKA_BACKEND == "apache"):
+        return _topic_exec_base() + [
+            "/opt/kafka/bin/kafka-topics.sh",
+            "--bootstrap-server", KAFKA_BOOTSTRAP,
+            "--list",
+        ]
+    return _topic_exec_base() + [
+        "rpk", "topic", "list",
+        "-X", f"brokers={KAFKA_BOOTSTRAP}",
+    ]
+
+def _parse_topic_list(stdout):
+    # kafka-topics.sh --list prints one topic per line; rpk topic list prints a
+    # table with a 'NAME PARTITIONS REPLICAS' header, so take the first column
+    # and drop that header row.
+    topics = []
+    for line in (stdout or "").splitlines():
+        parts = line.split()
+        if not(parts):
+            continue
+        if (parts[0] == "NAME"):
+            continue
+        topics.append(parts[0])
+    return topics
+
+
+# ---------------------------------------------------------------------------
 # Create Topics
 # - Pre-creates expected Kafka topics before dfe-loader starts consuming
 # ---------------------------------------------------------------------------
@@ -835,14 +922,7 @@ def clean_topics(expected_topics):
         if not(topic):
             continue
         LOGGER.debug(f"Deleting topic: '{topic}'...")
-        delete_cmd = [
-            "docker", "compose", "exec", "-T", "kafka",
-            "/opt/kafka/bin/kafka-topics.sh",
-            "--bootstrap-server", "kafka:9092",
-            "--delete", "--if-exists",
-            "--topic", topic,
-        ]
-        result = run_cmd(delete_cmd, check = False, capture = True)
+        result = run_cmd(_topic_delete_cmd(topic), check = False, capture = True)
         if (result.returncode != 0):
             LOGGER.warning(f"Failed to delete topic '{topic}': {result.stderr or result.stdout}")
     LOGGER.debug(f"{len(expected_topics)} topic{topics_label} cleaned")
@@ -861,16 +941,7 @@ def create_topics(expected_topics):
         if not(topic):
             continue
         LOGGER.debug(f"Creating topic: '{topic}'...")
-        create_cmd = [
-            "docker", "compose", "exec", "-T", "kafka",
-            "/opt/kafka/bin/kafka-topics.sh",
-            "--bootstrap-server", "kafka:9092",
-            "--create", "--if-not-exists",
-            "--topic", topic,
-            "--partitions", "1",
-            "--replication-factor", "1",
-        ]
-        result = run_cmd(create_cmd, check = False, capture = True)
+        result = run_cmd(_topic_create_cmd(topic), check = False, capture = True)
         if (result.returncode != 0):
             LOGGER.error(f"Failed to create topic '{topic}': {result.stderr or result.stdout}")
             return False
@@ -884,9 +955,8 @@ def create_topics(expected_topics):
 def verify_topics(ctx, test_name, expected_topics):
     LOGGER.info("Verifying 'Kafka' topics...")
     
-    base_cmd = ["docker", "compose", "exec", "-T", "kafka", "/opt/kafka/bin/kafka-topics.sh", "--bootstrap-server", "kafka:9092", "--list"]
-    result = run_cmd(base_cmd, check = False, capture = True)
-    topics = result.stdout.strip().splitlines() if (result.returncode == 0 and result.stdout) else []
+    result = run_cmd(_topic_list_cmd(), check = False, capture = True)
+    topics = _parse_topic_list(result.stdout) if (result.returncode == 0) else []
 
     for topic in expected_topics:
         if not(topic):
@@ -991,7 +1061,7 @@ def run_test(ctx, mode, test, persistent_services):
     verify_table(ctx, test.name, test.database, test.table, test.marker)
 
     # If the test runs Kafka and expected topics are defined, verify the topics exist
-    if ("kafka" in test.compose_profiles and test.expected_topics):
+    if (KAFKA_BACKEND_PROFILE in test.compose_profiles and test.expected_topics):
         print()
         verify_topics(ctx, test.name, test.expected_topics)
 

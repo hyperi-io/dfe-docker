@@ -128,6 +128,44 @@ In `dev` mode, they build from each repo's own Dockerfile (not the shared Rust b
 |--------------------|-------------------------------------------------------------------|
 | `make test-e2e`    | End-to-end test executor                                          |
 
+The e2e harness (`scripts/test_e2e.py`, config `tests/e2e/e2e-tests.yaml`) runs
+the core data-path acceptance: POST known JSON at the ingest edge and assert the
+row lands in the ClickHouse table. It is transport-agnostic - each test selects a
+`service_profiles.yaml` profile, so the same assertion covers both the Kafka and
+the direct-gRPC paths. Run a subset by name:
+
+```
+make test-e2e E2E_TESTS="simple-receiver-to-loader-grpc simple-fetcher-to-loader"
+```
+
+### The two default acceptance tests
+
+The DFE stack ships two default "it is working" e2e tests: (1) the core data path
+and (2) self-monitoring - the stack's own OTel logs+metrics landing in the otel
+ClickHouse database. This docker harness implements test (1) only. The docker
+profile ships no OTel collector and no otel ClickHouse database, so test (2)
+cannot run here without wiring the profile does not carry; it lives in the k8s
+bootstrap-smoke suite that dfe-infra runs post-deploy.
+
+### Shared dev hosts (port collision)
+
+Kafka-transport tests start a broker that publishes to host ports `9092` and
+`19092`. On a shared host already running a Kafka/Redpanda on `9092` (e.g. an
+always-on dev daemon) that clashes. Two clean ways to run without the clash:
+
+- Remap the host ports. The harness only reaches the broker over the docker
+  network alias `kafka:9092`, so any free host port works:
+
+  ```
+  KAFKA_PLAINTEXT_PORT=29092 KAFKA_PLAINTEXT_HOST_PORT=29192 make test-e2e
+  ```
+
+- Or run the gRPC-only tests, which need no broker at all:
+
+  ```
+  make test-e2e E2E_TESTS="simple-receiver-to-loader-grpc simple-fetcher-to-loader"
+  ```
+
 ## Configuration
 
 Config files live under `config/<component>/` and are self-documenting - browse the directory. The active config for each service is set by the selected profile in `service_profiles.yaml`, which can be overridden via the `DFE_PROFILE` environment variable.
