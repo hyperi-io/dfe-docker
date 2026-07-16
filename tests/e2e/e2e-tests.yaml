@@ -6,14 +6,19 @@
 # License:   BUSL-1.1
 # Copyright: (c) 2026 HYPERI PTY LIMITED
 
-# Each test references a profile from service_profiles.yaml. The profile declares which
-# DFE services run and their config paths. The runner adds infra automatically
-# (clickhouse always; the selected Kafka backend profile + kafka-ui when transport is kafka).
+# Each test references a profile from service_profiles.yaml. The profile declares
+# which DFE services run and their config paths. The runner adds infra
+# automatically: ClickHouse + dfe-engine (the schema authority -- it provisions the
+# landing tables and registers the schemas the loader needs) always, plus the
+# selected Kafka backend profile + kafka-ui when transport is kafka.
 #
-# Scope: this harness covers the core data-path acceptance (test 1 of the two
-# default DFE e2e tests). The self-monitoring OTel test (test 2) is not run here
-# -- the docker profile carries no OTel collector or otel ClickHouse database; it
-# lives in the k8s bootstrap-smoke suite (dfe-infra).
+# Verification: dfe-engine owns the schema and the loader drops unmapped event
+# fields, so the runner asserts the row-count DELTA in the engine-provisioned
+# default table (dfe.default) -- the DFE default-deploy acceptance ("the row lands
+# in the CH default table"). This is test 1 of the two default DFE e2e tests; the
+# self-monitoring OTel test (test 2) is not run here -- the docker profile carries
+# no OTel collector or otel ClickHouse database; it lives in the k8s
+# bootstrap-smoke suite (dfe-infra).
 #
 # Per-service config overrides can be set via `config_overrides`, keyed by
 # service name (e.g. dfe-loader: config/custom.yaml).
@@ -21,16 +26,12 @@
 global:
   data_file: tests/e2e/data/events.jsonl
   mode: ci
+  # Only ClickHouse persists between tests (schema + accumulated rows; the
+  # count-delta verify baselines per test). Kafka, kafbat and the DFE services
+  # recreate fresh each test so a test always runs its own config and a stale
+  # broker cannot fail the next test's health gate.
   persistent_services:
     - clickhouse
-    - kafka-ui
-    - kafka-redpanda
-    - dfe-fetcher
-    - dfe-loader
-
-clickhouse:
-  drop_database: false
-  table_ddl_file_path: clickhouse/ddls/base_table_ddl.sql
 
 tests:
   - name: simple-receiver-to-loader-grpc
@@ -53,8 +54,6 @@ tests:
 
   - name: simple-fetcher-to-loader-kafka
     profile: kafka-fetcher
-    clickhouse:
-      table_ddl_file_path: clickhouse/ddls/aws_cloudtrail_ddl.sql
     expected_topics:
       - default_land
       - simple_fetcher_to_loader_kafka_land

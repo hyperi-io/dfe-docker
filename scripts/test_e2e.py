@@ -53,10 +53,6 @@ DEFAULTS = {
     "data_file": "tests/e2e/data/events.jsonl",
     "mode": "ci",
     "persistent_services": ["clickhouse"],
-    "clickhouse": {
-        "drop_database": True,
-        "table_ddl_file_path": "clickhouse/base_table_ddl.sql"
-    }
 }
 
 # ------------------------------------------------------------------------------
@@ -69,13 +65,29 @@ DEFAULTS = {
 SERVICE_PROFILES_FILE = Path(__file__).resolve().parent.parent / "service_profiles.yaml"
 
 SERVICE_CONFIG_MOUNTS = {
-    "dfe-archiver": "/etc/dfe-archiver/config.yaml",
-    "dfe-fetcher":  "/etc/dfe-fetcher/config.yaml",
+    "dfe-archiver": "/etc/dfe/archiver.yaml",
+    "dfe-fetcher":  "/etc/dfe/fetcher.yaml",
     "dfe-loader":   "/etc/dfe/loader.yaml",
     "dfe-receiver": "/etc/dfe-receiver/config.yaml",
 }
 
 KNOWN_DFE_SERVICES = set(SERVICE_CONFIG_MOUNTS.keys())
+
+# ------------------------------------------------------------------------------
+# Schema Authority
+# - dfe-engine provisions the ClickHouse objects (dfe.default et al.) and
+#   registers their schemas, which the loader pre-warms into its schema cache on
+#   startup. Without it the loader holds every message pending-schema and
+#   dead-letters after a timeout. So it is brought up as INFRA -- health-gated
+#   BEFORE the DFE services -- not as a per-profile DFE service. The loader routes
+#   an event to <default_db>.<_source>; the harness sends with _source = the
+#   target table, landing rows in the engine-provisioned default table (the DFE
+#   default-deploy acceptance: "the row lands in the CH default table").
+# ------------------------------------------------------------------------------
+SCHEMA_AUTHORITY_SERVICE = "dfe-engine"
+SCHEMA_AUTHORITY_PROFILE = "core"
+TARGET_DB = "dfe"
+TARGET_TABLE = "default"
 
 # ------------------------------------------------------------------------------
 # Load Dotenv Function
@@ -127,6 +139,10 @@ DFE_ARCHIVER_HEALTH_URL = os.environ.get(
 DFE_FETCHER_HEALTH_URL = os.environ.get(
     "DFE_FETCHER_HEALTH_URL",
     f"http://localhost:{os.environ.get("DFE_FETCHER_PROMETHEUS_PORT", "9094")}/health/ready",
+)
+DFE_ENGINE_HEALTH_URL = os.environ.get(
+    "DFE_ENGINE_HEALTH_URL",
+    f"http://localhost:{os.environ.get("DFE_ENGINE_PORT", "8003")}/health/ready",
 )
 DFE_FETCHER_INGEST_URL = os.environ.get(
     "DFE_FETCHER_INGEST_URL",
@@ -204,8 +220,6 @@ class TestCase:
     database: str
     table: str
     marker: str
-    ch_drop_database: str
-    ch_table_ddl_file_path: str
     persistent_services: list[str] = field(default_factory = list)
     expected_topics: list[str] = field(default_factory = list)
 
@@ -414,7 +428,7 @@ def resolve_services_profile(profile_name):
     if not(raw_services):
         error(f"Profile '{profile_name}': no services defined")
 
-    compose_profiles = ["clickhouse"]
+    compose_profiles = ["clickhouse", SCHEMA_AUTHORITY_PROFILE]
     if (transport == "kafka"):
         compose_profiles += [KAFKA_BACKEND_PROFILE, KAFKA_UI_PROFILE]
 
@@ -586,17 +600,28 @@ def stack_up(mode, test, services):
 
     compose_files += ["-f", override_file]
 
-    # Create the ClickHouse database and table as well as clean ready for the test so it can pre-warm
-    if (test.database and test.table and test.ch_table_ddl_file_path):
-        LOGGER.info("Preparing 'ClickHouse' service...")
-        create_table(test.database, test.table, test.ch_table_ddl_file_path)
-        clean_table(test.database, test.table)
+    # Schema authority: dfe-engine provisions dfe.default and registers the schemas
+    # the loader pre-warms on startup. Bring it up with ClickHouse and gate on its
+    # health BEFORE the DFE services, so the loader caches the schema instead of
+    # holding every message pending-schema and dead-lettering it.
+    LOGGER.info("Preparing schema authority (ClickHouse + dfe-engine)...")
+    authority_up = ["docker", "compose"] + compose_files + [
+        "--profile", "clickhouse", "--profile", SCHEMA_AUTHORITY_PROFILE,
+        "up", "-d", "clickhouse", SCHEMA_AUTHORITY_SERVICE,
+    ]
+    authority_result = run_cmd(authority_up, check = False, capture = not(LOG_LEVEL == "DEBUG"))
+    if (authority_result.returncode != 0):
+        filtered = filter_build_output(authority_result.stderr or authority_result.stdout or "")
+        LOGGER.error(f"Schema authority failed to start: {filtered if (filtered) else (authority_result.stderr or authority_result.stdout)}")
+        return False
+    if not(wait_for_service("dfe-engine", DFE_ENGINE_HEALTH_URL, max_attempts = 45)):
+        return False
 
     # Kafka profiles: bring up infra first, create topics, then start the full profile.
     # The loader fails on startup if no matching topics exist on the broker.
     has_kafka = (KAFKA_BACKEND_PROFILE in test.compose_profiles)
     if (has_kafka and test.expected_topics):
-        infra_cmd = ["docker", "compose"] + compose_files + ["--profile", "clickhouse", "--profile", KAFKA_BACKEND_PROFILE]
+        infra_cmd = ["docker", "compose"] + compose_files + ["--profile", "clickhouse", "--profile", KAFKA_BACKEND_PROFILE, "--profile", KAFKA_UI_PROFILE]
         infra_up = infra_cmd + ["up", "-d"]
 
         LOGGER.info("Preparing 'Kafka' service...")
@@ -743,33 +768,6 @@ def wait_for_stack(services):
 # - Functions for preparing test data, sending events, and verifying results
 # ==============================================================================
 
-# ------------------------------------------------------------------------------
-# Create Table
-# - Creates the ClickHouse database/table before each test run
-# ------------------------------------------------------------------------------
-def create_table(database, table, ch_table_ddl_file_path):
-    query = f"CREATE DATABASE IF NOT EXISTS {database}"
-    LOGGER.debug(f"Creating database '{database}' with `{query}`...")
-    ch_query(query)
-    time.sleep(1)
-    
-    with open(ch_table_ddl_file_path, 'r') as ddl_file:
-        ddl_template = ddl_file.read()
-    query = ddl_template.replace("{database}", database).replace("{table}", table)
-    LOGGER.debug(f"Creating table '{database}.{table}' with `{query}`...")
-    ch_query(query)
-    time.sleep(1)
-
-# ------------------------------------------------------------------------------
-# Truncate Table
-# - Truncates the ClickHouse table before each test run
-# ------------------------------------------------------------------------------
-def clean_table(database, table):
-    query = f"TRUNCATE TABLE IF EXISTS {database}.{table}"
-    LOGGER.debug(f"Truncating '{database}.{table}' with `{query}`...")
-    ch_query(query)
-    time.sleep(1)
-
 # ---------------------------------------------------------------------------
 # Send Events
 # - Reads events from a file and sends to the receiver
@@ -813,33 +811,40 @@ def send_events(ctx, test_name, marker, data_file_name, database, table, ingest_
         mark_fail(ctx, f"[{test_name}] {send_errors}/{ctx.total_sent} ingest requests failed (non-200 response codes)")
 
 # ---------------------------------------------------------------------------
-# Verify Table
-# - Queries ClickHouse to check the expected number of events with the marker
+# ClickHouse Row Count
+# - Returns the current row count of a table (0 if it cannot be read)
 # ---------------------------------------------------------------------------
-def verify_table(ctx, test_name, database, table, marker, max_attempts = 10):
-    expected = ctx.total_sent
-    LOGGER.info(f"Verifying events in ClickHouse table '{database}.{table}' (marker: '{marker}')...")
-    time.sleep(5)
+def ch_count(database, table):
+    raw = ch_query(f"SELECT count() FROM {database}.{table}")
+    try:
+        return int(raw.strip())
+    except (ValueError, AttributeError):
+        return 0
 
-    actual = 0
+# ---------------------------------------------------------------------------
+# Verify Table
+# - Confirms `expected` new rows landed in the engine-provisioned landing table
+# ---------------------------------------------------------------------------
+def verify_table(ctx, test_name, database, table, baseline, expected, max_attempts = 12):
+    target = baseline + expected
+    LOGGER.info(f"Verifying {expected} new rows in ClickHouse table '{database}.{table}' (baseline {baseline})...")
+    time.sleep(3)
+
+    actual = baseline
     for attempt in range(1, max_attempts + 1):
-        raw = ch_query(f"SELECT count() FROM {database}.{table} WHERE _json._tags.marker == '{marker}'")
-        try:
-            actual = int(raw.strip())
-        except (ValueError, AttributeError):
-            actual = 0
-
-        if (actual >= expected):
-            LOGGER.info(f"    Attempt {attempt}/{max_attempts}: got {actual}/{expected}")
+        actual = ch_count(database, table)
+        got = actual - baseline
+        if (actual >= target):
+            LOGGER.info(f"    Attempt {attempt}/{max_attempts}: got +{got}/{expected}")
             break
-        else:
-            LOGGER.info(f"    Attempt {attempt}/{max_attempts}: got {actual}/{expected}, retrying in 5s...")
-            time.sleep(5)
+        LOGGER.info(f"    Attempt {attempt}/{max_attempts}: got +{got}/{expected}, retrying in 5s...")
+        time.sleep(5)
 
-    if (actual >= expected):
-        mark_pass(ctx, f"[{test_name}] '{database}.{table}': {actual}/{expected}")
+    got = actual - baseline
+    if (actual >= target):
+        mark_pass(ctx, f"[{test_name}] '{database}.{table}': +{got}/{expected} rows")
     else:
-        mark_fail(ctx, f"[{test_name}] '{database}.{table}': Expected {expected}, got {actual}")
+        mark_fail(ctx, f"[{test_name}] '{database}.{table}': expected +{expected}, got +{got}")
 
 # ---------------------------------------------------------------------------
 # Kafka Topic Commands
@@ -995,10 +1000,8 @@ def resolve_test_case(test_config, global_config):
         compose_profiles = compose_profiles,
         services = services,
         data_file = get_config("data_file", test_config, global_config, required = True),
-        database = get_config("database", test_config, global_config, default_value = RUN_ID).replace("-", "_"),
-        table = get_config("table", test_config, global_config, default_value = test_name).replace("-", "_"),
-        ch_drop_database = get_config("clickhouse.drop_database", test_config, global_config, required = True),
-        ch_table_ddl_file_path = get_config("clickhouse.table_ddl_file_path", test_config, global_config, required = True),
+        database = get_config("database", test_config, global_config, default_value = TARGET_DB).replace("-", "_"),
+        table = get_config("table", test_config, global_config, default_value = TARGET_TABLE).replace("-", "_"),
         expected_topics = get_config("expected_topics", test_config, global_config, is_list = True),
         marker = f"{RUN_ID}-{test_name}"
     )
@@ -1054,11 +1057,14 @@ def run_test(ctx, mode, test, persistent_services):
         if (has_fetcher and not(has_receiver))
         else DFE_RECEIVER_INGEST_URL
     )
+    # Baseline the landing table before send so verification measures the delta
+    # this run contributes (the engine-provisioned table is shared, not per-run).
+    baseline = ch_count(test.database, test.table)
     send_events(ctx, test.name, test.marker, test.data_file, test.database, test.table, ingest_url)
 
-    # Verify the events have been ingested into ClickHouse with the correct marker
+    # Verify the events landed in ClickHouse (row-count delta from the baseline)
     print()
-    verify_table(ctx, test.name, test.database, test.table, test.marker)
+    verify_table(ctx, test.name, test.database, test.table, baseline, ctx.total_sent)
 
     # If the test runs Kafka and expected topics are defined, verify the topics exist
     if (KAFKA_BACKEND_PROFILE in test.compose_profiles and test.expected_topics):
