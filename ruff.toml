@@ -1,0 +1,34 @@
+# Project:   dfe-docker
+# File:      ruff.toml
+# Purpose:   Ruff configuration for the repo's Python helper scripts
+# Language:  TOML
+#
+# License:   BUSL-1.1
+# Copyright: (c) 2026 HYPERI PTY LIMITED
+#
+# The HyperI Python standard's ruff config, applied here. This repo had NO ruff
+# config at all, so tooling fell back to ruff's defaults and enforced E501 --
+# which the house standard explicitly ignores, because `ruff format` (Black
+# semantics) already owns line breaking and cannot split a long string literal or
+# URL. Leaving E501 on means a formatter-approved file still fails lint, and the
+# only way to "fix" it is to hand-mangle prose the formatter will not touch.
+#
+# line-length stays 88: it is what the formatter wraps CODE to. E501 being off
+# governs the leftovers the formatter deliberately leaves alone.
+#
+# `select` is left at ruff's default (E4/E7/E9 + F) rather than the standard's
+# fuller E,F,I,N,UP,D set. This repo is a Compose packaging repo with helper
+# scripts, not a Python package -- turning on pydocstyle here would demand
+# docstring furniture on scripts that read better without it. Revisit if these
+# scripts ever become an installable package.
+
+line-length = 88
+
+[lint]
+ignore = ["E501"]
+
+# Belt and braces: a bare `ignore` loses to an explicit `--select E` on the
+# command line (CLI selection outranks config ignores in ruff), and the shared
+# lint hook invokes exactly that. per-file-ignores survives it.
+[lint.per-file-ignores]
+"*.py" = ["E501"]

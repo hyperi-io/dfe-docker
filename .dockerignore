@@ -1,0 +1,54 @@
+# Project:   dfe-docker
+# File:      .dockerignore
+# Purpose:   Build-context exclusions for any image built with this repo as context
+# Language:  dockerignore
+#
+# License:   BUSL-1.1
+# Copyright: (c) 2026 HYPERI PTY LIMITED
+#
+# Nothing in this repo currently builds with the repo root as its context:
+# scripts/build_dev_images.py stages each component's source into a temp dir with
+# its own STAGE_EXCLUDES, and the runtime image comes from the component repo's
+# own Dockerfile. So today this file is a guard, not a fix.
+#
+# It earns its keep the moment someone adds a root-context build -- which is
+# exactly when nobody remembers to write one, and secrets (.env, env/) get
+# shipped into an image layer. That is the failure this prevents.
+
+# Secrets and local config -- the reason this file exists at all.
+.env
+.env.*
+!.env.example
+env/
+certs/
+
+# Version control and CI metadata
+.git/
+.github/
+.gitignore
+.gitleaks.toml
+
+# Agent and editor artefacts
+.claude/
+.hyperi-ai/
+.mcp.json
+.vscode/
+.idea/
+
+# Local build and runtime state
+.profile.mk
+.tmp/
+tmp/
+**/target/
+**/__pycache__/
+**/*.pyc
+
+# Docs and packaging that never belong in a runtime image
+docs/
+*.md
+LICENSE
+robots.txt
+
+# Compose definitions themselves -- an image built from this context does not
+# need the stack that runs it.
+docker-compose*.yml

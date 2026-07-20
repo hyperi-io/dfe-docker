@@ -1,6 +1,6 @@
 # Project:   dfe-docker
 # File:      config/receiver/grpc.yaml
-# Purpose:   dfe-receiver config - gRPC transport (default, DFE_TRANSPORT=grpc)
+# Purpose:   dfe-receiver config - gRPC transport (used by the gRPC profiles)
 # Language:  YAML
 #
 # License:   BUSL-1.1

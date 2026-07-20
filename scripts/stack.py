@@ -47,6 +47,12 @@ from _common import (
     _rel_path,
 )
 
+# `make stack` depends on `.env` existing, and creating one is init's job -- it is
+# the only place that mints the generated secrets. A plain copy here would produce
+# a .env whose secrets are still the sentinel placeholders, which starts but fails
+# `make post`.
+from init import _create_dotenv
+
 # Default sibling directory holding a dfe-infra checkout (the stack SSoT repo).
 DEFAULT_INFRA_DIRNAME = "dfe-infra"
 # OCI repository for the signed stack-manifest artifact (air-gap / CI path).
@@ -207,8 +213,7 @@ def _ensure_env() -> None:
             f"neither {_rel_path(path=DOTENV_FILE)} nor "
             f"{_rel_path(path=DOTENV_TEMPLATE)} exists -- run `make init` first"
         )
-    shutil.copy(dst=DOTENV_FILE, src=DOTENV_TEMPLATE)
-    _print(header=_rel_path(path=DOTENV_FILE), msg="Created from template")
+    _create_dotenv(dst_path=DOTENV_FILE, src_path=DOTENV_TEMPLATE)
 
 
 def main() -> int:

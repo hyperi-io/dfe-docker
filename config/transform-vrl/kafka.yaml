@@ -1,6 +1,6 @@
 # Project:   dfe-docker
 # File:      config/transform-vrl/kafka.yaml
-# Purpose:   dfe-transform-vrl config - Kafka transport (DFE_TRANSPORT=kafka)
+# Purpose:   dfe-transform-vrl config - Kafka transport (used by the Kafka profiles)
 # Language:  YAML
 #
 # License:   BUSL-1.1
