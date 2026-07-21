@@ -21,10 +21,10 @@ from pathlib import Path
 
 from _common import (
     CONFIG_DIR,
-    DOTENV_FILE,
     FALSY,
     PROFILE_MK,
     SERVICE_PROFILES_FILE,
+    _load_dotenv,
     _print,
     _rel_path,
 )
@@ -81,23 +81,6 @@ def _env_truthy(*, default: bool, name: str) -> bool:
     if raw is None:
         return default
     return raw.strip().lower() not in FALSY
-
-
-def _load_dotenv() -> None:
-    """Merge .env into os.environ. Existing env vars take precedence."""
-    if not (DOTENV_FILE.is_file()):
-        return
-    for raw in DOTENV_FILE.read_text(encoding="utf-8", errors="replace").splitlines():
-        line = raw.strip()
-        if not (line) or (line.startswith("#")) or ("=" not in line):
-            continue
-        key, _, value = line.partition("=")
-        key = key.strip()
-        value = value.strip()
-        if value and value[0] not in ("'", '"'):
-            value = value.split(" #", 1)[0].strip()
-        value = value.strip('"').strip("'")
-        os.environ.setdefault(key, value)
 
 
 def _parse_yaml(*, text: str) -> dict[str, object]:
@@ -237,7 +220,10 @@ def main() -> int:
             lines.append(f"export {var_name} := {service_config['config_path']}")
 
         new_content = "\n".join(lines) + "\n"
-        if not (PROFILE_MK.exists()) or PROFILE_MK.read_text(encoding="utf-8") != new_content:
+        if (
+            not (PROFILE_MK.exists())
+            or PROFILE_MK.read_text(encoding="utf-8") != new_content
+        ):
             PROFILE_MK.write_text(new_content, encoding="utf-8")
     except _ProfileError as error:
         PROFILE_MK.unlink(missing_ok=True)

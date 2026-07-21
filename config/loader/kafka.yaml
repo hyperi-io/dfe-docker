@@ -1,6 +1,6 @@
 # Project:   dfe-docker
 # File:      config/loader/kafka.yaml
-# Purpose:   dfe-loader config - Kafka transport consumer (DFE_TRANSPORT=kafka)
+# Purpose:   dfe-loader config - Kafka transport consumer (used by the Kafka profiles)
 # Language:  YAML
 #
 # License:   BUSL-1.1

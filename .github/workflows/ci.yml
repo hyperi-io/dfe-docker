@@ -1,0 +1,135 @@
+# Project:   dfe-docker
+# File:      .github/workflows/ci.yml
+# Purpose:   Validate the compose stack and lint the dev builder Dockerfile
+#
+# License:   BUSL-1.1 - HYPERI PTY LIMITED
+# Copyright: (c) 2026 HYPERI PTY LIMITED
+#
+# Why this is hand-written rather than a `uses: hyperi-io/hyperi-ci/...` call:
+# hyperi-ci's reusable workflows are per-language (python / rust / go / ts) and
+# its language detection returns nothing for a compose-packaging repo, so there
+# is no reusable workflow to call for this shape. The house conventions are
+# followed deliberately -- least-privilege permissions, SHA-pinned third-party
+# actions with a version comment, Title Case job names, ubuntu-latest -- so that
+# when hyperi-ci grows the container/compose gating it is currently missing,
+# this collapses into a `uses:` line rather than a rewrite.
+#
+# Renovate automerges patch and digest updates in this repo "when CI passes", and
+# before this workflow existed there was no CI to pass -- the rule was asserting a
+# condition that could not be evaluated. This makes it mean what it says.
+#
+# Scope it honestly, though: the service image pins moved out of .env.example into
+# the private stack SSoT, so they now live in a gitignored .env where Renovate
+# cannot see them. What Renovate still manages HERE is RUST_IMAGE in the builder
+# Dockerfile and the actions pinned below. And note check_compose.py substitutes
+# placeholders for the mandatory keys, so this validates compose STRUCTURE, not
+# that any particular digest resolves.
+
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+# Least-privilege GITHUB_TOKEN default for every job.
+permissions:
+  contents: read
+
+jobs:
+  compose:
+    name: Compose
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          # No job here pushes, so the token has no reason to survive in
+          # .git/config where any later step could read it.
+          persist-credentials: false
+
+      # Every step below runs a `make` target rather than the command directly,
+      # so `make check` locally and CI cannot drift apart.
+      #
+      # Resolves docker-compose.yml on both the registry and dev-override paths,
+      # against both Kafka backends. Hermetic: it reads the mandatory keys out of
+      # the compose file and supplies placeholders, so it needs neither the
+      # private stack SSoT nor registry credentials.
+      - name: Validate compose
+        run: make check-compose
+
+      # The stack must refuse to start unpinned rather than silently pull
+      # `latest`. Without that, an operator cannot answer "which image am I
+      # running?" on a production deploy target, so it gets asserted rather than
+      # assumed.
+      - name: Assert a fresh checkout hard-fails
+        run: make check-hardfail
+
+      # Five audience-scoped documents plus a README whose whole job is to route
+      # between them. A deleted or renamed file leaves a link that still looks
+      # like a link, and the reader finds out rather than the author -- which is
+      # exactly what retiring docs/SCOPE.md did to six live links.
+      # Stdlib only, so it needs nothing installed.
+      - name: Docs
+        run: make check-docs
+
+      # Version-pinned so a new ruff release cannot turn this red on an unrelated
+      # PR. Bumping it is then a visible, deliberate change.
+      - name: Install ruff
+        run: pipx install ruff==0.15.22
+
+      # Every check above is driven by a Python helper script, so a bug in one of
+      # them shows up as a check that passes when it should not. They get linted
+      # like anything else. Config in ruff.toml.
+      - name: Python
+        run: make check-python
+
+  dockerfile:
+    name: Dockerfile
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          # No job here pushes, so the token has no reason to survive in
+          # .git/config where any later step could read it.
+          persist-credentials: false
+
+      # hadolint GATES: a decade old, stable rule IDs, and it lints the shell
+      # inside RUN via ShellCheck -- a correctness check droast structurally
+      # does not have.
+      # stdin form, per the standard. The one rule we disagree with (DL3008) is an
+      # inline `# hadolint ignore=` directive in the Dockerfile rather than a
+      # config file, so the reason sits next to the code it excuses and the exact
+      # same command is runnable locally -- no mount, no config discovery.
+      - name: Hadolint
+        run: make check-dockerfile
+
+# droast is DELIBERATELY NOT RUN HERE. That matches hyperi-ci's own posture --
+# quality/droast.py resolves it with `find_tool(recommended=False)` and info-skips
+# when absent, so hyperi-ci never installs it either -- but the reason here is
+# measured rather than inherited.
+#
+# Run against docker/dfe-rust-builder.Dockerfile on 2026-07-20 (droast 0.1.x,
+# `--no-fail`): 6 findings, 0 true positives.
+#
+#   DF036 no CMD/ENTRYPOINT   - false. The final stage is `FROM scratch AS export`,
+#                               an artefact export consumed via `--output`.
+#   DF001 unpinned image tag  - false. ARG RUST_IMAGE is `rust:1.97-trixie@sha256:...`;
+#                               droast does not resolve the ARG default. hadolint does.
+#   DF057 pipe, no pipefail   - false. `SHELL ["/bin/bash", "-o", "pipefail", "-c"]`
+#                               is set; droast ignores the SHELL directive.
+#   DF063 relative COPY dest  - false. The destination is `"/${BINARY}"`, absolute.
+#   DF005 unpinned apt        - duplicate of hadolint DL3008.
+#   DF033 no .dockerignore    - wrong context (assumes the Dockerfile's own dir).
+#
+# Two of those tell us to fix things this Dockerfile already fixes correctly, so
+# wiring it in would train people to ignore the advisory. droast.toml is kept so
+# `droast .` works locally for anyone who wants the cache-ordering rules hadolint
+# has no equivalent for. Revisit when its parser handles ARG defaults and SHELL.

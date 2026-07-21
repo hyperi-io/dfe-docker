@@ -36,7 +36,11 @@ RUST_COMPONENTS = [
 ]
 SELF_CONTAINED_COMPONENTS = ["dfe-engine", "dfe-ui", "hyperdx"]
 SERVICE_BUILD_ARGS = {"hyperdx": {"NEXT_PUBLIC_IS_LOCAL_MODE": "true"}}
-SERVICE_REPO_DIRS = {"hyperdx": "hyperi-hyperdx"}
+# Compose service name -> source repo DIRECTORY under PROJECTS_PATH, for the
+# cases where they differ. hyperdx is the one: the repo is `dfe-hyperdx`, while
+# the image it publishes is `hyperi-hyperdx`. This mapped to the IMAGE name, so a
+# dev build looked for a directory that does not exist.
+SERVICE_REPO_DIRS = {"hyperdx": "dfe-hyperdx"}
 STAGE_EXCLUDES = [
     "target",
     ".git",
@@ -46,6 +50,15 @@ STAGE_EXCLUDES = [
     ".turbo",
     ".next",
     ".dockerignore",
+    # Secrets. The staged tree is fed to the builder as a build context and lands
+    # in a layer via `COPY . .`, so a component checkout's own .env or certs would
+    # be baked into the local builder image. The exported artefact is `FROM
+    # scratch` so nothing ships, but it is still a credential sitting in the build
+    # cache -- and this repo's own .dockerignore exists to prevent exactly that.
+    ".env",
+    ".env.*",
+    "env",
+    "certs",
 ]
 
 

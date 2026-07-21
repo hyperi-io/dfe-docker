@@ -1,0 +1,20 @@
+# Project:   dfe-docker
+# File:      droast.toml
+# Purpose:   droast (advisory Dockerfile linter) configuration
+# Language:  TOML
+#
+# License:   BUSL-1.1
+# Copyright: (c) 2026 HYPERI PTY LIMITED
+#
+# droast is ADVISORY and never blocks -- it is young and single-maintainer, which
+# is too young to gate a build on. It earns its place by catching build-efficiency
+# problems hadolint has no rules for at all (layer-cache ordering, .dockerignore
+# effectiveness). hadolint is the one that gates.
+#
+# min-severity MUST stay "info". DF033 (.dockerignore) and DF031 (npm ci) are
+# INFO-severity rules, so raising this to "warning" silences the two findings
+# droast is actually here for and leaves only rules hadolint already covers.
+
+skip         = ["DF007", "DF012"]
+min-severity = "info"
+no-fail      = true

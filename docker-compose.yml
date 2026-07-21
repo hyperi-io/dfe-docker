@@ -6,17 +6,43 @@
 # License:   BUSL-1.1
 # Copyright: (c) 2026 HYPERI PTY LIMITED
 #
-# Profile        | Services                   | Notes                                      |
-# ---------------|----------------------------|--------------------------------------------|
-# clickhouse     | clickhouse                 |                                            |
-# kafka-redpanda | kafka-redpanda, kafka-init | Redpanda (default); fits 4 GB CI runners   |
-# kafka-apache   | kafka-apache, kafka-init   | Apache Kafka (opt-in); compat + safety net |
-# ui             | kafka-ui                   |                                            |
+# Profile        | Services                            | Notes                                     |
+# ---------------|-------------------------------------|-------------------------------------------|
+# clickhouse     | clickhouse                          |                                           |
+# kafka-redpanda | kafka-redpanda, kafka-init-redpanda | Redpanda (default); BSL -- see README      |
+# kafka-apache   | kafka-apache, kafka-init-apache     | Apache Kafka (opt-in); Apache-2.0 only     |
+# kafka-ui       | kafka-ui                            |                                           |
 #
 # The kafka-* profiles are mutually exclusive. All expose the network alias `kafka` on the same host ports, so only one can be active at a time.
 # Downstream services and configs always address `kafka:9092` and work with either backend.
+# Each backend has its OWN topic-init service so the Apache profile never pulls a BSL-licensed artefact -- see the kafka-init sections below.
 #
-# DFE services have no profile and are started by name. Which ones run is controlled by service_profiles.yaml at the repo root. Config paths are also set there.
+# DFE services carry profiles too -- `dfe` (receiver, fetcher, loader, archiver, transforms, dlq-init), `core` (engine, ui, proxy) and `hyperdx`.
+# Which of them actually START is a second, independent selection made by service_profiles.yaml at the repo root, which also sets their config paths.
+#
+# ---------------------------------------------------------------------------
+# Production posture (Compose is a supported small-environment deploy target)
+# ---------------------------------------------------------------------------
+# Host port binding is split by audience, per the operator/user port separation:
+#   DFE_INGRESS_BIND_HOST (default 0.0.0.0)  - what USERS reach: ingest ports, the UI proxy, the HyperDX app.
+#   DFE_BIND_HOST         (default 127.0.0.1) - what OPERATORS reach: datastores, brokers, /metrics, internal gRPC, admin UIs.
+# On a laptop the loopback default costs nothing. On a partner box it is the difference between an internal
+# port and an open one. Remote dev hosts set DFE_BIND_HOST=0.0.0.0 in their own .env.
+#
+# Healthchecks use the READINESS path (`/readyz`, or `/health/ready` on scalo-py), not liveness. That is a
+# deliberate departure from "a Docker HEALTHCHECK should be liveness": in Compose the healthcheck is ALSO
+# what `depends_on: condition: service_healthy` gates on, and it is the only startup gate there is. scalo-rs
+# `/healthz` returns alive unconditionally, so gating on it would mean a loader that can never reach
+# ClickHouse still reports healthy, the receiver starts against it, `docker compose ps` shows green, and
+# events pile up in the DLQ spool with nothing surfacing the fault. `/readyz` is the K8s-standard path AND
+# folds in the dependency checks, so it satisfies both the naming standard and the gate. Kubernetes, which
+# has separate liveness and readiness probes and ignores HEALTHCHECK entirely, does not have this tension.
+#
+# Every service declares deploy.resources.limits. `docker compose up` honours cpus and memory outside Swarm;
+# an unlimited service on a single box is how one runaway container takes the host down. The four tiers below
+# are sized for a 16 GB box running the default profile -- retune the DFE_*_CPUS / DFE_*_MEMORY vars in .env
+# for your target. Reservations are deliberately omitted: only memory maps outside Swarm, and a soft floor
+# that half-applies reads as configuration that does more than it does.
 #
 # Quick start:
 #   make dev                         # Uses active_profile from service_profiles.yaml
@@ -29,26 +55,95 @@
 # CI / registry images only (skip override):
 #   docker compose -f docker-compose.yml --profile clickhouse --profile kafka-redpanda up -d dfe-loader
 
+# =============================================================================
+# Resource limit tiers
+# Anchors, not services -- the `x-` prefix keeps Compose from treating them as one.
+# =============================================================================
+
+# Sized so the DEFAULT profile fits a 16 GB box that is also running an operating
+# system and whatever else that box does -- 16 GB of RAM is not 16 GB of headroom.
+# Enabling every profile at once needs retuning, not these defaults.
+#
+# Deliberately no totals written down here. They were, and they went stale the
+# first time a service moved tier -- which is how a comment ends up lying about
+# the file it lives in. `make limits` computes them from the resolved config
+# instead, and cannot drift.
+#
+# Limits are ceilings, not reservations -- nothing is pre-allocated.
+#
+# Caveat worth knowing: Docker permits an equal amount of SWAP alongside a memory
+# limit, so a 3G limit can become 3G RAM + 3G swap on a swap-enabled host. Set
+# `memswap_limit` equal to the memory limit per service if you need a hard cap.
+x-limits-clickhouse: &limits-clickhouse
+  resources:
+    limits:
+      cpus: "${DFE_CLICKHOUSE_CPUS:-2.0}"
+      memory: ${DFE_CLICKHOUSE_MEMORY:-3G}
+
+x-limits-broker: &limits-broker
+  resources:
+    limits:
+      cpus: "${DFE_BROKER_CPUS:-1.5}"
+      memory: ${DFE_BROKER_MEMORY:-1536M}
+
+# 2.0 CPUs is a FLOOR, not a sizing estimate. Tokio sizes its worker pool from
+# `available_parallelism()`, which reads the cgroup quota and floors it, so any
+# ceiling below 2.0 gives a scalo service exactly ONE worker thread -- and a
+# data-plane loop that polls Kafka synchronously then owns that thread outright.
+#
+# That is not hypothetical. At the previous 1.5 default, dfe-archiver accepted
+# connections on :9090 and never answered any of them (`/readyz`, `/healthz` and
+# `/metrics` alike), so its healthcheck timed out forever and the stack never
+# reached healthy. Proven on both axes against the same image: raising the
+# ceiling to 2.0 answered in 0.2ms, and holding the ceiling at 1.5 while setting
+# TOKIO_WORKER_THREADS=4 answered in 0.16ms. So it is worker-thread starvation,
+# not a shortage of CPU.
+#
+# The real fix is in the component -- scalo's `recv` keeps a synchronous
+# `BaseConsumer::poll` and its own comment says to escalate to spawn_blocking or
+# StreamConsumer "if it shows real Tokio-worker starvation". It now has. Until
+# that lands, do NOT lower this below 2.0: the operator surface goes dark first
+# and the data path keeps working, which is the hardest kind of fault to spot.
+x-limits-service: &limits-service
+  resources:
+    limits:
+      cpus: "${DFE_SERVICE_CPUS:-2.0}"
+      memory: ${DFE_SERVICE_MEMORY:-768M}
+
+# 512M rather than less because kafka-init-apache runs a JVM (kafka-topics.sh);
+# verified it starts and completes under this cap, and a smaller one risks an OOM
+# kill on a service whose whole job is to exit cleanly.
+x-limits-sidecar: &limits-sidecar
+  resources:
+    limits:
+      cpus: "${DFE_SIDECAR_CPUS:-0.5}"
+      memory: ${DFE_SIDECAR_MEMORY:-512M}
+
 services:
 
   # ===========================================================================
   # ClickHouse
   # Set CLICKHOUSE_HOST in .env to use an external instance.
+  # Ports bind DFE_BIND_HOST (loopback by default): an unauthenticated analytics
+  # database on 0.0.0.0 is fine on a laptop and an open database anywhere else.
   # ===========================================================================
 
   clickhouse:
     image: clickhouse/clickhouse-server:${CLICKHOUSE_VERSION:?run 'make stack VERSION=X.Y.Z' to pin CLICKHOUSE_VERSION}
     container_name: dfe-clickhouse
     profiles: ["clickhouse"]
+    restart: unless-stopped
+    deploy: *limits-clickhouse
     ports:
-      - ${CLICKHOUSE_HTTP_PORT:-8123}:8123
-      - ${CLICKHOUSE_NATIVE_PORT:-9000}:9000
+      - ${DFE_BIND_HOST:-127.0.0.1}:${CLICKHOUSE_HTTP_PORT:-8123}:8123
+      - ${DFE_BIND_HOST:-127.0.0.1}:${CLICKHOUSE_NATIVE_PORT:-9000}:9000
     environment:
       CLICKHOUSE_DB: ${CLICKHOUSE_DB:-default}
       CLICKHOUSE_USER: ${CLICKHOUSE_USERNAME:-default}
       CLICKHOUSE_PASSWORD: ${CLICKHOUSE_PASSWORD:-}
       CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT: 1
     volumes:
+      - clickhouse-data:/var/lib/clickhouse
       - ./clickhouse/default-user.xml:/etc/clickhouse-server/users.d/default-custom.xml:ro
     healthcheck:
       test: ["CMD-SHELL", "clickhouse-client --password \"$$CLICKHOUSE_PASSWORD\" --query \"SELECT 1 FROM system.databases WHERE name = '\"$$CLICKHOUSE_DB\"'\""]
@@ -63,12 +158,25 @@ services:
   # ===========================================================================
   # Kafka (Redpanda)
   # Default Kafka-API broker (mutually exclusive with other kafka-* services)
+  #
+  # LICENCE: Redpanda's core is source-available under the BSL, not OSS. Local
+  # dev and CI sit inside its Additional Use Grant; a partner or edge deployment
+  # is a per-deployment licence check, not a blanket default. If that check does
+  # not come back clean, set KAFKA_BACKEND=apache -- see README.
+  #
+  # `--mode=dev-container` is a Redpanda DEVELOPER mode (relaxed fsync, single
+  # core, 1 GB) chosen so the stack fits a 4 GB CI runner. It is NOT a production
+  # configuration. A small-environment deploy sets REDPANDA_MODE=production plus
+  # real REDPANDA_SMP / REDPANDA_MEMORY, and must raise DFE_BROKER_* to match --
+  # the container limit has to exceed --memory or the broker gets OOM-killed.
   # ===========================================================================
 
   kafka-redpanda:
     image: docker.redpanda.com/redpandadata/redpanda:${REDPANDA_VERSION:?run 'make stack VERSION=X.Y.Z' to pin REDPANDA_VERSION}
     container_name: dfe-kafka-redpanda
     profiles: ["kafka-redpanda"]
+    restart: unless-stopped
+    deploy: *limits-broker
     networks:
       default:
         aliases:
@@ -76,14 +184,14 @@ services:
     command:
       - redpanda
       - start
-      - --mode=dev-container
-      - --smp=1
+      - --mode=${REDPANDA_MODE:-dev-container}
+      - --smp=${REDPANDA_SMP:-1}
       - --memory=${REDPANDA_MEMORY:-1G}
       - --kafka-addr=internal://0.0.0.0:9092,external://0.0.0.0:19092
-      - --advertise-kafka-addr=internal://kafka:9092,external://localhost:19092
+      - --advertise-kafka-addr=internal://kafka:9092,external://${KAFKA_ADVERTISED_HOST:-localhost}:${KAFKA_PLAINTEXT_HOST_PORT:-19092}
     ports:
-      - ${KAFKA_PLAINTEXT_PORT:-9092}:9092
-      - ${KAFKA_PLAINTEXT_HOST_PORT:-19092}:19092
+      - ${DFE_BIND_HOST:-127.0.0.1}:${KAFKA_PLAINTEXT_PORT:-9092}:9092
+      - ${DFE_BIND_HOST:-127.0.0.1}:${KAFKA_PLAINTEXT_HOST_PORT:-19092}:19092
     volumes:
       - kafka-redpanda-data:/var/lib/redpanda/data
     healthcheck:
@@ -102,13 +210,20 @@ services:
     image: apache/kafka:${APACHE_KAFKA_VERSION:?run 'make stack VERSION=X.Y.Z' to pin APACHE_KAFKA_VERSION}
     container_name: dfe-kafka-apache
     profiles: ["kafka-apache"]
+    restart: unless-stopped
+    deploy: *limits-broker
     networks:
       default:
         aliases:
           - kafka
     environment:
       CLUSTER_ID: ${KAFKA_CLUSTER_ID:-dfe-docker-dev-cluster-01}
-      KAFKA_ADVERTISED_LISTENERS: ${KAFKA_ADVERTISED_LISTENERS:-PLAINTEXT://kafka:9092,PLAINTEXT_HOST://localhost:19092}
+      # KAFKA_ADVERTISED_HOST / KAFKA_PLAINTEXT_HOST_PORT are threaded through here
+      # too, so the .env.example guidance about advertising a reachable name works
+      # on BOTH backends. Previously this hardcoded localhost:19092 while the
+      # Redpanda service honoured the variables -- so following the documentation
+      # on the Apache backend silently did nothing.
+      KAFKA_ADVERTISED_LISTENERS: ${KAFKA_ADVERTISED_LISTENERS:-PLAINTEXT://kafka:9092,PLAINTEXT_HOST://${KAFKA_ADVERTISED_HOST:-localhost}:${KAFKA_PLAINTEXT_HOST_PORT:-19092}}
       KAFKA_AUTO_CREATE_TOPICS_ENABLE: ${KAFKA_AUTO_CREATE_TOPICS_ENABLE:-true}
       KAFKA_CONTROLLER_LISTENER_NAMES: ${KAFKA_CONTROLLER_LISTENER_NAMES:-CONTROLLER}
       KAFKA_CONTROLLER_QUORUM_VOTERS: ${KAFKA_CONTROLLER_QUORUM_VOTERS:-1@kafka:29092}
@@ -122,8 +237,8 @@ services:
       KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: ${KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR:-1}
       KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: ${KAFKA_TRANSACTION_STATE_LOG_MIN_ISR:-1}
     ports:
-      - ${KAFKA_PLAINTEXT_PORT:-9092}:9092
-      - ${KAFKA_PLAINTEXT_HOST_PORT:-19092}:19092
+      - ${DFE_BIND_HOST:-127.0.0.1}:${KAFKA_PLAINTEXT_PORT:-9092}:9092
+      - ${DFE_BIND_HOST:-127.0.0.1}:${KAFKA_PLAINTEXT_HOST_PORT:-19092}:19092
     volumes:
       - kafka-apache-data:/var/lib/kafka/data
     healthcheck:
@@ -136,19 +251,50 @@ services:
   # ===========================================================================
   # Kafka Init
   # Pre-creates default topics so consumers don't fail on an empty broker.
+  #
+  # One init service per backend, each using ITS OWN broker's tooling. A single
+  # shared init service is tempting and was what we had, but it ran the Redpanda
+  # image (for `rpk`) on BOTH profiles -- so choosing Apache Kafka to stay clear
+  # of the BSL still pulled and ran a BSL artefact. The escape hatch has to
+  # actually escape. `apache/kafka` already carries kafka-topics.sh, so the
+  # Apache path needs nothing extra.
+  #
+  # Downstream services depend on both with `required: false`; exactly one
+  # exists for any given profile, so the other is a no-op.
+  #
+  # The topic name is a literal, deliberately. A KAFKA_DEFAULT_TOPIC knob (briefly
+  # tried) is a trap: the consumers name their topics in their own YAML, which is
+  # not env-interpolated, so setting it pre-creates a topic nobody consumes AND
+  # stops pre-creating the one they do.
+  #
+  # DO NOT add `default_load` here. config/loader/kafka-load.yaml consumes it and
+  # nothing pre-creates it, so pre-creating it looks like the obvious tidy-up. It
+  # is not: the transform profiles rely on broker auto-create, deliberately.
+  #
+  # The loader auto-discovers topics (`topic_regex: .*_land`) and scalo applies a
+  # suppression rule to the discovered set -- a `<base>_load` topic REMOVES
+  # `<base>_land`, because `_load` means a transform stage has already produced the
+  # loadable form and the raw landing topic is redundant. Pre-creating
+  # `default_load` on every Kafka profile therefore drops `default_land` from the
+  # subscription of every loader that is NOT running a transform, which is most of
+  # them. That is what took both Kafka e2e tests from 1000 rows to 0 while the gRPC
+  # tests stayed green: ingest still returned 200, the receiver still produced to
+  # `default_land`, and nobody consumed it.
+  #
+  # Reverting the change does not fix a broker that already has the topic -- it
+  # lives in `kafka-redpanda-data` / `kafka-apache-data`, which outlive the
+  # containers. Delete the topic (or the volume):
+  #   docker compose exec kafka-redpanda rpk topic delete default_load -X brokers=kafka:9092
   # ===========================================================================
 
-  kafka-init:
+  kafka-init-redpanda:
     image: docker.redpanda.com/redpandadata/redpanda:${REDPANDA_VERSION:?run 'make stack VERSION=X.Y.Z' to pin REDPANDA_VERSION}
-    container_name: dfe-kafka-init
-    profiles: ["kafka-apache", "kafka-redpanda"]
+    container_name: dfe-kafka-init-redpanda
+    profiles: ["kafka-redpanda"]
+    deploy: *limits-sidecar
     depends_on:
-      kafka-apache:
-        condition: service_healthy
-        required: false
       kafka-redpanda:
         condition: service_healthy
-        required: false
     entrypoint: ["/bin/sh", "-c"]
     command:
       - |
@@ -157,7 +303,32 @@ services:
           rpk topic create default_land --partitions 1 --replicas 1 -X brokers=kafka:9092 2>&1 || true
           sleep 1
         done
-        echo "FAILED: default_land topic not created after 30s" >&2
+        echo "FAILED: default_land topic not created after 30 attempts (~30s; rpk fails fast)" >&2
+        exit 1
+    restart: "no"
+
+  kafka-init-apache:
+    image: apache/kafka:${APACHE_KAFKA_VERSION:?run 'make stack VERSION=X.Y.Z' to pin APACHE_KAFKA_VERSION}
+    container_name: dfe-kafka-init-apache
+    profiles: ["kafka-apache"]
+    deploy: *limits-sidecar
+    depends_on:
+      kafka-apache:
+        condition: service_healthy
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        for i in $$(seq 1 30); do
+          /opt/kafka/bin/kafka-topics.sh --bootstrap-server kafka:9092 --create --if-not-exists \
+            --topic default_land --partitions 1 --replication-factor 1 >/dev/null 2>&1 && exit 0
+          sleep 1
+        done
+        # Unlike rpk, kafka-topics.sh BLOCKS on its own request timeout (~60s)
+        # when the broker is unreachable, so these attempts are not 1s apart --
+        # the worst case here is tens of minutes, not 30 seconds. In practice
+        # depends_on gates on kafka-apache being healthy first, so a retry at all
+        # means something is genuinely wrong rather than merely slow.
+        echo "FAILED: default_land topic not created after 30 attempts" >&2
         exit 1
     restart: "no"
 
@@ -170,12 +341,70 @@ services:
     image: ghcr.io/kafbat/kafka-ui:${KAFBAT_VERSION:?run 'make stack VERSION=X.Y.Z' to pin KAFBAT_VERSION}
     container_name: dfe-kafka-ui
     profiles: ["kafka-ui"]
+    restart: unless-stopped
+    # Service tier, not sidecar: kafbat is a Spring Boot JVM, and the JVM sizes its
+    # heap as a percentage of the container limit. On the 512M sidecar tier that
+    # leaves roughly 128M of heap, and an OOM kill under `restart: unless-stopped`
+    # becomes a restart loop rather than a clean failure.
+    deploy: *limits-service
     ports:
-      - ${KAFBAT_PORT:-8081}:8080
+      - ${DFE_BIND_HOST:-127.0.0.1}:${KAFBAT_PORT:-8081}:8080
     environment:
       DYNAMIC_CONFIG_ENABLED: ${KAFBAT_DYNAMIC_CONFIG_ENABLED:-true}
       KAFKA_CLUSTERS_0_BOOTSTRAPSERVERS: ${KAFBAT_KAFKA_CLUSTERS_0_BOOTSTRAPSERVERS:-kafka:9092}
       KAFKA_CLUSTERS_0_NAME: ${KAFBAT_KAFKA_CLUSTERS_0_NAME:-dfe-local}
+
+  # ===========================================================================
+  # dlq-init
+  # Makes the shared DLQ spool writable by the services that use it.
+  #
+  # `dlq-spool` is mounted at /var/spool/dfe by archiver, fetcher, loader and
+  # receiver, all of which run as non-root appuser (uid 1000, verified identical
+  # across all three published images). None of those images pre-creates that
+  # path, so Docker creates the volume mountpoint owned by ROOT -- and no service
+  # can then create /var/spool/dfe/dlq inside it.
+  #
+  # That is not theoretical: dfe-archiver creates its DLQ writer EAGERLY at
+  # startup and died with "DLQ init failed ... Permission denied (os error 13)",
+  # crash-looping. The others create theirs lazily on first dead-letter, so they
+  # look healthy right up until something actually needs to dead-letter -- the
+  # worst moment to discover the DLQ never worked.
+  #
+  # Per-service volumes do NOT fix this (checked: a fresh volume is root-owned
+  # too, because ownership is inherited from a path the image does not have).
+  # The real fix is for the component images to create /var/spool/dfe as appuser;
+  # until they do, this one-shot does it. It reuses the archiver image purely
+  # because it is already pinned -- nothing archiver-specific.
+  #
+  # Three things to know about it, none of them ideal:
+  #
+  # 1. `required: false` on the dependents means a FAILED dlq-init does not stop
+  #    them -- Compose logs one warning and carries on with a zero exit. So the
+  #    bug this prevents can come back quietly. Watch for the warning.
+  # 2. uid 1000 is hard-coded. It is `appuser` in every published DFE image today
+  #    (checked archiver, loader, receiver), but nothing here verifies that, so an
+  #    image that renumbers appuser breaks the DLQ silently again.
+  # 3. In dev mode this still resolves to the REGISTRY archiver image, because
+  #    docker-compose.override.yml does not map it. `make dev` therefore needs
+  #    GHCR access and a pinned DFE_ARCHIVER_VERSION even on profiles with no
+  #    archiver in them.
+  # ===========================================================================
+
+  dlq-init:
+    image: ${IMAGE_REGISTRY:-ghcr.io/hyperi-io}/dfe-archiver:${DFE_ARCHIVER_VERSION:?run 'make stack VERSION=X.Y.Z' to pin DFE_ARCHIVER_VERSION}
+    container_name: dfe-dlq-init
+    profiles: ["dfe"]
+    deploy: *limits-sidecar
+    user: "0:0"
+    entrypoint: ["/bin/sh", "-c"]
+    # A LIST with one element, not a bare scalar. Compose splits a scalar command
+    # into argv, so `sh -c` would receive only `chown` and the rest would land in
+    # $0/$1/$2 -- which fails with "chown: missing operand".
+    command:
+      - chown -R 1000:1000 /var/spool/dfe
+    volumes:
+      - dlq-spool:/var/spool/dfe
+    restart: "no"
 
   # ===========================================================================
   # dfe-archiver
@@ -186,8 +415,10 @@ services:
     image: ${IMAGE_REGISTRY:-ghcr.io/hyperi-io}/dfe-archiver:${DFE_ARCHIVER_VERSION:?run 'make stack VERSION=X.Y.Z' to pin DFE_ARCHIVER_VERSION}
     container_name: dfe-archiver
     profiles: ["dfe"]
+    restart: unless-stopped
+    deploy: *limits-service
     ports:
-      - ${DFE_ARCHIVER_PROMETHEUS_PORT:-9093}:9090
+      - ${DFE_BIND_HOST:-127.0.0.1}:${DFE_ARCHIVER_PROMETHEUS_PORT:-9093}:9090
     env_file:
       - path: env/archiver.env
         required: false
@@ -195,7 +426,13 @@ services:
       LOG_LEVEL: ${LOG_LEVEL:-info}
       LOG_FORMAT: ${LOG_FORMAT:-text}
     depends_on:
-      kafka-init:
+      dlq-init:
+        condition: service_completed_successfully
+        required: false
+      kafka-init-apache:
+        condition: service_completed_successfully
+        required: false
+      kafka-init-redpanda:
         condition: service_completed_successfully
         required: false
     working_dir: /home/appuser
@@ -204,7 +441,7 @@ services:
       - archiver-data:/var/data/archive
       - dlq-spool:/var/spool/dfe
     healthcheck:
-      test: ["CMD", "curl", "-sf", "http://localhost:9090/health/ready"]
+      test: ["CMD", "curl", "-sf", "http://localhost:9090/readyz"]
       interval: 10s
       timeout: 3s
       retries: 5
@@ -217,9 +454,11 @@ services:
     image: ${IMAGE_REGISTRY:-ghcr.io/hyperi-io}/dfe-fetcher:${DFE_FETCHER_VERSION:?run 'make stack VERSION=X.Y.Z' to pin DFE_FETCHER_VERSION}
     container_name: dfe-fetcher
     profiles: ["dfe"]
+    restart: unless-stopped
+    deploy: *limits-service
     ports:
-      - ${DFE_FETCHER_INGEST_PORT:-8082}:8080
-      - ${DFE_FETCHER_PROMETHEUS_PORT:-9094}:9090
+      - ${DFE_INGRESS_BIND_HOST:-0.0.0.0}:${DFE_FETCHER_INGEST_PORT:-8082}:8080
+      - ${DFE_BIND_HOST:-127.0.0.1}:${DFE_FETCHER_PROMETHEUS_PORT:-9094}:9090
     env_file:
       - path: env/fetcher.env
         required: false
@@ -230,14 +469,20 @@ services:
       dfe-loader:
         condition: service_healthy
         required: false
-      kafka-init:
+      dlq-init:
+        condition: service_completed_successfully
+        required: false
+      kafka-init-apache:
+        condition: service_completed_successfully
+        required: false
+      kafka-init-redpanda:
         condition: service_completed_successfully
         required: false
     volumes:
       - ./config/${DFE_FETCHER_CONFIG:-fetcher/aws-kafka.yaml}:/etc/dfe/fetcher.yaml:ro
       - dlq-spool:/var/spool/dfe
     healthcheck:
-      test: ["CMD", "curl", "-sf", "http://localhost:9090/health/ready"]
+      test: ["CMD", "curl", "-sf", "http://localhost:9090/readyz"]
       interval: 10s
       timeout: 3s
       retries: 5
@@ -251,9 +496,13 @@ services:
     image: ${IMAGE_REGISTRY:-ghcr.io/hyperi-io}/dfe-loader:${DFE_LOADER_VERSION:?run 'make stack VERSION=X.Y.Z' to pin DFE_LOADER_VERSION}
     container_name: dfe-loader
     profiles: ["dfe"]
+    restart: unless-stopped
+    deploy: *limits-service
     ports:
-      - ${DFE_LOADER_PROMETHEUS_PORT:-9091}:9090
-      - ${DFE_LOADER_GRPC_PORT:-50051}:50051
+      # 50051 is the INTERNAL DfeTransport/Push surface (receiver -> loader), not
+      # a client-facing one -- operators only, so it binds DFE_BIND_HOST.
+      - ${DFE_BIND_HOST:-127.0.0.1}:${DFE_LOADER_PROMETHEUS_PORT:-9091}:9090
+      - ${DFE_BIND_HOST:-127.0.0.1}:${DFE_LOADER_GRPC_PORT:-50051}:50051
     env_file:
       - path: env/loader.env
         required: false
@@ -266,14 +515,39 @@ services:
       clickhouse:
         condition: service_healthy
         required: false
-      kafka-init:
+      # dfe-engine is the schema authority: it creates the ClickHouse objects and
+      # registers the schemas the loader pre-warms into its cache. A loader started
+      # first holds every message pending-schema and then dead-letters it, which
+      # reads as data loss and is really start ordering. The e2e harness has always
+      # done this by hand; this makes `make dev` / `make ci` behave the same way.
+      #
+      # This gate was once blamed for taking both Kafka e2e tests from 1000 rows to
+      # 0, on the theory that the ~30s wait made the loader join the consumer group
+      # after the events were produced. That theory was WRONG. The real cause was a
+      # stale `default_load` topic suppressing `default_land` out of the loader's
+      # discovered topic set (see the kafka-init section). With that cleared, both
+      # Kafka tests pass with this gate in place -- verified by run.
+      #
+      # Do not re-blame it for a data-path failure without first checking what the
+      # loader actually RESOLVED:
+      #   docker compose logs dfe-loader | grep "Resolved Kafka topics"
+      dfe-engine:
+        condition: service_healthy
+        required: false
+      dlq-init:
+        condition: service_completed_successfully
+        required: false
+      kafka-init-apache:
+        condition: service_completed_successfully
+        required: false
+      kafka-init-redpanda:
         condition: service_completed_successfully
         required: false
     volumes:
       - ./config/${DFE_LOADER_CONFIG:-loader/kafka.yaml}:/etc/dfe/loader.yaml:ro
       - dlq-spool:/var/spool/dfe
     healthcheck:
-      test: ["CMD", "curl", "-sf", "http://localhost:9090/health/ready"]
+      test: ["CMD", "curl", "-sf", "http://localhost:9090/readyz"]
       interval: 10s
       timeout: 3s
       retries: 5
@@ -286,15 +560,20 @@ services:
     image: ${IMAGE_REGISTRY:-ghcr.io/hyperi-io}/dfe-receiver:${DFE_RECEIVER_VERSION:?run 'make stack VERSION=X.Y.Z' to pin DFE_RECEIVER_VERSION}
     container_name: dfe-receiver
     profiles: ["dfe"]
+    restart: unless-stopped
+    deploy: *limits-service
     ports:
-      - ${DFE_RECEIVER_GRPC_PORT:-6000}:6000
-      - ${DFE_RECEIVER_HTTP_PORT:-8080}:8080
-      - ${DFE_RECEIVER_PROMETHEUS_PORT:-9090}:9090
+      # 6000 (Vector protocol) and 8080 (HTTP) are the INGEST surfaces external
+      # clients push to, so they bind DFE_INGRESS_BIND_HOST. 9090 is operators.
+      # Do not confuse 6000 with the loader's 50051 -- different protocols.
+      - ${DFE_INGRESS_BIND_HOST:-0.0.0.0}:${DFE_RECEIVER_GRPC_PORT:-6000}:6000
+      - ${DFE_INGRESS_BIND_HOST:-0.0.0.0}:${DFE_RECEIVER_HTTP_PORT:-8080}:8080
+      - ${DFE_BIND_HOST:-127.0.0.1}:${DFE_RECEIVER_PROMETHEUS_PORT:-9090}:9090
       # Uncomment to expose additional ingest protocols:
-      # - ${DFE_RECEIVER_BEATS_PORT:-5044}:5044
-      # - ${DFE_RECEIVER_HEC_PORT:-8088}:8088
-      # - ${DFE_RECEIVER_OTLP_GRPC_PORT:-4317}:4317
-      # - ${DFE_RECEIVER_OTLP_HTTP_PORT:-4318}:4318
+      # - ${DFE_INGRESS_BIND_HOST:-0.0.0.0}:${DFE_RECEIVER_BEATS_PORT:-5044}:5044
+      # - ${DFE_INGRESS_BIND_HOST:-0.0.0.0}:${DFE_RECEIVER_HEC_PORT:-8088}:8088
+      # - ${DFE_INGRESS_BIND_HOST:-0.0.0.0}:${DFE_RECEIVER_OTLP_GRPC_PORT:-4317}:4317
+      # - ${DFE_INGRESS_BIND_HOST:-0.0.0.0}:${DFE_RECEIVER_OTLP_HTTP_PORT:-4318}:4318
     env_file:
       - path: env/receiver.env
         required: false
@@ -305,7 +584,13 @@ services:
       dfe-loader:
         condition: service_healthy
         required: false
-      kafka-init:
+      dlq-init:
+        condition: service_completed_successfully
+        required: false
+      kafka-init-apache:
+        condition: service_completed_successfully
+        required: false
+      kafka-init-redpanda:
         condition: service_completed_successfully
         required: false
     volumes:
@@ -315,7 +600,7 @@ services:
       # - ./certs/dev/receiver.crt:/etc/ssl/receiver.crt:ro
       # - ./certs/dev/receiver.key:/etc/ssl/receiver.key:ro
     healthcheck:
-      test: ["CMD", "curl", "-sf", "http://localhost:9090/health/ready"]
+      test: ["CMD", "curl", "-sf", "http://localhost:9090/readyz"]
       interval: 10s
       timeout: 3s
       retries: 5
@@ -328,9 +613,11 @@ services:
     image: ${IMAGE_REGISTRY:-ghcr.io/hyperi-io}/dfe-transform-vector:${DFE_TRANSFORM_VECTOR_VERSION:?run 'make stack VERSION=X.Y.Z' to pin DFE_TRANSFORM_VECTOR_VERSION}
     container_name: dfe-transform-vector
     profiles: ["dfe"]
+    restart: unless-stopped
+    deploy: *limits-service
     ports:
-      - ${DFE_TRANSFORM_VECTOR_PROMETHEUS_PORT:-9095}:9090
-      - ${DFE_TRANSFORM_VECTOR_API_PORT:-8686}:8686
+      - ${DFE_BIND_HOST:-127.0.0.1}:${DFE_TRANSFORM_VECTOR_PROMETHEUS_PORT:-9095}:9090
+      - ${DFE_BIND_HOST:-127.0.0.1}:${DFE_TRANSFORM_VECTOR_API_PORT:-8686}:8686
     env_file:
       - path: env/transform-vector.env
         required: false
@@ -338,13 +625,17 @@ services:
       LOG_LEVEL: ${LOG_LEVEL:-info}
       LOG_FORMAT: ${LOG_FORMAT:-text}
     depends_on:
-      kafka-init:
+      # No dlq-init here: this service does not mount dlq-spool.
+      kafka-init-apache:
+        condition: service_completed_successfully
+        required: false
+      kafka-init-redpanda:
         condition: service_completed_successfully
         required: false
     volumes:
       - ./config/${DFE_TRANSFORM_VECTOR_CONFIG:-transform-vector/kafka.yaml}:/etc/dfe-transform-vector/config.yaml:ro
     healthcheck:
-      test: ["CMD", "curl", "-sf", "http://localhost:9090/health/ready"]
+      test: ["CMD", "curl", "-sf", "http://localhost:9090/readyz"]
       interval: 10s
       timeout: 3s
       retries: 5
@@ -357,8 +648,10 @@ services:
     image: ${IMAGE_REGISTRY:-ghcr.io/hyperi-io}/dfe-transform-vrl:${DFE_TRANSFORM_VRL_VERSION:?run 'make stack VERSION=X.Y.Z' to pin DFE_TRANSFORM_VRL_VERSION}
     container_name: dfe-transform-vrl
     profiles: ["dfe"]
+    restart: unless-stopped
+    deploy: *limits-service
     ports:
-      - ${DFE_TRANSFORM_VRL_PROMETHEUS_PORT:-9096}:9090
+      - ${DFE_BIND_HOST:-127.0.0.1}:${DFE_TRANSFORM_VRL_PROMETHEUS_PORT:-9096}:9090
     env_file:
       - path: env/transform-vrl.env
         required: false
@@ -366,14 +659,18 @@ services:
       LOG_LEVEL: ${LOG_LEVEL:-info}
       LOG_FORMAT: ${LOG_FORMAT:-text}
     depends_on:
-      kafka-init:
+      # No dlq-init here: this service does not mount dlq-spool.
+      kafka-init-apache:
+        condition: service_completed_successfully
+        required: false
+      kafka-init-redpanda:
         condition: service_completed_successfully
         required: false
     volumes:
       - ./config/${DFE_TRANSFORM_VRL_CONFIG:-transform-vrl/kafka.yaml}:/etc/dfe-transform-vrl/config.yaml:ro
       - ./config/transform-vrl/transforms:/etc/dfe-transform-vrl/transforms:ro
     healthcheck:
-      test: ["CMD", "curl", "-sf", "http://localhost:9090/health/ready"]
+      test: ["CMD", "curl", "-sf", "http://localhost:9090/readyz"]
       interval: 10s
       timeout: 3s
       retries: 5
@@ -390,8 +687,12 @@ services:
     image: ${IMAGE_REGISTRY:-ghcr.io/hyperi-io}/dfe-engine:${DFE_ENGINE_VERSION:?run 'make stack VERSION=X.Y.Z' to pin DFE_ENGINE_VERSION}
     container_name: dfe-engine
     profiles: ["core"]
+    restart: unless-stopped
+    deploy: *limits-service
     ports:
-      - ${DFE_ENGINE_PORT:-8003}:8000
+      # dfe-proxy reaches the engine over the docker network; this host mapping
+      # is for operators and direct API work, so it binds DFE_BIND_HOST.
+      - ${DFE_BIND_HOST:-127.0.0.1}:${DFE_ENGINE_PORT:-8003}:8000
     env_file:
       - path: env/engine.env
         required: false
@@ -414,6 +715,14 @@ services:
         required: false
     working_dir: /home/appuser
     healthcheck:
+      # Readiness, same reasoning as the header: depends_on gates on it.
+      #
+      # /health/ready rather than /readyz because it is the path we have actually
+      # verified answering on this pinned image. Current scalo-py registers
+      # /healthz and /readyz as canonical WITH /health/live|ready|startup as
+      # aliases, but whether the scalo-py baked into DFE_ENGINE_VERSION does is a
+      # per-version question. The alias is stable across both, so it is the safe
+      # choice; the scalo-RS services above use the canonical /readyz.
       test: ["CMD", "curl", "-sf", "http://localhost:8000/health/ready"]
       interval: 10s
       timeout: 3s
@@ -428,13 +737,22 @@ services:
     image: ${IMAGE_REGISTRY:-ghcr.io/hyperi-io}/dfe-ui:${DFE_UI_VERSION:?run 'make stack VERSION=X.Y.Z' to pin DFE_UI_VERSION}
     container_name: dfe-ui
     profiles: ["core"]
+    restart: unless-stopped
+    deploy: *limits-service
     env_file:
       - path: env/ui.env
         required: false
     environment:
       HYPERDX_PORT: ${DFE_HYPERDX_APP_PORT:-8090}
       NODE_ENV: ${DFE_UI_NODE_ENV:-production}
-      NEXTAUTH_SECRET: ${DFE_UI_NEXTAUTH_SECRET:-secret}
+      # `make init` generates a random value; the previous `:-secret` default meant
+      # an operator who never touched .env.example silently ran the literal string
+      # "secret". Deliberately NOT a `:?` hard-fail: Compose interpolates every
+      # service regardless of profile, so a hard-fail would abort `make down` and
+      # `make ps` too, locking an upgrading operator out of their own stack. The
+      # generated value is the fix; the sentinel below is what makes a missing one
+      # loud instead of silent.
+      NEXTAUTH_SECRET: ${DFE_UI_NEXTAUTH_SECRET:-RUN-make-init-TO-GENERATE-A-REAL-SECRET}
     healthcheck:
       test: ["CMD", "node", "-e", "fetch('http://localhost:3000/').then(() => process.exit(0)).catch(() => process.exit(1))"]
       interval: 10s
@@ -444,14 +762,24 @@ services:
 
   # ===========================================================================
   # dfe-proxy
+  #
+  # DFE_PROXY_VERSION is owned by the DFE stack SSoT (dfe-infra/versions.yaml)
+  # and written into .env by `make stack` -- editing the pin here or in .env gets
+  # stomped on the next bump. It currently resolves to an alpine variant, which
+  # is allowed (the Alpine prohibition covers images WE build, not vendor images
+  # we consume) but is not the house default. Change it in the SSoT if you want
+  # the Debian variant.
   # ===========================================================================
 
   dfe-proxy:
     image: nginx:${DFE_PROXY_VERSION:?run 'make stack VERSION=X.Y.Z' to pin DFE_PROXY_VERSION}
     container_name: dfe-proxy
     profiles: ["core"]
+    restart: unless-stopped
+    deploy: *limits-sidecar
     ports:
-      - ${DFE_UI_PORT:-3000}:80
+      # The DFE UI -- this is the one users reach.
+      - ${DFE_INGRESS_BIND_HOST:-0.0.0.0}:${DFE_UI_PORT:-3000}:80
     volumes:
       - ./config/proxy/nginx.conf:/etc/nginx/conf.d/default.conf:ro
     depends_on:
@@ -477,9 +805,18 @@ services:
     image: ghcr.io/ferretdb/postgres-documentdb:${HYPERDX_POSTGRES_VERSION:?run 'make stack VERSION=X.Y.Z' to pin HYPERDX_POSTGRES_VERSION}
     container_name: dfe-hyperdx-postgres
     profiles: ["hyperdx"]
+    restart: unless-stopped
+    deploy: *limits-service
     environment:
       POSTGRES_DB: postgres
       POSTGRES_USER: ${HYPERDX_POSTGRES_USER:-hyperdx}
+      # `make init` generates this rather than shipping a password whose value is
+      # also its name. It is NOT a `:?` hard-fail, for the same reason
+      # DFE_HYPERDX_VERSION is not: Compose interpolates every service before
+      # profiles filter anything, so a hard-fail here aborts every command --
+      # including `make down` -- for operators who never enabled hyperdx at all.
+      # Locking someone out of stopping their own stack over a secret belonging to
+      # a service they do not run is a worse failure than the weak default.
       POSTGRES_PASSWORD: ${HYPERDX_POSTGRES_PASSWORD:-hyperdx}
     volumes:
       - hyperdx-pg-data:/var/lib/postgresql/data
@@ -493,12 +830,28 @@ services:
     image: ghcr.io/ferretdb/ferretdb:${HYPERDX_FERRETDB_VERSION:?run 'make stack VERSION=X.Y.Z' to pin HYPERDX_FERRETDB_VERSION}
     container_name: dfe-hyperdx-ferretdb
     profiles: ["hyperdx"]
+    restart: unless-stopped
+    deploy: *limits-service
     environment:
       FERRETDB_POSTGRESQL_URL: postgres://${HYPERDX_POSTGRES_USER:-hyperdx}:${HYPERDX_POSTGRES_PASSWORD:-hyperdx}@hyperdx-postgres:5432/postgres
     depends_on:
       hyperdx-postgres:
         condition: service_healthy
-    restart: on-failure
+    healthcheck:
+      # The image is distroless -- no shell, no curl, no wget, no mongosh -- so
+      # CMD-SHELL and any HTTP-client probe are out. FerretDB ships a `ping`
+      # subcommand for exactly this: it dials the wire listener (27017) and exits
+      # non-zero if it cannot connect. Exec form, no shell.
+      #
+      # The image already declares this same check; we are only retuning the
+      # timings (its own is 60s interval / 1 retry, far too slow to gate startup
+      # on). Stated explicitly so nobody removes it thinking it is redundant, or
+      # keeps it thinking it is the only thing making hyperdx wait.
+      test: ["CMD", "/ferretdb", "ping"]
+      interval: 5s
+      timeout: 3s
+      start_period: 10s
+      retries: 10
 
   hyperdx:
     # The dfe-hyperdx fork is not yet published, so the DFE stack SSoT emits
@@ -511,9 +864,19 @@ services:
     image: ${IMAGE_REGISTRY:-ghcr.io/hyperi-io}/hyperi-hyperdx:${DFE_HYPERDX_VERSION:-latest}
     container_name: dfe-hyperdx
     profiles: ["hyperdx"]
+    restart: unless-stopped
+    deploy: *limits-service
     ports:
-      - ${DFE_HYPERDX_API_PORT:-8000}:8000
-      - ${DFE_HYPERDX_APP_PORT:-8090}:${DFE_HYPERDX_APP_PORT:-8090}
+      - ${DFE_BIND_HOST:-127.0.0.1}:${DFE_HYPERDX_API_PORT:-8000}:8000
+      # DFE_BIND_HOST, not INGRESS, despite being a UI. This is the only browser
+      # surface that hands out a datastore credential: NEXT_PUBLIC_* below is
+      # inlined into the client bundle by Next.js, so anyone who can load this
+      # page reads CLICKHOUSE_PASSWORD out of the JavaScript -- and
+      # NEXT_PUBLIC_IS_LOCAL_MODE means there is no login in front of it.
+      # Binding it world-readable by default contradicted our own advice to treat
+      # HyperDX as a localhost or tunnelled tool. Set DFE_BIND_HOST to widen it
+      # deliberately, having read that sentence.
+      - ${DFE_BIND_HOST:-127.0.0.1}:${DFE_HYPERDX_APP_PORT:-8090}:${DFE_HYPERDX_APP_PORT:-8090}
     env_file:
       - path: env/hyperdx.env
         required: false
@@ -522,8 +885,10 @@ services:
       HYPERDX_APP_PORT: ${DFE_HYPERDX_APP_PORT:-8090}
       HYPERDX_APP_URL: ${DFE_HYPERDX_APP_URL:-http://localhost}
       FRONTEND_URL: ${DFE_HYPERDX_APP_URL:-http://localhost}:${DFE_HYPERDX_APP_PORT:-8090}
-      MONGO_URI: mongodb://${HYPERDX_POSTGRES_USER:-hyperdx}:${HYPERDX_POSTGRES_PASSWORD:-hyperdx}@hyperdx-ferretdb:27017/hyperdx?authSource=adminThe source mapping is read from the mounted file below.
+      # HyperDX talks Mongo wire protocol; FerretDB serves it over Postgres.
+      MONGO_URI: mongodb://${HYPERDX_POSTGRES_USER:-hyperdx}:${HYPERDX_POSTGRES_PASSWORD:-hyperdx}@hyperdx-ferretdb:27017/hyperdx?authSource=admin
       NEXT_PUBLIC_IS_LOCAL_MODE: "true"
+      # The source mapping is read from the mounted file below.
       NEXT_PUBLIC_HDX_LOCAL_DEFAULT_CONNECTIONS: '[{"id":"local","name":"ClickHouse","host":"${DFE_HYPERDX_APP_URL:-http://localhost}:${CLICKHOUSE_HTTP_PORT:-8123}","username":"${CLICKHOUSE_USERNAME:-default}","password":"${CLICKHOUSE_PASSWORD:-}"}]'
       NEXT_PUBLIC_HDX_LOCAL_DEFAULT_SOURCES_FILE: /etc/hyperdx/default-sources.json
       NEXT_PUBLIC_THEME: ${HYPERDX_THEME:-dfe}
@@ -531,7 +896,7 @@ services:
       - ./config/hyperdx/default-sources.json:/etc/hyperdx/default-sources.json:ro
     depends_on:
       hyperdx-ferretdb:
-        condition: service_started
+        condition: service_healthy
       clickhouse:
         condition: service_healthy
         required: false
