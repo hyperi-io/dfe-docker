@@ -289,7 +289,7 @@ All `kafka-*` profiles are **mutually exclusive**. They expose the network alias
 
 `dfe-engine` (config/schema API backend) and `dfe-ui` (web console frontend) are independent of the transport/infra profiles. They start alongside whichever profile is active and are toggled as a pair by env var `DFE_CORE_ENABLED` (defaults to `true`). Set this to `false` to run without the core components.
 
-In `dev` mode, they build from each repo's own Dockerfile (not the shared Rust builder) so the engine and UI source repos must be present under `PROJECTS_PATH`.
+In `dev` mode, they build from each repo's own Dockerfile (not the shared Rust builder). Source comes via git into a managed cache by default, or from your own checkouts when `DFE_SRC_ROOT` is set -- see [docs/developing.md](docs/developing.md#where-it-looks-for-your-source).
 
 ## Make Commands
 
@@ -403,7 +403,10 @@ See [.env.example](.env.example) for available overrides.
 
 | Variable                                         | Use                                                                                  | Default                                                             |
 |--------------------------------------------------|--------------------------------------------------------------------------------------|---------------------------------------------------------------------|
-| `PROJECTS_PATH`                                  | Parent directory containing DFE source repos (used by `docker-compose.override.yml`) | `/projects`                                                         |
+| `DFE_SRC_ROOT`                                   | Directory holding your local `dfe-*` checkouts; set = build (and `LIVE=1` mount) those instead of the git cache | unset (git cache)                                 |
+| `DFE_SRC_REMOTE`                                 | Git base URL the managed cache clones component repos from                           | `https://github.com/hyperi-io`                                      |
+| `DFE_SRC_REF`                                    | Branch, tag or commit the managed cache builds                                       | `main`                                                              |
+| `DFE_SRC_CACHE`                                  | Location of the managed source cache                                                 | `~/.cache/dfe-docker/src`                                           |
 
 ### DFE Components - General
 

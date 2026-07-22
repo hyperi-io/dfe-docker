@@ -11,11 +11,21 @@
 # Non-fatal: init creates .env, so it must not exist on a fresh checkout
 -include .env
 
-# Host UID/GID passed to dev containers (docker-compose.override.yml) that write
-# to bind-mounted host dirs (dfe-engine config/schemas), so files are owned by
-# the host user rather than the image user and writes don't hit permission errors.
+# Host UID/GID passed to live-mode containers (docker-compose.live.yml) that
+# write to bind-mounted host dirs (dfe-engine config/schemas), so files are owned
+# by the host user rather than the image user and writes don't hit permission
+# errors.
 export DFE_DEV_UID := $(shell id -u)
 export DFE_DEV_GID := $(shell id -g)
+
+# Live-edit mode: `make dev LIVE=1` layers docker-compose.live.yml, which
+# bind-mounts dfe-engine config/schemas from DFE_SRC_ROOT so edits land without
+# a rebuild. COMPOSE_FILE chains the overlay for every plain `docker compose`
+# call this make run spawns; the targets that pass -f explicitly (ci, down,
+# clean) ignore COMPOSE_FILE by design, so the registry path stays untouched.
+ifneq ($(strip $(LIVE)),)
+    export COMPOSE_FILE := docker-compose.yml:docker-compose.override.yml:docker-compose.live.yml
+endif
 
 # Goals that work without a resolved service profile. The check-* targets belong
 # here because their whole point is running on a fresh checkout -- resolving a
@@ -128,7 +138,7 @@ check-python: ## Lint the helper scripts (config in ruff.toml)
 	ruff format --check scripts/
 
 .PHONY: check-compose
-check-compose: ## Resolve compose on the registry and dev paths, both Kafka backends
+check-compose: ## Resolve compose on the registry, dev and live paths, both Kafka backends
 	@python3 scripts/check_compose.py
 
 .PHONY: check-hardfail

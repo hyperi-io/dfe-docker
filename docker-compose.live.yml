@@ -1,0 +1,28 @@
+# Project:   dfe-docker
+# File:      docker-compose.live.yml
+# Purpose:   Opt-in live-edit overlay - bind-mount dfe-engine config/schemas from
+#            your local checkout so edits land without a rebuild
+# Language:  YAML
+#
+# License:   BUSL-1.1
+# Copyright: (c) 2026 HYPERI PTY LIMITED
+#
+# NOT auto-loaded. Layer it with `make dev LIVE=1` (which chains it via
+# COMPOSE_FILE) or an explicit -f list. It hard-requires DFE_SRC_ROOT -- the
+# documented per-machine variable naming the directory that holds your dfe-*
+# checkouts -- because a defaulted path would silently mount empty directories
+# over the engine's own config on any machine without that layout.
+#
+# The user/HOME overrides exist for the mounts: the engine writes into the
+# bind-mounted host dirs, so it runs as the host user (DFE_DEV_UID/GID are
+# exported by the Makefile) rather than the image user.
+
+services:
+  dfe-engine:
+    user: "${DFE_DEV_UID:-1000}:${DFE_DEV_GID:-1000}"
+    working_dir: /app
+    environment:
+      HOME: /tmp
+    volumes:
+      - ${DFE_SRC_ROOT:?set DFE_SRC_ROOT to the directory holding your dfe-engine checkout (live mode builds and mounts local source)}/dfe-engine/config:${DFE_ENGINE_CONFIG_DIR:-/app/config}
+      - ${DFE_SRC_ROOT:?set DFE_SRC_ROOT to the directory holding your dfe-engine checkout (live mode builds and mounts local source)}/dfe-engine/schemas:${DFE_ENGINE_SCHEMAS_DIR:-/app/schemas}

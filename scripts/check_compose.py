@@ -35,6 +35,9 @@ Paths checked:
 - registry: ``-f docker-compose.yml`` alone, the CI and production path.
 - dev: the same plus the auto-loaded ``docker-compose.override.yml``, the path
   ``make dev`` takes.
+- live: dev plus ``docker-compose.live.yml``, the path ``make dev LIVE=1``
+  takes. Its ``${DFE_SRC_ROOT:?...}`` mounts are hard-fail by design, so the
+  placeholder injection covers that key the same way it covers image pins.
 
 Each is checked against both Kafka backends, because the two are mutually
 exclusive and a change can easily satisfy one and break the other -- which is
@@ -55,6 +58,7 @@ import sys
 
 from _common import (
     COMPOSE_FILE,
+    COMPOSE_LIVE_FILE,
     COMPOSE_OVERRIDE_FILE,
     REPO_ROOT,
     _dotenv_values,
@@ -64,6 +68,11 @@ from _common import (
 
 # Enough to satisfy interpolation and produce a parseable image reference.
 _PLACEHOLDER = "0.0.0-compose-check"
+# Keys with these suffixes land in bind-mount sources, and compose reads a
+# sourceless-looking string there as a NAMED VOLUME ("refers to undefined
+# volume") -- so their placeholder must be an absolute path. Any existing one
+# does; the repo root is the one path this script can always name.
+_PATH_KEY_SUFFIXES = ("_ROOT", "_DIR", "_PATH")
 
 # Profiles are opt-in, so an unprofiled run checks almost nothing. `dfe` and
 # `core` carry the services this repo exists to ship.
@@ -95,9 +104,16 @@ def _check_env() -> tuple[dict[str, str], list[str]]:
     """
     env = {**_dotenv_values(), **os.environ}
     injected = []
-    for name in sorted(_required_compose_vars()):
+    # Discover across every shipped compose file, not just docker-compose.yml --
+    # the live overlay declares its own hard-fail key (DFE_SRC_ROOT).
+    required = _required_compose_vars(
+        files=(COMPOSE_FILE, COMPOSE_OVERRIDE_FILE, COMPOSE_LIVE_FILE)
+    )
+    for name in sorted(required):
         if not (env.get(name, "").strip()):
-            env[name] = _PLACEHOLDER
+            env[name] = (
+                str(REPO_ROOT) if name.endswith(_PATH_KEY_SUFFIXES) else _PLACEHOLDER
+            )
             injected.append(name)
     return env, injected
 
@@ -177,17 +193,23 @@ def _readyz_cpu_failures(*, env: dict[str, str], files: list[str]) -> list[str]:
 
 def _paths() -> list[tuple[str, list[str]]]:
     """Return the (label, compose file list) pairs we ship and therefore must check."""
-    if not (COMPOSE_OVERRIDE_FILE.is_file()):
-        # Not a skip. The override is committed and `make dev` auto-loads it, so
-        # its absence means the dev path is broken, not absent. Skipping would
-        # halve the coverage while still printing "All compose paths resolve".
-        raise FileNotFoundError(
-            f"{COMPOSE_OVERRIDE_FILE.name} is missing -- it is committed and "
-            "auto-loaded by `make dev`, so the dev path cannot be checked"
-        )
+    for shipped in (COMPOSE_OVERRIDE_FILE, COMPOSE_LIVE_FILE):
+        if not (shipped.is_file()):
+            # Not a skip. Both overlays are committed (`make dev` auto-loads the
+            # override, `make dev LIVE=1` chains the live file), so an absence
+            # means that path is broken, not absent. Skipping would shrink the
+            # coverage while still printing "All compose paths resolve".
+            raise FileNotFoundError(
+                f"{shipped.name} is missing -- it is committed and used by "
+                "`make dev`, so that path cannot be checked"
+            )
     return [
         ("registry", [COMPOSE_FILE.name]),
         ("dev", [COMPOSE_FILE.name, COMPOSE_OVERRIDE_FILE.name]),
+        (
+            "live",
+            [COMPOSE_FILE.name, COMPOSE_OVERRIDE_FILE.name, COMPOSE_LIVE_FILE.name],
+        ),
     ]
 
 

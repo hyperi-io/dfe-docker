@@ -43,9 +43,9 @@ DOTENV_TEMPLATE = REPO_ROOT / ".env.example"
 ENV_DIR = REPO_ROOT / "env"
 ENV_TEMPLATE_DIR = REPO_ROOT / "env.example"
 COMPOSE_FILE = REPO_ROOT / "docker-compose.yml"
+COMPOSE_LIVE_FILE = REPO_ROOT / "docker-compose.live.yml"
 COMPOSE_OVERRIDE_FILE = REPO_ROOT / "docker-compose.override.yml"
 PROFILE_MK = REPO_ROOT / ".profile.mk"
-PROJECTS_PATH = REPO_ROOT.parent
 RUST_BUILDER = REPO_ROOT / "docker" / "dfe-rust-builder.Dockerfile"
 SERVICE_PROFILES_FILE = REPO_ROOT / "service_profiles.yaml"
 
@@ -137,10 +137,15 @@ def _resolved_profiles() -> list[str]:
     return [p for p in _profile_mk_value(key="PROFILE_FLAGS") if p != "--profile"]
 
 
-def _required_compose_vars() -> set[str]:
-    """Return every variable docker-compose.yml declares mandatory via ``${VAR:?...}``.
+def _required_compose_vars(*, files: tuple[Path, ...] = (COMPOSE_FILE,)) -> set[str]:
+    """Return every variable the given compose files declare mandatory via ``${VAR:?...}``.
 
-    Discovered from the compose file rather than listed anywhere, so adding a new
-    hard-fail key cannot silently escape the checks that depend on this.
+    Discovered from the compose files rather than listed anywhere, so adding a new
+    hard-fail key cannot silently escape the checks that depend on this. The
+    default covers docker-compose.yml alone -- the image-pin surface -- which is
+    what the pin-focused consumers (check_hardfail, show_limits) want.
     """
-    return set(_REQUIRED_VAR_RE.findall(COMPOSE_FILE.read_text(encoding="utf-8")))
+    found: set[str] = set()
+    for path in files:
+        found |= set(_REQUIRED_VAR_RE.findall(path.read_text(encoding="utf-8")))
+    return found

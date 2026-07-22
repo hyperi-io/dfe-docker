@@ -14,11 +14,11 @@ stack and merges its ``*_VERSION=tag@digest`` lines into ``.env``. Only those
 keys are overwritten; every other key (ports, hosts, creds, profile) is left
 exactly as it was, so the merge is idempotent and safe to re-run.
 
-Transport is LOCAL-PATH-FIRST, OCI-FALLBACK:
+Transport is EXPLICIT-LOCAL-FIRST, OCI-DEFAULT:
 
-1. A local dfe-infra checkout (env ``DFE_INFRA_DIR``, default the sibling
-   ``../dfe-infra``): run ``scripts/dfe-stack render --target docker --stack
-   VERSION`` and read its stdout fragment.
+1. A local dfe-infra checkout, ONLY when ``DFE_INFRA_DIR`` names one (no
+   implicit sibling probe): run ``scripts/dfe-stack render --target docker
+   --stack VERSION`` and read its stdout fragment.
 2. Else pull the signed OCI stack-manifest artifact
    (``ghcr.io/hyperi-io/dfe-stack-manifest:VERSION`` via ``oras pull``) and read
    its ``dfe-env-VERSION.txt`` member. This is the air-gap / CI path.
@@ -42,7 +42,6 @@ from pathlib import Path
 from _common import (
     DOTENV_FILE,
     DOTENV_TEMPLATE,
-    PROJECTS_PATH,
     _print,
     _rel_path,
 )
@@ -53,8 +52,6 @@ from _common import (
 # `make post`.
 from init import _create_dotenv
 
-# Default sibling directory holding a dfe-infra checkout (the stack SSoT repo).
-DEFAULT_INFRA_DIRNAME = "dfe-infra"
 # OCI repository for the signed stack-manifest artifact (air-gap / CI path).
 DEFAULT_MANIFEST_REPO = "ghcr.io/hyperi-io/dfe-stack-manifest"
 
@@ -81,22 +78,21 @@ def _run(cmd: list[str]) -> subprocess.CompletedProcess:
 def _infra_dir() -> Path | None:
     """Resolve a local dfe-infra checkout holding the dfe-stack renderer.
 
-    ``DFE_INFRA_DIR`` overrides the default sibling ``../dfe-infra``. An
-    explicitly-set but rendererless directory is an error (loud, not silent);
-    an absent default simply falls through to the OCI path.
+    ``DFE_INFRA_DIR`` is the only local path considered, and it must be set
+    explicitly -- there is no implicit sibling probe, so the default on any
+    machine is the OCI manifest path. An explicitly-set but rendererless
+    directory is an error (loud, not silent).
     """
     raw = os.environ.get("DFE_INFRA_DIR", "").strip()
-    candidate = (
-        Path(raw).expanduser() if raw else (PROJECTS_PATH / DEFAULT_INFRA_DIRNAME)
-    )
+    if not (raw):
+        return None
+    candidate = Path(raw).expanduser()
     if (candidate / "scripts" / "dfe-stack").is_file():
         return candidate
-    if raw:
-        raise StackError(
-            f"DFE_INFRA_DIR={raw!r} has no scripts/dfe-stack renderer -- "
-            "point it at a dfe-infra checkout or unset it to use the OCI path"
-        )
-    return None
+    raise StackError(
+        f"DFE_INFRA_DIR={raw!r} has no scripts/dfe-stack renderer -- "
+        "point it at a dfe-infra checkout or unset it to use the OCI path"
+    )
 
 
 def _render_local(infra_dir: Path, version: str) -> str:

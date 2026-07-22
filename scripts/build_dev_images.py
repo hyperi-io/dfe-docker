@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 #  Project:      dfe-docker
 #  File:         scripts/build_dev_images.py
-#  Purpose:      Build local :local DFE images for `make dev` from local source
+#  Purpose:      Build local :local DFE images for `make dev` from component source
 #  Language:     Python
 #
 #  License:      BUSL-1.1
@@ -9,21 +9,28 @@
 #
 """Builder for local DFE images.
 
+Source acquisition goes via git, never an assumed local layout: each component
+repo is cloned/fetched into a managed cache (``DFE_SRC_CACHE``) from
+``DFE_SRC_REMOTE`` at ``DFE_SRC_REF``, so a fresh machine only needs git
+credentials for the hyperi-io repos. ``DFE_SRC_ROOT`` is the explicit opt-in for
+building your own local checkouts (work in progress included) instead.
+
 Each rust component is built in two phases:
-1. Compile the binary from local source via the shared docker/dfe-rust-builder.Dockerfile
+1. Compile the binary from the staged source via the shared docker/dfe-rust-builder.Dockerfile
 2. Package it with the component's own committed Dockerfile (the single source of truth for runtime)
 Self-contained components (dfe-ui) build straight from their own Dockerfile. Result image tag: <service>:local (consumed by docker-compose.override.yml).
 """
 
 from __future__ import annotations
 
+import os
 import shutil
 import subprocess
 import sys
 import tempfile
 from pathlib import Path
 
-from _common import PROJECTS_PATH, RUST_BUILDER, _print
+from _common import RUST_BUILDER, _load_dotenv, _print
 
 IMAGE_TAG = "local"
 RUST_COMPONENTS = [
@@ -36,11 +43,16 @@ RUST_COMPONENTS = [
 ]
 SELF_CONTAINED_COMPONENTS = ["dfe-engine", "dfe-ui", "hyperdx"]
 SERVICE_BUILD_ARGS = {"hyperdx": {"NEXT_PUBLIC_IS_LOCAL_MODE": "true"}}
-# Compose service name -> source repo DIRECTORY under PROJECTS_PATH, for the
-# cases where they differ. hyperdx is the one: the repo is `dfe-hyperdx`, while
-# the image it publishes is `hyperi-hyperdx`. This mapped to the IMAGE name, so a
-# dev build looked for a directory that does not exist.
+# Compose service name -> source repo NAME (the GitHub repo and therefore the
+# checkout directory name), for the cases where they differ. hyperdx is the one:
+# the repo is `dfe-hyperdx`, while the image it publishes is `hyperi-hyperdx`.
+# This mapped to the IMAGE name, so a dev build looked for a repo that does not
+# exist.
 SERVICE_REPO_DIRS = {"hyperdx": "dfe-hyperdx"}
+# Source acquisition defaults; override via DFE_SRC_REMOTE / DFE_SRC_REF (or
+# DFE_SRC_ROOT to build local checkouts instead of the git cache).
+SRC_REMOTE_DEFAULT = "https://github.com/hyperi-io"
+SRC_REF_DEFAULT = "main"
 STAGE_EXCLUDES = [
     "target",
     ".git",
@@ -74,7 +86,7 @@ class _BuilderError(Exception):
 
 def _build_image(*, service: str) -> None:
     """Build an image for a service."""
-    repo = PROJECTS_PATH / SERVICE_REPO_DIRS.get(service, service)
+    repo = _source_checkout(service=service)
     dockerfile = repo / "Dockerfile"
     if not (dockerfile.is_file()):
         raise _BuilderError(header=service, msg=f"Missing Dockerfile at {dockerfile!r}")
@@ -88,6 +100,55 @@ def _build_image(*, service: str) -> None:
                 repo=repo, service=service, workdir=Path(workdir)
             )
             _docker_build(context=context, dockerfile=dockerfile, service=service)
+
+
+def _cached_clone(*, repo_dir: str, service: str) -> Path:
+    """Return a managed clone of repo_dir at DFE_SRC_REF, cloning/fetching as needed.
+
+    The checkout is detached at the resolved commit and must stay clean -- the
+    cache is tool-managed, not a place to work. Local edits fail the build with a
+    pointer at ``DFE_SRC_ROOT``, which is the supported way to build your own
+    checkouts.
+    """
+    remote = os.environ.get("DFE_SRC_REMOTE", "").strip() or SRC_REMOTE_DEFAULT
+    ref = os.environ.get("DFE_SRC_REF", "").strip() or SRC_REF_DEFAULT
+    checkout = _src_cache_root() / repo_dir
+    url = f"{remote.rstrip('/')}/{repo_dir}.git"
+    if not ((checkout / ".git").exists()):
+        checkout.parent.mkdir(parents=True, exist_ok=True)
+        # The URL is not echoed: DFE_SRC_REMOTE may carry userinfo credentials.
+        _print(header=service, msg=f"Cloning {repo_dir!r} into {str(checkout)!r}")
+        _run(args=["git", "clone", "--quiet", "--", url, str(checkout)])
+    # Tracked edits only: untracked droppings (a Finder .DS_Store) are not
+    # somebody's work and must not brick the build.
+    status = _git_capture(
+        args=["git", "-C", str(checkout), "status", "--porcelain", "-uno"]
+    )
+    if (status.returncode != 0) or (status.stdout.strip()):
+        raise _BuilderError(
+            header=service,
+            msg=f"Source cache {str(checkout)!r} has edits to tracked files -- "
+            "the cache is managed by this script; set DFE_SRC_ROOT to build "
+            "local work, or delete the cache directory to reset it",
+        )
+    # --prune: a remote branch deleted after being cached must resolve to a
+    # loud error, not silently build the stale remote-tracking ref.
+    _run(
+        args=[
+            "git",
+            "-C",
+            str(checkout),
+            "fetch",
+            "--quiet",
+            "--prune",
+            "--tags",
+            "origin",
+        ]
+    )
+    commit = _resolve_ref(checkout=checkout, ref=ref, service=service)
+    _run(args=["git", "-C", str(checkout), "checkout", "--quiet", "--detach", commit])
+    _print(header=service, msg=f"Source {repo_dir}@{ref} ({commit[:12]})")
+    return checkout
 
 
 def _docker_build(*, context: Path, dockerfile: Path, service: str) -> None:
@@ -143,6 +204,41 @@ def _export_rust_binary(*, repo: Path, service: str, workdir: Path) -> Path:
     return bindir
 
 
+def _git_capture(*, args: list[str]) -> subprocess.CompletedProcess:
+    """Run git capturing text output as explicit UTF-8 (locale-independent)."""
+    return subprocess.run(
+        args=args,
+        capture_output=True,
+        check=False,
+        encoding="utf-8",
+        errors="replace",
+        text=True,
+    )
+
+
+def _resolve_ref(*, checkout: Path, ref: str, service: str) -> str:
+    """Resolve ref to a commit SHA, preferring the remote branch of that name."""
+    for candidate in (f"origin/{ref}", ref):
+        result = _git_capture(
+            args=[
+                "git",
+                "-C",
+                str(checkout),
+                "rev-parse",
+                "--verify",
+                "--quiet",
+                "--end-of-options",
+                f"{candidate}^{{commit}}",
+            ]
+        )
+        if (result.returncode == 0) and (result.stdout.strip()):
+            return result.stdout.strip()
+    raise _BuilderError(
+        header=service,
+        msg=f"DFE_SRC_REF={ref!r} is not a branch, tag or commit in {str(checkout)!r}",
+    )
+
+
 def _run(*, args: list[str]) -> None:
     """Run a command, raising _BuilderError on a non-zero exit."""
     result = subprocess.run(args=args, check=False)
@@ -152,12 +248,44 @@ def _run(*, args: list[str]) -> None:
         )
 
 
+def _source_checkout(*, service: str) -> Path:
+    """Resolve the source checkout to build service from.
+
+    ``DFE_SRC_ROOT`` set -> that directory's checkout (your local work, wherever
+    you keep it). Unset -> the managed git cache. Never an assumed sibling or a
+    machine-specific path: the dependency is a repo, so it travels as git config.
+    """
+    repo_dir = SERVICE_REPO_DIRS.get(service, service)
+    raw_root = os.environ.get("DFE_SRC_ROOT", "").strip()
+    if not (raw_root):
+        return _cached_clone(repo_dir=repo_dir, service=service)
+    checkout = Path(raw_root).expanduser() / repo_dir
+    if not ((checkout / ".git").exists()):
+        raise _BuilderError(
+            header=service,
+            msg=f"DFE_SRC_ROOT={raw_root!r} has no {repo_dir!r} checkout -- "
+            "clone it there or unset DFE_SRC_ROOT to build from the git cache",
+        )
+    return checkout
+
+
+def _src_cache_root() -> Path:
+    """Return the managed source cache root (DFE_SRC_CACHE overrides the default)."""
+    raw = os.environ.get("DFE_SRC_CACHE", "").strip()
+    if raw:
+        return Path(raw).expanduser()
+    xdg = os.environ.get("XDG_CACHE_HOME", "").strip()
+    base = Path(xdg).expanduser() if xdg else (Path.home() / ".cache")
+    return base / "dfe-docker" / "src"
+
+
 def _stage_source(*, dest: Path, repo: Path) -> None:
     """Copy repo into dest, skipping STAGE_EXCLUDES."""
     shutil.copytree(dst=dest, ignore=shutil.ignore_patterns(*STAGE_EXCLUDES), src=repo)
 
 
 def main() -> int:
+    _load_dotenv()
     try:
         requested = sys.argv[1:]
         if not (requested):

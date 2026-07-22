@@ -29,7 +29,7 @@ exist, and how a profile decides which of them run.
 | Python 3 | the helper scripts under `scripts/` |
 | PyYAML | `make test-e2e` only (`pip install pyyaml`, or `uv run --with pyyaml`) |
 | ruff | `make check-python` only |
-| Component repos checked out beside this one | `make dev` |
+| git credentials for the hyperi-io repos (or `DFE_SRC_ROOT` checkouts) | `make dev` |
 
 ## First run
 
@@ -50,12 +50,12 @@ re-run. It does two things beyond the copy:
   missing and stops there -- editing your `.env` is yours to do.
 
 `make stack VERSION=X.Y.Z[-rc.N]` writes the `*_VERSION` pins into `.env` from the
-DFE stack SSoT. It takes a local `../dfe-infra` checkout first
-(`scripts/dfe-stack render --target docker --stack VERSION`, override the location
-with `DFE_INFRA_DIR`), and falls back to `oras pull` of
-`ghcr.io/hyperi-io/dfe-stack-manifest:VERSION`. If neither is available it fails
-loudly -- there is no silent `latest`. Only `*_VERSION` keys are rewritten; your
-ports, hosts, credentials and profile survive the merge.
+DFE stack SSoT. It uses a local dfe-infra checkout only when `DFE_INFRA_DIR`
+names one (`scripts/dfe-stack render --target docker --stack VERSION`), and
+otherwise does an `oras pull` of `ghcr.io/hyperi-io/dfe-stack-manifest:VERSION`.
+If neither is available it fails loudly -- there is no silent `latest`. Only
+`*_VERSION` keys are rewritten; your ports, hosts, credentials and profile
+survive the merge.
 
 Skipping `make stack` is not a soft failure. Nearly every image pin uses
 `${VAR:?...}`, so an unpinned checkout aborts the compose command with a message
@@ -107,18 +107,31 @@ A service that is not a locally buildable DFE component (ClickHouse, the broker,
 
 ### Where it looks for your source
 
-Two different mechanisms, and they do not read the same thing:
+Source comes via git, never an assumed directory layout:
 
-- **The builder** resolves component repos as **siblings of this repo** --
-  `scripts/_common.py` sets `PROJECTS_PATH` to the repo root's parent. The
-  `PROJECTS_PATH` variable in `.env` does not affect it.
-- **The compose override** uses `${PROJECTS_PATH:-/projects}` for the `dfe-engine`
-  config and schema bind mounts.
+- **Default -- the managed cache.** The builder clones each component repo from
+  `DFE_SRC_REMOTE` (default `https://github.com/hyperi-io`) into
+  `DFE_SRC_CACHE` (default `~/.cache/dfe-docker/src`) and builds the commit
+  `DFE_SRC_REF` resolves to (default `main`). Re-runs fetch and re-checkout, so
+  the cache tracks the ref. The cache is tool-managed: a dirty checkout there
+  fails the build rather than silently building someone's stray edits.
+- **Local work -- set `DFE_SRC_ROOT`.** Point it at the directory holding your
+  `dfe-*` checkouts (in `.env` or the `make` command line) and the builder uses
+  those working trees as they stand, uncommitted changes included. This is the
+  explicit replacement for the old sibling-checkout assumption -- nothing is
+  inferred from where this repo happens to live.
+- **Live engine edits -- `make dev LIVE=1`.** Layers `docker-compose.live.yml`,
+  which bind-mounts `dfe-engine/config` and `dfe-engine/schemas` from
+  `DFE_SRC_ROOT` so engine config edits land without a rebuild. It hard-fails
+  when `DFE_SRC_ROOT` is unset, because a defaulted path would silently mount
+  empty directories over the engine's own config on any machine without that
+  layout. Note that with `DFE_SRC_ROOT` set, EVERY active component builds from
+  those checkouts -- live mode is "build and mount my local source", not an
+  engine-only switch.
 
-So keep the checkouts as siblings, and if that parent directory is not
-`/projects`, set `PROJECTS_PATH` in `.env` to match or the engine mounts will point
-somewhere else. `make stack`'s local-render path also looks for `dfe-infra` as a
-sibling.
+`make stack`'s local-render path is explicit the same way: it uses a dfe-infra
+checkout only when `DFE_INFRA_DIR` names one, and otherwise pulls the signed OCI
+stack manifest.
 
 ## Picking a profile
 

@@ -10,11 +10,13 @@
 # CI and production use: docker compose -f docker-compose.yml ... (skips this file)
 #
 # The <service>:local images are built by `make dev` / `make dev-build` via
-# scripts/build_dev_images.py: each rust component is compiled from local source
-# with docker/dfe-rust-builder.Dockerfile, then packaged by the component's OWN
-# committed Dockerfile (single source of truth for runtime). dfe-ui builds from its
-# own Next.js standalone Dockerfile. Prereq: the component repos are checked out
-# under PROJECTS_PATH (default: /projects; see .env).
+# scripts/build_dev_images.py: each rust component is compiled from source with
+# docker/dfe-rust-builder.Dockerfile, then packaged by the component's OWN
+# committed Dockerfile (single source of truth for runtime). dfe-ui builds from
+# its own Next.js standalone Dockerfile. Source comes via git (cloned into a
+# managed cache at DFE_SRC_REF), or from your own checkouts when DFE_SRC_ROOT is
+# set -- never from an assumed directory layout. To live-edit dfe-engine config
+# without rebuilding, add docker-compose.live.yml: `make dev LIVE=1`.
 
 services:
   dfe-receiver:
@@ -37,13 +39,6 @@ services:
 
   dfe-engine:
     image: dfe-engine:local
-    user: "${DFE_DEV_UID:-1000}:${DFE_DEV_GID:-1000}"
-    working_dir: /app
-    environment:
-      HOME: /tmp
-    volumes:
-      - ${PROJECTS_PATH:-/projects}/dfe-engine/config:${DFE_ENGINE_CONFIG_DIR:-/app/config}
-      - ${PROJECTS_PATH:-/projects}/dfe-engine/schemas:${DFE_ENGINE_SCHEMAS_DIR:-/app/schemas}
 
   dfe-ui:
     image: dfe-ui:local
