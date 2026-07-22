@@ -15,6 +15,8 @@ clickhouse:
     - clickhouse:8123
   database: dfe
   protocol: http
+  username: env:CLICKHOUSE_USERNAME
+  password: env:CLICKHOUSE_PASSWORD
 
 grpc:
   listen: 0.0.0.0:50051

@@ -40,3 +40,9 @@ TODO.md
 
 # Per-service env files: env/
 env/
+
+# Predecessor CI clone and an inert submodule declaration, both untracked and
+# left in the tree. Ignored so `git add -A` cannot pull a dead CI system (100+
+# files) or a broken submodule pointer into this repo. Safe to delete outright.
+ci/
+.gitmodules

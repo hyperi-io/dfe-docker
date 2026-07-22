@@ -204,25 +204,26 @@ because Compose interpolates every service before profiles filter anything. A
 Redpanda pin in `.env` is not a Redpanda deployment -- but if your licence
 position requires zero reference to the artefact, that is the remaining edge.
 
-## Secrets: two are generated, one is yours
+## Secrets: three are generated
 
-`make init` mints a random value for `DFE_UI_NEXTAUTH_SECRET` and
-`HYPERDX_POSTGRES_PASSWORD`, including topping up an existing `.env` that
-predates either key (`scripts/init.py`). Compose carries a sentinel default for
-both rather than a `${VAR:?}` hard-fail -- interpolation is not profile-gated, so
-a hard-fail would abort `make down` too, for a service the operator may not even
-run. The check lives in the power-on self test instead: `make post` exits non-zero
-while either is still at its built-in default (`WEAK_SECRET_DEFAULTS` in
-`scripts/post.py`).
+`make init` mints a random value for `DFE_UI_NEXTAUTH_SECRET`,
+`HYPERDX_POSTGRES_PASSWORD` and `CLICKHOUSE_PASSWORD`, including topping up an
+existing `.env` that predates any of them (`scripts/init.py`). Compose carries a
+sentinel (or empty) default rather than a `${VAR:?}` hard-fail -- interpolation is
+not profile-gated, so a hard-fail would abort `make down` too, for a service the
+operator may not even run. The check lives in the power-on self test instead:
+`make post` exits non-zero while any is still at its default.
 
 Be aware of the gap that leaves. The self test auto-runs after `make dev` /
 `make ci` but is currently **non-fatal** there, so those commands still succeed
 with a default secret in place -- you get a loud message, not a failure. If you
 want it enforced, run `make post` as its own step and check the exit code.
 
-`CLICKHOUSE_PASSWORD` is **not** generated. It defaults to empty, alongside
-`CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT=1`. Setting it is yours to do -- read the
-HyperDX note above first.
+`CLICKHOUSE_PASSWORD` guards the ClickHouse default user, which runs with
+`CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT=1` -- full admin. It was blank. `make post`
+skips it when `CLICKHOUSE_HOST` points at an external instance, because then the
+credential is the operator's, not the stack's. See the upgrade note below -- a
+generated password against an existing warehouse volume is a breaking change.
 
 Never commit `.env`.
 
@@ -261,6 +262,22 @@ reaching this box from elsewhere -- a remote `clickhouse-client`, a Prometheus
 scrape of `:9090-9096`, a colleague's browser -- gets `connection refused` with
 no hint as to why. `DFE_BIND_HOST=0.0.0.0` restores the old behaviour, having
 read the auth section above.
+
+**`CLICKHOUSE_PASSWORD` is now generated, not blank.** `make init` mints one, so
+an upgraded stack that runs `make init` (to pick up new `.env.example` keys) gets
+a real password. ClickHouse stores the default-user credential in its data volume
+on first init, so a pre-existing `clickhouse-data` volume still expects the OLD
+(blank) password and the loader/engine/HyperDX now authenticate with the new one
+-- every query fails `Authentication failed`. Two ways through:
+
+- Keep the old behaviour: set `CLICKHOUSE_PASSWORD=` (blank) in `.env` before
+  starting. `make init` only tops up a MISSING key, so an explicit blank is kept.
+- Adopt the password: set the ClickHouse default user to the generated value once
+  (`ALTER USER default IDENTIFIED BY '<value>'` against the running instance, or
+  recreate the volume if it holds nothing you need), then restart the stack.
+
+A fresh deployment has neither problem -- the volume is created with the generated
+password from the start.
 
 ## The power-on self test, and what a PASS proves
 
