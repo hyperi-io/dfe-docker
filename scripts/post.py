@@ -101,6 +101,22 @@ def _weak_secrets() -> list[tuple[str, str]]:
         value = os.environ.get(name, "").strip()
         if not (value) or value == default:
             weak.append((name, value or default))
+
+    # ClickHouse is not a DFE service (it comes in via the `clickhouse` profile,
+    # not DFE_SERVICES), and its weak default is an EMPTY password, so it does not
+    # fit the service-map above. `make init` now generates it. Only enforce it for
+    # the Docker ClickHouse: with CLICKHOUSE_HOST set the operator points at an
+    # external instance and owns its credential, so an empty value here is theirs
+    # to make, not a missed `make init`.
+    if not (os.environ.get("CLICKHOUSE_HOST", "").strip()):
+        ch = os.environ.get("CLICKHOUSE_PASSWORD", "").strip()
+        if not (ch):
+            weak.append(
+                (
+                    "CLICKHOUSE_PASSWORD",
+                    "<empty> -- full-admin ClickHouse with no password",
+                )
+            )
     return weak
 
 

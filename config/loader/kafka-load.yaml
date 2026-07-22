@@ -1,6 +1,6 @@
 # Project:   dfe-docker
-# File:      config/loader/kafka.yaml
-# Purpose:   dfe-loader config - Kafka transport consumer (used by the Kafka profiles)
+# File:      config/loader/kafka-load.yaml
+# Purpose:   dfe-loader config - Kafka consumer of the transform _load topic (used by transform profiles)
 # Language:  YAML
 #
 # License:   BUSL-1.1
@@ -11,6 +11,8 @@ clickhouse:
     - clickhouse:8123
   database: dfe
   protocol: http
+  username: env:CLICKHOUSE_USERNAME
+  password: env:CLICKHOUSE_PASSWORD
 
 kafka:
   brokers:
