@@ -86,9 +86,9 @@ make down   # Stop everything
 
 ## Deployment posture
 
-Compose here covers laptop use - tyre-kicking, demos, mini-POCs - **and it is a
-supported production deploy target for small environments**: single box, edge, and
-partner deployments where standing up a cluster is not justified.
+Compose here covers laptop use - trying the stack out, demos, mini-POCs - **and
+it is a supported production deploy target for small environments**: single box,
+edge, and partner deployments where standing up a cluster is not justified.
 
 **Kubernetes remains the primary path.** Compose is not co-equal; it is the right
 answer for a specific, smaller shape. If both would work, choose Kubernetes.
