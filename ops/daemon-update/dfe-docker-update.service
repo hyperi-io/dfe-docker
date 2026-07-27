@@ -1,0 +1,20 @@
+# STAGED - systemd oneshot that runs the dfe-docker self-updater.
+# Installed by install.sh (which substitutes the __PLACEHOLDER__ values).
+[Unit]
+Description=DFE docker stack self-update (pin newest certified stack, pull, restart)
+Documentation=https://github.com/hyperi-io/dfe-docker
+After=network-online.target docker.service
+Wants=network-online.target
+Requires=docker.service
+
+[Service]
+Type=oneshot
+User=__DFE_UPDATE_USER__
+WorkingDirectory=__DFE_DOCKER_DIR__
+Environment=DFE_DOCKER_DIR=__DFE_DOCKER_DIR__
+# Track stable releases only. To also take -rc builds, uncomment:
+# Environment=DFE_UPDATE_ALLOW_PRERELEASE=1
+ExecStart=/usr/bin/python3 __DFE_DOCKER_DIR__/ops/daemon-update/self_update.py
+# `make ci` pulls + restarts the stack; give it room but never hang forever.
+# On failure systemd marks the unit failed and the timer retries next tick.
+TimeoutStartSec=1800
