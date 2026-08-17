@@ -763,25 +763,25 @@ services:
   # ===========================================================================
   # dfe-proxy
   #
-  # DFE_PROXY_VERSION is owned by the DFE stack SSoT (dfe-infra/versions.yaml)
-  # and written into .env by `make stack` -- editing the pin here or in .env gets
-  # stomped on the next bump. It currently resolves to an alpine variant, which
-  # is allowed (the Alpine prohibition covers images WE build, not vendor images
-  # we consume) but is not the house default. Change it in the SSoT if you want
-  # the Debian variant.
+  # Envoy is THE product entrypoint (the same proxy the k8s tier runs at its
+  # edge); its oauth2/jwt_authn filters chain in when dfe-engine becomes the
+  # OIDC provider (dfe-engine#143). DFE_PROXY_VERSION is owned by the DFE
+  # stack SSoT (dfe-infra/versions.yaml services.envoy-proxy) and written into
+  # .env by `make stack` -- editing the pin here or in .env gets stomped on
+  # the next bump.
   # ===========================================================================
 
   dfe-proxy:
-    image: nginx:${DFE_PROXY_VERSION:?run 'make stack VERSION=X.Y.Z' to pin DFE_PROXY_VERSION}
+    image: envoyproxy/envoy:${DFE_PROXY_VERSION:?run 'make stack VERSION=X.Y.Z' to pin DFE_PROXY_VERSION}
     container_name: dfe-proxy
     profiles: ["core"]
     restart: unless-stopped
     deploy: *limits-sidecar
     ports:
       # The DFE UI -- this is the one users reach.
-      - ${DFE_INGRESS_BIND_HOST:-0.0.0.0}:${DFE_UI_PORT:-3000}:80
+      - ${DFE_INGRESS_BIND_HOST:-0.0.0.0}:${DFE_UI_PORT:-3000}:8080
     volumes:
-      - ./config/proxy/nginx.conf:/etc/nginx/conf.d/default.conf:ro
+      - ./config/proxy/envoy.yaml:/etc/envoy/envoy.yaml:ro
     depends_on:
       dfe-ui:
         condition: service_healthy
@@ -790,7 +790,9 @@ services:
         condition: service_healthy
         required: false
     healthcheck:
-      test: ["CMD-SHELL", "wget -q -O /dev/null http://127.0.0.1:80/healthz || exit 1"]
+      # The image ships no curl/wget; drive the local admin /ready over
+      # bash's /dev/tcp (admin binds 127.0.0.1 only, never published).
+      test: ["CMD", "bash", "-c", "exec 3<>/dev/tcp/127.0.0.1/9901 && printf 'GET /ready HTTP/1.1\\r\\nHost: localhost\\r\\nConnection: close\\r\\n\\r\\n' >&3 && grep -q LIVE <&3"]
       interval: 10s
       timeout: 3s
       start_period: 10s

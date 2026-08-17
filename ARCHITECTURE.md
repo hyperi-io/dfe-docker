@@ -90,7 +90,7 @@ flowchart LR
     classDef store fill:#009E73,stroke:#333333,color:#000000
 
     user(["Browser"]):::ext
-    proxy["dfe-proxy (nginx) :3000"]:::dfe
+    proxy["dfe-proxy (envoy) :3000"]:::dfe
     ui["dfe-ui :3000"]:::dfe
     engine["dfe-engine :8000"]:::dfe
     ch[(ClickHouse)]:::store
@@ -103,7 +103,7 @@ flowchart LR
 
 `dfe-proxy` exists to give the UI and the engine API one origin, because the UI
 client calls the engine with a relative `/api/v1/...` base URL
-(`config/proxy/nginx.conf`).
+(`config/proxy/envoy.yaml`).
 
 ## The two gRPC surfaces are not the same thing
 

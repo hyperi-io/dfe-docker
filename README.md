@@ -564,7 +564,7 @@ Off by default. `DFE_HYPERDX_ENABLED=true` starts `hyperdx` (API + App) plus its
 
 | Port  | Service              | Protocol           |
 |-------|----------------------|--------------------|
-| 3000  | dfe-proxy            | Web UI (nginx fronts dfe-ui, which publishes no host port) |
+| 3000  | dfe-proxy            | Web UI (envoy fronts dfe-ui, which publishes no host port) |
 | 6000  | dfe-receiver         | gRPC               |
 | 8000  | hyperdx              | API                |
 | 8003  | dfe-engine           | HTTP API           |
