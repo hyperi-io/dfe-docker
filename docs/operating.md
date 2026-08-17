@@ -59,7 +59,7 @@ Two consequences survive the loopback defaults below.
 **The engine API is reachable from outside regardless of its own binding.**
 `dfe-proxy` listens on `:3000` bound to `0.0.0.0` and reverse-proxies `/api/v1/*`
 straight through to the dfe-engine API on the Docker network
-(`config/proxy/nginx.conf`). Loopback-binding the engine's own `:8003` does not
+(`config/proxy/envoy.yaml`). Loopback-binding the engine's own `:8003` does not
 protect that API -- the same endpoints answer through the proxy,
 unauthenticated, to anyone who can route to the box.
 

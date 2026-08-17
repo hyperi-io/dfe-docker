@@ -35,7 +35,7 @@ Health endpoints, straight from the host:
 | dfe-transform-vector | 9095 | same |
 | dfe-transform-vrl | 9096 | same |
 | dfe-engine | 8003 | `/health/live`, `/health/ready`, `/health/startup` |
-| dfe-proxy | 3000 | `/healthz` (served by nginx itself, no backend) |
+| dfe-proxy | 3000 | `/healthz` (served by envoy itself, no backend) |
 | hyperdx | 8000 | `/health` |
 
 The Rust components are scalo-rs: `/healthz` returns alive unconditionally,
