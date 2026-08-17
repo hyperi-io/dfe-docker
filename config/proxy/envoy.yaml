@@ -15,7 +15,7 @@
 # Envoy replaces nginx as THE entrypoint across the product (same proxy the
 # k8s tier runs at its edge): OSS nginx has no free inbound OIDC, while
 # Envoy's oauth2/jwt_authn filters are Apache-2.0. Those auth filters chain
-# in here when dfe-engine becomes the OIDC provider (dfe-engine#143) --
+# in here when the bundled dex issuer lands (the one-issuer decision) --
 # semantically the same edge policy the k8s SecurityPolicies express.
 #
 # STRICT_DNS clusters resolve per refresh via Docker's embedded DNS, so the
@@ -45,7 +45,7 @@ static_resources:
                   - upgrade_type: websocket
                 http_filters:
                   # AUTH SEAM: jwt_authn + oauth2 filters insert here when the
-                  # engine OP lands (dfe-engine#143).
+                  # bundled dex issuer lands.
                   - name: envoy.filters.http.router
                     typed_config:
                       "@type": type.googleapis.com/envoy.extensions.filters.http.router.v3.Router
