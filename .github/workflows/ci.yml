@@ -79,16 +79,17 @@ jobs:
       - name: Docs
         run: make check-docs
 
-      # Version-pinned so a new ruff release cannot turn this red on an unrelated
-      # PR. Bumping it is then a visible, deliberate change.
+      # The pin lives in the Makefile (RUFF_VERSION), so a local `make check`
+      # lints with the same version this does. Installed here rather than run
+      # through uvx to keep the runner off the network mid-job.
       - name: Install ruff
-        run: pipx install ruff==0.15.22
+        run: pipx install "ruff==$(make -s print-ruff-version)"
 
       # Every check above is driven by a Python helper script, so a bug in one of
       # them shows up as a check that passes when it should not. They get linted
       # like anything else. Config in ruff.toml.
       - name: Python
-        run: make check-python
+        run: make check-python RUFF=ruff
 
   dockerfile:
     name: Dockerfile

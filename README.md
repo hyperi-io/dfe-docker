@@ -15,7 +15,7 @@ can apply - read both if so.
 | Working out why a stack is misbehaving - yours or someone else's. | **Troubleshooting** | [docs/troubleshooting.md](docs/troubleshooting.md) |
 | Standing a deployment up, or moving one to a newer certified stack. | **Deploying** | [docs/deploying.md](docs/deploying.md) |
 | Asking what the stack reports about itself - health endpoints, self-telemetry, what a passing self test proves. | **Observability** | [docs/observability.md](docs/observability.md) |
-| Wanting to know how the pieces fit together, before any of the above. | **Everyone** | [ARCHITECTURE.md](ARCHITECTURE.md) |
+| Wanting to know how the pieces fit together, before any of the above. | **Everyone** | [docs/architecture.md](docs/architecture.md) |
 
 Two things worth knowing before you start, whichever you are:
 
@@ -29,7 +29,7 @@ Two things worth knowing before you start, whichever you are:
 
 ## Architecture
 
-See [ARCHITECTURE.md](ARCHITECTURE.md).
+See [docs/architecture.md](docs/architecture.md).
 
 ## Quickstart
 
@@ -78,10 +78,11 @@ make ci     # Uses active_profile from service_profiles.yaml
 make down   # Stop everything
 ```
 
-### 2. Dev Mode (Requires Repositories Cloned Locally)
+### 2. Dev mode (builds from component source)
 
-See [docs/developing.md](docs/developing.md#where-it-looks-for-your-source) for which
-repositories are required and where the build expects to find them.
+Source comes from a managed git cache by default, or your own checkouts when
+`DFE_SRC_ROOT` is set - see
+[docs/developing.md](docs/developing.md#where-it-looks-for-your-source).
 
 ```bash
 make init   # Edit .env files as needed (versions, ports)
@@ -91,157 +92,25 @@ make down   # Stop everything
 
 ## Deployment posture
 
-Compose here covers laptop use - trying the stack out, demos, mini-POCs - **and
-it is a supported production deploy target for small environments**: single box,
-edge, and partner deployments where standing up a cluster is not justified.
+Compose covers laptop use AND is a supported production target for small
+environments -- single box, edge, partner deployments. **Kubernetes stays the
+primary path**: if both would work, choose Kubernetes.
 
-**Kubernetes remains the primary path.** Compose is not co-equal; it is the right
-answer for a specific, smaller shape. If both would work, choose Kubernetes.
+What makes it safe to deploy is that it consumes the same image from the same
+registry as the cluster path, pinned from the same stack SSoT. No promotion step,
+no Compose-specific build.
 
-What makes it safe to deploy is that it consumes *the same image from the same
-registry* as the cluster path. One image, one contract, two consumers. There is no
-promotion step, and a separately hand-built image is not supported.
+Three things to read before running this anywhere real:
 
-One exception, and it is a real one: `hyperi-hyperdx` is still on a floating
-`:latest` because the fork is unpublished, so the stack SSoT cannot pin it. It is
-the only image in the stack without a digest. Until that fork ships, the
-opt-in `hyperdx` profile does not carry the pinning guarantee the rest of the
-stack does.
+- **There is no authentication.** Docker mode is god-mode by design, and
+  `dfe-proxy` on `:3000` reverse-proxies straight to the engine API. Put it
+  behind a VPN, a tunnel, a firewall, or an authenticating proxy.
+- **The defaults assume a laptop.** Port bindings, resource limits, Redpanda's
+  developer mode and the generated secrets all want review.
+- **Redpanda is BSL, not OSS.** `KAFKA_BACKEND=apache` is the Apache-2.0 path.
 
-### There is no authentication. Read this before exposing anything.
-
-**Docker mode runs in god-mode by design.** Nothing here authenticates anyone
-today. That is a deliberate decision, not an oversight - but it sets a hard limit
-on what "production" can mean here.
-
-Envoy fronts the stack now and carries the same OIDC filters the Kubernetes edge
-uses, so the limit is worth stating: **dfe-docker can never assume an OIDC issuer
-exists.** When the bundled dex profile lands it fronts the proxy origin only -
-the UI and the engine's interactive paths, while that profile runs. Ingest,
-machine API paths, metrics, ClickHouse, Kafka, kafka-ui and HyperDX never require
-or use OIDC.
-
-Concretely, and this survives the port-binding defaults below:
-
-- `dfe-proxy` on `:3000` is bound `0.0.0.0` and reverse-proxies `/api/v1/*` straight
-  through to the dfe-engine API. Loopback-binding the engine's own `:8003` does
-  **not** protect that API - the same endpoints are reachable through the proxy,
-  unauthenticated, by anyone who can route to the box.
-- HyperDX runs with `NEXT_PUBLIC_IS_LOCAL_MODE=true` (no login), and its browser
-  bundle is handed a ClickHouse connection - so **whatever you set
-  `CLICKHOUSE_PASSWORD` to is served to every browser that loads the HyperDX app.**
-  Setting a ClickHouse password does not make HyperDX safe to expose; it just moves
-  the credential into a place more people can read it.
-- That same connection is the reason remote HyperDX does not work out of the box:
-  the browser is told to reach ClickHouse at `${DFE_HYPERDX_APP_URL}:8123`, but
-  8123 now binds loopback on the server. Using HyperDX from another machine needs
-  ClickHouse reachable from that machine too - which is the exposure above. The
-  opt-in `hyperdx` profile is best treated as a localhost or tunnelled tool, and
-  its app port binds loopback by default to match that advice.
-
-So: put this behind something. A VPN, an SSH tunnel, a firewall, or an
-authenticating reverse proxy in front of `:3000`. The bindings below reduce
-the *accidental* surface; they are not an access-control mechanism.
-
-### What the defaults assume
-
-The defaults are tuned for a laptop. Four things to change for anything else.
-
-**1. Host port exposure.** Ports bind by audience, not all on `0.0.0.0`:
-
-| Variable | Default | Covers |
-|---|---|---|
-| `DFE_INGRESS_BIND_HOST` | `0.0.0.0` | What users reach: receiver ingest (6000/8080), fetcher ingest (8082), UI proxy (3000) |
-| `DFE_BIND_HOST` | `127.0.0.1` | What operators reach: ClickHouse (8123/9000), Kafka (9092/19092), the `/metrics` ports (9090, 9091, 9093-9096), Vector's API (8686), loader gRPC (50051), engine API (8003), Kafka UI (8081), HyperDX API (8000) and app (8090), collector health (13133) |
-
-The HyperDX app (8090) is a browser surface but binds the *operator* variable,
-because it is the one page that hands a ClickHouse credential to whoever loads it
-(see above). Widening it is a deliberate act, not a default.
-
-Set `DFE_BIND_HOST=0.0.0.0` only knowingly. One variable opens all of it at once,
-including a ClickHouse that ships with **no password** (`CLICKHOUSE_PASSWORD`
-defaults to empty) and `CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT=1`, and a Kafka UI
-with dynamic config enabled. Set `CLICKHOUSE_PASSWORD` if you do - but see the auth
-note above first, because HyperDX will then serve that password to browsers.
-
-Note that this is not the whole story: `:3000` is bound `0.0.0.0` regardless, and
-reaches the engine API. See the auth section above.
-
-**2. Resource limits.** Every service declares `deploy.resources.limits`. The
-defaults are sized so the *default profile* fits a 16 GB box **that is also running
-an operating system and whatever else that box does** - 16 GB of RAM is not 16 GB
-of headroom. Enabling every profile at once wants retuning rather than these
-defaults.
-
-```bash
-make limits    # per-service limits and totals, computed from the resolved config
-```
-
-Deliberately a command, not a table: totals written into a document go stale the
-first time a service changes tier, and a stale number people believe is worse than
-no number.
-
-Limits are ceilings, not reservations - an idle service costs nothing. Retune
-`DFE_CLICKHOUSE_*`, `DFE_BROKER_*`, `DFE_SERVICE_*`, `DFE_SIDECAR_*` for your
-target. An unlimited service on a single box is how one runaway container takes the
-host down.
-
-One caveat: Docker permits an equal amount of **swap** alongside a memory limit, so
-a 3G limit can become 3G RAM + 3G swap on a swap-enabled host. Set `memswap_limit`
-equal to the memory limit per service if you need a genuinely hard cap.
-
-**3. Redpanda runs in developer mode.** `--mode=dev-container --smp=1
---memory=1G` fits a 4 GB CI runner and is not a production configuration. Set
-`REDPANDA_MODE=production` with real `REDPANDA_SMP`/`REDPANDA_MEMORY`, and raise
-`DFE_BROKER_MEMORY` above `REDPANDA_MEMORY` or the broker is OOM-killed rather
-than backpressured.
-
-**4. Secrets.** `make init` generates `DFE_UI_NEXTAUTH_SECRET` and
-`HYPERDX_POSTGRES_PASSWORD`. Compose does **not** refuse to start without them - it
-carries a sentinel default, because a hard-fail would also block `make down` for
-services you may not run. `make post` is what fails while a default is in place, so
-run it if you want that enforced. `CLICKHOUSE_PASSWORD` is **not** generated at all:
-it defaults to empty and is yours to set. Do not commit `.env`.
-
-### Upgrading an existing deployment
-
-Two changes in this release will bite an existing stack. Neither is silent if you
-read this; both are silent if you do not.
-
-- **ClickHouse now uses a named volume.** Previously its data lived in the
-  container's writable layer, which meant it died with `docker compose down`. It
-  now mounts `clickhouse-data:/var/lib/clickhouse`. On first `make ci` after
-  upgrading, the container is recreated with an **empty** volume - any data still
-  sitting in the old writable layer is not migrated and will appear to vanish. If
-  that data matters, export it before upgrading.
-- **Published ports moved to loopback.** Most ports that were on `0.0.0.0` now
-  bind `127.0.0.1` - everything except the ingest and UI surfaces. Anything reaching this box from elsewhere - a remote
-  `clickhouse-client`, a Prometheus scrape of `:9090-9096`, a colleague's browser -
-  will get `connection refused` with no hint as to why. Set `DFE_BIND_HOST=0.0.0.0`
-  to restore the old behaviour, having read the auth note above.
-
-Also note `make clean` removes volumes (`down -v`). It always did, but with
-ClickHouse now on a named volume that means it deletes the warehouse.
-
-### Kafka backend licensing
-
-The default broker is **Redpanda, whose core is source-available under the BSL -
-not OSS.** Local development and CI sit inside its Additional Use Grant. A partner
-or edge deployment is a per-deployment licence check, and that check is a question
-for a human, not an assumption.
-
-If it does not come back clean, `KAFKA_BACKEND=apache` switches to Apache Kafka
-(Apache-2.0). The two are mutually exclusive and share the `kafka:9092` network
-alias, so nothing downstream changes. Each backend brings **its own** topic-init
-service, so the Apache path never pulls or runs a BSL-licensed artefact - the
-previous shared init service used the Redpanda image on both.
-
-Be precise about what that does and does not buy you: no Redpanda image is
-*pulled or run*, but `REDPANDA_VERSION` must still be **pinned** for the file to
-resolve, because Compose interpolates every service before profiles filter
-anything. A Redpanda pin in `.env` is not a Redpanda deployment, but if your
-licence position requires zero reference to the artefact, that is the remaining
-edge to clean up.
+All three, in full, plus what an upgrade does to an existing stack:
+[operating.md](docs/operating.md) and [deploying.md](docs/deploying.md).
 
 ## Service Profiles
 
@@ -400,257 +269,11 @@ always-on dev daemon) that clashes. Two clean ways to run without the clash:
 
 ## Configuration
 
-Config files live under `config/<component>/` and are self-documenting - browse the directory. The active config for each service is set by the selected profile in `service_profiles.yaml`, which can be overridden via the `DFE_PROFILE` environment variable.
+Config files live under `config/<component>/` and are self-documenting - browse
+the directory. Which one each service mounts is the profile's call.
 
-## Environment Variables
-
-See [.env.example](.env.example) for available overrides.
-
-### Profile Selection
-
-| Variable                                         | Use                                                                                  | Default                                                             |
-|--------------------------------------------------|--------------------------------------------------------------------------------------|---------------------------------------------------------------------|
-| `DFE_PROFILE`                                    | Override active profile from service_profiles.yaml                                   | -                                                                   |
-
-### Image Registry
-
-| Variable                                         | Use                                                                                  | Default                                                             |
-|--------------------------------------------------|--------------------------------------------------------------------------------------|---------------------------------------------------------------------|
-| `DOCKER_DEFAULT_PLATFORM`                        | Image architecture to pull from docker (if not wanting automatic determination)      | -                                                                   |
-| `IMAGE_REGISTRY`                                 | OCI registry hosting published `dfe-*` images                                        | `ghcr.io/hyperi-io`                                                 |
-
-### Dev Builds
-
-| Variable                                         | Use                                                                                  | Default                                                             |
-|--------------------------------------------------|--------------------------------------------------------------------------------------|---------------------------------------------------------------------|
-| `DFE_SRC_ROOT`                                   | Directory holding your local `dfe-*` checkouts; set = build (and `LIVE=1` mount) those instead of the git cache | unset (git cache)                                 |
-| `DFE_SRC_REMOTE`                                 | Git base URL the managed cache clones component repos from                           | `https://github.com/hyperi-io`                                      |
-| `DFE_SRC_REF`                                    | Branch, tag or commit the managed cache builds                                       | `main`                                                              |
-| `DFE_SRC_CACHE`                                  | Location of the managed source cache                                                 | `~/.cache/dfe-docker/src`                                           |
-
-### DFE Components - General
-
-| Variable                                         | Use                                                                                  | Default                                                             |
-|--------------------------------------------------|--------------------------------------------------------------------------------------|---------------------------------------------------------------------|
-| `LOG_LEVEL`                                      | Log level (trace\|debug\|info\|warn\|error)                                          | `info`                                                              |
-| `LOG_FORMAT`                                     | Log format                                                                           | `text`                                                              |
-
-### DFE Archiver
-
-| Variable                                         | Use                                                                                  | Default                                                             |
-|--------------------------------------------------|--------------------------------------------------------------------------------------|---------------------------------------------------------------------|
-| `DFE_ARCHIVER_VERSION`                           | Version of dfe-archiver to use                                                       | none -- `make stack` pins it; unset is a hard-fail                                                            |
-| `DFE_ARCHIVER_PROMETHEUS_PORT`                   | Archiver Prometheus port                                                             | `9093`                                                              |
-
-### DFE Fetcher
-
-| Variable                                         | Use                                                                                  | Default                                                             |
-|--------------------------------------------------|--------------------------------------------------------------------------------------|---------------------------------------------------------------------|
-| `DFE_FETCHER_VERSION`                            | Version of dfe-fetcher to use                                                        | none -- `make stack` pins it; unset is a hard-fail                                                            |
-| `DFE_FETCHER_INGEST_PORT`                        | Fetcher ingest port                                                                  | `8082`                                                              |
-| `DFE_FETCHER_PROMETHEUS_PORT`                    | Fetcher Prometheus port                                                              | `9094`                                                              |
-| `AWS_ACCESS_KEY_ID`                              | AWS access key. Goes in `env/fetcher.env`, NOT `.env` -- the fetcher config reads it via `env:`  | -                                    |
-| `AWS_SECRET_ACCESS_KEY`                          | AWS secret key. Same file as above                                                   | -                                                                   |
-
-The AWS **region** is not an environment variable: it is a literal in
-`config/fetcher/aws-*.yaml` (`region: us-west-2`), because only the two
-credential fields are `env:`-interpolated. Change it there.
-
-### DFE Loader
-
-| Variable                                         | Use                                                                                  | Default                                                             |
-|--------------------------------------------------|--------------------------------------------------------------------------------------|---------------------------------------------------------------------|
-| `DFE_LOADER_VERSION`                             | Version of dfe-loader to use                                                         | none -- `make stack` pins it; unset is a hard-fail                                                            |
-| `DFE_LOADER_PROMETHEUS_PORT`                     | Loader Prometheus port                                                               | `9091`                                                              |
-| `DFE_LOADER_GRPC_PORT`                           | Loader gRPC port                                                                     | `50051`                                                             |
-
-### DFE Receiver
-
-| Variable                                         | Use                                                                                  | Default                                                             |
-|--------------------------------------------------|--------------------------------------------------------------------------------------|---------------------------------------------------------------------|
-| `DFE_RECEIVER_VERSION`                           | Version of dfe-receiver to use                                                       | none -- `make stack` pins it; unset is a hard-fail                                                            |
-| `DFE_RECEIVER_BEATS_PORT`                        | Receiver Beats port                                                                  | `5044`                                                              |
-| `DFE_RECEIVER_GRPC_PORT`                         | Receiver gRPC port                                                                   | `6000`                                                              |
-| `DFE_RECEIVER_HEC_PORT`                          | Receiver HEC port                                                                    | `8088`                                                              |
-| `DFE_RECEIVER_HTTP_PORT`                         | Receiver HTTP port                                                                   | `8080`                                                              |
-| `DFE_RECEIVER_OTLP_GRPC_PORT`                    | Receiver OTLP gRPC port                                                              | `4317`                                                              |
-| `DFE_RECEIVER_OTLP_HTTP_PORT`                    | Receiver OTLP HTTP port                                                              | `4318`                                                              |
-| `DFE_RECEIVER_PROMETHEUS_PORT`                   | Receiver Prometheus port                                                             | `9090`                                                              |
-
-### DFE Transform Vector
-
-| Variable                                         | Use                                                                                  | Default                                                             |
-|--------------------------------------------------|--------------------------------------------------------------------------------------|---------------------------------------------------------------------|
-| `DFE_TRANSFORM_VECTOR_VERSION`                   | Version of dfe-transform-vector to use                                               | none -- `make stack` pins it; unset is a hard-fail                                                            |
-| `DFE_TRANSFORM_VECTOR_PROMETHEUS_PORT`           | Transform Vector Prometheus port                                                     | `9095`                                                              |
-| `DFE_TRANSFORM_VECTOR_API_PORT`                  | Transform Vector API port                                                            | `8686`                                                              |
-
-### DFE Transform VRL
-
-| Variable                                         | Use                                                                                  | Default                                                             |
-|--------------------------------------------------|--------------------------------------------------------------------------------------|---------------------------------------------------------------------|
-| `DFE_TRANSFORM_VRL_VERSION`                      | Version of dfe-transform-vrl to use                                                  | none -- `make stack` pins it; unset is a hard-fail                                                            |
-| `DFE_TRANSFORM_VRL_PROMETHEUS_PORT`              | Transform VRL Prometheus port                                                        | `9096`                                                              |
-
-### ClickHouse
-
-| Variable                                         | Use                                                                                  | Default                                                             |
-|--------------------------------------------------|--------------------------------------------------------------------------------------|---------------------------------------------------------------------|
-| `CLICKHOUSE_VERSION`                             | Version of ClickHouse to use                                                         | none -- `make stack` pins it from the DFE stack SSoT; unset is a hard-fail                |
-| `CLICKHOUSE_HOST`                                | External ClickHouse host (skips Docker container)                                    | `clickhouse`                                                        |
-| `CLICKHOUSE_HTTP_PORT`                           | ClickHouse HTTP port                                                                 | `8123`                                                              |
-| `CLICKHOUSE_NATIVE_PORT`                         | ClickHouse native protocol port                                                      | `9000`                                                              |
-| `CLICKHOUSE_DB`                                  | ClickHouse initialisation database                                                   | `default`                                                           |
-| `CLICKHOUSE_USERNAME`                            | ClickHouse username to connect with                                                  | `default`                                                           |
-| `CLICKHOUSE_PASSWORD`                            | ClickHouse password associated to user                                               | -                                                                   |
-
-### Kafka - General
-
-| Variable                                         | Use                                                                                  | Default                                                             |
-|--------------------------------------------------|--------------------------------------------------------------------------------------|---------------------------------------------------------------------|
-| `KAFKA_BACKEND`                                  | Kafka backend for `kafka` transport profiles                                         | `redpanda`                                                          |
-| `KAFKA_PLAINTEXT_HOST_PORT`                      | Kafka plaintext host port (host-facing)                                              | `19092`                                                             |
-| `KAFKA_PLAINTEXT_PORT`                           | Kafka plaintext port (in-network)                                                    | `9092`                                                              |
-
-### Apache Kafka
-
-| Variable                                         | Use                                                                                  | Default                                                             |
-|--------------------------------------------------|--------------------------------------------------------------------------------------|---------------------------------------------------------------------|
-| `APACHE_KAFKA_VERSION`                           | Version of Apache Kafka to use                                                       | none -- `make stack` pins it from the DFE stack SSoT; unset is a hard-fail                |
-| `KAFKA_ADVERTISED_LISTENERS`                     | Listener addresses advertised to clients/brokers                                     | `PLAINTEXT://kafka:9092,PLAINTEXT_HOST://localhost:19092`           |
-| `KAFKA_AUTO_CREATE_TOPICS_ENABLE`                | Toggle auto creation of topics                                                       | `true`                                                              |
-| `KAFKA_CLUSTER_ID`                               | Name of the Kafka cluster                                                            | `dfe-docker-dev-cluster-01`                                         |
-| `KAFKA_CONTROLLER_LISTENER_NAMES`                | Listeners used by the controller                                                     | `CONTROLLER`                                                        |
-| `KAFKA_CONTROLLER_QUORUM_VOTERS`                 | Set of voters                                                                        | `1@kafka:29092`                                                     |
-| `KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS`         | Time (ms) group coordinator waits before initial rebalance                           | `0`                                                                 |
-| `KAFKA_INTER_BROKER_LISTENER_NAME`               | Listener used for communication between brokers                                      | `PLAINTEXT`                                                         |
-| `KAFKA_LISTENER_SECURITY_PROTOCOL_MAP`           | Map of listener names and security protocols                                         | `CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT` |
-| `KAFKA_LISTENERS`                                | List of listeners                                                                    | `PLAINTEXT://:9092,PLAINTEXT_HOST://:19092,CONTROLLER://:29092`     |
-| `KAFKA_NODE_ID`                                  | Node ID associated with the roles                                                    | `1`                                                                 |
-| `KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR`         | Replication factor for the offsets topic                                             | `1`                                                                 |
-| `KAFKA_PROCESS_ROLES`                            | Roles the process will use                                                           | `broker,controller`                                                 |
-| `KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR` | Replication factor for the transaction topic                                         | `1`                                                                 |
-| `KAFKA_TRANSACTION_STATE_LOG_MIN_ISR`            | Minimum ISR for transaction topic                                                    | `1`                                                                 |
-
-### Kafka Redpanda
-
-| Variable                                         | Use                                                                                  | Default                                                             |
-|--------------------------------------------------|--------------------------------------------------------------------------------------|---------------------------------------------------------------------|
-| `REDPANDA_VERSION`                               | Version of Redpanda to use                                                           | none -- `make stack` pins it from the DFE stack SSoT; unset is a hard-fail                |
-| `REDPANDA_MEMORY`                                | Memory cap for the Redpanda broker (Seastar reserves this up front)                  | `1G`                                                                |
-
-### Kafka UI (Kafbat)
-
-| Variable                                         | Use                                                                                  | Default                                                             |
-|--------------------------------------------------|--------------------------------------------------------------------------------------|---------------------------------------------------------------------|
-| `KAFBAT_ENABLED`                                 | Toggle to turn on Kafbat                                                             | `true`                                                              |
-| `KAFBAT_VERSION`                                 | Version of Kafbat to use                                                             | none -- `make stack` pins it from the DFE stack SSoT; unset is a hard-fail                |
-| `KAFBAT_DYNAMIC_CONFIG_ENABLED`                  | Toggle runtime config changes                                                        | `true`                                                              |
-| `KAFBAT_KAFKA_CLUSTERS_0_BOOTSTRAPSERVERS`       | Kafka bootstrap server                                                               | `kafka:9092`                                                        |
-| `KAFBAT_KAFKA_CLUSTERS_0_NAME`                   | Kafka cluster name                                                                   | `dfe-local`                                                         |
-| `KAFBAT_PORT`                                    | Kafbat port                                                                          | `8081`                                                              |
-
-## Core DFE Components
-
-| Variable                                         | Use                                                                                  | Default                                                             |
-|--------------------------------------------------|--------------------------------------------------------------------------------------|---------------------------------------------------------------------|
-| `DFE_CORE_ENABLED`                               | Toggle to turn on core components                                                    | `true`                                                              |
-| `DFE_ENGINE_VERSION`                             | Version of dfe-engine to use                                                         | none -- `make stack` pins it; unset is a hard-fail                                                            |
-| `DFE_ENGINE_PORT`                                | Port used by dfe-engine                                                              | `8003`                                                              |
-| `DFE_ENGINE_CONFIG_DIR`                          | Path to config directory                                                             | `/app/config`                                                       |
-| `DFE_ENGINE_SCHEMAS_DIR`                         | Path to schemas directory                                                            | `/app/schemas`                                                      |
-| `DFE_UI_VERSION`                                 | Version of dfe-ui to use                                                             | none -- `make stack` pins it; unset is a hard-fail                                                            |
-| `DFE_UI_PORT`                                    | Port used by dfe-ui                                                                  | `3000`                                                              |
-| `DFE_UI_NODE_ENV`                                | Node environment of dfe-ui                                                           | `production`                                                        |
-
-## Self-monitoring (opt-in)
-
-Off by default. `DFE_OTEL_ENABLED=true` (or a profile declaring `otel: true`, as `single` does) starts a collector that takes the stack's own telemetry over OTLP and writes the `otel` ClickHouse database, which HyperDX reads. Nothing is scraped, and the collector's OTLP ports stay on the Compose network. Full picture, including which services report today: [operating.md](docs/observability.md).
-
-| Variable                                         | Use                                                                                  | Default                                                             |
-|--------------------------------------------------|--------------------------------------------------------------------------------------|---------------------------------------------------------------------|
-| `DFE_OTEL_ENABLED`                               | Toggle to start the collector                                                        | `false`                                                             |
-| `DFE_OTEL_COLLECTOR_VERSION`                     | Version of otel/opentelemetry-collector-contrib                                      | none -- `make stack` pins it; unset is a hard-fail                  |
-| `DFE_OTEL_EXPORTER_ENDPOINT`                     | Where services push; empty exports nothing                                           | empty (the profile points it at the bundled collector)              |
-| `DFE_OTEL_DATABASE`                              | ClickHouse database the collector writes                                             | `otel`                                                              |
-| `DFE_OTEL_HEALTH_PORT`                           | Collector `health_check` host port                                                   | `13133`                                                             |
-| `DFE_OTEL_COLLECTOR_LOG_LEVEL`                   | Collector's own log level                                                            | `warn`                                                              |
-| `DFE_ENGINE_METRICS_BACKEND`                     | dfe-engine metrics backend; `opentelemetry` is dual (push + `/metrics`)              | `prometheus` (the profile sets `opentelemetry`)                     |
-
-## HyperDX (opt-in observability)
-
-Off by default. `DFE_HYPERDX_ENABLED=true` starts `hyperdx` (API + App) plus its `hyperdx-ferretdb` and `hyperdx-postgres` dependencies, sharing the always-on ClickHouse.
-
-| Variable                                         | Use                                                                                  | Default                                                             |
-|--------------------------------------------------|--------------------------------------------------------------------------------------|---------------------------------------------------------------------|
-| `DFE_HYPERDX_ENABLED`                            | Toggle to start HyperDX + FerretDB + Postgres                                        | `false`                                                             |
-| `DFE_HYPERDX_VERSION`                            | Version of hyperi-hyperdx to use                                                     | `latest` -- the ONE image not hard-failed, because the fork is unpublished so the SSoT cannot pin it |
-| `DFE_HYPERDX_API_PORT`                           | HyperDX API host port                                                                | `8000`                                                              |
-| `DFE_HYPERDX_APP_PORT`                           | HyperDX App UI host port                                                             | `8090`                                                              |
-| `DFE_HYPERDX_APP_URL`                            | Base URL the browser uses to reach HyperDX                                           | `http://localhost`                                                  |
-| `HYPERDX_THEME`                                  | UI theme (NEXT_PUBLIC_THEME)                                                         | `dfe`                                                               |
-| `HYPERDX_POSTGRES_USER`                          | FerretDB/Postgres user                                                               | `hyperdx`                                                           |
-| `HYPERDX_POSTGRES_PASSWORD`                      | FerretDB/Postgres password                                                           | `hyperdx`                                                           |
-| `HYPERDX_FERRETDB_VERSION`                       | FerretDB image version                                                               | none -- `make stack` pins it from the DFE stack SSoT; unset is a hard-fail                |
-| `HYPERDX_POSTGRES_VERSION`                       | Postgres/DocumentDB image version                                                    | none -- `make stack` pins it from the DFE stack SSoT; unset is a hard-fail                |
-
-## Default Ports
-
-| Port  | Service              | Protocol           |
-|-------|----------------------|--------------------|
-| 3000  | dfe-proxy            | Web UI (envoy fronts dfe-ui, which publishes no host port) |
-| 6000  | dfe-receiver         | gRPC               |
-| 8000  | hyperdx              | API                |
-| 8003  | dfe-engine           | HTTP API           |
-| 8080  | dfe-receiver         | HTTP ingest        |
-| 8081  | Kafbat               | Web UI             |
-| 8082  | dfe-fetcher          | HTTP ingest        |
-| 8090  | hyperdx              | App UI             |
-| 8123  | ClickHouse           | HTTP API           |
-| 8686  | dfe-transform-vector | Vector API         |
-| 9000  | ClickHouse           | Native protocol    |
-| 9090  | dfe-receiver         | Prometheus metrics |
-| 9091  | dfe-loader           | Prometheus metrics |
-| 9092  | Kafka (any backend)  | Plaintext          |
-| 9093  | dfe-archiver         | Prometheus metrics |
-| 9094  | dfe-fetcher          | Prometheus metrics |
-| 9095  | dfe-transform-vector | Prometheus metrics |
-| 9096  | dfe-transform-vrl    | Prometheus metrics |
-| 13133 | otel-collector       | health_check       |
-| 19092 | Kafka (any backend)  | Plaintext host     |
-| 50051 | dfe-loader           | gRPC               |
-
-Additional receiver ports (commented out by default in docker-compose.yml):
-4317 (OTLP gRPC), 4318 (OTLP HTTP), 5044 (Beats), 8088 (HEC).
-
-## ClickHouse Schema
-
-**dfe-engine is the schema authority.** It ships `/app/schemas` inside its own
-image (pinned by `DFE_ENGINE_VERSION`) and creates the ClickHouse objects at
-startup; the loader pre-warms those schemas into its cache. Nothing in this repo
-provisions tables.
-
-- `dfe` - master database for all DFE related tables
-- `dfe.default` - catch-all for unrouted events, carrying `_tags` (JSON) among
-  the profile columns
-
-That last detail matters more than it looks: the e2e suite and the power-on self
-test both identify their own rows by reading `_tags.marker` back out. If a
-deployment provisions a schema without `_tags`, both will correctly refuse to
-claim they verified anything.
-
-## Container Images
-
-Images are published from the component repos:
-
-- `ghcr.io/hyperi-io/dfe-archiver`
-- `ghcr.io/hyperi-io/dfe-engine`
-- `ghcr.io/hyperi-io/dfe-fetcher`
-- `ghcr.io/hyperi-io/dfe-loader`
-- `ghcr.io/hyperi-io/dfe-receiver`
-- `ghcr.io/hyperi-io/dfe-transform-vector`
-- `ghcr.io/hyperi-io/dfe-transform-vrl`
-- `ghcr.io/hyperi-io/dfe-ui`
+Every environment variable, the port map and the image list are in
+[docs/configuration.md](docs/configuration.md).
 
 ## Licence
 

@@ -115,7 +115,7 @@ still production, and the defaults here are tuned for a laptop.
 
 | You want to | Read |
 |-------------|------|
-| Understand how the pieces fit | [ARCHITECTURE.md](../ARCHITECTURE.md) |
+| Understand how the pieces fit | [architecture.md](architecture.md) |
 | Run this where others depend on it | [operating.md](operating.md) |
 | Work on a DFE component | [developing.md](developing.md) |
 | Work out why something is broken | [troubleshooting.md](troubleshooting.md) |

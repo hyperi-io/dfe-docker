@@ -18,7 +18,7 @@ What you get from it is a running pipeline that either pulls published images or
 compiles your local component source, plus two harnesses that prove events
 actually traverse it.
 
-Read [ARCHITECTURE.md](../ARCHITECTURE.md) first if you have not: which services
+Read [architecture.md](architecture.md) first if you have not: which services
 exist, and how a profile decides which of them run.
 
 ## Prerequisites

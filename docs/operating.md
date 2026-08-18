@@ -333,4 +333,4 @@ each component actually does, and why `/metrics` still exists are all in
 
 - [README.md](../README.md) -- quick start, profiles, full environment variable reference
 - [troubleshooting.md](troubleshooting.md) -- reading stack state, known issues, common failures
-- [ARCHITECTURE.md](../ARCHITECTURE.md) -- components, transports, and how data moves
+- [architecture.md](architecture.md) -- components, transports, and how data moves

@@ -156,4 +156,4 @@ proxy. Outcomes and opt-out:
 
 - [operating.md](operating.md) -- exposure, limits, secrets, upgrades, the dial
 - [troubleshooting.md](troubleshooting.md) -- reading stack state, diagnosing failures
-- [../ARCHITECTURE.md](../ARCHITECTURE.md) -- components, transports, how data moves
+- [architecture.md](architecture.md) -- components, transports, how data moves
