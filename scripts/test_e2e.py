@@ -40,10 +40,10 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 from shutil import rmtree, which
-from urllib.error import URLError
+from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
-from _common import _load_dotenv
+from _common import FALSY, _load_dotenv
 from _pipeline import MARKER_EXPRESSIONS  # noqa: F401 - re-exported for callers
 from _pipeline import ch_marker_count as _ch_marker_count
 
@@ -85,6 +85,8 @@ SERVICE_CONFIG_MOUNTS = {
     "dfe-fetcher": "/etc/dfe/fetcher.yaml",
     "dfe-loader": "/etc/dfe/loader.yaml",
     "dfe-receiver": "/etc/dfe-receiver/config.yaml",
+    "dfe-transform-vector": "/etc/dfe-transform-vector/config.yaml",
+    "dfe-transform-vrl": "/etc/dfe-transform-vrl/config.yaml",
 }
 
 KNOWN_DFE_SERVICES = set(SERVICE_CONFIG_MOUNTS.keys())
@@ -102,6 +104,9 @@ KNOWN_DFE_SERVICES = set(SERVICE_CONFIG_MOUNTS.keys())
 # ------------------------------------------------------------------------------
 SCHEMA_AUTHORITY_SERVICE = "dfe-engine"
 SCHEMA_AUTHORITY_PROFILE = "core"
+# The rest of the `core` profile: the user-facing surface a complete-stack test
+# asserts against. dfe-engine is started separately, earlier, as the authority.
+CORE_SURFACE_SERVICES = ["dfe-ui", "dfe-proxy"]
 TARGET_DB = "dfe"
 TARGET_TABLE = "default"
 
@@ -127,9 +132,9 @@ CLICKHOUSE_URL = os.environ.get(
 CLICKHOUSE_USERNAME = os.environ.get("CLICKHOUSE_USERNAME", "default")
 CLICKHOUSE_PASSWORD = os.environ.get("CLICKHOUSE_PASSWORD", "")
 # Readiness, not liveness -- the harness needs "usable", not "the process exists".
-# The scalo-RS services use /readyz, matching the compose healthchecks. dfe-engine
-# keeps /health/ready: same semantic, and it is the spelling verified answering on
-# the pinned image regardless of which scalo-py version is baked in.
+# Every service uses /readyz, matching the compose healthchecks. The
+# /health/live|ready|startup aliases are gone from the scalo-py in the pinned
+# dfe-engine and 404, which reads as an engine that never comes ready.
 DFE_LOADER_HEALTH_URL = os.environ.get(
     "DFE_LOADER_HEALTH_URL",
     f"http://localhost:{os.environ.get('DFE_LOADER_PROMETHEUS_PORT', '9091')}/readyz",
@@ -148,7 +153,7 @@ DFE_FETCHER_HEALTH_URL = os.environ.get(
 )
 DFE_ENGINE_HEALTH_URL = os.environ.get(
     "DFE_ENGINE_HEALTH_URL",
-    f"http://localhost:{os.environ.get('DFE_ENGINE_PORT', '8003')}/health/ready",
+    f"http://localhost:{os.environ.get('DFE_ENGINE_PORT', '8003')}/readyz",
 )
 DFE_FETCHER_INGEST_URL = os.environ.get(
     "DFE_FETCHER_INGEST_URL",
@@ -229,6 +234,8 @@ class TestCase:
     marker: str
     persistent_services: list[str] = field(default_factory=list)
     expected_topics: list[str] = field(default_factory=list)
+    extra_services: list[str] = field(default_factory=list)
+    expected_http: list[dict] = field(default_factory=list)
 
 
 # ------------------------------------------------------------------------------
@@ -458,6 +465,20 @@ def resolve_services_profile(profile_name):
     if transport == "kafka":
         compose_profiles += [KAFKA_BACKEND_PROFILE, KAFKA_UI_PROFILE]
 
+    # Footprint keys from service_profiles.yaml, defaults matching
+    # scripts/resolve_profile.py. dfe-engine already starts as the schema
+    # authority; `core` adds the UI and the proxy so a complete-stack profile is
+    # tested whole. `clickhouse` and `hyperdx` are ignored: the suite owns the
+    # warehouse it asserts against and carries no HyperDX assertions.
+    extra_services = []
+    if str(profile.get("core", "true")).strip().lower() not in FALSY:
+        extra_services += CORE_SURFACE_SERVICES
+    if (
+        transport == "kafka"
+        and str(profile.get("kafbat", "true")).strip().lower() not in FALSY
+    ):
+        extra_services.append("kafka-ui")
+
     services = {}
     for svc_name, svc_conf in raw_services.items():
         if svc_name not in KNOWN_DFE_SERVICES:
@@ -468,7 +489,7 @@ def resolve_services_profile(profile_name):
             )
         services[svc_name] = f"config/{svc_conf['config_path']}"
 
-    return compose_profiles, services
+    return compose_profiles, services, extra_services
 
 
 # ==============================================================================
@@ -781,7 +802,7 @@ def stack_up(mode, test, services):
     for profile in test.compose_profiles:
         profile_flags += ["--profile", profile]
     base_cmd = ["docker", "compose"] + compose_files + profile_flags
-    up_args = base_cmd + ["up", "-d"] + sorted(services.keys())
+    up_args = base_cmd + ["up", "-d"] + sorted(set(services) | set(test.extra_services))
 
     up_result = run_cmd(up_args, capture=not (LOG_LEVEL == "DEBUG"))
     if up_result.returncode != 0:
@@ -1272,6 +1293,39 @@ def verify_topics(ctx, test_name, expected_topics):
             mark_fail(ctx, f"[{test_name}] 'Kafka' topic '{topic}' not found")
 
 
+# ---------------------------------------------------------------------------
+# Verify HTTP
+# - Asserts the user-facing surface answers: the proxy origin, and what it routes
+#   to. A complete-stack profile is only proven when the UI and the engine API
+#   both answer on ONE origin, which is the whole reason dfe-proxy exists.
+# ---------------------------------------------------------------------------
+def verify_http(ctx, test_name, checks):
+    LOGGER.info("Verifying HTTP surface...")
+
+    for check in checks:
+        url = (check or {}).get("url")
+        if not (url):
+            continue
+        want = int(check.get("status", 200))
+        needle = check.get("contains", "")
+        try:
+            with urlopen(Request(url), timeout=15) as response:
+                got = response.status
+                body = response.read().decode("utf-8", errors="replace")
+        except HTTPError as error:
+            got, body = error.code, ""
+        except (URLError, OSError) as error:
+            mark_fail(ctx, f"[{test_name}] {url} unreachable: {error}")
+            continue
+
+        if got != want:
+            mark_fail(ctx, f"[{test_name}] {url} returned {got}, wanted {want}")
+        elif needle and needle not in body:
+            mark_fail(ctx, f"[{test_name}] {url} is {got} but lacks {needle!r}")
+        else:
+            mark_pass(ctx, f"[{test_name}] {url} -> {got}")
+
+
 # ==============================================================================
 # Test Functions
 # - Functions for resolving test cases from config and running the test flow
@@ -1286,7 +1340,7 @@ def resolve_test_case(test_config, global_config):
     test_name = get_config("name", test_config, global_config, required=True)
     profile_name = get_config("profile", test_config, global_config, required=True)
 
-    compose_profiles, services = resolve_services_profile(profile_name)
+    compose_profiles, services, extra_services = resolve_services_profile(profile_name)
 
     # Apply any per-test config overrides
     overrides = test_config.get("config_overrides") or {}
@@ -1311,6 +1365,10 @@ def resolve_test_case(test_config, global_config):
         ).replace("-", "_"),
         expected_topics=get_config(
             "expected_topics", test_config, global_config, is_list=True
+        ),
+        extra_services=extra_services,
+        expected_http=get_config(
+            "expected_http", test_config, global_config, is_list=True
         ),
         marker=f"{RUN_ID}-{test_name}",
     )
@@ -1392,6 +1450,10 @@ def run_test(ctx, mode, test, persistent_services):
     if KAFKA_BACKEND_PROFILE in test.compose_profiles and test.expected_topics:
         print()
         verify_topics(ctx, test.name, test.expected_topics)
+
+    if test.expected_http:
+        print()
+        verify_http(ctx, test.name, test.expected_http)
 
     # Dump container logs for debugging purposes, then tear down the stack if configured to do so
     dump_logs()

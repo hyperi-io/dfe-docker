@@ -26,29 +26,34 @@ not show up there while still holding its ports.
 
 Health endpoints, straight from the host:
 
+Three paths, the same three on every DFE service: `/livez` (process alive),
+`/readyz` (can it serve -- dependency checks live here) and `/metrics`. There are
+no aliases. `/healthz`, `/health/live`, `/health/ready` and `/health/startup` are
+retired and return **404** on every image the stack pins, so a probe still aimed
+at one reads as a service that never comes up.
+
 | Service | Host port | Paths |
 |---|---|---|
-| dfe-receiver | 9090 | `/healthz` (live), `/readyz` (ready), `/metrics` |
+| dfe-receiver | 9090 | `/livez`, `/readyz`, `/metrics` |
 | dfe-loader | 9091 | same |
 | dfe-archiver | 9093 | same |
 | dfe-fetcher | 9094 | same |
 | dfe-transform-vector | 9095 | same |
 | dfe-transform-vrl | 9096 | same |
-| dfe-engine | 8003 | `/health/live`, `/health/ready`, `/health/startup` |
-| dfe-proxy | 3000 | `/livez` (served by envoy itself, no backend) |
-| hyperdx | 8000 | `/health` |
+| dfe-engine | 8003 | `/livez`, `/readyz` (its `/metrics` is on the container's own 9090, not published) |
+| dfe-proxy | 3000 | `/livez`, served by envoy itself with no backend |
+| hyperdx | 8000 | `/health` -- a third-party app on its own convention |
 
-The Rust components are scalo-rs: `/healthz` returns alive unconditionally,
-`/readyz` folds in the dependency checks, and both sit on the metrics port
-alongside `/metrics`. `dfe-engine` is scalo-py -- the stack targets the
-`/health/*` paths on it, not the `*z` paths the Rust services use.
+`dfe-ui` is the exception worth knowing: it answers **200 on every path**,
+including ones that do not exist, so its healthcheck proves the Node server is
+listening and nothing more.
 
 Every one of those ports binds `DFE_BIND_HOST` (`127.0.0.1` by default), so curl
 them from the box itself, not from your laptop.
 
 ```bash
 curl -sf http://localhost:9091/readyz     # loader ready?
-curl -sf http://localhost:8003/health/ready
+curl -sf http://localhost:8003/readyz     # engine ready?
 ```
 
 ### Why the compose healthchecks use readiness, not liveness
@@ -58,11 +63,10 @@ readiness, because in Compose the healthcheck is *also* what
 `depends_on: condition: service_healthy` gates on -- it is the only startup gate
 there is.
 
-Gate on `/healthz` and a loader that cannot reach ClickHouse still reports
+Gate on `/livez` and a loader that cannot reach ClickHouse still reports
 healthy. The receiver then starts against it, `docker compose ps` shows green,
-and events pile up with nothing surfacing the fault. `/readyz` is the
-Kubernetes-standard path and folds in the dependency checks, so it satisfies both
-the naming standard and the gate. Kubernetes itself has separate liveness and
+and events pile up with nothing surfacing the fault. `/readyz` is where the
+dependency checks live, so it is the one that can gate a start. Kubernetes itself has separate liveness and
 readiness probes and ignores `HEALTHCHECK` entirely, so it never has this
 tension.
 
@@ -252,7 +256,7 @@ Symptom: `docker compose ps` shows a DFE service unhealthy or perpetually
 starting, `docker inspect` reports `Health check exceeded timeout`, and yet
 events are flowing through that very service. Curl its port from inside the
 container and the connection is *accepted* instantly and then never answered --
-not refused, not reset, just silent. `/healthz` and `/metrics` behave the same
+not refused, not reset, just silent. `/livez` and `/metrics` behave the same
 way, which rules out the readiness logic.
 
 That is Tokio worker-thread starvation, and the cause is the CPU ceiling.

@@ -57,3 +57,22 @@ tests:
     expected_topics:
       - default_land
       - simple_fetcher_to_loader_kafka_land
+
+  # The complete single-node stack: receiver, fetcher, transform, loader and
+  # archiver over Kafka, with the engine, UI and proxy in front. The HTTP checks
+  # assert the single-origin contract dfe-proxy exists for -- UI and engine API
+  # on ONE origin.
+  - name: complete-single-node-stack
+    profile: single
+    expected_topics:
+      - default_land
+      - complete_single_node_stack_land
+    expected_http:
+      - url: http://localhost:3000/livez
+        status: 200
+        contains: "ok"
+      - url: http://localhost:3000/
+        status: 200
+      - url: http://localhost:3000/api/v1/auth/setup-status
+        status: 200
+        contains: "initial_setup"
