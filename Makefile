@@ -163,8 +163,8 @@ limits: ## Show the resource limits and totals, computed from the resolved confi
 
 .PHONY: check-python
 check-python: ## Lint the helper scripts (config in ruff.toml)
-	ruff check scripts/
-	ruff format --check scripts/
+	ruff check scripts/ ops/
+	ruff format --check scripts/ ops/
 
 .PHONY: check-compose
 check-compose: ## Resolve compose on the registry, dev and live paths, both Kafka backends

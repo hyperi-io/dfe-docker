@@ -316,6 +316,13 @@ default it tracks STABLE releases only; `DFE_UPDATE_ALLOW_PRERELEASE=1` (comment
 in the service unit) also takes `-rc` builds. See
 [ops/daemon-update/README.md](../ops/daemon-update/README.md).
 
+The daemon fast-forwards the checkout before pinning, because a stack version is
+images plus the compose that runs them. It refuses rather than pull over
+uncommitted changes to tracked files, and `DFE_UPDATE_SKIP_GIT_PULL=1` turns the
+refresh off for a checkout managed another way. On the pinned path that is your
+job: `git pull` before `make stack`, or you get new images under an old compose
+file.
+
 The two are mutually exclusive: a track-latest box lets the daemon own the
 version, so leave `version.pin` out of the dial there. `make modes` calls it
 `AMBIGUOUS` if it finds both set.
