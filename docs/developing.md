@@ -248,6 +248,29 @@ The delta alone would pass on somebody else's rows; the marker alone would not
 notice a partial load. A marker column it cannot locate is reported, never
 silently treated as a pass.
 
+A profile declaring `otel` adds a third assertion -- the stack's own telemetry
+landing fresh in the `otel` database -- and `expected_http` adds a fourth, a
+status and optional body check per URL. `single` uses both, which is what makes
+`complete-single-node-stack` a whole-stack test rather than a data-path one.
+
+Two things about the runner worth knowing before you debug it:
+
+- **It waits on named services, never on a whole profile.** `docker compose up
+  --wait` treats a container that EXITS as a failure even on exit 0, and the
+  topic-init services are one-shots that are supposed to exit. Waiting on the
+  profile swept them in and failed every time, regardless of the broker. That was
+  silently breaking the default Redpanda backend -- `rpk` finishes in about a
+  second, so init had always exited by the time `--wait` looked -- while the
+  Apache backend passed on luck, `kafka-topics.sh` being slow enough to still be
+  running. A test that passes on timing is not passing.
+- **It deletes the `_load` sibling of every expected `_land` topic before each
+  run.** Broker volumes outlive containers, so one earlier transform run leaves
+  `default_load` on the broker forever, and scalo's suppression rule then drops
+  `default_land` from every non-transform loader's subscription. See
+  [troubleshooting.md](troubleshooting.md#configloaderkafka-loadyaml-consumes-a-topic-nothing-pre-creates).
+  Deleting it per run means a run depends on the test definition rather than on
+  broker history.
+
 ## Static checks
 
 `make check` runs what CI runs, so a green local run means a green pipeline.

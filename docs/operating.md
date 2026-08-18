@@ -265,116 +265,12 @@ Eight named volumes hold all durable state:
 eight, which now includes the warehouse. It always removed volumes; what changed
 is that ClickHouse data is in one.
 
-## The deployment dial: one file the deploy reads
+## Deploying and upgrading
 
-A repeatable deploy turns ONE file. `deployment.example.yaml` is the template;
-copy it to `deployment.yaml` (gitignored, never committed) and populate it. That
-copy is the SSoT for the deploy -- registry, pinned version, service footprint,
-host exposure, the broker, and where the pull credential comes from -- and `make
-dial` renders its docker-vm slice into `.env`. A redeploy is a dial edit, not a
-hunt through `.env`:
-
-```bash
-make dial && make stack && make ci
-```
-
-`make dial` writes the deploy-controlled keys over the `.env` that `make init`
-generated, `make stack` pins the certified image set from the dial's
-`version.pin`, and `make ci` pulls and starts it. Both `stack` and `ci` depend
-on `make login`, so registry auth happens on the way through.
-
-Two properties keep the file safe to hand around. **Secrets are references,
-never values** -- `secrets.backend` and `secrets.ref` name WHERE the GHCR pull
-credential lives (OpenBao by default), and whoever deploys resolves it. On a
-lone box you set `DFE_GHCR_USERNAME` and `DFE_GHCR_TOKEN` in `.env` by hand; in
-the estate a thin caller reads them from the backend and injects them, so the
-dial itself carries no token. **Estate endpoints stay blank** -- an empty
-`endpoints.clickhouse_host` means "use the in-stack container", and you set it
-(or let the caller inject it) only to point the engine at an external warehouse.
-
-`make login` authenticates docker and oras to `registry` from those two `.env`
-keys. `scripts/ghcr_login.py` pipes the token on stdin, so it never reaches a
-make variable or the process list, and it is a no-op when the keys are unset --
-a daemon that authed out of band is not re-authed -- which is why `stack` and
-`ci` depend on it unconditionally.
-
-This file is the docker-vm SLICE. The canonical superset -- docker-vm plus the
-Kubernetes and cloud dials, and the schema -- lives in dfe-infra, but a lone
-dfe-docker clone deploys from its own `deployment.yaml` alone, with no dfe-infra
-checkout needed.
-
-## Staying current: pinned or track-latest
-
-A box stays current one of two mutually exclusive ways. `make modes` states both
-and reports which one THIS checkout is on -- ask the stack rather than this page,
-for the same reason `make limits` exists.
-
-```bash
-make modes                                          # the contract + this box's mode
-python3 ops/daemon-update/self_update.py --dry-run  # the live latest-vs-applied
-```
-
-**Pinned (default).** `make stack VERSION=X.Y.Z && make ci` pins the whole
-certified set from the signed stack-manifest and starts it. It hard-fails rather
-than ever pull `latest`. `make dial` sets the pin from the deployment dial's
-`version.pin`, so a redeploy is a dial edit plus `make dial && make stack && make
-ci`. This is the production-safe default: nothing moves until you move it.
-
-**Track-latest (opt-in).** `ops/daemon-update/install.sh` installs a systemd timer
-that discovers the newest certified stack tag and runs the SAME `make stack` +
-`make ci`, but only when something newer has shipped. It never pulls `latest`. By
-default it tracks STABLE releases only; `DFE_UPDATE_ALLOW_PRERELEASE=1` (commented
-in the service unit) also takes `-rc` builds. See
-[ops/daemon-update/README.md](../ops/daemon-update/README.md).
-
-The daemon fast-forwards the checkout before pinning, because a stack version is
-images plus the compose that runs them. It refuses rather than pull over
-uncommitted changes to tracked files, and `DFE_UPDATE_SKIP_GIT_PULL=1` turns the
-refresh off for a checkout managed another way. On the pinned path that is your
-job: `git pull` before `make stack`, or you get new images under an old compose
-file.
-
-The two are mutually exclusive: a track-latest box lets the daemon own the
-version, so leave `version.pin` out of the dial there. `make modes` calls it
-`AMBIGUOUS` if it finds both set.
-
-> Until a GA stack ships, the only published tag is a pre-release, so a
-> stable-only track-latest daemon finds nothing to apply -- pin explicitly, or set
-> `DFE_UPDATE_ALLOW_PRERELEASE=1` knowingly.
-
-## Upgrading an existing deployment
-
-Two changes bite an existing stack. Neither is silent if you read this; both are
-silent if you do not.
-
-**ClickHouse moved to a named volume.** Its data previously lived in the
-container's writable layer and died with `docker compose down`. It now mounts
-`clickhouse-data:/var/lib/clickhouse`. On the first `make ci` after upgrading,
-the container is recreated against an **empty** volume -- anything still in the
-old writable layer is not migrated and will appear to have vanished. Export it
-before upgrading if it matters.
-
-**Most published ports moved from `0.0.0.0` to `127.0.0.1`.** Anything
-reaching this box from elsewhere -- a remote `clickhouse-client`, a Prometheus
-scrape of `:9090-9096`, a colleague's browser -- gets `connection refused` with
-no hint as to why. `DFE_BIND_HOST=0.0.0.0` restores the old behaviour, having
-read the auth section above.
-
-**`CLICKHOUSE_PASSWORD` is now generated, not blank.** `make init` mints one, so
-an upgraded stack that runs `make init` (to pick up new `.env.example` keys) gets
-a real password. ClickHouse stores the default-user credential in its data volume
-on first init, so a pre-existing `clickhouse-data` volume still expects the OLD
-(blank) password and the loader/engine/HyperDX now authenticate with the new one
--- every query fails `Authentication failed`. Two ways through:
-
-- Keep the old behaviour: set `CLICKHOUSE_PASSWORD=` (blank) in `.env` before
-  starting. `make init` only tops up a MISSING key, so an explicit blank is kept.
-- Adopt the password: set the ClickHouse default user to the generated value once
-  (`ALTER USER default IDENTIFIED BY '<value>'` against the running instance, or
-  recreate the volume if it holds nothing you need), then restart the stack.
-
-A fresh deployment has neither problem -- the volume is created with the generated
-password from the start.
+A deploy turns one file -- `deployment.yaml` -- and pins one stack version.
+`make dial && make stack && make ci` is the whole loop. Tracking a channel
+instead of a pin, and what an upgrade does to a running stack, are in
+[deploying.md](deploying.md).
 
 ## The power-on self test, and what a PASS proves
 
@@ -425,71 +321,13 @@ The other outcomes are as informative as the PASS:
 
 ## Self-monitoring
 
-The stack's own telemetry leaves by a different door from the data it ingests.
-That separation is the point: a platform that reports on itself through its own
-ingest pipeline cannot tell you when that pipeline is the thing that broke.
+The stack's own telemetry goes out over OTLP to a collector, which writes the
+`otel` ClickHouse database that HyperDX reads. Turn it on with `otel: true` on a
+profile (`single` has it) or `DFE_OTEL_ENABLED=true`.
 
-The chain is the same one the Kubernetes tier runs:
-
-```mermaid
-flowchart LR
-    apps["DFE services"] -->|OTLP push :4317| col["otel-collector"]
-    col -->|clickhouse exporter| ch[("ClickHouse<br/>otel database")]
-    ch -.->|reads, never pushed to| hdx["HyperDX"]
-
-    classDef on fill:#009E73,color:#ffffff,stroke:#000000
-    class col,ch on
-```
-
-Services **push**. Nothing scrapes them, and HyperDX is a reader of ClickHouse
-rather than a destination -- the fork ships no OTLP receiver, so the collector's
-exporter is what writes the tables HyperDX queries.
-
-Turn it on by declaring `otel: true` on a profile (the `single` profile does) or
-setting `DFE_OTEL_ENABLED=true`. Two dials, deliberately independent:
-
-| Variable | Default | Effect |
-|---|---|---|
-| `DFE_OTEL_ENABLED` | `false` | starts the bundled collector |
-| `DFE_OTEL_EXPORTER_ENDPOINT` | empty | where services push; **empty exports nothing** |
-| `DFE_OTEL_DATABASE` | `otel` | the ClickHouse database the collector writes |
-| `DFE_OTEL_HEALTH_PORT` | `13133` | the collector's `health_check` extension |
-
-Enabling the profile points the services at the bundled collector. Name an
-endpoint yourself and they push there instead, which is how you feed an external
-OTLP backend with no bundled collector at all. An empty endpoint exports nothing
-and never falls back to an OTel default -- that rule belongs to scalo, not to
-this repo.
-
-The collector's OTLP ports are **not** published to the host. Self-monitoring
-travels the Compose network only, and 4317/4318 on the host belong to
-dfe-receiver's OTLP *ingest* edge, which is a different thing entirely.
-
-### What actually reports today
-
-Only `dfe-engine`. This is worth knowing before you read an empty dashboard as a
-fault:
-
-- The six Rust services are built without scalo's `otel-metrics` Cargo feature,
-  so no OTLP exporter exists in the binary and `OTEL_EXPORTER_OTLP_ENDPOINT` is
-  inert on them (scalo-rs#28). They still serve `/metrics` for anything that
-  wants to scrape it.
-- `dfe-engine` has an exporter, but scalo-py's CLI defaults the metrics backend
-  to prometheus (scalo-py#11), so the profile sets
-  `DFE_ENGINE_METRICS_BACKEND=opentelemetry`. That backend is **dual** -- it
-  pushes OTLP and keeps serving `/metrics` -- so switching it costs a scraping
-  estate nothing.
-- `dfe-ui` carries `@opentelemetry/api` and no SDK, so it does not push either.
-  It does serve `/metrics` on its own `:3000`.
-
-This repo ships no Prometheus and scrapes nothing. `/metrics` is exposed because
-the components expose it, for whatever you point at it.
-
-Container **logs** are not collected either. The Kubernetes tier gets them from a
-daemonset tailing `/var/log/pods`; the Docker equivalent means mounting
-`/var/lib/docker/containers` into the collector, which hands it every container
-log on the host including ones with nothing to do with DFE. `docker compose logs`
-is the tool here.
+Only dfe-engine reports today, and nothing here scrapes anything. The dials, what
+each component actually does, and why `/metrics` still exists are all in
+[observability.md](observability.md).
 
 ## Related
 

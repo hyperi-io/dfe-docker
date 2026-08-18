@@ -13,6 +13,8 @@ can apply - read both if so.
 | Running this where other people depend on it - one box, an edge site, a partner deployment. Small is still production. | **Operating** | [docs/operating.md](docs/operating.md) |
 | Working on dfe-receiver, dfe-loader, dfe-engine or another component, and using this stack as your test rig. | **Developing** | [docs/developing.md](docs/developing.md) |
 | Working out why a stack is misbehaving - yours or someone else's. | **Troubleshooting** | [docs/troubleshooting.md](docs/troubleshooting.md) |
+| Standing a deployment up, or moving one to a newer certified stack. | **Deploying** | [docs/deploying.md](docs/deploying.md) |
+| Asking what the stack reports about itself - health endpoints, self-telemetry, what a passing self test proves. | **Observability** | [docs/observability.md](docs/observability.md) |
 | Wanting to know how the pieces fit together, before any of the above. | **Everyone** | [ARCHITECTURE.md](ARCHITECTURE.md) |
 
 Two things worth knowing before you start, whichever you are:
@@ -375,7 +377,7 @@ and (2) self-monitoring - the stack's own telemetry landing in the otel ClickHou
 database. Both run here. Test (2) needs a profile that declares `otel`, which
 `single` does, and `make post` makes the same pair of claims against an
 already-running stack. Only `dfe-engine` produces telemetry today - see
-[self-monitoring](docs/operating.md#self-monitoring) for why.
+[self-monitoring](docs/observability.md) for why.
 
 ### Shared dev hosts (port collision)
 
@@ -563,7 +565,7 @@ credential fields are `env:`-interpolated. Change it there.
 
 ## Self-monitoring (opt-in)
 
-Off by default. `DFE_OTEL_ENABLED=true` (or a profile declaring `otel: true`, as `single` does) starts a collector that takes the stack's own telemetry over OTLP and writes the `otel` ClickHouse database, which HyperDX reads. Nothing is scraped, and the collector's OTLP ports stay on the Compose network. Full picture, including which services report today: [operating.md](docs/operating.md#self-monitoring).
+Off by default. `DFE_OTEL_ENABLED=true` (or a profile declaring `otel: true`, as `single` does) starts a collector that takes the stack's own telemetry over OTLP and writes the `otel` ClickHouse database, which HyperDX reads. Nothing is scraped, and the collector's OTLP ports stay on the Compose network. Full picture, including which services report today: [operating.md](docs/observability.md).
 
 | Variable                                         | Use                                                                                  | Default                                                             |
 |--------------------------------------------------|--------------------------------------------------------------------------------------|---------------------------------------------------------------------|

@@ -94,14 +94,10 @@ KNOWN_DFE_SERVICES = set(SERVICE_CONFIG_MOUNTS.keys())
 
 # ------------------------------------------------------------------------------
 # Schema Authority
-# - dfe-engine provisions the ClickHouse objects (dfe.default et al.) and
-#   registers their schemas, which the loader pre-warms into its schema cache on
-#   startup. Without it the loader holds every message pending-schema and
-#   dead-letters after a timeout. So it is brought up as INFRA -- health-gated
-#   BEFORE the DFE services -- not as a per-profile DFE service. The loader routes
-#   an event to <default_db>.<_source>; the harness sends with _source = the
-#   target table, landing rows in the engine-provisioned default table (the DFE
-#   default-deploy acceptance: "the row lands in the CH default table").
+# - dfe-engine is brought up as INFRA, health-gated before the DFE services,
+#   because the loader pre-warms the schemas it registers. The harness sends with
+#   _source = the target table, so rows land in the engine-provisioned default
+#   table. docs/developing.md#end-to-end-suite----one-stack-per-test
 # ------------------------------------------------------------------------------
 SCHEMA_AUTHORITY_SERVICE = "dfe-engine"
 SCHEMA_AUTHORITY_PROFILE = "core"
@@ -768,23 +764,9 @@ def stack_up(mode, test, services):
             )
             return False
 
-        # Name the services explicitly instead of waiting on the whole profile.
-        #
-        # `docker compose up --wait` treats a container that EXITS as a failure,
-        # even on exit 0, and the topic-init service is a one-shot that is
-        # supposed to exit. Waiting on the profile therefore sweeps it in and the
-        # command always fails with `container dfe-kafka-init-... exited (0)`,
-        # regardless of whether the broker is fine.
-        #
-        # This was silently breaking the DEFAULT (redpanda) backend: rpk finishes
-        # in about a second, so init had always exited by the time --wait looked.
-        # The apache backend passed only by luck -- kafka-topics.sh is slow enough
-        # that init was usually still running and counted as "started". A test
-        # that passes on timing is not passing.
-        #
-        # Naming clickhouse and the broker scopes the wait to the two things we
-        # actually need healthy, and leaves init to the `depends_on:
-        # service_completed_successfully` gate that already handles it correctly.
+        # Named services, never the whole profile: `--wait` counts an EXITED
+        # container as a failure even on exit 0, and topic-init is a one-shot.
+        # docs/developing.md#end-to-end-suite----one-stack-per-test
         LOGGER.debug("Waiting for 'Kafka' to be healthy...")
         wait_cmd = (
             ["docker", "compose"]
@@ -1203,23 +1185,9 @@ def _parse_topic_list(stdout):
 # Suppressing Topics
 # - Expands a topic list with the siblings that would SUPPRESS it on the broker
 #
-#   The loader auto-discovers topics (`topic_regex: .*_land`) and scalo applies a
-#   default suppression rule to the result: a `<base>_load` topic REMOVES
-#   `<base>_land` from the subscription, on the assumption that a transform stage
-#   has already produced the loadable topic and the raw landing one is redundant.
-#
-#   That rule is right in production and lethal in a test suite, because the broker
-#   data volume outlives the containers. One earlier run of a transform profile --
-#   or one experiment that pre-created `default_load` -- leaves the topic on the
-#   broker indefinitely, and from then on EVERY Kafka test silently loses
-#   `default_land` from the loader's subscription. The symptom is maximally
-#   misleading: ingest returns 200 for all 1000 events, the receiver produces to
-#   `default_land`, the topic exists with a non-zero high watermark, the gRPC tests
-#   stay green, and zero rows reach ClickHouse.
-#
-#   So the suppressing sibling is deleted alongside the topic under test. It is
-#   never re-created (create_topics works from expected_topics only) -- the point is
-#   that a run depends on the test definition, not on broker history.
+#   A `<base>_load` topic removes `<base>_land` from the loader's subscription,
+#   and broker volumes outlive containers, so the sibling is deleted per run and
+#   never re-created. docs/developing.md#end-to-end-suite----one-stack-per-test
 # ---------------------------------------------------------------------------
 KAFKA_SUPPRESSION_PAIRS = (("_land", "_load"),)
 

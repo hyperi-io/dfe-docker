@@ -24,38 +24,9 @@ exist and their health, but only for the currently resolved profile -- see the
 first known issue below, because a stray container from a previous profile will
 not show up there while still holding its ports.
 
-Health endpoints, straight from the host:
-
-Three paths, the same three on every DFE service: `/livez` (process alive),
-`/readyz` (can it serve -- dependency checks live here) and `/metrics`. There are
-no aliases. `/healthz`, `/health/live`, `/health/ready` and `/health/startup` are
-retired and return **404** on every image the stack pins, so a probe still aimed
-at one reads as a service that never comes up.
-
-| Service | Host port | Paths |
-|---|---|---|
-| dfe-receiver | 9090 | `/livez`, `/readyz`, `/metrics` |
-| dfe-loader | 9091 | same |
-| dfe-archiver | 9093 | same |
-| dfe-fetcher | 9094 | same |
-| dfe-transform-vector | 9095 | same |
-| dfe-transform-vrl | 9096 | same |
-| dfe-engine | 8003 | `/livez`, `/readyz` (its `/metrics` is on the container's own 9090, not published) |
-| dfe-ui | container `:3000` | `/livez`, `/readyz`, `/metrics` -- no host port; unknown paths return the 200 app shell |
-| dfe-proxy | 3000 | `/livez`, served by envoy itself with no backend |
-| hyperdx | 8000 | `/health` -- a third-party app on its own convention |
-
-`dfe-ui` serves the same three -- `/livez`, `/readyz` and `/metrics` -- on its
-own `:3000`, alongside the app. Next.js is a single listener, so there is no
-separate observability port, and it publishes no host port at all: reach it
-through the proxy or `docker compose exec`.
-
-The trap is that an **unknown** path there returns the 200 app shell rather than
-a 404, so a probe aimed at a typo passes. `/livez` is real and returns
-`{"status":"alive"}`; `/api/livez` is not, and returns HTML with a 200.
-
-Every one of those ports binds `DFE_BIND_HOST` (`127.0.0.1` by default), so curl
-them from the box itself, not from your laptop.
+Health endpoints, straight from the host. Every DFE service serves `/livez`,
+`/readyz` and `/metrics` and nothing else -- the retired `/health*` paths 404, so
+a probe left on one reads as a service that never came up.
 
 ```bash
 curl -sf http://localhost:9091/readyz     # loader ready?
@@ -63,29 +34,9 @@ curl -sf http://localhost:8003/readyz     # engine ready?
 curl -sf http://localhost:13133/          # collector healthy? (otel profile only)
 ```
 
-### Which path each healthcheck uses, and why it differs
-
-A Docker `HEALTHCHECK` is a liveness check, so most services here use `/livez`.
-Two do not, and the reason is worth knowing when you read `docker compose ps`.
-
-Compose has no readiness condition. `depends_on: condition: service_healthy` is
-the only startup gate there is, so a service that others wait for has to report
-readiness or the gate means nothing.
-
-| Service | Path | Why |
-|---|---|---|
-| dfe-loader | `/readyz` | dfe-receiver and dfe-fetcher wait on it |
-| dfe-engine | `/readyz` | dfe-loader and dfe-proxy wait on it, and it provisions the schema they need |
-| receiver, fetcher, archiver, both transforms, ui | `/livez` | nothing gates on them |
-| otel-collector | none | the image is distroless, so nothing in it can probe `:13133`. Curl it from the host instead |
-
-Gate the loader on liveness instead and one that can never reach ClickHouse still
-reports healthy: the receiver starts against it, `docker compose ps` shows green,
-and events pile up with nothing surfacing the fault. It is the same reason the
-stack waits on ClickHouse's own readiness before starting anything that uses it.
-
-Kubernetes has separate liveness and readiness probes and ignores `HEALTHCHECK`
-entirely, so it never has to choose.
+Ports bind `DFE_BIND_HOST` (`127.0.0.1`), so curl them from the box. The full
+port table, which path each HEALTHCHECK uses and why, and dfe-ui's 200-on-unknown
+-paths trap are in [observability.md](observability.md).
 
 ## Known issues
 
