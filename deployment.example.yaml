@@ -47,9 +47,12 @@ secrets:
   backend: openbao          # openbao | aws-sm | file
   ref: secret/dfe           # base path; ghcr-pull-secret lives under it
 
-## Service footprint. Left commented, service_profiles.yaml's active_profile is
-## used. Set it to override -- the value must be a profile defined there.
-# profile: default
+## Service footprint -- the DATA-PLANE shape only. Left commented,
+## service_profiles.yaml's active_profile is used. The value must be a profile
+## key defined there (kafka-full, kafka-receiver, grpc-full, ... -- there is no
+## profile called `default`), NOT one of the k8s dial's slim/single/scale.
+## Which of core, kafbat and hyperdx run is the separate set of flags below.
+# profile: kafka-full
 
 ## docker-vm knobs. Each maps to one .env key; a blank/absent field leaves the
 ## .env default in place.
