@@ -287,15 +287,22 @@ def main() -> int:
 
         # Point the services at the bundled collector, unless .env already names
         # an endpoint -- an external OTLP backend is the other supported shape.
+        #
+        # Emitted UNCONDITIONALLY, taking the env value when there is one. Make
+        # re-execs after rebuilding an included makefile, so a line that appears
+        # only when its own variable is unset removes itself on the next pass and
+        # the file never settles -- `make ci` then restarts forever.
         if footprint["otel"]:
-            if not (os.environ.get(OTEL_ENDPOINT_ENV_VAR, "").strip()):
-                lines.append(
-                    f"export {OTEL_ENDPOINT_ENV_VAR} := {OTEL_BUNDLED_ENDPOINT}"
-                )
-            if not (os.environ.get(OTEL_ENGINE_BACKEND_ENV_VAR, "").strip()):
-                lines.append(
-                    f"export {OTEL_ENGINE_BACKEND_ENV_VAR} := {OTEL_ENGINE_BACKEND}"
-                )
+            endpoint = (
+                os.environ.get(OTEL_ENDPOINT_ENV_VAR, "").strip()
+                or OTEL_BUNDLED_ENDPOINT
+            )
+            lines.append(f"export {OTEL_ENDPOINT_ENV_VAR} := {endpoint}")
+            backend = (
+                os.environ.get(OTEL_ENGINE_BACKEND_ENV_VAR, "").strip()
+                or OTEL_ENGINE_BACKEND
+            )
+            lines.append(f"export {OTEL_ENGINE_BACKEND_ENV_VAR} := {backend}")
 
         for service_name, service_config in services.items():
             var_name = SERVICE_TO_CONFIG_VAR[service_name]
