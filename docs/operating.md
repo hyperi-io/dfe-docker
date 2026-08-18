@@ -479,6 +479,8 @@ fault:
   `DFE_ENGINE_METRICS_BACKEND=opentelemetry`. That backend is **dual** -- it
   pushes OTLP and keeps serving `/metrics` -- so switching it costs a scraping
   estate nothing.
+- `dfe-ui` carries `@opentelemetry/api` and no SDK, so it does not push either.
+  It does serve `/metrics` on its own `:3000`.
 
 This repo ships no Prometheus and scrapes nothing. `/metrics` is exposed because
 the components expose it, for whatever you point at it.

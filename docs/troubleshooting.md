@@ -41,12 +41,18 @@ at one reads as a service that never comes up.
 | dfe-transform-vector | 9095 | same |
 | dfe-transform-vrl | 9096 | same |
 | dfe-engine | 8003 | `/livez`, `/readyz` (its `/metrics` is on the container's own 9090, not published) |
+| dfe-ui | container `:3000` | `/livez`, `/readyz`, `/metrics` -- no host port; unknown paths return the 200 app shell |
 | dfe-proxy | 3000 | `/livez`, served by envoy itself with no backend |
 | hyperdx | 8000 | `/health` -- a third-party app on its own convention |
 
-`dfe-ui` is the exception worth knowing: it answers **200 on every path**,
-including ones that do not exist, so its healthcheck proves the Node server is
-listening and nothing more.
+`dfe-ui` serves the same three -- `/livez`, `/readyz` and `/metrics` -- on its
+own `:3000`, alongside the app. Next.js is a single listener, so there is no
+separate observability port, and it publishes no host port at all: reach it
+through the proxy or `docker compose exec`.
+
+The trap is that an **unknown** path there returns the 200 app shell rather than
+a 404, so a probe aimed at a typo passes. `/livez` is real and returns
+`{"status":"alive"}`; `/api/livez` is not, and returns HTML with a 200.
 
 Every one of those ports binds `DFE_BIND_HOST` (`127.0.0.1` by default), so curl
 them from the box itself, not from your laptop.
@@ -70,7 +76,7 @@ readiness or the gate means nothing.
 |---|---|---|
 | dfe-loader | `/readyz` | dfe-receiver and dfe-fetcher wait on it |
 | dfe-engine | `/readyz` | dfe-loader and dfe-proxy wait on it, and it provisions the schema they need |
-| receiver, fetcher, archiver, both transforms | `/livez` | nothing gates on them |
+| receiver, fetcher, archiver, both transforms, ui | `/livez` | nothing gates on them |
 | otel-collector | none | the image is distroless, so nothing in it can probe `:13133`. Curl it from the host instead |
 
 Gate the loader on liveness instead and one that can never reach ClickHouse still
