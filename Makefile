@@ -35,7 +35,7 @@ endif
 # any more (both sweep every profile), and requiring a resolvable profile to STOP
 # a stack is the same lockout the compose secret comments argue against -- set
 # DFE_PROFILE to something that does not exist and you could not tear down.
-BOOTSTRAP_GOALS := init help stack down clean limits check check-compose check-hardfail check-dockerfile check-docs check-python
+BOOTSTRAP_GOALS := init help login stack dial modes down clean limits check check-compose check-hardfail check-dockerfile check-docs check-python
 
 # Resolve the active profile only when a goal actually needs the compose stack
 ifneq (,$(filter-out $(BOOTSTRAP_GOALS),$(or $(MAKECMDGOALS),help)))
@@ -69,9 +69,38 @@ FORCE:
 init: ## Create .env and per-service env/<service>.env files from templates
 	@python3 scripts/init.py
 
+# GHCR auth for the private dfe-* images and the signed stack-manifest. A no-op
+# when DFE_GHCR_* are unset (a daemon authed out of band), so it is safe as an
+# unconditional prerequisite. The helper reads .env itself and pipes the token on
+# stdin -- it never reaches a make variable, so it stays out of the process list.
+.PHONY: login
+login: ## Authenticate docker + oras to the image registry from .env (DFE_GHCR_USERNAME/TOKEN)
+	@python3 scripts/ghcr_login.py
+
+# `make stack VERSION=X.Y.Z` pins the certified set. `make dial` writes the dial's
+# version.pin to DFE_STACK_VERSION in .env, so `make dial && make stack` pins
+# straight from the deployment dial. An explicit VERSION= on the command line wins.
+VERSION ?= $(DFE_STACK_VERSION)
+
 .PHONY: stack
-stack: .env ## Pin image versions into .env from the DFE stack SSoT (VERSION=X.Y.Z[-rc.N])
+stack: .env login ## Pin image versions into .env from the DFE stack SSoT (VERSION=X.Y.Z[-rc.N])
 	@python3 scripts/stack.py $(VERSION)
+
+# The deployment dial (deployment.yaml) is the single SSoT a deployment turns.
+# This renders its docker-vm slice into .env; `make init` still mints the secrets,
+# the dial merges the deploy-controlled keys over them. Canonical superset lives
+# in dfe-infra; a lone dfe-docker clone deploys from deployment.yaml alone.
+.PHONY: dial
+dial: .env ## Render deployment.yaml (the deployment dial) into .env -- docker-vm slice
+	@python3 scripts/render_dial.py
+
+# The two deploy-currency modes, stated in one place: PINNED (make stack + make
+# ci) vs TRACK-LATEST (the ops/daemon-update timer). Reads local files only, so
+# it is safe on a fresh checkout; the live latest-vs-applied number comes from
+# `self_update.py --dry-run`, which this points at.
+.PHONY: modes
+modes: ## Show the deploy modes -- pinned vs track-latest -- and which one this checkout uses
+	@python3 scripts/show_modes.py
 
 # ---------------------------------------------------------------------------
 # Dev (builds from local source via docker-compose.override.yml)
@@ -94,14 +123,14 @@ dev-build: ## Build local DFE images from source (no start)
 # ---------------------------------------------------------------------------
 
 .PHONY: ci
-ci: down  ## Pull and start infra and registry DFE images
+ci: login down  ## Pull and start infra and registry DFE images
 	docker compose -f docker-compose.yml $(PROFILE_FLAGS) pull
 	docker compose -f docker-compose.yml $(PROFILE_FLAGS) pull $(ACTIVE_SERVICES)
 	docker compose -f docker-compose.yml $(PROFILE_FLAGS) up -d $(ACTIVE_SERVICES)
 	@$(MAKE) --no-print-directory post || echo "post: SELF TEST FAILED -- the stack is up, but it did not prove it moves data. Run 'make post' for detail."
 
 .PHONY: ci-pull
-ci-pull: ## Pull infra and registry DFE images
+ci-pull: login ## Pull infra and registry DFE images
 	docker compose -f docker-compose.yml $(PROFILE_FLAGS) pull
 	docker compose -f docker-compose.yml $(PROFILE_FLAGS) pull $(ACTIVE_SERVICES)
 
