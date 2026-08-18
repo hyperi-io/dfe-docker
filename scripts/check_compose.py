@@ -45,7 +45,7 @@ precisely what happened with the topic-init service that ran a Redpanda image on
 the Apache profile.
 
 Beyond resolution, one semantic assertion rides along: no service that gates on
-``/readyz`` may carry a CPU ceiling under `_MIN_READYZ_CPUS`. See that constant
+a health endpoint may carry a CPU ceiling under `_MIN_HEALTH_CPUS`. See that constant
 for why a lower ceiling takes the endpoint dark while the data path keeps working.
 """
 
@@ -87,13 +87,13 @@ _KAFKA_BACKENDS = ("kafka-redpanda", "kafka-apache")
 # Observed on dfe-archiver at 1.5; see the x-limits-service comment in
 # docker-compose.yml for the A/B that proved it.
 #
-# Keyed off /readyz rather than a service list so a service added later is covered
-# without anyone remembering this file exists. State the limit of that honestly:
-# it covers services that ALREADY DECLARE a /readyz healthcheck. A new scalo
-# service with no healthcheck, or one pointed at /livez, gets nothing -- and
-# that is the very shape that goes dark, because dfe-archiver was silent on
-# /livez, /readyz and /metrics alike and only the healthcheck made it visible.
-_MIN_READYZ_CPUS = 2.0
+# Keyed off the health path rather than a service list so a service added later is
+# covered without anyone remembering this file exists. Both `*z` paths count: the
+# starvation takes the whole observability port dark, so which path a service
+# happens to gate on says nothing about its exposure. A service with no
+# healthcheck at all still gets nothing, which is the honest limit here.
+_MIN_HEALTH_CPUS = 2.0
+_HEALTH_PATHS = ("/livez", "/readyz")
 
 # Retired health paths. The whole surface is /livez, /readyz and /metrics, and
 # these 404 on every image the stack pins.
@@ -183,8 +183,8 @@ def _retired_health_failures(*, config: dict) -> list[str]:
     return failures
 
 
-def _readyz_cpu_failures(*, env: dict[str, str], files: list[str]) -> list[str]:
-    """Return one message per service that gates on /readyz with too small a CPU ceiling.
+def _health_cpu_failures(*, env: dict[str, str], files: list[str]) -> list[str]:
+    """Return one message per service with a health endpoint and too small a CPU ceiling.
 
     Takes the file set rather than assuming the registry path. An override can
     lower `deploy.resources.limits.cpus` on any service, and a hand-edited
@@ -220,17 +220,17 @@ def _readyz_cpu_failures(*, env: dict[str, str], files: list[str]) -> list[str]:
     failures = _retired_health_failures(config=config)
     for name, service in sorted(config.get("services", {}).items()):
         test = service.get("healthcheck", {}).get("test") or []
-        if not (any("/readyz" in str(part) for part in test)):
+        if not (any(path in str(part) for part in test for path in _HEALTH_PATHS)):
             continue
         cpus = (
             service.get("deploy", {}).get("resources", {}).get("limits", {}).get("cpus")
         )
         if cpus is None:
             continue
-        if float(cpus) < _MIN_READYZ_CPUS:
+        if float(cpus) < _MIN_HEALTH_CPUS:
             failures.append(
-                f"{name}: cpus={cpus} is below {_MIN_READYZ_CPUS}, which leaves Tokio one "
-                "worker thread and takes /readyz dark while the data path keeps working"
+                f"{name}: cpus={cpus} is below {_MIN_HEALTH_CPUS}, which leaves Tokio one "
+                "worker thread and takes the health port dark while the data path keeps working"
             )
     return failures
 
@@ -297,14 +297,14 @@ def main() -> int:
     cpu_failures = [
         f"{label}: {message}"
         for label, files in paths
-        for message in _readyz_cpu_failures(env=env, files=files)
+        for message in _health_cpu_failures(env=env, files=files)
     ]
     for message in cpu_failures:
         _print(msg=f"FAIL {message}")
     if cpu_failures:
         return 1
     _print(
-        msg=f"Every /readyz service carries at least {_MIN_READYZ_CPUS} CPUs "
+        msg=f"Every health-checked service carries at least {_MIN_HEALTH_CPUS} CPUs "
         f"on all {len(paths)} path(s)"
     )
     _print(msg="No healthcheck targets a retired health path")
