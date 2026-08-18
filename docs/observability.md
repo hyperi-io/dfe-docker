@@ -15,7 +15,7 @@ Three surfaces, three different questions.
 | Surface | Answers | Where |
 |---|---|---|
 | Health endpoints | is this process alive, can it work right now | `/livez`, `/readyz` |
-| Self-telemetry | what has the stack been doing | the `otel` ClickHouse database |
+| Self-telemetry | what has the stack been doing | the `default.otel_*` tables |
 | The self test | did an event actually get through | `make post` |
 
 Ingested data is a different question -- [troubleshooting.md](troubleshooting.md).
@@ -68,7 +68,7 @@ a broken ingest pipeline cannot take the reporting on it down too.
 ```mermaid
 flowchart LR
     apps["DFE services"] -->|OTLP push :4317| col["otel-collector"]
-    col -->|clickhouse exporter| ch[(ClickHouse otel database)]
+    col -->|clickhouse exporter| ch[(`default.otel_*` tables)]
     ch -.->|queries it| hdx["HyperDX"]
 
     classDef on fill:#009E73,color:#ffffff,stroke:#000000
@@ -91,7 +91,7 @@ Declare `otel: true` on a profile (`single` does) or set `DFE_OTEL_ENABLED=true`
 |---|---|---|
 | `DFE_OTEL_ENABLED` | `false` | starts the bundled collector |
 | `DFE_OTEL_EXPORTER_ENDPOINT` | empty | where services push -- **empty exports nothing** |
-| `DFE_OTEL_DATABASE` | `otel` | database the collector writes |
+| `DFE_OTEL_DATABASE` | `default` | database the collector writes |
 | `DFE_OTEL_HEALTH_PORT` | `13133` | the `health_check` extension |
 | `DFE_ENGINE_METRICS_BACKEND` | `prometheus` | `opentelemetry` makes dfe-engine push |
 
@@ -130,7 +130,7 @@ the collector, giving it every container log on the host. Use
 
 - **Ingest.** Three marked events posted at the profile's ingest edge come back
   as those exact rows in `dfe.default` inside 60s.
-- **Self-monitoring**, when a collector is running. Rows in the `otel` database
+- **Self-monitoring**, when a collector is running. Rows in the `default.otel_*` tables
   NEWER than five minutes.
 
 The freshness window is what makes the second claim mean "streaming now" rather

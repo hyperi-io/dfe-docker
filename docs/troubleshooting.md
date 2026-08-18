@@ -268,7 +268,7 @@ shortage of CPU.
 ### The self test fails on self-telemetry
 
 `make post` makes two claims on a profile running the collector, and the second
-is that the `otel` database has rows newer than five minutes. Two distinct
+is that the `default.otel_*` tables has rows newer than five minutes. Two distinct
 failures:
 
 **"no table readable"** -- the collector never wrote its schema, so it cannot
@@ -277,7 +277,7 @@ absent schema is a connection or credential fault, not a quiet one:
 
 ```bash
 docker compose logs otel-collector
-docker compose exec clickhouse clickhouse-client --query "SHOW TABLES FROM otel"
+docker compose exec clickhouse clickhouse-client --query "SHOW TABLES FROM default"
 ```
 
 **"no rows newer than"** -- the tables exist and nothing is arriving, so nothing

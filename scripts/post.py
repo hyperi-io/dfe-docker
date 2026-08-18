@@ -258,7 +258,7 @@ def _verify_self_monitoring() -> int:
         )
         return 0
 
-    database = os.environ.get("DFE_OTEL_DATABASE", "otel")
+    database = os.environ.get("DFE_OTEL_DATABASE", "default")
     _print(
         msg=f"Waiting for self-telemetry in {database} "
         f"(rows newer than {OTEL_FRESH_WINDOW_SECONDS}s)"

@@ -22,7 +22,7 @@
     "kind": "log",
     "connection": "local",
     "from": {
-      "databaseName": "otel",
+      "databaseName": "default",
       "tableName": "otel_logs"
     },
     "timestampValueExpression": "TimestampTime",
@@ -43,7 +43,7 @@
     "kind": "trace",
     "connection": "local",
     "from": {
-      "databaseName": "otel",
+      "databaseName": "default",
       "tableName": "otel_traces"
     },
     "timestampValueExpression": "Timestamp",
@@ -67,7 +67,7 @@
     "kind": "metric",
     "connection": "local",
     "from": {
-      "databaseName": "otel",
+      "databaseName": "default",
       "tableName": ""
     },
     "timestampValueExpression": "TimeUnix",

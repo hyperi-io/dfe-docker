@@ -48,9 +48,13 @@ profiles:
       dfe-receiver:
         config_path: receiver/grpc.yaml
 
-  # One node of everything, WITH Kafka -- the complete stack, self-monitoring
-  # included. HyperDX stays opt-in, matching the Kubernetes profile, which leaves
-  # it to its own toggle.
+  # One node of the whole PLATFORM, with Kafka: warehouse, core surface, Kafka UI
+  # and self-monitoring. The data plane is receiver + loader ONLY, because those
+  # two are the pair that runs from a default deploy with nothing external
+  # configured. dfe-archiver, dfe-fetcher and the transforms need endpoints or
+  # credentials this profile cannot supply, so they stay opt-in on the
+  # fine-grained profiles below. HyperDX is opt-in too, matching the Kubernetes
+  # profile.
   single:
     transport: kafka
     clickhouse: true
@@ -58,16 +62,10 @@ profiles:
     kafbat: true
     otel: true
     services:
-      dfe-archiver:
-        config_path: archiver/kafka.yaml
-      dfe-fetcher:
-        config_path: fetcher/aws-kafka.yaml
       dfe-loader:
-        config_path: loader/kafka-load.yaml
+        config_path: loader/kafka.yaml
       dfe-receiver:
         config_path: receiver/kafka.yaml
-      dfe-transform-vrl:
-        config_path: transform-vrl/kafka.yaml
 
   kafka-minimal:
     transport: kafka

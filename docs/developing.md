@@ -145,12 +145,15 @@ tier, so one deployment dial reads the same on both:
 | Profile | Transport | Services | Also starts |
 |---|---|---|---|
 | `slim` | grpc | loader, receiver | ClickHouse, core |
-| `single` | kafka | archiver, fetcher, loader, receiver, transform-vrl | ClickHouse, core, kafka-ui |
+| `single` | kafka | loader, receiver | ClickHouse, core, kafka-ui, otel-collector |
 
-`single` is the complete stack -- it is what "everything on one box" means here,
-and the only shape the bundled dex profile will front when it lands. HyperDX
-stays opt-in on it, matching the Kubernetes profile. There is no `scale`:
-Compose cannot run an HA broker or a ClickHouse cluster.
+`single` is the whole PLATFORM on one box, and the only shape the bundled dex
+profile will front when it lands. Its data plane is receiver + loader only:
+those two run from a default deploy with nothing external configured, while
+dfe-archiver, dfe-fetcher and the transforms need endpoints or credentials the
+profile cannot supply. Take those from the fine-grained profiles below. HyperDX
+is opt-in too, matching the Kubernetes profile. There is no `scale`: Compose
+cannot run an HA broker or a ClickHouse cluster.
 
 The rest are fine-grained data-plane shapes. The e2e suite pins them by name.
 
@@ -249,7 +252,7 @@ notice a partial load. A marker column it cannot locate is reported, never
 silently treated as a pass.
 
 A profile declaring `otel` adds a third assertion -- the stack's own telemetry
-landing fresh in the `otel` database -- and `expected_http` adds a fourth, a
+landing fresh in the `default.otel_*` tables -- and `expected_http` adds a fourth, a
 status and optional body check per URL. `single` uses both, which is what makes
 `complete-single-node-stack` a whole-stack test rather than a data-path one.
 
