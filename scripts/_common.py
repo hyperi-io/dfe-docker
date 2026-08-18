@@ -38,6 +38,8 @@ FALSY = {"", "0", "false", "no", "off"}
 # Repo constants
 REPO_ROOT = __find_repo_root()
 CONFIG_DIR = REPO_ROOT / "config"
+DEPLOYMENT_DIAL = REPO_ROOT / "deployment.yaml"
+DEPLOYMENT_DIAL_TEMPLATE = REPO_ROOT / "deployment.example.yaml"
 DOTENV_FILE = REPO_ROOT / ".env"
 DOTENV_TEMPLATE = REPO_ROOT / ".env.example"
 ENV_DIR = REPO_ROOT / "env"
@@ -96,6 +98,45 @@ def _load_dotenv() -> None:
     """Merge .env into os.environ. Existing environment variables take precedence."""
     for key, value in _dotenv_values().items():
         os.environ.setdefault(key, value)
+
+
+def _parse_yaml_subset(*, text: str) -> dict[str, object]:
+    """Parse a minimal YAML subset - nested maps, scalar string values - into dicts.
+
+    Dependency-free (no PyYAML): the scripts run under a plain ``python3`` on the
+    devex VMs. Handles ``key: value`` scalars and ``key:`` nesting by indentation,
+    skipping ``#`` comments and blank lines. It does NOT handle lists or inline
+    collections - a line it cannot place raises ValueError. Values come back as
+    strings (quotes stripped), which is all a dotenv render needs.
+
+    resolve_profile.py keeps a local twin of this for service_profiles.yaml; fold
+    that onto this shared one when convenient.
+    """
+    root: dict[str, object] = {}
+    stack: list[tuple[dict[str, object], int]] = [(root, -1)]
+    for line_num, raw_line in enumerate(text.splitlines(), 1):
+        line = raw_line.strip()
+        if not (line) or line.startswith("#"):
+            continue
+        indent = len(raw_line) - len(raw_line.lstrip())
+        while len(stack) > 1 and stack[-1][1] >= indent:
+            stack.pop()
+        parent = stack[-1][0]
+        if ": " in line:
+            key, value = line.split(": ", 1)
+            value = value.strip()
+            # Strip a trailing ` # ...` inline comment on an UNQUOTED value, the
+            # same way _dotenv_values does - a quoted value keeps its `#` literal.
+            if value and value[0] not in ("'", '"'):
+                value = value.split(" #", 1)[0].strip()
+            parent[key.strip()] = value.strip('"').strip("'")
+        elif line.endswith(":"):
+            child: dict[str, object] = {}
+            parent[line[:-1].strip()] = child
+            stack.append((child, indent))
+        else:
+            raise ValueError(f"line {line_num}: cannot parse {line!r}")
+    return root
 
 
 def _profile_mk_value(*, key: str) -> list[str]:

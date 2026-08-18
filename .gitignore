@@ -8,6 +8,9 @@ Thumbs.db
 .env
 .env.local
 .env.*.local
+deployment.yaml
+# Written by the track-latest daemon: the stack version it last applied.
+.dfe-stack-applied
 *.log
 dist/
 dist-bin/

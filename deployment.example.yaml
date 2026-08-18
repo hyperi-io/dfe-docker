@@ -1,0 +1,75 @@
+## Project:   dfe-docker
+## File:      deployment.example.yaml
+## Purpose:   The deployment dial (docker-vm slice) -- copy to deployment.yaml
+## Language:  YAML
+##
+## License:   BUSL-1.1
+## Copyright: (c) 2026 HYPERI PTY LIMITED
+
+## THE DEPLOYMENT DIAL -- one config file the whole deployment reads. `make dial`
+## renders the docker-vm keys below into .env, so a redeploy is a dial edit and
+## then `make dial && make login && make stack && make ci`. A QA GUI wizard will
+## populate this same file later, so every field is a labelled dial with a
+## default and its allowed values.
+##
+## This is the docker-vm SLICE. The canonical superset (docker-vm + k8s + cloud)
+## and its schema live in dfe-infra. A lone dfe-docker clone deploys from this
+## file alone -- no dfe-infra checkout needed.
+##
+## Copy to deployment.yaml (gitignored) and populate. Never commit real values:
+## secrets are REFERENCES to OpenBao, never literals; estate endpoints stay blank
+## here and are injected by hyperi-infra's thin caller at deploy time.
+
+## Which substrate this deployment targets. This renderer requires docker-vm.
+## (docker-vm | k8s -- the k8s substrate renders via dfe-infra into a DeployContext.)
+substrate: docker-vm
+
+## Image registry hosting the published dfe-* images.
+registry: ghcr.io/hyperi-io
+
+## Version dial: pin XOR track. Pinned is the default and the safe production
+## choice; track-latest is the opt-in daemon (ops/daemon-update) that advances to
+## the newest certified stack tag.
+version:
+  ## Pinned release -- written to DFE_STACK_VERSION, which `make stack` pins the
+  ## whole certified set from. An explicit `make stack VERSION=...` still wins.
+  pin: 2.2.0-rc.1
+  ## Track-latest instead: comment out `pin` above and use these. The daemon owns
+  ## the roll; leave DFE_STACK_VERSION unset.
+  # track: latest
+  # allow_prerelease: "false"
+
+## Secret backend + base path. REFERENCES only, never values. hyperi-infra's thin
+## caller resolves these from OpenBao and injects DFE_GHCR_USERNAME/TOKEN into
+## .env for `make login`; a standalone operator sets those two by hand instead.
+## `make dial` never reads or writes a secret.
+secrets:
+  backend: openbao          # openbao | aws-sm | file
+  ref: secret/dfe           # base path; ghcr-pull-secret lives under it
+
+## Service footprint -- the DATA-PLANE shape only. Left commented,
+## service_profiles.yaml's active_profile is used. The value must be a profile
+## key defined there (kafka-full, kafka-receiver, grpc-full, ... -- there is no
+## profile called `default`), NOT one of the k8s dial's slim/single/scale.
+## Which of core, kafbat and hyperdx run is the separate set of flags below.
+# profile: kafka-full
+
+## docker-vm knobs. Each maps to one .env key; a blank/absent field leaves the
+## .env default in place.
+docker:
+  kafka_backend: redpanda   # redpanda | apache
+  kafbat_enabled: "true"
+  core_enabled: "true"
+  hyperdx_enabled: "false"
+  post_enabled: "true"
+  ## Host exposure. bind_host is the OPERATOR surface (127.0.0.1 on a laptop,
+  ## 0.0.0.0 only on a box you mean to expose); ingress_bind_host is the USER
+  ## ingest surface.
+  bind_host: 127.0.0.1
+  ingress_bind_host: 0.0.0.0
+
+## External endpoints -- BLANK here. Point a local engine at a remote ClickHouse
+## for integration tests by setting clickhouse_host in deployment.yaml (or let the
+## thin caller inject it from bao). Left empty, the in-stack container is used.
+endpoints:
+  clickhouse_host: ""
