@@ -33,13 +33,16 @@
 # no aliases -- `/healthz` and the `/health/*` paths are retired and 404 on every image pinned here, so a
 # probe aimed at one reads as a service that never comes up.
 #
-# Healthchecks here use READINESS, not the liveness path a Docker HEALTHCHECK normally takes. That is a
-# deliberate departure: in Compose the healthcheck is ALSO what `depends_on: condition: service_healthy`
-# gates on, and it is the only startup gate there is. `/livez` answers alive without touching dependencies,
-# so gating on it would mean a loader that can never reach ClickHouse still reports healthy, the receiver
-# starts against it, `docker compose ps` shows green, and events pile up in the DLQ spool with nothing
-# surfacing the fault. Kubernetes, which has separate liveness and readiness probes and ignores HEALTHCHECK
-# entirely, does not have this tension.
+# A HEALTHCHECK uses `/livez`, EXCEPT where something gates on it. Compose has no readiness condition --
+# `depends_on: condition: service_healthy` is the only startup gate there is -- so a service other services
+# wait for must report readiness or the gate means nothing. Gating on liveness would let a loader that can
+# never reach ClickHouse report healthy, the receiver start against it, and events pile up in the DLQ spool
+# with nothing surfacing the fault.
+#
+# So: dfe-loader and dfe-engine use `/readyz` because the services after them wait on it, the same way the
+# stack waits on ClickHouse's own readiness. Everything nothing gates on -- receiver, fetcher, archiver,
+# both transforms -- uses `/livez`. Kubernetes has separate probes and ignores HEALTHCHECK entirely, so it
+# never has to choose.
 #
 # Every service declares deploy.resources.limits. `docker compose up` honours cpus and memory outside Swarm;
 # an unlimited service on a single box is how one runaway container takes the host down. The four tiers below
@@ -444,7 +447,7 @@ services:
       - archiver-data:/var/data/archive
       - dlq-spool:/var/spool/dfe
     healthcheck:
-      test: ["CMD", "curl", "-sf", "http://localhost:9090/readyz"]
+      test: ["CMD", "curl", "-sf", "http://localhost:9090/livez"]
       interval: 10s
       timeout: 3s
       retries: 5
@@ -485,7 +488,7 @@ services:
       - ./config/${DFE_FETCHER_CONFIG:-fetcher/aws-kafka.yaml}:/etc/dfe/fetcher.yaml:ro
       - dlq-spool:/var/spool/dfe
     healthcheck:
-      test: ["CMD", "curl", "-sf", "http://localhost:9090/readyz"]
+      test: ["CMD", "curl", "-sf", "http://localhost:9090/livez"]
       interval: 10s
       timeout: 3s
       retries: 5
@@ -603,7 +606,7 @@ services:
       # - ./certs/dev/receiver.crt:/etc/ssl/receiver.crt:ro
       # - ./certs/dev/receiver.key:/etc/ssl/receiver.key:ro
     healthcheck:
-      test: ["CMD", "curl", "-sf", "http://localhost:9090/readyz"]
+      test: ["CMD", "curl", "-sf", "http://localhost:9090/livez"]
       interval: 10s
       timeout: 3s
       retries: 5
@@ -638,7 +641,7 @@ services:
     volumes:
       - ./config/${DFE_TRANSFORM_VECTOR_CONFIG:-transform-vector/kafka.yaml}:/etc/dfe-transform-vector/config.yaml:ro
     healthcheck:
-      test: ["CMD", "curl", "-sf", "http://localhost:9090/readyz"]
+      test: ["CMD", "curl", "-sf", "http://localhost:9090/livez"]
       interval: 10s
       timeout: 3s
       retries: 5
@@ -673,7 +676,7 @@ services:
       - ./config/${DFE_TRANSFORM_VRL_CONFIG:-transform-vrl/kafka.yaml}:/etc/dfe-transform-vrl/config.yaml:ro
       - ./config/transform-vrl/transforms:/etc/dfe-transform-vrl/transforms:ro
     healthcheck:
-      test: ["CMD", "curl", "-sf", "http://localhost:9090/readyz"]
+      test: ["CMD", "curl", "-sf", "http://localhost:9090/livez"]
       interval: 10s
       timeout: 3s
       retries: 5

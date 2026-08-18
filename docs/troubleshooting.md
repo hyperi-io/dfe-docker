@@ -56,19 +56,28 @@ curl -sf http://localhost:9091/readyz     # loader ready?
 curl -sf http://localhost:8003/readyz     # engine ready?
 ```
 
-### Why the compose healthchecks use readiness, not liveness
+### Which path each healthcheck uses, and why it differs
 
-Normally a Docker `HEALTHCHECK` is a liveness check. Here it is deliberately
-readiness, because in Compose the healthcheck is *also* what
-`depends_on: condition: service_healthy` gates on -- it is the only startup gate
-there is.
+A Docker `HEALTHCHECK` is a liveness check, so most services here use `/livez`.
+Two do not, and the reason is worth knowing when you read `docker compose ps`.
 
-Gate on `/livez` and a loader that cannot reach ClickHouse still reports
-healthy. The receiver then starts against it, `docker compose ps` shows green,
-and events pile up with nothing surfacing the fault. `/readyz` is where the
-dependency checks live, so it is the one that can gate a start. Kubernetes itself has separate liveness and
-readiness probes and ignores `HEALTHCHECK` entirely, so it never has this
-tension.
+Compose has no readiness condition. `depends_on: condition: service_healthy` is
+the only startup gate there is, so a service that others wait for has to report
+readiness or the gate means nothing.
+
+| Service | Path | Why |
+|---|---|---|
+| dfe-loader | `/readyz` | dfe-receiver and dfe-fetcher wait on it |
+| dfe-engine | `/readyz` | dfe-loader and dfe-proxy wait on it, and it provisions the schema they need |
+| receiver, fetcher, archiver, both transforms | `/livez` | nothing gates on them |
+
+Gate the loader on liveness instead and one that can never reach ClickHouse still
+reports healthy: the receiver starts against it, `docker compose ps` shows green,
+and events pile up with nothing surfacing the fault. It is the same reason the
+stack waits on ClickHouse's own readiness before starting anything that uses it.
+
+Kubernetes has separate liveness and readiness probes and ignores `HEALTHCHECK`
+entirely, so it never has to choose.
 
 ## Known issues
 
