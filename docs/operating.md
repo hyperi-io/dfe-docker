@@ -181,11 +181,10 @@ synchronous, so that loop owns the thread. The HTTP server carrying `/readyz`,
 `/livez` and `/metrics` never gets scheduled: it accepts your connection and
 then answers nothing at all.
 
-dfe-archiver did exactly this at a 1.5 ceiling -- healthcheck timing out
-forever, container never healthy, events archiving perfectly the whole time.
-Proven on both axes against the same image: raising the ceiling to 2.0 answered
-in 0.2ms, and holding it at 1.5 while setting `TOKIO_WORKER_THREADS=4` answered
-in 0.16ms. So it is worker-thread starvation, not a shortage of CPU.
+The symptom on dfe-archiver at a 1.5 ceiling is a healthcheck that times out
+forever while events archive normally. `TOKIO_WORKER_THREADS=4` at that same
+ceiling restores the endpoints, which is how you tell worker-thread starvation
+from a shortage of CPU.
 
 `make check-compose` refuses any value under 2.0 on a service that gates on
 `/readyz`, so you cannot ship this by accident. If you need the ceiling lower
@@ -331,6 +330,8 @@ each component actually does, and why `/metrics` still exists are all in
 
 ## Related
 
-- [README.md](../README.md) -- quick start, profiles, full environment variable reference
+- [deploying.md](deploying.md) -- the dial, pinning, upgrading a running stack
+- [observability.md](observability.md) -- health surface, self-telemetry, the self test
+- [configuration.md](configuration.md) -- every variable, port and image
 - [troubleshooting.md](troubleshooting.md) -- reading stack state, known issues, common failures
 - [architecture.md](architecture.md) -- components, transports, and how data moves

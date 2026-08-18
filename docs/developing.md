@@ -256,20 +256,16 @@ status and optional body check per URL. `single` uses both, which is what makes
 Two things about the runner worth knowing before you debug it:
 
 - **It waits on named services, never on a whole profile.** `docker compose up
-  --wait` treats a container that EXITS as a failure even on exit 0, and the
-  topic-init services are one-shots that are supposed to exit. Waiting on the
-  profile swept them in and failed every time, regardless of the broker. That was
-  silently breaking the default Redpanda backend -- `rpk` finishes in about a
-  second, so init had always exited by the time `--wait` looked -- while the
-  Apache backend passed on luck, `kafka-topics.sh` being slow enough to still be
-  running. A test that passes on timing is not passing.
+  --wait` counts a container that EXITS as a failure even on exit 0, and the
+  topic-init services are one-shots that must exit. Waiting on the profile sweeps
+  them in and fails regardless of broker health.
 - **It deletes the `_load` sibling of every expected `_land` topic before each
-  run.** Broker volumes outlive containers, so one earlier transform run leaves
-  `default_load` on the broker forever, and scalo's suppression rule then drops
-  `default_land` from every non-transform loader's subscription. See
+  run.** Broker volumes outlive containers, so a `default_load` left by any
+  transform run suppresses `default_land` for every non-transform loader
+  thereafter. See
   [troubleshooting.md](troubleshooting.md#configloaderkafka-loadyaml-consumes-a-topic-nothing-pre-creates).
-  Deleting it per run means a run depends on the test definition rather than on
-  broker history.
+  Deleting it per run makes a run depend on the test definition, not on broker
+  history.
 
 ## Static checks
 
@@ -348,3 +344,10 @@ container fine.
 compiles from staged source with no `target/` -- it uses a cache mount rather than
 your local build artefacts, so a first build after a toolchain change is slow, and
 a compile error is yours, not the harness's.
+
+## Related
+
+- [architecture.md](architecture.md) -- components, transports, how data moves
+- [observability.md](observability.md) -- health surface, self-telemetry, the self test
+- [configuration.md](configuration.md) -- every variable, port and image
+- [troubleshooting.md](troubleshooting.md) -- diagnosing a stack that misbehaves

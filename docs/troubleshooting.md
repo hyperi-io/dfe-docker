@@ -106,29 +106,24 @@ at `kafka-load.yaml`: `kafka-receiver-transform-vector` and
 `kafka-full-transform-vrl`.
 
 The topic names are literals in those YAML files, not env-interpolated. If you
-change one, change it in the init services and the configs together. A
-`KAFKA_DEFAULT_TOPIC` knob was tried and is a trap for the same reason: the
-consumers name their topics in their own YAML, so setting it pre-creates a topic
-nobody consumes and stops pre-creating the one they do.
+change one, change it in the init services and the configs together. A single
+topic variable cannot work: the consumers name their topics in their own YAML, so
+setting it pre-creates a topic nobody consumes and stops pre-creating the one
+they do.
 
 There is one topic-init service per backend, each running its own broker's
-tooling. A single shared init is tempting and was what we had, but it ran the
-Redpanda image (for `rpk`) on both profiles -- so choosing Apache Kafka to stay
-clear of the BSL still pulled and ran a BSL artefact. An escape hatch has to
-actually escape. `apache/kafka` already carries `kafka-topics.sh`, so the Apache
-path needs nothing extra. Downstream services depend on both with
-`required: false`; exactly one exists for any profile, so the other is a no-op.
+tooling, so choosing Apache Kafka to stay clear of the BSL never pulls a BSL
+artefact. Downstream services depend on both with `required: false`; exactly one
+exists for any profile, so the other is a no-op.
 
-Do not close this gap by pre-creating `default_load` in the init services. The
-loader auto-discovers topics and scalo suppresses `<base>_land` whenever
+**Do not close this gap by pre-creating `default_load` in the init services.**
+The loader auto-discovers topics and scalo suppresses `<base>_land` whenever
 `<base>_load` exists, on the reasoning that a `_load` topic means a transform has
-already produced the loadable form and the raw landing topic is redundant. Creating
-`default_load` on every Kafka profile therefore drops `default_land` from the
-subscription of every loader that is not running a transform -- which is most of
-them. It was tried, and it took both Kafka e2e tests from 1000 rows to 0 while the
-gRPC tests stayed green: ingest still returned 200, the receiver still produced to
-`default_land`, the topic still showed a rising high watermark, and nothing
-consumed it.
+already produced the loadable form. Creating `default_load` on every Kafka profile
+therefore drops `default_land` from the subscription of every loader not running a
+transform, which is most of them. The symptom is maximally misleading: ingest
+returns 200, the receiver produces to `default_land`, the topic shows a rising
+high watermark, and no rows reach ClickHouse.
 
 Reverting the change does not restore a broker that already has the topic.
 `kafka-redpanda-data` and `kafka-apache-data` outlive the containers, so the topic
@@ -212,29 +207,26 @@ mountpoint owned by root and no service can write inside it. The `dlq-init`
 one-shot (`chown -R 1000:1000 /var/spool/dfe`) fixes that before the services
 start.
 
-That failure mode is not theoretical. dfe-archiver creates its DLQ writer eagerly
-at startup and crash-looped with `DLQ init failed ... Permission denied (os error
-13)`. The others create theirs lazily on first dead-letter, so they look healthy
-right up until something actually needs to dead-letter -- the worst moment to
-discover the DLQ never worked.
+Without it, dfe-archiver crash-loops on `DLQ init failed ... Permission denied
+(os error 13)` -- it creates its DLQ writer eagerly at startup. The others create
+theirs lazily on first dead-letter, so they look healthy until something needs to
+dead-letter, which is the worst moment to find the DLQ never worked.
 
-Per-service volumes do not fix it -- a fresh volume is root-owned too, because
+Per-service volumes do not fix it: a fresh volume is root-owned too, because
 ownership is inherited from a path the image does not have. The real fix is for
-the component images to create `/var/spool/dfe` as appuser; until they do, the
-one-shot does it, and it reuses the archiver image purely because that image is
-already pinned.
+the component images to create `/var/spool/dfe` as appuser. The one-shot reuses
+the archiver image because that image is already pinned.
 
-Three sharp edges in that arrangement, none of them ideal:
+Three sharp edges in that arrangement:
 
 1. `required: false` on the dependents means a **failed** dlq-init does not stop
-   them. Compose logs one warning and carries on with a zero exit, so the bug it
-   prevents can come back quietly. Watch for the warning.
-2. uid 1000 is hard-coded. It is `appuser` in every published DFE image today
-   (checked archiver, loader, receiver), but nothing verifies that, so an image
-   that renumbers appuser breaks the DLQ silently again.
-3. In dev mode dlq-init still resolves to the **registry** archiver image, because
-   `docker-compose.override.yml` does not map it. So `make dev` needs GHCR access
-   and a pinned `DFE_ARCHIVER_VERSION` even on profiles with no archiver in them.
+   them -- Compose logs one warning and carries on with a zero exit. Watch for
+   the warning.
+2. uid 1000 is hard-coded and nothing verifies it, so an image that renumbers
+   appuser breaks the DLQ silently.
+3. In dev mode dlq-init resolves to the **registry** archiver image, because
+   `docker-compose.override.yml` does not map it. `make dev` therefore needs GHCR
+   access and a pinned `DFE_ARCHIVER_VERSION` even on profiles with no archiver.
 
 **Files under `/var/spool/dfe/dlq` mean events were accepted and then could not be
 delivered.** They are evidence, not noise: read them to see what was rejected and
@@ -355,5 +347,6 @@ stdlib-only and works on a bare machine.
 
 ## Related
 
-- [operating.md](operating.md) -- auth position, exposure, limits, secrets, upgrades
-- [README.md](../README.md) -- profiles, make targets, full environment variable reference
+- [observability.md](observability.md) -- the health surface and what each endpoint proves
+- [operating.md](operating.md) -- auth position, exposure, limits, secrets
+- [configuration.md](configuration.md) -- every variable, port and image

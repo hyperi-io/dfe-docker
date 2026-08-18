@@ -117,5 +117,8 @@ still production, and the defaults here are tuned for a laptop.
 |-------------|------|
 | Understand how the pieces fit | [architecture.md](architecture.md) |
 | Run this where others depend on it | [operating.md](operating.md) |
+| Stand up a real deployment, or upgrade one | [deploying.md](deploying.md) |
+| Know what the stack reports about itself | [observability.md](observability.md) |
+| Look up a variable or a port | [configuration.md](configuration.md) |
 | Work on a DFE component | [developing.md](developing.md) |
 | Work out why something is broken | [troubleshooting.md](troubleshooting.md) |
