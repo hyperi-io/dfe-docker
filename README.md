@@ -242,11 +242,11 @@ exist, is my topic there) belongs in the scalo deployment contract, not here.
 ### The two default acceptance tests
 
 The DFE stack ships two default "it is working" e2e tests: (1) the core data path
-and (2) self-monitoring - the stack's own telemetry landing in the otel ClickHouse
-database. Both run here. Test (2) needs a profile that declares `otel`, which
-`single` does, and `make post` makes the same pair of claims against an
-already-running stack. Only `dfe-engine` produces telemetry today - see
-[self-monitoring](docs/observability.md) for why.
+and (2) self-monitoring - the stack's own telemetry landing in the
+`default.otel_*` tables. Both run here. Test (2) needs a profile that declares
+`otel`, which `single` does, and `make post` makes the same pair of claims
+against an already-running stack. See
+[observability.md](docs/observability.md) for which services report.
 
 ### Shared dev hosts (port collision)
 
