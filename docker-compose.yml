@@ -697,6 +697,13 @@ services:
       - path: env/engine.env
         required: false
     environment:
+      # dfe-engine refuses to start unless DFE_ENV states the posture: at
+      # `production` it demands auth enabled AND a non-placeholder
+      # DFE_API_JWT_SECRET, because auth-off there would grant every
+      # unauthenticated caller the admin role. Compose mode is god-mode by
+      # design, so it declares `dev`. Set DFE_ENV=production in .env only once
+      # something in front of the engine actually authenticates.
+      DFE_ENV: ${DFE_ENV:-dev}
       DFE_CLICKHOUSE_HOST: ${CLICKHOUSE_HOST:-clickhouse}
       DFE_CLICKHOUSE_PORT: ${CLICKHOUSE_HTTP_PORT:-8123}
       DFE_CLICKHOUSE_NATIVE_PORT: ${CLICKHOUSE_NATIVE_PORT:-9000}
@@ -717,13 +724,12 @@ services:
     healthcheck:
       # Readiness, same reasoning as the header: depends_on gates on it.
       #
-      # /health/ready rather than /readyz because it is the path we have actually
-      # verified answering on this pinned image. Current scalo-py registers
-      # /healthz and /readyz as canonical WITH /health/live|ready|startup as
-      # aliases, but whether the scalo-py baked into DFE_ENGINE_VERSION does is a
-      # per-version question. The alias is stable across both, so it is the safe
-      # choice; the scalo-RS services above use the canonical /readyz.
-      test: ["CMD", "curl", "-sf", "http://localhost:8000/health/ready"]
+      # /readyz is the canonical scalo path and the one verified answering on
+      # this pinned image, so the engine now matches the scalo-rs services above.
+      # The /health/live|ready|startup aliases are gone from the scalo-py baked
+      # into DFE_ENGINE_VERSION -- they 404, which reads as a stack that never
+      # comes up rather than a healthcheck pointed at nothing.
+      test: ["CMD", "curl", "-sf", "http://localhost:8000/readyz"]
       interval: 10s
       timeout: 3s
       start_period: 30s
