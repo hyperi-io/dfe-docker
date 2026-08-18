@@ -169,7 +169,7 @@ Tokio sizes its worker pool from `available_parallelism()`, which reads the
 cgroup CPU quota and floors it. Any ceiling under 2.0 therefore leaves a scalo
 service with exactly **one** worker thread, and its Kafka poll loop is
 synchronous, so that loop owns the thread. The HTTP server carrying `/readyz`,
-`/healthz` and `/metrics` never gets scheduled: it accepts your connection and
+`/livez` and `/metrics` never gets scheduled: it accepts your connection and
 then answers nothing at all.
 
 dfe-archiver did exactly this at a 1.5 ceiling -- healthcheck timing out

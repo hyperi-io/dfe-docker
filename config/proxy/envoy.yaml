@@ -65,7 +65,10 @@ static_resources:
                             key: X-Real-IP
                             value: "%DOWNSTREAM_REMOTE_ADDRESS_WITHOUT_PORT%"
                       routes:
-                        # Liveness served by the proxy itself (scalo surface: /livez + /readyz, no /healthz alias).
+                        # Liveness, answered by the proxy itself so it does not
+                        # depend on a backend. Readiness is envoy's admin
+                        # /ready, which the compose healthcheck drives; a static
+                        # /readyz here would claim a readiness it cannot know.
                         - match: { path: /livez }
                           direct_response:
                             status: 200

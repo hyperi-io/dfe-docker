@@ -82,7 +82,7 @@ _KAFKA_BACKENDS = ("kafka-redpanda", "kafka-apache")
 # Tokio sizes its worker pool from `available_parallelism()`, which reads the
 # cgroup CPU quota and FLOORS it. A ceiling under 2.0 therefore leaves a scalo
 # service with a single worker thread, and its synchronous Kafka poll loop owns
-# that thread -- so the operator surface (/readyz, /healthz, /metrics) accepts
+# that thread -- so the operator surface (/livez, /readyz, /metrics) accepts
 # connections and answers none of them while the data path keeps working.
 # Observed on dfe-archiver at 1.5; see the x-limits-service comment in
 # docker-compose.yml for the A/B that proved it.
@@ -90,10 +90,27 @@ _KAFKA_BACKENDS = ("kafka-redpanda", "kafka-apache")
 # Keyed off /readyz rather than a service list so a service added later is covered
 # without anyone remembering this file exists. State the limit of that honestly:
 # it covers services that ALREADY DECLARE a /readyz healthcheck. A new scalo
-# service with no healthcheck, or one pointed at /healthz, gets nothing -- and
+# service with no healthcheck, or one pointed at /livez, gets nothing -- and
 # that is the very shape that goes dark, because dfe-archiver was silent on
-# /readyz, /healthz and /metrics alike and only the healthcheck made it visible.
+# /livez, /readyz and /metrics alike and only the healthcheck made it visible.
 _MIN_READYZ_CPUS = 2.0
+
+# Retired health paths. The whole surface is /livez, /readyz and /metrics, and
+# these 404 on every image the stack pins.
+_RETIRED_HEALTH_PATHS = ("/healthz", "/health/live", "/health/ready", "/health/startup")
+
+# Services this project owns and therefore holds to that surface. hyperdx,
+# clickhouse, the brokers and kafka-ui are third-party and keep their own.
+_DFE_OWNED_SERVICES = {
+    "dfe-archiver",
+    "dfe-engine",
+    "dfe-fetcher",
+    "dfe-loader",
+    "dfe-receiver",
+    "dfe-transform-vector",
+    "dfe-transform-vrl",
+    "dfe-ui",
+}
 
 
 def _check_env() -> tuple[dict[str, str], list[str]]:
@@ -139,6 +156,33 @@ def _compose_config(
     )
 
 
+def _retired_health_failures(*, config: dict) -> list[str]:
+    """Return one message per healthcheck aimed at a retired health path.
+
+    The surface is `/livez`, `/readyz` and `/metrics`, with no aliases: the
+    retired names 404 on every image the stack pins, so a probe left on one reads
+    as a service that never comes up rather than as a misconfigured probe. That
+    is how the pinned dfe-engine sat in a restart loop behind `/health/ready`.
+
+    Third-party images keep their own conventions, so only the services this
+    project owns are checked.
+    """
+    failures = []
+    for name, service in sorted(config.get("services", {}).items()):
+        if name not in _DFE_OWNED_SERVICES:
+            continue
+        test = " ".join(
+            str(part) for part in (service.get("healthcheck", {}).get("test") or [])
+        )
+        for retired in _RETIRED_HEALTH_PATHS:
+            if retired in test:
+                failures.append(
+                    f"{name}: healthcheck targets the retired {retired} -- it 404s on "
+                    "the pinned image; use /livez or /readyz"
+                )
+    return failures
+
+
 def _readyz_cpu_failures(*, env: dict[str, str], files: list[str]) -> list[str]:
     """Return one message per service that gates on /readyz with too small a CPU ceiling.
 
@@ -173,7 +217,7 @@ def _readyz_cpu_failures(*, env: dict[str, str], files: list[str]) -> list[str]:
         return []
 
     config = json.loads(result.stdout)
-    failures = []
+    failures = _retired_health_failures(config=config)
     for name, service in sorted(config.get("services", {}).items()):
         test = service.get("healthcheck", {}).get("test") or []
         if not (any("/readyz" in str(part) for part in test)):
@@ -263,6 +307,7 @@ def main() -> int:
         msg=f"Every /readyz service carries at least {_MIN_READYZ_CPUS} CPUs "
         f"on all {len(paths)} path(s)"
     )
+    _print(msg="No healthcheck targets a retired health path")
     return 0
 
 
