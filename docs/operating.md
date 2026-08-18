@@ -21,9 +21,18 @@ work, choose Kubernetes.
 
 ## There is no authentication -- everything else is bounded by this
 
-Docker mode runs in god-mode by design. Auth (OIDC + Envoy) is a
-Kubernetes-only concern. That is a decision, not an oversight, and it sets a hard
-limit on what "production" can mean here.
+Docker mode runs in god-mode by design. Nothing here authenticates anyone. That
+is a decision, not an oversight, and it sets a hard limit on what "production"
+can mean here.
+
+Envoy is the entrypoint on both tiers now, so the boundary is worth stating
+exactly. **dfe-docker can never assume an OIDC issuer exists**, and no profile
+may come to require one. When the bundled dex profile lands, OIDC fronts the
+proxy origin only -- the UI and the engine's interactive paths -- and only while
+that profile runs. Ingest edges, machine API paths, `/.well-known`, `/livez`,
+every metrics port, ClickHouse, Kafka, kafka-ui and HyperDX stay outside it. That
+mirrors the Kubernetes tier, which applies OIDC per interactive route rather than
+at the Gateway, precisely so machine paths are never redirected to a login.
 
 ```mermaid
 flowchart LR

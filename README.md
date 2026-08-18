@@ -105,9 +105,16 @@ stack does.
 
 ### There is no authentication. Read this before exposing anything.
 
-**Docker mode runs in god-mode by design.** Auth (OIDC + Envoy) is a Kubernetes-only
-concern. That is a deliberate decision, not an oversight - but it sets a hard limit
+**Docker mode runs in god-mode by design.** Nothing here authenticates anyone
+today. That is a deliberate decision, not an oversight - but it sets a hard limit
 on what "production" can mean here.
+
+Envoy fronts the stack now and carries the same OIDC filters the Kubernetes edge
+uses, so the limit is worth stating: **dfe-docker can never assume an OIDC issuer
+exists.** When the bundled dex profile lands it fronts the proxy origin only -
+the UI and the engine's interactive paths, while that profile runs. Ingest,
+machine API paths, metrics, ClickHouse, Kafka, kafka-ui and HyperDX never require
+or use OIDC.
 
 Concretely, and this survives the port-binding defaults below:
 
