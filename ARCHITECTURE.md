@@ -248,8 +248,14 @@ of the same stack version run identical digests.
 
 Two known asymmetries, both deliberate:
 
-- **No authentication here.** OIDC and Envoy are Kubernetes-only. Compose runs in
-  god-mode.
+- **No authentication here.** Compose runs in god-mode. Envoy is now the
+  entrypoint on both tiers, but its OIDC filters stay unconfigured here: Docker
+  mode can never assume an issuer exists, so OIDC is a capability a profile adds,
+  never something the stack requires. When the bundled dex profile lands it
+  fronts the proxy origin only - the UI and the engine's interactive paths -
+  leaving ingest, machine API paths, metrics and the datastores untouched. Same
+  shape as the k8s tier, which applies OIDC per interactive route rather than at
+  the Gateway.
 - **`hyperi-hyperdx` is unpinned.** The fork is unpublished, so the stack SSoT
   cannot pin it and it falls back to `:latest`. It is the only image in the stack
   without a digest, and only on the opt-in `hyperdx` profile.

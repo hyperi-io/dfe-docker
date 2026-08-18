@@ -771,10 +771,11 @@ services:
   #
   # Envoy is THE product entrypoint (the same proxy the k8s tier runs at its
   # edge); its oauth2/jwt_authn filters chain in when dfe-engine becomes the
-  # OIDC provider (dfe-engine#143). DFE_PROXY_VERSION is owned by the DFE
-  # stack SSoT (dfe-infra/versions.yaml services.envoy-proxy) and written into
-  # .env by `make stack` -- editing the pin here or in .env gets stomped on
-  # the next bump.
+  # OIDC provider (dfe-engine#143). Those filters are opt-in and scoped to this
+  # origin -- no profile may require an OIDC issuer to start. DFE_PROXY_VERSION
+  # is owned by the DFE stack SSoT (dfe-infra/versions.yaml services.envoy-proxy)
+  # and written into .env by `make stack` -- editing the pin here or in .env gets
+  # stomped on the next bump.
   # ===========================================================================
 
   dfe-proxy:

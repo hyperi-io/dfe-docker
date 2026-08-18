@@ -18,6 +18,10 @@
 # in here when the bundled dex issuer lands (the one-issuer decision) --
 # semantically the same edge policy the k8s SecurityPolicies express.
 #
+# Docker mode never assumes an issuer exists. OIDC is a capability the dex
+# profile adds to THIS origin, never a requirement any profile inherits; ingest,
+# machine paths, metrics and the datastores stay outside it.
+#
 # STRICT_DNS clusters resolve per refresh via Docker's embedded DNS, so the
 # proxy boots while a backend is down and recovers when it returns (the
 # equivalent of nginx's variable-upstream resolver trick).
@@ -45,7 +49,9 @@ static_resources:
                   - upgrade_type: websocket
                 http_filters:
                   # AUTH SEAM: jwt_authn + oauth2 filters insert here when the
-                  # bundled dex issuer lands.
+                  # bundled dex issuer lands, gated on that profile running.
+                  # Scope them per-route, never chain-wide: /api/v1 is a machine
+                  # path and must return 401, not a login redirect.
                   - name: envoy.filters.http.router
                     typed_config:
                       "@type": type.googleapis.com/envoy.extensions.filters.http.router.v3.Router
