@@ -164,15 +164,16 @@ Compose profiles, and what each holds:
 | `dfe` | `dlq-init`, `dfe-archiver`, `dfe-fetcher`, `dfe-loader`, `dfe-receiver`, `dfe-transform-vector`, `dfe-transform-vrl` |
 | `core` | `dfe-engine`, `dfe-ui`, `dfe-proxy` |
 | `hyperdx` | `hyperdx`, `hyperdx-ferretdb`, `hyperdx-postgres` |
+| `otel` | `otel-collector` |
 
 The `dfe` profile is the whole set of data-path services; which of them actually
 start is `service_profiles.yaml`'s call, because the Makefile names services
-explicitly on `up`. `resolve_profile.py` always adds `clickhouse`, adds the
-selected Kafka backend plus `kafka-ui` when the profile's transport is `kafka`,
-adds the `core` services unless `DFE_CORE_ENABLED` is falsy, and adds the HyperDX
-services only when `DFE_HYPERDX_ENABLED` is truthy. Each profile entry also names
-the config file that service mounts, which is how one service gets a Kafka config
-and another a gRPC one without a second compose file.
+explicitly on `up`. `resolve_profile.py` reads the profile's footprint keys --
+`clickhouse`, `core`, `kafbat`, `hyperdx`, `otel` -- with the matching `.env` flag
+overriding each, and adds the selected Kafka backend when the transport is
+`kafka`. Each profile entry also names the config file that service mounts, which
+is how one service gets a Kafka config and another a gRPC one without a second
+compose file.
 
 ## dfe-engine is the schema authority
 
@@ -260,6 +261,12 @@ Two known asymmetries, both deliberate:
   cannot pin it and it falls back to `:latest`. It is the only image in the stack
   without a digest, and only on the opt-in `hyperdx` profile.
 
-The self-monitoring OTel acceptance test also does not run here: this profile
-carries no OTel collector and no `otel` ClickHouse database, so that test lives in
-the `dfe-infra` post-deploy bootstrap-smoke suite.
+- **Self-monitoring reports less.** The `otel` profile runs the same chain the
+  cluster does -- services push OTLP to a collector whose exporter writes the
+  ClickHouse `otel` tables, which HyperDX reads -- and `make post` plus the
+  complete-stack e2e assert freshness there, matching the cluster's CORE 1. What
+  is missing is producers: only `dfe-engine` pushes today, because the Rust
+  services are built without scalo's `otel-metrics` feature (scalo-rs#28). The
+  cluster additionally collects container logs and node metrics from a daemonset,
+  which has no Compose equivalent. See
+  [operating.md](docs/operating.md#self-monitoring).

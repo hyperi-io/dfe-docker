@@ -150,7 +150,7 @@ The defaults are tuned for a laptop. Four things to change for anything else.
 | Variable | Default | Covers |
 |---|---|---|
 | `DFE_INGRESS_BIND_HOST` | `0.0.0.0` | What users reach: receiver ingest (6000/8080), fetcher ingest (8082), UI proxy (3000) |
-| `DFE_BIND_HOST` | `127.0.0.1` | What operators reach: ClickHouse (8123/9000), Kafka (9092/19092), the `/metrics` ports (9090, 9091, 9093-9096), Vector's API (8686), loader gRPC (50051), engine API (8003), Kafka UI (8081), HyperDX API (8000) and app (8090) |
+| `DFE_BIND_HOST` | `127.0.0.1` | What operators reach: ClickHouse (8123/9000), Kafka (9092/19092), the `/metrics` ports (9090, 9091, 9093-9096), Vector's API (8686), loader gRPC (50051), engine API (8003), Kafka UI (8081), HyperDX API (8000) and app (8090), collector health (13133) |
 
 The HyperDX app (8090) is a browser surface but binds the *operator* variable,
 because it is the one page that hands a ClickHouse credential to whoever loads it
@@ -243,7 +243,7 @@ edge to clean up.
 
 ## Service Profiles
 
-Service selection is controlled by `service_profiles.yaml` at the repo root. Each profile declares a transport mode, which DFE services to start, and optionally its whole footprint - the `clickhouse`, `core`, `kafbat` and `hyperdx` keys. The `active_profile` field is used to define the profile set and can be overridden with the `DFE_PROFILE` env var. The matching `.env` flags (`DFE_CLICKHOUSE_ENABLED`, `DFE_CORE_ENABLED`, `KAFBAT_ENABLED`, `DFE_HYPERDX_ENABLED`) override the profile's keys.
+Service selection is controlled by `service_profiles.yaml` at the repo root. Each profile declares a transport mode, which DFE services to start, and optionally its whole footprint - the `clickhouse`, `core`, `kafbat`, `hyperdx` and `otel` keys. The `active_profile` field is used to define the profile set and can be overridden with the `DFE_PROFILE` env var. The matching `.env` flags (`DFE_CLICKHOUSE_ENABLED`, `DFE_CORE_ENABLED`, `KAFBAT_ENABLED`, `DFE_HYPERDX_ENABLED`, `DFE_OTEL_ENABLED`) override the profile's keys.
 
 For `kafka` transport profiles, the Kafka backend is selected via `KAFKA_BACKEND` (default `redpanda`).
 
@@ -252,6 +252,7 @@ make dev                         # Uses active_profile from service_profiles.yam
 DFE_PROFILE=grpc-full make dev   # Override profile
 KAFKA_BACKEND=apache make dev    # Override Kafka backend
 DFE_HYPERDX_ENABLED=1 make dev   # Also start the HyperDX observability stack
+DFE_OTEL_ENABLED=1 make dev      # Also start the self-monitoring collector
 ```
 
 To start only a subset of the resolved profile for a single invocation, pass `SERVICES` (space-separated). It also works with `make ci`. An empty `SERVICES` (the default) starts the whole profile; a name that is not part of the resolved stack is a hard error.
@@ -370,11 +371,11 @@ exist, is my topic there) belongs in the scalo deployment contract, not here.
 ### The two default acceptance tests
 
 The DFE stack ships two default "it is working" e2e tests: (1) the core data path
-and (2) self-monitoring - the stack's own OTel logs+metrics landing in the otel
-ClickHouse database. This docker harness implements test (1) only. The docker
-profile ships no OTel collector and no otel ClickHouse database, so test (2)
-cannot run here without wiring the profile does not carry; it lives in the k8s
-bootstrap-smoke suite that dfe-infra runs post-deploy.
+and (2) self-monitoring - the stack's own telemetry landing in the otel ClickHouse
+database. Both run here. Test (2) needs a profile that declares `otel`, which
+`single` does, and `make post` makes the same pair of claims against an
+already-running stack. Only `dfe-engine` produces telemetry today - see
+[self-monitoring](docs/operating.md#self-monitoring) for why.
 
 ### Shared dev hosts (port collision)
 
@@ -560,6 +561,20 @@ credential fields are `env:`-interpolated. Change it there.
 | `DFE_UI_PORT`                                    | Port used by dfe-ui                                                                  | `3000`                                                              |
 | `DFE_UI_NODE_ENV`                                | Node environment of dfe-ui                                                           | `production`                                                        |
 
+## Self-monitoring (opt-in)
+
+Off by default. `DFE_OTEL_ENABLED=true` (or a profile declaring `otel: true`, as `single` does) starts a collector that takes the stack's own telemetry over OTLP and writes the `otel` ClickHouse database, which HyperDX reads. Nothing is scraped, and the collector's OTLP ports stay on the Compose network. Full picture, including which services report today: [operating.md](docs/operating.md#self-monitoring).
+
+| Variable                                         | Use                                                                                  | Default                                                             |
+|--------------------------------------------------|--------------------------------------------------------------------------------------|---------------------------------------------------------------------|
+| `DFE_OTEL_ENABLED`                               | Toggle to start the collector                                                        | `false`                                                             |
+| `DFE_OTEL_COLLECTOR_VERSION`                     | Version of otel/opentelemetry-collector-contrib                                      | none -- `make stack` pins it; unset is a hard-fail                  |
+| `DFE_OTEL_EXPORTER_ENDPOINT`                     | Where services push; empty exports nothing                                           | empty (the profile points it at the bundled collector)              |
+| `DFE_OTEL_DATABASE`                              | ClickHouse database the collector writes                                             | `otel`                                                              |
+| `DFE_OTEL_HEALTH_PORT`                           | Collector `health_check` host port                                                   | `13133`                                                             |
+| `DFE_OTEL_COLLECTOR_LOG_LEVEL`                   | Collector's own log level                                                            | `warn`                                                              |
+| `DFE_ENGINE_METRICS_BACKEND`                     | dfe-engine metrics backend; `opentelemetry` is dual (push + `/metrics`)              | `prometheus` (the profile sets `opentelemetry`)                     |
+
 ## HyperDX (opt-in observability)
 
 Off by default. `DFE_HYPERDX_ENABLED=true` starts `hyperdx` (API + App) plus its `hyperdx-ferretdb` and `hyperdx-postgres` dependencies, sharing the always-on ClickHouse.
@@ -599,6 +614,7 @@ Off by default. `DFE_HYPERDX_ENABLED=true` starts `hyperdx` (API + App) plus its
 | 9094  | dfe-fetcher          | Prometheus metrics |
 | 9095  | dfe-transform-vector | Prometheus metrics |
 | 9096  | dfe-transform-vrl    | Prometheus metrics |
+| 13133 | otel-collector       | health_check       |
 | 19092 | Kafka (any backend)  | Plaintext host     |
 | 50051 | dfe-loader           | gRPC               |
 

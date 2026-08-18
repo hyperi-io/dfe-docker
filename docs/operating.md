@@ -113,12 +113,15 @@ Per-port, as published in `docker-compose.yml`:
 | 9094 | dfe-fetcher | operator | Metrics and health |
 | 9095 | dfe-transform-vector | operator | Metrics and health |
 | 9096 | dfe-transform-vrl | operator | Metrics and health |
+| 13133 | otel-collector | operator | `health_check` extension |
 | 50051 | dfe-loader | operator | Internal `DfeTransport/Push` gRPC |
 
 `dfe-ui`, `hyperdx-postgres` and `hyperdx-ferretdb` publish no host ports at all
--- they are reached over the Docker network. The receiver's OTLP (`4317`,
-`4318`), Beats (`5044`) and HEC (`8088`) mappings are present but commented out;
-uncomment them to expose those ingest protocols.
+-- they are reached over the Docker network. Nor does the collector publish its
+OTLP ports: self-monitoring stays on the Compose network. The receiver's OTLP
+(`4317`, `4318`), Beats (`5044`) and HEC (`8088`) mappings are present but
+commented out; uncomment them to expose those ingest protocols. Note that those
+`4317`/`4318` are the receiver's *ingest* edge, not the collector's.
 
 Setting `DFE_BIND_HOST=0.0.0.0` opens every operator port at once, including a
 ClickHouse whose `CLICKHOUSE_PASSWORD` defaults to empty and which runs with
@@ -159,6 +162,12 @@ equal amount of **swap** alongside a memory limit, so a 3G limit can become 3G
 RAM plus 3G swap on a swap-enabled host. Set `memswap_limit` equal to the memory
 limit per service if you need a genuinely hard cap.
 
+Reservations are omitted deliberately: only memory maps outside Swarm, and a soft
+floor that half-applies reads as configuration doing more than it does. The
+sidecar tier is 512M rather than less because `kafka-init-apache` runs a JVM
+(`kafka-topics.sh`), and a smaller cap risks an OOM kill on a service whose whole
+job is to exit cleanly.
+
 ### `DFE_SERVICE_CPUS` has a floor of 2.0, and it is not about speed
 
 Trimming this one to fit a smaller box does not make the DFE services slower --
@@ -174,7 +183,9 @@ then answers nothing at all.
 
 dfe-archiver did exactly this at a 1.5 ceiling -- healthcheck timing out
 forever, container never healthy, events archiving perfectly the whole time.
-Raising the ceiling to 2.0 answered in 0.2ms.
+Proven on both axes against the same image: raising the ceiling to 2.0 answered
+in 0.2ms, and holding it at 1.5 while setting `TOKIO_WORKER_THREADS=4` answered
+in 0.16ms. So it is worker-thread starvation, not a shortage of CPU.
 
 `make check-compose` refuses any value under 2.0 on a service that gates on
 `/readyz`, so you cannot ship this by accident. If you need the ceiling lower
@@ -386,6 +397,11 @@ seconds at least three rows carrying that run's unique marker were readable in
 one end to the other. It is transport-agnostic by construction, so it means the
 same thing on the Kafka and gRPC profiles.
 
+On a profile that runs the collector it makes a **second** claim, and both must
+hold: that the stack's own telemetry is landing fresh in the `otel` database.
+That is the pair the Kubernetes bootstrap smoke asserts as CORE 1 and CORE 2 --
+the two pipelines a complete deployment has to move.
+
 What it does not prove: anything about tables other than the target, about
 profiles you are not running, or about throughput. Three rows is deliberate -- a
 self test that writes thousands of rows into a landing table on every boot is one
@@ -402,6 +418,76 @@ The other outcomes are as informative as the PASS:
   it did not make.
 - **SKIP** -- the active profile has no ingest component at all (loader-only).
   There is nothing to prove end to end.
+- **FAIL, no otel schema** -- the collector is in the profile but never wrote its
+  tables. It cannot reach ClickHouse; read its logs.
+- **FAIL, no fresh rows** -- the tables exist and nothing recent is in them, so
+  the services are not exporting. See below.
+
+## Self-monitoring
+
+The stack's own telemetry leaves by a different door from the data it ingests.
+That separation is the point: a platform that reports on itself through its own
+ingest pipeline cannot tell you when that pipeline is the thing that broke.
+
+The chain is the same one the Kubernetes tier runs:
+
+```mermaid
+flowchart LR
+    apps["DFE services"] -->|OTLP push :4317| col["otel-collector"]
+    col -->|clickhouse exporter| ch[("ClickHouse<br/>otel database")]
+    ch -.->|reads, never pushed to| hdx["HyperDX"]
+
+    classDef on fill:#009E73,color:#ffffff,stroke:#000000
+    class col,ch on
+```
+
+Services **push**. Nothing scrapes them, and HyperDX is a reader of ClickHouse
+rather than a destination -- the fork ships no OTLP receiver, so the collector's
+exporter is what writes the tables HyperDX queries.
+
+Turn it on by declaring `otel: true` on a profile (the `single` profile does) or
+setting `DFE_OTEL_ENABLED=true`. Two dials, deliberately independent:
+
+| Variable | Default | Effect |
+|---|---|---|
+| `DFE_OTEL_ENABLED` | `false` | starts the bundled collector |
+| `DFE_OTEL_EXPORTER_ENDPOINT` | empty | where services push; **empty exports nothing** |
+| `DFE_OTEL_DATABASE` | `otel` | the ClickHouse database the collector writes |
+| `DFE_OTEL_HEALTH_PORT` | `13133` | the collector's `health_check` extension |
+
+Enabling the profile points the services at the bundled collector. Name an
+endpoint yourself and they push there instead, which is how you feed an external
+OTLP backend with no bundled collector at all. An empty endpoint exports nothing
+and never falls back to an OTel default -- that rule belongs to scalo, not to
+this repo.
+
+The collector's OTLP ports are **not** published to the host. Self-monitoring
+travels the Compose network only, and 4317/4318 on the host belong to
+dfe-receiver's OTLP *ingest* edge, which is a different thing entirely.
+
+### What actually reports today
+
+Only `dfe-engine`. This is worth knowing before you read an empty dashboard as a
+fault:
+
+- The six Rust services are built without scalo's `otel-metrics` Cargo feature,
+  so no OTLP exporter exists in the binary and `OTEL_EXPORTER_OTLP_ENDPOINT` is
+  inert on them (scalo-rs#28). They still serve `/metrics` for anything that
+  wants to scrape it.
+- `dfe-engine` has an exporter, but scalo-py's CLI defaults the metrics backend
+  to prometheus (scalo-py#11), so the profile sets
+  `DFE_ENGINE_METRICS_BACKEND=opentelemetry`. That backend is **dual** -- it
+  pushes OTLP and keeps serving `/metrics` -- so switching it costs a scraping
+  estate nothing.
+
+This repo ships no Prometheus and scrapes nothing. `/metrics` is exposed because
+the components expose it, for whatever you point at it.
+
+Container **logs** are not collected either. The Kubernetes tier gets them from a
+daemonset tailing `/var/log/pods`; the Docker equivalent means mounting
+`/var/lib/docker/containers` into the collector, which hands it every container
+log on the host including ones with nothing to do with DFE. `docker compose logs`
+is the tool here.
 
 ## Related
 

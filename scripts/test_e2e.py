@@ -46,6 +46,7 @@ from urllib.request import Request, urlopen
 from _common import FALSY, _load_dotenv
 from _pipeline import MARKER_EXPRESSIONS  # noqa: F401 - re-exported for callers
 from _pipeline import ch_marker_count as _ch_marker_count
+from _pipeline import otel_fresh_counts, poll_until
 
 
 # ==============================================================================
@@ -107,6 +108,15 @@ SCHEMA_AUTHORITY_PROFILE = "core"
 # The rest of the `core` profile: the user-facing surface a complete-stack test
 # asserts against. dfe-engine is started separately, earlier, as the authority.
 CORE_SURFACE_SERVICES = ["dfe-ui", "dfe-proxy"]
+OTEL_PROFILE = "otel"
+OTEL_SERVICE = "otel-collector"
+OTEL_ENDPOINT_ENV_VAR = "DFE_OTEL_EXPORTER_ENDPOINT"
+OTEL_BUNDLED_ENDPOINT = "http://otel-collector:4317"
+OTEL_ENGINE_BACKEND_ENV_VAR = "DFE_ENGINE_METRICS_BACKEND"
+OTEL_ENGINE_BACKEND = "opentelemetry"
+OTEL_FRESH_WINDOW_SECONDS = 300
+OTEL_TIMEOUT_SECONDS = 120.0
+OTEL_INTERVAL_SECONDS = 5.0
 TARGET_DB = "dfe"
 TARGET_TABLE = "default"
 
@@ -467,9 +477,10 @@ def resolve_services_profile(profile_name):
 
     # Footprint keys from service_profiles.yaml, defaults matching
     # scripts/resolve_profile.py. dfe-engine already starts as the schema
-    # authority; `core` adds the UI and the proxy so a complete-stack profile is
-    # tested whole. `clickhouse` and `hyperdx` are ignored: the suite owns the
-    # warehouse it asserts against and carries no HyperDX assertions.
+    # authority; `core` adds the UI and the proxy, `otel` the collector, so a
+    # complete-stack profile is tested whole. `clickhouse` and `hyperdx` are
+    # ignored: the suite owns the warehouse it asserts against and carries no
+    # HyperDX assertions.
     extra_services = []
     if str(profile.get("core", "true")).strip().lower() not in FALSY:
         extra_services += CORE_SURFACE_SERVICES
@@ -478,6 +489,13 @@ def resolve_services_profile(profile_name):
         and str(profile.get("kafbat", "true")).strip().lower() not in FALSY
     ):
         extra_services.append("kafka-ui")
+    if str(profile.get("otel", "false")).strip().lower() not in FALSY:
+        compose_profiles.append(OTEL_PROFILE)
+        extra_services.append(OTEL_SERVICE)
+        # The harness drives compose directly, so it sets what resolve_profile.py
+        # would have exported through make.
+        os.environ.setdefault(OTEL_ENDPOINT_ENV_VAR, OTEL_BUNDLED_ENDPOINT)
+        os.environ.setdefault(OTEL_ENGINE_BACKEND_ENV_VAR, OTEL_ENGINE_BACKEND)
 
     services = {}
     for svc_name, svc_conf in raw_services.items():
@@ -1326,6 +1344,53 @@ def verify_http(ctx, test_name, checks):
             mark_pass(ctx, f"[{test_name}] {url} -> {got}")
 
 
+# ---------------------------------------------------------------------------
+# Verify Self-Monitoring
+# - Asserts the stack's OWN telemetry reaches ClickHouse, the second of the two
+#   pipelines a complete stack has to land. Freshness, not existence: the claim
+#   is that it is streaming now.
+# ---------------------------------------------------------------------------
+def verify_self_monitoring(ctx, test_name):
+    database = os.environ.get("DFE_OTEL_DATABASE", "otel")
+    LOGGER.info(f"Verifying self-telemetry in '{database}'...")
+
+    def _fresh():
+        return otel_fresh_counts(
+            database, OTEL_FRESH_WINDOW_SECONDS, debug=LOGGER.debug
+        )
+
+    def _report(attempt, result):
+        LOGGER.debug(f"    Attempt {attempt}: {result}")
+
+    counts = poll_until(
+        _fresh,
+        timeout=OTEL_TIMEOUT_SECONDS,
+        interval=OTEL_INTERVAL_SECONDS,
+        done=lambda result: result is not None and any(result.values()),
+        on_attempt=_report,
+    )
+
+    if counts is None:
+        mark_fail(
+            ctx,
+            f"[{test_name}] no '{database}' table readable within "
+            f"{OTEL_TIMEOUT_SECONDS:.0f}s - the collector never wrote its schema",
+        )
+        return
+    landed = {table: count for table, count in counts.items() if count}
+    if not (landed):
+        mark_fail(
+            ctx,
+            f"[{test_name}] '{database}' has no rows newer than "
+            f"{OTEL_FRESH_WINDOW_SECONDS}s - the services are not exporting",
+        )
+        return
+    summary = ", ".join(f"{table}={count}" for table, count in sorted(landed.items()))
+    mark_pass(
+        ctx, f"[{test_name}] self-telemetry streaming into '{database}' ({summary})"
+    )
+
+
 # ==============================================================================
 # Test Functions
 # - Functions for resolving test cases from config and running the test flow
@@ -1454,6 +1519,10 @@ def run_test(ctx, mode, test, persistent_services):
     if test.expected_http:
         print()
         verify_http(ctx, test.name, test.expected_http)
+
+    if OTEL_SERVICE in test.extra_services:
+        print()
+        verify_self_monitoring(ctx, test.name)
 
     # Dump container logs for debugging purposes, then tear down the stack if configured to do so
     dump_logs()

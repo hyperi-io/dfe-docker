@@ -158,6 +158,41 @@ def ch_marker_count(
     return 0 if usable else None
 
 
+# Tables the collector's ClickHouse exporter creates, with the column carrying
+# event time. Metrics lead: scalo's OTLP backend is a metrics backend, so logs
+# and traces are probed but not expected to carry rows.
+OTEL_FRESHNESS_TABLES = (
+    ("otel_metrics_sum", "TimeUnix"),
+    ("otel_metrics_gauge", "TimeUnix"),
+    ("otel_metrics_histogram", "TimeUnix"),
+    ("otel_logs", "Timestamp"),
+    ("otel_traces", "Timestamp"),
+)
+
+
+def otel_fresh_counts(
+    database: str, window_seconds: int, *, debug=None
+) -> dict[str, int] | None:
+    """Count self-telemetry rows newer than the window, per table.
+
+    Freshness rather than existence, so the assertion is that the pipeline is
+    streaming now. Returns None when no table could be read: an absent schema and
+    an empty one call for opposite reactions.
+    """
+    counts: dict[str, int] = {}
+    for table, column in OTEL_FRESHNESS_TABLES:
+        raw = ch_query(
+            f"SELECT count() FROM {database}.{table} "
+            f"WHERE {column} > now() - INTERVAL {int(window_seconds)} SECOND",
+            debug=debug,
+        )
+        try:
+            counts[table] = int(raw.strip())
+        except (ValueError, AttributeError):
+            continue
+    return counts or None
+
+
 def marked_event(*, marker: str, source: str, extra: dict | None = None) -> str:
     """Build one JSON event stamped with `marker`, routed to `source`.
 
