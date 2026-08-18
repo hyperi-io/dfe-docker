@@ -111,7 +111,9 @@ def _footprint(*, profile: dict[str, object], profile_name: str) -> dict[str, bo
                 header=profile_name,
                 msg=f"Footprint key {key!r} must be true or false, not a block",
             )
-        fallback = default if declared is None else declared.strip().lower() not in FALSY
+        fallback = (
+            default if declared is None else declared.strip().lower() not in FALSY
+        )
         resolved[key] = _env_truthy(default=fallback, name=env_var)
     return resolved
 
