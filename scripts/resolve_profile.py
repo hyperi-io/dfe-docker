@@ -10,8 +10,16 @@
 """Resolve DFE service profile from service_profiles.yaml.
 
 Reads service_profiles.yaml, resolves the active profile (overridable via DFE_PROFILE env var), validates config paths exist and writes to the .profile.mk file.
-If KAFBAT_ENABLED, adds the `kafka-ui` profile to the PROFILE_FLAGS.
 For kafka transport, KAFKA_BACKEND selects the backend (defaults to redpanda).
+
+A profile declares its whole FOOTPRINT, not just the data plane. The optional
+``core`` / ``kafbat`` / ``hyperdx`` / ``clickhouse`` keys say which of those
+components run; an absent key keeps the historical default, so a profile that
+declares none behaves exactly as it did before the keys existed.
+
+The matching env var wins over the profile key, because ``.env`` is what a deploy
+writes (via the deployment dial) while the profile is the committed shape -- the
+same precedence ``DFE_PROFILE`` already has over ``active_profile``.
 """
 
 from __future__ import annotations
@@ -34,6 +42,16 @@ CORE_SERVICES = ["dfe-engine", "dfe-ui", "dfe-proxy"]
 
 HYPERDX_ENABLED_ENV_VAR = "DFE_HYPERDX_ENABLED"
 HYPERDX_SERVICES = ["hyperdx", "hyperdx-ferretdb", "hyperdx-postgres"]
+
+# Footprint components a profile may declare: yaml key -> (env override, default
+# when neither the key nor the env var is set). kafbat's default only applies on
+# the kafka transport; there is no Kafka UI without a broker.
+FOOTPRINT_KEYS = {
+    "clickhouse": ("DFE_CLICKHOUSE_ENABLED", True),
+    "core": (CORE_ENABLED_ENV_VAR, True),
+    "hyperdx": (HYPERDX_ENABLED_ENV_VAR, False),
+    "kafbat": ("KAFBAT_ENABLED", True),
+}
 
 PROFILE_ENV_VAR = "DFE_PROFILE"
 PROFILE_ACTIVE_YAML_FIELD = "active_profile"
@@ -83,6 +101,21 @@ def _env_truthy(*, default: bool, name: str) -> bool:
     return raw.strip().lower() not in FALSY
 
 
+def _footprint(*, profile: dict[str, object], profile_name: str) -> dict[str, bool]:
+    """Resolve which footprint components run: env var, else profile key, else default."""
+    resolved: dict[str, bool] = {}
+    for key, (env_var, default) in FOOTPRINT_KEYS.items():
+        declared = profile.get(key)
+        if declared is not None and not (isinstance(declared, str)):
+            raise _ProfileError(
+                header=profile_name,
+                msg=f"Footprint key {key!r} must be true or false, not a block",
+            )
+        fallback = default if declared is None else declared.strip().lower() not in FALSY
+        resolved[key] = _env_truthy(default=fallback, name=env_var)
+    return resolved
+
+
 def _parse_yaml(*, text: str) -> dict[str, object]:
     """Parse a minimal YAML subset into nested dicts with string values."""
     root = {}
@@ -112,8 +145,10 @@ def _parse_yaml(*, text: str) -> dict[str, object]:
     return root
 
 
-def _resolve_profile(*, data: dict[str, object]) -> tuple[str, dict[str, object]]:
-    """Resolve active profile and return (transport, services_dict)."""
+def _resolve_profile(
+    *, data: dict[str, object]
+) -> tuple[str, dict[str, object], dict[str, bool]]:
+    """Resolve active profile and return (transport, services_dict, footprint)."""
     active_profile = os.environ.get(PROFILE_ENV_VAR, "") or data.get(
         PROFILE_ACTIVE_YAML_FIELD, None
     )
@@ -136,6 +171,17 @@ def _resolve_profile(*, data: dict[str, object]) -> tuple[str, dict[str, object]
 
     _print(msg=f"Using profile {active_profile!r}...")
     profile = profiles[active_profile]
+
+    # A typo like `cor: true` would otherwise resolve to the default and start a
+    # footprint nobody asked for, silently.
+    known_keys = {"transport", "services"} | set(FOOTPRINT_KEYS)
+    unknown = sorted(set(profile) - known_keys)
+    if unknown:
+        raise _ProfileError(
+            header=active_profile,
+            msg=f"Unknown profile key(s) {', '.join(unknown)}. Known keys:\n{'\n'.join(f'- {key}' for key in sorted(known_keys))}",
+        )
+
     transport = profile.get("transport", "")
     if transport not in TRANSPORT_TYPES:
         raise _ProfileError(
@@ -167,7 +213,7 @@ def _resolve_profile(*, data: dict[str, object]) -> tuple[str, dict[str, object]
                 msg=f"Config file {_rel_path(path=config_file)!r} not found.",
             )
 
-    return transport, services
+    return transport, services, _footprint(profile=profile, profile_name=active_profile)
 
 
 def main() -> int:
@@ -182,10 +228,12 @@ def main() -> int:
         data = _parse_yaml(
             text=SERVICE_PROFILES_FILE.read_text(encoding="utf-8", errors="replace")
         )
-        transport, services = _resolve_profile(data=data)
+        transport, services, footprint = _resolve_profile(data=data)
 
         # Build infra compose profile flags
-        profiles = ["clickhouse"]
+        profiles = []
+        if footprint["clickhouse"]:
+            profiles.append("clickhouse")
         kafka_ui_enabled = False
         if transport == "kafka":
             backend = (
@@ -196,22 +244,24 @@ def main() -> int:
                     msg=f"Kafka backend {backend!r} unknown. Available Kafka backends:\n{'\n'.join([f'- {option}' for option in SERVICE_KAFKA_OPTIONS])}",
                 )
             profiles.append(SERVICE_KAFKA_OPTIONS[backend])
-            if _env_truthy(default=True, name="KAFBAT_ENABLED"):
+            # No broker, no Kafka UI -- the grpc transport starts neither.
+            if footprint["kafbat"]:
                 profiles.append("kafka-ui")
                 kafka_ui_enabled = True
-
-        hyperdx_enabled = _env_truthy(default=False, name=HYPERDX_ENABLED_ENV_VAR)
 
         # Write to .profile.mk ($(shell) collapses newlines)
         lines = []
         profile_flags = " ".join(f"--profile {profile}" for profile in profiles)
         lines.append(f"export PROFILE_FLAGS := {profile_flags}")
+        # ClickHouse stays out of this list -- it starts via its compose profile
+        # and the depends_on of whatever needs it. DFE_SERVICES is also what
+        # build_dev_images.py builds and what `SERVICES=` narrows against.
         service_list = sorted(services.keys())
         if kafka_ui_enabled:
             service_list.append("kafka-ui")
-        if _env_truthy(default=True, name=CORE_ENABLED_ENV_VAR):
+        if footprint["core"]:
             service_list.extend(CORE_SERVICES)
-        if hyperdx_enabled:
+        if footprint["hyperdx"]:
             service_list.extend(HYPERDX_SERVICES)
         lines.append(f"export DFE_SERVICES := {' '.join(service_list)}")
 

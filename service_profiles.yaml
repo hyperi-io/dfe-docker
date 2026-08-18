@@ -13,10 +13,59 @@
 #   DFE_PROFILE=grpc-full make dev
 #
 # config_path is relative to the config/ directory.
+#
+# FOOTPRINT KEYS (optional, per profile) say which non-data-plane components run.
+# An absent key keeps the default, so a profile that declares none behaves as it
+# always has:
+#
+#   clickhouse  (default true)   the warehouse container
+#   core        (default true)   dfe-engine, dfe-ui, dfe-proxy
+#   kafbat      (default true)   the Kafka UI; kafka transport only
+#   hyperdx     (default false)  hyperdx + its Postgres and FerretDB
+#
+# The matching env var -- DFE_CLICKHOUSE_ENABLED, DFE_CORE_ENABLED,
+# KAFBAT_ENABLED, DFE_HYPERDX_ENABLED -- overrides the key, because .env is what
+# a deploy writes and the profile is the committed shape.
+#
+# NAMING: `slim` and `single` are the shared vocabulary with the Kubernetes tier
+# (dfe-infra argocd/values/profile-*.yaml), so one deployment dial reads the same
+# on both. There is no `scale` here: Compose cannot run an HA broker or a
+# ClickHouse cluster. Every profile below is single-node, so the axis that
+# carries information is how COMPLETE the stack is, not the node count.
+# The transport-shaped names below `single` are the fine-grained data-plane
+# shapes; the e2e suite pins them by name.
 
 active_profile: kafka-fetcher
 
 profiles:
+  # gRPC, no broker: the smallest thing that ingests and serves.
+  slim:
+    transport: grpc
+    services:
+      dfe-loader:
+        config_path: loader/grpc.yaml
+      dfe-receiver:
+        config_path: receiver/grpc.yaml
+
+  # One node of everything, WITH Kafka -- the complete stack. HyperDX stays
+  # opt-in, matching the Kubernetes profile, which leaves it to its own toggle.
+  single:
+    transport: kafka
+    clickhouse: true
+    core: true
+    kafbat: true
+    services:
+      dfe-archiver:
+        config_path: archiver/kafka.yaml
+      dfe-fetcher:
+        config_path: fetcher/aws-kafka.yaml
+      dfe-loader:
+        config_path: loader/kafka-load.yaml
+      dfe-receiver:
+        config_path: receiver/kafka.yaml
+      dfe-transform-vrl:
+        config_path: transform-vrl/kafka.yaml
+
   kafka-minimal:
     transport: kafka
     services:

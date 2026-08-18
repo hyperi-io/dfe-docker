@@ -233,7 +233,7 @@ edge to clean up.
 
 ## Service Profiles
 
-Service selection is controlled by `service_profiles.yaml` at the repo root. Each profile declares a transport mode and which DFE services to start. The `active_profile` field is used to define the profile set and can be overridden with the `DFE_PROFILE` env var.
+Service selection is controlled by `service_profiles.yaml` at the repo root. Each profile declares a transport mode, which DFE services to start, and optionally its whole footprint - the `clickhouse`, `core`, `kafbat` and `hyperdx` keys. The `active_profile` field is used to define the profile set and can be overridden with the `DFE_PROFILE` env var. The matching `.env` flags (`DFE_CLICKHOUSE_ENABLED`, `DFE_CORE_ENABLED`, `KAFBAT_ENABLED`, `DFE_HYPERDX_ENABLED`) override the profile's keys.
 
 For `kafka` transport profiles, the Kafka backend is selected via `KAFKA_BACKEND` (default `redpanda`).
 
@@ -253,8 +253,15 @@ make ci  SERVICES="dfe-loader dfe-ui"   # Same, against registry images
 
 ### Application Profiles (service_profiles.yaml)
 
+`slim` and `single` name a whole-stack shape and share their names with the
+Kubernetes tier, so one deployment dial reads the same on both. `single` is the
+complete stack. There is no `scale` - Compose cannot run an HA broker or a
+ClickHouse cluster.
+
 | Profile                           | Transport | dfe-archiver | dfe-fetcher | dfe-loader | dfe-receiver | dfe-transform-vrl | dfe-transform-vector |
 |-----------------------------------|-----------|:------------:|:-----------:|:----------:|:------------:|:-----------------:|:--------------------:|
+| `slim`                            | gRPC      |              |             |     X      |      X       |                   |                      |
+| `single`                          | Kafka     |      X       |      X      |     X      |      X       |         X         |                      |
 | `kafka-fetcher`                   | Kafka     |              |      X      |     X      |              |                   |                      |
 | `kafka-full`                      | Kafka     |      X       |      X      |     X      |      X       |                   |                      |
 | `kafka-full-transform-vrl`        | Kafka     |              |      X      |     X      |      X       |         X         |                      |
