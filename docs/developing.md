@@ -139,6 +139,21 @@ stack manifest.
 mounts. `active_profile` is the default; `DFE_PROFILE` overrides it for one
 invocation.
 
+Two profiles name a whole-stack shape and share their names with the Kubernetes
+tier, so one deployment dial reads the same on both:
+
+| Profile | Transport | Services | Also starts |
+|---|---|---|---|
+| `slim` | grpc | loader, receiver | ClickHouse, core |
+| `single` | kafka | archiver, fetcher, loader, receiver, transform-vrl | ClickHouse, core, kafka-ui |
+
+`single` is the complete stack -- it is what "everything on one box" means here,
+and the only shape the bundled dex profile will front when it lands. HyperDX
+stays opt-in on it, matching the Kubernetes profile. There is no `scale`:
+Compose cannot run an HA broker or a ClickHouse cluster.
+
+The rest are fine-grained data-plane shapes. The e2e suite pins them by name.
+
 | Profile | Transport | Services |
 |---|---|---|
 | `kafka-minimal` | kafka | loader |
@@ -157,9 +172,14 @@ invocation.
 DFE_PROFILE=grpc-full make dev        # override the profile
 KAFKA_BACKEND=apache make dev         # Apache Kafka instead of Redpanda
 DFE_CORE_ENABLED=false make dev       # skip engine, UI and proxy
+DFE_CLICKHOUSE_ENABLED=false make dev # no warehouse container (external instance)
 DFE_HYPERDX_ENABLED=1 make dev        # add the HyperDX observability stack
 make dev SERVICES="dfe-loader"        # start a subset of the resolved profile
 ```
+
+Those four flags mirror the `clickhouse`, `core`, `kafbat` and `hyperdx` keys a
+profile may declare, and they win over it -- `.env` is what a deploy writes, the
+profile is the committed shape. Leave them unset and the profile decides.
 
 Two of those need a warning.
 
