@@ -888,6 +888,50 @@ def dump_logs():
 
 
 # ------------------------------------------------------------------------------
+# Report Unready Service
+# - Dumps what a timed-out service was actually doing, before teardown removes it
+#
+#   A bare timeout cannot distinguish the three states it might have been in: no
+#   container, a container whose port is published but not yet listening, or a
+#   process that is running and not answering. They call for different fixes, and
+#   the container is gone by the time anyone reads the failure.
+# ------------------------------------------------------------------------------
+def report_unready(name):
+    inspect = run_cmd(
+        [
+            "docker",
+            "inspect",
+            "-f",
+            "status={{.State.Status}} health={{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}} restarts={{.RestartCount}}",
+            name,
+        ],
+        capture=True,
+    )
+    state = (inspect.stdout or inspect.stderr or "").strip()
+    LOGGER.error(f"    '{name}' container: {state or 'not found'}")
+    if inspect.returncode != 0:
+        return
+
+    health = run_cmd(
+        [
+            "docker",
+            "inspect",
+            "-f",
+            "{{range .State.Health.Log}}{{.ExitCode}} {{.Output}}{{end}}",
+            name,
+        ],
+        capture=True,
+    )
+    if (health.stdout or "").strip():
+        LOGGER.error(f"    '{name}' healthcheck log: {health.stdout.strip()[:400]}")
+
+    logs = run_cmd(["docker", "logs", "--tail", "20", name], capture=True)
+    tail = ((logs.stdout or "") + (logs.stderr or "")).strip()
+    if tail:
+        LOGGER.error(f"    '{name}' last lines:\n{tail[-2000:]}")
+
+
+# ------------------------------------------------------------------------------
 # Wait For Service
 # - Waits for a service to become healthy by polling its endpoint
 # ------------------------------------------------------------------------------
@@ -909,6 +953,8 @@ def wait_for_service(name, url, max_attempts=30):
     LOGGER.error(
         f"'{name}' not ready after {max_attempts} attempt{'s' if (attempt > 1) else ''}"
     )
+    if name.startswith("dfe-"):
+        report_unready(name)
     return False
 
 
