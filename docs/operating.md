@@ -113,12 +113,15 @@ Per-port, as published in `docker-compose.yml`:
 | 9094 | dfe-fetcher | operator | Metrics and health |
 | 9095 | dfe-transform-vector | operator | Metrics and health |
 | 9096 | dfe-transform-vrl | operator | Metrics and health |
+| 13133 | otel-collector | operator | `health_check` extension |
 | 50051 | dfe-loader | operator | Internal `DfeTransport/Push` gRPC |
 
 `dfe-ui`, `hyperdx-postgres` and `hyperdx-ferretdb` publish no host ports at all
--- they are reached over the Docker network. The receiver's OTLP (`4317`,
-`4318`), Beats (`5044`) and HEC (`8088`) mappings are present but commented out;
-uncomment them to expose those ingest protocols.
+-- they are reached over the Docker network. Nor does the collector publish its
+OTLP ports: self-monitoring stays on the Compose network. The receiver's OTLP
+(`4317`, `4318`), Beats (`5044`) and HEC (`8088`) mappings are present but
+commented out; uncomment them to expose those ingest protocols. Note that those
+`4317`/`4318` are the receiver's *ingest* edge, not the collector's.
 
 Setting `DFE_BIND_HOST=0.0.0.0` opens every operator port at once, including a
 ClickHouse whose `CLICKHOUSE_PASSWORD` defaults to empty and which runs with
@@ -159,6 +162,12 @@ equal amount of **swap** alongside a memory limit, so a 3G limit can become 3G
 RAM plus 3G swap on a swap-enabled host. Set `memswap_limit` equal to the memory
 limit per service if you need a genuinely hard cap.
 
+Reservations are omitted deliberately: only memory maps outside Swarm, and a soft
+floor that half-applies reads as configuration doing more than it does. The
+sidecar tier is 512M rather than less because `kafka-init-apache` runs a JVM
+(`kafka-topics.sh`), and a smaller cap risks an OOM kill on a service whose whole
+job is to exit cleanly.
+
 ### `DFE_SERVICE_CPUS` has a floor of 2.0, and it is not about speed
 
 Trimming this one to fit a smaller box does not make the DFE services slower --
@@ -172,9 +181,10 @@ synchronous, so that loop owns the thread. The HTTP server carrying `/readyz`,
 `/livez` and `/metrics` never gets scheduled: it accepts your connection and
 then answers nothing at all.
 
-dfe-archiver did exactly this at a 1.5 ceiling -- healthcheck timing out
-forever, container never healthy, events archiving perfectly the whole time.
-Raising the ceiling to 2.0 answered in 0.2ms.
+The symptom on dfe-archiver at a 1.5 ceiling is a healthcheck that times out
+forever while events archive normally. `TOKIO_WORKER_THREADS=4` at that same
+ceiling restores the endpoints, which is how you tell worker-thread starvation
+from a shortage of CPU.
 
 `make check-compose` refuses any value under 2.0 on a service that gates on
 `/readyz`, so you cannot ship this by accident. If you need the ceiling lower
@@ -254,116 +264,12 @@ Eight named volumes hold all durable state:
 eight, which now includes the warehouse. It always removed volumes; what changed
 is that ClickHouse data is in one.
 
-## The deployment dial: one file the deploy reads
+## Deploying and upgrading
 
-A repeatable deploy turns ONE file. `deployment.example.yaml` is the template;
-copy it to `deployment.yaml` (gitignored, never committed) and populate it. That
-copy is the SSoT for the deploy -- registry, pinned version, service footprint,
-host exposure, the broker, and where the pull credential comes from -- and `make
-dial` renders its docker-vm slice into `.env`. A redeploy is a dial edit, not a
-hunt through `.env`:
-
-```bash
-make dial && make stack && make ci
-```
-
-`make dial` writes the deploy-controlled keys over the `.env` that `make init`
-generated, `make stack` pins the certified image set from the dial's
-`version.pin`, and `make ci` pulls and starts it. Both `stack` and `ci` depend
-on `make login`, so registry auth happens on the way through.
-
-Two properties keep the file safe to hand around. **Secrets are references,
-never values** -- `secrets.backend` and `secrets.ref` name WHERE the GHCR pull
-credential lives (OpenBao by default), and whoever deploys resolves it. On a
-lone box you set `DFE_GHCR_USERNAME` and `DFE_GHCR_TOKEN` in `.env` by hand; in
-the estate a thin caller reads them from the backend and injects them, so the
-dial itself carries no token. **Estate endpoints stay blank** -- an empty
-`endpoints.clickhouse_host` means "use the in-stack container", and you set it
-(or let the caller inject it) only to point the engine at an external warehouse.
-
-`make login` authenticates docker and oras to `registry` from those two `.env`
-keys. `scripts/ghcr_login.py` pipes the token on stdin, so it never reaches a
-make variable or the process list, and it is a no-op when the keys are unset --
-a daemon that authed out of band is not re-authed -- which is why `stack` and
-`ci` depend on it unconditionally.
-
-This file is the docker-vm SLICE. The canonical superset -- docker-vm plus the
-Kubernetes and cloud dials, and the schema -- lives in dfe-infra, but a lone
-dfe-docker clone deploys from its own `deployment.yaml` alone, with no dfe-infra
-checkout needed.
-
-## Staying current: pinned or track-latest
-
-A box stays current one of two mutually exclusive ways. `make modes` states both
-and reports which one THIS checkout is on -- ask the stack rather than this page,
-for the same reason `make limits` exists.
-
-```bash
-make modes                                          # the contract + this box's mode
-python3 ops/daemon-update/self_update.py --dry-run  # the live latest-vs-applied
-```
-
-**Pinned (default).** `make stack VERSION=X.Y.Z && make ci` pins the whole
-certified set from the signed stack-manifest and starts it. It hard-fails rather
-than ever pull `latest`. `make dial` sets the pin from the deployment dial's
-`version.pin`, so a redeploy is a dial edit plus `make dial && make stack && make
-ci`. This is the production-safe default: nothing moves until you move it.
-
-**Track-latest (opt-in).** `ops/daemon-update/install.sh` installs a systemd timer
-that discovers the newest certified stack tag and runs the SAME `make stack` +
-`make ci`, but only when something newer has shipped. It never pulls `latest`. By
-default it tracks STABLE releases only; `DFE_UPDATE_ALLOW_PRERELEASE=1` (commented
-in the service unit) also takes `-rc` builds. See
-[ops/daemon-update/README.md](../ops/daemon-update/README.md).
-
-The daemon fast-forwards the checkout before pinning, because a stack version is
-images plus the compose that runs them. It refuses rather than pull over
-uncommitted changes to tracked files, and `DFE_UPDATE_SKIP_GIT_PULL=1` turns the
-refresh off for a checkout managed another way. On the pinned path that is your
-job: `git pull` before `make stack`, or you get new images under an old compose
-file.
-
-The two are mutually exclusive: a track-latest box lets the daemon own the
-version, so leave `version.pin` out of the dial there. `make modes` calls it
-`AMBIGUOUS` if it finds both set.
-
-> Until a GA stack ships, the only published tag is a pre-release, so a
-> stable-only track-latest daemon finds nothing to apply -- pin explicitly, or set
-> `DFE_UPDATE_ALLOW_PRERELEASE=1` knowingly.
-
-## Upgrading an existing deployment
-
-Two changes bite an existing stack. Neither is silent if you read this; both are
-silent if you do not.
-
-**ClickHouse moved to a named volume.** Its data previously lived in the
-container's writable layer and died with `docker compose down`. It now mounts
-`clickhouse-data:/var/lib/clickhouse`. On the first `make ci` after upgrading,
-the container is recreated against an **empty** volume -- anything still in the
-old writable layer is not migrated and will appear to have vanished. Export it
-before upgrading if it matters.
-
-**Most published ports moved from `0.0.0.0` to `127.0.0.1`.** Anything
-reaching this box from elsewhere -- a remote `clickhouse-client`, a Prometheus
-scrape of `:9090-9096`, a colleague's browser -- gets `connection refused` with
-no hint as to why. `DFE_BIND_HOST=0.0.0.0` restores the old behaviour, having
-read the auth section above.
-
-**`CLICKHOUSE_PASSWORD` is now generated, not blank.** `make init` mints one, so
-an upgraded stack that runs `make init` (to pick up new `.env.example` keys) gets
-a real password. ClickHouse stores the default-user credential in its data volume
-on first init, so a pre-existing `clickhouse-data` volume still expects the OLD
-(blank) password and the loader/engine/HyperDX now authenticate with the new one
--- every query fails `Authentication failed`. Two ways through:
-
-- Keep the old behaviour: set `CLICKHOUSE_PASSWORD=` (blank) in `.env` before
-  starting. `make init` only tops up a MISSING key, so an explicit blank is kept.
-- Adopt the password: set the ClickHouse default user to the generated value once
-  (`ALTER USER default IDENTIFIED BY '<value>'` against the running instance, or
-  recreate the volume if it holds nothing you need), then restart the stack.
-
-A fresh deployment has neither problem -- the volume is created with the generated
-password from the start.
+A deploy turns one file -- `deployment.yaml` -- and pins one stack version.
+`make dial && make stack && make ci` is the whole loop. Tracking a channel
+instead of a pin, and what an upgrade does to a running stack, are in
+[deploying.md](deploying.md).
 
 ## The power-on self test, and what a PASS proves
 
@@ -386,6 +292,11 @@ seconds at least three rows carrying that run's unique marker were readable in
 one end to the other. It is transport-agnostic by construction, so it means the
 same thing on the Kafka and gRPC profiles.
 
+On a profile that runs the collector it makes a **second** claim, and both must
+hold: that the stack's own telemetry is landing fresh in the `otel` database.
+That is the pair the Kubernetes bootstrap smoke asserts as CORE 1 and CORE 2 --
+the two pipelines a complete deployment has to move.
+
 What it does not prove: anything about tables other than the target, about
 profiles you are not running, or about throughput. Three rows is deliberate -- a
 self test that writes thousands of rows into a landing table on every boot is one
@@ -402,9 +313,25 @@ The other outcomes are as informative as the PASS:
   it did not make.
 - **SKIP** -- the active profile has no ingest component at all (loader-only).
   There is nothing to prove end to end.
+- **FAIL, no otel schema** -- the collector is in the profile but never wrote its
+  tables. It cannot reach ClickHouse; read its logs.
+- **FAIL, no fresh rows** -- the tables exist and nothing recent is in them, so
+  the services are not exporting. See below.
+
+## Self-monitoring
+
+The stack's own telemetry goes out over OTLP to a collector, which writes the
+`otel` ClickHouse database that HyperDX reads. Turn it on with `otel: true` on a
+profile (`single` has it) or `DFE_OTEL_ENABLED=true`.
+
+Only dfe-engine reports today, and nothing here scrapes anything. The dials, what
+each component actually does, and why `/metrics` still exists are all in
+[observability.md](observability.md).
 
 ## Related
 
-- [README.md](../README.md) -- quick start, profiles, full environment variable reference
+- [deploying.md](deploying.md) -- the dial, pinning, upgrading a running stack
+- [observability.md](observability.md) -- health surface, self-telemetry, the self test
+- [configuration.md](configuration.md) -- every variable, port and image
 - [troubleshooting.md](troubleshooting.md) -- reading stack state, known issues, common failures
-- [ARCHITECTURE.md](../ARCHITECTURE.md) -- components, transports, and how data moves
+- [architecture.md](architecture.md) -- components, transports, and how data moves

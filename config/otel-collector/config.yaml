@@ -1,0 +1,63 @@
+# Project:   dfe-docker
+# File:      config/otel-collector/config.yaml
+# Purpose:   Collector config for the stack's own telemetry
+# Language:  YAML
+#
+# License:   BUSL-1.1
+# Copyright: (c) 2026 HYPERI PTY LIMITED
+#
+# OTLP in, ClickHouse out -- HyperDX reads those tables, it is never pushed to.
+# The same shape as the k8s gateway. See docs/operating.md#self-monitoring.
+
+extensions:
+  health_check:
+    endpoint: 0.0.0.0:13133
+
+receivers:
+  otlp:
+    protocols:
+      grpc:
+        endpoint: 0.0.0.0:4317
+      http:
+        endpoint: 0.0.0.0:4318
+
+processors:
+  memory_limiter:
+    check_interval: 5s
+    limit_percentage: 75
+    spike_limit_percentage: 15
+  batch:
+    timeout: 5s
+    send_batch_size: 1024
+
+exporters:
+  clickhouse:
+    endpoint: tcp://${env:CLICKHOUSE_HOST}:${env:CLICKHOUSE_NATIVE_PORT}
+    database: ${env:DFE_OTEL_DATABASE}
+    username: ${env:CLICKHOUSE_USERNAME}
+    password: ${env:CLICKHOUSE_PASSWORD}
+    create_schema: true
+    timeout: 10s
+    sending_queue:
+      queue_size: 1000
+    retry_on_failure:
+      enabled: true
+
+service:
+  extensions: [health_check]
+  pipelines:
+    metrics:
+      receivers: [otlp]
+      processors: [memory_limiter, batch]
+      exporters: [clickhouse]
+    traces:
+      receivers: [otlp]
+      processors: [memory_limiter, batch]
+      exporters: [clickhouse]
+    logs:
+      receivers: [otlp]
+      processors: [memory_limiter, batch]
+      exporters: [clickhouse]
+  telemetry:
+    logs:
+      level: ${env:DFE_OTEL_COLLECTOR_LOG_LEVEL}

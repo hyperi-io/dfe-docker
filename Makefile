@@ -161,10 +161,20 @@ check: check-compose check-hardfail check-dockerfile check-docs check-python ## 
 limits: ## Show the resource limits and totals, computed from the resolved config
 	@python3 scripts/show_limits.py
 
+# Pinned so a new ruff release cannot turn this red on an unrelated change, and
+# so a local run lints with the SAME version CI does. CI installs the pin itself
+# and sets RUFF=ruff; override the same way if you have no uvx.
+RUFF_VERSION := 0.15.22
+RUFF ?= uvx ruff@$(RUFF_VERSION)
+
+.PHONY: print-ruff-version
+print-ruff-version:
+	@echo $(RUFF_VERSION)
+
 .PHONY: check-python
 check-python: ## Lint the helper scripts (config in ruff.toml)
-	ruff check scripts/ ops/
-	ruff format --check scripts/ ops/
+	$(RUFF) check scripts/ ops/
+	$(RUFF) format --check scripts/ ops/
 
 .PHONY: check-compose
 check-compose: ## Resolve compose on the registry, dev and live paths, both Kafka backends

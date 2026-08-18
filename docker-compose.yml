@@ -12,43 +12,24 @@
 # kafka-redpanda | kafka-redpanda, kafka-init-redpanda | Redpanda (default); BSL -- see README      |
 # kafka-apache   | kafka-apache, kafka-init-apache     | Apache Kafka (opt-in); Apache-2.0 only     |
 # kafka-ui       | kafka-ui                            |                                           |
+# otel           | otel-collector                      | self-monitoring; opt-in                   |
 #
-# The kafka-* profiles are mutually exclusive. All expose the network alias `kafka` on the same host ports, so only one can be active at a time.
-# Downstream services and configs always address `kafka:9092` and work with either backend.
-# Each backend has its OWN topic-init service so the Apache profile never pulls a BSL-licensed artefact -- see the kafka-init sections below.
+# The kafka-* profiles are mutually exclusive: all three share the network alias `kafka`, and downstream
+# configs always address `kafka:9092`. Each backend has its own topic-init so the Apache profile never
+# pulls a BSL artefact.
 #
-# DFE services carry profiles too -- `dfe` (receiver, fetcher, loader, archiver, transforms, dlq-init), `core` (engine, ui, proxy) and `hyperdx`.
-# Which of them actually START is a second, independent selection made by service_profiles.yaml at the repo root, which also sets their config paths.
+# DFE services carry profiles too -- `dfe`, `core`, `hyperdx`, `otel`. WHICH of them start is a second,
+# independent selection made by service_profiles.yaml, which also sets their config paths.
 #
-# ---------------------------------------------------------------------------
-# Production posture (Compose is a supported small-environment deploy target)
-# ---------------------------------------------------------------------------
-# Host port binding is split by audience, per the operator/user port separation:
-#   DFE_INGRESS_BIND_HOST (default 0.0.0.0)  - what USERS reach: ingest ports, the UI proxy, the HyperDX app.
-#   DFE_BIND_HOST         (default 127.0.0.1) - what OPERATORS reach: datastores, brokers, /metrics, internal gRPC, admin UIs.
-# On a laptop the loopback default costs nothing. On a partner box it is the difference between an internal
-# port and an open one. Remote dev hosts set DFE_BIND_HOST=0.0.0.0 in their own .env.
+# Two host-binding variables, split by audience: DFE_INGRESS_BIND_HOST (users, 0.0.0.0) and DFE_BIND_HOST
+# (operators, 127.0.0.1). docs/operating.md#port-exposure-is-split-by-audience.
 #
-# Every DFE service serves exactly `/livez`, `/readyz` and `/metrics` on its observability port. There are
-# no aliases -- `/healthz` and the `/health/*` paths are retired and 404 on every image pinned here, so a
-# probe aimed at one reads as a service that never comes up.
+# Every DFE service serves `/livez`, `/readyz` and `/metrics` and nothing else -- the retired aliases 404.
+# A HEALTHCHECK uses `/livez` EXCEPT where a `depends_on` gates on it, which is why dfe-loader and
+# dfe-engine use `/readyz`. docs/troubleshooting.md#which-path-each-healthcheck-uses-and-why-it-differs.
 #
-# A HEALTHCHECK uses `/livez`, EXCEPT where something gates on it. Compose has no readiness condition --
-# `depends_on: condition: service_healthy` is the only startup gate there is -- so a service other services
-# wait for must report readiness or the gate means nothing. Gating on liveness would let a loader that can
-# never reach ClickHouse report healthy, the receiver start against it, and events pile up in the DLQ spool
-# with nothing surfacing the fault.
-#
-# So: dfe-loader and dfe-engine use `/readyz` because the services after them wait on it, the same way the
-# stack waits on ClickHouse's own readiness. Everything nothing gates on -- receiver, fetcher, archiver,
-# both transforms -- uses `/livez`. Kubernetes has separate probes and ignores HEALTHCHECK entirely, so it
-# never has to choose.
-#
-# Every service declares deploy.resources.limits. `docker compose up` honours cpus and memory outside Swarm;
-# an unlimited service on a single box is how one runaway container takes the host down. The four tiers below
-# are sized for a 16 GB box running the default profile -- retune the DFE_*_CPUS / DFE_*_MEMORY vars in .env
-# for your target. Reservations are deliberately omitted: only memory maps outside Swarm, and a soft floor
-# that half-applies reads as configuration that does more than it does.
+# Every service declares deploy.resources.limits, in four tiers. `make limits` prints the resolved numbers;
+# docs/operating.md#resource-limits-four-tiers-ceilings-not-reservations explains the sizing.
 #
 # Quick start:
 #   make dev                         # Uses active_profile from service_profiles.yaml
@@ -66,20 +47,8 @@
 # Anchors, not services -- the `x-` prefix keeps Compose from treating them as one.
 # =============================================================================
 
-# Sized so the DEFAULT profile fits a 16 GB box that is also running an operating
-# system and whatever else that box does -- 16 GB of RAM is not 16 GB of headroom.
-# Enabling every profile at once needs retuning, not these defaults.
-#
-# Deliberately no totals written down here. They were, and they went stale the
-# first time a service moved tier -- which is how a comment ends up lying about
-# the file it lives in. `make limits` computes them from the resolved config
-# instead, and cannot drift.
-#
-# Limits are ceilings, not reservations -- nothing is pre-allocated.
-#
-# Caveat worth knowing: Docker permits an equal amount of SWAP alongside a memory
-# limit, so a 3G limit can become 3G RAM + 3G swap on a swap-enabled host. Set
-# `memswap_limit` equal to the memory limit per service if you need a hard cap.
+# Sized for a 16 GB box running the DEFAULT profile. No totals written down here
+# -- `make limits` computes them from the resolved config and cannot drift.
 x-limits-clickhouse: &limits-clickhouse
   resources:
     limits:
@@ -92,24 +61,10 @@ x-limits-broker: &limits-broker
       cpus: "${DFE_BROKER_CPUS:-1.5}"
       memory: ${DFE_BROKER_MEMORY:-1536M}
 
-# 2.0 CPUs is a FLOOR, not a sizing estimate. Tokio sizes its worker pool from
-# `available_parallelism()`, which reads the cgroup quota and floors it, so any
-# ceiling below 2.0 gives a scalo service exactly ONE worker thread -- and a
-# data-plane loop that polls Kafka synchronously then owns that thread outright.
-#
-# That is not hypothetical. At the previous 1.5 default, dfe-archiver accepted
-# connections on :9090 and never answered any of them (`/readyz`, `/livez` and
-# `/metrics` alike), so its healthcheck timed out forever and the stack never
-# reached healthy. Proven on both axes against the same image: raising the
-# ceiling to 2.0 answered in 0.2ms, and holding the ceiling at 1.5 while setting
-# TOKIO_WORKER_THREADS=4 answered in 0.16ms. So it is worker-thread starvation,
-# not a shortage of CPU.
-#
-# The real fix is in the component -- scalo's `recv` keeps a synchronous
-# `BaseConsumer::poll` and its own comment says to escalate to spawn_blocking or
-# StreamConsumer "if it shows real Tokio-worker starvation". It now has. Until
-# that lands, do NOT lower this below 2.0: the operator surface goes dark first
-# and the data path keeps working, which is the hardest kind of fault to spot.
+# 2.0 CPUs is a FLOOR, not a sizing estimate. Below it Tokio gives a scalo service
+# one worker thread, the Kafka poll loop owns it, and the whole observability port
+# goes dark while the data path keeps working. `make check-compose` enforces it.
+# docs/operating.md#dfe_service_cpus-has-a-floor-of-20-and-it-is-not-about-speed
 x-limits-service: &limits-service
   resources:
     limits:
@@ -165,16 +120,12 @@ services:
   # Kafka (Redpanda)
   # Default Kafka-API broker (mutually exclusive with other kafka-* services)
   #
-  # LICENCE: Redpanda's core is source-available under the BSL, not OSS. Local
-  # dev and CI sit inside its Additional Use Grant; a partner or edge deployment
-  # is a per-deployment licence check, not a blanket default. If that check does
-  # not come back clean, set KAFKA_BACKEND=apache -- see README.
+  # LICENCE: the core is BSL, not OSS. Set KAFKA_BACKEND=apache if a
+  # per-deployment check does not come back clean.
+  # docs/operating.md#kafka-backend-licensing-is-a-human-decision
   #
-  # `--mode=dev-container` is a Redpanda DEVELOPER mode (relaxed fsync, single
-  # core, 1 GB) chosen so the stack fits a 4 GB CI runner. It is NOT a production
-  # configuration. A small-environment deploy sets REDPANDA_MODE=production plus
-  # real REDPANDA_SMP / REDPANDA_MEMORY, and must raise DFE_BROKER_* to match --
-  # the container limit has to exceed --memory or the broker gets OOM-killed.
+  # `--mode=dev-container` is Redpanda's DEVELOPER mode, not a production one.
+  # docs/operating.md#redpanda-ships-in-developer-mode
   # ===========================================================================
 
   kafka-redpanda:
@@ -256,41 +207,15 @@ services:
 
   # ===========================================================================
   # Kafka Init
-  # Pre-creates default topics so consumers don't fail on an empty broker.
+  # Pre-creates `default_land` so consumers don't fail on an empty broker.
   #
-  # One init service per backend, each using ITS OWN broker's tooling. A single
-  # shared init service is tempting and was what we had, but it ran the Redpanda
-  # image (for `rpk`) on BOTH profiles -- so choosing Apache Kafka to stay clear
-  # of the BSL still pulled and ran a BSL artefact. The escape hatch has to
-  # actually escape. `apache/kafka` already carries kafka-topics.sh, so the
-  # Apache path needs nothing extra.
+  # One init per backend, each using ITS OWN broker's tooling, so choosing Apache
+  # Kafka never pulls a BSL artefact. Dependents gate on both with
+  # `required: false`; exactly one exists per profile.
   #
-  # Downstream services depend on both with `required: false`; exactly one
-  # exists for any given profile, so the other is a no-op.
-  #
-  # The topic name is a literal, deliberately. A KAFKA_DEFAULT_TOPIC knob (briefly
-  # tried) is a trap: the consumers name their topics in their own YAML, which is
-  # not env-interpolated, so setting it pre-creates a topic nobody consumes AND
-  # stops pre-creating the one they do.
-  #
-  # DO NOT add `default_load` here. config/loader/kafka-load.yaml consumes it and
-  # nothing pre-creates it, so pre-creating it looks like the obvious tidy-up. It
-  # is not: the transform profiles rely on broker auto-create, deliberately.
-  #
-  # The loader auto-discovers topics (`topic_regex: .*_land`) and scalo applies a
-  # suppression rule to the discovered set -- a `<base>_load` topic REMOVES
-  # `<base>_land`, because `_load` means a transform stage has already produced the
-  # loadable form and the raw landing topic is redundant. Pre-creating
-  # `default_load` on every Kafka profile therefore drops `default_land` from the
-  # subscription of every loader that is NOT running a transform, which is most of
-  # them. That is what took both Kafka e2e tests from 1000 rows to 0 while the gRPC
-  # tests stayed green: ingest still returned 200, the receiver still produced to
-  # `default_land`, and nobody consumed it.
-  #
-  # Reverting the change does not fix a broker that already has the topic -- it
-  # lives in `kafka-redpanda-data` / `kafka-apache-data`, which outlive the
-  # containers. Delete the topic (or the volume):
-  #   docker compose exec kafka-redpanda rpk topic delete default_load -X brokers=kafka:9092
+  # DO NOT add `default_load` here -- it suppresses `default_land` out of every
+  # non-transform loader's subscription and silently zeroes the data path.
+  # docs/troubleshooting.md#configloaderkafka-loadyaml-consumes-a-topic-nothing-pre-creates
   # ===========================================================================
 
   kafka-init-redpanda:
@@ -362,38 +287,13 @@ services:
 
   # ===========================================================================
   # dlq-init
-  # Makes the shared DLQ spool writable by the services that use it.
+  # Makes the shared DLQ spool writable by the services that use it: Docker
+  # creates the `dlq-spool` mountpoint root-owned and all four consumers run as
+  # uid 1000, so without this dfe-archiver crash-loops on its eager DLQ writer.
   #
-  # `dlq-spool` is mounted at /var/spool/dfe by archiver, fetcher, loader and
-  # receiver, all of which run as non-root appuser (uid 1000, verified identical
-  # across all three published images). None of those images pre-creates that
-  # path, so Docker creates the volume mountpoint owned by ROOT -- and no service
-  # can then create /var/spool/dfe/dlq inside it.
-  #
-  # That is not theoretical: dfe-archiver creates its DLQ writer EAGERLY at
-  # startup and died with "DLQ init failed ... Permission denied (os error 13)",
-  # crash-looping. The others create theirs lazily on first dead-letter, so they
-  # look healthy right up until something actually needs to dead-letter -- the
-  # worst moment to discover the DLQ never worked.
-  #
-  # Per-service volumes do NOT fix this (checked: a fresh volume is root-owned
-  # too, because ownership is inherited from a path the image does not have).
-  # The real fix is for the component images to create /var/spool/dfe as appuser;
-  # until they do, this one-shot does it. It reuses the archiver image purely
-  # because it is already pinned -- nothing archiver-specific.
-  #
-  # Three things to know about it, none of them ideal:
-  #
-  # 1. `required: false` on the dependents means a FAILED dlq-init does not stop
-  #    them -- Compose logs one warning and carries on with a zero exit. So the
-  #    bug this prevents can come back quietly. Watch for the warning.
-  # 2. uid 1000 is hard-coded. It is `appuser` in every published DFE image today
-  #    (checked archiver, loader, receiver), but nothing here verifies that, so an
-  #    image that renumbers appuser breaks the DLQ silently again.
-  # 3. In dev mode this still resolves to the REGISTRY archiver image, because
-  #    docker-compose.override.yml does not map it. `make dev` therefore needs
-  #    GHCR access and a pinned DFE_ARCHIVER_VERSION even on profiles with no
-  #    archiver in them.
+  # Three sharp edges -- `required: false` means a FAILED dlq-init only warns,
+  # uid 1000 is hard-coded, and dev mode still pulls the REGISTRY archiver image
+  # for it. docs/troubleshooting.md#the-dlq-spool
   # ===========================================================================
 
   dlq-init:
@@ -431,6 +331,9 @@ services:
     environment:
       LOG_LEVEL: ${LOG_LEVEL:-info}
       LOG_FORMAT: ${LOG_FORMAT:-text}
+      # Empty exports nothing -- scalo's own rule, and the stack default.
+      OTEL_EXPORTER_OTLP_ENDPOINT: ${DFE_OTEL_EXPORTER_ENDPOINT:-}
+      OTEL_SERVICE_NAME: dfe-archiver
     depends_on:
       dlq-init:
         condition: service_completed_successfully
@@ -471,6 +374,8 @@ services:
     environment:
       LOG_LEVEL: ${LOG_LEVEL:-info}
       LOG_FORMAT: ${LOG_FORMAT:-text}
+      OTEL_EXPORTER_OTLP_ENDPOINT: ${DFE_OTEL_EXPORTER_ENDPOINT:-}
+      OTEL_SERVICE_NAME: dfe-fetcher
     depends_on:
       dfe-loader:
         condition: service_healthy
@@ -517,26 +422,15 @@ services:
       CLICKHOUSE_PASSWORD: ${CLICKHOUSE_PASSWORD:-}
       LOG_LEVEL: ${LOG_LEVEL:-info}
       LOG_FORMAT: ${LOG_FORMAT:-text}
+      OTEL_EXPORTER_OTLP_ENDPOINT: ${DFE_OTEL_EXPORTER_ENDPOINT:-}
+      OTEL_SERVICE_NAME: dfe-loader
     depends_on:
       clickhouse:
         condition: service_healthy
         required: false
-      # dfe-engine is the schema authority: it creates the ClickHouse objects and
-      # registers the schemas the loader pre-warms into its cache. A loader started
-      # first holds every message pending-schema and then dead-letters it, which
-      # reads as data loss and is really start ordering. The e2e harness has always
-      # done this by hand; this makes `make dev` / `make ci` behave the same way.
-      #
-      # This gate was once blamed for taking both Kafka e2e tests from 1000 rows to
-      # 0, on the theory that the ~30s wait made the loader join the consumer group
-      # after the events were produced. That theory was WRONG. The real cause was a
-      # stale `default_load` topic suppressing `default_land` out of the loader's
-      # discovered topic set (see the kafka-init section). With that cleared, both
-      # Kafka tests pass with this gate in place -- verified by run.
-      #
-      # Do not re-blame it for a data-path failure without first checking what the
-      # loader actually RESOLVED:
-      #   docker compose logs dfe-loader | grep "Resolved Kafka topics"
+      # The schema authority. A loader started first holds every message
+      # pending-schema and dead-letters it, which reads as data loss and is
+      # really start ordering. docs/troubleshooting.md#events-are-accepted-but-nothing-lands
       dfe-engine:
         condition: service_healthy
         required: false
@@ -586,6 +480,8 @@ services:
     environment:
       LOG_LEVEL: ${LOG_LEVEL:-info}
       LOG_FORMAT: ${LOG_FORMAT:-text}
+      OTEL_EXPORTER_OTLP_ENDPOINT: ${DFE_OTEL_EXPORTER_ENDPOINT:-}
+      OTEL_SERVICE_NAME: dfe-receiver
     depends_on:
       dfe-loader:
         condition: service_healthy
@@ -630,6 +526,8 @@ services:
     environment:
       LOG_LEVEL: ${LOG_LEVEL:-info}
       LOG_FORMAT: ${LOG_FORMAT:-text}
+      OTEL_EXPORTER_OTLP_ENDPOINT: ${DFE_OTEL_EXPORTER_ENDPOINT:-}
+      OTEL_SERVICE_NAME: dfe-transform-vector
     depends_on:
       # No dlq-init here: this service does not mount dlq-spool.
       kafka-init-apache:
@@ -664,6 +562,8 @@ services:
     environment:
       LOG_LEVEL: ${LOG_LEVEL:-info}
       LOG_FORMAT: ${LOG_FORMAT:-text}
+      OTEL_EXPORTER_OTLP_ENDPOINT: ${DFE_OTEL_EXPORTER_ENDPOINT:-}
+      OTEL_SERVICE_NAME: dfe-transform-vrl
     depends_on:
       # No dlq-init here: this service does not mount dlq-spool.
       kafka-init-apache:
@@ -703,12 +603,8 @@ services:
       - path: env/engine.env
         required: false
     environment:
-      # dfe-engine refuses to start unless DFE_ENV states the posture: at
-      # `production` it demands auth enabled AND a non-placeholder
-      # DFE_API_JWT_SECRET, because auth-off there would grant every
-      # unauthenticated caller the admin role. Compose mode is god-mode by
-      # design, so it declares `dev`. Set DFE_ENV=production in .env only once
-      # something in front of the engine actually authenticates.
+      # The engine refuses to start at `production` without real auth, and
+      # compose mode is god-mode. docs/operating.md#there-is-no-authentication
       DFE_ENV: ${DFE_ENV:-dev}
       DFE_CLICKHOUSE_HOST: ${CLICKHOUSE_HOST:-clickhouse}
       DFE_CLICKHOUSE_PORT: ${CLICKHOUSE_HTTP_PORT:-8123}
@@ -719,6 +615,11 @@ services:
       DFE_CLICKHOUSE_SECURE: ${CLICKHOUSE_SECURE:-false}
       DFE_CONFIG_DIR: ${DFE_ENGINE_CONFIG_DIR:-/app/config}
       DFE_SCHEMAS_DIR: ${DFE_ENGINE_SCHEMAS_DIR:-/app/schemas}
+      OTEL_EXPORTER_OTLP_ENDPOINT: ${DFE_OTEL_EXPORTER_ENDPOINT:-}
+      OTEL_SERVICE_NAME: dfe-engine
+      # scalo's CLI falls back to the prometheus backend, so the endpoint alone
+      # exports nothing. `opentelemetry` is dual -- OTLP push AND /metrics.
+      DFE_API_METRICS_BACKEND: ${DFE_ENGINE_METRICS_BACKEND:-prometheus}
     volumes:
       - dfe-engine-config:${DFE_ENGINE_CONFIG_DIR:-/app/config}
       - dfe-engine-schemas:${DFE_ENGINE_SCHEMAS_DIR:-/app/schemas}
@@ -729,12 +630,6 @@ services:
     working_dir: /home/appuser
     healthcheck:
       # Readiness, same reasoning as the header: depends_on gates on it.
-      #
-      # /readyz is the canonical scalo path and the one verified answering on
-      # this pinned image, so the engine now matches the scalo-rs services above.
-      # The /health/live|ready|startup aliases are gone from the scalo-py baked
-      # into DFE_ENGINE_VERSION -- they 404, which reads as a stack that never
-      # comes up rather than a healthcheck pointed at nothing.
       test: ["CMD", "curl", "-sf", "http://localhost:8000/readyz"]
       interval: 10s
       timeout: 3s
@@ -757,16 +652,16 @@ services:
     environment:
       HYPERDX_PORT: ${DFE_HYPERDX_APP_PORT:-8090}
       NODE_ENV: ${DFE_UI_NODE_ENV:-production}
-      # `make init` generates a random value; the previous `:-secret` default meant
-      # an operator who never touched .env.example silently ran the literal string
-      # "secret". Deliberately NOT a `:?` hard-fail: Compose interpolates every
-      # service regardless of profile, so a hard-fail would abort `make down` and
-      # `make ps` too, locking an upgrading operator out of their own stack. The
-      # generated value is the fix; the sentinel below is what makes a missing one
-      # loud instead of silent.
+      # `make init` generates this. NOT a `:?` hard-fail -- that would abort even
+      # `make down` for everyone. The sentinel is what makes a missing one loud.
       NEXTAUTH_SECRET: ${DFE_UI_NEXTAUTH_SECRET:-RUN-make-init-TO-GENERATE-A-REAL-SECRET}
+      OTEL_EXPORTER_OTLP_ENDPOINT: ${DFE_OTEL_EXPORTER_ENDPOINT:-}
+      OTEL_SERVICE_NAME: dfe-ui
     healthcheck:
-      test: ["CMD", "node", "-e", "fetch('http://localhost:3000/').then(() => process.exit(0)).catch(() => process.exit(1))"]
+      # The image ships no curl; node's own fetch does it. `/livez` is a real
+      # endpoint here -- an unknown path returns the 200 app shell, so probing
+      # `/` proved only that Node was listening.
+      test: ["CMD", "node", "-e", "fetch('http://localhost:3000/livez').then((r) => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))"]
       interval: 10s
       timeout: 3s
       start_period: 30s
@@ -775,13 +670,9 @@ services:
   # ===========================================================================
   # dfe-proxy
   #
-  # Envoy is THE product entrypoint (the same proxy the k8s tier runs at its
-  # edge); its oauth2/jwt_authn filters chain in when dfe-engine becomes the
-  # OIDC provider (dfe-engine#143). Those filters are opt-in and scoped to this
-  # origin -- no profile may require an OIDC issuer to start. DFE_PROXY_VERSION
-  # is owned by the DFE stack SSoT (dfe-infra/versions.yaml services.envoy-proxy)
-  # and written into .env by `make stack` -- editing the pin here or in .env gets
-  # stomped on the next bump.
+  # THE product entrypoint. Its oauth2/jwt_authn filters chain in when dfe-engine
+  # becomes the OIDC provider -- opt-in, scoped to this origin, and no profile may
+  # require an issuer to start. docs/operating.md#there-is-no-authentication
   # ===========================================================================
 
   dfe-proxy:
@@ -812,6 +703,41 @@ services:
       retries: 5
 
   # ===========================================================================
+  # otel-collector
+  # The stack's own telemetry, opt-in via DFE_OTEL_ENABLED. Its OTLP ports are
+  # NOT published: self-monitoring stays on the compose network, and 4317/4318
+  # on the host belong to dfe-receiver's ingest. docs/operating.md#self-monitoring
+  # ===========================================================================
+
+  otel-collector:
+    image: otel/opentelemetry-collector-contrib:${DFE_OTEL_COLLECTOR_VERSION:?run 'make stack VERSION=X.Y.Z' to pin DFE_OTEL_COLLECTOR_VERSION}
+    container_name: dfe-otel-collector
+    profiles: ["otel"]
+    restart: unless-stopped
+    deploy: *limits-sidecar
+    command: ["--config=/etc/otelcol/config.yaml"]
+    ports:
+      # The health_check extension. Operator surface, and the only way in: the
+      # image is distroless, so a HEALTHCHECK has no client to probe it with.
+      - ${DFE_BIND_HOST:-127.0.0.1}:${DFE_OTEL_HEALTH_PORT:-13133}:13133
+    environment:
+      CLICKHOUSE_HOST: ${CLICKHOUSE_HOST:-clickhouse}
+      CLICKHOUSE_NATIVE_PORT: ${CLICKHOUSE_NATIVE_PORT:-9000}
+      CLICKHOUSE_USERNAME: ${CLICKHOUSE_USERNAME:-default}
+      CLICKHOUSE_PASSWORD: ${CLICKHOUSE_PASSWORD:-}
+      DFE_OTEL_DATABASE: ${DFE_OTEL_DATABASE:-otel}
+      DFE_OTEL_COLLECTOR_LOG_LEVEL: ${DFE_OTEL_COLLECTOR_LOG_LEVEL:-warn}
+    volumes:
+      - ./config/otel-collector/config.yaml:/etc/otelcol/config.yaml:ro
+    depends_on:
+      clickhouse:
+        condition: service_healthy
+        required: false
+    # No HEALTHCHECK: the image is distroless (no shell, no curl, no wget), so
+    # there is nothing in it to probe :13133 with. Nothing gates on the
+    # collector, so an always-passing probe would only look like cover.
+
+  # ===========================================================================
   # HyperDX (observability UI)
   # Opt-in via DFE_HYPERDX_ENABLED
   # ===========================================================================
@@ -825,13 +751,7 @@ services:
     environment:
       POSTGRES_DB: postgres
       POSTGRES_USER: ${HYPERDX_POSTGRES_USER:-hyperdx}
-      # `make init` generates this rather than shipping a password whose value is
-      # also its name. It is NOT a `:?` hard-fail, for the same reason
-      # DFE_HYPERDX_VERSION is not: Compose interpolates every service before
-      # profiles filter anything, so a hard-fail here aborts every command --
-      # including `make down` -- for operators who never enabled hyperdx at all.
-      # Locking someone out of stopping their own stack over a secret belonging to
-      # a service they do not run is a worse failure than the weak default.
+      # `make init` generates this. Not a `:?` hard-fail -- see NEXTAUTH_SECRET.
       POSTGRES_PASSWORD: ${HYPERDX_POSTGRES_PASSWORD:-hyperdx}
     volumes:
       - hyperdx-pg-data:/var/lib/postgresql/data
@@ -853,15 +773,9 @@ services:
       hyperdx-postgres:
         condition: service_healthy
     healthcheck:
-      # The image is distroless -- no shell, no curl, no wget, no mongosh -- so
-      # CMD-SHELL and any HTTP-client probe are out. FerretDB ships a `ping`
-      # subcommand for exactly this: it dials the wire listener (27017) and exits
-      # non-zero if it cannot connect. Exec form, no shell.
-      #
-      # The image already declares this same check; we are only retuning the
-      # timings (its own is 60s interval / 1 retry, far too slow to gate startup
-      # on). Stated explicitly so nobody removes it thinking it is redundant, or
-      # keeps it thinking it is the only thing making hyperdx wait.
+      # Distroless, so no CMD-SHELL and no HTTP probe. `ping` dials the wire
+      # listener. The image declares this too -- we only retune its 60s/1-retry
+      # timings, which are far too slow to gate startup on.
       test: ["CMD", "/ferretdb", "ping"]
       interval: 5s
       timeout: 3s
@@ -869,13 +783,10 @@ services:
       retries: 10
 
   hyperdx:
-    # The dfe-hyperdx fork is not yet published, so the DFE stack SSoT emits
-    # DFE_HYPERDX_VERSION as a comment, not a value -- `make stack` cannot pin
-    # it. Compose interpolates every service (profiles do not gate it), so a
-    # `:?` hard-fail here would abort even the default non-hyperdx path. This is
-    # the ONE DFE-owned image still on a soft default; flip it to
-    # `:?run 'make stack VERSION=X.Y.Z' to pin DFE_HYPERDX_VERSION` once the
-    # fork publishes and versions.yaml gains content.dfe-hyperdx.
+    # The ONE image on a soft default -- the fork is unpublished so the SSoT
+    # cannot pin it, and a `:?` here would abort even the non-hyperdx path.
+    # Flip it to `:?` once the fork publishes.
+    # docs/troubleshooting.md#hyperi-hyperdx-is-the-one-image-still-on-a-floating-tag
     image: ${IMAGE_REGISTRY:-ghcr.io/hyperi-io}/hyperi-hyperdx:${DFE_HYPERDX_VERSION:-latest}
     container_name: dfe-hyperdx
     profiles: ["hyperdx"]
@@ -883,14 +794,10 @@ services:
     deploy: *limits-service
     ports:
       - ${DFE_BIND_HOST:-127.0.0.1}:${DFE_HYPERDX_API_PORT:-8000}:8000
-      # DFE_BIND_HOST, not INGRESS, despite being a UI. This is the only browser
-      # surface that hands out a datastore credential: NEXT_PUBLIC_* below is
-      # inlined into the client bundle by Next.js, so anyone who can load this
-      # page reads CLICKHOUSE_PASSWORD out of the JavaScript -- and
-      # NEXT_PUBLIC_IS_LOCAL_MODE means there is no login in front of it.
-      # Binding it world-readable by default contradicted our own advice to treat
-      # HyperDX as a localhost or tunnelled tool. Set DFE_BIND_HOST to widen it
-      # deliberately, having read that sentence.
+      # DFE_BIND_HOST, not INGRESS, despite being a UI: Next.js inlines
+      # NEXT_PUBLIC_* into the client bundle, so anyone who loads this page reads
+      # CLICKHOUSE_PASSWORD out of the JavaScript, with no login in front of it.
+      # docs/operating.md#port-exposure-is-split-by-audience
       - ${DFE_BIND_HOST:-127.0.0.1}:${DFE_HYPERDX_APP_PORT:-8090}:${DFE_HYPERDX_APP_PORT:-8090}
     env_file:
       - path: env/hyperdx.env

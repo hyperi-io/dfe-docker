@@ -33,7 +33,7 @@ registry: ghcr.io/hyperi-io
 version:
   ## Pinned release -- written to DFE_STACK_VERSION, which `make stack` pins the
   ## whole certified set from. An explicit `make stack VERSION=...` still wins.
-  pin: 2.2.0-rc.1
+  pin: 2.2.0-rc.2
   ## Track-latest instead: comment out `pin` above and use these. The daemon owns
   ## the roll; leave DFE_STACK_VERSION unset.
   # track: latest
@@ -51,7 +51,7 @@ secrets:
 ## service_profiles.yaml's active_profile is used. The value must be a profile
 ## key defined there (kafka-full, kafka-receiver, grpc-full, ... -- there is no
 ## profile called `default`), NOT one of the k8s dial's slim/single/scale.
-## Which of core, kafbat and hyperdx run is the separate set of flags below.
+## Which of core, kafbat, hyperdx and otel run is the separate set of flags below.
 # profile: kafka-full
 
 ## docker-vm knobs. Each maps to one .env key; a blank/absent field leaves the
@@ -61,6 +61,11 @@ docker:
   kafbat_enabled: "true"
   core_enabled: "true"
   hyperdx_enabled: "false"
+  ## Self-monitoring. otel_enabled starts the bundled collector; setting
+  ## otel_exporter_endpoint instead pushes to an OTLP backend of your own.
+  ## Blank endpoint exports nothing.
+  otel_enabled: "false"
+  otel_exporter_endpoint: ""
   post_enabled: "true"
   ## Host exposure. bind_host is the OPERATOR surface (127.0.0.1 on a laptop,
   ## 0.0.0.0 only on a box you mean to expose); ingress_bind_host is the USER

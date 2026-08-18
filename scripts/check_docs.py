@@ -9,16 +9,10 @@
 
 """Assert that no document links at a file that is not there.
 
-The docs are four audience-scoped documents under `docs/`, plus root
-`ARCHITECTURE.md` and the README that routes between them. They cross-link
-heavily and the README's whole job is to send people elsewhere, so a deleted or
-renamed file is a silent breakage: the link still looks like a link, and the
-reader finds out, not the author.
-
-This is not hypothetical, twice over. Retiring `docs/SCOPE.md` left six live
-links pointing at a file that no longer existed, in three documents. Then moving
-the docs to the lowercase-kebab layout the documentation-structure standard
-requires renamed all five at once.
+The docs are audience-scoped documents under `docs/` plus the README that routes
+between them. They cross-link heavily and the README's whole job is to send
+people elsewhere, so a deleted or renamed file is a silent breakage: the link
+still looks like a link, and the reader finds out, not the author.
 
 Scope, so a green run is not read as more than it earns:
 
@@ -53,11 +47,9 @@ _EXTERNAL = ("http://", "https://", "mailto:")
 _OPTIONAL = ("STATE.md",)
 
 
-# Root prose the standard keeps OUT of docs/: README is the universal community
-# file, ARCHITECTURE.md is the house addition for the WHY. Both are required --
-# a glob over docs/ alone would stop watching ARCHITECTURE.md the moment it moved
-# up here, which is exactly the silent gap this module exists to catch.
-_ROOT_DOCS = ("README.md", "ARCHITECTURE.md")
+# The README is the only prose left at the root, and it is required rather than
+# globbed: a glob over docs/ alone would stop watching it the moment it moved.
+_ROOT_DOCS = ("README.md",)
 
 
 def _documents() -> list[Path]:

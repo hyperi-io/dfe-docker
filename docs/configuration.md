@@ -1,0 +1,274 @@
+<!--
+Project:   dfe-docker
+File:      docs/configuration.md
+Purpose:   Every environment variable, port and image the stack reads
+Language:  Markdown
+
+License:   BUSL-1.1
+Copyright: (c) 2026 HYPERI PTY LIMITED
+-->
+
+# Configuration reference
+
+Lookup, not narrative. Every variable the stack reads, what it does, and what it
+defaults to. [.env.example](../.env.example) is the annotated template these come
+from.
+
+Image pins (`*_VERSION`) are written by `make stack VERSION=X.Y.Z` from the DFE
+stack SSoT. Compose hard-fails on an unset pin rather than resolving `latest`, so
+run it before any compose command -- [deploying.md](deploying.md).
+
+## Environment Variables
+
+### Profile Selection
+
+| Variable                                         | Use                                                                                  | Default                                                             |
+|--------------------------------------------------|--------------------------------------------------------------------------------------|---------------------------------------------------------------------|
+| `DFE_PROFILE`                                    | Override active profile from service_profiles.yaml                                   | -                                                                   |
+
+### Image Registry
+
+| Variable                                         | Use                                                                                  | Default                                                             |
+|--------------------------------------------------|--------------------------------------------------------------------------------------|---------------------------------------------------------------------|
+| `DOCKER_DEFAULT_PLATFORM`                        | Image architecture to pull from docker (if not wanting automatic determination)      | -                                                                   |
+| `IMAGE_REGISTRY`                                 | OCI registry hosting published `dfe-*` images                                        | `ghcr.io/hyperi-io`                                                 |
+
+### Dev Builds
+
+| Variable                                         | Use                                                                                  | Default                                                             |
+|--------------------------------------------------|--------------------------------------------------------------------------------------|---------------------------------------------------------------------|
+| `DFE_SRC_ROOT`                                   | Directory holding your local `dfe-*` checkouts; set = build (and `LIVE=1` mount) those instead of the git cache | unset (git cache)                                 |
+| `DFE_SRC_REMOTE`                                 | Git base URL the managed cache clones component repos from                           | `https://github.com/hyperi-io`                                      |
+| `DFE_SRC_REF`                                    | Branch, tag or commit the managed cache builds                                       | `main`                                                              |
+| `DFE_SRC_CACHE`                                  | Location of the managed source cache                                                 | `~/.cache/dfe-docker/src`                                           |
+
+### DFE Components - General
+
+| Variable                                         | Use                                                                                  | Default                                                             |
+|--------------------------------------------------|--------------------------------------------------------------------------------------|---------------------------------------------------------------------|
+| `LOG_LEVEL`                                      | Log level (trace\|debug\|info\|warn\|error)                                          | `info`                                                              |
+| `LOG_FORMAT`                                     | Log format                                                                           | `text`                                                              |
+
+### DFE Archiver
+
+| Variable                                         | Use                                                                                  | Default                                                             |
+|--------------------------------------------------|--------------------------------------------------------------------------------------|---------------------------------------------------------------------|
+| `DFE_ARCHIVER_VERSION`                           | Version of dfe-archiver to use                                                       | none -- `make stack` pins it; unset is a hard-fail                                                            |
+| `DFE_ARCHIVER_PROMETHEUS_PORT`                   | Archiver Prometheus port                                                             | `9093`                                                              |
+
+### DFE Fetcher
+
+| Variable                                         | Use                                                                                  | Default                                                             |
+|--------------------------------------------------|--------------------------------------------------------------------------------------|---------------------------------------------------------------------|
+| `DFE_FETCHER_VERSION`                            | Version of dfe-fetcher to use                                                        | none -- `make stack` pins it; unset is a hard-fail                                                            |
+| `DFE_FETCHER_INGEST_PORT`                        | Fetcher ingest port                                                                  | `8082`                                                              |
+| `DFE_FETCHER_PROMETHEUS_PORT`                    | Fetcher Prometheus port                                                              | `9094`                                                              |
+| `AWS_ACCESS_KEY_ID`                              | AWS access key. Goes in `env/fetcher.env`, NOT `.env` -- the fetcher config reads it via `env:`  | -                                    |
+| `AWS_SECRET_ACCESS_KEY`                          | AWS secret key. Same file as above                                                   | -                                                                   |
+
+The AWS **region** is not an environment variable: it is a literal in
+`config/fetcher/aws-*.yaml` (`region: us-west-2`), because only the two
+credential fields are `env:`-interpolated. Change it there.
+
+### DFE Loader
+
+| Variable                                         | Use                                                                                  | Default                                                             |
+|--------------------------------------------------|--------------------------------------------------------------------------------------|---------------------------------------------------------------------|
+| `DFE_LOADER_VERSION`                             | Version of dfe-loader to use                                                         | none -- `make stack` pins it; unset is a hard-fail                                                            |
+| `DFE_LOADER_PROMETHEUS_PORT`                     | Loader Prometheus port                                                               | `9091`                                                              |
+| `DFE_LOADER_GRPC_PORT`                           | Loader gRPC port                                                                     | `50051`                                                             |
+
+### DFE Receiver
+
+| Variable                                         | Use                                                                                  | Default                                                             |
+|--------------------------------------------------|--------------------------------------------------------------------------------------|---------------------------------------------------------------------|
+| `DFE_RECEIVER_VERSION`                           | Version of dfe-receiver to use                                                       | none -- `make stack` pins it; unset is a hard-fail                                                            |
+| `DFE_RECEIVER_BEATS_PORT`                        | Receiver Beats port                                                                  | `5044`                                                              |
+| `DFE_RECEIVER_GRPC_PORT`                         | Receiver gRPC port                                                                   | `6000`                                                              |
+| `DFE_RECEIVER_HEC_PORT`                          | Receiver HEC port                                                                    | `8088`                                                              |
+| `DFE_RECEIVER_HTTP_PORT`                         | Receiver HTTP port                                                                   | `8080`                                                              |
+| `DFE_RECEIVER_OTLP_GRPC_PORT`                    | Receiver OTLP gRPC port                                                              | `4317`                                                              |
+| `DFE_RECEIVER_OTLP_HTTP_PORT`                    | Receiver OTLP HTTP port                                                              | `4318`                                                              |
+| `DFE_RECEIVER_PROMETHEUS_PORT`                   | Receiver Prometheus port                                                             | `9090`                                                              |
+
+### DFE Transform Vector
+
+| Variable                                         | Use                                                                                  | Default                                                             |
+|--------------------------------------------------|--------------------------------------------------------------------------------------|---------------------------------------------------------------------|
+| `DFE_TRANSFORM_VECTOR_VERSION`                   | Version of dfe-transform-vector to use                                               | none -- `make stack` pins it; unset is a hard-fail                                                            |
+| `DFE_TRANSFORM_VECTOR_PROMETHEUS_PORT`           | Transform Vector Prometheus port                                                     | `9095`                                                              |
+| `DFE_TRANSFORM_VECTOR_API_PORT`                  | Transform Vector API port                                                            | `8686`                                                              |
+
+### DFE Transform VRL
+
+| Variable                                         | Use                                                                                  | Default                                                             |
+|--------------------------------------------------|--------------------------------------------------------------------------------------|---------------------------------------------------------------------|
+| `DFE_TRANSFORM_VRL_VERSION`                      | Version of dfe-transform-vrl to use                                                  | none -- `make stack` pins it; unset is a hard-fail                                                            |
+| `DFE_TRANSFORM_VRL_PROMETHEUS_PORT`              | Transform VRL Prometheus port                                                        | `9096`                                                              |
+
+### ClickHouse
+
+| Variable                                         | Use                                                                                  | Default                                                             |
+|--------------------------------------------------|--------------------------------------------------------------------------------------|---------------------------------------------------------------------|
+| `CLICKHOUSE_VERSION`                             | Version of ClickHouse to use                                                         | none -- `make stack` pins it from the DFE stack SSoT; unset is a hard-fail                |
+| `CLICKHOUSE_HOST`                                | External ClickHouse host (skips Docker container)                                    | `clickhouse`                                                        |
+| `CLICKHOUSE_HTTP_PORT`                           | ClickHouse HTTP port                                                                 | `8123`                                                              |
+| `CLICKHOUSE_NATIVE_PORT`                         | ClickHouse native protocol port                                                      | `9000`                                                              |
+| `CLICKHOUSE_DB`                                  | ClickHouse initialisation database                                                   | `default`                                                           |
+| `CLICKHOUSE_USERNAME`                            | ClickHouse username to connect with                                                  | `default`                                                           |
+| `CLICKHOUSE_PASSWORD`                            | ClickHouse password associated to user                                               | -                                                                   |
+
+### Kafka - General
+
+| Variable                                         | Use                                                                                  | Default                                                             |
+|--------------------------------------------------|--------------------------------------------------------------------------------------|---------------------------------------------------------------------|
+| `KAFKA_BACKEND`                                  | Kafka backend for `kafka` transport profiles                                         | `redpanda`                                                          |
+| `KAFKA_PLAINTEXT_HOST_PORT`                      | Kafka plaintext host port (host-facing)                                              | `19092`                                                             |
+| `KAFKA_PLAINTEXT_PORT`                           | Kafka plaintext port (in-network)                                                    | `9092`                                                              |
+
+### Apache Kafka
+
+| Variable                                         | Use                                                                                  | Default                                                             |
+|--------------------------------------------------|--------------------------------------------------------------------------------------|---------------------------------------------------------------------|
+| `APACHE_KAFKA_VERSION`                           | Version of Apache Kafka to use                                                       | none -- `make stack` pins it from the DFE stack SSoT; unset is a hard-fail                |
+| `KAFKA_ADVERTISED_LISTENERS`                     | Listener addresses advertised to clients/brokers                                     | `PLAINTEXT://kafka:9092,PLAINTEXT_HOST://localhost:19092`           |
+| `KAFKA_AUTO_CREATE_TOPICS_ENABLE`                | Toggle auto creation of topics                                                       | `true`                                                              |
+| `KAFKA_CLUSTER_ID`                               | Name of the Kafka cluster                                                            | `dfe-docker-dev-cluster-01`                                         |
+| `KAFKA_CONTROLLER_LISTENER_NAMES`                | Listeners used by the controller                                                     | `CONTROLLER`                                                        |
+| `KAFKA_CONTROLLER_QUORUM_VOTERS`                 | Set of voters                                                                        | `1@kafka:29092`                                                     |
+| `KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS`         | Time (ms) group coordinator waits before initial rebalance                           | `0`                                                                 |
+| `KAFKA_INTER_BROKER_LISTENER_NAME`               | Listener used for communication between brokers                                      | `PLAINTEXT`                                                         |
+| `KAFKA_LISTENER_SECURITY_PROTOCOL_MAP`           | Map of listener names and security protocols                                         | `CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT` |
+| `KAFKA_LISTENERS`                                | List of listeners                                                                    | `PLAINTEXT://:9092,PLAINTEXT_HOST://:19092,CONTROLLER://:29092`     |
+| `KAFKA_NODE_ID`                                  | Node ID associated with the roles                                                    | `1`                                                                 |
+| `KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR`         | Replication factor for the offsets topic                                             | `1`                                                                 |
+| `KAFKA_PROCESS_ROLES`                            | Roles the process will use                                                           | `broker,controller`                                                 |
+| `KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR` | Replication factor for the transaction topic                                         | `1`                                                                 |
+| `KAFKA_TRANSACTION_STATE_LOG_MIN_ISR`            | Minimum ISR for transaction topic                                                    | `1`                                                                 |
+
+### Kafka Redpanda
+
+| Variable                                         | Use                                                                                  | Default                                                             |
+|--------------------------------------------------|--------------------------------------------------------------------------------------|---------------------------------------------------------------------|
+| `REDPANDA_VERSION`                               | Version of Redpanda to use                                                           | none -- `make stack` pins it from the DFE stack SSoT; unset is a hard-fail                |
+| `REDPANDA_MEMORY`                                | Memory cap for the Redpanda broker (Seastar reserves this up front)                  | `1G`                                                                |
+
+### Kafka UI (Kafbat)
+
+| Variable                                         | Use                                                                                  | Default                                                             |
+|--------------------------------------------------|--------------------------------------------------------------------------------------|---------------------------------------------------------------------|
+| `KAFBAT_ENABLED`                                 | Toggle to turn on Kafbat                                                             | `true`                                                              |
+| `KAFBAT_VERSION`                                 | Version of Kafbat to use                                                             | none -- `make stack` pins it from the DFE stack SSoT; unset is a hard-fail                |
+| `KAFBAT_DYNAMIC_CONFIG_ENABLED`                  | Toggle runtime config changes                                                        | `true`                                                              |
+| `KAFBAT_KAFKA_CLUSTERS_0_BOOTSTRAPSERVERS`       | Kafka bootstrap server                                                               | `kafka:9092`                                                        |
+| `KAFBAT_KAFKA_CLUSTERS_0_NAME`                   | Kafka cluster name                                                                   | `dfe-local`                                                         |
+| `KAFBAT_PORT`                                    | Kafbat port                                                                          | `8081`                                                              |
+
+## Core DFE Components
+
+| Variable                                         | Use                                                                                  | Default                                                             |
+|--------------------------------------------------|--------------------------------------------------------------------------------------|---------------------------------------------------------------------|
+| `DFE_CORE_ENABLED`                               | Toggle to turn on core components                                                    | `true`                                                              |
+| `DFE_ENGINE_VERSION`                             | Version of dfe-engine to use                                                         | none -- `make stack` pins it; unset is a hard-fail                                                            |
+| `DFE_ENGINE_PORT`                                | Port used by dfe-engine                                                              | `8003`                                                              |
+| `DFE_ENGINE_CONFIG_DIR`                          | Path to config directory                                                             | `/app/config`                                                       |
+| `DFE_ENGINE_SCHEMAS_DIR`                         | Path to schemas directory                                                            | `/app/schemas`                                                      |
+| `DFE_UI_VERSION`                                 | Version of dfe-ui to use                                                             | none -- `make stack` pins it; unset is a hard-fail                                                            |
+| `DFE_UI_PORT`                                    | Port used by dfe-ui                                                                  | `3000`                                                              |
+| `DFE_UI_NODE_ENV`                                | Node environment of dfe-ui                                                           | `production`                                                        |
+
+## Self-monitoring (opt-in)
+
+Off by default. `DFE_OTEL_ENABLED=true` (or a profile declaring `otel: true`, as `single` does) starts a collector that takes the stack's own telemetry over OTLP and writes the `otel` ClickHouse database, which HyperDX reads. Nothing is scraped, and the collector's OTLP ports stay on the Compose network. Full picture, including which services report today: [observability.md](observability.md).
+
+| Variable                                         | Use                                                                                  | Default                                                             |
+|--------------------------------------------------|--------------------------------------------------------------------------------------|---------------------------------------------------------------------|
+| `DFE_OTEL_ENABLED`                               | Toggle to start the collector                                                        | `false`                                                             |
+| `DFE_OTEL_COLLECTOR_VERSION`                     | Version of otel/opentelemetry-collector-contrib                                      | none -- `make stack` pins it; unset is a hard-fail                  |
+| `DFE_OTEL_EXPORTER_ENDPOINT`                     | Where services push; empty exports nothing                                           | empty (the profile points it at the bundled collector)              |
+| `DFE_OTEL_DATABASE`                              | ClickHouse database the collector writes                                             | `otel`                                                              |
+| `DFE_OTEL_HEALTH_PORT`                           | Collector `health_check` host port                                                   | `13133`                                                             |
+| `DFE_OTEL_COLLECTOR_LOG_LEVEL`                   | Collector's own log level                                                            | `warn`                                                              |
+| `DFE_ENGINE_METRICS_BACKEND`                     | dfe-engine metrics backend; `opentelemetry` is dual (push + `/metrics`)              | `prometheus` (the profile sets `opentelemetry`)                     |
+
+## HyperDX (opt-in observability)
+
+Off by default. `DFE_HYPERDX_ENABLED=true` starts `hyperdx` (API + App) plus its `hyperdx-ferretdb` and `hyperdx-postgres` dependencies, sharing the always-on ClickHouse.
+
+| Variable                                         | Use                                                                                  | Default                                                             |
+|--------------------------------------------------|--------------------------------------------------------------------------------------|---------------------------------------------------------------------|
+| `DFE_HYPERDX_ENABLED`                            | Toggle to start HyperDX + FerretDB + Postgres                                        | `false`                                                             |
+| `DFE_HYPERDX_VERSION`                            | Version of hyperi-hyperdx to use                                                     | `latest` -- the ONE image not hard-failed, because the fork is unpublished so the SSoT cannot pin it |
+| `DFE_HYPERDX_API_PORT`                           | HyperDX API host port                                                                | `8000`                                                              |
+| `DFE_HYPERDX_APP_PORT`                           | HyperDX App UI host port                                                             | `8090`                                                              |
+| `DFE_HYPERDX_APP_URL`                            | Base URL the browser uses to reach HyperDX                                           | `http://localhost`                                                  |
+| `HYPERDX_THEME`                                  | UI theme (NEXT_PUBLIC_THEME)                                                         | `dfe`                                                               |
+| `HYPERDX_POSTGRES_USER`                          | FerretDB/Postgres user                                                               | `hyperdx`                                                           |
+| `HYPERDX_POSTGRES_PASSWORD`                      | FerretDB/Postgres password                                                           | `hyperdx`                                                           |
+| `HYPERDX_FERRETDB_VERSION`                       | FerretDB image version                                                               | none -- `make stack` pins it from the DFE stack SSoT; unset is a hard-fail                |
+| `HYPERDX_POSTGRES_VERSION`                       | Postgres/DocumentDB image version                                                    | none -- `make stack` pins it from the DFE stack SSoT; unset is a hard-fail                |
+
+## Default Ports
+
+| Port  | Service              | Protocol           |
+|-------|----------------------|--------------------|
+| 3000  | dfe-proxy            | Web UI (envoy fronts dfe-ui, which publishes no host port) |
+| 6000  | dfe-receiver         | gRPC               |
+| 8000  | hyperdx              | API                |
+| 8003  | dfe-engine           | HTTP API           |
+| 8080  | dfe-receiver         | HTTP ingest        |
+| 8081  | Kafbat               | Web UI             |
+| 8082  | dfe-fetcher          | HTTP ingest        |
+| 8090  | hyperdx              | App UI             |
+| 8123  | ClickHouse           | HTTP API           |
+| 8686  | dfe-transform-vector | Vector API         |
+| 9000  | ClickHouse           | Native protocol    |
+| 9090  | dfe-receiver         | Prometheus metrics |
+| 9091  | dfe-loader           | Prometheus metrics |
+| 9092  | Kafka (any backend)  | Plaintext          |
+| 9093  | dfe-archiver         | Prometheus metrics |
+| 9094  | dfe-fetcher          | Prometheus metrics |
+| 9095  | dfe-transform-vector | Prometheus metrics |
+| 9096  | dfe-transform-vrl    | Prometheus metrics |
+| 13133 | otel-collector       | health_check       |
+| 19092 | Kafka (any backend)  | Plaintext host     |
+| 50051 | dfe-loader           | gRPC               |
+
+Additional receiver ports (commented out by default in docker-compose.yml):
+4317 (OTLP gRPC), 4318 (OTLP HTTP), 5044 (Beats), 8088 (HEC).
+
+## ClickHouse Schema
+
+**dfe-engine is the schema authority.** It ships `/app/schemas` inside its own
+image (pinned by `DFE_ENGINE_VERSION`) and creates the ClickHouse objects at
+startup; the loader pre-warms those schemas into its cache. Nothing in this repo
+provisions tables.
+
+- `dfe` - master database for all DFE related tables
+- `dfe.default` - catch-all for unrouted events, carrying `_tags` (JSON) among
+  the profile columns
+
+That last detail matters more than it looks: the e2e suite and the power-on self
+test both identify their own rows by reading `_tags.marker` back out. If a
+deployment provisions a schema without `_tags`, both will correctly refuse to
+claim they verified anything.
+
+## Container Images
+
+Images are published from the component repos:
+
+- `ghcr.io/hyperi-io/dfe-archiver`
+- `ghcr.io/hyperi-io/dfe-engine`
+- `ghcr.io/hyperi-io/dfe-fetcher`
+- `ghcr.io/hyperi-io/dfe-loader`
+- `ghcr.io/hyperi-io/dfe-receiver`
+- `ghcr.io/hyperi-io/dfe-transform-vector`
+- `ghcr.io/hyperi-io/dfe-transform-vrl`
+- `ghcr.io/hyperi-io/dfe-ui`
+
+
+## Related
+
+- [deploying.md](deploying.md) -- the dial, pinning, upgrades
+- [operating.md](operating.md) -- what these settings mean in production
+- [observability.md](observability.md) -- the self-monitoring variables in context

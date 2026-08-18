@@ -9,10 +9,10 @@
 
 """Power-on self test (POST) for a stack that is ALREADY running.
 
-Injects a small number of uniquely-marked events at the ingest edge and proves
-those exact rows reach ClickHouse. That is the whole claim: not "the containers
-started", not "the ports answer", but "an event put in one end came out the
-other".
+Two claims, one per pipeline. INGEST: uniquely-marked events put in at the ingest
+edge come out as those exact rows in ClickHouse. SELF-MONITORING: when the profile
+runs a collector, the stack's own telemetry is landing FRESH in the otel database.
+Neither is "the containers started" or "the ports answer".
 
 Transport-agnostic by construction. It posts to the ingest edge and reads
 ClickHouse, so it works identically on the Kafka and the gRPC (kafka-less)
@@ -49,6 +49,7 @@ from _pipeline import (
     http_get,
     http_post,
     marked_event,
+    otel_fresh_counts,
     poll_until,
 )
 
@@ -71,6 +72,14 @@ READY_INTERVAL_SECONDS = 2.0
 
 TARGET_DB = "dfe"
 TARGET_TABLE = "default"
+
+# Self-monitoring assertion. The collector batches on a 5s timeout and the SDKs
+# export on their own interval, so the window is generous and the timeout is the
+# stuck-dependency backstop.
+OTEL_SERVICE = "otel-collector"
+OTEL_FRESH_WINDOW_SECONDS = 300
+OTEL_TIMEOUT_SECONDS = 120.0
+OTEL_INTERVAL_SECONDS = 5.0
 
 # Compose defaults that mean "nobody ran `make init`". They are deterministic and
 # committed, so a stack running them has a signing key and a database password
@@ -237,6 +246,62 @@ def _cleanup(database: str, table: str, marker: str) -> None:
     )
 
 
+def _verify_self_monitoring() -> int:
+    """Prove the stack's OWN telemetry reaches ClickHouse, when a collector runs.
+
+    The second of the two pipelines a complete stack has to land, matching the
+    k8s bootstrap smoke. Skipped, not passed, when no collector is in the profile.
+    """
+    if OTEL_SERVICE not in set(_resolved_services()):
+        _print(
+            msg=f"SKIP  {OTEL_SERVICE} not in the active profile -- no self-telemetry to prove"
+        )
+        return 0
+
+    database = os.environ.get("DFE_OTEL_DATABASE", "otel")
+    _print(
+        msg=f"Waiting for self-telemetry in {database} "
+        f"(rows newer than {OTEL_FRESH_WINDOW_SECONDS}s)"
+    )
+
+    def _fresh():
+        return otel_fresh_counts(database, OTEL_FRESH_WINDOW_SECONDS)
+
+    def _report(attempt, result):
+        if result is None:
+            _print(msg=f"  attempt {attempt}: {database} tables not created yet")
+            return
+        summary = ", ".join(
+            f"{table}={count}" for table, count in sorted(result.items())
+        )
+        _print(msg=f"  attempt {attempt}: {summary}")
+
+    counts = poll_until(
+        _fresh,
+        timeout=OTEL_TIMEOUT_SECONDS,
+        interval=OTEL_INTERVAL_SECONDS,
+        done=lambda result: result is not None and any(result.values()),
+        on_attempt=_report,
+    )
+
+    if counts is None:
+        _print(
+            msg=f"FAIL  no {database} table could be read within "
+            f"{OTEL_TIMEOUT_SECONDS:.0f}s -- the collector never wrote its schema"
+        )
+        return 1
+    landed = {table: count for table, count in counts.items() if count}
+    if not (landed):
+        _print(
+            msg=f"FAIL  {database} exists but carries no rows newer than "
+            f"{OTEL_FRESH_WINDOW_SECONDS}s -- the services are not exporting"
+        )
+        return 1
+    summary = ", ".join(f"{table}={count}" for table, count in sorted(landed.items()))
+    _print(msg=f"PASS  self-telemetry is streaming into {database} ({summary})")
+    return 0
+
+
 def main() -> int:
     _load_dotenv()
 
@@ -264,9 +329,10 @@ def main() -> int:
         service, ingest_url = _ingest_target(table=table)
     except NoIngestComponent as reason:
         # A genuine skip: some profiles run no ingest component at all
-        # (loader-only), so there is nothing to prove end to end.
+        # (loader-only), so there is nothing to prove end to end. Self-monitoring
+        # is a separate pipeline and is still worth asserting.
         _print(msg=f"SKIP  {reason} -- nothing to prove end to end")
-        return 0
+        return _verify_self_monitoring()
     except IngestNotReady as reason:
         _print(msg=f"FAIL  {reason}")
         return 1
@@ -332,7 +398,7 @@ def main() -> int:
             msg=f"PASS  {matched}/{EVENT_COUNT} marked event(s) landed in {database}.{table}"
         )
         _cleanup(database, table, marker)
-        return 0
+        return _verify_self_monitoring()
 
     _print(
         msg=f"FAIL  only {matched}/{EVENT_COUNT} marked event(s) reached "

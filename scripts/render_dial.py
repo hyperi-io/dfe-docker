@@ -51,6 +51,8 @@ _DOCKER_DIAL_MAP: tuple[tuple[tuple[str, ...], str], ...] = (
     (("docker", "kafbat_enabled"), "KAFBAT_ENABLED"),
     (("docker", "core_enabled"), "DFE_CORE_ENABLED"),
     (("docker", "hyperdx_enabled"), "DFE_HYPERDX_ENABLED"),
+    (("docker", "otel_enabled"), "DFE_OTEL_ENABLED"),
+    (("docker", "otel_exporter_endpoint"), "DFE_OTEL_EXPORTER_ENDPOINT"),
     (("docker", "post_enabled"), "DFE_POST_ENABLED"),
     (("docker", "bind_host"), "DFE_BIND_HOST"),
     (("docker", "ingress_bind_host"), "DFE_INGRESS_BIND_HOST"),

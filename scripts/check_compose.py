@@ -76,7 +76,7 @@ _PATH_KEY_SUFFIXES = ("_ROOT", "_DIR", "_PATH")
 
 # Profiles are opt-in, so an unprofiled run checks almost nothing. `dfe` and
 # `core` carry the services this repo exists to ship.
-_BASE_PROFILES = ("clickhouse", "dfe", "core", "hyperdx", "kafka-ui")
+_BASE_PROFILES = ("clickhouse", "dfe", "core", "hyperdx", "kafka-ui", "otel")
 _KAFKA_BACKENDS = ("kafka-redpanda", "kafka-apache")
 
 # Tokio sizes its worker pool from `available_parallelism()`, which reads the

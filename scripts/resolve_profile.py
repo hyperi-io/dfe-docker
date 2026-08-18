@@ -13,9 +13,9 @@ Reads service_profiles.yaml, resolves the active profile (overridable via DFE_PR
 For kafka transport, KAFKA_BACKEND selects the backend (defaults to redpanda).
 
 A profile declares its whole FOOTPRINT, not just the data plane. The optional
-``core`` / ``kafbat`` / ``hyperdx`` / ``clickhouse`` keys say which of those
-components run; an absent key keeps the historical default, so a profile that
-declares none behaves exactly as it did before the keys existed.
+``core`` / ``kafbat`` / ``hyperdx`` / ``clickhouse`` / ``otel`` keys say which of
+those components run; an absent key keeps the historical default, so a profile
+that declares none behaves exactly as it did before the keys existed.
 
 The matching env var wins over the profile key, because ``.env`` is what a deploy
 writes (via the deployment dial) while the profile is the committed shape -- the
@@ -43,6 +43,19 @@ CORE_SERVICES = ["dfe-engine", "dfe-ui", "dfe-proxy"]
 HYPERDX_ENABLED_ENV_VAR = "DFE_HYPERDX_ENABLED"
 HYPERDX_SERVICES = ["hyperdx", "hyperdx-ferretdb", "hyperdx-postgres"]
 
+OTEL_ENABLED_ENV_VAR = "DFE_OTEL_ENABLED"
+OTEL_SERVICES = ["otel-collector"]
+# Where the services push when the bundled collector runs and .env names no
+# endpoint of its own. Empty exports nothing, which is the stack default.
+OTEL_ENDPOINT_ENV_VAR = "DFE_OTEL_EXPORTER_ENDPOINT"
+OTEL_BUNDLED_ENDPOINT = "http://otel-collector:4317"
+
+# dfe-engine is the only component that can push today, and scalo's CLI defaults
+# the backend off. `opentelemetry` is dual -- it pushes AND keeps serving
+# /metrics, so switching costs a scraping estate nothing. See scalo-rs#28.
+OTEL_ENGINE_BACKEND_ENV_VAR = "DFE_ENGINE_METRICS_BACKEND"
+OTEL_ENGINE_BACKEND = "opentelemetry"
+
 # Footprint components a profile may declare: yaml key -> (env override, default
 # when neither the key nor the env var is set). kafbat's default only applies on
 # the kafka transport; there is no Kafka UI without a broker.
@@ -51,6 +64,7 @@ FOOTPRINT_KEYS = {
     "core": (CORE_ENABLED_ENV_VAR, True),
     "hyperdx": (HYPERDX_ENABLED_ENV_VAR, False),
     "kafbat": ("KAFBAT_ENABLED", True),
+    "otel": (OTEL_ENABLED_ENV_VAR, False),
 }
 
 PROFILE_ENV_VAR = "DFE_PROFILE"
@@ -236,6 +250,8 @@ def main() -> int:
         profiles = []
         if footprint["clickhouse"]:
             profiles.append("clickhouse")
+        if footprint["otel"]:
+            profiles.append("otel")
         kafka_ui_enabled = False
         if transport == "kafka":
             backend = (
@@ -265,7 +281,21 @@ def main() -> int:
             service_list.extend(CORE_SERVICES)
         if footprint["hyperdx"]:
             service_list.extend(HYPERDX_SERVICES)
+        if footprint["otel"]:
+            service_list.extend(OTEL_SERVICES)
         lines.append(f"export DFE_SERVICES := {' '.join(service_list)}")
+
+        # Point the services at the bundled collector, unless .env already names
+        # an endpoint -- an external OTLP backend is the other supported shape.
+        if footprint["otel"]:
+            if not (os.environ.get(OTEL_ENDPOINT_ENV_VAR, "").strip()):
+                lines.append(
+                    f"export {OTEL_ENDPOINT_ENV_VAR} := {OTEL_BUNDLED_ENDPOINT}"
+                )
+            if not (os.environ.get(OTEL_ENGINE_BACKEND_ENV_VAR, "").strip()):
+                lines.append(
+                    f"export {OTEL_ENGINE_BACKEND_ENV_VAR} := {OTEL_ENGINE_BACKEND}"
+                )
 
         for service_name, service_config in services.items():
             var_name = SERVICE_TO_CONFIG_VAR[service_name]

@@ -24,60 +24,19 @@ exist and their health, but only for the currently resolved profile -- see the
 first known issue below, because a stray container from a previous profile will
 not show up there while still holding its ports.
 
-Health endpoints, straight from the host:
-
-Three paths, the same three on every DFE service: `/livez` (process alive),
-`/readyz` (can it serve -- dependency checks live here) and `/metrics`. There are
-no aliases. `/healthz`, `/health/live`, `/health/ready` and `/health/startup` are
-retired and return **404** on every image the stack pins, so a probe still aimed
-at one reads as a service that never comes up.
-
-| Service | Host port | Paths |
-|---|---|---|
-| dfe-receiver | 9090 | `/livez`, `/readyz`, `/metrics` |
-| dfe-loader | 9091 | same |
-| dfe-archiver | 9093 | same |
-| dfe-fetcher | 9094 | same |
-| dfe-transform-vector | 9095 | same |
-| dfe-transform-vrl | 9096 | same |
-| dfe-engine | 8003 | `/livez`, `/readyz` (its `/metrics` is on the container's own 9090, not published) |
-| dfe-proxy | 3000 | `/livez`, served by envoy itself with no backend |
-| hyperdx | 8000 | `/health` -- a third-party app on its own convention |
-
-`dfe-ui` is the exception worth knowing: it answers **200 on every path**,
-including ones that do not exist, so its healthcheck proves the Node server is
-listening and nothing more.
-
-Every one of those ports binds `DFE_BIND_HOST` (`127.0.0.1` by default), so curl
-them from the box itself, not from your laptop.
+Health endpoints, straight from the host. Every DFE service serves `/livez`,
+`/readyz` and `/metrics` and nothing else -- the retired `/health*` paths 404, so
+a probe left on one reads as a service that never came up.
 
 ```bash
 curl -sf http://localhost:9091/readyz     # loader ready?
 curl -sf http://localhost:8003/readyz     # engine ready?
+curl -sf http://localhost:13133/          # collector healthy? (otel profile only)
 ```
 
-### Which path each healthcheck uses, and why it differs
-
-A Docker `HEALTHCHECK` is a liveness check, so most services here use `/livez`.
-Two do not, and the reason is worth knowing when you read `docker compose ps`.
-
-Compose has no readiness condition. `depends_on: condition: service_healthy` is
-the only startup gate there is, so a service that others wait for has to report
-readiness or the gate means nothing.
-
-| Service | Path | Why |
-|---|---|---|
-| dfe-loader | `/readyz` | dfe-receiver and dfe-fetcher wait on it |
-| dfe-engine | `/readyz` | dfe-loader and dfe-proxy wait on it, and it provisions the schema they need |
-| receiver, fetcher, archiver, both transforms | `/livez` | nothing gates on them |
-
-Gate the loader on liveness instead and one that can never reach ClickHouse still
-reports healthy: the receiver starts against it, `docker compose ps` shows green,
-and events pile up with nothing surfacing the fault. It is the same reason the
-stack waits on ClickHouse's own readiness before starting anything that uses it.
-
-Kubernetes has separate liveness and readiness probes and ignores `HEALTHCHECK`
-entirely, so it never has to choose.
+Ports bind `DFE_BIND_HOST` (`127.0.0.1`), so curl them from the box. The full
+port table, which path each HEALTHCHECK uses and why, and dfe-ui's 200-on-unknown
+-paths trap are in [observability.md](observability.md).
 
 ## Known issues
 
@@ -147,18 +106,24 @@ at `kafka-load.yaml`: `kafka-receiver-transform-vector` and
 `kafka-full-transform-vrl`.
 
 The topic names are literals in those YAML files, not env-interpolated. If you
-change one, change it in the init services and the configs together.
+change one, change it in the init services and the configs together. A single
+topic variable cannot work: the consumers name their topics in their own YAML, so
+setting it pre-creates a topic nobody consumes and stops pre-creating the one
+they do.
 
-Do not close this gap by pre-creating `default_load` in the init services. The
-loader auto-discovers topics and scalo suppresses `<base>_land` whenever
+There is one topic-init service per backend, each running its own broker's
+tooling, so choosing Apache Kafka to stay clear of the BSL never pulls a BSL
+artefact. Downstream services depend on both with `required: false`; exactly one
+exists for any profile, so the other is a no-op.
+
+**Do not close this gap by pre-creating `default_load` in the init services.**
+The loader auto-discovers topics and scalo suppresses `<base>_land` whenever
 `<base>_load` exists, on the reasoning that a `_load` topic means a transform has
-already produced the loadable form and the raw landing topic is redundant. Creating
-`default_load` on every Kafka profile therefore drops `default_land` from the
-subscription of every loader that is not running a transform -- which is most of
-them. It was tried, and it took both Kafka e2e tests from 1000 rows to 0 while the
-gRPC tests stayed green: ingest still returned 200, the receiver still produced to
-`default_land`, the topic still showed a rising high watermark, and nothing
-consumed it.
+already produced the loadable form. Creating `default_load` on every Kafka profile
+therefore drops `default_land` from the subscription of every loader not running a
+transform, which is most of them. The symptom is maximally misleading: ingest
+returns 200, the receiver produces to `default_land`, the topic shows a rising
+high watermark, and no rows reach ClickHouse.
 
 Reverting the change does not restore a broker that already has the topic.
 `kafka-redpanda-data` and `kafka-apache-data` outlive the containers, so the topic
@@ -242,11 +207,26 @@ mountpoint owned by root and no service can write inside it. The `dlq-init`
 one-shot (`chown -R 1000:1000 /var/spool/dfe`) fixes that before the services
 start.
 
-That failure mode is not theoretical. dfe-archiver creates its DLQ writer eagerly
-at startup and crash-looped with `DLQ init failed ... Permission denied (os error
-13)`. The others create theirs lazily on first dead-letter, so they look healthy
-right up until something actually needs to dead-letter -- the worst moment to
-discover the DLQ never worked.
+Without it, dfe-archiver crash-loops on `DLQ init failed ... Permission denied
+(os error 13)` -- it creates its DLQ writer eagerly at startup. The others create
+theirs lazily on first dead-letter, so they look healthy until something needs to
+dead-letter, which is the worst moment to find the DLQ never worked.
+
+Per-service volumes do not fix it: a fresh volume is root-owned too, because
+ownership is inherited from a path the image does not have. The real fix is for
+the component images to create `/var/spool/dfe` as appuser. The one-shot reuses
+the archiver image because that image is already pinned.
+
+Three sharp edges in that arrangement:
+
+1. `required: false` on the dependents means a **failed** dlq-init does not stop
+   them -- Compose logs one warning and carries on with a zero exit. Watch for
+   the warning.
+2. uid 1000 is hard-coded and nothing verifies it, so an image that renumbers
+   appuser breaks the DLQ silently.
+3. In dev mode dlq-init resolves to the **registry** archiver image, because
+   `docker-compose.override.yml` does not map it. `make dev` therefore needs GHCR
+   access and a pinned `DFE_ARCHIVER_VERSION` even on profiles with no archiver.
 
 **Files under `/var/spool/dfe/dlq` mean events were accepted and then could not be
 delivered.** They are evidence, not noise: read them to see what was rejected and
@@ -284,6 +264,37 @@ shortage of CPU.
 
 `make check-compose` blocks a sub-2.0 ceiling on any service that gates on
 `/readyz`, so this should only reach you via a hand-edited override.
+
+### The self test fails on self-telemetry
+
+`make post` makes two claims on a profile running the collector, and the second
+is that the `otel` database has rows newer than five minutes. Two distinct
+failures:
+
+**"no table readable"** -- the collector never wrote its schema, so it cannot
+reach ClickHouse. Its exporter creates the database and tables on startup, so an
+absent schema is a connection or credential fault, not a quiet one:
+
+```bash
+docker compose logs otel-collector
+docker compose exec clickhouse clickhouse-client --query "SHOW TABLES FROM otel"
+```
+
+**"no rows newer than"** -- the tables exist and nothing is arriving, so nothing
+is exporting. Check that the endpoint actually reached the containers, and that
+the engine is on the OTel backend:
+
+```bash
+docker compose exec dfe-engine printenv OTEL_EXPORTER_OTLP_ENDPOINT
+docker compose logs dfe-engine | grep "Metrics initialized"
+```
+
+`backend=prometheus` on that last line means it is not pushing. The profile sets
+`DFE_ENGINE_METRICS_BACKEND=opentelemetry`; a value in `.env` overrides it.
+
+Expect only `dfe-engine` in the results for now -- the Rust services carry no
+OTLP exporter yet, so their absence is not a fault. See
+[operating.md](operating.md#self-monitoring).
 
 ### `port is already allocated`
 
@@ -336,5 +347,6 @@ stdlib-only and works on a bare machine.
 
 ## Related
 
-- [operating.md](operating.md) -- auth position, exposure, limits, secrets, upgrades
-- [README.md](../README.md) -- profiles, make targets, full environment variable reference
+- [observability.md](observability.md) -- the health surface and what each endpoint proves
+- [operating.md](operating.md) -- auth position, exposure, limits, secrets
+- [configuration.md](configuration.md) -- every variable, port and image

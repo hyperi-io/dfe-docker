@@ -22,10 +22,11 @@
 #   core        (default true)   dfe-engine, dfe-ui, dfe-proxy
 #   kafbat      (default true)   the Kafka UI; kafka transport only
 #   hyperdx     (default false)  hyperdx + its Postgres and FerretDB
+#   otel        (default false)  the collector that takes the stack's OWN telemetry
 #
 # The matching env var -- DFE_CLICKHOUSE_ENABLED, DFE_CORE_ENABLED,
-# KAFBAT_ENABLED, DFE_HYPERDX_ENABLED -- overrides the key, because .env is what
-# a deploy writes and the profile is the committed shape.
+# KAFBAT_ENABLED, DFE_HYPERDX_ENABLED, DFE_OTEL_ENABLED -- overrides the key,
+# because .env is what a deploy writes and the profile is the committed shape.
 #
 # NAMING: `slim` and `single` are the shared vocabulary with the Kubernetes tier
 # (dfe-infra argocd/values/profile-*.yaml), so one deployment dial reads the same
@@ -47,13 +48,15 @@ profiles:
       dfe-receiver:
         config_path: receiver/grpc.yaml
 
-  # One node of everything, WITH Kafka -- the complete stack. HyperDX stays
-  # opt-in, matching the Kubernetes profile, which leaves it to its own toggle.
+  # One node of everything, WITH Kafka -- the complete stack, self-monitoring
+  # included. HyperDX stays opt-in, matching the Kubernetes profile, which leaves
+  # it to its own toggle.
   single:
     transport: kafka
     clickhouse: true
     core: true
     kafbat: true
+    otel: true
     services:
       dfe-archiver:
         config_path: archiver/kafka.yaml

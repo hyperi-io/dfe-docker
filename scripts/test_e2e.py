@@ -46,6 +46,7 @@ from urllib.request import Request, urlopen
 from _common import FALSY, _load_dotenv
 from _pipeline import MARKER_EXPRESSIONS  # noqa: F401 - re-exported for callers
 from _pipeline import ch_marker_count as _ch_marker_count
+from _pipeline import otel_fresh_counts, poll_until
 
 
 # ==============================================================================
@@ -93,20 +94,25 @@ KNOWN_DFE_SERVICES = set(SERVICE_CONFIG_MOUNTS.keys())
 
 # ------------------------------------------------------------------------------
 # Schema Authority
-# - dfe-engine provisions the ClickHouse objects (dfe.default et al.) and
-#   registers their schemas, which the loader pre-warms into its schema cache on
-#   startup. Without it the loader holds every message pending-schema and
-#   dead-letters after a timeout. So it is brought up as INFRA -- health-gated
-#   BEFORE the DFE services -- not as a per-profile DFE service. The loader routes
-#   an event to <default_db>.<_source>; the harness sends with _source = the
-#   target table, landing rows in the engine-provisioned default table (the DFE
-#   default-deploy acceptance: "the row lands in the CH default table").
+# - dfe-engine is brought up as INFRA, health-gated before the DFE services,
+#   because the loader pre-warms the schemas it registers. The harness sends with
+#   _source = the target table, so rows land in the engine-provisioned default
+#   table. docs/developing.md#end-to-end-suite----one-stack-per-test
 # ------------------------------------------------------------------------------
 SCHEMA_AUTHORITY_SERVICE = "dfe-engine"
 SCHEMA_AUTHORITY_PROFILE = "core"
 # The rest of the `core` profile: the user-facing surface a complete-stack test
 # asserts against. dfe-engine is started separately, earlier, as the authority.
 CORE_SURFACE_SERVICES = ["dfe-ui", "dfe-proxy"]
+OTEL_PROFILE = "otel"
+OTEL_SERVICE = "otel-collector"
+OTEL_ENDPOINT_ENV_VAR = "DFE_OTEL_EXPORTER_ENDPOINT"
+OTEL_BUNDLED_ENDPOINT = "http://otel-collector:4317"
+OTEL_ENGINE_BACKEND_ENV_VAR = "DFE_ENGINE_METRICS_BACKEND"
+OTEL_ENGINE_BACKEND = "opentelemetry"
+OTEL_FRESH_WINDOW_SECONDS = 300
+OTEL_TIMEOUT_SECONDS = 120.0
+OTEL_INTERVAL_SECONDS = 5.0
 TARGET_DB = "dfe"
 TARGET_TABLE = "default"
 
@@ -467,9 +473,10 @@ def resolve_services_profile(profile_name):
 
     # Footprint keys from service_profiles.yaml, defaults matching
     # scripts/resolve_profile.py. dfe-engine already starts as the schema
-    # authority; `core` adds the UI and the proxy so a complete-stack profile is
-    # tested whole. `clickhouse` and `hyperdx` are ignored: the suite owns the
-    # warehouse it asserts against and carries no HyperDX assertions.
+    # authority; `core` adds the UI and the proxy, `otel` the collector, so a
+    # complete-stack profile is tested whole. `clickhouse` and `hyperdx` are
+    # ignored: the suite owns the warehouse it asserts against and carries no
+    # HyperDX assertions.
     extra_services = []
     if str(profile.get("core", "true")).strip().lower() not in FALSY:
         extra_services += CORE_SURFACE_SERVICES
@@ -478,6 +485,13 @@ def resolve_services_profile(profile_name):
         and str(profile.get("kafbat", "true")).strip().lower() not in FALSY
     ):
         extra_services.append("kafka-ui")
+    if str(profile.get("otel", "false")).strip().lower() not in FALSY:
+        compose_profiles.append(OTEL_PROFILE)
+        extra_services.append(OTEL_SERVICE)
+        # The harness drives compose directly, so it sets what resolve_profile.py
+        # would have exported through make.
+        os.environ.setdefault(OTEL_ENDPOINT_ENV_VAR, OTEL_BUNDLED_ENDPOINT)
+        os.environ.setdefault(OTEL_ENGINE_BACKEND_ENV_VAR, OTEL_ENGINE_BACKEND)
 
     services = {}
     for svc_name, svc_conf in raw_services.items():
@@ -750,23 +764,9 @@ def stack_up(mode, test, services):
             )
             return False
 
-        # Name the services explicitly instead of waiting on the whole profile.
-        #
-        # `docker compose up --wait` treats a container that EXITS as a failure,
-        # even on exit 0, and the topic-init service is a one-shot that is
-        # supposed to exit. Waiting on the profile therefore sweeps it in and the
-        # command always fails with `container dfe-kafka-init-... exited (0)`,
-        # regardless of whether the broker is fine.
-        #
-        # This was silently breaking the DEFAULT (redpanda) backend: rpk finishes
-        # in about a second, so init had always exited by the time --wait looked.
-        # The apache backend passed only by luck -- kafka-topics.sh is slow enough
-        # that init was usually still running and counted as "started". A test
-        # that passes on timing is not passing.
-        #
-        # Naming clickhouse and the broker scopes the wait to the two things we
-        # actually need healthy, and leaves init to the `depends_on:
-        # service_completed_successfully` gate that already handles it correctly.
+        # Named services, never the whole profile: `--wait` counts an EXITED
+        # container as a failure even on exit 0, and topic-init is a one-shot.
+        # docs/developing.md#end-to-end-suite----one-stack-per-test
         LOGGER.debug("Waiting for 'Kafka' to be healthy...")
         wait_cmd = (
             ["docker", "compose"]
@@ -888,6 +888,50 @@ def dump_logs():
 
 
 # ------------------------------------------------------------------------------
+# Report Unready Service
+# - Dumps what a timed-out service was actually doing, before teardown removes it
+#
+#   A bare timeout cannot distinguish the three states it might have been in: no
+#   container, a container whose port is published but not yet listening, or a
+#   process that is running and not answering. They call for different fixes, and
+#   the container is gone by the time anyone reads the failure.
+# ------------------------------------------------------------------------------
+def report_unready(name):
+    inspect = run_cmd(
+        [
+            "docker",
+            "inspect",
+            "-f",
+            "status={{.State.Status}} health={{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}} restarts={{.RestartCount}}",
+            name,
+        ],
+        capture=True,
+    )
+    state = (inspect.stdout or inspect.stderr or "").strip()
+    LOGGER.error(f"    '{name}' container: {state or 'not found'}")
+    if inspect.returncode != 0:
+        return
+
+    health = run_cmd(
+        [
+            "docker",
+            "inspect",
+            "-f",
+            "{{range .State.Health.Log}}{{.ExitCode}} {{.Output}}{{end}}",
+            name,
+        ],
+        capture=True,
+    )
+    if (health.stdout or "").strip():
+        LOGGER.error(f"    '{name}' healthcheck log: {health.stdout.strip()[:400]}")
+
+    logs = run_cmd(["docker", "logs", "--tail", "20", name], capture=True)
+    tail = ((logs.stdout or "") + (logs.stderr or "")).strip()
+    if tail:
+        LOGGER.error(f"    '{name}' last lines:\n{tail[-2000:]}")
+
+
+# ------------------------------------------------------------------------------
 # Wait For Service
 # - Waits for a service to become healthy by polling its endpoint
 # ------------------------------------------------------------------------------
@@ -909,6 +953,8 @@ def wait_for_service(name, url, max_attempts=30):
     LOGGER.error(
         f"'{name}' not ready after {max_attempts} attempt{'s' if (attempt > 1) else ''}"
     )
+    if name.startswith("dfe-"):
+        report_unready(name)
     return False
 
 
@@ -1185,23 +1231,9 @@ def _parse_topic_list(stdout):
 # Suppressing Topics
 # - Expands a topic list with the siblings that would SUPPRESS it on the broker
 #
-#   The loader auto-discovers topics (`topic_regex: .*_land`) and scalo applies a
-#   default suppression rule to the result: a `<base>_load` topic REMOVES
-#   `<base>_land` from the subscription, on the assumption that a transform stage
-#   has already produced the loadable topic and the raw landing one is redundant.
-#
-#   That rule is right in production and lethal in a test suite, because the broker
-#   data volume outlives the containers. One earlier run of a transform profile --
-#   or one experiment that pre-created `default_load` -- leaves the topic on the
-#   broker indefinitely, and from then on EVERY Kafka test silently loses
-#   `default_land` from the loader's subscription. The symptom is maximally
-#   misleading: ingest returns 200 for all 1000 events, the receiver produces to
-#   `default_land`, the topic exists with a non-zero high watermark, the gRPC tests
-#   stay green, and zero rows reach ClickHouse.
-#
-#   So the suppressing sibling is deleted alongside the topic under test. It is
-#   never re-created (create_topics works from expected_topics only) -- the point is
-#   that a run depends on the test definition, not on broker history.
+#   A `<base>_load` topic removes `<base>_land` from the loader's subscription,
+#   and broker volumes outlive containers, so the sibling is deleted per run and
+#   never re-created. docs/developing.md#end-to-end-suite----one-stack-per-test
 # ---------------------------------------------------------------------------
 KAFKA_SUPPRESSION_PAIRS = (("_land", "_load"),)
 
@@ -1324,6 +1356,53 @@ def verify_http(ctx, test_name, checks):
             mark_fail(ctx, f"[{test_name}] {url} is {got} but lacks {needle!r}")
         else:
             mark_pass(ctx, f"[{test_name}] {url} -> {got}")
+
+
+# ---------------------------------------------------------------------------
+# Verify Self-Monitoring
+# - Asserts the stack's OWN telemetry reaches ClickHouse, the second of the two
+#   pipelines a complete stack has to land. Freshness, not existence: the claim
+#   is that it is streaming now.
+# ---------------------------------------------------------------------------
+def verify_self_monitoring(ctx, test_name):
+    database = os.environ.get("DFE_OTEL_DATABASE", "otel")
+    LOGGER.info(f"Verifying self-telemetry in '{database}'...")
+
+    def _fresh():
+        return otel_fresh_counts(
+            database, OTEL_FRESH_WINDOW_SECONDS, debug=LOGGER.debug
+        )
+
+    def _report(attempt, result):
+        LOGGER.debug(f"    Attempt {attempt}: {result}")
+
+    counts = poll_until(
+        _fresh,
+        timeout=OTEL_TIMEOUT_SECONDS,
+        interval=OTEL_INTERVAL_SECONDS,
+        done=lambda result: result is not None and any(result.values()),
+        on_attempt=_report,
+    )
+
+    if counts is None:
+        mark_fail(
+            ctx,
+            f"[{test_name}] no '{database}' table readable within "
+            f"{OTEL_TIMEOUT_SECONDS:.0f}s - the collector never wrote its schema",
+        )
+        return
+    landed = {table: count for table, count in counts.items() if count}
+    if not (landed):
+        mark_fail(
+            ctx,
+            f"[{test_name}] '{database}' has no rows newer than "
+            f"{OTEL_FRESH_WINDOW_SECONDS}s - the services are not exporting",
+        )
+        return
+    summary = ", ".join(f"{table}={count}" for table, count in sorted(landed.items()))
+    mark_pass(
+        ctx, f"[{test_name}] self-telemetry streaming into '{database}' ({summary})"
+    )
 
 
 # ==============================================================================
@@ -1454,6 +1533,10 @@ def run_test(ctx, mode, test, persistent_services):
     if test.expected_http:
         print()
         verify_http(ctx, test.name, test.expected_http)
+
+    if OTEL_SERVICE in test.extra_services:
+        print()
+        verify_self_monitoring(ctx, test.name)
 
     # Dump container logs for debugging purposes, then tear down the stack if configured to do so
     dump_logs()

@@ -15,5 +15,70 @@
     "serviceNameExpression": "_source",
     "eventAttributesExpression": "_json",
     "defaultTableSelectExpression": "_timestamp,_source,_json"
+  },
+  {
+    "id": "dfe-self-logs",
+    "name": "DFE Self (logs)",
+    "kind": "log",
+    "connection": "local",
+    "from": {
+      "databaseName": "otel",
+      "tableName": "otel_logs"
+    },
+    "timestampValueExpression": "TimestampTime",
+    "displayedTimestampValueExpression": "TimestampTime",
+    "implicitColumnExpression": "Body",
+    "bodyExpression": "Body",
+    "serviceNameExpression": "ServiceName",
+    "severityTextExpression": "SeverityText",
+    "traceIdExpression": "TraceId",
+    "spanIdExpression": "SpanId",
+    "eventAttributesExpression": "LogAttributes",
+    "resourceAttributesExpression": "ResourceAttributes",
+    "defaultTableSelectExpression": "TimestampTime,ServiceName,SeverityText,Body"
+  },
+  {
+    "id": "dfe-self-traces",
+    "name": "DFE Self (traces)",
+    "kind": "trace",
+    "connection": "local",
+    "from": {
+      "databaseName": "otel",
+      "tableName": "otel_traces"
+    },
+    "timestampValueExpression": "Timestamp",
+    "displayedTimestampValueExpression": "Timestamp",
+    "durationExpression": "Duration",
+    "durationPrecision": 9,
+    "traceIdExpression": "TraceId",
+    "spanIdExpression": "SpanId",
+    "parentSpanIdExpression": "ParentSpanId",
+    "spanNameExpression": "SpanName",
+    "spanKindExpression": "SpanKind",
+    "serviceNameExpression": "ServiceName",
+    "statusCodeExpression": "StatusCode",
+    "statusMessageExpression": "StatusMessage",
+    "eventAttributesExpression": "SpanAttributes",
+    "resourceAttributesExpression": "ResourceAttributes"
+  },
+  {
+    "id": "dfe-self-metrics",
+    "name": "DFE Self (metrics)",
+    "kind": "metric",
+    "connection": "local",
+    "from": {
+      "databaseName": "otel",
+      "tableName": ""
+    },
+    "timestampValueExpression": "TimeUnix",
+    "serviceNameExpression": "ServiceName",
+    "resourceAttributesExpression": "ResourceAttributes",
+    "metricTables": {
+      "gauge": "otel_metrics_gauge",
+      "histogram": "otel_metrics_histogram",
+      "sum": "otel_metrics_sum",
+      "summary": "otel_metrics_summary",
+      "exponential histogram": "otel_metrics_exponential_histogram"
+    }
   }
 ]

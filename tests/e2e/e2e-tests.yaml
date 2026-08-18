@@ -12,13 +12,11 @@
 # landing tables and registers the schemas the loader needs) always, plus the
 # selected Kafka backend profile + kafka-ui when transport is kafka.
 #
-# Verification: dfe-engine owns the schema and the loader drops unmapped event
-# fields, so the runner asserts the row-count DELTA in the engine-provisioned
-# default table (dfe.default) -- the DFE default-deploy acceptance ("the row lands
-# in the CH default table"). This is test 1 of the two default DFE e2e tests; the
-# self-monitoring OTel test (test 2) is not run here -- the docker profile carries
-# no OTel collector or otel ClickHouse database; it lives in the k8s
-# bootstrap-smoke suite (dfe-infra).
+# Verification, the two default DFE acceptances. INGEST: dfe-engine owns the
+# schema and the loader drops unmapped fields, so the runner asserts the row-count
+# DELTA plus this run's marker in the engine-provisioned default table
+# (dfe.default). SELF-MONITORING: on a profile declaring `otel`, that the stack's
+# own telemetry is landing FRESH in the otel database.
 #
 # Per-service config overrides can be set via `config_overrides`, keyed by
 # service name (e.g. dfe-loader: config/custom.yaml).

@@ -18,7 +18,7 @@ What you get from it is a running pipeline that either pulls published images or
 compiles your local component source, plus two harnesses that prove events
 actually traverse it.
 
-Read [ARCHITECTURE.md](../ARCHITECTURE.md) first if you have not: which services
+Read [architecture.md](architecture.md) first if you have not: which services
 exist, and how a profile decides which of them run.
 
 ## Prerequisites
@@ -248,6 +248,25 @@ The delta alone would pass on somebody else's rows; the marker alone would not
 notice a partial load. A marker column it cannot locate is reported, never
 silently treated as a pass.
 
+A profile declaring `otel` adds a third assertion -- the stack's own telemetry
+landing fresh in the `otel` database -- and `expected_http` adds a fourth, a
+status and optional body check per URL. `single` uses both, which is what makes
+`complete-single-node-stack` a whole-stack test rather than a data-path one.
+
+Two things about the runner worth knowing before you debug it:
+
+- **It waits on named services, never on a whole profile.** `docker compose up
+  --wait` counts a container that EXITS as a failure even on exit 0, and the
+  topic-init services are one-shots that must exit. Waiting on the profile sweeps
+  them in and fails regardless of broker health.
+- **It deletes the `_load` sibling of every expected `_land` topic before each
+  run.** Broker volumes outlive containers, so a `default_load` left by any
+  transform run suppresses `default_land` for every non-transform loader
+  thereafter. See
+  [troubleshooting.md](troubleshooting.md#configloaderkafka-loadyaml-consumes-a-topic-nothing-pre-creates).
+  Deleting it per run makes a run depend on the test definition, not on broker
+  history.
+
 ## Static checks
 
 `make check` runs what CI runs, so a green local run means a green pipeline.
@@ -325,3 +344,10 @@ container fine.
 compiles from staged source with no `target/` -- it uses a cache mount rather than
 your local build artefacts, so a first build after a toolchain change is slow, and
 a compile error is yours, not the harness's.
+
+## Related
+
+- [architecture.md](architecture.md) -- components, transports, how data moves
+- [observability.md](observability.md) -- health surface, self-telemetry, the self test
+- [configuration.md](configuration.md) -- every variable, port and image
+- [troubleshooting.md](troubleshooting.md) -- diagnosing a stack that misbehaves
