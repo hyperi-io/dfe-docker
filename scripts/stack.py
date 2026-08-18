@@ -234,8 +234,12 @@ def main() -> int:
                 f"stack render for {version!r} produced no *_VERSION pins "
                 f"(source: {source})"
             )
+        # Record WHICH stack these pins came from, alongside them. `make modes`
+        # reports this key and `VERSION ?= $(DFE_STACK_VERSION)` defaults from
+        # it, so a stale value makes both describe a stack the box is not on.
+        marker = {"DFE_STACK_VERSION": f"DFE_STACK_VERSION={version}"}
         merged = _merge_into_env(
-            DOTENV_FILE.read_text(encoding="utf-8", errors="replace"), pins
+            DOTENV_FILE.read_text(encoding="utf-8", errors="replace"), pins | marker
         )
         DOTENV_FILE.write_text(merged, encoding="utf-8", newline="\n")
         _print(
@@ -246,6 +250,7 @@ def main() -> int:
         )
         for key in pins:
             _print(msg=f"  {pins[key]}")
+        _print(msg=f"  {marker['DFE_STACK_VERSION']}  # the stack these came from")
     except StackError as error:
         _print(msg=f"error: {error}")
         return 1
