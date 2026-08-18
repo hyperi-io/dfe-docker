@@ -35,6 +35,9 @@ See [ARCHITECTURE.md](ARCHITECTURE.md).
 
 - Docker and Docker Compose v2
 - Python 3
+- [`oras`](https://oras.land) - `make stack` reads the signed OCI stack-manifest
+  through it. Not needed if you render from a local dfe-infra checkout instead
+  (`DFE_INFRA_DIR`).
 
 ### Initialisation
 

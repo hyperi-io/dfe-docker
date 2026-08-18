@@ -11,6 +11,28 @@ stack is versioned as a CERTIFIED SET (the signed `dfe-stack-manifest`), and
 `make stack` hard-fails rather than ever pull `latest`. This daemon respects
 that - it only ever moves the VM between whole certified pin sets.
 
+## The checkout moves with the pins
+
+A stack version is images PLUS the compose that runs them, so the daemon
+fast-forwards the checkout (`git pull --ff-only`) before pinning. Pinning new
+images against an old `docker-compose.yml` is a half-update that reports success:
+the 2.2.0-rc.2 engine needs a `DFE_ENV` declaration and a healthcheck path that
+older compose files do not have, so the schema authority restart-loops while the
+timer records a clean run.
+
+Two guards. A tree with uncommitted changes to TRACKED files is refused rather
+than pulled over - a deployed box should be clean, since `.env`, `env/`,
+`deployment.yaml` and the state file are all gitignored. And the pull needs a
+credential for the remote; without one it fails loudly rather than carrying on
+with a stale compose.
+
+`DFE_UPDATE_SKIP_GIT_PULL=1` turns it off for a box whose checkout is managed
+another way (an image, a config-management run, an air-gapped copy). The skip is
+logged, because it reintroduces exactly the drift above.
+
+`--dry-run` reports what the refresh would do, so you can see a box is dirty
+before the timer does.
+
 ## Files
 
 - `self_update.py` - discovers the newest stable stack tag (`oras repo tags`),
