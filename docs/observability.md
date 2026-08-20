@@ -68,6 +68,8 @@ a broken ingest pipeline cannot take the reporting on it down too.
 ```mermaid
 flowchart LR
     apps["DFE services"] -->|OTLP push :4317| col["otel-collector"]
+    chsrv[("ClickHouse<br/>system tables")] -->|sqlquery pull| col
+    col -->|self-telemetry :8888| col
     col -->|clickhouse exporter| ch[(`dfe.otel_*` tables)]
     ch -.->|queries it| hdx["HyperDX"]
 
@@ -78,6 +80,18 @@ flowchart LR
 Services PUSH. HyperDX reads ClickHouse rather than receiving anything -- the
 fork ships no OTLP receiver, so the collector's exporter writes the tables it
 queries. This is the same chain Kubernetes runs.
+
+Two of the collector's inputs are PULLS, not pushes, because their sources cannot
+push. `sqlquery` reads ClickHouse's own `system.metrics`, `system.events` and
+`system.parts` on a 30s interval -- the `:9363` Prometheus endpoint is not exposed
+by the stack's image, and these system tables are readable on any provider,
+managed ClickHouse included. The `prometheus` receiver scrapes the collector's own
+`service.telemetry` endpoint on loopback, which is what puts queue depth and
+refused/failed counts (`otelcol_*`) into the same pipeline as everything else.
+
+Between them they are what the pre-canned DFE ClickHouse Health and DFE Pipeline
+Health dashboards read. Without them those dashboards render empty here while
+working on Kubernetes.
 
 `/metrics` is a SEPARATE pathway, for anything that scrapes. This repo ships
 nothing that does. Enabling push does not disable it: a Prometheus estate and a
@@ -114,6 +128,14 @@ edge -- data coming in from your estate, pointing the other way.
 `OTEL_EXPORTER_OTLP_ENDPOINT` is set on every service regardless, so a rebuilt
 component starts reporting with no config change. It is inert on the Rust
 services, on Kubernetes as well as here.
+
+This is what leaves the pre-canned DFE Pipeline Health dashboard partly empty:
+its records-in-vs-out, Kafka lag, buffer depth and worker saturation tiles read
+metrics only the Rust services produce, and those are served on `/metrics` rather
+than pushed. The collector-side and ClickHouse-side tiles on that dashboard do
+work. Closing the rest needs scalo-rs#28, or a `prometheus` receiver scraping the
+services' `/metrics` endpoints -- the second is a config change here, not a
+rebuild, and is the cheaper of the two.
 
 The `opentelemetry` backend is DUAL -- it pushes and keeps serving `/metrics`
 (`readers=[otlp(grpc)->..., prometheus(/metrics)]`), so the switch costs a
