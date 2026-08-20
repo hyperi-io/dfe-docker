@@ -21,6 +21,129 @@ receivers:
       http:
         endpoint: 0.0.0.0:4318
 
+  # Server-side ClickHouse health, read from system tables rather than the :9363
+  # Prometheus endpoint, which the stack's image does not expose. Mirrors the k8s
+  # gateway so the DFE ClickHouse Health dashboard renders on both tiers.
+  sqlquery/clickhouse:
+    driver: clickhouse
+    datasource: "clickhouse://${env:CLICKHOUSE_USERNAME}:${env:CLICKHOUSE_PASSWORD}@${env:CLICKHOUSE_HOST}:${env:CLICKHOUSE_NATIVE_PORT}/${env:DFE_OTEL_DATABASE}"
+    collection_interval: 30s
+    queries:
+      - sql: >-
+          SELECT
+            toInt64(sumIf(value, metric = 'Query')) AS ch_queries_running,
+            toInt64(sumIf(value, metric = 'Merge')) AS ch_merges_running,
+            toInt64(sumIf(value, metric = 'PartMutation')) AS ch_mutations_running,
+            toInt64(sumIf(value, metric = 'MemoryTracking')) AS ch_memory_tracked_bytes,
+            toInt64(sumIf(value, metric = 'TCPConnection')) AS ch_tcp_connections,
+            toInt64(sumIf(value, metric = 'ReadonlyReplica')) AS ch_readonly_replicas,
+            toInt64(sumIf(value, metric = 'DelayedInserts')) AS ch_delayed_inserts
+          FROM system.metrics
+        metrics:
+          - metric_name: clickhouse_queries_running
+            value_column: ch_queries_running
+          - metric_name: clickhouse_merges_running
+            value_column: ch_merges_running
+          - metric_name: clickhouse_mutations_running
+            value_column: ch_mutations_running
+          - metric_name: clickhouse_memory_tracked_bytes
+            value_column: ch_memory_tracked_bytes
+            unit: By
+          - metric_name: clickhouse_tcp_connections
+            value_column: ch_tcp_connections
+          - metric_name: clickhouse_readonly_replicas
+            value_column: ch_readonly_replicas
+          # Non-zero means inserts are being throttled because merges cannot keep
+          # up -- the step before "too many parts" rejects writes.
+          - metric_name: clickhouse_delayed_inserts
+            value_column: ch_delayed_inserts
+      # max-parts-per-partition is the leading indicator of "too many parts".
+      - sql: >-
+          SELECT
+            toInt64(sum(part_count)) AS ch_active_parts,
+            toInt64(max(part_count)) AS ch_max_parts_per_partition
+          FROM (
+            SELECT count() AS part_count
+            FROM system.parts
+            WHERE active
+            GROUP BY database, table, partition
+          )
+        metrics:
+          - metric_name: clickhouse_active_parts
+            value_column: ch_active_parts
+          - metric_name: clickhouse_max_parts_per_partition
+            value_column: ch_max_parts_per_partition
+      # Cumulative server counters; rates are computed at query time.
+      - sql: >-
+          SELECT
+            toInt64(sumIf(value, event = 'InsertedRows')) AS ch_inserted_rows,
+            toInt64(sumIf(value, event = 'InsertedBytes')) AS ch_inserted_bytes,
+            toInt64(sumIf(value, event = 'SelectedRows')) AS ch_selected_rows,
+            toInt64(sumIf(value, event = 'MergedRows')) AS ch_merged_rows,
+            toInt64(sumIf(value, event = 'Query')) AS ch_queries,
+            toInt64(sumIf(value, event = 'FailedQuery')) AS ch_failed_queries,
+            toInt64(sumIf(value, event = 'FailedInsertQuery')) AS ch_failed_insert_queries
+          FROM system.events
+        metrics:
+          - metric_name: clickhouse_inserted_rows_total
+            value_column: ch_inserted_rows
+            data_type: sum
+            monotonic: true
+          - metric_name: clickhouse_inserted_bytes_total
+            value_column: ch_inserted_bytes
+            data_type: sum
+            monotonic: true
+            unit: By
+          - metric_name: clickhouse_selected_rows_total
+            value_column: ch_selected_rows
+            data_type: sum
+            monotonic: true
+          - metric_name: clickhouse_merged_rows_total
+            value_column: ch_merged_rows
+            data_type: sum
+            monotonic: true
+          - metric_name: clickhouse_queries_total
+            value_column: ch_queries
+            data_type: sum
+            monotonic: true
+          - metric_name: clickhouse_failed_queries_total
+            value_column: ch_failed_queries
+            data_type: sum
+            monotonic: true
+          - metric_name: clickhouse_failed_insert_queries_total
+            value_column: ch_failed_insert_queries
+            data_type: sum
+            monotonic: true
+      # One series per table, bounded by the DFE schema rather than by traffic.
+      - sql: >-
+          SELECT
+            database,
+            table,
+            toInt64(sum(rows)) AS ch_table_rows,
+            toInt64(sum(bytes_on_disk)) AS ch_table_bytes
+          FROM system.parts
+          WHERE active
+          GROUP BY database, table
+        metrics:
+          - metric_name: clickhouse_table_rows
+            value_column: ch_table_rows
+            attribute_columns: [database, table]
+          - metric_name: clickhouse_table_bytes_on_disk
+            value_column: ch_table_bytes
+            attribute_columns: [database, table]
+            unit: By
+
+  # Loopback scrape of this collector's own service.telemetry endpoint, which is
+  # what puts otelcol_* (queue depth, refused and failed points) into the same
+  # pipeline as everything else.
+  prometheus:
+    config:
+      scrape_configs:
+        - job_name: otelcol
+          scrape_interval: 30s
+          static_configs:
+            - targets: ["127.0.0.1:8888"]
+
 processors:
   memory_limiter:
     check_interval: 5s
@@ -29,6 +152,13 @@ processors:
   batch:
     timeout: 5s
     send_batch_size: 1024
+  # sqlquery emits no service.name, so its metrics would land in the same
+  # unattributed bucket as anything else missing one.
+  resource/clickhouse:
+    attributes:
+      - key: service.name
+        value: clickhouse
+        action: upsert
 
 exporters:
   clickhouse:
@@ -45,10 +175,26 @@ exporters:
 
 service:
   extensions: [health_check]
+  telemetry:
+    logs:
+      level: ${env:DFE_OTEL_COLLECTOR_LOG_LEVEL}
+    metrics:
+      readers:
+        - pull:
+            exporter:
+              prometheus:
+                host: 127.0.0.1
+                port: 8888
   pipelines:
     metrics:
-      receivers: [otlp]
+      receivers: [otlp, prometheus]
       processors: [memory_limiter, batch]
+      exporters: [clickhouse]
+    # Separate pipeline so the ClickHouse metrics can be tagged with their own
+    # service.name without touching everything else on the otlp pipeline.
+    metrics/clickhouse:
+      receivers: [sqlquery/clickhouse]
+      processors: [memory_limiter, resource/clickhouse, batch]
       exporters: [clickhouse]
     traces:
       receivers: [otlp]
@@ -58,6 +204,3 @@ service:
       receivers: [otlp]
       processors: [memory_limiter, batch]
       exporters: [clickhouse]
-  telemetry:
-    logs:
-      level: ${env:DFE_OTEL_COLLECTOR_LOG_LEVEL}
