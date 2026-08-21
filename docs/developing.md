@@ -147,8 +147,8 @@ tier, so one deployment dial reads the same on both:
 | `slim` | grpc | loader, receiver | ClickHouse, core |
 | `single` | kafka | loader, receiver | ClickHouse, core, kafka-ui, otel-collector |
 
-`single` is the whole PLATFORM on one box, and the only shape the bundled dex
-profile will front when it lands. Its data plane is receiver + loader only:
+`single` is the whole PLATFORM on one box, and the only shape an OIDC issuer
+would front if one is wired in. Its data plane is receiver + loader only:
 those two run from a default deploy with nothing external configured, while
 dfe-archiver, dfe-fetcher and the transforms need endpoints or credentials the
 profile cannot supply. Take those from the fine-grained profiles below. HyperDX
