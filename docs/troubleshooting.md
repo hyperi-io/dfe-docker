@@ -137,15 +137,6 @@ The e2e harness now does this for itself: `clean_topics` deletes the `_load`
 sibling of every expected `_land` topic, so a run depends on the test definition
 rather than on the broker's history.
 
-### `hyperi-hyperdx` is the one image still on a floating tag
-
-Every other image in the stack is pinned to `tag@digest` by `make stack` from the
-DFE stack SSoT, and compose hard-fails (`${VAR:?}`) rather than resolving a
-missing pin to `latest`. `hyperi-hyperdx` uses `${DFE_HYPERDX_VERSION:-latest}`
-because the fork is unpublished, so the SSoT cannot emit a pin for it. Until that
-fork ships, the opt-in `hyperdx` profile does not carry the pinning guarantee the
-rest of the stack does.
-
 ## Events are accepted but nothing lands
 
 The ingest edge returning 2xx only means the event was accepted. Work down this
