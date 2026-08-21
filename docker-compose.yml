@@ -725,7 +725,7 @@ services:
       CLICKHOUSE_NATIVE_PORT: ${CLICKHOUSE_NATIVE_PORT:-9000}
       CLICKHOUSE_USERNAME: ${CLICKHOUSE_USERNAME:-default}
       CLICKHOUSE_PASSWORD: ${CLICKHOUSE_PASSWORD:-}
-      DFE_OTEL_DATABASE: ${DFE_OTEL_DATABASE:-default}
+      DFE_OTEL_DATABASE: ${DFE_OTEL_DATABASE:-dfe}
       DFE_OTEL_COLLECTOR_LOG_LEVEL: ${DFE_OTEL_COLLECTOR_LOG_LEVEL:-warn}
     volumes:
       - ./config/otel-collector/config.yaml:/etc/otelcol/config.yaml:ro

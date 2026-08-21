@@ -268,7 +268,7 @@ shortage of CPU.
 ### The self test fails on self-telemetry
 
 `make post` makes two claims on a profile running the collector, and the second
-is that the `default.otel_*` tables has rows newer than five minutes. Two distinct
+is that the `dfe.otel_*` tables has rows newer than five minutes. Two distinct
 failures:
 
 **"no table readable"** -- the collector never wrote its schema, so it cannot

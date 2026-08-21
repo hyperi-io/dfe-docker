@@ -1365,7 +1365,7 @@ def verify_http(ctx, test_name, checks):
 #   is that it is streaming now.
 # ---------------------------------------------------------------------------
 def verify_self_monitoring(ctx, test_name):
-    database = os.environ.get("DFE_OTEL_DATABASE", "default")
+    database = os.environ.get("DFE_OTEL_DATABASE", "dfe")
     LOGGER.info(f"Verifying self-telemetry in '{database}'...")
 
     def _fresh():

@@ -252,7 +252,7 @@ notice a partial load. A marker column it cannot locate is reported, never
 silently treated as a pass.
 
 A profile declaring `otel` adds a third assertion -- the stack's own telemetry
-landing fresh in the `default.otel_*` tables -- and `expected_http` adds a fourth, a
+landing fresh in the `dfe.otel_*` tables -- and `expected_http` adds a fourth, a
 status and optional body check per URL. `single` uses both, which is what makes
 `complete-single-node-stack` a whole-stack test rather than a data-path one.
 
