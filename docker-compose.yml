@@ -783,11 +783,10 @@ services:
       retries: 10
 
   hyperdx:
-    # The ONE image on a soft default -- the fork is unpublished so the SSoT
-    # cannot pin it, and a `:?` here would abort even the non-hyperdx path.
-    # Flip it to `:?` once the fork publishes.
-    # docs/troubleshooting.md#hyperi-hyperdx-is-the-one-image-still-on-a-floating-tag
-    image: ${IMAGE_REGISTRY:-ghcr.io/hyperi-io}/hyperi-hyperdx:${DFE_HYPERDX_VERSION:-latest}
+    # Pinned from the stack SSoT like every other image: the fork now publishes,
+    # so `make stack` renders DFE_HYPERDX_VERSION from versions.yaml
+    # (content.dfe-hyperdx). Fail-loud `:?` -- no floating `latest`.
+    image: ${IMAGE_REGISTRY:-ghcr.io/hyperi-io}/hyperi-hyperdx:${DFE_HYPERDX_VERSION:?run 'make stack VERSION=X.Y.Z' to pin DFE_HYPERDX_VERSION}
     container_name: dfe-hyperdx
     profiles: ["hyperdx"]
     restart: unless-stopped
