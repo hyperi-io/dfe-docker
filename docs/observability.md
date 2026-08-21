@@ -117,25 +117,21 @@ The collector's OTLP ports are NOT published. Self-monitoring stays on the
 Compose network. Note `4317`/`4318` on the host are dfe-receiver's OTLP INGEST
 edge -- data coming in from your estate, pointing the other way.
 
-## Only dfe-engine reports today
+## What reports
 
 | Component | Pushes? | Why |
 |---|---|---|
+| the six Rust services | yes, when built against scalo >= 2.10.11 | scalo's `metrics` feature pulls `otel-metrics` and `otel-tracing`, so OTLP export is on by default (scalo-rs#30) |
 | dfe-engine | yes, once the profile sets the backend | scalo-py has an exporter, its CLI defaults the backend to prometheus (scalo-py#11) |
-| the six Rust services | no | built without scalo's `otel-metrics` feature, so nothing is linked in (scalo-rs#28) |
 | dfe-ui | no | `@opentelemetry/api` only, no SDK. Serves `/metrics` on `:3000` |
 
 `OTEL_EXPORTER_OTLP_ENDPOINT` is set on every service regardless, so a rebuilt
-component starts reporting with no config change. It is inert on the Rust
-services, on Kubernetes as well as here.
+component starts reporting with no config change here.
 
-This is what leaves the pre-canned DFE Pipeline Health dashboard partly empty:
-its records-in-vs-out, Kafka lag, buffer depth and worker saturation tiles read
-metrics only the Rust services produce, and those are served on `/metrics` rather
-than pushed. The collector-side and ClickHouse-side tiles on that dashboard do
-work. Closing the rest needs scalo-rs#28, or a `prometheus` receiver scraping the
-services' `/metrics` endpoints -- the second is a config change here, not a
-rebuild, and is the cheaper of the two.
+Each Rust service pushes the scalo chassis set -- the `worker_pool_*` family,
+`process_*` and `container_*` -- plus whatever it defines itself; the loader adds
+`rdkafka_*`. What decides whether a service reports is the scalo version its image
+links, not this repo's configuration.
 
 The `opentelemetry` backend is DUAL -- it pushes and keeps serving `/metrics`
 (`readers=[otlp(grpc)->..., prometheus(/metrics)]`), so the switch costs a
