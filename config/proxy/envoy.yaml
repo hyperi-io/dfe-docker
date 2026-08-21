@@ -15,12 +15,13 @@
 # Envoy replaces nginx as THE entrypoint across the product (same proxy the
 # k8s tier runs at its edge): OSS nginx has no free inbound OIDC, while
 # Envoy's oauth2/jwt_authn filters are Apache-2.0. Those auth filters chain
-# in here when the bundled dex issuer lands (the one-issuer decision) --
-# semantically the same edge policy the k8s SecurityPolicies express.
+# in here when an OIDC issuer fronts this origin (the engine as OIDC provider,
+# or an external IdP) -- semantically the same edge policy the k8s
+# SecurityPolicies express.
 #
-# Docker mode never assumes an issuer exists. OIDC is a capability the dex
-# profile adds to THIS origin, never a requirement any profile inherits; ingest,
-# machine paths, metrics and the datastores stay outside it.
+# Docker mode never assumes an issuer exists. OIDC is a capability that fronts
+# THIS origin when an issuer is wired, never a requirement any profile inherits;
+# ingest, machine paths, metrics and the datastores stay outside it.
 #
 # STRICT_DNS clusters resolve per refresh via Docker's embedded DNS, so the
 # proxy boots while a backend is down and recovers when it returns (the
@@ -48,8 +49,8 @@ static_resources:
                 upgrade_configs:
                   - upgrade_type: websocket
                 http_filters:
-                  # AUTH SEAM: jwt_authn + oauth2 filters insert here when the
-                  # bundled dex issuer lands, gated on that profile running.
+                  # AUTH SEAM: jwt_authn + oauth2 filters insert here when an
+                  # OIDC issuer fronts this origin (the engine or an external IdP).
                   # Scope them per-route, never chain-wide: /api/v1 is a machine
                   # path and must return 401, not a login redirect.
                   - name: envoy.filters.http.router

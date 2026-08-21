@@ -209,14 +209,13 @@ and is not co-equal -- if both would work, choose Kubernetes. What makes Compose
 safe to deploy is that it consumes the SAME image from the SAME registry, pinned
 from the same stack SSoT, so both run identical digests.
 
-Three deliberate asymmetries:
+Two deliberate asymmetries:
 
 - **No authentication.** Compose runs god-mode. Envoy fronts both tiers, but its
   OIDC filters stay unconfigured here, because Docker mode can never assume an
-  issuer exists. A bundled dex profile would front the proxy origin only, leaving
-  ingest, machine paths, metrics and datastores untouched.
-- **`hyperi-hyperdx` is unpinned.** The fork is unpublished, so the SSoT cannot
-  pin it. The only image without a digest, on an opt-in profile.
+  issuer exists. An OIDC issuer (the engine as provider, or an external IdP)
+  would front the proxy origin only, leaving ingest, machine paths, metrics and
+  datastores untouched.
 - **Self-monitoring has fewer producers.** Same chain, fewer things pushing into
   it, and no container logs or node metrics -- those come from a daemonset on the
   cluster. See [observability.md](observability.md).

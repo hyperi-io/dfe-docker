@@ -19,12 +19,11 @@ sink:
   brokers:
     - kafka:9092
   topic: default_load
-  # Workaround: hyperi-rustlib's KafkaTransport::new always creates a
+  # Workaround: scalo's KafkaTransport::new always creates a
   # BaseConsumer alongside the FutureProducer, even when only the producer
   # side is used. Empty group.id makes librdkafka treat the instance as
   # producer-only, and BaseConsumer construction then fails with
   # "rdkafka consumer queue not available". Force a non-empty group.id via
   # librdkafka_options so the unused consumer can be constructed.
-  # See TODO.md `dfe-transform-vrl` issues.
   librdkafka_options:
     group.id: dfe-transform-vrl-producer-dummy

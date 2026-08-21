@@ -27,9 +27,9 @@ can mean here.
 
 Envoy is the entrypoint on both tiers now, so the boundary is worth stating
 exactly. **dfe-docker can never assume an OIDC issuer exists**, and no profile
-may come to require one. When the bundled dex profile lands, OIDC fronts the
+may come to require one. When an OIDC issuer is wired in front, OIDC fronts the
 proxy origin only -- the UI and the engine's interactive paths -- and only while
-that profile runs. Ingest edges, machine API paths, `/.well-known`, `/livez`,
+that issuer runs. Ingest edges, machine API paths, `/.well-known`, `/livez`,
 every metrics port, ClickHouse, Kafka, kafka-ui and HyperDX stay outside it. That
 mirrors the Kubernetes tier, which applies OIDC per interactive route rather than
 at the Gateway, precisely so machine paths are never redirected to a login.
