@@ -68,6 +68,8 @@ a broken ingest pipeline cannot take the reporting on it down too.
 ```mermaid
 flowchart LR
     apps["DFE services"] -->|OTLP push :4317| col["otel-collector"]
+    chsrv[("ClickHouse<br/>system tables")] -->|sqlquery pull| col
+    col -->|self-telemetry :8888| col
     col -->|clickhouse exporter| ch[(`dfe.otel_*` tables)]
     ch -.->|queries it| hdx["HyperDX"]
 
@@ -78,6 +80,18 @@ flowchart LR
 Services PUSH. HyperDX reads ClickHouse rather than receiving anything -- the
 fork ships no OTLP receiver, so the collector's exporter writes the tables it
 queries. This is the same chain Kubernetes runs.
+
+Two of the collector's inputs are PULLS, not pushes, because their sources cannot
+push. `sqlquery` reads ClickHouse's own `system.metrics`, `system.events` and
+`system.parts` on a 30s interval -- the `:9363` Prometheus endpoint is not exposed
+by the stack's image, and these system tables are readable on any provider,
+managed ClickHouse included. The `prometheus` receiver scrapes the collector's own
+`service.telemetry` endpoint on loopback, which is what puts queue depth and
+refused/failed counts (`otelcol_*`) into the same pipeline as everything else.
+
+Between them they are what the pre-canned DFE ClickHouse Health and DFE Pipeline
+Health dashboards read. Without them those dashboards render empty here while
+working on Kubernetes.
 
 `/metrics` is a SEPARATE pathway, for anything that scrapes. This repo ships
 nothing that does. Enabling push does not disable it: a Prometheus estate and a
@@ -103,17 +117,21 @@ The collector's OTLP ports are NOT published. Self-monitoring stays on the
 Compose network. Note `4317`/`4318` on the host are dfe-receiver's OTLP INGEST
 edge -- data coming in from your estate, pointing the other way.
 
-## Only dfe-engine reports today
+## What reports
 
 | Component | Pushes? | Why |
 |---|---|---|
+| the six Rust services | yes, when built against scalo >= 2.10.11 | scalo's `metrics` feature pulls `otel-metrics` and `otel-tracing`, so OTLP export is on by default (scalo-rs#30) |
 | dfe-engine | yes, once the profile sets the backend | scalo-py has an exporter, its CLI defaults the backend to prometheus (scalo-py#11) |
-| the six Rust services | no | built without scalo's `otel-metrics` feature, so nothing is linked in (scalo-rs#28) |
 | dfe-ui | no | `@opentelemetry/api` only, no SDK. Serves `/metrics` on `:3000` |
 
 `OTEL_EXPORTER_OTLP_ENDPOINT` is set on every service regardless, so a rebuilt
-component starts reporting with no config change. It is inert on the Rust
-services, on Kubernetes as well as here.
+component starts reporting with no config change here.
+
+Each Rust service pushes the scalo chassis set -- the `worker_pool_*` family,
+`process_*` and `container_*` -- plus whatever it defines itself; the loader adds
+`rdkafka_*`. What decides whether a service reports is the scalo version its image
+links, not this repo's configuration.
 
 The `opentelemetry` backend is DUAL -- it pushes and keeps serving `/metrics`
 (`readers=[otlp(grpc)->..., prometheus(/metrics)]`), so the switch costs a
