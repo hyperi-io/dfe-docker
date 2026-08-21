@@ -293,7 +293,7 @@ one end to the other. It is transport-agnostic by construction, so it means the
 same thing on the Kafka and gRPC profiles.
 
 On a profile that runs the collector it makes a **second** claim, and both must
-hold: that the stack's own telemetry is landing fresh in the `default.otel_*` tables.
+hold: that the stack's own telemetry is landing fresh in the `dfe.otel_*` tables.
 That is the pair the Kubernetes bootstrap smoke asserts as CORE 1 and CORE 2 --
 the two pipelines a complete deployment has to move.
 
@@ -321,7 +321,7 @@ The other outcomes are as informative as the PASS:
 ## Self-monitoring
 
 The stack's own telemetry goes out over OTLP to a collector, which writes the
-`default.otel_*` tables that HyperDX reads. Turn it on with `otel: true` on a
+`dfe.otel_*` tables that HyperDX reads. Turn it on with `otel: true` on a
 profile (`single` has it) or `DFE_OTEL_ENABLED=true`.
 
 Only dfe-engine reports today, and nothing here scrapes anything. The dials, what
