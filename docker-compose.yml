@@ -313,6 +313,42 @@ services:
     restart: "no"
 
   # ===========================================================================
+  # dfe-schema-init
+  # Creates or reconciles every DFE ClickHouse table, then exits. Runs the
+  # `dfe-schema` entry point on the dfe-engine image -- the same code the engine
+  # runs on boot and the k8s deploy runs as a Job, so no target invents its own.
+  #
+  # In `dfe` AND `otel`, not `core`: a profile without dfe-engine still writes to
+  # these tables, and the otel collector now runs with create_schema=false, so a
+  # telemetry-only stack would otherwise have nothing to insert into.
+  # ===========================================================================
+
+  dfe-schema-init:
+    image: ${IMAGE_REGISTRY:-ghcr.io/hyperi-io}/dfe-engine:${DFE_ENGINE_VERSION:?run 'make stack VERSION=X.Y.Z' to pin DFE_ENGINE_VERSION}
+    container_name: dfe-schema-init
+    profiles: ["dfe", "otel"]
+    deploy: *limits-sidecar
+    entrypoint: ["dfe-schema"]
+    # ClickHouse reports healthy before it will accept DDL on a cold start, so
+    # the apply retries rather than failing the whole stack on a race.
+    command: ["apply", "--wait", "${DFE_SCHEMA_WAIT:-120}"]
+    environment:
+      DFE_ENV: ${DFE_ENV:-dev}
+      DFE_CLICKHOUSE_HOST: ${CLICKHOUSE_HOST:-clickhouse}
+      DFE_CLICKHOUSE_PORT: ${CLICKHOUSE_HTTP_PORT:-8123}
+      DFE_CLICKHOUSE_DATABASE: ${CLICKHOUSE_DB:-default}
+      DFE_CLICKHOUSE_USERNAME: ${CLICKHOUSE_USERNAME:-default}
+      DFE_CLICKHOUSE_PASSWORD: ${CLICKHOUSE_PASSWORD:-}
+      DFE_CLICKHOUSE_SECURE: ${CLICKHOUSE_SECURE:-false}
+      DFE_SCHEMAS_DIR: ${DFE_ENGINE_SCHEMAS_DIR:-/app/schemas}
+      OTEL_SERVICE_NAME: dfe-schema
+    depends_on:
+      clickhouse:
+        condition: service_healthy
+        required: false
+    restart: "no"
+
+  # ===========================================================================
   # dfe-archiver
   # Only supports Kafka input transport.
   # ===========================================================================
@@ -431,6 +467,10 @@ services:
       # The schema authority. A loader started first holds every message
       # pending-schema and dead-letters it, which reads as data loss and is
       # really start ordering. docs/troubleshooting.md#events-are-accepted-but-nothing-lands
+      # dfe-schema-init covers the profiles that run no engine.
+      dfe-schema-init:
+        condition: service_completed_successfully
+        required: false
       dfe-engine:
         condition: service_healthy
         required: false
@@ -732,6 +772,11 @@ services:
     depends_on:
       clickhouse:
         condition: service_healthy
+        required: false
+      # The exporter runs with create_schema=false, so the otel tables have to
+      # exist before it sends its first batch.
+      dfe-schema-init:
+        condition: service_completed_successfully
         required: false
     # No HEALTHCHECK: the image is distroless (no shell, no curl, no wget), so
     # there is nothing in it to probe :13133 with. Nothing gates on the
