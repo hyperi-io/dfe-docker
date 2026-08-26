@@ -58,6 +58,36 @@ def http_get(url: str, timeout: int = 5) -> str:
         return response.read().decode()
 
 
+def http_post_json(
+    url: str,
+    payload: dict,
+    token: str = "",
+    timeout: int = 30,
+) -> tuple[int, typing.Any]:
+    """POST JSON and return (status, decoded body), for callers that need the body.
+
+    A body that is not JSON comes back as the raw text, so a proxy error page is
+    reported as what it is rather than raising a decode error over the top of it.
+    """
+    request = Request(url, data=json.dumps(payload).encode(), method="POST")
+    request.add_header("Content-Type", "application/json")
+    if token:
+        request.add_header("Authorization", f"Bearer {token}")
+    try:
+        with urlopen(request, timeout=timeout) as response:
+            raw = response.read().decode()
+            status = response.status
+    except URLError as error:
+        if not (hasattr(error, "code")):
+            raise
+        raw = error.read().decode() if hasattr(error, "read") else ""
+        status = error.code
+    try:
+        return status, json.loads(raw)
+    except ValueError:
+        return status, raw
+
+
 def http_post(
     url: str,
     body: str | bytes,

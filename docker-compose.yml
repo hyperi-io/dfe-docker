@@ -649,6 +649,10 @@ services:
       # The engine refuses to start at `production` without real auth, and
       # compose mode is god-mode. docs/operating.md#there-is-no-authentication
       DFE_ENV: ${DFE_ENV:-dev}
+      # Break-glass login, seeded on the engine's FIRST start. `make init`
+      # generates the password; unset, the engine seeds "changeme".
+      DFE_AUTH_LOCAL_ADMIN_NAME: ${DFE_AUTH_LOCAL_ADMIN_NAME:-admin}
+      DFE_AUTH_LOCAL_ADMIN_PASSWORD: ${DFE_AUTH_LOCAL_ADMIN_PASSWORD:-}
       DFE_CLICKHOUSE_HOST: ${CLICKHOUSE_HOST:-clickhouse}
       DFE_CLICKHOUSE_PORT: ${CLICKHOUSE_HTTP_PORT:-8123}
       DFE_CLICKHOUSE_NATIVE_PORT: ${CLICKHOUSE_NATIVE_PORT:-9000}
