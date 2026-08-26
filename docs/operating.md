@@ -19,11 +19,17 @@ access control, port exposure, resource limits, the broker, secrets, and what
 your backup actually covers. Kubernetes remains the primary path -- if both would
 work, choose Kubernetes.
 
-## There is no authentication -- everything else is bounded by this
+## Only the console authenticates -- everything else is bounded by that
 
-Docker mode runs in god-mode by design. Nothing here authenticates anyone. That
-is a decision, not an oversight, and it sets a hard limit on what "production"
-can mean here.
+The engine's API requires a login. `make init` generates
+`DFE_AUTH_LOCAL_ADMIN_PASSWORD` into `.env`, and the engine seeds that break-glass
+admin on its FIRST start -- a stack whose account store already exists keeps
+whatever password it was first given, so rotate through the UI rather than
+expecting the generated value to take.
+
+Nothing else in the stack authenticates anyone, and that is the hard limit on what
+"production" can mean here: the ingest edges, every metrics port, ClickHouse,
+Kafka, kafka-ui and HyperDX are open to whoever can route to them.
 
 Envoy is the entrypoint on both tiers now, so the boundary is worth stating
 exactly. **dfe-docker can never assume an OIDC issuer exists**, and no profile

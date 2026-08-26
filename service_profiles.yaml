@@ -39,9 +39,13 @@
 active_profile: kafka-fetcher
 
 profiles:
-  # gRPC, no broker: the smallest thing that ingests and serves.
+  # Mirrors the Kubernetes slim tier: gRPC transport, no broker, the
+  # receiver/loader ingest path, and the collector that tier also runs.
   slim:
     transport: grpc
+    clickhouse: true
+    core: true
+    otel: true
     services:
       dfe-loader:
         config_path: loader/grpc.yaml

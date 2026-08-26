@@ -9,10 +9,12 @@
 
 """Power-on self test (POST) for a stack that is ALREADY running.
 
-Two claims, one per pipeline. INGEST: uniquely-marked events put in at the ingest
-edge come out as those exact rows in ClickHouse. SELF-MONITORING: when the profile
-runs a collector, the stack's own telemetry is landing FRESH in the otel database.
-Neither is "the containers started" or "the ports answer".
+Three claims. INGEST: uniquely-marked events put in at the ingest edge come out as
+those exact rows in ClickHouse. SELF-MONITORING: when the profile runs a collector,
+the stack's own telemetry is landing FRESH in the otel database. CONSOLE: those
+same marked rows read back through the engine query API that dfe-ui uses, so the
+data is not merely stored but reachable from the surface an operator works in.
+None of the three is "the containers started" or "the ports answer".
 
 Transport-agnostic by construction. It posts to the ingest edge and reads
 ClickHouse, so it works identically on the Kafka and the gRPC (kafka-less)
@@ -44,10 +46,13 @@ import time
 
 from _common import FALSY, _load_dotenv, _print, _resolved_services
 from _pipeline import (
+    MARKER_EXPRESSIONS,
     ch_count,
     ch_marker_count,
+    escape_literal,
     http_get,
     http_post,
+    http_post_json,
     marked_event,
     otel_fresh_counts,
     poll_until,
@@ -80,6 +85,14 @@ OTEL_SERVICE = "otel-collector"
 OTEL_FRESH_WINDOW_SECONDS = 300
 OTEL_TIMEOUT_SECONDS = 120.0
 OTEL_INTERVAL_SECONDS = 5.0
+
+# Console assertion. dfe-ui holds no ClickHouse credential of its own -- it reads
+# through the engine's query API -- so exercising that API with the break-glass
+# login is what proves the console can see the data.
+UI_QUERY_SERVICES = ("dfe-engine", "dfe-ui")
+UI_QUERY_DATASOURCE = "clickhouse:default"
+UI_QUERY_TIMEOUT_SECONDS = 30.0
+UI_QUERY_INTERVAL_SECONDS = 3.0
 
 # Compose defaults that mean "nobody ran `make init`". They are deterministic and
 # committed, so a stack running them has a signing key and a database password
@@ -302,6 +315,106 @@ def _verify_self_monitoring() -> int:
     return 0
 
 
+def _ui_query_count(
+    *, base: str, database: str, marker: str, table: str, token: str
+) -> int | None:
+    """Count this run's rows through the query API, or None if no form was readable.
+
+    Both marker expressions are tried for the same reason ``ch_marker_count`` tries
+    them: this repo does not own the landing schema.
+    """
+    escaped = escape_literal(marker)
+    for expression in MARKER_EXPRESSIONS:
+        status, body = http_post_json(
+            f"{base}/queries/raw",
+            {
+                "datasource": UI_QUERY_DATASOURCE,
+                "query": (
+                    f"SELECT count() AS c FROM {database}.{table} "
+                    f"WHERE {expression} = '{escaped}'"
+                ),
+            },
+            token=token,
+        )
+        if status != 200 or not (isinstance(body, dict)):
+            continue
+        rows = body.get("rows") or []
+        if not (rows):
+            continue
+        try:
+            matched = int(next(iter(rows[0].values())))
+        except (StopIteration, TypeError, ValueError):
+            continue
+        if matched > 0:
+            return matched
+    return None
+
+
+def _verify_ui_query(*, database: str, marker: str, table: str) -> int:
+    """Prove the console's query path returns THIS run's rows.
+
+    Rows in ClickHouse are not the same claim as rows an operator can see: the
+    console reaches them through the engine, which authenticates, resolves a
+    datasource and applies row-level scoping the loader never touches.
+    """
+    absent = [
+        name for name in UI_QUERY_SERVICES if name not in set(_resolved_services())
+    ]
+    if absent:
+        _print(
+            msg=f"SKIP  {', '.join(absent)} not in the active profile -- no console query path to prove"
+        )
+        return 0
+
+    bind = os.environ.get("DFE_POST_HOST", "localhost")
+    base = f"http://{bind}:{os.environ.get('DFE_ENGINE_PORT', '8003')}/api/v1"
+    username = os.environ.get("DFE_AUTH_LOCAL_ADMIN_NAME", "admin").strip() or "admin"
+    password = os.environ.get("DFE_AUTH_LOCAL_ADMIN_PASSWORD", "").strip()
+    if not (password):
+        _print(msg="FAIL  DFE_AUTH_LOCAL_ADMIN_PASSWORD is unset -- run `make init`")
+        return 1
+
+    _print(msg=f"Querying {database}.{table} through the engine API as {username!r}")
+    status, body = http_post_json(
+        f"{base}/auth/login", {"username": username, "password": password}
+    )
+    token = body.get("access_token", "") if isinstance(body, dict) else ""
+    if status != 200 or not (token):
+        # An engine seeded before this password was generated holds the old one, so
+        # retrying cannot help.
+        _print(
+            msg=f"FAIL  login as {username!r} returned HTTP {status} -- the console "
+            "cannot authenticate, so nobody can read this data through dfe-ui"
+        )
+        return 1
+
+    def _report(attempt, result):
+        _print(msg=f"  attempt {attempt}: query API rows = {result}")
+
+    matched = poll_until(
+        lambda: _ui_query_count(
+            base=base, database=database, marker=marker, table=table, token=token
+        ),
+        timeout=UI_QUERY_TIMEOUT_SECONDS,
+        interval=UI_QUERY_INTERVAL_SECONDS,
+        done=lambda result: result is not None and result >= EVENT_COUNT,
+        on_attempt=_report,
+    )
+
+    if matched is None or matched < EVENT_COUNT:
+        _print(
+            msg=f"FAIL  the query API returned {matched if matched is not None else 0}"
+            f"/{EVENT_COUNT} of this run's rows within {UI_QUERY_TIMEOUT_SECONDS:.0f}s "
+            "-- the rows are in ClickHouse but the console cannot read them"
+        )
+        return 1
+
+    _print(
+        msg=f"PASS  dfe-ui's query path returned {matched}/{EVENT_COUNT} of this run's rows"
+    )
+    return 0
+
+
 def main() -> int:
     _load_dotenv()
 
@@ -398,7 +511,11 @@ def main() -> int:
             msg=f"PASS  {matched}/{EVENT_COUNT} marked event(s) landed in {database}.{table}"
         )
         _cleanup(database, table, marker)
-        return _verify_self_monitoring()
+        # Both remaining claims run even when the first of them fails, so one boot
+        # reports every broken pipeline rather than the first one.
+        failed = _verify_self_monitoring()
+        failed += _verify_ui_query(database=database, marker=marker, table=table)
+        return 1 if failed else 0
 
     _print(
         msg=f"FAIL  only {matched}/{EVENT_COUNT} marked event(s) reached "
