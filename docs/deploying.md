@@ -70,6 +70,12 @@ than ever pull `latest`. `make dial` sets the pin from the deployment dial's
 `version.pin`, so a redeploy is a dial edit plus `make dial && make stack && make
 ci`. This is the production-safe default: nothing moves until you move it.
 
+Per image, the pin is always an explicit release tag (e.g.
+`DFE_HYPERDX_VERSION=v0.2.0`). The registries also publish `latest` and
+`sha-<commit>` tags for every image, the hyperdx fork included -- none of them
+is ever consumed here, so what a release publishes and what a deploy runs stay
+two separate decisions.
+
 **Track-latest (opt-in).** `ops/daemon-update/install.sh` installs a systemd timer
 that discovers the newest certified stack tag and runs the SAME `make stack` +
 `make ci`, but only when something newer has shipped. It never pulls `latest`. By
