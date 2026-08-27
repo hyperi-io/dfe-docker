@@ -1,0 +1,35 @@
+# Opt-in external data location -- active when DFE_DATA_ROOT is set (the
+# Makefile chains this file in). Every stateful volume becomes a bind onto
+# ${DFE_DATA_ROOT}/<name>, so the stores that grow (ClickHouse, Kafka, the
+# archiver and DLQ spools) live on a disk you chose instead of
+# /var/lib/docker. The k8s path parameterises the same choice through
+# storageClass/size in the charts.
+#
+# Switching an existing deployment does NOT migrate data between locations,
+# and `make clean` removes the volume objects while the bind directories
+# keep their contents.
+volumes:
+  clickhouse-data:
+    driver: local
+    driver_opts: {type: none, o: bind, device: "${DFE_DATA_ROOT}/clickhouse"}
+  kafka-redpanda-data:
+    driver: local
+    driver_opts: {type: none, o: bind, device: "${DFE_DATA_ROOT}/kafka-redpanda"}
+  kafka-apache-data:
+    driver: local
+    driver_opts: {type: none, o: bind, device: "${DFE_DATA_ROOT}/kafka-apache"}
+  archiver-data:
+    driver: local
+    driver_opts: {type: none, o: bind, device: "${DFE_DATA_ROOT}/archiver"}
+  dlq-spool:
+    driver: local
+    driver_opts: {type: none, o: bind, device: "${DFE_DATA_ROOT}/dlq-spool"}
+  dfe-engine-config:
+    driver: local
+    driver_opts: {type: none, o: bind, device: "${DFE_DATA_ROOT}/engine-config"}
+  dfe-engine-schemas:
+    driver: local
+    driver_opts: {type: none, o: bind, device: "${DFE_DATA_ROOT}/engine-schemas"}
+  hyperdx-pg-data:
+    driver: local
+    driver_opts: {type: none, o: bind, device: "${DFE_DATA_ROOT}/hyperdx-pg"}

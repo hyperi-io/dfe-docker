@@ -23,8 +23,20 @@ export DFE_DEV_GID := $(shell id -g)
 # a rebuild. COMPOSE_FILE chains the overlay for every plain `docker compose`
 # call this make run spawns; the targets that pass -f explicitly (ci, down,
 # clean) ignore COMPOSE_FILE by design, so the registry path stays untouched.
+# External data location: DFE_DATA_ROOT (env, else .env) rehomes every stateful
+# volume onto that path via docker-compose.storage.yml. STORAGE_FLAGS carries it
+# onto the explicit `-f` targets (ci, ci-pull), which must relocate storage too.
+DFE_DATA_ROOT ?= $(shell sed -n 's/^DFE_DATA_ROOT=//p' .env 2>/dev/null)
+ifneq ($(strip $(DFE_DATA_ROOT)),)
+    export DFE_DATA_ROOT
+    STORAGE_CHAIN := :docker-compose.storage.yml
+    STORAGE_FLAGS := -f docker-compose.storage.yml
+endif
+
 ifneq ($(strip $(LIVE)),)
-    export COMPOSE_FILE := docker-compose.yml:docker-compose.override.yml:docker-compose.live.yml
+    export COMPOSE_FILE := docker-compose.yml:docker-compose.override.yml:docker-compose.live.yml$(STORAGE_CHAIN)
+else ifneq ($(strip $(STORAGE_CHAIN)),)
+    export COMPOSE_FILE := docker-compose.yml:docker-compose.override.yml$(STORAGE_CHAIN)
 endif
 
 # Goals that work without a resolved service profile. The check-* targets belong
@@ -106,8 +118,15 @@ modes: ## Show the deploy modes -- pinned vs track-latest -- and which one this 
 # Dev (builds from local source via docker-compose.override.yml)
 # ---------------------------------------------------------------------------
 
+# The bind directories must exist before the local volume driver mounts them.
+.PHONY: storage-dirs
+storage-dirs:
+ifneq ($(strip $(DFE_DATA_ROOT)),)
+	@mkdir -p $(addprefix $(DFE_DATA_ROOT)/,clickhouse kafka-redpanda kafka-apache archiver dlq-spool engine-config engine-schemas hyperdx-pg)
+endif
+
 .PHONY: dev
-dev: down ## Build local DFE images from source and start the dev stack
+dev: down storage-dirs ## Build local DFE images from source and start the dev stack
 	docker compose $(PROFILE_FLAGS) pull
 	python3 scripts/build_dev_images.py $(ACTIVE_SERVICES)
 	docker compose $(PROFILE_FLAGS) up -d $(ACTIVE_SERVICES)
@@ -123,10 +142,10 @@ dev-build: ## Build local DFE images from source (no start)
 # ---------------------------------------------------------------------------
 
 .PHONY: ci
-ci: login down  ## Pull and start infra and registry DFE images
-	docker compose -f docker-compose.yml $(PROFILE_FLAGS) pull
-	docker compose -f docker-compose.yml $(PROFILE_FLAGS) pull $(ACTIVE_SERVICES)
-	docker compose -f docker-compose.yml $(PROFILE_FLAGS) up -d $(ACTIVE_SERVICES)
+ci: login down storage-dirs  ## Pull and start infra and registry DFE images
+	docker compose -f docker-compose.yml $(STORAGE_FLAGS) $(PROFILE_FLAGS) pull
+	docker compose -f docker-compose.yml $(STORAGE_FLAGS) $(PROFILE_FLAGS) pull $(ACTIVE_SERVICES)
+	docker compose -f docker-compose.yml $(STORAGE_FLAGS) $(PROFILE_FLAGS) up -d $(ACTIVE_SERVICES)
 	@$(MAKE) --no-print-directory post || echo "post: SELF TEST FAILED -- the stack is up, but it did not prove it moves data. Run 'make post' for detail."
 
 .PHONY: ci-pull
@@ -139,7 +158,7 @@ ci-pull: login ## Pull infra and registry DFE images
 # ---------------------------------------------------------------------------
 
 .PHONY: infra
-infra: ## Start infrastructure services
+infra: storage-dirs ## Start infrastructure services
 	docker compose $(PROFILE_FLAGS) pull
 	docker compose $(PROFILE_FLAGS) up -d
 

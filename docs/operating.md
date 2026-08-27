@@ -270,6 +270,20 @@ Eight named volumes hold all durable state:
 eight, which now includes the warehouse. It always removed volumes; what changed
 is that ClickHouse data is in one.
 
+### External data location
+
+ClickHouse and Kafka grow, and `/var/lib/docker` is rarely the disk sized for
+them. Set `DFE_DATA_ROOT` (in `.env` or the environment) and every volume above
+becomes a bind onto `${DFE_DATA_ROOT}/<name>` via `docker-compose.storage.yml`
+-- the make targets create the directories and chain the overlay on every path,
+`make ci` included. The k8s charts parameterise the same choice through
+`storageClass` and size.
+
+Two consequences to know: switching an existing deployment does not migrate
+data between locations, and `make clean` removes the volume objects while the
+bind directories keep their contents -- reclaiming the space is an explicit
+delete of `${DFE_DATA_ROOT}`.
+
 ## Deploying and upgrading
 
 A deploy turns one file -- `deployment.yaml` -- and pins one stack version.
