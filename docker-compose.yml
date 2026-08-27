@@ -106,6 +106,9 @@ services:
     volumes:
       - clickhouse-data:/var/lib/clickhouse
       - ./clickhouse/default-user.xml:/etc/clickhouse-server/users.d/default-custom.xml:ro
+      # Server config, not users config: access_control_improvements is only read
+      # from config.d.
+      - ./clickhouse/server-custom.xml:/etc/clickhouse-server/config.d/dfe-custom.xml:ro
     healthcheck:
       test: ["CMD-SHELL", "clickhouse-client --password \"$$CLICKHOUSE_PASSWORD\" --query \"SELECT 1 FROM system.databases WHERE name = '\"$$CLICKHOUSE_DB\"'\""]
       interval: 5s

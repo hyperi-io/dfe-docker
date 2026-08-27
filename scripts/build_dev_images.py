@@ -44,10 +44,8 @@ RUST_COMPONENTS = [
 SELF_CONTAINED_COMPONENTS = ["dfe-engine", "dfe-ui", "hyperdx"]
 SERVICE_BUILD_ARGS = {"hyperdx": {"NEXT_PUBLIC_IS_LOCAL_MODE": "true"}}
 # Compose service name -> source repo NAME (the GitHub repo and therefore the
-# checkout directory name), for the cases where they differ. hyperdx is the one:
-# the repo is `dfe-hyperdx`, while the image it publishes is `hyperi-hyperdx`.
-# This mapped to the IMAGE name, so a dev build looked for a repo that does not
-# exist.
+# checkout directory name), for the cases where they differ; hyperdx's repo and
+# image are `dfe-hyperdx`.
 SERVICE_REPO_DIRS = {"hyperdx": "dfe-hyperdx"}
 # Source acquisition defaults; override via DFE_SRC_REMOTE / DFE_SRC_REF (or
 # DFE_SRC_ROOT to build local checkouts instead of the git cache).

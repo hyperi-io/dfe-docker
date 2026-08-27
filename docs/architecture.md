@@ -197,7 +197,7 @@ Dev builds fetch source into a managed git cache, or from your own checkouts whe
 | `dfe-transform-vrl` | Rust | Embedded VRL transform engine | `dfe` |
 | `dfe-engine` | Python | Config and schema API; the schema authority | `core` |
 | `dfe-ui` | TypeScript | Web console | `core` |
-| `dfe-hyperdx` | TypeScript | HyperDX fork. The repo is `dfe-hyperdx`, the image it publishes is `hyperi-hyperdx` | `hyperdx` |
+| `dfe-hyperdx` | TypeScript | HyperDX fork. Repo and published image are both `dfe-hyperdx` | `hyperdx` |
 
 `dfe-transform-elastic`, `dfe-transform-splack` and `dfe-transform-wasm` have
 repos but no service here, so this stack cannot run them.
