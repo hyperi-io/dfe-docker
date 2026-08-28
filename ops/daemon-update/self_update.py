@@ -99,6 +99,14 @@ def _list_tags(repo: str) -> list[str]:
     return [line.strip() for line in out.stdout.splitlines() if line.strip()]
 
 
+def _pre_key(pre: str) -> tuple:
+    """Pre-release precedence: all-digit identifiers compare numerically and rank below alphanumeric ones."""
+    return tuple(
+        (0, int(ident), "") if ident.isdigit() else (1, 0, ident)
+        for ident in pre.split(".")
+    )
+
+
 def _sort_key(version: str) -> tuple:
     """Semver sort key. A release ranks ABOVE its own pre-releases."""
     m = _SEMVER.match(version)
@@ -106,7 +114,7 @@ def _sort_key(version: str) -> tuple:
         raise UpdateError(f"not a semver tag: {version!r}")
     core = (int(m["major"]), int(m["minor"]), int(m["patch"]))
     # No pre-release sorts higher than any pre-release of the same core.
-    return (*core, 1) if m["pre"] is None else (*core, 0, m["pre"])
+    return (*core, 1) if m["pre"] is None else (*core, 0, _pre_key(pre=m["pre"]))
 
 
 def _is_stable(version: str) -> bool:
