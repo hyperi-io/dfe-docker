@@ -88,6 +88,18 @@ docker:
   engine_api_external: "true"
   kafbat_ui_external: "true"
   hyperdx_ui_external: "true"
+  ## Infra UI authentication. auth_enabled puts an oauth2-proxy in front of each
+  ## infra UI, gating on OIDC sign-in AND group membership. It needs an issuer,
+  ## so it stays off until a deployment has one. The client SECRET is not a dial
+  ## field -- hyperi-infra's thin caller injects DFE_OIDC_CLIENT_SECRET into .env
+  ## from OpenBao, the same way it injects the GHCR token.
+  auth_enabled: "false"
+  oidc_issuer_url: ""
+  oidc_client_id: ""
+  oidc_allowed_groups: dfe-infra,dfe-admin
+  ## Base origin the OAuth redirect URLs are built from -- the hostname a browser
+  ## reaches this box on, not localhost, on anything but a workstation.
+  oauth2_proxy_external_origin: http://localhost
 
 ## External endpoints -- BLANK here. Point a local engine at a remote ClickHouse
 ## for integration tests by setting clickhouse_host in deployment.yaml (or let the

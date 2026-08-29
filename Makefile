@@ -33,71 +33,6 @@ ifneq ($(strip $(DFE_DATA_ROOT)),)
     STORAGE_FLAGS := -f docker-compose.storage.yml
 endif
 
-# ---------------------------------------------------------------------------
-# Web UI exposure
-#
-# Two dials, because "external" means different things on the two boxes compose
-# deploys to. DFE_BIND_SCOPE=localhost (the default, a developer workstation)
-# publishes every UI on 127.0.0.1 so the host sees them and the LAN does not;
-# DFE_BIND_SCOPE=all publishes on 0.0.0.0 for a small/VM deploy. It resolves to
-# DFE_UI_BIND_HOST, the address compose interpolates into every UI port mapping.
-# Ingest (DFE_INGRESS_BIND_HOST) and the operator ports (DFE_BIND_HOST) keep
-# their own audiences and are untouched by it.
-#
-# Every UI publishes by default. An opt-out drops that service's ports mapping,
-# which compose merging cannot do by override -- hence a `!reset` fragment per
-# UI, chained here the same way STORAGE_CHAIN chains the storage overlay.
-# DFE_INFRA_UIS_EXTERNAL=false is the kill switch: it unpublishes every
-# INFRA-class UI at once and beats their individual flags. dfe-ui and the engine
-# API are PRODUCT class and answer only to their own.
-# ---------------------------------------------------------------------------
-DFE_BIND_SCOPE ?= localhost
-ifeq ($(strip $(DFE_BIND_SCOPE)),localhost)
-    export DFE_UI_BIND_HOST := 127.0.0.1
-else ifeq ($(strip $(DFE_BIND_SCOPE)),all)
-    export DFE_UI_BIND_HOST := 0.0.0.0
-else
-    $(error DFE_BIND_SCOPE must be `localhost` or `all`, got '$(strip $(DFE_BIND_SCOPE))')
-endif
-
-DFE_INFRA_UIS_EXTERNAL ?= true
-DFE_UI_EXTERNAL ?= true
-DFE_ENGINE_API_EXTERNAL ?= true
-DFE_KAFBAT_UI_EXTERNAL ?= true
-DFE_HYPERDX_UI_EXTERNAL ?= true
-
-# A typo in an exposure flag must fail the run rather than silently pick a side.
-EXPOSURE_FLAGS := DFE_INFRA_UIS_EXTERNAL DFE_UI_EXTERNAL DFE_ENGINE_API_EXTERNAL DFE_KAFBAT_UI_EXTERNAL DFE_HYPERDX_UI_EXTERNAL
-BAD_EXPOSURE := $(strip $(foreach flag,$(EXPOSURE_FLAGS),$(if $(filter-out true false,$(strip $($(flag)))),$(flag)='$(strip $($(flag)))')))
-ifneq ($(BAD_EXPOSURE),)
-    $(error exposure flags must be `true` or `false`: $(BAD_EXPOSURE))
-endif
-
-UI_CHAIN :=
-UI_FLAGS :=
-ifeq ($(strip $(DFE_UI_EXTERNAL)),false)
-    UI_CHAIN := $(UI_CHAIN):docker-compose.unpublish-dfe-ui.yml
-    UI_FLAGS := $(UI_FLAGS) -f docker-compose.unpublish-dfe-ui.yml
-endif
-ifeq ($(strip $(DFE_ENGINE_API_EXTERNAL)),false)
-    UI_CHAIN := $(UI_CHAIN):docker-compose.unpublish-engine-api.yml
-    UI_FLAGS := $(UI_FLAGS) -f docker-compose.unpublish-engine-api.yml
-endif
-ifneq ($(strip $(DFE_INFRA_UIS_EXTERNAL))$(strip $(DFE_KAFBAT_UI_EXTERNAL)),truetrue)
-    UI_CHAIN := $(UI_CHAIN):docker-compose.unpublish-kafbat.yml
-    UI_FLAGS := $(UI_FLAGS) -f docker-compose.unpublish-kafbat.yml
-endif
-ifneq ($(strip $(DFE_INFRA_UIS_EXTERNAL))$(strip $(DFE_HYPERDX_UI_EXTERNAL)),truetrue)
-    UI_CHAIN := $(UI_CHAIN):docker-compose.unpublish-hyperdx.yml
-    UI_FLAGS := $(UI_FLAGS) -f docker-compose.unpublish-hyperdx.yml
-endif
-
-ifneq ($(strip $(LIVE)),)
-    export COMPOSE_FILE := docker-compose.yml:docker-compose.override.yml:docker-compose.live.yml$(STORAGE_CHAIN)$(UI_CHAIN)
-else ifneq ($(strip $(STORAGE_CHAIN))$(strip $(UI_CHAIN)),)
-    export COMPOSE_FILE := docker-compose.yml:docker-compose.override.yml$(STORAGE_CHAIN)$(UI_CHAIN)
-endif
-
 # Goals that work without a resolved service profile. The check-* targets belong
 # here because their whole point is running on a fresh checkout -- resolving a
 # profile first would make them fail for the reason they exist to detect.
@@ -121,6 +56,99 @@ ifneq (,$(filter-out $(BOOTSTRAP_GOALS),$(or $(MAKECMDGOALS),help)))
         endif
         ACTIVE_SERVICES := $(filter $(SERVICES),$(DFE_SERVICES))
     endif
+endif
+
+# ---------------------------------------------------------------------------
+# Web UI exposure
+#
+# Two dials, because "external" means different things on the two boxes compose
+# deploys to. DFE_BIND_SCOPE=localhost (the default, a developer workstation)
+# publishes every UI on 127.0.0.1 so the host sees them and the LAN does not;
+# DFE_BIND_SCOPE=all publishes on 0.0.0.0 for a small/VM deploy. It resolves to
+# DFE_UI_BIND_HOST, the address compose interpolates into every UI port mapping.
+# Ingest (DFE_INGRESS_BIND_HOST) and the operator ports (DFE_BIND_HOST) keep
+# their own audiences and are untouched by it.
+#
+# Every UI publishes by default. An opt-out drops that service's ports mapping,
+# which compose merging cannot do by override -- hence a `!reset` fragment per
+# UI, chained here the same way STORAGE_CHAIN chains the storage overlay.
+# DFE_INFRA_UIS_EXTERNAL=false is the kill switch: it unpublishes every
+# INFRA-class UI at once and beats their individual flags. dfe-ui and the engine
+# API are PRODUCT class and answer only to their own.
+#
+# Below the profile block because DFE_AUTH_RESOLVED comes from .profile.mk, so
+# the profile key and the env var can never disagree about whether the auth
+# proxies are in play. The bootstrap goals skip that include and read it empty,
+# which is the auth-off branch -- the safe direction for a target that only
+# stops a stack or checks a file.
+# ---------------------------------------------------------------------------
+DFE_BIND_SCOPE ?= localhost
+ifeq ($(strip $(DFE_BIND_SCOPE)),localhost)
+    export DFE_UI_BIND_HOST := 127.0.0.1
+else ifeq ($(strip $(DFE_BIND_SCOPE)),all)
+    export DFE_UI_BIND_HOST := 0.0.0.0
+else
+    $(error DFE_BIND_SCOPE must be `localhost` or `all`, got '$(strip $(DFE_BIND_SCOPE))')
+endif
+
+DFE_INFRA_UIS_EXTERNAL ?= true
+DFE_UI_EXTERNAL ?= true
+DFE_ENGINE_API_EXTERNAL ?= true
+DFE_KAFBAT_UI_EXTERNAL ?= true
+DFE_HYPERDX_UI_EXTERNAL ?= true
+
+# A typo in an exposure flag must fail the run rather than silently pick a side.
+EXPOSURE_FLAGS := DFE_INFRA_UIS_EXTERNAL DFE_UI_EXTERNAL DFE_ENGINE_API_EXTERNAL DFE_KAFBAT_UI_EXTERNAL DFE_HYPERDX_UI_EXTERNAL
+BAD_EXPOSURE := $(strip $(foreach flag,$(EXPOSURE_FLAGS),$(if $(filter-out true false,$(strip $($(flag)))),$(flag)='$(strip $($(flag)))')))
+ifneq ($(BAD_EXPOSURE),)
+    $(error exposure flags must be `true` or `false`: $(BAD_EXPOSURE))
+endif
+
+# An infra UI is gated when the kill switch is off OR its own flag is false.
+KAFBAT_GATED := $(filter-out truetrue,$(strip $(DFE_INFRA_UIS_EXTERNAL))$(strip $(DFE_KAFBAT_UI_EXTERNAL)))
+HYPERDX_GATED := $(filter-out truetrue,$(strip $(DFE_INFRA_UIS_EXTERNAL))$(strip $(DFE_HYPERDX_UI_EXTERNAL)))
+
+# One fragment onto both chains: COMPOSE_FILE for plain `docker compose` calls,
+# and the explicit -f list for the targets that pass files themselves.
+define chain_fragment
+UI_CHAIN := $$(UI_CHAIN):$(1)
+UI_FLAGS := $$(UI_FLAGS) -f $(1)
+endef
+
+UI_CHAIN :=
+UI_FLAGS :=
+ifeq ($(strip $(DFE_UI_EXTERNAL)),false)
+    $(eval $(call chain_fragment,docker-compose.unpublish-dfe-ui.yml))
+endif
+ifeq ($(strip $(DFE_ENGINE_API_EXTERNAL)),false)
+    $(eval $(call chain_fragment,docker-compose.unpublish-engine-api.yml))
+endif
+
+# Infra class. With the auth profile armed each infra UI moves BEHIND its
+# oauth2-proxy, so its own port is unpublished either way and the gate lands on
+# the proxy instead.
+ifeq ($(strip $(DFE_AUTH_RESOLVED)),true)
+    $(eval $(call chain_fragment,docker-compose.unpublish-kafbat.yml))
+    $(eval $(call chain_fragment,docker-compose.unpublish-hyperdx.yml))
+    ifneq ($(KAFBAT_GATED),)
+        $(eval $(call chain_fragment,docker-compose.unpublish-auth-kafbat.yml))
+    endif
+    ifneq ($(HYPERDX_GATED),)
+        $(eval $(call chain_fragment,docker-compose.unpublish-auth-hyperdx.yml))
+    endif
+else
+    ifneq ($(KAFBAT_GATED),)
+        $(eval $(call chain_fragment,docker-compose.unpublish-kafbat.yml))
+    endif
+    ifneq ($(HYPERDX_GATED),)
+        $(eval $(call chain_fragment,docker-compose.unpublish-hyperdx.yml))
+    endif
+endif
+
+ifneq ($(strip $(LIVE)),)
+    export COMPOSE_FILE := docker-compose.yml:docker-compose.override.yml:docker-compose.live.yml$(STORAGE_CHAIN)$(UI_CHAIN)
+else ifneq ($(strip $(STORAGE_CHAIN))$(strip $(UI_CHAIN)),)
+    export COMPOSE_FILE := docker-compose.yml:docker-compose.override.yml$(STORAGE_CHAIN)$(UI_CHAIN)
 endif
 
 .profile.mk: FORCE

@@ -56,6 +56,10 @@ from _common import (
 _SECRET_ALPHABET = string.ascii_letters + string.digits
 _LEN_CREDENTIAL = 24  # DB / service credentials
 _LEN_KEY = 48  # signing keys and other long-lived key material
+# oauth2-proxy decodes its cookie secret to an AES key and accepts exactly 16, 24
+# or 32 bytes. The key tier's 48 is rejected outright, so this one is its own
+# length rather than a tier -- 32 for AES-256, the strongest of the three.
+_LEN_COOKIE = 32
 
 # Name -> length tier. DB passwords are the 128-bit credential tier; the dfe-ui
 # NextAuth value is a session-signing KEY, so it takes the 256-bit tier.
@@ -64,6 +68,7 @@ GENERATED_SECRETS = {
     "DFE_AUTH_LOCAL_ADMIN_PASSWORD": _LEN_CREDENTIAL,
     "HYPERDX_POSTGRES_PASSWORD": _LEN_CREDENTIAL,
     "DFE_UI_NEXTAUTH_SECRET": _LEN_KEY,
+    "DFE_OAUTH2_PROXY_COOKIE_SECRET": _LEN_COOKIE,
 }
 
 # Matches a dotenv assignment: live (`KEY=value`) or a single-hash commented-out

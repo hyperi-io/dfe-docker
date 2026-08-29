@@ -13,9 +13,13 @@ Reads service_profiles.yaml, resolves the active profile (overridable via DFE_PR
 For kafka transport, KAFKA_BACKEND selects the backend (defaults to redpanda).
 
 A profile declares its whole FOOTPRINT, not just the data plane. The optional
-``core`` / ``kafbat`` / ``hyperdx`` / ``clickhouse`` / ``otel`` keys say which of
-those components run; an absent key keeps the historical default, so a profile
-that declares none behaves exactly as it did before the keys existed.
+``core`` / ``kafbat`` / ``hyperdx`` / ``clickhouse`` / ``otel`` / ``auth`` keys
+say which of those components run; an absent key keeps the historical default, so
+a profile that declares none behaves exactly as it did before the keys existed.
+
+``auth`` defaults OFF and is the only key whose settings are validated here: the
+oauth2-proxies it starts need an OIDC issuer, and no dfe-docker profile may
+require one to exist.
 
 The matching env var wins over the profile key, because ``.env`` is what a deploy
 writes (via the deployment dial) while the profile is the committed shape -- the
@@ -36,6 +40,29 @@ from _common import (
     _print,
     _rel_path,
 )
+
+AUTH_ENABLED_ENV_VAR = "DFE_AUTH_ENABLED"
+# One proxy per infra-UI ORIGIN, not per UI: oauth2-proxy serves a single
+# --http-address, and HyperDX's app and API are two origins of one UI. Each list
+# rides on its UI being in the footprint -- a proxy in front of a UI that is not
+# running is a port bound to nothing.
+AUTH_KAFBAT_SERVICES = ["oauth2-proxy-kafbat"]
+AUTH_HYPERDX_SERVICES = ["oauth2-proxy-hyperdx", "oauth2-proxy-hyperdx-api"]
+
+# The auth profile needs a real issuer, client and cookie secret. Compose cannot
+# demand them: it interpolates the whole file before it filters by profile, so a
+# hard-fail key inside a profiled service aborts a stack that never armed that
+# profile. This is the only place that knows the auth footprint resolved on.
+AUTH_REQUIRED_ENV_VARS = (
+    "DFE_OIDC_ISSUER_URL",
+    "DFE_OIDC_CLIENT_ID",
+    "DFE_OIDC_CLIENT_SECRET",
+    "DFE_OAUTH2_PROXY_COOKIE_SECRET",
+)
+# Absent is fine (compose supplies the default group list). Set-but-BLANK is the
+# dangerous shape: oauth2-proxy with no allowed group authenticates but checks no
+# membership, which is authn alone -- exactly what the infra gate exists to stop.
+AUTH_NON_BLANK_IF_SET = ("DFE_OIDC_ALLOWED_GROUPS",)
 
 CORE_ENABLED_ENV_VAR = "DFE_CORE_ENABLED"
 CORE_SERVICES = ["dfe-engine", "dfe-ui", "dfe-proxy"]
@@ -60,6 +87,7 @@ OTEL_ENGINE_BACKEND = "opentelemetry"
 # when neither the key nor the env var is set). kafbat's default only applies on
 # the kafka transport; there is no Kafka UI without a broker.
 FOOTPRINT_KEYS = {
+    "auth": (AUTH_ENABLED_ENV_VAR, False),
     "clickhouse": ("DFE_CLICKHOUSE_ENABLED", True),
     "core": (CORE_ENABLED_ENV_VAR, True),
     "hyperdx": (HYPERDX_ENABLED_ENV_VAR, False),
@@ -113,6 +141,35 @@ def _env_truthy(*, default: bool, name: str) -> bool:
     if raw is None:
         return default
     return raw.strip().lower() not in FALSY
+
+
+def _validate_auth() -> None:
+    """Raise unless every setting the armed auth profile needs carries a real value.
+
+    Naming the missing key matters more than the count: an oauth2-proxy started
+    without an issuer accepts connections and redirects them nowhere, which reads
+    as a broken UI rather than as configuration nobody supplied.
+    """
+    missing = [
+        name for name in AUTH_REQUIRED_ENV_VARS if not os.environ.get(name, "").strip()
+    ]
+    blank = [
+        name
+        for name in AUTH_NON_BLANK_IF_SET
+        if name in os.environ and not os.environ[name].strip()
+    ]
+    if not (missing) and not (blank):
+        return
+    detail = [f"- {name} is empty or unset" for name in missing]
+    detail += [
+        f"- {name} is set to an empty value, which allows any group" for name in blank
+    ]
+    raise _ProfileError(
+        header="auth",
+        msg="The auth profile is armed but its OIDC settings are incomplete:\n"
+        + "\n".join(detail)
+        + f"\nSet them in .env, or turn the profile off with {AUTH_ENABLED_ENV_VAR}=false",
+    )
 
 
 def _footprint(*, profile: dict[str, object], profile_name: str) -> dict[str, bool]:
@@ -248,6 +305,9 @@ def main() -> int:
 
         # Build infra compose profile flags
         profiles = []
+        if footprint["auth"]:
+            _validate_auth()
+            profiles.append("auth")
         if footprint["clickhouse"]:
             profiles.append("clickhouse")
         if footprint["otel"]:
@@ -283,7 +343,20 @@ def main() -> int:
             service_list.extend(HYPERDX_SERVICES)
         if footprint["otel"]:
             service_list.extend(OTEL_SERVICES)
+        if footprint["auth"]:
+            if kafka_ui_enabled:
+                service_list.extend(AUTH_KAFBAT_SERVICES)
+            if footprint["hyperdx"]:
+                service_list.extend(AUTH_HYPERDX_SERVICES)
         lines.append(f"export DFE_SERVICES := {' '.join(service_list)}")
+
+        # The Makefile decides the compose fragment chain from this, so profile
+        # key and env var can never disagree about whether auth is armed.
+        # Emitted unconditionally -- a line that vanishes when its own value is
+        # false would make the included file re-settle on every make pass.
+        lines.append(
+            f"export DFE_AUTH_RESOLVED := {'true' if footprint['auth'] else 'false'}"
+        )
 
         # Point the services at the bundled collector, unless .env already names
         # an endpoint -- an external OTLP backend is the other supported shape.

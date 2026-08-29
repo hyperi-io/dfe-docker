@@ -28,17 +28,21 @@ whatever password it was first given, so rotate through the UI rather than
 expecting the generated value to take.
 
 Nothing else in the stack authenticates anyone, and that is the hard limit on what
-"production" can mean here: the ingest edges, every metrics port, ClickHouse,
-Kafka, kafka-ui and HyperDX are open to whoever can route to them.
+"production" can mean here: the ingest edges, every metrics port, ClickHouse and
+Kafka are open to whoever can route to them. Kafbat and HyperDX are too, unless
+the opt-in `auth` profile below is armed -- and even then the gate is at the
+proxy, not inside those UIs.
 
 Envoy is the entrypoint on both tiers now, so the boundary is worth stating
 exactly. **dfe-docker can never assume an OIDC issuer exists**, and no profile
-may come to require one. When an OIDC issuer is wired in front, OIDC fronts the
-proxy origin only -- the UI and the engine's interactive paths -- and only while
-that issuer runs. Ingest edges, machine API paths, `/.well-known`, `/livez`,
-every metrics port, ClickHouse, Kafka, kafka-ui and HyperDX stay outside it. That
-mirrors the Kubernetes tier, which applies OIDC per interactive route rather than
-at the Gateway, precisely so machine paths are never redirected to a login.
+may come to require one. Where OIDC is wired in, it is scoped per origin and only
+while the issuer runs. The opt-in `auth` profile below covers the infra UIs
+today; the product origin -- the DFE UI and the engine's interactive paths --
+gets the same treatment through dfe-proxy's own filter chain when dfe-engine
+becomes the issuer. Ingest edges, machine API paths, `/.well-known`, `/livez`,
+every metrics port, ClickHouse and Kafka stay outside it either way. That mirrors
+the Kubernetes tier, which applies OIDC per interactive route rather than at the
+Gateway, precisely so machine paths are never redirected to a login.
 
 ```mermaid
 flowchart LR
@@ -174,6 +178,50 @@ authenticates nobody.
 `make check-compose` asserts all of it: that every UI follows the scope on both
 addresses, that no ingest or backing-service port moves with it, and that each
 fragment drops only its own UI.
+
+## Gating the infra UIs with OIDC
+
+`DFE_AUTH_ENABLED=true` arms the `auth` profile, which puts an oauth2-proxy in
+front of each infra UI. Reaching Kafbat or HyperDX then needs an OIDC sign-in
+**and** membership of one of `DFE_OIDC_ALLOWED_GROUPS` (`dfe-infra`,
+`dfe-admin` by default). The group check is the gate -- authentication alone is
+not, which is the same rule the Kubernetes tier applies at the Envoy edge.
+
+Three proxies, one per origin, because oauth2-proxy serves a single listener and
+HyperDX is one UI across two origins:
+
+| Host port | Proxy | Upstream |
+|---|---|---|
+| 8081 | oauth2-proxy-kafbat | kafka-ui |
+| 8090 | oauth2-proxy-hyperdx | HyperDX app |
+| 8000 | oauth2-proxy-hyperdx-api | HyperDX API, which the browser calls directly |
+
+They take those ports over and the UIs stop publishing their own, so nothing
+moves for anyone using them. All three share one cookie secret, and cookies are
+not port-scoped, so a single sign-in covers the set. Register all three redirect
+URIs (`<origin>:<port>/oauth2/callback`) with the IdP, and make sure it emits a
+groups claim or every sign-in is refused.
+
+The infra kill switch still wins: `DFE_INFRA_UIS_EXTERNAL=false` unpublishes the
+proxies as well as the UIs. A gated door is still a door.
+
+Four limits, none of them cosmetic:
+
+- **It gates page access only.** Neither UI learns who signed in, and neither
+  gains a session, roles or an audit trail of its own.
+- **It does not contain the HyperDX credential leak.** `NEXT_PUBLIC_*` is inlined
+  into the client bundle, so anyone who passes the group check still reads
+  `CLICKHOUSE_PASSWORD` out of the JavaScript.
+- **An expired session on the API origin fails opaquely.** A cross-origin XHR
+  that gets a redirect to the IdP is blocked by the browser, so the app shows
+  failed requests rather than a login prompt. Reload the app page to sign back
+  in.
+- **Nothing else moves behind it.** Ingest, ClickHouse, Kafka, the metrics ports
+  and the product UIs are untouched.
+
+Off by default, and it must stay possible to run every other profile without an
+issuer. Arming it with a setting missing stops `make` and names the key rather
+than starting a proxy that redirects nowhere.
 
 ## Resource limits: four tiers, ceilings not reservations
 

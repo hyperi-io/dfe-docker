@@ -44,12 +44,17 @@ exclusive and a change can easily satisfy one and break the other -- which is
 precisely what happened with the topic-init service that ran a Redpanda image on
 the Apache profile.
 
-Beyond resolution, two semantic assertions ride along. No service that gates on a
-health endpoint may carry a CPU ceiling under `_MIN_HEALTH_CPUS` -- see that
-constant for why a lower ceiling takes the endpoint dark while the data path keeps
-working. And the web-UI exposure dials must do exactly what they claim: the bind
-scope moves every UI port and nothing else, and each unpublish fragment drops that
-UI's ports and no other service's. See `_UI_EXPOSURE`.
+Beyond resolution, three semantic assertions ride along.
+
+- No service that gates on a health endpoint may carry a CPU ceiling under
+  `_MIN_HEALTH_CPUS` -- see that constant for why a lower ceiling takes the
+  endpoint dark while the data path keeps working.
+- The web-UI exposure dials must do what they claim: the bind scope moves every
+  UI port and nothing else, and each unpublish fragment drops that UI's ports and
+  no other service's. See `_UI_EXPOSURE`.
+- The opt-in auth profile must gate without holes: no stack needs an OIDC setting
+  to resolve, an armed profile moves every infra-UI origin behind a proxy, and
+  the infra kill switch takes the proxies down with the UIs. See `_AUTH_PROXIES`.
 """
 
 from __future__ import annotations
@@ -117,6 +122,40 @@ _UI_EXPOSURE: dict[str, tuple[str, str]] = {
 
 # The two addresses DFE_BIND_SCOPE resolves to, localhost first (the default).
 _BIND_SCOPE_ADDRS = ("127.0.0.1", "0.0.0.0")
+
+# The opt-in `auth` profile fronts each infra UI with oauth2-proxy. Keyed by the
+# UI service: the proxies that front it, and the fragment that unpublishes them.
+# One proxy per ORIGIN, because oauth2-proxy serves a single --http-address and
+# HyperDX is one UI across two.
+_AUTH_PROFILE = "auth"
+_AUTH_PROXIES: dict[str, tuple[tuple[str, ...], str]] = {
+    "hyperdx": (
+        ("oauth2-proxy-hyperdx", "oauth2-proxy-hyperdx-api"),
+        "docker-compose.unpublish-auth-hyperdx.yml",
+    ),
+    "kafka-ui": (
+        ("oauth2-proxy-kafbat",),
+        "docker-compose.unpublish-auth-kafbat.yml",
+    ),
+}
+# The fragments the Makefile chains whenever the profile is armed: each infra UI
+# moves behind its proxy, so its own port stops reaching the host.
+_AUTH_DIRECT_FRAGMENTS = (
+    "docker-compose.unpublish-hyperdx.yml",
+    "docker-compose.unpublish-kafbat.yml",
+)
+# Settings the proxies read. Prefixes, because the rule they guard is that NO
+# stack needs any of them: compose interpolates before it filters by profile, so
+# one hard-fail key in a profiled service would make an OIDC issuer mandatory for
+# every deploy. `_auth_exposure_failures` renders with all of them stripped.
+_AUTH_ENV_PREFIXES = ("DFE_OIDC_", "DFE_OAUTH2_PROXY_")
+# Representative values for the armed-profile renders. Never leave this process.
+_AUTH_ENV = {
+    "DFE_OIDC_ISSUER_URL": "https://idp.example.invalid/realms/dfe",
+    "DFE_OIDC_CLIENT_ID": "compose-check",
+    "DFE_OIDC_CLIENT_SECRET": "compose-check",
+    "DFE_OAUTH2_PROXY_COOKIE_SECRET": "0123456789abcdef0123456789abcdef",
+}
 
 # Services this project owns and therefore holds to that surface. hyperdx,
 # clickhouse, the brokers and kafka-ui are third-party and keep their own.
@@ -202,17 +241,20 @@ def _retired_health_failures(*, config: dict) -> list[str]:
     return failures
 
 
-def _config_json(*, env: dict[str, str], files: list[str]) -> dict | None:
+def _config_json(
+    *, env: dict[str, str], files: list[str], extra_profiles: tuple[str, ...] = ()
+) -> dict | None:
     """Return the fully interpolated compose model, or None if it did not resolve.
 
-    Every profile is turned on, plus one Kafka backend, so the model carries every
-    service a reader might assert about. Resolution failures are reported by the
-    loop in main(), so a None here needs no second message.
+    Every base profile is turned on, plus one Kafka backend, so the model carries
+    every service a reader might assert about. `auth` is opt-in and therefore only
+    arrives through `extra_profiles`. Resolution failures are reported by the loop
+    in main(), so a None here needs no second message.
     """
     cmd = ["docker", "compose"]
     for path in files:
         cmd += ["-f", path]
-    for profile in [*_BASE_PROFILES, _KAFKA_BACKENDS[0]]:
+    for profile in [*_BASE_PROFILES, _KAFKA_BACKENDS[0], *extra_profiles]:
         cmd += ["--profile", profile]
     cmd += ["config", "--format", "json"]
     result = subprocess.run(
@@ -235,8 +277,8 @@ def _published(*, config: dict, service: str) -> list[tuple[str, str]]:
     return [(str(p.get("host_ip", "")), str(p.get("published", ""))) for p in ports]
 
 
-def _ui_exposure_failures(*, env: dict[str, str]) -> list[str]:
-    """Return one message per web-UI exposure dial that does not do what it claims.
+def _ui_exposure_failures(*, env: dict[str, str]) -> tuple[list[str], int]:
+    """Return (messages, assertions made) for the web-UI exposure dials.
 
     Three properties, all read off the interpolated model rather than the source
     YAML, because the whole mechanism is interpolation plus fragment merging:
@@ -247,16 +289,21 @@ def _ui_exposure_failures(*, env: dict[str, str]) -> list[str]:
     - each unpublish fragment drops exactly its own UI's ports.
     """
     failures: list[str] = []
+    made = 0
     base = [COMPOSE_FILE.name]
     models: dict[str, dict] = {}
     for addr in _BIND_SCOPE_ADDRS:
         config = _config_json(env={**env, "DFE_UI_BIND_HOST": addr}, files=base)
         if config is None:
-            return [f"the base path did not resolve with DFE_UI_BIND_HOST={addr}"]
+            return (
+                [f"the base path did not resolve with DFE_UI_BIND_HOST={addr}"],
+                made,
+            )
         models[addr] = config
 
     for addr, config in models.items():
         for service in sorted(_UI_EXPOSURE):
+            made += 1
             bound = _published(config=config, service=service)
             if not (bound):
                 failures.append(f"{service}: publishes no host port at all")
@@ -272,6 +319,7 @@ def _ui_exposure_failures(*, env: dict[str, str]) -> list[str]:
     for service in sorted(models[_BIND_SCOPE_ADDRS[0]].get("services", {})):
         if service in _UI_EXPOSURE:
             continue
+        made += 1
         first, second = (
             _published(config=models[addr], service=service)
             for addr in _BIND_SCOPE_ADDRS
@@ -293,12 +341,107 @@ def _ui_exposure_failures(*, env: dict[str, str]) -> list[str]:
             failures.append(f"{fragment} did not resolve on top of the base path")
             continue
         for other in sorted(_UI_EXPOSURE):
+            made += 1
             bound = _published(config=config, service=other)
             if other == service and bound:
                 failures.append(f"{fragment}: {service} still publishes {bound}")
             elif other != service and not (bound):
                 failures.append(f"{fragment}: it also unpublished {other}")
-    return failures
+    return failures, made
+
+
+def _auth_exposure_failures(*, env: dict[str, str]) -> tuple[list[str], int]:
+    """Return (messages, assertions made) for the opt-in auth profile's exposure rules.
+
+    Four properties:
+
+    - no stack needs an OIDC setting, so the base path resolves with every one of
+      them stripped from the environment;
+    - armed, each infra UI stops publishing and its proxies publish exactly the
+      origins that UI had, so the gate has no hole;
+    - armed, the product UIs are untouched;
+    - armed with the infra class killed, the PROXIES go dark too -- a gated door
+      is still a door.
+    """
+    failures: list[str] = []
+    made = 0
+    base = [COMPOSE_FILE.name]
+    addr = _BIND_SCOPE_ADDRS[0]
+
+    bare = {k: v for k, v in env.items() if not k.startswith(_AUTH_ENV_PREFIXES)}
+    bare["DFE_UI_BIND_HOST"] = addr
+    plain = _config_json(env=bare, files=base)
+    made += 1
+    if plain is None:
+        return (
+            [
+                "the base path does not resolve with the OIDC settings unset -- "
+                "no profile may require an issuer to exist"
+            ],
+            made,
+        )
+
+    armed_env = {**env, **_AUTH_ENV, "DFE_UI_BIND_HOST": addr}
+    on = _config_json(
+        env=armed_env,
+        files=[*base, *_AUTH_DIRECT_FRAGMENTS],
+        extra_profiles=(_AUTH_PROFILE,),
+    )
+    if on is None:
+        return ([f"the {_AUTH_PROFILE} profile path did not resolve"], made)
+
+    for ui, (proxies, _) in sorted(_AUTH_PROXIES.items()):
+        made += 2
+        if _published(config=on, service=ui):
+            failures.append(
+                f"{ui}: still publishes with the {_AUTH_PROFILE} profile armed -- "
+                "its port belongs to the proxy in front of it"
+            )
+        want = {port for _, port in _published(config=plain, service=ui)}
+        got: set[str] = set()
+        for proxy in proxies:
+            bound = _published(config=on, service=proxy)
+            got |= {port for _, port in bound}
+            stray = sorted({ip for ip, _ in bound if ip != addr})
+            if stray:
+                failures.append(f"{proxy}: binds {', '.join(stray)}, not {addr}")
+        if got != want:
+            failures.append(
+                f"{ui}: its proxies publish {sorted(got)} but the UI published "
+                f"{sorted(want)} -- every origin must stay covered"
+            )
+
+    for service in sorted(_UI_EXPOSURE):
+        if service in _AUTH_PROXIES:
+            continue
+        made += 1
+        if _published(config=on, service=service) != _published(
+            config=plain, service=service
+        ):
+            failures.append(
+                f"{service}: the {_AUTH_PROFILE} profile moved a product UI port"
+            )
+
+    killed = _config_json(
+        env=armed_env,
+        files=[
+            *base,
+            *_AUTH_DIRECT_FRAGMENTS,
+            *(fragment for _, fragment in _AUTH_PROXIES.values()),
+        ],
+        extra_profiles=(_AUTH_PROFILE,),
+    )
+    if killed is None:
+        return (failures + ["the killed-infra auth path did not resolve"], made)
+    for ui, (proxies, _) in sorted(_AUTH_PROXIES.items()):
+        for proxy in proxies:
+            made += 1
+            if _published(config=killed, service=proxy):
+                failures.append(
+                    f"{proxy}: still publishes with the infra class killed -- "
+                    "the kill switch covers the proxy as well as the UI"
+                )
+    return failures, made
 
 
 def _health_cpu_failures(*, env: dict[str, str], files: list[str]) -> list[str]:
@@ -411,14 +554,24 @@ def main() -> int:
     )
     _print(msg="No healthcheck targets a retired health path")
 
-    ui_failures = _ui_exposure_failures(env=env)
+    ui_failures, ui_made = _ui_exposure_failures(env=env)
     for message in ui_failures:
         _print(msg=f"FAIL {message}")
     if ui_failures:
         return 1
     _print(
         msg=f"All {len(_UI_EXPOSURE)} web UI(s) follow the bind scope on both addresses, "
-        f"and each unpublish fragment drops only its own"
+        f"and each unpublish fragment drops only its own ({ui_made} assertions)"
+    )
+
+    auth_failures, auth_made = _auth_exposure_failures(env=env)
+    for message in auth_failures:
+        _print(msg=f"FAIL {message}")
+    if auth_failures:
+        return 1
+    _print(
+        msg=f"No stack needs an OIDC setting, and the {_AUTH_PROFILE} profile moves every "
+        f"infra UI behind a proxy the kill switch still covers ({auth_made} assertions)"
     )
     return 0
 

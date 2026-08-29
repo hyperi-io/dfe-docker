@@ -43,6 +43,26 @@ table and the UI classes.
 | `DFE_KAFBAT_UI_EXTERNAL`                         | Publish Kafbat (`:8081`); infra class                                                | `true`                                                              |
 | `DFE_HYPERDX_UI_EXTERNAL`                        | Publish HyperDX (`:8090` and its API `:8000`); infra class                           | `true`                                                              |
 
+### Infra UI authentication (opt-in)
+
+Arms an oauth2-proxy per infra-UI origin --
+[operating.md](operating.md#gating-the-infra-uis-with-oidc). Off by default; no
+other profile may require an issuer.
+
+| Variable                                         | Use                                                                                  | Default                                                             |
+|--------------------------------------------------|--------------------------------------------------------------------------------------|---------------------------------------------------------------------|
+| `DFE_AUTH_ENABLED`                               | Arm the `auth` compose profile (also a `service_profiles.yaml` footprint key)        | `false`                                                             |
+| `DFE_OIDC_ISSUER_URL`                            | OIDC issuer; required when the profile is armed                                      | -                                                                   |
+| `DFE_OIDC_CLIENT_ID`                             | OAuth client id; required when the profile is armed                                  | -                                                                   |
+| `DFE_OIDC_CLIENT_SECRET`                         | OAuth client secret; required when the profile is armed                              | -                                                                   |
+| `DFE_OIDC_ALLOWED_GROUPS`                        | Groups allowed through the gate; blank means authn alone and is refused              | `dfe-infra,dfe-admin`                                               |
+| `DFE_OIDC_EMAIL_DOMAINS`                         | Extra email-domain restriction on top of the group check                             | `*`                                                                 |
+| `DFE_OAUTH2_PROXY_COOKIE_SECRET`                 | Session cookie key, shared by all three proxies; `make init` generates 32 bytes      | generated                                                           |
+| `DFE_OAUTH2_PROXY_COOKIE_DOMAIN`                 | Cookie domain; blank is a host-only cookie, which shares one session across the box  | blank                                                               |
+| `DFE_OAUTH2_PROXY_COOKIE_SECURE`                 | Set the Secure cookie flag; `true` only behind real TLS                              | `false`                                                             |
+| `DFE_OAUTH2_PROXY_EXTERNAL_ORIGIN`               | Base origin the OAuth redirect URLs are built from                                   | `http://localhost`                                                  |
+| `DFE_OAUTH2_PROXY_VERSION`                       | Override the oauth2-proxy image pin; not SSoT-derived, keep the `tag@sha256` form    | pinned in `docker-compose.yml`                                      |
+
 ### Image Registry
 
 | Variable                                         | Use                                                                                  | Default                                                             |
