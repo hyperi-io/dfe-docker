@@ -56,6 +56,12 @@ _DOCKER_DIAL_MAP: tuple[tuple[tuple[str, ...], str], ...] = (
     (("docker", "post_enabled"), "DFE_POST_ENABLED"),
     (("docker", "bind_host"), "DFE_BIND_HOST"),
     (("docker", "ingress_bind_host"), "DFE_INGRESS_BIND_HOST"),
+    (("docker", "bind_scope"), "DFE_BIND_SCOPE"),
+    (("docker", "infra_uis_external"), "DFE_INFRA_UIS_EXTERNAL"),
+    (("docker", "ui_external"), "DFE_UI_EXTERNAL"),
+    (("docker", "engine_api_external"), "DFE_ENGINE_API_EXTERNAL"),
+    (("docker", "kafbat_ui_external"), "DFE_KAFBAT_UI_EXTERNAL"),
+    (("docker", "hyperdx_ui_external"), "DFE_HYPERDX_UI_EXTERNAL"),
     (("endpoints", "clickhouse_host"), "CLICKHOUSE_HOST"),
 )
 

@@ -282,7 +282,10 @@ services:
     # becomes a restart loop rather than a clean failure.
     deploy: *limits-service
     ports:
-      - ${DFE_BIND_HOST:-127.0.0.1}:${KAFBAT_PORT:-8081}:8080
+      # A web UI, so it binds DFE_UI_BIND_HOST (the DFE_BIND_SCOPE dial), and it
+      # is INFRA class -- DFE_INFRA_UIS_EXTERNAL=false unpublishes it along with
+      # HyperDX. docs/operating.md#port-exposure-is-split-by-audience
+      - ${DFE_UI_BIND_HOST:-127.0.0.1}:${KAFBAT_PORT:-8081}:8080
     environment:
       DYNAMIC_CONFIG_ENABLED: ${KAFBAT_DYNAMIC_CONFIG_ENABLED:-true}
       KAFKA_CLUSTERS_0_BOOTSTRAPSERVERS: ${KAFBAT_KAFKA_CLUSTERS_0_BOOTSTRAPSERVERS:-kafka:9092}
@@ -643,8 +646,10 @@ services:
     deploy: *limits-service
     ports:
       # dfe-proxy reaches the engine over the docker network; this host mapping
-      # is for operators and direct API work, so it binds DFE_BIND_HOST.
-      - ${DFE_BIND_HOST:-127.0.0.1}:${DFE_ENGINE_PORT:-8003}:8000
+      # is for direct API work. PRODUCT class -- it is the API the UI consumes --
+      # so it binds DFE_UI_BIND_HOST and only DFE_ENGINE_API_EXTERNAL=false takes
+      # it dark, never the infra kill switch.
+      - ${DFE_UI_BIND_HOST:-127.0.0.1}:${DFE_ENGINE_PORT:-8003}:8000
     env_file:
       - path: env/engine.env
         required: false
@@ -732,8 +737,10 @@ services:
     restart: unless-stopped
     deploy: *limits-sidecar
     ports:
-      # The DFE UI -- this is the one users reach.
-      - ${DFE_INGRESS_BIND_HOST:-0.0.0.0}:${DFE_UI_PORT:-3000}:8080
+      # The DFE UI -- this is the one users reach. PRODUCT class: it binds
+      # DFE_UI_BIND_HOST (the DFE_BIND_SCOPE dial) and the infra kill switch
+      # never covers it, so only DFE_UI_EXTERNAL=false takes it dark.
+      - ${DFE_UI_BIND_HOST:-127.0.0.1}:${DFE_UI_PORT:-3000}:8080
     volumes:
       - ./config/proxy/envoy.yaml:/etc/envoy/envoy.yaml:ro
     depends_on:
@@ -847,12 +854,15 @@ services:
     restart: unless-stopped
     deploy: *limits-service
     ports:
-      - ${DFE_BIND_HOST:-127.0.0.1}:${DFE_HYPERDX_API_PORT:-8000}:8000
-      # DFE_BIND_HOST, not INGRESS, despite being a UI: Next.js inlines
-      # NEXT_PUBLIC_* into the client bundle, so anyone who loads this page reads
-      # CLICKHOUSE_PASSWORD out of the JavaScript, with no login in front of it.
+      # One UI in two ports: the browser bundle calls this API directly, so the
+      # pair publishes together or the app is broken. INFRA class, so
+      # DFE_INFRA_UIS_EXTERNAL=false unpublishes both.
+      - ${DFE_UI_BIND_HOST:-127.0.0.1}:${DFE_HYPERDX_API_PORT:-8000}:8000
+      # Next.js inlines NEXT_PUBLIC_* into the client bundle, so anyone who loads
+      # this page reads CLICKHOUSE_PASSWORD out of the JavaScript with no login in
+      # front of it -- DFE_BIND_SCOPE=all publishes that to the LAN.
       # docs/operating.md#port-exposure-is-split-by-audience
-      - ${DFE_BIND_HOST:-127.0.0.1}:${DFE_HYPERDX_APP_PORT:-8090}:${DFE_HYPERDX_APP_PORT:-8090}
+      - ${DFE_UI_BIND_HOST:-127.0.0.1}:${DFE_HYPERDX_APP_PORT:-8090}:${DFE_HYPERDX_APP_PORT:-8090}
     env_file:
       - path: env/hyperdx.env
         required: false

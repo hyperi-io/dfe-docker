@@ -1,0 +1,19 @@
+# Project:   dfe-docker
+# File:      docker-compose.unpublish-engine-api.yml
+# Purpose:   Unpublish the dfe-engine API host port - DFE_ENGINE_API_EXTERNAL=false
+# Language:  YAML
+#
+# License:   BUSL-1.1
+# Copyright: (c) 2026 HYPERI PTY LIMITED
+#
+# NOT auto-loaded. The Makefile chains it when DFE_ENGINE_API_EXTERNAL=false.
+# See docker-compose.unpublish-dfe-ui.yml for why an opt-out is a `!reset`
+# fragment rather than an override.
+#
+# PRODUCT class, so the infra kill switch never covers it. Unpublishing the
+# engine's own port does not close the API: dfe-proxy still reverse-proxies
+# /api/v1/* through DFE_UI_PORT. docs/operating.md#there-is-no-authentication
+
+services:
+  dfe-engine:
+    ports: !reset []

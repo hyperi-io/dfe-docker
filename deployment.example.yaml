@@ -74,6 +74,20 @@ docker:
   ## ingest surface.
   bind_host: 127.0.0.1
   ingress_bind_host: 0.0.0.0
+  ## Web UI exposure. bind_scope is where every UI publishes: localhost for a
+  ## developer workstation (the host sees them, the LAN does not), all for a
+  ## small/VM deploy. It moves the UI ports only -- ingest and the backing
+  ## services keep the two surfaces above.
+  ## (localhost | all)
+  bind_scope: localhost
+  ## infra_uis_external is the kill switch over every INFRA-class UI (Kafbat,
+  ## HyperDX): false unpublishes them together and beats their own flags. The
+  ## PRODUCT UIs below are exempt and answer only to themselves.
+  infra_uis_external: "true"
+  ui_external: "true"
+  engine_api_external: "true"
+  kafbat_ui_external: "true"
+  hyperdx_ui_external: "true"
 
 ## External endpoints -- BLANK here. Point a local engine at a remote ClickHouse
 ## for integration tests by setting clickhouse_host in deployment.yaml (or let the

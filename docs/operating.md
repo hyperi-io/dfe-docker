@@ -45,38 +45,40 @@ flowchart LR
     user(["Anyone who can route to the box"])
 
     subgraph ingress["DFE_INGRESS_BIND_HOST -- default 0.0.0.0"]
-        proxy["dfe-proxy :3000"]
         recv["dfe-receiver :6000 :8080"]
         fetch["dfe-fetcher :8082"]
-        hdx["hyperdx app :8090"]
+    end
+
+    subgraph uis["DFE_UI_BIND_HOST -- DFE_BIND_SCOPE, default 127.0.0.1"]
+        proxy["dfe-proxy :3000 -- product"]
+        engine["dfe-engine :8003 -- product"]
+        kafbat["kafka-ui :8081 -- infra"]
+        hdx["hyperdx :8090 :8000 -- infra"]
     end
 
     subgraph operator["DFE_BIND_HOST -- default 127.0.0.1"]
-        engine["dfe-engine :8003"]
         ch[(ClickHouse :8123 :9000)]
     end
 
-    user --> proxy
     user --> recv
     user --> fetch
-    user --> hdx
+    user --> proxy
     proxy -->|proxies /api/v1 paths| engine
     hdx -.->|browser is given a CH connection| ch
 
     classDef open fill:#D55E00,color:#ffffff,stroke:#000000
     classDef loop fill:#0072B2,color:#ffffff,stroke:#000000
-    class proxy,recv,fetch,hdx open
-    class engine,ch loop
+    class recv,fetch open
+    class proxy,engine,kafbat,hdx,ch loop
 ```
 
 Two consequences survive the loopback defaults below.
 
-**The engine API is reachable from outside regardless of its own binding.**
-`dfe-proxy` listens on `:3000` bound to `0.0.0.0` and reverse-proxies `/api/v1/*`
-straight through to the dfe-engine API on the Docker network
-(`config/proxy/envoy.yaml`). Loopback-binding the engine's own `:8003` does not
-protect that API -- the same endpoints answer through the proxy,
-unauthenticated, to anyone who can route to the box.
+**The engine API is reachable from wherever the UI is, regardless of its own
+binding.** `dfe-proxy` reverse-proxies `/api/v1/*` straight through to the
+dfe-engine API on the Docker network (`config/proxy/envoy.yaml`). Unpublishing
+the engine's own `:8003` does not protect that API -- the same endpoints answer
+through the proxy, unauthenticated, to anyone who can reach `:3000`.
 
 **HyperDX serves the ClickHouse password to browsers.** It runs with
 `NEXT_PUBLIC_IS_LOCAL_MODE=true` (no login), and its browser bundle is handed a
@@ -91,25 +93,26 @@ reduce the accidental surface. They are not access control.
 
 ## Port exposure is split by audience
 
-Two variables, chosen by who the port is for.
+Three variables, chosen by who the port is for.
 
 | Variable | Default | Audience |
 |---|---|---|
-| `DFE_INGRESS_BIND_HOST` | `0.0.0.0` | What users reach: ingest, the UI proxy, the HyperDX app |
-| `DFE_BIND_HOST` | `127.0.0.1` | What operators reach: datastores, broker, metrics, internal gRPC, admin UIs |
+| `DFE_INGRESS_BIND_HOST` | `0.0.0.0` | What users push to: receiver and fetcher ingest |
+| `DFE_UI_BIND_HOST` | `127.0.0.1` | Every web UI. Derived from `DFE_BIND_SCOPE`, not set by hand |
+| `DFE_BIND_HOST` | `127.0.0.1` | What operators reach: datastores, broker, metrics, internal gRPC |
 
 Per-port, as published in `docker-compose.yml`:
 
 | Host port | Service | Binds | Purpose |
 |---|---|---|---|
-| 3000 | dfe-proxy | ingress | UI, plus `/api/v1/*` to the engine |
+| 3000 | dfe-proxy | ui | UI, plus `/api/v1/*` to the engine |
 | 6000 | dfe-receiver | ingress | Vector protocol ingest |
 | 8080 | dfe-receiver | ingress | HTTP ingest |
 | 8082 | dfe-fetcher | ingress | HTTP ingest |
-| 8090 | hyperdx | ingress | HyperDX app UI |
-| 8000 | hyperdx | operator | HyperDX API |
-| 8003 | dfe-engine | operator | Config and schema API (container `:8000`) |
-| 8081 | kafka-ui | operator | Kafbat UI (container `:8080`) |
+| 8090 | hyperdx | ui | HyperDX app UI |
+| 8000 | hyperdx | ui | HyperDX API |
+| 8003 | dfe-engine | ui | Config and schema API (container `:8000`) |
+| 8081 | kafka-ui | ui | Kafbat UI (container `:8080`) |
 | 8123 / 9000 | clickhouse | operator | HTTP and native protocol |
 | 9092 / 19092 | kafka (either backend) | operator | Plaintext listeners |
 | 8686 | dfe-transform-vector | operator | Vector API |
@@ -131,8 +134,46 @@ commented out; uncomment them to expose those ingest protocols. Note that those
 
 Setting `DFE_BIND_HOST=0.0.0.0` opens every operator port at once, including a
 ClickHouse whose `CLICKHOUSE_PASSWORD` defaults to empty and which runs with
-`CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT=1`, and a Kafka UI with dynamic config
-enabled. Do it knowingly.
+`CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT=1`. Do it knowingly.
+
+## Web UIs: one scope dial, one kill switch
+
+Every web UI publishes by default. `DFE_BIND_SCOPE` says where:
+
+| Mode | Publishes on | For |
+|---|---|---|
+| `localhost` (default) | `127.0.0.1` | A developer workstation -- the host sees every UI, the LAN does not |
+| `all` | `0.0.0.0` | A small or VM deploy |
+
+It moves the UI ports and nothing else. Ingest and the backing services keep the
+two surfaces above, so widening the UIs never opens ClickHouse.
+
+Each UI carries a class, and the class decides what can take it dark:
+
+| UI | Service | Class | Flag |
+|---|---|---|---|
+| DFE UI | dfe-proxy | product | `DFE_UI_EXTERNAL` |
+| Engine API | dfe-engine | product | `DFE_ENGINE_API_EXTERNAL` |
+| Kafbat | kafka-ui | infra | `DFE_KAFBAT_UI_EXTERNAL` |
+| HyperDX | hyperdx | infra | `DFE_HYPERDX_UI_EXTERNAL` |
+
+`DFE_INFRA_UIS_EXTERNAL=false` is the kill switch: it unpublishes every
+infra-class UI at once and beats their individual flags. The product UIs are
+exempt, so locking the ops surfaces down never takes the DFE UI with it.
+
+Both dials take effect through `make`, which resolves the scope into
+`DFE_UI_BIND_HOST` and chains a `docker-compose.unpublish-*.yml` fragment per
+opted-out UI. Compose merging can add a ports mapping but never remove one, so
+an opt-out has to arrive as a `!reset` fragment rather than an override. A raw
+`docker compose` outside `make` therefore publishes everything on loopback.
+
+Unpublishing leaves the container running and reachable on the compose network.
+It reduces the accidental surface; it is not access control, and the stack still
+authenticates nobody.
+
+`make check-compose` asserts all of it: that every UI follows the scope on both
+addresses, that no ingest or backing-service port moves with it, and that each
+fragment drops only its own UI.
 
 ## Resource limits: four tiers, ceilings not reservations
 

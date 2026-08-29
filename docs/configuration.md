@@ -26,6 +26,23 @@ run it before any compose command -- [deploying.md](deploying.md).
 |--------------------------------------------------|--------------------------------------------------------------------------------------|---------------------------------------------------------------------|
 | `DFE_PROFILE`                                    | Override active profile from service_profiles.yaml                                   | -                                                                   |
 
+### Host exposure
+
+Which interface each published port binds. Ports are grouped by audience --
+[operating.md](operating.md#port-exposure-is-split-by-audience) has the per-port
+table and the UI classes.
+
+| Variable                                         | Use                                                                                  | Default                                                             |
+|--------------------------------------------------|--------------------------------------------------------------------------------------|---------------------------------------------------------------------|
+| `DFE_INGRESS_BIND_HOST`                          | Interface the receiver and fetcher ingest ports bind                                 | `0.0.0.0`                                                           |
+| `DFE_BIND_HOST`                                  | Interface the datastore, broker, metrics and internal gRPC ports bind                | `127.0.0.1`                                                         |
+| `DFE_BIND_SCOPE`                                 | Where every web UI publishes (`localhost`\|`all`); `make` resolves it to `DFE_UI_BIND_HOST` | `localhost`                                                  |
+| `DFE_INFRA_UIS_EXTERNAL`                         | Kill switch -- `false` unpublishes every infra-class UI and beats their own flags    | `true`                                                              |
+| `DFE_UI_EXTERNAL`                                | Publish the DFE UI (dfe-proxy `:3000`); product class, kill switch never covers it   | `true`                                                              |
+| `DFE_ENGINE_API_EXTERNAL`                        | Publish the engine API (`:8003`); product class                                      | `true`                                                              |
+| `DFE_KAFBAT_UI_EXTERNAL`                         | Publish Kafbat (`:8081`); infra class                                                | `true`                                                              |
+| `DFE_HYPERDX_UI_EXTERNAL`                        | Publish HyperDX (`:8090` and its API `:8000`); infra class                           | `true`                                                              |
+
 ### Image Registry
 
 | Variable                                         | Use                                                                                  | Default                                                             |
