@@ -62,6 +62,11 @@ _DOCKER_DIAL_MAP: tuple[tuple[tuple[str, ...], str], ...] = (
     (("docker", "engine_api_external"), "DFE_ENGINE_API_EXTERNAL"),
     (("docker", "kafbat_ui_external"), "DFE_KAFBAT_UI_EXTERNAL"),
     (("docker", "hyperdx_ui_external"), "DFE_HYPERDX_UI_EXTERNAL"),
+    (("docker", "auth_enabled"), "DFE_AUTH_ENABLED"),
+    (("docker", "oidc_issuer_url"), "DFE_OIDC_ISSUER_URL"),
+    (("docker", "oidc_client_id"), "DFE_OIDC_CLIENT_ID"),
+    (("docker", "oidc_allowed_groups"), "DFE_OIDC_ALLOWED_GROUPS"),
+    (("docker", "oauth2_proxy_external_origin"), "DFE_OAUTH2_PROXY_EXTERNAL_ORIGIN"),
     (("endpoints", "clickhouse_host"), "CLICKHOUSE_HOST"),
 )
 

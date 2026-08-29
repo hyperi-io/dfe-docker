@@ -13,6 +13,7 @@
 # kafka-apache   | kafka-apache, kafka-init-apache     | Apache Kafka (opt-in); Apache-2.0 only     |
 # kafka-ui       | kafka-ui                            |                                           |
 # otel           | otel-collector                      | self-monitoring; opt-in                   |
+# auth           | oauth2-proxy-* (3)                  | edge OIDC + group check; opt-in           |
 #
 # The kafka-* profiles are mutually exclusive: all three share the network alias `kafka`, and downstream
 # configs always address `kafka:9092`. Each backend has its own topic-init so the Apache profile never
@@ -21,8 +22,9 @@
 # DFE services carry profiles too -- `dfe`, `core`, `hyperdx`, `otel`. WHICH of them start is a second,
 # independent selection made by service_profiles.yaml, which also sets their config paths.
 #
-# Two host-binding variables, split by audience: DFE_INGRESS_BIND_HOST (users, 0.0.0.0) and DFE_BIND_HOST
-# (operators, 127.0.0.1). docs/operating.md#port-exposure-is-split-by-audience.
+# Three host-binding variables, split by audience: DFE_INGRESS_BIND_HOST (ingest, 0.0.0.0), DFE_UI_BIND_HOST
+# (every web UI, from the DFE_BIND_SCOPE dial, 127.0.0.1) and DFE_BIND_HOST (operators, 127.0.0.1).
+# docs/operating.md#port-exposure-is-split-by-audience.
 #
 # Every DFE service serves `/livez`, `/readyz` and `/metrics` and nothing else -- the retired aliases 404.
 # A HEALTHCHECK uses `/livez` EXCEPT where a `depends_on` gates on it, which is why dfe-loader and
@@ -79,6 +81,43 @@ x-limits-sidecar: &limits-sidecar
     limits:
       cpus: "${DFE_SIDECAR_CPUS:-0.5}"
       memory: ${DFE_SIDECAR_MEMORY:-512M}
+
+# =============================================================================
+# oauth2-proxy shared settings (the opt-in `auth` profile)
+#
+# One OIDC identity and one cookie secret across every infra-UI proxy, so a
+# single sign-in covers all of them. They gate on the SAME groups, so sharing a
+# session is the intent rather than a leak. Cookies ignore PORT, which is what
+# lets the HyperDX app and its API sit on one session across two origins.
+#
+# EVERY key here takes a default and none of them is a hard-fail, which is
+# load-bearing: compose interpolates the whole file BEFORE it filters by profile,
+# so a hard-fail key inside a profiled service aborts a stack that never asked
+# for that profile. dfe-docker may not require an OIDC issuer to start, so the
+# "issuer is missing" check lives in resolve_profile.py, which runs only when the
+# auth footprint actually resolves ON.
+# =============================================================================
+x-oauth2-proxy-env: &oauth2-proxy-env
+  OAUTH2_PROXY_PROVIDER: oidc
+  OAUTH2_PROXY_OIDC_ISSUER_URL: ${DFE_OIDC_ISSUER_URL:-}
+  OAUTH2_PROXY_CLIENT_ID: ${DFE_OIDC_CLIENT_ID:-}
+  OAUTH2_PROXY_CLIENT_SECRET: ${DFE_OIDC_CLIENT_SECRET:-}
+  # The group check, not authn alone. Plural env name because --allowed-group is
+  # a list flag. Setting it makes the generic OIDC provider request the `groups`
+  # scope implicitly, so there is no separate scope dial to keep in step.
+  OAUTH2_PROXY_ALLOWED_GROUPS: ${DFE_OIDC_ALLOWED_GROUPS:-dfe-infra,dfe-admin}
+  # `*` because the group check is the gate. Narrowing by email domain as well
+  # is a deployment's choice, not a default.
+  OAUTH2_PROXY_EMAIL_DOMAINS: ${DFE_OIDC_EMAIL_DOMAINS:-*}
+  OAUTH2_PROXY_COOKIE_SECRET: ${DFE_OAUTH2_PROXY_COOKIE_SECRET:-}
+  # Blank = a host-only cookie, which is what shares one session across the
+  # infra UIs on a single box. Name it only for a real multi-host deployment.
+  OAUTH2_PROXY_COOKIE_DOMAINS: ${DFE_OAUTH2_PROXY_COOKIE_DOMAIN:-}
+  # Compose serves plain HTTP, so a Secure cookie would never be sent back and
+  # every sign-in would loop. Behind real TLS, set this true.
+  OAUTH2_PROXY_COOKIE_SECURE: ${DFE_OAUTH2_PROXY_COOKIE_SECURE:-false}
+  OAUTH2_PROXY_HTTP_ADDRESS: 0.0.0.0:4180
+  OAUTH2_PROXY_SKIP_PROVIDER_BUTTON: "true"
 
 services:
 
@@ -896,6 +935,88 @@ services:
       timeout: 3s
       start_period: 30s
       retries: 5
+
+  # ===========================================================================
+  # oauth2-proxy -- edge OIDC + group check for the INFRA UIs
+  #
+  # The docker half of the dual-mode auth seam: k8s gates infra routes at the
+  # Envoy edge, compose has no Gateway, so each infra UI gets a proxy in front
+  # of it. OFF by default and behind its own `auth` profile, because no dfe-docker
+  # profile may require an OIDC issuer to exist.
+  #
+  # With the profile armed the Makefile chains the kafbat and hyperdx unpublish
+  # fragments, so those UIs stop reaching the host directly and these take over
+  # their ports -- same port numbers, a gate in front. Turn the infra class off
+  # and the PROXIES go dark with the UIs: a gated door is still a door.
+  #
+  # It gates PAGE ACCESS ONLY. Neither UI learns who signed in, and neither has
+  # a session of its own. docs/operating.md#gating-the-infra-uis-with-oidc
+  # ===========================================================================
+
+  oauth2-proxy-kafbat:
+    image: quay.io/oauth2-proxy/oauth2-proxy:${DFE_OAUTH2_PROXY_VERSION:-v7.15.4@sha256:b1b2021fe8f4004573e8d690dec6c7bb29cc44364572cf8510a05bf3a0ae2ded}
+    container_name: dfe-oauth2-proxy-kafbat
+    profiles: ["auth"]
+    restart: unless-stopped
+    deploy: *limits-sidecar
+    ports:
+      - ${DFE_UI_BIND_HOST:-127.0.0.1}:${KAFBAT_PORT:-8081}:4180
+    environment:
+      <<: *oauth2-proxy-env
+      OAUTH2_PROXY_UPSTREAMS: http://kafka-ui:8080
+      OAUTH2_PROXY_REDIRECT_URL: ${DFE_OAUTH2_PROXY_EXTERNAL_ORIGIN:-http://localhost}:${KAFBAT_PORT:-8081}/oauth2/callback
+    depends_on:
+      kafka-ui:
+        condition: service_started
+        required: false
+
+  oauth2-proxy-hyperdx:
+    image: quay.io/oauth2-proxy/oauth2-proxy:${DFE_OAUTH2_PROXY_VERSION:-v7.15.4@sha256:b1b2021fe8f4004573e8d690dec6c7bb29cc44364572cf8510a05bf3a0ae2ded}
+    container_name: dfe-oauth2-proxy-hyperdx
+    profiles: ["auth"]
+    restart: unless-stopped
+    deploy: *limits-sidecar
+    ports:
+      - ${DFE_UI_BIND_HOST:-127.0.0.1}:${DFE_HYPERDX_APP_PORT:-8090}:4180
+    environment:
+      <<: *oauth2-proxy-env
+      OAUTH2_PROXY_UPSTREAMS: http://hyperdx:${DFE_HYPERDX_APP_PORT:-8090}
+      OAUTH2_PROXY_REDIRECT_URL: ${DFE_OAUTH2_PROXY_EXTERNAL_ORIGIN:-http://localhost}:${DFE_HYPERDX_APP_PORT:-8090}/oauth2/callback
+    depends_on:
+      hyperdx:
+        condition: service_healthy
+        required: false
+
+  # The SECOND HyperDX origin. One oauth2-proxy serves exactly one
+  # --http-address, and HyperDX's browser bundle calls its API by absolute
+  # origin rather than by a path under the app, so the two ports cannot collapse
+  # into one proxy without changing the fork. Same cookie secret and name as the
+  # app proxy above, and cookies are not port-scoped, so signing in at the app
+  # authorises this one too.
+  #
+  # KNOWN EDGE: an expired session on this origin answers a cross-origin XHR
+  # with a redirect to the IdP, which the browser blocks. The app shows failed
+  # requests rather than a login prompt -- reload the app page to sign back in.
+  oauth2-proxy-hyperdx-api:
+    image: quay.io/oauth2-proxy/oauth2-proxy:${DFE_OAUTH2_PROXY_VERSION:-v7.15.4@sha256:b1b2021fe8f4004573e8d690dec6c7bb29cc44364572cf8510a05bf3a0ae2ded}
+    container_name: dfe-oauth2-proxy-hyperdx-api
+    profiles: ["auth"]
+    restart: unless-stopped
+    deploy: *limits-sidecar
+    ports:
+      - ${DFE_UI_BIND_HOST:-127.0.0.1}:${DFE_HYPERDX_API_PORT:-8000}:4180
+    environment:
+      <<: *oauth2-proxy-env
+      OAUTH2_PROXY_UPSTREAMS: http://hyperdx:8000
+      OAUTH2_PROXY_REDIRECT_URL: ${DFE_OAUTH2_PROXY_EXTERNAL_ORIGIN:-http://localhost}:${DFE_HYPERDX_API_PORT:-8000}/oauth2/callback
+      # Host header and every upstream response header pass through untouched
+      # (--pass-host-header defaults true), so HyperDX's own CORS headers reach
+      # the browser exactly as the API sent them.
+      OAUTH2_PROXY_PASS_HOST_HEADER: "true"
+    depends_on:
+      hyperdx:
+        condition: service_healthy
+        required: false
 
 volumes:
   clickhouse-data:

@@ -1,0 +1,20 @@
+# Project:   dfe-docker
+# File:      docker-compose.unpublish-auth-kafbat.yml
+# Purpose:   Unpublish the Kafbat auth proxy host port - infra class, auth profile
+# Language:  YAML
+#
+# License:   BUSL-1.1
+# Copyright: (c) 2026 HYPERI PTY LIMITED
+#
+# NOT auto-loaded. The Makefile chains it when the auth profile is armed AND
+# Kafbat is gated off, by its own flag or by the DFE_INFRA_UIS_EXTERNAL kill
+# switch. The kill switch is absolute for infra class and the proxy is part of
+# that class -- a gated door is still a door.
+#
+# Separate from docker-compose.unpublish-kafbat.yml because with the auth profile
+# armed that file is chained ALWAYS (the UI moves behind the proxy), so the two
+# decisions cannot share a fragment.
+
+services:
+  oauth2-proxy-kafbat:
+    ports: !reset []

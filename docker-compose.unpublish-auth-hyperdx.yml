@@ -1,0 +1,21 @@
+# Project:   dfe-docker
+# File:      docker-compose.unpublish-auth-hyperdx.yml
+# Purpose:   Unpublish both HyperDX auth proxy host ports - infra class, auth profile
+# Language:  YAML
+#
+# License:   BUSL-1.1
+# Copyright: (c) 2026 HYPERI PTY LIMITED
+#
+# NOT auto-loaded. The Makefile chains it when the auth profile is armed AND
+# HyperDX is gated off, by its own flag or by the DFE_INFRA_UIS_EXTERNAL kill
+# switch. See docker-compose.unpublish-auth-kafbat.yml for why the auth-side
+# opt-out needs its own fragment.
+#
+# Both proxies go together for the same reason both HyperDX ports do: the app
+# and the API are one UI across two origins.
+
+services:
+  oauth2-proxy-hyperdx:
+    ports: !reset []
+  oauth2-proxy-hyperdx-api:
+    ports: !reset []
