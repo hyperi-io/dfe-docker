@@ -1,0 +1,19 @@
+# Project:   dfe-docker
+# File:      docker-compose.unpublish-dfe-ui.yml
+# Purpose:   Unpublish the DFE UI host port - DFE_UI_EXTERNAL=false
+# Language:  YAML
+#
+# License:   BUSL-1.1
+# Copyright: (c) 2026 HYPERI PTY LIMITED
+#
+# NOT auto-loaded. The Makefile chains it when DFE_UI_EXTERNAL=false. Compose
+# merging can add a ports entry but never remove one, so an opt-out has to be
+# `!reset` in a chained fragment rather than an override of the base mapping.
+#
+# dfe-ui is PRODUCT class: the infra kill switch (DFE_INFRA_UIS_EXTERNAL) never
+# covers it, so this file is the only way it goes dark. The container keeps
+# serving on the compose network either way.
+
+services:
+  dfe-proxy:
+    ports: !reset []

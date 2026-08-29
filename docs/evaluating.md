@@ -81,10 +81,11 @@ genuinely so; a couple of seconds is normal.
 | http://localhost:8123 | ClickHouse HTTP |
 | http://localhost:8003 | dfe-engine API |
 
-The UI and the ingest ports bind all interfaces so you can reach them from
-another machine. Everything else binds loopback by default - see
-[operating.md](operating.md) if you need to change that, and read the auth
-section there first, because there is no authentication anywhere in this stack.
+The ingest ports bind all interfaces so anything can push to them. Everything
+else -- every web UI included -- binds loopback by default, so the four links
+above work on this box and nowhere else. `DFE_BIND_SCOPE=all` publishes the UIs
+on every interface; read the auth section of [operating.md](operating.md) first,
+because there is no authentication anywhere in this stack.
 
 ## Stopping
 

@@ -44,9 +44,12 @@ exclusive and a change can easily satisfy one and break the other -- which is
 precisely what happened with the topic-init service that ran a Redpanda image on
 the Apache profile.
 
-Beyond resolution, one semantic assertion rides along: no service that gates on
-a health endpoint may carry a CPU ceiling under `_MIN_HEALTH_CPUS`. See that constant
-for why a lower ceiling takes the endpoint dark while the data path keeps working.
+Beyond resolution, two semantic assertions ride along. No service that gates on a
+health endpoint may carry a CPU ceiling under `_MIN_HEALTH_CPUS` -- see that
+constant for why a lower ceiling takes the endpoint dark while the data path keeps
+working. And the web-UI exposure dials must do exactly what they claim: the bind
+scope moves every UI port and nothing else, and each unpublish fragment drops that
+UI's ports and no other service's. See `_UI_EXPOSURE`.
 """
 
 from __future__ import annotations
@@ -98,6 +101,22 @@ _HEALTH_PATHS = ("/livez", "/readyz")
 # Retired health paths. The whole surface is /livez, /readyz and /metrics, and
 # these 404 on every image the stack pins.
 _RETIRED_HEALTH_PATHS = ("/healthz", "/health/live", "/health/ready", "/health/startup")
+
+# The web UIs the exposure dials govern, keyed by compose service: the class the
+# kill switch reads, and the fragment that unpublishes that UI. PRODUCT is the DFE
+# UI and the API it consumes; INFRA is the ops consoles DFE_INFRA_UIS_EXTERNAL
+# covers as a set. Every other published port is ingest or a backing service and
+# must not move when the UI dials do -- which is what `_ui_exposure_failures`
+# asserts.
+_UI_EXPOSURE: dict[str, tuple[str, str]] = {
+    "dfe-engine": ("product", "docker-compose.unpublish-engine-api.yml"),
+    "dfe-proxy": ("product", "docker-compose.unpublish-dfe-ui.yml"),
+    "hyperdx": ("infra", "docker-compose.unpublish-hyperdx.yml"),
+    "kafka-ui": ("infra", "docker-compose.unpublish-kafbat.yml"),
+}
+
+# The two addresses DFE_BIND_SCOPE resolves to, localhost first (the default).
+_BIND_SCOPE_ADDRS = ("127.0.0.1", "0.0.0.0")
 
 # Services this project owns and therefore holds to that surface. hyperdx,
 # clickhouse, the brokers and kafka-ui are third-party and keep their own.
@@ -183,19 +202,12 @@ def _retired_health_failures(*, config: dict) -> list[str]:
     return failures
 
 
-def _health_cpu_failures(*, env: dict[str, str], files: list[str]) -> list[str]:
-    """Return one message per service with a health endpoint and too small a CPU ceiling.
+def _config_json(*, env: dict[str, str], files: list[str]) -> dict | None:
+    """Return the fully interpolated compose model, or None if it did not resolve.
 
-    Takes the file set rather than assuming the registry path. An override can
-    lower `deploy.resources.limits.cpus` on any service, and a hand-edited
-    override is precisely the vector the docs point at -- checking only
-    docker-compose.yml would leave the named vector the one place unguarded.
-
-    Reads the INTERPOLATED numbers, so it reflects whatever `.env` and the
-    environment actually produce, not the defaults written in the compose file.
-
-    A service with no limit at all is NOT flagged: unlimited means Tokio sees the
-    host's CPUs, which is the situation that worked before limits existed.
+    Every profile is turned on, plus one Kafka backend, so the model carries every
+    service a reader might assert about. Resolution failures are reported by the
+    loop in main(), so a None here needs no second message.
     """
     cmd = ["docker", "compose"]
     for path in files:
@@ -213,10 +225,100 @@ def _health_cpu_failures(*, env: dict[str, str], files: list[str]) -> list[str]:
         text=True,
     )
     if result.returncode != 0:
-        # Resolution failures are reported by the loop in main(); nothing to add.
+        return None
+    return json.loads(result.stdout)
+
+
+def _published(*, config: dict, service: str) -> list[tuple[str, str]]:
+    """Return the (host_ip, published port) pairs one service maps onto the host."""
+    ports = config.get("services", {}).get(service, {}).get("ports") or []
+    return [(str(p.get("host_ip", "")), str(p.get("published", ""))) for p in ports]
+
+
+def _ui_exposure_failures(*, env: dict[str, str]) -> list[str]:
+    """Return one message per web-UI exposure dial that does not do what it claims.
+
+    Three properties, all read off the interpolated model rather than the source
+    YAML, because the whole mechanism is interpolation plus fragment merging:
+
+    - the bind scope moves every UI port to the chosen address;
+    - it moves nothing else, so ingest and backing-service ports keep the audience
+      they were given;
+    - each unpublish fragment drops exactly its own UI's ports.
+    """
+    failures: list[str] = []
+    base = [COMPOSE_FILE.name]
+    models: dict[str, dict] = {}
+    for addr in _BIND_SCOPE_ADDRS:
+        config = _config_json(env={**env, "DFE_UI_BIND_HOST": addr}, files=base)
+        if config is None:
+            return [f"the base path did not resolve with DFE_UI_BIND_HOST={addr}"]
+        models[addr] = config
+
+    for addr, config in models.items():
+        for service in sorted(_UI_EXPOSURE):
+            bound = _published(config=config, service=service)
+            if not (bound):
+                failures.append(f"{service}: publishes no host port at all")
+                continue
+            stray = sorted({ip for ip, _ in bound if ip != addr})
+            if stray:
+                failures.append(
+                    f"{service}: DFE_UI_BIND_HOST={addr} but it binds {', '.join(stray)} "
+                    "-- a UI port that ignores the bind scope"
+                )
+
+    # Anything outside the UI set must be identical under both addresses.
+    for service in sorted(models[_BIND_SCOPE_ADDRS[0]].get("services", {})):
+        if service in _UI_EXPOSURE:
+            continue
+        first, second = (
+            _published(config=models[addr], service=service)
+            for addr in _BIND_SCOPE_ADDRS
+        )
+        if first != second:
+            failures.append(
+                f"{service}: the bind scope moved a non-UI port ({first} -> {second}) "
+                "-- ingest and backing services keep their own audience"
+            )
+
+    for service, (ui_class, fragment) in sorted(_UI_EXPOSURE.items()):
+        if not ((REPO_ROOT / fragment).is_file()):
+            failures.append(
+                f"{fragment} is missing -- {service} has no {ui_class} opt-out"
+            )
+            continue
+        config = _config_json(env=env, files=[*base, fragment])
+        if config is None:
+            failures.append(f"{fragment} did not resolve on top of the base path")
+            continue
+        for other in sorted(_UI_EXPOSURE):
+            bound = _published(config=config, service=other)
+            if other == service and bound:
+                failures.append(f"{fragment}: {service} still publishes {bound}")
+            elif other != service and not (bound):
+                failures.append(f"{fragment}: it also unpublished {other}")
+    return failures
+
+
+def _health_cpu_failures(*, env: dict[str, str], files: list[str]) -> list[str]:
+    """Return one message per service with a health endpoint and too small a CPU ceiling.
+
+    Takes the file set rather than assuming the registry path. An override can
+    lower `deploy.resources.limits.cpus` on any service, and a hand-edited
+    override is precisely the vector the docs point at -- checking only
+    docker-compose.yml would leave the named vector the one place unguarded.
+
+    Reads the INTERPOLATED numbers, so it reflects whatever `.env` and the
+    environment actually produce, not the defaults written in the compose file.
+
+    A service with no limit at all is NOT flagged: unlimited means Tokio sees the
+    host's CPUs, which is the situation that worked before limits existed.
+    """
+    config = _config_json(env=env, files=files)
+    if config is None:
         return []
 
-    config = json.loads(result.stdout)
     failures = _retired_health_failures(config=config)
     for name, service in sorted(config.get("services", {}).items()):
         test = service.get("healthcheck", {}).get("test") or []
@@ -308,6 +410,16 @@ def main() -> int:
         f"on all {len(paths)} path(s)"
     )
     _print(msg="No healthcheck targets a retired health path")
+
+    ui_failures = _ui_exposure_failures(env=env)
+    for message in ui_failures:
+        _print(msg=f"FAIL {message}")
+    if ui_failures:
+        return 1
+    _print(
+        msg=f"All {len(_UI_EXPOSURE)} web UI(s) follow the bind scope on both addresses, "
+        f"and each unpublish fragment drops only its own"
+    )
     return 0
 
 

@@ -116,6 +116,13 @@ scrape of `:9090-9096`, a colleague's browser -- gets `connection refused` with
 no hint as to why. `DFE_BIND_HOST=0.0.0.0` restores the old behaviour, having
 read the auth section above.
 
+**The DFE UI moved from `0.0.0.0` to `127.0.0.1` as well.** Every web UI now
+binds `DFE_BIND_SCOPE`, which defaults to `localhost` for a developer
+workstation, so `:3000` stops answering from off the box. A VM or small deploy
+sets `DFE_BIND_SCOPE=all` (or `docker.bind_scope: all` in the deployment dial) to
+publish the UIs on every interface --
+[operating.md](operating.md#web-uis-one-scope-dial-one-kill-switch).
+
 **`CLICKHOUSE_PASSWORD` is now generated, not blank.** `make init` mints one, so
 an upgraded stack that runs `make init` (to pick up new `.env.example` keys) gets
 a real password. ClickHouse stores the default-user credential in its data volume

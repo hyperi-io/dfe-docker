@@ -33,10 +33,69 @@ ifneq ($(strip $(DFE_DATA_ROOT)),)
     STORAGE_FLAGS := -f docker-compose.storage.yml
 endif
 
+# ---------------------------------------------------------------------------
+# Web UI exposure
+#
+# Two dials, because "external" means different things on the two boxes compose
+# deploys to. DFE_BIND_SCOPE=localhost (the default, a developer workstation)
+# publishes every UI on 127.0.0.1 so the host sees them and the LAN does not;
+# DFE_BIND_SCOPE=all publishes on 0.0.0.0 for a small/VM deploy. It resolves to
+# DFE_UI_BIND_HOST, the address compose interpolates into every UI port mapping.
+# Ingest (DFE_INGRESS_BIND_HOST) and the operator ports (DFE_BIND_HOST) keep
+# their own audiences and are untouched by it.
+#
+# Every UI publishes by default. An opt-out drops that service's ports mapping,
+# which compose merging cannot do by override -- hence a `!reset` fragment per
+# UI, chained here the same way STORAGE_CHAIN chains the storage overlay.
+# DFE_INFRA_UIS_EXTERNAL=false is the kill switch: it unpublishes every
+# INFRA-class UI at once and beats their individual flags. dfe-ui and the engine
+# API are PRODUCT class and answer only to their own.
+# ---------------------------------------------------------------------------
+DFE_BIND_SCOPE ?= localhost
+ifeq ($(strip $(DFE_BIND_SCOPE)),localhost)
+    export DFE_UI_BIND_HOST := 127.0.0.1
+else ifeq ($(strip $(DFE_BIND_SCOPE)),all)
+    export DFE_UI_BIND_HOST := 0.0.0.0
+else
+    $(error DFE_BIND_SCOPE must be `localhost` or `all`, got '$(strip $(DFE_BIND_SCOPE))')
+endif
+
+DFE_INFRA_UIS_EXTERNAL ?= true
+DFE_UI_EXTERNAL ?= true
+DFE_ENGINE_API_EXTERNAL ?= true
+DFE_KAFBAT_UI_EXTERNAL ?= true
+DFE_HYPERDX_UI_EXTERNAL ?= true
+
+# A typo in an exposure flag must fail the run rather than silently pick a side.
+EXPOSURE_FLAGS := DFE_INFRA_UIS_EXTERNAL DFE_UI_EXTERNAL DFE_ENGINE_API_EXTERNAL DFE_KAFBAT_UI_EXTERNAL DFE_HYPERDX_UI_EXTERNAL
+BAD_EXPOSURE := $(strip $(foreach flag,$(EXPOSURE_FLAGS),$(if $(filter-out true false,$(strip $($(flag)))),$(flag)='$(strip $($(flag)))')))
+ifneq ($(BAD_EXPOSURE),)
+    $(error exposure flags must be `true` or `false`: $(BAD_EXPOSURE))
+endif
+
+UI_CHAIN :=
+UI_FLAGS :=
+ifeq ($(strip $(DFE_UI_EXTERNAL)),false)
+    UI_CHAIN := $(UI_CHAIN):docker-compose.unpublish-dfe-ui.yml
+    UI_FLAGS := $(UI_FLAGS) -f docker-compose.unpublish-dfe-ui.yml
+endif
+ifeq ($(strip $(DFE_ENGINE_API_EXTERNAL)),false)
+    UI_CHAIN := $(UI_CHAIN):docker-compose.unpublish-engine-api.yml
+    UI_FLAGS := $(UI_FLAGS) -f docker-compose.unpublish-engine-api.yml
+endif
+ifneq ($(strip $(DFE_INFRA_UIS_EXTERNAL))$(strip $(DFE_KAFBAT_UI_EXTERNAL)),truetrue)
+    UI_CHAIN := $(UI_CHAIN):docker-compose.unpublish-kafbat.yml
+    UI_FLAGS := $(UI_FLAGS) -f docker-compose.unpublish-kafbat.yml
+endif
+ifneq ($(strip $(DFE_INFRA_UIS_EXTERNAL))$(strip $(DFE_HYPERDX_UI_EXTERNAL)),truetrue)
+    UI_CHAIN := $(UI_CHAIN):docker-compose.unpublish-hyperdx.yml
+    UI_FLAGS := $(UI_FLAGS) -f docker-compose.unpublish-hyperdx.yml
+endif
+
 ifneq ($(strip $(LIVE)),)
-    export COMPOSE_FILE := docker-compose.yml:docker-compose.override.yml:docker-compose.live.yml$(STORAGE_CHAIN)
-else ifneq ($(strip $(STORAGE_CHAIN)),)
-    export COMPOSE_FILE := docker-compose.yml:docker-compose.override.yml$(STORAGE_CHAIN)
+    export COMPOSE_FILE := docker-compose.yml:docker-compose.override.yml:docker-compose.live.yml$(STORAGE_CHAIN)$(UI_CHAIN)
+else ifneq ($(strip $(STORAGE_CHAIN))$(strip $(UI_CHAIN)),)
+    export COMPOSE_FILE := docker-compose.yml:docker-compose.override.yml$(STORAGE_CHAIN)$(UI_CHAIN)
 endif
 
 # Goals that work without a resolved service profile. The check-* targets belong
@@ -143,9 +202,9 @@ dev-build: ## Build local DFE images from source (no start)
 
 .PHONY: ci
 ci: login down storage-dirs  ## Pull and start infra and registry DFE images
-	docker compose -f docker-compose.yml $(STORAGE_FLAGS) $(PROFILE_FLAGS) pull
-	docker compose -f docker-compose.yml $(STORAGE_FLAGS) $(PROFILE_FLAGS) pull $(ACTIVE_SERVICES)
-	docker compose -f docker-compose.yml $(STORAGE_FLAGS) $(PROFILE_FLAGS) up -d $(ACTIVE_SERVICES)
+	docker compose -f docker-compose.yml $(STORAGE_FLAGS) $(UI_FLAGS) $(PROFILE_FLAGS) pull
+	docker compose -f docker-compose.yml $(STORAGE_FLAGS) $(UI_FLAGS) $(PROFILE_FLAGS) pull $(ACTIVE_SERVICES)
+	docker compose -f docker-compose.yml $(STORAGE_FLAGS) $(UI_FLAGS) $(PROFILE_FLAGS) up -d $(ACTIVE_SERVICES)
 	@$(MAKE) --no-print-directory post || echo "post: SELF TEST FAILED -- the stack is up, but it did not prove it moves data. Run 'make post' for detail."
 
 .PHONY: ci-pull

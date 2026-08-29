@@ -1,0 +1,18 @@
+# Project:   dfe-docker
+# File:      docker-compose.unpublish-kafbat.yml
+# Purpose:   Unpublish the Kafbat UI host port - infra class
+# Language:  YAML
+#
+# License:   BUSL-1.1
+# Copyright: (c) 2026 HYPERI PTY LIMITED
+#
+# NOT auto-loaded. The Makefile chains it when DFE_KAFBAT_UI_EXTERNAL=false or
+# when the kill switch DFE_INFRA_UIS_EXTERNAL=false covers every infra UI. See
+# docker-compose.unpublish-dfe-ui.yml for why an opt-out is a `!reset` fragment.
+#
+# KAFBAT_ENABLED is a different dial: that one stops the container running, this
+# one only stops it reaching the host.
+
+services:
+  kafka-ui:
+    ports: !reset []

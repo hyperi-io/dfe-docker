@@ -1,0 +1,18 @@
+# Project:   dfe-docker
+# File:      docker-compose.unpublish-hyperdx.yml
+# Purpose:   Unpublish the HyperDX app and API host ports - infra class
+# Language:  YAML
+#
+# License:   BUSL-1.1
+# Copyright: (c) 2026 HYPERI PTY LIMITED
+#
+# NOT auto-loaded. The Makefile chains it when DFE_HYPERDX_UI_EXTERNAL=false or
+# when the kill switch DFE_INFRA_UIS_EXTERNAL=false covers every infra UI. See
+# docker-compose.unpublish-dfe-ui.yml for why an opt-out is a `!reset` fragment.
+#
+# Both ports go together: the browser bundle calls the API origin directly, so
+# publishing the app without it serves a page that cannot load anything.
+
+services:
+  hyperdx:
+    ports: !reset []
