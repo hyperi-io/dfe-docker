@@ -235,7 +235,7 @@ Off by default. `DFE_HYPERDX_ENABLED=true` starts `hyperdx` (API + App) plus its
 | Variable                                         | Use                                                                                  | Default                                                             |
 |--------------------------------------------------|--------------------------------------------------------------------------------------|---------------------------------------------------------------------|
 | `DFE_HYPERDX_ENABLED`                            | Toggle to start HyperDX + FerretDB + Postgres                                        | `false`                                                             |
-| `DFE_HYPERDX_VERSION`                            | Version of hyperi-hyperdx to use                                                     | pinned by `make stack` from the SSoT (fail-loud, like every image)  |
+| `DFE_HYPERDX_VERSION`                            | Version of the dfe-hyperdx fork image to use                                         | pinned by `make stack` from the SSoT (fail-loud, like every image)  |
 | `DFE_HYPERDX_API_PORT`                           | HyperDX API host port                                                                | `8000`                                                              |
 | `DFE_HYPERDX_APP_PORT`                           | HyperDX App UI host port                                                             | `8090`                                                              |
 | `DFE_HYPERDX_APP_URL`                            | Base URL the browser uses to reach HyperDX                                           | `http://localhost`                                                  |
