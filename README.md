@@ -1,5 +1,12 @@
 # dfe-docker
 
+[![Build Status](https://github.com/hyperi-io/dfe-docker/actions/workflows/ci.yml/badge.svg)](https://github.com/hyperi-io/dfe-docker/actions)
+[![License](https://img.shields.io/badge/license-BUSL--1.1-blue)](https://github.com/hyperi-io/dfe-docker/blob/main/LICENSE)
+
+> The whole DFE stack on one host, pinned to a certified release rather than
+> whatever the tags point at today. Every image is `tag@sha256`, and the compose
+> file refuses to start if a pin is missing.
+
 Docker Compose deployment packaging for HyperI Data Fusion Engine.
 
 ## Start here: which of these are you?
