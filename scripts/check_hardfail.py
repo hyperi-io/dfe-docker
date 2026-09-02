@@ -36,8 +36,9 @@ image is pinned. Compose aborts on the FIRST missing variable, so one surviving
 slipping in alongside it would not be caught.
 
 Nor does it prove a pin is a DIGEST. Every ``*_VERSION`` the stack SSoT renders is
-``tag@sha256:...`` except ``DFE_HYPERDX_VERSION``, which is tag-only until
-versions.yaml carries a ``digests.dfe-hyperdx`` entry for the render to pick up.
+``tag@sha256:...``, including ``DFE_HYPERDX_VERSION`` now that versions.yaml carries
+a ``digests.dfe-hyperdx`` entry. The render falls back to a bare tag whenever that
+key is absent, so absence downgrades the pin silently rather than failing.
 """
 
 from __future__ import annotations

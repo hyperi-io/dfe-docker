@@ -72,9 +72,10 @@ ci`. This is the production-safe default: nothing moves until you move it.
 
 Per image, the pin is an explicit release tag plus the digest that tag resolved
 to (e.g. `DFE_ENGINE_VERSION=v1.17.13@sha256:50c4428...`), so a retagged image
-cannot change what a pinned box runs. The one exception is
-`DFE_HYPERDX_VERSION`, tag-only until the stack SSoT records a digest for the
-fork. The registries also publish `latest` and `sha-<commit>` tags for every
+cannot change what a pinned box runs. That now covers the hyperdx fork too. Where
+the SSoT has no digest for an image the render emits a bare tag instead, which
+downgrades the pin without announcing it. The registries also publish `latest`
+and `sha-<commit>` tags for every
 image, the hyperdx fork included -- none of them is ever consumed here, so what
 a release publishes and what a deploy runs stay two separate decisions.
 
