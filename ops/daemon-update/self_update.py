@@ -31,6 +31,12 @@ DFE_ENV declaration and a healthcheck path that older compose files do not have,
 so the schema authority restart-loops while the timer records a clean run. Set
 DFE_UPDATE_SKIP_GIT_PULL=1 on a box whose checkout is managed some other way.
 
+DFE_UPDATE_WIPE_STATE=1 inserts `make clean` between the pin and the bring-up, so
+a DISPOSABLE box re-initialises from empty volumes on every new version and the
+first-start paths get exercised for real. It deletes ClickHouse, Kafka, the DLQ
+spool and the engine's config volume -- sources, orgs and local accounts included,
+none of which the image can reseed. Leave it unset anywhere the data matters.
+
 The pull replaces this script mid-run; Python has already loaded it, so the
 current tick finishes on the old code and the next uses the new.
 
@@ -201,10 +207,38 @@ def _refresh_plan(repo_dir: Path) -> str:
     return "run `git pull --ff-only`"
 
 
+def _wipe_state_enabled() -> bool:
+    """Whether this box destroys its data on every version change.
+
+    OFF by default: `make clean` deletes ClickHouse, Kafka, the DLQ spool and the
+    engine's config volume, and none of that is recoverable. Only a box whose data
+    is expendable should set it.
+    """
+    return os.environ.get("DFE_UPDATE_WIPE_STATE", "").strip() in {"1", "true", "yes"}
+
+
 def _apply(repo_dir: Path, version: str) -> None:
-    """Run OUR updater: refresh the checkout, pin the version, then pull + restart."""
+    """Run OUR updater: refresh the checkout, pin the version, then pull + restart.
+
+    With DFE_UPDATE_WIPE_STATE set, `make clean` runs between the pin and the
+    bring-up so the new version initialises from nothing -- the disposable-VM
+    workflow, where the point is to exercise the first-start paths rather than to
+    keep data. It sits inside the version-change branch its caller already guards,
+    so a wipe costs one new stack version, not one timer tick.
+
+    The slot is not arbitrary. It follows `make stack` because docker-compose.yml
+    declares its image pins `:?`-required and compose resolves those before it runs
+    anything, so an unpinned tree aborts `down -v` exactly as it aborts `up`. And it
+    follows the checkout refresh, so the compose file naming the volume set is the
+    one shipping with the version being installed.
+    """
     _refresh_checkout(repo_dir)
-    for cmd in (["make", "stack", f"VERSION={version}"], ["make", "ci"]):
+    commands = [["make", "stack", f"VERSION={version}"]]
+    if _wipe_state_enabled():
+        _log("DFE_UPDATE_WIPE_STATE is set -- deleting every volume before bring-up")
+        commands.append(["make", "clean"])
+    commands.append(["make", "ci"])
+    for cmd in commands:
         _log(f"running: {' '.join(cmd)}")
         out = _run(cmd, cwd=repo_dir)
         sys.stdout.write(out.stdout)
@@ -250,6 +284,11 @@ def main() -> int:
         if args.dry_run:
             _log(f"dry-run: would update {applied or '(none)'} -> {latest}")
             _log(f"dry-run: checkout refresh would {_refresh_plan(repo_dir)}")
+            if _wipe_state_enabled():
+                _log(
+                    "dry-run: DFE_UPDATE_WIPE_STATE is set -- EVERY volume would be "
+                    "deleted (ClickHouse, Kafka, DLQ spool, engine config)"
+                )
             return 0
 
         _log(f"updating {applied or '(none)'} -> {latest}")
