@@ -435,10 +435,11 @@ profile (`single` has it) or `DFE_OTEL_ENABLED=true`.
 
 The apps push over OTLP -- on `single` that is dfe-engine, dfe-receiver and
 dfe-loader. Two things do scrape: the collector scrapes its own metrics on
-127.0.0.1:8888, and `sqlquery` reads ClickHouse. Container logs are not
-collected on this path, so `dfe.otel_logs` stays empty -- see
-[observability.md](observability.md), which also has the dials, what each
-component does, and why `/metrics` still exists.
+127.0.0.1:8888, and `sqlquery` reads ClickHouse. Nothing on this path sends
+logs -- there is no container-log collector, and the apps export metrics and
+traces only -- so `dfe.otel_logs` stays empty even though the collector has a
+logs pipeline wired. See [observability.md](observability.md), which also has
+the dials, what each component does, and why `/metrics` still exists.
 
 ## Related
 

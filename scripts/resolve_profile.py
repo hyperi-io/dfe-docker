@@ -77,9 +77,10 @@ OTEL_SERVICES = ["otel-collector"]
 OTEL_ENDPOINT_ENV_VAR = "DFE_OTEL_EXPORTER_ENDPOINT"
 OTEL_BUNDLED_ENDPOINT = "http://otel-collector:4317"
 
-# dfe-engine is the only component that can push today, and scalo's CLI defaults
-# the backend off. `opentelemetry` is dual -- it pushes AND keeps serving
-# /metrics, so switching costs a scraping estate nothing. See scalo-rs#28.
+# The Rust services push whenever the endpoint is set. dfe-engine also needs its
+# backend switched, because scalo-py's CLI defaults it to prometheus (scalo-py#11).
+# `opentelemetry` is dual -- it pushes AND keeps serving /metrics, so switching
+# costs a scraping estate nothing.
 OTEL_ENGINE_BACKEND_ENV_VAR = "DFE_ENGINE_METRICS_BACKEND"
 OTEL_ENGINE_BACKEND = "opentelemetry"
 
