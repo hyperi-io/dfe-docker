@@ -298,6 +298,13 @@ For a small-environment deploy, set `REDPANDA_MODE=production` with real
 container limit that does not exceed it means the broker is OOM-killed rather
 than backpressured.
 
+Exceeding it is not sufficient on every host. Redpanda subtracts the HOST's
+`vm.min_free_kbytes` from the container limit before comparing it to `--memory`,
+so the usable figure is lower than the limit you set. A host with
+`min_free_kbytes` over ~512MB left the old 1536M default under the 1G request
+and the broker refused to start; the default is now 2560M. Check the host value
+with `sysctl vm.min_free_kbytes` and leave that much headroom on top.
+
 ## Kafka backend licensing is a human decision
 
 Redpanda's core is source-available under the BSL. It is not OSS. Local
