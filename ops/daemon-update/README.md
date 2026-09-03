@@ -33,12 +33,35 @@ logged, because it reintroduces exactly the drift above.
 `--dry-run` reports what the refresh would do, so you can see a box is dirty
 before the timer does.
 
+## Disposable boxes: fresh state on every version
+
+`DFE_UPDATE_WIPE_STATE=1` runs `make clean` between the pin and the bring-up, so
+the new version comes up against empty volumes and its first-start paths - schema
+creation, the break-glass seed, the engine's built-in defaults - actually execute
+instead of short-circuiting as already-current. It fires once per NEW STACK
+VERSION, not once per timer tick: the wipe sits inside the branch the daemon
+already guards with `applied == latest`.
+
+It deletes everything - ClickHouse, Kafka, the DLQ spool, HyperDX, and the
+engine's config volume. That last one does not come back: the image ships an
+EMPTY `/app/config`, so sources, orgs and locally created accounts are gone for
+good, and only the break-glass admin returns because the engine reseeds it from
+`DFE_AUTH_LOCAL_ADMIN_PASSWORD`. Pin that to a known value on a box running this,
+rather than letting `make init` mint a random one you never see.
+
+One trap. With `DFE_DATA_ROOT` set, docker-compose.storage.yml turns every volume
+into a bind onto that path, and `make clean` does not chain that overlay - it
+removes the volume objects while the directories keep their contents. The wipe
+silently degrades to a no-op. Leave `DFE_DATA_ROOT` unset on a box that relies on
+this flag.
+
 ## Files
 
 - `self_update.py` - discovers the newest stable stack tag (`oras repo tags`),
   compares to the last-applied version (state file `.dfe-stack-applied` in the
   checkout), and runs the updater only on a change. `--dry-run` reports without
-  acting. `DFE_UPDATE_ALLOW_PRERELEASE=1` includes `-rc` builds.
+  acting. `DFE_UPDATE_ALLOW_PRERELEASE=1` includes `-rc` builds;
+  `DFE_UPDATE_WIPE_STATE=1` destroys every volume on each version change.
 - `dfe-docker-update.service` - oneshot that runs the updater.
 - `dfe-docker-update.timer` - runs it 10 min after boot, then every 6h (jittered).
 - `install.sh` - renders + installs the units and enables the timer.
