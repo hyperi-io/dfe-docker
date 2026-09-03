@@ -887,7 +887,10 @@ services:
     # Pinned from the stack SSoT like every other image: the fork now publishes,
     # so `make stack` renders DFE_HYPERDX_VERSION from versions.yaml
     # (content.dfe-hyperdx). Fail-loud `:?` -- no floating `latest`.
-    image: ${IMAGE_REGISTRY:-ghcr.io/hyperi-io}/hyperi-hyperdx:${DFE_HYPERDX_VERSION:?run 'make stack VERSION=X.Y.Z' to pin DFE_HYPERDX_VERSION}
+    # Same image name the k8s chart pulls; ghcr.io/hyperi-io/hyperi-hyperdx does not exist.
+    # Digest-pinned like the rest: versions.yaml carries digests.dfe-hyperdx, which
+    # the render appends as tag@sha256.
+    image: ${IMAGE_REGISTRY:-ghcr.io/hyperi-io}/dfe-hyperdx:${DFE_HYPERDX_VERSION:?run 'make stack VERSION=X.Y.Z' to pin DFE_HYPERDX_VERSION}
     container_name: dfe-hyperdx
     profiles: ["hyperdx"]
     restart: unless-stopped
