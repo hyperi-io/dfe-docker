@@ -134,6 +134,7 @@ To start only a subset of the resolved profile for a single invocation, pass `SE
 ```bash
 make dev SERVICES="dfe-loader dfe-ui"   # Start dev images of dfe-loader and dfe-ui only
 make ci  SERVICES="dfe-loader dfe-ui"   # Same, against registry images
+make dev LOCAL="dfe-engine dfe-ui"      # Build only these from source; the rest run the pinned registry images
 ```
 
 ### Application Profiles (service_profiles.yaml)
@@ -190,7 +191,7 @@ In `dev` mode, they build from each repo's own Dockerfile (not the shared Rust b
 | Command            | Description                                                        |
 |--------------------|--------------------------------------------------------------------|
 | `make init`        | Create .env and per-service .env files from templates              |
-| `make dev`         | Build local DFE images from source and start the stack             |
+| `make dev`         | Build local DFE images from source and start the stack (`LOCAL="..."` builds only those, rest pinned) |
 | `make dev-build`   | Build local DFE images from source (no start)                      |
 | `make ci`          | Pull and start infra and registry DFE images                       |
 | `make ci-pull`     | Pull infra and registry DFE images (no start)                      |

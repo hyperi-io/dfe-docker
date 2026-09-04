@@ -16,7 +16,14 @@
 # its own Next.js standalone Dockerfile. Source comes via git (cloned into a
 # managed cache at DFE_SRC_REF), or from your own checkouts when DFE_SRC_ROOT is
 # set -- never from an assumed directory layout. To live-edit dfe-engine config
-# without rebuilding, add docker-compose.live.yml: `make dev LIVE=1`.
+# without rebuilding, add docker-compose.live.yml: `make dev LIVE=1`. To build
+# only some components and keep the rest on the registry pins, `make dev
+# LOCAL="dfe-engine dfe-ui"` writes docker-compose.local.yml instead of this.
+#
+# A service that runs a component's image under another name (dlq-init,
+# dfe-schema-init, dfe-hunt-runner) is repointed with it. The list is
+# IMAGE_CONSUMERS in scripts/build_dev_images.py and check-compose asserts this
+# file covers all of it.
 
 services:
   dfe-receiver:
@@ -26,6 +33,9 @@ services:
     image: dfe-fetcher:local
 
   dfe-archiver:
+    image: dfe-archiver:local
+
+  dlq-init:
     image: dfe-archiver:local
 
   dfe-loader:
@@ -38,6 +48,12 @@ services:
     image: dfe-transform-vrl:local
 
   dfe-engine:
+    image: dfe-engine:local
+
+  dfe-schema-init:
+    image: dfe-engine:local
+
+  dfe-hunt-runner:
     image: dfe-engine:local
 
   dfe-ui:

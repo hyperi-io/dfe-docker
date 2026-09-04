@@ -50,11 +50,44 @@ ifneq (,$(filter-out $(BOOTSTRAP_GOALS),$(or $(MAKECMDGOALS),help)))
     ifeq ($(strip $(SERVICES)),)
         ACTIVE_SERVICES := $(DFE_SERVICES)
     else
-        INVALID_SERVICES := $(filter-out $(DFE_SERVICES),$(SERVICES))
-        ifneq ($(INVALID_SERVICES),)
-            $(error 'SERVICES' contains names not in the resolved stack: $(INVALID_SERVICES). Available: $(DFE_SERVICES))
+        # On a fresh checkout make parses once before .profile.mk exists, then
+        # remakes it and parses again; the name check only means anything on
+        # the second pass, when DFE_SERVICES is populated.
+        ifneq ($(strip $(DFE_SERVICES)),)
+            INVALID_SERVICES := $(filter-out $(DFE_SERVICES),$(SERVICES))
+            ifneq ($(INVALID_SERVICES),)
+                $(error 'SERVICES' contains names not in the resolved stack: $(INVALID_SERVICES). Available: $(DFE_SERVICES))
+            endif
         endif
         ACTIVE_SERVICES := $(filter $(SERVICES),$(DFE_SERVICES))
+    endif
+    # `make dev LOCAL="dfe-engine dfe-ui"` builds only those and keeps the rest
+    # on the registry pins: the build writes docker-compose.local.yml for the
+    # built components and the compose call names its files explicitly, which
+    # keeps the auto-loaded all-local override out. Empty LOCAL is plain dev.
+    LOCAL ?=
+    LOCAL_OVERLAY := docker-compose.local.yml
+    ifeq ($(strip $(LOCAL)),)
+        DEV_BUILD := $(ACTIVE_SERVICES)
+        DEV_PULL_FLAGS :=
+        DEV_FLAGS :=
+        DEV_OVERLAY_ARG :=
+    else
+        ifneq ($(strip $(DFE_SERVICES)),)
+            INVALID_LOCAL := $(filter-out $(DFE_SERVICES),$(LOCAL))
+            ifneq ($(INVALID_LOCAL),)
+                $(error 'LOCAL' contains names not in the resolved stack: $(INVALID_LOCAL). Available: $(DFE_SERVICES))
+            endif
+        endif
+        DEV_BUILD := $(LOCAL)
+        # The pull runs before the build writes the overlay, so it names no
+        # overlay; only the infra profiles are pulled there anyway.
+        DEV_PULL_FLAGS := -f docker-compose.yml $(STORAGE_FLAGS) $(UI_FLAGS)
+        DEV_FLAGS := $(DEV_PULL_FLAGS) -f $(LOCAL_OVERLAY)
+        ifneq ($(strip $(LIVE)),)
+            DEV_FLAGS += -f docker-compose.live.yml
+        endif
+        DEV_OVERLAY_ARG := --overlay $(LOCAL_OVERLAY)
     endif
 endif
 
@@ -213,16 +246,16 @@ ifneq ($(strip $(DFE_DATA_ROOT)),)
 endif
 
 .PHONY: dev
-dev: down storage-dirs ## Build local DFE images from source and start the dev stack
-	docker compose $(PROFILE_FLAGS) pull
-	python3 scripts/build_dev_images.py $(ACTIVE_SERVICES)
-	docker compose $(PROFILE_FLAGS) up -d $(ACTIVE_SERVICES)
+dev: down storage-dirs ## Build local DFE images from source and start the dev stack (LOCAL="svc ..." builds only those, rest pinned)
+	docker compose $(DEV_PULL_FLAGS) $(PROFILE_FLAGS) pull
+	python3 scripts/build_dev_images.py $(DEV_OVERLAY_ARG) $(DEV_BUILD)
+	docker compose $(DEV_FLAGS) $(PROFILE_FLAGS) up -d $(ACTIVE_SERVICES)
 	@$(MAKE) --no-print-directory post || echo "post: SELF TEST FAILED -- the stack is up, but it did not prove it moves data. Run 'make post' for detail."
 
 .PHONY: dev-build
-dev-build: ## Build local DFE images from source (no start)
-	docker compose $(PROFILE_FLAGS) pull
-	python3 scripts/build_dev_images.py $(ACTIVE_SERVICES)
+dev-build: ## Build local DFE images from source (no start; honours LOCAL)
+	docker compose $(DEV_PULL_FLAGS) $(PROFILE_FLAGS) pull
+	python3 scripts/build_dev_images.py $(DEV_OVERLAY_ARG) $(DEV_BUILD)
 
 # ---------------------------------------------------------------------------
 # CI / registry images (skips docker-compose.override.yml)

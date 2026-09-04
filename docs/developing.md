@@ -105,6 +105,23 @@ from their own Dockerfile.
 A service that is not a locally buildable DFE component (ClickHouse, the broker,
 `kafka-ui`) is skipped with a message rather than failing the build.
 
+A service that runs a component's image under another name follows it:
+`dlq-init` runs the archiver image, `dfe-schema-init` and `dfe-hunt-runner` the
+engine image. The map is `IMAGE_CONSUMERS` in `scripts/build_dev_images.py`, and
+`make check-compose` asserts the override covers all of it.
+
+### Some from source, the rest pinned
+
+```bash
+make dev LOCAL="dfe-engine dfe-ui"   # build these two; everything else from GHCR
+```
+
+The build writes `docker-compose.local.yml` (not committed) repointing only the
+named components and the services sharing their image at `:local`, and compose
+runs with explicit `-f` files so the all-local override stays out. `SERVICES`
+still filters what starts, `LIVE=1` still layers the engine bind-mounts, and a
+name outside the resolved stack is a hard error.
+
 ### Where it looks for your source
 
 Source comes via git, never an assumed directory layout:
@@ -276,7 +293,7 @@ Two things about the runner worth knowing before you debug it:
 
 | Target | What it does |
 |---|---|
-| `make check-compose` | `docker compose config` on the registry and dev paths, against both Kafka backends, plus the CPU floor assertion |
+| `make check-compose` | `docker compose config` on the registry, dev, live and `LOCAL=` paths, against both Kafka backends, plus the CPU floor and override-coverage assertions |
 | `make check-hardfail` | asserts an unpinned checkout refuses to resolve instead of pulling `latest` |
 | `make check-dockerfile` | hadolint on `docker/dfe-rust-builder.Dockerfile` |
 | `make check-docs` | asserts every relative link across the README and the five docs resolves |
