@@ -40,6 +40,7 @@ that is a scalo contract change, not a Compose one.
 
 from __future__ import annotations
 
+import json
 import os
 import sys
 import time
@@ -350,6 +351,18 @@ def _ui_query_count(
     return None
 
 
+def _wizard_rotated_admin_password(*, base: str) -> bool:
+    """True when the engine's setup-status says the wizard already rotated the break-glass password."""
+    try:
+        status = json.loads(http_get(f"{base}/auth/setup-status"))
+    except Exception:  # noqa: BLE001
+        return False
+    if not isinstance(status, dict):
+        return False
+    initial = status.get("initial_setup") or {}
+    return "admin_password" in (initial.get("completed_steps") or [])
+
+
 def _verify_ui_query(*, database: str, marker: str, table: str) -> int:
     """Prove the console's query path returns THIS run's rows.
 
@@ -368,9 +381,24 @@ def _verify_ui_query(*, database: str, marker: str, table: str) -> int:
 
     bind = os.environ.get("DFE_POST_HOST", "localhost")
     base = f"http://{bind}:{os.environ.get('DFE_ENGINE_PORT', '8003')}/api/v1"
-    username = os.environ.get("DFE_AUTH_LOCAL_ADMIN_NAME", "admin").strip() or "admin"
-    password = os.environ.get("DFE_AUTH_LOCAL_ADMIN_PASSWORD", "").strip()
+    # DFE_POST_LOGIN_* names any account; the break-glass admin is the fallback.
+    username = (
+        os.environ.get("DFE_POST_LOGIN_USER", "").strip()
+        or os.environ.get("DFE_AUTH_LOCAL_ADMIN_NAME", "admin").strip()
+        or "admin"
+    )
+    password = (
+        os.environ.get("DFE_POST_LOGIN_PASSWORD", "").strip()
+        or os.environ.get("DFE_AUTH_LOCAL_ADMIN_PASSWORD", "").strip()
+    )
     if not (password):
+        if _wizard_rotated_admin_password(base=base):
+            _print(
+                msg="SKIP  the setup wizard rotated the break-glass password, so no "
+                "console credential lives in the env -- set DFE_POST_LOGIN_USER and "
+                "DFE_POST_LOGIN_PASSWORD to prove the query path"
+            )
+            return 0
         _print(msg="FAIL  DFE_AUTH_LOCAL_ADMIN_PASSWORD is unset -- run `make init`")
         return 1
 
