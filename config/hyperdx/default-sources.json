@@ -22,7 +22,7 @@
     "kind": "log",
     "connection": "local",
     "from": {
-      "databaseName": "dfe_hunts",
+      "databaseName": "dfe",
       "tableName": "detection"
     },
     "timestampValueExpression": "_timestamp",
