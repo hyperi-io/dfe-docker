@@ -73,6 +73,11 @@ auto-loaded by Compose with no flags. It repoints each DFE service at
 `<service>:local`. `make ci` passes `-f docker-compose.yml` explicitly, which
 skips the override and therefore uses registry images only.
 
+Both start targets run `make env-files` first: it asserts every
+`env.example/<service>.env` has a counterpart in `env/`, runs `make init` for the
+ones a release added, and fails only if one is still missing. It warns, never
+edits, when a template gains a key inside a file you already have.
+
 `scripts/build_dev_images.py` builds the `:local` images in two stages for every
 Rust component:
 

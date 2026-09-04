@@ -338,6 +338,24 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
     return parser.parse_args(argv)
 
 
+def _write_overlay(*, built: list[str], overlay: Path) -> int:
+    """Write the overlay for what was built, or delete it when nothing was.
+
+    An earlier run's file would repoint services at `:local` images this run
+    never rebuilt.
+    """
+    if not (built):
+        overlay.unlink(missing_ok=True)
+        _print(
+            msg=f"No component was built, so {overlay} was removed rather than left "
+            "pointing at images this run did not rebuild"
+        )
+        return 1
+    overlay.write_text(overlay_text(built), encoding="utf-8", newline="\n")
+    _print(msg=f"Overlay written: {overlay} ({', '.join(built)} -> :local)")
+    return 0
+
+
 def main() -> int:
     _load_dotenv()
     args = _parse_args(sys.argv[1:])
@@ -352,16 +370,18 @@ def main() -> int:
                     header=service,
                     msg="SKIPPING - Not a locally buildable DFE component",
                 )
+        # Settled before the empty check, because the caller's next compose
+        # command names this file whether or not anything was built.
+        overlay_status = (
+            0
+            if args.overlay is None
+            else _write_overlay(built=built, overlay=args.overlay)
+        )
         if not (built):
             _print(msg="Nothing to build.")
-            return 0
+            return overlay_status
         _print(msg=f"Built:\n{'\n'.join([f'- {build}' for build in built])}")
-        if args.overlay is not None:
-            args.overlay.write_text(overlay_text(built), encoding="utf-8", newline="\n")
-            _print(
-                msg=f"Overlay written: {args.overlay} ({', '.join(built)} -> :local)"
-            )
-        return 0
+        return overlay_status
     except _BuilderError as error:
         _print(header=error.header, msg=error.msg)
         return 1

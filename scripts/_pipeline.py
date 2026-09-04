@@ -58,30 +58,53 @@ def http_get(url: str, timeout: int = 5) -> str:
         return response.read().decode()
 
 
-def http_get_json(
-    url: str, token: str = "", timeout: int = 30
-) -> tuple[int, typing.Any]:
-    """GET and return (status, decoded body), for callers that need the body.
+def _request(
+    *,
+    method: str,
+    url: str,
+    content_type: str = "",
+    data: bytes | None = None,
+    timeout: int,
+    token: str = "",
+) -> tuple[int, str]:
+    """Make one request and return (status, body text).
 
-    A body that is not JSON comes back as the raw text, so a proxy error page is
-    reported as what it is rather than raising a decode error over the top of it.
+    A response carrying an HTTP error status is a RESULT here, not an exception:
+    every caller reports the status it got. A transport failure with no status at
+    all still raises, because there is nothing to report.
     """
-    request = Request(url, method="GET")
+    request = Request(url, data=data, method=method)
+    if content_type:
+        request.add_header("Content-Type", content_type)
     if token:
         request.add_header("Authorization", f"Bearer {token}")
     try:
         with urlopen(request, timeout=timeout) as response:
-            raw = response.read().decode()
-            status = response.status
+            return response.status, response.read().decode()
     except URLError as error:
         if not (hasattr(error, "code")):
             raise
-        raw = error.read().decode() if hasattr(error, "read") else ""
-        status = error.code
+        return error.code, error.read().decode() if hasattr(error, "read") else ""
+
+
+def _decoded(raw: str) -> typing.Any:
+    """Decode a JSON body, or return the raw text when it is not JSON.
+
+    A body that is not JSON comes back as the raw text, so a proxy error page is
+    reported as what it is rather than raising a decode error over the top of it.
+    """
     try:
-        return status, json.loads(raw)
+        return json.loads(raw)
     except ValueError:
-        return status, raw
+        return raw
+
+
+def http_get_json(
+    url: str, token: str = "", timeout: int = 30
+) -> tuple[int, typing.Any]:
+    """GET and return (status, decoded body), for callers that need the body."""
+    status, raw = _request(method="GET", url=url, timeout=timeout, token=token)
+    return status, _decoded(raw)
 
 
 def http_post_json(
@@ -90,28 +113,16 @@ def http_post_json(
     token: str = "",
     timeout: int = 30,
 ) -> tuple[int, typing.Any]:
-    """POST JSON and return (status, decoded body), for callers that need the body.
-
-    A body that is not JSON comes back as the raw text, so a proxy error page is
-    reported as what it is rather than raising a decode error over the top of it.
-    """
-    request = Request(url, data=json.dumps(payload).encode(), method="POST")
-    request.add_header("Content-Type", "application/json")
-    if token:
-        request.add_header("Authorization", f"Bearer {token}")
-    try:
-        with urlopen(request, timeout=timeout) as response:
-            raw = response.read().decode()
-            status = response.status
-    except URLError as error:
-        if not (hasattr(error, "code")):
-            raise
-        raw = error.read().decode() if hasattr(error, "read") else ""
-        status = error.code
-    try:
-        return status, json.loads(raw)
-    except ValueError:
-        return status, raw
+    """POST JSON and return (status, decoded body), for callers that need the body."""
+    status, raw = _request(
+        method="POST",
+        url=url,
+        content_type="application/json",
+        data=json.dumps(payload).encode(),
+        timeout=timeout,
+        token=token,
+    )
+    return status, _decoded(raw)
 
 
 def http_post(
@@ -120,17 +131,14 @@ def http_post(
     content_type: str = "application/json",
     timeout: int = 10,
 ) -> int:
-    """POST a body and return the HTTP status, or 0-style error codes from URLError."""
-    data = body.encode() if isinstance(body, str) else body
-    request = Request(url, data=data, method="POST")
-    request.add_header("Content-Type", content_type)
-    try:
-        with urlopen(request, timeout=timeout) as response:
-            return response.status
-    except URLError as error:
-        if hasattr(error, "code"):
-            return error.code
-        raise
+    """POST a body and return the HTTP status."""
+    return _request(
+        method="POST",
+        url=url,
+        content_type=content_type,
+        data=body.encode() if isinstance(body, str) else body,
+        timeout=timeout,
+    )[0]
 
 
 def http_delete(url: str, token: str = "", timeout: int = 10) -> int:
@@ -140,16 +148,7 @@ def http_delete(url: str, token: str = "", timeout: int = 10) -> int:
     raising, because tidy-up runs on the failure path too and a second exception
     there would bury the finding that mattered.
     """
-    request = Request(url, method="DELETE")
-    if token:
-        request.add_header("Authorization", f"Bearer {token}")
-    try:
-        with urlopen(request, timeout=timeout) as response:
-            return response.status
-    except URLError as error:
-        if hasattr(error, "code"):
-            return error.code
-        raise
+    return _request(method="DELETE", url=url, timeout=timeout, token=token)[0]
 
 
 def ch_query(sql: str, *, debug: typing.Callable[[str], None] | None = None) -> str:
@@ -177,11 +176,8 @@ def ch_query(sql: str, *, debug: typing.Callable[[str], None] | None = None) -> 
 
 def ch_count(database: str, table: str, *, debug=None) -> int:
     """Return the row count of a table, or 0 if it cannot be read."""
-    raw = ch_query(f"SELECT count() FROM {database}.{table}", debug=debug)
-    try:
-        return int(raw.strip())
-    except (ValueError, AttributeError):
-        return 0
+    count = ch_int(f"SELECT count() FROM {database}.{table}", debug=debug)
+    return 0 if count is None else count
 
 
 def ch_int(sql: str, *, debug=None) -> int | None:

@@ -46,6 +46,7 @@ import json
 import os
 import sys
 import time
+from urllib.parse import quote
 
 from _common import FALSY, _load_dotenv, _print, _resolved_services
 from _pipeline import (
@@ -546,6 +547,32 @@ def _hunt_status(*, base: str, token: str) -> tuple[bool, int]:
     return bool(body.get("running")), int(body.get("hunt_count", -1))
 
 
+def _hunt_http_status(*, base: str, hunt: str, token: str) -> int:
+    """Return the HTTP status GET /hunts/<name> answers with: 200 present, 404 absent."""
+    status, _ = http_get_json(
+        f"{base}/hunts/{quote(hunt, safe='')}", token=token, timeout=10
+    )
+    return status
+
+
+def _assert_hunt_removed(*, base: str, hunt: str, token: str) -> int:
+    """Prove the hunt this run created is gone, so a passing run leaves the stack as it found it."""
+    status = _hunt_http_status(base=base, hunt=hunt, token=token)
+    if status == 404:
+        return 0
+    if status == 200:
+        _print(
+            msg=f"FAIL  GET /hunts/{hunt} still returns the hunt after the delete -- "
+            "this run left a hunt behind on the stack"
+        )
+        return 1
+    _print(
+        msg=f"      note: GET /hunts/{hunt} returned HTTP {status} after the delete, "
+        "so whether the hunt is gone could not be read"
+    )
+    return 0
+
+
 def _verify_hunt(*, database: str, marker: str, table: str) -> int:
     """Prove a hunt created while the runner is running is picked up and executed.
 
@@ -571,16 +598,22 @@ def _verify_hunt(*, database: str, marker: str, table: str) -> int:
             "DFE_POST_LOGIN_PASSWORD to prove the hunt path"
         )
         return 0
+    if status == 0:
+        _print(
+            msg="FAIL  no password for the console is available -- set "
+            "DFE_AUTH_LOCAL_ADMIN_PASSWORD (run `make init`) or DFE_POST_LOGIN_PASSWORD, "
+            "so this run can create the hunt it needs"
+        )
+        return 1
     if status != 200 or not (token):
         _print(
             msg=f"FAIL  login as {username!r} returned HTTP {status} -- the hunt API "
-            "cannot be reached, so this run cannot create the hunt it needs"
+            "rejected the credential, so this run cannot create the hunt it needs"
         )
         return 1
 
     hunt_name = marker
     rule_name = f"{marker}-rule"
-    _, before = _hunt_status(base=base, token=token)
     _print(
         msg=f"Creating rule {rule_name!r} and hunt {hunt_name!r} over this run's rows"
     )
@@ -610,25 +643,30 @@ def _verify_hunt(*, database: str, marker: str, table: str) -> int:
             _print(msg=f"FAIL  {fault}")
             return 1
         try:
-            return _await_hunt(
-                base=base, database=database, hunt=hunt_name, before=before, token=token
+            result = _await_hunt(
+                base=base, database=database, hunt=hunt_name, token=token
             )
         finally:
             _remove(
                 f"{base}/hunts/{hunt_name}", kind="hunt", name=hunt_name, token=token
             )
+        return result or _assert_hunt_removed(base=base, hunt=hunt_name, token=token)
     finally:
         _remove(f"{base}/rules/{rule_name}", kind="rule", name=rule_name, token=token)
 
 
-def _await_hunt(*, base: str, database: str, hunt: str, before: int, token: str) -> int:
+def _await_hunt(*, base: str, database: str, hunt: str, token: str) -> int:
     """Wait for the runner to load the new hunt, run it, and write its detections."""
     escaped = escape_literal(hunt)
-    running, after = _hunt_status(base=base, token=token)
-    if after >= 0 and after <= before:
+    running, _ = _hunt_status(base=base, token=token)
+    # This run's own hunt, not the global count: a concurrent `make post` or an
+    # operator deleting an unrelated hunt moves the count either way.
+    present = _hunt_http_status(base=base, hunt=hunt, token=token)
+    if present != 200:
         _print(
-            msg=f"FAIL  GET /hunts/status still counts {after} hunt(s) after creating one "
-            "-- the engine did not write the hunt where it reports hunts from"
+            msg=f"FAIL  GET /hunts/{hunt} returned HTTP {present} straight after the "
+            "engine accepted it -- the hunt was not written where the engine reports "
+            "hunts from"
         )
         return 1
 
@@ -713,10 +751,9 @@ def _await_hunt(*, base: str, database: str, hunt: str, before: int, token: str)
             f"{database}.{HUNT_TARGET_TABLE} within {HUNT_DETECTION_TIMEOUT_SECONDS:.0f}s"
         )
         _print(
-            msg="      the hunt YAML the API writes carries `rules`, and the runner "
-            "executes a `query` field nothing compiles those rules into "
-            "(dfe_engine/hunt_runner/spec_loader.py) -- so a hunt made in the UI "
-            "schedules, claims and completes without ever detecting anything"
+            msg="      the runner claimed the hunt and completed the run, so it is the "
+            "detection write that did not happen -- check the hunt-runner logs and the "
+            "rule the hunt names"
         )
         return 1
 
