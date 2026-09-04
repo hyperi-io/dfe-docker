@@ -256,6 +256,17 @@ shortage of CPU.
 `make check-compose` blocks a sub-2.0 ceiling on any service that gates on
 `/readyz`, so this should only reach you via a hand-edited override.
 
+### The self test fails on the console login
+
+`make post` logs in as the break-glass admin with `DFE_AUTH_LOCAL_ADMIN_PASSWORD`
+from `.env`. The setup wizard's last step rotates that password, so after
+onboarding the value in `.env` is stale and the login step returns 401. Pass the
+current one on the command line, since the shell environment beats `.env`:
+
+```bash
+DFE_AUTH_LOCAL_ADMIN_PASSWORD='the rotated password' make post
+```
+
 ### The self test fails on self-telemetry
 
 `make post` makes two claims on a profile running the collector, and the second

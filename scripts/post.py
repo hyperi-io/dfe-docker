@@ -380,11 +380,14 @@ def _verify_ui_query(*, database: str, marker: str, table: str) -> int:
     )
     token = body.get("access_token", "") if isinstance(body, dict) else ""
     if status != 200 or not (token):
-        # An engine seeded before this password was generated holds the old one, so
-        # retrying cannot help.
+        # An engine seeded before this password was generated holds the old one, and
+        # the setup wizard's last step rotates it: either way retrying cannot help.
         _print(
             msg=f"FAIL  login as {username!r} returned HTTP {status} -- the console "
-            "cannot authenticate, so nobody can read this data through dfe-ui"
+            "cannot authenticate, so nobody can read this data through dfe-ui. "
+            "If the setup wizard rotated the break-glass password, pass the current "
+            "one on the command line (shell env beats .env): "
+            "DFE_AUTH_LOCAL_ADMIN_PASSWORD=... make post"
         )
         return 1
 
