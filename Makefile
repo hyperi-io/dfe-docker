@@ -250,7 +250,7 @@ dev: down storage-dirs ## Build local DFE images from source and start the dev s
 	docker compose $(DEV_PULL_FLAGS) $(PROFILE_FLAGS) pull
 	python3 scripts/build_dev_images.py $(DEV_OVERLAY_ARG) $(DEV_BUILD)
 	docker compose $(DEV_FLAGS) $(PROFILE_FLAGS) up -d $(ACTIVE_SERVICES)
-	@$(MAKE) --no-print-directory post || echo "post: SELF TEST FAILED -- the stack is up, but it did not prove it moves data. Run 'make post' for detail."
+	@$(MAKE) --no-print-directory post || { echo "post: SELF TEST FAILED -- the stack is up, but it did not prove it moves data. Run 'make post' for detail."; exit 1; }
 
 .PHONY: dev-build
 dev-build: ## Build local DFE images from source (no start; honours LOCAL)
@@ -266,7 +266,7 @@ ci: login down storage-dirs  ## Pull and start infra and registry DFE images
 	docker compose -f docker-compose.yml $(STORAGE_FLAGS) $(UI_FLAGS) $(PROFILE_FLAGS) pull
 	docker compose -f docker-compose.yml $(STORAGE_FLAGS) $(UI_FLAGS) $(PROFILE_FLAGS) pull $(ACTIVE_SERVICES)
 	docker compose -f docker-compose.yml $(STORAGE_FLAGS) $(UI_FLAGS) $(PROFILE_FLAGS) up -d $(ACTIVE_SERVICES)
-	@$(MAKE) --no-print-directory post || echo "post: SELF TEST FAILED -- the stack is up, but it did not prove it moves data. Run 'make post' for detail."
+	@$(MAKE) --no-print-directory post || { echo "post: SELF TEST FAILED -- the stack is up, but it did not prove it moves data. Run 'make post' for detail."; exit 1; }
 
 .PHONY: ci-pull
 ci-pull: login ## Pull infra and registry DFE images
