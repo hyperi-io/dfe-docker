@@ -745,7 +745,9 @@ services:
     deploy: *limits-service
     # The image's entrypoint is the engine CLI; the runner is its own console script.
     entrypoint: ["dfe-hunt-runner"]
-    command: ["run", "--poll", "15", "--cap", "8"]
+    # --reload-every 1 is what makes "picked up on the next poll" true: the default
+    # re-reads the hunt dir every 20 ticks, which is five minutes at this poll.
+    command: ["run", "--poll", "15", "--cap", "8", "--reload-every", "1"]
     env_file:
       - path: env/engine.env
         required: false
