@@ -115,9 +115,10 @@ HUNT_CRON = "* * * * *"
 HUNT_PICKUP_TIMEOUT_SECONDS = 150.0
 HUNT_PICKUP_INTERVAL_SECONDS = 3.0
 
-# Short because the run has already finished by then: the worker advances the
-# watermark only after its INSERT commits.
-HUNT_DETECTION_TIMEOUT_SECONDS = 30.0
+# The fire that claims the hunt is not always the fire that matches: the hunt
+# carries log_buffer 60, so rows younger than that sit outside the window and are
+# picked up by the NEXT minute's fire. Long enough to cover that second fire.
+HUNT_DETECTION_TIMEOUT_SECONDS = 150.0
 HUNT_DETECTION_INTERVAL_SECONDS = 3.0
 
 # Compose defaults that mean "nobody ran `make init`". They are deterministic and
