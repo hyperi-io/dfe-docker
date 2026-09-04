@@ -731,6 +731,52 @@ services:
       retries: 5
 
   # ===========================================================================
+  # dfe-hunt-runner -- the pull-based hunt executor (engine image, own process).
+  # One instance per stack, the same shape the Kubernetes chart runs. It reads
+  # the hunt and rule YAML the engine governs off the engine's config volume,
+  # so a hunt created through the UI is picked up on the next poll.
+  # ===========================================================================
+
+  dfe-hunt-runner:
+    image: ${IMAGE_REGISTRY:-ghcr.io/hyperi-io}/dfe-engine:${DFE_ENGINE_VERSION:?run 'make stack VERSION=X.Y.Z' to pin DFE_ENGINE_VERSION}
+    container_name: dfe-hunt-runner
+    profiles: ["core"]
+    restart: unless-stopped
+    deploy: *limits-service
+    command: ["dfe-hunt-runner", "run", "--poll", "15", "--cap", "8"]
+    env_file:
+      - path: env/engine.env
+        required: false
+    environment:
+      DFE_ENV: ${DFE_ENV:-dev}
+      DFE_CLICKHOUSE_HOST: ${CLICKHOUSE_HOST:-clickhouse}
+      DFE_CLICKHOUSE_PORT: ${CLICKHOUSE_HTTP_PORT:-8123}
+      DFE_CLICKHOUSE_NATIVE_PORT: ${CLICKHOUSE_NATIVE_PORT:-9000}
+      DFE_CLICKHOUSE_DATABASE: ${CLICKHOUSE_DB:-default}
+      DFE_CLICKHOUSE_USERNAME: ${CLICKHOUSE_USERNAME:-default}
+      DFE_CLICKHOUSE_PASSWORD: ${CLICKHOUSE_PASSWORD:-}
+      DFE_CLICKHOUSE_SECURE: ${CLICKHOUSE_SECURE:-false}
+      DFE_CONFIG_DIR: ${DFE_ENGINE_CONFIG_DIR:-/app/config}
+      DFE_HUNTS_DIR: ${DFE_ENGINE_CONFIG_DIR:-/app/config}/hunts
+      DFE_HUNTS_RULES_DIR: ${DFE_ENGINE_CONFIG_DIR:-/app/config}/rules
+      DFE_SCHEMAS_DIR: ${DFE_ENGINE_SCHEMAS_DIR:-/app/schemas}
+      OTEL_EXPORTER_OTLP_ENDPOINT: ${DFE_OTEL_EXPORTER_ENDPOINT:-}
+      OTEL_SERVICE_NAME: dfe-hunt-runner
+      # The engine binds the observability port in this image; a second process
+      # on the same default would fail to start.
+      METRICS_ADDR: 0.0.0.0:9091
+    volumes:
+      - dfe-engine-config:${DFE_ENGINE_CONFIG_DIR:-/app/config}
+      - dfe-engine-schemas:${DFE_ENGINE_SCHEMAS_DIR:-/app/schemas}
+    depends_on:
+      dfe-engine:
+        condition: service_healthy
+      clickhouse:
+        condition: service_healthy
+        required: false
+    working_dir: /home/appuser
+
+  # ===========================================================================
   # dfe-ui
   # ===========================================================================
 

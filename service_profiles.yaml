@@ -19,7 +19,7 @@
 # always has:
 #
 #   clickhouse  (default true)   the warehouse container
-#   core        (default true)   dfe-engine, dfe-ui, dfe-proxy
+#   core        (default true)   dfe-engine, dfe-hunt-runner, dfe-ui, dfe-proxy
 #   kafbat      (default true)   the Kafka UI; kafka transport only
 #   hyperdx     (default false)  hyperdx + its Postgres and FerretDB
 #   otel        (default false)  the collector that takes the stack's OWN telemetry

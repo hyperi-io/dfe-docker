@@ -65,7 +65,7 @@ AUTH_REQUIRED_ENV_VARS = (
 AUTH_NON_BLANK_IF_SET = ("DFE_OIDC_ALLOWED_GROUPS",)
 
 CORE_ENABLED_ENV_VAR = "DFE_CORE_ENABLED"
-CORE_SERVICES = ["dfe-engine", "dfe-ui", "dfe-proxy"]
+CORE_SERVICES = ["dfe-engine", "dfe-hunt-runner", "dfe-ui", "dfe-proxy"]
 
 HYPERDX_ENABLED_ENV_VAR = "DFE_HYPERDX_ENABLED"
 HYPERDX_SERVICES = ["hyperdx", "hyperdx-ferretdb", "hyperdx-postgres"]
