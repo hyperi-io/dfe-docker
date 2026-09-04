@@ -41,7 +41,7 @@ endif
 # any more (both sweep every profile), and requiring a resolvable profile to STOP
 # a stack is the same lockout the compose secret comments argue against -- set
 # DFE_PROFILE to something that does not exist and you could not tear down.
-BOOTSTRAP_GOALS := init help login stack dial modes down clean limits check check-compose check-hardfail check-dockerfile check-docs check-python
+BOOTSTRAP_GOALS := init env-files help login stack dial modes down clean limits check check-compose check-hardfail check-dockerfile check-docs check-python
 
 # Resolve the active profile only when a goal actually needs the compose stack
 ifneq (,$(filter-out $(BOOTSTRAP_GOALS),$(or $(MAKECMDGOALS),help)))
@@ -201,6 +201,14 @@ FORCE:
 init: ## Create .env and per-service env/<service>.env files from templates
 	@python3 scripts/init.py
 
+# Start targets require every per-service env file (dfe-ui reads INTERNAL_API_URL
+# from env/ui.env). Compose marks them optional so `make down` never needs them.
+# Recursive `=`: evaluated when the target runs, not when make parses.
+ENV_FILES_MISSING = $(filter-out $(notdir $(wildcard env/*.env)),$(notdir $(wildcard env.example/*.env)))
+.PHONY: env-files
+env-files:
+	@$(if $(strip $(ENV_FILES_MISSING)),echo "env/ is missing $(ENV_FILES_MISSING) -- run 'make init' (creates them from env.example/, leaves existing files alone)" >&2; exit 1,:)
+
 # GHCR auth for the private dfe-* images and the signed stack-manifest. A no-op
 # when DFE_GHCR_* are unset (a daemon authed out of band), so it is safe as an
 # unconditional prerequisite. The helper reads .env itself and pipes the token on
@@ -246,7 +254,7 @@ ifneq ($(strip $(DFE_DATA_ROOT)),)
 endif
 
 .PHONY: dev
-dev: down storage-dirs ## Build local DFE images from source and start the dev stack (LOCAL="svc ..." builds only those, rest pinned)
+dev: env-files down storage-dirs ## Build local DFE images from source and start the dev stack (LOCAL="svc ..." builds only those, rest pinned)
 	docker compose $(DEV_PULL_FLAGS) $(PROFILE_FLAGS) pull
 	python3 scripts/build_dev_images.py $(DEV_OVERLAY_ARG) $(DEV_BUILD)
 	docker compose $(DEV_FLAGS) $(PROFILE_FLAGS) up -d $(ACTIVE_SERVICES)
@@ -262,7 +270,7 @@ dev-build: ## Build local DFE images from source (no start; honours LOCAL)
 # ---------------------------------------------------------------------------
 
 .PHONY: ci
-ci: login down storage-dirs  ## Pull and start infra and registry DFE images
+ci: login env-files down storage-dirs  ## Pull and start infra and registry DFE images
 	docker compose -f docker-compose.yml $(STORAGE_FLAGS) $(UI_FLAGS) $(PROFILE_FLAGS) pull
 	docker compose -f docker-compose.yml $(STORAGE_FLAGS) $(UI_FLAGS) $(PROFILE_FLAGS) pull $(ACTIVE_SERVICES)
 	docker compose -f docker-compose.yml $(STORAGE_FLAGS) $(UI_FLAGS) $(PROFILE_FLAGS) up -d $(ACTIVE_SERVICES)
