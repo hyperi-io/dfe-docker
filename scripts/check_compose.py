@@ -38,6 +38,9 @@ Paths checked:
 - live: dev plus ``docker-compose.live.yml``, the path ``make dev LIVE=1``
   takes. Its ``${DFE_SRC_ROOT:?...}`` mounts are hard-fail by design, so the
   placeholder injection covers that key the same way it covers image pins.
+- local: the registry path plus the overlay ``make dev LOCAL=...`` generates,
+  rendered here for one representative pair so the generator's output is
+  checked, not just its source.
 
 Each is checked against both Kafka backends, because the two are mutually
 exclusive and a change can easily satisfy one and break the other -- which is
@@ -55,6 +58,9 @@ Beyond resolution, three semantic assertions ride along.
 - The opt-in auth profile must gate without holes: no stack needs an OIDC setting
   to resolve, an armed profile moves every infra-UI origin behind a proxy, and
   the infra kill switch takes the proxies down with the UIs. See `_AUTH_PROXIES`.
+- The committed override must repoint every service that runs a buildable
+  component's image, consumers included, or `make dev` runs two builds of one
+  component. See `_override_coverage_failures`.
 """
 
 from __future__ import annotations
@@ -73,6 +79,12 @@ from _common import (
     _print,
     _required_compose_vars,
 )
+from build_dev_images import buildable_components, local_image_services, overlay_text
+
+# The overlay `make dev LOCAL=...` generates, rendered for this pair. Written
+# under .tmp so compose resolves it relative to the repo like the shipped files.
+_LOCAL_SAMPLE = ["dfe-engine", "dfe-ui"]
+_LOCAL_RENDER = REPO_ROOT / ".tmp" / "compose-check-local.yml"
 
 # Enough to satisfy interpolation and produce a parseable image reference.
 _PLACEHOLDER = "0.0.0-compose-check"
@@ -492,6 +504,10 @@ def _paths() -> list[tuple[str, list[str]]]:
                 f"{shipped.name} is missing -- it is committed and used by "
                 "`make dev`, so that path cannot be checked"
             )
+    _LOCAL_RENDER.parent.mkdir(parents=True, exist_ok=True)
+    _LOCAL_RENDER.write_text(
+        overlay_text(_LOCAL_SAMPLE), encoding="utf-8", newline="\n"
+    )
     return [
         ("registry", [COMPOSE_FILE.name]),
         ("dev", [COMPOSE_FILE.name, COMPOSE_OVERRIDE_FILE.name]),
@@ -499,7 +515,33 @@ def _paths() -> list[tuple[str, list[str]]]:
             "live",
             [COMPOSE_FILE.name, COMPOSE_OVERRIDE_FILE.name, COMPOSE_LIVE_FILE.name],
         ),
+        ("local", [COMPOSE_FILE.name, str(_LOCAL_RENDER.relative_to(REPO_ROOT))]),
     ]
+
+
+def _override_coverage_failures(*, env: dict[str, str]) -> list[str]:
+    """Return one message per service the committed override leaves on the registry.
+
+    Read off the interpolated dev model: every service that runs a buildable
+    component's image must resolve to `<component>:local` there.
+    """
+    config = _config_json(
+        env=env, files=[COMPOSE_FILE.name, COMPOSE_OVERRIDE_FILE.name]
+    )
+    if config is None:
+        return ["the dev path did not resolve, so override coverage is unknown"]
+    services = config.get("services", {})
+    failures = []
+    for service, image in sorted(local_image_services(buildable_components()).items()):
+        if service not in services:
+            continue
+        got = services[service].get("image", "")
+        if got != image:
+            failures.append(
+                f"{COMPOSE_OVERRIDE_FILE.name}: {service} runs {got}, not {image} -- "
+                "a local build of that component would sit beside a registry one"
+            )
+    return failures
 
 
 def main() -> int:
@@ -553,6 +595,16 @@ def main() -> int:
         f"on all {len(paths)} path(s)"
     )
     _print(msg="No healthcheck targets a retired health path")
+
+    coverage_failures = _override_coverage_failures(env=env)
+    for message in coverage_failures:
+        _print(msg=f"FAIL {message}")
+    if coverage_failures:
+        return 1
+    _print(
+        msg=f"{COMPOSE_OVERRIDE_FILE.name} repoints every service that runs a buildable "
+        "component's image, consumers included"
+    )
 
     ui_failures, ui_made = _ui_exposure_failures(env=env)
     for message in ui_failures:
