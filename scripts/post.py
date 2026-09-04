@@ -700,7 +700,13 @@ def _await_hunt(*, base: str, database: str, hunt: str, before: int, token: str)
         on_attempt=_report_rows,
     )
 
-    if not (matched):
+    if matched is None:
+        _print(
+            msg=f"FAIL  {database}.{HUNT_TARGET_TABLE} could not be read -- the hunt "
+            "output table does not exist, so no hunt on this stack can land anywhere"
+        )
+        return 1
+    if matched <= 0:
         _print(
             msg=f"FAIL  the runner ran {hunt!r} but wrote no row to "
             f"{database}.{HUNT_TARGET_TABLE} within {HUNT_DETECTION_TIMEOUT_SECONDS:.0f}s"
