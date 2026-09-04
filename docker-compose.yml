@@ -743,7 +743,9 @@ services:
     profiles: ["core"]
     restart: unless-stopped
     deploy: *limits-service
-    command: ["dfe-hunt-runner", "run", "--poll", "15", "--cap", "8"]
+    # The image's entrypoint is the engine CLI; the runner is its own console script.
+    entrypoint: ["dfe-hunt-runner"]
+    command: ["run", "--poll", "15", "--cap", "8"]
     env_file:
       - path: env/engine.env
         required: false
