@@ -773,6 +773,10 @@ services:
       clickhouse:
         condition: service_healthy
         required: false
+    # The runner has no HTTP listener, so the engine image's HEALTHCHECK (:9090/livez)
+    # can never pass here. Liveness is the ClickHouse lease the runner renews.
+    healthcheck:
+      disable: true
     working_dir: /home/appuser
 
   # ===========================================================================
