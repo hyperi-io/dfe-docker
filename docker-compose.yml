@@ -917,6 +917,10 @@ services:
       # UI (served by dfe-proxy on DFE_UI_PORT), not the HyperDX origin. Matches
       # the k8s hyperdx chart. next-runtime-env reads it per request.
       NEXT_PUBLIC_DFE_UI_BASE_URL: ${DFE_HYPERDX_APP_URL:-http://localhost}:${DFE_UI_PORT:-3000}
+      # The fork's CSP frame-ancestors allowlist. dfe-ui iframes /observe/* from a
+      # different origin here (:3000 vs :8090), so without this entry the browser
+      # blocks every embed.
+      DFE_EMBED_FRAME_ANCESTORS: ${DFE_HYPERDX_APP_URL:-http://localhost}:${DFE_UI_PORT:-3000}
       # HyperDX talks Mongo wire protocol; FerretDB serves it over Postgres.
       MONGO_URI: mongodb://${HYPERDX_POSTGRES_USER:-hyperdx}:${HYPERDX_POSTGRES_PASSWORD:-hyperdx}@hyperdx-ferretdb:27017/hyperdx?authSource=admin
       NEXT_PUBLIC_IS_LOCAL_MODE: "true"
