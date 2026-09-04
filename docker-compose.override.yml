@@ -21,7 +21,8 @@
 # LOCAL="dfe-engine dfe-ui"` writes docker-compose.local.yml instead of this.
 #
 # A service that runs a component's image under another name (dlq-init,
-# dfe-schema-init, dfe-hunt-runner) is repointed with it. The list is
+# dfe-schema-init, dfe-hunt-runner, dfe-transform-vrl-filebeat) is repointed
+# with it. The list is
 # IMAGE_CONSUMERS in scripts/build_dev_images.py and check-compose asserts this
 # file covers all of it.
 
@@ -45,6 +46,9 @@ services:
     image: dfe-transform-vector:local
 
   dfe-transform-vrl:
+    image: dfe-transform-vrl:local
+
+  dfe-transform-vrl-filebeat:
     image: dfe-transform-vrl:local
 
   dfe-engine:

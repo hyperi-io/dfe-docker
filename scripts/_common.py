@@ -73,6 +73,33 @@ def _rel_path(*, path: Path) -> str:
     return str(path.relative_to(REPO_ROOT))
 
 
+def _config_topics(*, path: Path) -> tuple[set[str], set[str], str]:
+    """Return (subscribed topics, produced topics, subscription regex) of one service config.
+
+    A deliberately small reader rather than a YAML parse: the service configs use
+    three topic keys and nothing else, and the callers have to run with no PyYAML
+    (CI installs it for ``make test-e2e`` only). A config that derives its topics
+    from a ``dfe_source`` instead of naming them returns empty sets.
+    """
+    subscribed: set[str] = set()
+    produced: set[str] = set()
+    regex = ""
+    in_list = False
+    for raw in path.read_text(encoding="utf-8", errors="replace").splitlines():
+        line = raw.strip()
+        if not (line) or line.startswith("#"):
+            continue
+        if in_list and line.startswith("- "):
+            subscribed.add(line[2:].strip().strip("\"'"))
+            continue
+        in_list = line == "topics:"
+        if line.startswith("topic: "):
+            produced.add(line.split(": ", 1)[1].strip().strip("\"'"))
+        elif line.startswith("topic_regex: "):
+            regex = line.split(": ", 1)[1].strip().strip("\"'")
+    return subscribed, produced, regex
+
+
 def _dotenv_values() -> dict[str, str]:
     """Parse .env into a dict, honouring the same minimal subset docker compose does.
 

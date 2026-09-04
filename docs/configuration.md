@@ -142,6 +142,10 @@ credential fields are `env:`-interpolated. Change it there.
 |--------------------------------------------------|--------------------------------------------------------------------------------------|---------------------------------------------------------------------|
 | `DFE_TRANSFORM_VRL_VERSION`                      | Version of dfe-transform-vrl to use                                                  | none -- `make stack` pins it; unset is a hard-fail                                                            |
 | `DFE_TRANSFORM_VRL_PROMETHEUS_PORT`              | Transform VRL Prometheus port                                                        | `9096`                                                              |
+| `DFE_TRANSFORM_VRL_FILEBEAT_PROMETHEUS_PORT`     | Prometheus port of the filebeat instance -- it runs the same image, so it needs its own | `9097`                                                           |
+
+The filebeat instance takes its version from `DFE_TRANSFORM_VRL_VERSION` as well:
+it is a second deployment of the one component, not a component of its own.
 
 ### ClickHouse
 

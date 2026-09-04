@@ -36,6 +36,7 @@ from _common import (
     FALSY,
     PROFILE_MK,
     SERVICE_PROFILES_FILE,
+    _config_topics,
     _load_dotenv,
     _print,
     _rel_path,
@@ -96,6 +97,12 @@ FOOTPRINT_KEYS = {
     "otel": (OTEL_ENABLED_ENV_VAR, False),
 }
 
+# Topics kafka-init pre-creates: the stack default plus the ones this profile's
+# transforms name. dfe-transform-vrl exits on a missing topic, its sink included.
+KAFKA_INIT_TOPICS_VAR = "KAFKA_INIT_TOPICS"
+KAFKA_INIT_TOPIC_DEFAULT = "default_land"
+TRANSFORM_SERVICE_PREFIX = "dfe-transform-"
+
 PROFILE_ENV_VAR = "DFE_PROFILE"
 PROFILE_ACTIVE_YAML_FIELD = "active_profile"
 PROFILE_LIST_YAML_FIELD = "profiles"
@@ -113,7 +120,10 @@ SERVICE_TO_CONFIG_VAR = {
     "dfe-receiver": "DFE_RECEIVER_CONFIG",
     "dfe-transform-vector": "DFE_TRANSFORM_VECTOR_CONFIG",
     "dfe-transform-vrl": "DFE_TRANSFORM_VRL_CONFIG",
+    "dfe-transform-vrl-filebeat": "DFE_TRANSFORM_VRL_FILEBEAT_CONFIG",
 }
+# A per-source transform instance is a service of its own here, because a
+# profile has to be able to run one without the other.
 SERVICES = [
     "dfe-archiver",
     "dfe-fetcher",
@@ -121,6 +131,7 @@ SERVICES = [
     "dfe-receiver",
     "dfe-transform-vector",
     "dfe-transform-vrl",
+    "dfe-transform-vrl-filebeat",
 ]
 
 TRANSPORT_TYPES = ["grpc", "kafka"]
@@ -171,6 +182,18 @@ def _validate_auth() -> None:
         + "\n".join(detail)
         + f"\nSet them in .env, or turn the profile off with {AUTH_ENABLED_ENV_VAR}=false",
     )
+
+
+def _init_topics(*, services: dict[str, object]) -> list[str]:
+    """Return the topics kafka-init must create for this profile, sorted."""
+    topics = {KAFKA_INIT_TOPIC_DEFAULT}
+    for service_name, service_config in services.items():
+        if not (service_name.startswith(TRANSFORM_SERVICE_PREFIX)):
+            continue
+        path = CONFIG_DIR / service_config[PROFILE_SERVICE_CONFIG_YAML_FIELD]
+        subscribed, produced, _ = _config_topics(path=path)
+        topics |= subscribed | produced
+    return sorted(topics)
 
 
 def _footprint(*, profile: dict[str, object], profile_name: str) -> dict[str, bool]:
@@ -332,6 +355,9 @@ def main() -> int:
         lines = []
         profile_flags = " ".join(f"--profile {profile}" for profile in profiles)
         lines.append(f"export PROFILE_FLAGS := {profile_flags}")
+        lines.append(
+            f"export {KAFKA_INIT_TOPICS_VAR} := {' '.join(_init_topics(services=services))}"
+        )
         # ClickHouse stays out of this list -- it starts via its compose profile
         # and the depends_on of whatever needs it. DFE_SERVICES is also what
         # build_dev_images.py builds and what `SERVICES=` narrows against.

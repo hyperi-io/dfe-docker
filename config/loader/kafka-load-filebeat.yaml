@@ -1,0 +1,31 @@
+# Project:   dfe-docker
+# File:      config/loader/kafka-load-filebeat.yaml
+# Purpose:   dfe-loader config - the shared transform output plus the filebeat source's own
+# Language:  YAML
+#
+# License:   BUSL-1.1
+# Copyright: (c) 2026 HYPERI PTY LIMITED
+#
+# One topic per transform instance, listed rather than matched: the loader strips
+# the _load suffix to get _source, and routes each to the table of that name, so
+# filebeat_load lands in dfe.filebeat and default_load in dfe.default.
+
+clickhouse:
+  hosts:
+    - clickhouse:8123
+  database: dfe
+  protocol: http
+  username: env:CLICKHOUSE_USERNAME
+  password: env:CLICKHOUSE_PASSWORD
+
+kafka:
+  brokers:
+    - kafka:9092
+  group: dfe-loader
+  topics:
+    - default_load
+    - filebeat_load
+
+routing:
+  dlq:
+    enabled: false

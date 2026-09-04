@@ -72,6 +72,32 @@ Both transforms and `dfe-archiver` are Kafka-only by construction: each reads a
 topic and writes a topic or a volume. With a transform in the profile the loader
 switches to `config/loader/kafka-load.yaml` and consumes `default_load` instead.
 
+### A source with its own transform gets its own instance
+
+A source configured with a transform stops sharing `default_land`: the receiver
+routes it to `<source>_land`, and only a transform reading THAT topic sees it.
+So the transform is deployed once per source, the same way the Kubernetes tier
+deploys one per Source definition, and the instance is the source -- its input
+topic, its program directory and its output topic all carry the source name.
+
+`kafka-filebeat` is the shipped example, and the shape another source copies:
+
+| Piece | For `filebeat` |
+|---|---|
+| Compose service | `dfe-transform-vrl-filebeat`, the same image, its own metrics port |
+| Config | `config/transform-vrl/filebeat.yaml` -- `filebeat_land` in, `filebeat_load` out |
+| Program | `config/transform-vrl/transforms-filebeat/`, vendored from dfe-transform-vrl |
+| Loader | `config/loader/kafka-load-filebeat.yaml` lists `filebeat_load` alongside `default_load` |
+| Table | `dfe.filebeat`, from the `_load` topic name -- the loader strips the suffix and routes on it |
+
+`dfe.filebeat` itself is dfe-engine's to create, from the `meta/beats/filebeat`
+meta schema, when the source is created -- nothing in this repo provisions it.
+Create the source before you send it data: a loader that meets rows for a table
+it has no schema for buffers them and then dead-letters them.
+
+`make check` asserts the wiring: a transform whose output topic no loader in the
+profile reads is a failure, not a stack that starts and quietly moves nothing.
+
 ## The management plane rides alongside
 
 Independent of transport, toggled as a unit by the `core` footprint key.
@@ -146,7 +172,7 @@ flowchart TD
 | `kafka-redpanda` | `kafka-redpanda`, `kafka-init-redpanda` |
 | `kafka-apache` | `kafka-apache`, `kafka-init-apache` |
 | `kafka-ui` | `kafka-ui` (Kafbat) |
-| `dfe` | `dlq-init`, archiver, fetcher, loader, receiver, both transforms |
+| `dfe` | `dlq-init`, archiver, fetcher, loader, receiver, every transform instance |
 | `core` | `dfe-engine`, `dfe-ui`, `dfe-proxy` |
 | `hyperdx` | `hyperdx`, `hyperdx-ferretdb`, `hyperdx-postgres` |
 | `otel` | `otel-collector` |
@@ -194,7 +220,7 @@ Dev builds fetch source into a managed git cache, or from your own checkouts whe
 | `dfe-loader` | Rust | Writes ClickHouse; hosts `DfeTransport/Push` | `dfe` |
 | `dfe-archiver` | Rust | Archive sink (filesystem, S3, MinIO, GCS, Azure Blob) | `dfe` |
 | `dfe-transform-vector` | Rust | Vector.dev subprocess wrapper, Kafka to Kafka | `dfe` |
-| `dfe-transform-vrl` | Rust | Embedded VRL transform engine | `dfe` |
+| `dfe-transform-vrl` | Rust | Embedded VRL transform engine; deployed once per source that has a transform | `dfe` |
 | `dfe-engine` | Python | Config and schema API; the schema authority | `core` |
 | `dfe-ui` | TypeScript | Web console | `core` |
 | `dfe-hyperdx` | TypeScript | HyperDX fork. Repo and published image are both `dfe-hyperdx` | `hyperdx` |

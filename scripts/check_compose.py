@@ -66,12 +66,15 @@ Beyond resolution, these semantic assertions ride along.
   See `_local_overlay_failures`.
 - That overlay must describe THIS run: a build that builds nothing removes it
   rather than leaving the previous run's. See `_overlay_staleness_failures`.
+- Every profile's transform output topic must be read by that profile's loader,
+  and no two transforms may consume one topic. See `_transform_wiring_failures`.
 """
 
 from __future__ import annotations
 
 import json
 import os
+import re
 import subprocess
 import sys
 
@@ -79,12 +82,16 @@ from _common import (
     COMPOSE_FILE,
     COMPOSE_LIVE_FILE,
     COMPOSE_OVERRIDE_FILE,
+    CONFIG_DIR,
     REPO_ROOT,
+    SERVICE_PROFILES_FILE,
+    _config_topics,
     _dotenv_values,
     _print,
     _required_compose_vars,
 )
 from build_dev_images import buildable_components, local_image_services, overlay_text
+from resolve_profile import _parse_yaml
 
 # The overlay `make dev LOCAL=...` generates, rendered for dfe-engine because it
 # is the component with IMAGE_CONSUMERS followers. Written under .tmp so compose
@@ -187,8 +194,13 @@ _DFE_OWNED_SERVICES = {
     "dfe-receiver",
     "dfe-transform-vector",
     "dfe-transform-vrl",
+    "dfe-transform-vrl-filebeat",
     "dfe-ui",
 }
+
+# Profile services whose config declares a Kafka sink topic somebody has to read.
+_TRANSFORM_PREFIX = "dfe-transform-"
+_LOADER_SERVICE = "dfe-loader"
 
 
 def _check_env() -> tuple[dict[str, str], list[str]]:
@@ -531,6 +543,57 @@ def _paths() -> list[tuple[str, list[str]]]:
     ]
 
 
+def _transform_wiring_failures() -> tuple[list[str], int]:
+    """Return (messages, assertions made) for every profile's transform topics.
+
+    Two properties, both of them things a profile can get wrong while every
+    service still starts and reports healthy:
+
+    - a transform's output topic must be read by that profile's loader, or the
+      events reach a topic and stop there (dfe-docker#66);
+    - two transform instances in one profile must not consume the same topic,
+      because each event would then take whichever program won the partition.
+    """
+    data = _parse_yaml(
+        text=SERVICE_PROFILES_FILE.read_text(encoding="utf-8", errors="replace")
+    )
+    failures: list[str] = []
+    made = 0
+    for name, profile in sorted(data.get("profiles", {}).items()):
+        services = profile.get("services", {})
+        transforms = {
+            service: config["config_path"]
+            for service, config in services.items()
+            if service.startswith(_TRANSFORM_PREFIX)
+        }
+        if not (transforms):
+            continue
+        loader = services.get(_LOADER_SERVICE, {}).get("config_path")
+        consumed, _, pattern = (
+            _config_topics(path=CONFIG_DIR / loader) if loader else (set(), set(), "")
+        )
+        seen: dict[str, str] = {}
+        for service, config_path in sorted(transforms.items()):
+            subscribed, produced, _ = _config_topics(path=CONFIG_DIR / config_path)
+            for topic in sorted(produced):
+                made += 1
+                if topic in consumed or (pattern and re.fullmatch(pattern, topic)):
+                    continue
+                failures.append(
+                    f"{name}: {service} produces {topic} and no loader in the profile "
+                    "consumes it -- events reach the topic and stop there"
+                )
+            for topic in sorted(subscribed):
+                made += 1
+                if topic in seen:
+                    failures.append(
+                        f"{name}: {service} and {seen[topic]} both consume {topic} -- "
+                        "an event would take whichever program won the partition"
+                    )
+                seen[topic] = service
+    return failures, made
+
+
 def _override_coverage_failures(*, env: dict[str, str]) -> list[str]:
     """Return one message per service the committed override leaves on the registry.
 
@@ -699,6 +762,16 @@ def main() -> int:
         f"on all {len(paths)} path(s)"
     )
     _print(msg="No healthcheck targets a retired health path")
+
+    wiring_failures, wiring_made = _transform_wiring_failures()
+    for message in wiring_failures:
+        _print(msg=f"FAIL {message}")
+    if wiring_failures:
+        return 1
+    _print(
+        msg="Every transform output topic is read by its profile's loader, and no two "
+        f"transforms in a profile consume the same topic ({wiring_made} assertions)"
+    )
 
     coverage_failures = _override_coverage_failures(env=env)
     for message in coverage_failures:
