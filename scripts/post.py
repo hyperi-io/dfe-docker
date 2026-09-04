@@ -42,6 +42,7 @@ that is a scalo contract change, not a Compose one.
 
 from __future__ import annotations
 
+import json
 import os
 import sys
 import time
@@ -347,13 +348,21 @@ def _engine_base() -> str:
 
 
 def _login(base: str) -> tuple[str, int, str]:
-    """Log the break-glass admin in. Returns (token, status, username).
+    """Log the console account in. Returns (token, status, username).
 
-    An empty token with status 0 means the password was never generated, which is
-    a different fault from a rejected login and reads differently to an operator.
+    DFE_POST_LOGIN_* names any account; the break-glass admin is the fallback. An
+    empty token with status 0 means no password is in the env at all, which is a
+    different fault from a rejected login and reads differently to an operator.
     """
-    username = os.environ.get("DFE_AUTH_LOCAL_ADMIN_NAME", "admin").strip() or "admin"
-    password = os.environ.get("DFE_AUTH_LOCAL_ADMIN_PASSWORD", "").strip()
+    username = (
+        os.environ.get("DFE_POST_LOGIN_USER", "").strip()
+        or os.environ.get("DFE_AUTH_LOCAL_ADMIN_NAME", "admin").strip()
+        or "admin"
+    )
+    password = (
+        os.environ.get("DFE_POST_LOGIN_PASSWORD", "").strip()
+        or os.environ.get("DFE_AUTH_LOCAL_ADMIN_PASSWORD", "").strip()
+    )
     if not (password):
         return "", 0, username
     status, body = http_post_json(
@@ -398,6 +407,18 @@ def _ui_query_count(
     return None
 
 
+def _wizard_rotated_admin_password(*, base: str) -> bool:
+    """True when the engine's setup-status says the wizard already rotated the break-glass password."""
+    try:
+        status = json.loads(http_get(f"{base}/auth/setup-status"))
+    except Exception:  # noqa: BLE001
+        return False
+    if not isinstance(status, dict):
+        return False
+    initial = status.get("initial_setup") or {}
+    return "admin_password" in (initial.get("completed_steps") or [])
+
+
 def _verify_ui_query(*, database: str, marker: str, table: str) -> int:
     """Prove the console's query path returns THIS run's rows.
 
@@ -417,16 +438,26 @@ def _verify_ui_query(*, database: str, marker: str, table: str) -> int:
     base = _engine_base()
     token, status, username = _login(base)
     if status == 0:
+        if _wizard_rotated_admin_password(base=base):
+            _print(
+                msg="SKIP  the setup wizard rotated the break-glass password, so no "
+                "console credential lives in the env -- set DFE_POST_LOGIN_USER and "
+                "DFE_POST_LOGIN_PASSWORD to prove the query path"
+            )
+            return 0
         _print(msg="FAIL  DFE_AUTH_LOCAL_ADMIN_PASSWORD is unset -- run `make init`")
         return 1
 
     _print(msg=f"Querying {database}.{table} through the engine API as {username!r}")
     if status != 200 or not (token):
-        # An engine seeded before this password was generated holds the old one, so
-        # retrying cannot help.
+        # An engine seeded before this password was generated holds the old one, and
+        # the setup wizard's last step rotates it: either way retrying cannot help.
         _print(
             msg=f"FAIL  login as {username!r} returned HTTP {status} -- the console "
-            "cannot authenticate, so nobody can read this data through dfe-ui"
+            "cannot authenticate, so nobody can read this data through dfe-ui. "
+            "If the setup wizard rotated the break-glass password, pass the current "
+            "one on the command line (shell env beats .env): "
+            "DFE_AUTH_LOCAL_ADMIN_PASSWORD=... make post"
         )
         return 1
 
@@ -532,6 +563,13 @@ def _verify_hunt(*, database: str, marker: str, table: str) -> int:
 
     base = _engine_base()
     token, status, username = _login(base)
+    if status == 0 and _wizard_rotated_admin_password(base=base):
+        _print(
+            msg="SKIP  the setup wizard rotated the break-glass password, so no console "
+            "credential lives in the env -- set DFE_POST_LOGIN_USER and "
+            "DFE_POST_LOGIN_PASSWORD to prove the hunt path"
+        )
+        return 0
     if status != 200 or not (token):
         _print(
             msg=f"FAIL  login as {username!r} returned HTTP {status} -- the hunt API "

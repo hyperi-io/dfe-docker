@@ -775,6 +775,10 @@ services:
       clickhouse:
         condition: service_healthy
         required: false
+    # The runner has no HTTP listener, so the engine image's HEALTHCHECK (:9090/livez)
+    # can never pass here. Liveness is the ClickHouse lease the runner renews.
+    healthcheck:
+      disable: true
     working_dir: /home/appuser
 
   # ===========================================================================
@@ -791,7 +795,7 @@ services:
       - path: env/ui.env
         required: false
     environment:
-      HYPERDX_PORT: ${DFE_HYPERDX_APP_PORT:-8090}
+      HYPERDX_PORT: ${DFE_HYPERDX_EMBED_PORT:-8091}
       NODE_ENV: ${DFE_UI_NODE_ENV:-production}
       # `make init` generates this. NOT a `:?` hard-fail -- that would abort even
       # `make down` for everyone. The sentinel is what makes a missing one loud.
@@ -827,6 +831,11 @@ services:
       # DFE_UI_BIND_HOST (the DFE_BIND_SCOPE dial) and the infra kill switch
       # never covers it, so only DFE_UI_EXTERNAL=false takes it dark.
       - ${DFE_UI_BIND_HOST:-127.0.0.1}:${DFE_UI_PORT:-3000}:8080
+      # HyperDX, re-served with frame-ancestors rewritten so the UI can iframe
+      # it. The app's own port stays infra class on the hyperdx service.
+      - ${DFE_UI_BIND_HOST:-127.0.0.1}:${DFE_HYPERDX_EMBED_PORT:-8091}:8091
+    environment:
+      DFE_HYPERDX_EMBED_ANCESTOR: ${DFE_HYPERDX_APP_URL:-http://localhost}:${DFE_UI_PORT:-3000}
     volumes:
       - ./config/proxy/envoy.yaml:/etc/envoy/envoy.yaml:ro
     depends_on:
@@ -956,6 +965,15 @@ services:
       - path: env/hyperdx.env
         required: false
     environment:
+      # The UI reads /api/connections, seeded from these. The NEXT_PUBLIC_HDX_LOCAL_*
+      # pair below is browser-side and this build ignores it, so without these the
+      # UI reports "no database connections found". Host resolves in-container --
+      # queries go through HyperDX's own /clickhouse-proxy. The name must be
+      # `local` or config/hyperdx/default-sources.json drops every source silently.
+      # 8123 is the container port and a constant; CLICKHOUSE_HTTP_PORT is the
+      # host binding, so dialling it in-network breaks a moved port (#32).
+      DEFAULT_CONNECTIONS: '[{"name":"local","host":"http://clickhouse:8123","username":"${CLICKHOUSE_USERNAME:-default}","password":"${CLICKHOUSE_PASSWORD:-}"}]'
+      DEFAULT_SOURCES_FILE: /etc/hyperdx/default-sources.json
       HYPERDX_API_PORT: 8000
       HYPERDX_APP_PORT: ${DFE_HYPERDX_APP_PORT:-8090}
       HYPERDX_APP_URL: ${DFE_HYPERDX_APP_URL:-http://localhost}
