@@ -20,7 +20,7 @@ like something else entirely, so read them before you go deep.
 ## Reading the stack's state
 
 `docker compose ps` (or `make ps`) is the first call. It shows which containers
-exist and their health, but only for the currently resolved profile -- see the
+exist and their health, but only for the profile resolved from `.env` -- see the
 first known issue below, because a stray container from a previous profile will
 not show up there while still holding its ports.
 
@@ -40,7 +40,7 @@ port table, which path each HEALTHCHECK uses and why, and dfe-ui's 200-on-unknow
 
 ## Known issues
 
-These are real and currently open. Each one has a symptom that misleads.
+These are real and open. Each one has a symptom that misleads.
 
 ### Stray containers from a previous profile (fixed, but worth recognising)
 
@@ -208,7 +208,7 @@ ownership is inherited from a path the image does not have. The real fix is for
 the component images to create `/var/spool/dfe` as appuser. The one-shot reuses
 the archiver image because that image is already pinned.
 
-Three sharp edges in that arrangement:
+Three ways that arrangement fails:
 
 1. `required: false` on the dependents means a **failed** dlq-init does not stop
    them -- Compose logs one warning and carries on with a zero exit. Watch for
@@ -255,6 +255,17 @@ shortage of CPU.
 
 `make check-compose` blocks a sub-2.0 ceiling on any service that gates on
 `/readyz`, so this should only reach you via a hand-edited override.
+
+### The self test fails on the console login
+
+`make post` logs in as the break-glass admin with `DFE_AUTH_LOCAL_ADMIN_PASSWORD`
+from `.env`. The setup wizard's last step rotates that password, so after
+onboarding the value in `.env` is stale and the login step returns 401. Pass the
+current one on the command line, since the shell environment beats `.env`:
+
+```bash
+DFE_AUTH_LOCAL_ADMIN_PASSWORD='the rotated password' make post
+```
 
 ### The self test fails on self-telemetry
 
