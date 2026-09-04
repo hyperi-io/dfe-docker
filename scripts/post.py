@@ -28,9 +28,9 @@ OPT-OUT, not opt-in: it runs unless `DFE_POST_ENABLED=false`. Something that onl
 runs when you remember to ask for it is not a power-on self test.
 
 Exit codes:
-  0  the pipeline moved the marked events (or the POST was skipped for a stated
-     reason -- disabled, or the running profile has no ingest component)
-  1  the events did not land, or landed unverifiably
+  0  every claim the active profile can make, held (or the POST was skipped for a
+     stated reason -- disabled, or the running profile has no ingest component)
+  1  a claim failed, or could not be checked
 
 Deliberately NOT a Docker HEALTHCHECK or a component entrypoint step. This
 assertion is cross-service and needs the whole stack up, which no single
@@ -631,11 +631,11 @@ def _await_hunt(*, base: str, database: str, hunt: str, before: int, token: str)
         )
         return 1
 
-    # The watermark is the runner's fingerprint: the engine never writes one, so a
-    # row here means the runner loaded a hunt that did not exist a moment ago and
-    # ran it, with nothing restarted in between.
     seen_running = {"flag": running}
 
+    # The watermark is the runner's fingerprint -- the engine never writes one --
+    # so a row for a hunt that did not exist a moment ago is the runner having
+    # re-read its dir, with nothing restarted in between.
     def _picked_up():
         live, _ = _hunt_status(base=base, token=token)
         seen_running["flag"] = seen_running["flag"] or live
