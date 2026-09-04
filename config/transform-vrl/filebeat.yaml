@@ -1,0 +1,47 @@
+# Project:   dfe-docker
+# File:      config/transform-vrl/filebeat.yaml
+# Purpose:   dfe-transform-vrl config - the per-source instance for the filebeat source
+# Language:  YAML
+#
+# License:   BUSL-1.1
+# Copyright: (c) 2026 HYPERI PTY LIMITED
+#
+# One transform instance per source, the same shape the Kubernetes tier deploys:
+# the receiver routes _source=filebeat to filebeat_land, this instance is the only
+# consumer of that topic, and dfe-loader derives the destination table from the
+# filebeat_load topic name.
+
+pipeline:
+  name: filebeat
+
+source:
+  brokers:
+    - kafka:9092
+  topics:
+    - filebeat_land
+  # Explicit, because the passthrough instance and this one must never share a
+  # group: Kafka assigns the union of a group's subscriptions across its members.
+  group_id: dfe-transform-vrl-filebeat
+
+transforms:
+  dir: /etc/dfe-transform-vrl/transforms
+
+# The ios and meraki branches of the bundled pipeline resolve timezone
+# abbreviations through this table, and a missing one is a compile error.
+enrichment_tables:
+  - name: timezones
+    path: /etc/dfe-transform-vrl/transforms/timezones.csv
+    key_columns: ["abbreviation"]
+
+sink:
+  brokers:
+    - kafka:9092
+  topic: filebeat_load
+  # Workaround: scalo's KafkaTransport::new always creates a
+  # BaseConsumer alongside the FutureProducer, even when only the producer
+  # side is used. Empty group.id makes librdkafka treat the instance as
+  # producer-only, and BaseConsumer construction then fails with
+  # "rdkafka consumer queue not available". Force a non-empty group.id via
+  # librdkafka_options so the unused consumer can be constructed.
+  librdkafka_options:
+    group.id: dfe-transform-vrl-filebeat-producer-dummy
