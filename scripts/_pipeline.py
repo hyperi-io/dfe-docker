@@ -58,6 +58,32 @@ def http_get(url: str, timeout: int = 5) -> str:
         return response.read().decode()
 
 
+def http_get_json(
+    url: str, token: str = "", timeout: int = 30
+) -> tuple[int, typing.Any]:
+    """GET and return (status, decoded body), for callers that need the body.
+
+    A body that is not JSON comes back as the raw text, so a proxy error page is
+    reported as what it is rather than raising a decode error over the top of it.
+    """
+    request = Request(url, method="GET")
+    if token:
+        request.add_header("Authorization", f"Bearer {token}")
+    try:
+        with urlopen(request, timeout=timeout) as response:
+            raw = response.read().decode()
+            status = response.status
+    except URLError as error:
+        if not (hasattr(error, "code")):
+            raise
+        raw = error.read().decode() if hasattr(error, "read") else ""
+        status = error.code
+    try:
+        return status, json.loads(raw)
+    except ValueError:
+        return status, raw
+
+
 def http_post_json(
     url: str,
     payload: dict,
@@ -107,6 +133,25 @@ def http_post(
         raise
 
 
+def http_delete(url: str, token: str = "", timeout: int = 10) -> int:
+    """DELETE a resource and return the HTTP status.
+
+    Used to put back what a self test created. It reports the status rather than
+    raising, because tidy-up runs on the failure path too and a second exception
+    there would bury the finding that mattered.
+    """
+    request = Request(url, method="DELETE")
+    if token:
+        request.add_header("Authorization", f"Bearer {token}")
+    try:
+        with urlopen(request, timeout=timeout) as response:
+            return response.status
+    except URLError as error:
+        if hasattr(error, "code"):
+            return error.code
+        raise
+
+
 def ch_query(sql: str, *, debug: typing.Callable[[str], None] | None = None) -> str:
     """Run a query over ClickHouse's HTTP interface, returning '' on any failure.
 
@@ -137,6 +182,21 @@ def ch_count(database: str, table: str, *, debug=None) -> int:
         return int(raw.strip())
     except (ValueError, AttributeError):
         return 0
+
+
+def ch_int(sql: str, *, debug=None) -> int | None:
+    """Run a single-value query and return it as an int, or None if unreadable.
+
+    None means the query did not run - a missing table, a column the schema does
+    not carry, an unreachable server. A caller waiting for rows to appear needs
+    that separate from a real zero, because only one of the two is worth waiting
+    on.
+    """
+    raw = ch_query(sql, debug=debug)
+    try:
+        return int(raw.strip())
+    except (ValueError, AttributeError):
+        return None
 
 
 def escape_literal(value: str) -> str:
