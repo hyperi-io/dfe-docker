@@ -73,6 +73,14 @@ ifneq (,$(filter-out $(BOOTSTRAP_GOALS),$(or $(MAKECMDGOALS),help)))
         DEV_FLAGS :=
         DEV_OVERLAY_ARG :=
     else
+        # Validated against the buildable set rather than the resolved stack: a
+        # name the builder skips builds nothing and leaves nothing to overlay.
+        ifneq ($(strip $(DFE_BUILDABLE_SERVICES)),)
+            UNBUILDABLE_LOCAL := $(filter-out $(DFE_BUILDABLE_SERVICES),$(LOCAL))
+            ifneq ($(UNBUILDABLE_LOCAL),)
+                $(error 'LOCAL' contains names this repo cannot build from source: $(UNBUILDABLE_LOCAL). Buildable: $(DFE_BUILDABLE_SERVICES))
+            endif
+        endif
         ifneq ($(strip $(DFE_SERVICES)),)
             INVALID_LOCAL := $(filter-out $(DFE_SERVICES),$(LOCAL))
             ifneq ($(INVALID_LOCAL),)
@@ -81,12 +89,16 @@ ifneq (,$(filter-out $(BOOTSTRAP_GOALS),$(or $(MAKECMDGOALS),help)))
         endif
         DEV_BUILD := $(LOCAL)
         # The pull runs before the build writes the overlay, so it names no
-        # overlay; only the infra profiles are pulled there anyway.
+        # overlay and resolves every image to its registry pin.
         DEV_PULL_FLAGS := -f docker-compose.yml $(STORAGE_FLAGS) $(UI_FLAGS)
-        DEV_FLAGS := $(DEV_PULL_FLAGS) -f $(LOCAL_OVERLAY)
+        # The local overlay takes the committed override's slot, keeping the
+        # default chain's relative order so `LIVE=1` resolves the engine volumes
+        # the same way with and without LOCAL.
+        DEV_FLAGS := -f docker-compose.yml -f $(LOCAL_OVERLAY)
         ifneq ($(strip $(LIVE)),)
             DEV_FLAGS += -f docker-compose.live.yml
         endif
+        DEV_FLAGS += $(STORAGE_FLAGS) $(UI_FLAGS)
         DEV_OVERLAY_ARG := --overlay $(LOCAL_OVERLAY)
     endif
 endif
@@ -203,11 +215,11 @@ init: ## Create .env and per-service env/<service>.env files from templates
 
 # Start targets require every per-service env file (dfe-ui reads INTERNAL_API_URL
 # from env/ui.env). Compose marks them optional so `make down` never needs them.
-# Recursive `=`: evaluated when the target runs, not when make parses.
-ENV_FILES_MISSING = $(filter-out $(notdir $(wildcard env/*.env)),$(notdir $(wildcard env.example/*.env)))
+# The guard creates what is missing (init is non-destructive) rather than refusing,
+# so a release that adds a template does not stop an initialised deployment.
 .PHONY: env-files
-env-files:
-	@$(if $(strip $(ENV_FILES_MISSING)),echo "env/ is missing $(ENV_FILES_MISSING) -- run 'make init' (creates them from env.example/, leaves existing files alone)" >&2; exit 1,:)
+env-files: ## Assert every env/<service>.env exists, creating any the templates have gained
+	@python3 scripts/env_files.py
 
 # GHCR auth for the private dfe-* images and the signed stack-manifest. A no-op
 # when DFE_GHCR_* are unset (a daemon authed out of band), so it is safe as an

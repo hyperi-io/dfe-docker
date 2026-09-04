@@ -40,6 +40,7 @@ from _common import (
     _print,
     _rel_path,
 )
+from build_dev_images import buildable_components
 
 AUTH_ENABLED_ENV_VAR = "DFE_AUTH_ENABLED"
 # One proxy per infra-UI ORIGIN, not per UI: oauth2-proxy serves a single
@@ -349,6 +350,13 @@ def main() -> int:
             if footprint["hyperdx"]:
                 service_list.extend(AUTH_HYPERDX_SERVICES)
         lines.append(f"export DFE_SERVICES := {' '.join(service_list)}")
+
+        # `LOCAL=` names components to BUILD, which is a smaller set than the
+        # services a profile runs, so make validates it against the builder's own
+        # list rather than against DFE_SERVICES.
+        lines.append(
+            f"export DFE_BUILDABLE_SERVICES := {' '.join(buildable_components())}"
+        )
 
         # The Makefile decides the compose fragment chain from this, so profile
         # key and env var can never disagree about whether auth is armed.

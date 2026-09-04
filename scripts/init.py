@@ -194,11 +194,20 @@ def _top_up_secrets(*, dotenv_path: Path) -> None:
     )
 
 
-def _report_drift(*, dotenv_path: Path, template_path: Path) -> None:
-    """Report template keys absent from an existing .env - the copy is one-shot, so it drifts."""
+def drift_keys(*, dotenv_path: Path, template_path: Path) -> list[str]:
+    """Return the template keys an existing dotenv file never received.
+
+    Key-level, so it catches a template that grew a setting inside a file that
+    already exists - which a file-level check cannot see.
+    """
     template_keys = _all_keys(text=template_path.read_text(encoding="utf-8"))
     dotenv_keys = _all_keys(text=dotenv_path.read_text(encoding="utf-8"))
-    missing = sorted(template_keys - dotenv_keys)
+    return sorted(template_keys - dotenv_keys)
+
+
+def _report_drift(*, dotenv_path: Path, template_path: Path) -> None:
+    """Report template keys absent from an existing .env - the copy is one-shot, so it drifts."""
+    missing = drift_keys(dotenv_path=dotenv_path, template_path=template_path)
     if not (missing):
         return
     _print(

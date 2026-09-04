@@ -39,7 +39,7 @@ Paths checked:
   takes. Its ``${DFE_SRC_ROOT:?...}`` mounts are hard-fail by design, so the
   placeholder injection covers that key the same way it covers image pins.
 - local: the registry path plus the overlay ``make dev LOCAL=...`` generates,
-  rendered here for one representative pair so the generator's output is
+  rendered here for one representative component so the generator's output is
   checked, not just its source.
 
 Each is checked against both Kafka backends, because the two are mutually
@@ -47,7 +47,7 @@ exclusive and a change can easily satisfy one and break the other -- which is
 precisely what happened with the topic-init service that ran a Redpanda image on
 the Apache profile.
 
-Beyond resolution, three semantic assertions ride along.
+Beyond resolution, these semantic assertions ride along.
 
 - No service that gates on a health endpoint may carry a CPU ceiling under
   `_MIN_HEALTH_CPUS` -- see that constant for why a lower ceiling takes the
@@ -61,6 +61,11 @@ Beyond resolution, three semantic assertions ride along.
 - The committed override must repoint every service that runs a buildable
   component's image, consumers included, or `make dev` runs two builds of one
   component. See `_override_coverage_failures`.
+- The overlay `make dev LOCAL=...` generates must put the named component and its
+  image consumers on `:local` and leave every other service on its registry pin.
+  See `_local_overlay_failures`.
+- That overlay must describe THIS run: a build that builds nothing removes it
+  rather than leaving the previous run's. See `_overlay_staleness_failures`.
 """
 
 from __future__ import annotations
@@ -81,10 +86,13 @@ from _common import (
 )
 from build_dev_images import buildable_components, local_image_services, overlay_text
 
-# The overlay `make dev LOCAL=...` generates, rendered for this pair. Written
-# under .tmp so compose resolves it relative to the repo like the shipped files.
-_LOCAL_SAMPLE = ["dfe-engine", "dfe-ui"]
+# The overlay `make dev LOCAL=...` generates, rendered for dfe-engine because it
+# is the component with IMAGE_CONSUMERS followers. Written under .tmp so compose
+# resolves it relative to the repo like the shipped files.
+_LOCAL_SAMPLE = ["dfe-engine"]
 _LOCAL_RENDER = REPO_ROOT / ".tmp" / "compose-check-local.yml"
+# A stack service the builder cannot build, for the overlay staleness assertion.
+_UNBUILDABLE_SAMPLE = "kafka-ui"
 
 # Enough to satisfy interpolation and produce a parseable image reference.
 _PLACEHOLDER = "0.0.0-compose-check"
@@ -492,6 +500,14 @@ def _health_cpu_failures(*, env: dict[str, str], files: list[str]) -> list[str]:
     return failures
 
 
+def _render_local_overlay() -> None:
+    """Render the `make dev LOCAL=...` overlay for the sample component, uncommitted."""
+    _LOCAL_RENDER.parent.mkdir(parents=True, exist_ok=True)
+    _LOCAL_RENDER.write_text(
+        overlay_text(_LOCAL_SAMPLE), encoding="utf-8", newline="\n"
+    )
+
+
 def _paths() -> list[tuple[str, list[str]]]:
     """Return the (label, compose file list) pairs we ship and therefore must check."""
     for shipped in (COMPOSE_OVERRIDE_FILE, COMPOSE_LIVE_FILE):
@@ -504,10 +520,6 @@ def _paths() -> list[tuple[str, list[str]]]:
                 f"{shipped.name} is missing -- it is committed and used by "
                 "`make dev`, so that path cannot be checked"
             )
-    _LOCAL_RENDER.parent.mkdir(parents=True, exist_ok=True)
-    _LOCAL_RENDER.write_text(
-        overlay_text(_LOCAL_SAMPLE), encoding="utf-8", newline="\n"
-    )
     return [
         ("registry", [COMPOSE_FILE.name]),
         ("dev", [COMPOSE_FILE.name, COMPOSE_OVERRIDE_FILE.name]),
@@ -544,12 +556,104 @@ def _override_coverage_failures(*, env: dict[str, str]) -> list[str]:
     return failures
 
 
+def _local_overlay_failures(*, env: dict[str, str]) -> tuple[list[str], int]:
+    """Return (messages, assertions made) for the images the generated LOCAL overlay resolves to.
+
+    The overlay is what `make dev LOCAL=...` puts in front of the registry path,
+    so it is checked by VALUE and not merely parsed: the named component and every
+    service running its image must resolve to `:local`, and every other service
+    must keep the image the registry path gives it.
+    """
+    registry = _config_json(env=env, files=[COMPOSE_FILE.name])
+    local = _config_json(
+        env=env,
+        files=[COMPOSE_FILE.name, str(_LOCAL_RENDER.relative_to(REPO_ROOT))],
+    )
+    if registry is None or local is None:
+        return (
+            ["the local overlay path did not resolve, so its images are unknown"],
+            0,
+        )
+
+    want = local_image_services(_LOCAL_SAMPLE)
+    services = local.get("services", {})
+    failures = []
+    made = 0
+    for service, image in sorted(want.items()):
+        made += 1
+        if service not in services:
+            failures.append(
+                f"{_LOCAL_RENDER.name}: {service} runs a {', '.join(_LOCAL_SAMPLE)} "
+                "image but is not in the resolved stack"
+            )
+            continue
+        got = services[service].get("image", "")
+        if got != image:
+            failures.append(
+                f"{_LOCAL_RENDER.name}: {service} runs {got}, not {image} -- a "
+                "LOCAL build leaves a follower on the registry image"
+            )
+    for service, service_config in sorted(services.items()):
+        if service in want:
+            continue
+        made += 1
+        pinned = registry.get("services", {}).get(service, {}).get("image", "")
+        got = service_config.get("image", "")
+        if got != pinned:
+            failures.append(
+                f"{_LOCAL_RENDER.name}: {service} runs {got}, not its pin {pinned} -- "
+                "LOCAL builds only what it names and leaves the rest on the registry"
+            )
+    return failures, made
+
+
+def _overlay_staleness_failures() -> tuple[list[str], int]:
+    """Return (messages, assertions made) for the overlay always describing THIS run.
+
+    Runs the builder for a name it cannot build. The overlay must be gone and the
+    run must fail: leaving the previous run's file would start services on
+    `:local` images nothing rebuilt.
+    """
+    stale = REPO_ROOT / ".tmp" / "compose-check-stale-local.yml"
+    stale.parent.mkdir(parents=True, exist_ok=True)
+    stale.write_text(overlay_text(_LOCAL_SAMPLE), encoding="utf-8", newline="\n")
+    result = subprocess.run(
+        [
+            sys.executable,
+            "scripts/build_dev_images.py",
+            "--overlay",
+            str(stale),
+            _UNBUILDABLE_SAMPLE,
+        ],
+        capture_output=True,
+        cwd=REPO_ROOT,
+        encoding="utf-8",
+        errors="replace",
+        text=True,
+    )
+    failures = []
+    if stale.exists():
+        stale.unlink()
+        failures.append(
+            f"build_dev_images.py left {stale.name} in place after building nothing "
+            f"-- a `make dev LOCAL={_UNBUILDABLE_SAMPLE}` would run the previous "
+            "run's overlay"
+        )
+    if result.returncode == 0:
+        failures.append(
+            f"build_dev_images.py exited 0 with nothing built for "
+            f"{_UNBUILDABLE_SAMPLE!r} -- the compose call that follows has no overlay"
+        )
+    return failures, 2
+
+
 def main() -> int:
     if not (COMPOSE_FILE.is_file()):
         _print(header=COMPOSE_FILE.name, msg="Not found")
         return 1
 
     try:
+        _render_local_overlay()
         paths = _paths()
     except FileNotFoundError as error:
         _print(msg=str(error))
@@ -604,6 +708,26 @@ def main() -> int:
     _print(
         msg=f"{COMPOSE_OVERRIDE_FILE.name} repoints every service that runs a buildable "
         "component's image, consumers included"
+    )
+
+    local_failures, local_made = _local_overlay_failures(env=env)
+    for message in local_failures:
+        _print(msg=f"FAIL {message}")
+    if local_failures:
+        return 1
+    _print(
+        msg=f"The generated LOCAL overlay puts {', '.join(_LOCAL_SAMPLE)} and its "
+        f"consumers on :local and everything else on its pin ({local_made} assertions)"
+    )
+
+    stale_failures, stale_made = _overlay_staleness_failures()
+    for message in stale_failures:
+        _print(msg=f"FAIL {message}")
+    if stale_failures:
+        return 1
+    _print(
+        msg="A build that builds nothing removes the overlay instead of leaving the "
+        f"previous run's ({stale_made} assertions)"
     )
 
     ui_failures, ui_made = _ui_exposure_failures(env=env)
