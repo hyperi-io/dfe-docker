@@ -5,8 +5,12 @@
 # straight into `_tags`, which is a ClickHouse JSON column -- an array there is
 # rejected with "Cannot read JSON object from JSON element" and the rejection
 # fails the whole batch, not the one field. Wrapping the list in an object keeps
-# every tag and gives the column the shape it declares. Remove this once
-# dfe-loader#139 makes the hoist shape-aware.
+# every tag and gives the column the shape it declares.
+#
+# Still required on dfe-loader v1.18.30: dfe-loader#140 shaped the tags_fields
+# hoist, but `_tags` is filled from the column's own
+# `@source: first(tags/_tags/meta/metadata.tags)` comment, and that mapping
+# copies the array verbatim. Remove this when dfe-loader#139 covers that path.
 ##############################################################################
 
 if is_array(.tags) {
