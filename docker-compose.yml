@@ -720,6 +720,8 @@ services:
     volumes:
       - ./config/${DFE_TRANSFORM_VRL_FILEBEAT_CONFIG:-transform-vrl/filebeat.yaml}:/etc/dfe-transform-vrl/config.yaml:ro
       - ./config/transform-vrl/transforms-filebeat:/etc/dfe-transform-vrl/transforms:ro
+      # Enrichment tables mount beside the program directory, never inside it.
+      - ./config/transform-vrl/data:/etc/dfe-transform-vrl/data:ro
     healthcheck:
       test: ["CMD", "curl", "-sf", "http://localhost:9090/livez"]
       interval: 10s

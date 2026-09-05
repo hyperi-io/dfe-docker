@@ -27,10 +27,12 @@ transforms:
   dir: /etc/dfe-transform-vrl/transforms
 
 # The ios and meraki branches of the bundled pipeline resolve timezone
-# abbreviations through this table, and a missing one is a compile error.
+# abbreviations through this table, and a missing one is a compile error. The
+# table lives outside transforms.dir because the transform scans that directory
+# for programs and a non-.vrl file there is only tolerated by the glob.
 enrichment_tables:
   - name: timezones
-    path: /etc/dfe-transform-vrl/transforms/timezones.csv
+    path: /etc/dfe-transform-vrl/data/timezones.csv
     key_columns: ["abbreviation"]
 
 sink:

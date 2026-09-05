@@ -100,6 +100,29 @@ def _config_topics(*, path: Path) -> tuple[set[str], set[str], str]:
     return subscribed, produced, regex
 
 
+def _config_enrichment_paths(*, path: Path) -> set[str]:
+    """Return the container paths a service config's `enrichment_tables` entries name.
+
+    The same deliberately small reader as `_config_topics`, for the same reason:
+    the callers run with no PyYAML. A config with no enrichment tables returns an
+    empty set.
+    """
+    paths: set[str] = set()
+    in_block = False
+    for raw in path.read_text(encoding="utf-8", errors="replace").splitlines():
+        line = raw.strip()
+        if not (line) or line.startswith("#"):
+            continue
+        if line == "enrichment_tables:":
+            in_block = True
+            continue
+        if in_block and not (raw.startswith((" ", "\t"))):
+            in_block = False
+        if in_block and (line.startswith("path: ") or line.startswith("- path: ")):
+            paths.add(line.split("path: ", 1)[1].strip().strip("\"'"))
+    return paths
+
+
 def _dotenv_values() -> dict[str, str]:
     """Parse .env into a dict, honouring the same minimal subset docker compose does.
 

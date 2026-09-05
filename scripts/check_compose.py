@@ -68,6 +68,8 @@ Beyond resolution, these semantic assertions ride along.
   rather than leaving the previous run's. See `_overlay_staleness_failures`.
 - Every profile's transform output topic must be read by that profile's loader,
   and no two transforms may consume one topic. See `_transform_wiring_failures`.
+- Every enrichment table a transform config names must resolve to a file through
+  that service's own bind mounts. See `_enrichment_table_failures`.
 """
 
 from __future__ import annotations
@@ -77,6 +79,7 @@ import os
 import re
 import subprocess
 import sys
+from pathlib import Path
 
 from _common import (
     COMPOSE_FILE,
@@ -85,6 +88,7 @@ from _common import (
     CONFIG_DIR,
     REPO_ROOT,
     SERVICE_PROFILES_FILE,
+    _config_enrichment_paths,
     _config_topics,
     _dotenv_values,
     _print,
@@ -561,11 +565,18 @@ def _transform_wiring_failures() -> tuple[list[str], int]:
     made = 0
     for name, profile in sorted(data.get("profiles", {}).items()):
         services = profile.get("services", {})
-        transforms = {
-            service: config["config_path"]
-            for service, config in services.items()
-            if service.startswith(_TRANSFORM_PREFIX)
-        }
+        transforms = {}
+        for service, config in services.items():
+            if not (service.startswith(_TRANSFORM_PREFIX)):
+                continue
+            config_path = config.get("config_path")
+            if config_path is None:
+                failures.append(
+                    f"{name}: {service} declares no config_path -- its topics cannot "
+                    "be read, so nothing checks what it consumes or produces"
+                )
+                continue
+            transforms[service] = config_path
         if not (transforms):
             continue
         loader = services.get(_LOADER_SERVICE, {}).get("config_path")
@@ -591,6 +602,61 @@ def _transform_wiring_failures() -> tuple[list[str], int]:
                         "an event would take whichever program won the partition"
                     )
                 seen[topic] = service
+    return failures, made
+
+
+def _bind_host_path(*, binds: dict[str, Path], target: str) -> Path | None:
+    """Return the file on disk a container path resolves to, or None if nothing mounts it.
+
+    Longest mount first, so a nested mount wins over the directory containing it.
+    """
+    for mount, source in sorted(binds.items(), key=lambda item: -len(item[0])):
+        mount = mount.rstrip("/")
+        if target == mount:
+            return source
+        if target.startswith(f"{mount}/"):
+            return source / target[len(mount) + 1 :]
+    return None
+
+
+def _enrichment_table_failures(*, env: dict[str, str]) -> tuple[list[str], int]:
+    """Return (messages, assertions made) for the enrichment tables the transforms name.
+
+    An `enrichment_tables` entry names a CONTAINER path, and a transform that
+    cannot open one fails to compile its programs at startup -- a running-stack
+    failure compose resolution never sees. So each path is mapped back through the
+    service's own bind mounts and the file is required to exist on disk.
+    """
+    config = _config_json(env=env, files=[COMPOSE_FILE.name])
+    if config is None:
+        return (
+            ["the registry path did not resolve, so enrichment tables are unknown"],
+            0,
+        )
+    failures: list[str] = []
+    made = 0
+    for name, service in sorted(config.get("services", {}).items()):
+        if not (name.startswith(_TRANSFORM_PREFIX)):
+            continue
+        binds = {
+            volume["target"]: Path(volume["source"])
+            for volume in service.get("volumes") or []
+            if volume.get("type") == "bind" and volume.get("source")
+        }
+        for source in sorted(path for path in binds.values() if path.is_file()):
+            for target in sorted(_config_enrichment_paths(path=source)):
+                made += 1
+                host = _bind_host_path(binds=binds, target=target)
+                if host is None:
+                    failures.append(
+                        f"{name}: enrichment table {target} is under no bind mount -- "
+                        "the transform cannot open it and fails to compile its programs"
+                    )
+                elif not (host.is_file()):
+                    failures.append(
+                        f"{name}: enrichment table {target} maps to {host}, which is "
+                        "not a file -- the transform fails to compile its programs"
+                    )
     return failures, made
 
 
@@ -771,6 +837,16 @@ def main() -> int:
     _print(
         msg="Every transform output topic is read by its profile's loader, and no two "
         f"transforms in a profile consume the same topic ({wiring_made} assertions)"
+    )
+
+    table_failures, table_made = _enrichment_table_failures(env=env)
+    for message in table_failures:
+        _print(msg=f"FAIL {message}")
+    if table_failures:
+        return 1
+    _print(
+        msg="Every enrichment table a transform config names resolves to a file "
+        f"through that service's bind mounts ({table_made} assertions)"
     )
 
     coverage_failures = _override_coverage_failures(env=env)

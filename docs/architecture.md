@@ -68,19 +68,20 @@ ingest components produce to a `*_land` topic derived from the event's `_source`
 and the loader consumes `topic_regex: .*_land`. On a `grpc-*` profile there is no
 broker -- the ingest components dial `dfe-loader:50051` directly.
 
-Both transforms and `dfe-archiver` are Kafka-only by construction: each reads a
-topic and writes a topic or a volume. With a transform in the profile the loader
-switches to `config/loader/kafka-load.yaml` and consumes `default_load` instead.
+Both transforms and `dfe-archiver` are Kafka-only: each reads a topic and writes
+a topic or a volume. With a transform in the profile the loader switches to
+`config/loader/kafka-load.yaml` and consumes `default_load`.
 
 ### A source with its own transform gets its own instance
 
-A source configured with a transform stops sharing `default_land`: the receiver
-routes it to `<source>_land`, and only a transform reading THAT topic sees it.
-So the transform is deployed once per source, the same way the Kubernetes tier
-deploys one per Source definition, and the instance is the source -- its input
-topic, its program directory and its output topic all carry the source name.
+A source with a transform stops sharing `default_land`: the receiver routes it to
+`<source>_land`, and only a transform reading THAT topic sees it. So a transform
+is deployed once per source, as the Kubernetes tier deploys one per Source
+definition -- input topic, program directory and output topic all carry the name.
 
-`kafka-filebeat` is the shipped example, and the shape another source copies:
+`kafka-filebeat` is the shipped example, and the shape another source copies. All
+ten pieces are needed: the first five carry the data, the rest keep dev mode,
+profile resolution and the checks working.
 
 | Piece | For `filebeat` |
 |---|---|
@@ -89,14 +90,20 @@ topic, its program directory and its output topic all carry the source name.
 | Program | `config/transform-vrl/transforms-filebeat/`, vendored from dfe-transform-vrl |
 | Loader | `config/loader/kafka-load-filebeat.yaml` lists `filebeat_load` alongside `default_load` |
 | Table | `dfe.filebeat`, from the `_load` topic name -- the loader strips the suffix and routes on it |
+| Enrichment data | `config/transform-vrl/data/`, mounted beside the program dir -- the transform scans that dir for programs |
+| Dev images | an override block plus `IMAGE_CONSUMERS` in `scripts/build_dev_images.py`, or `make dev` leaves it on the registry pin |
+| Env file | `env.example/transform-vrl-filebeat.env` for its own overrides; `make init` copies it into `env/` |
+| Profile resolution | `SERVICES` and `SERVICE_TO_CONFIG_VAR` in `scripts/resolve_profile.py`, so a profile can run it without the passthrough instance |
+| Check coverage | `_DFE_OWNED_SERVICES` in `scripts/check_compose.py`, which holds it to the `/livez` health surface |
+| Metrics port | a free host port (`DFE_TRANSFORM_VRL_FILEBEAT_PROMETHEUS_PORT`, 9097): every instance serves 9090 and two cannot publish one |
 
-`dfe.filebeat` itself is dfe-engine's to create, from the `meta/beats/filebeat`
-meta schema, when the source is created -- nothing in this repo provisions it.
-Create the source before you send it data: a loader that meets rows for a table
-it has no schema for buffers them and then dead-letters them.
+`dfe.filebeat` is dfe-engine's to create from the `meta/beats/filebeat` meta
+schema -- nothing here provisions it. Create the source before sending it data: a
+loader that meets rows for a table it has no schema for buffers them, then
+dead-letters them.
 
 `make check` asserts the wiring: a transform whose output topic no loader in the
-profile reads is a failure, not a stack that starts and quietly moves nothing.
+profile reads fails, as does an enrichment table no mount resolves.
 
 ## The management plane rides alongside
 
