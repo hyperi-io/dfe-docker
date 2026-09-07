@@ -720,6 +720,8 @@ def _credential_fault(*, config: dict) -> str:
     """Return why the engine's admin credential is unusable, or empty when it is fine."""
     service = config.get("services", {}).get(_ENGINE_SERVICE, {})
     environment = service.get("environment") or {}
+    # Engine contract: settings.is_dev_posture strips and lowercases DFE_ENV, and
+    # auth.bootstrap.default_credentials_in_use strips the password before comparing.
     posture = str(environment.get(_POSTURE_KEY) or "").strip().lower()
     password = str(environment.get(_ADMIN_PASSWORD_KEY) or "").strip()
     if password and password != _DEFAULT_PASSWORD:

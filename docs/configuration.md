@@ -274,8 +274,6 @@ Off by default. `DFE_HYPERDX_ENABLED=true` starts `hyperdx` (API + App) plus its
 | 9096  | dfe-transform-vrl    | Prometheus metrics |
 | 9097  | dfe-transform-vrl-filebeat | Prometheus metrics |
 | 9098  | dfe-transform-vector-filebeat | Prometheus metrics |
-| 9598  | dfe-transform-vector | Vector internal_metrics |
-| 9599  | dfe-transform-vector-filebeat | Vector internal_metrics |
 | 13133 | otel-collector       | health_check       |
 | 19092 | Kafka (any backend)  | Plaintext host     |
 | 50051 | dfe-loader           | gRPC               |

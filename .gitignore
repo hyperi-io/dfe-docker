@@ -8,6 +8,8 @@ Thumbs.db
 .env
 .env.local
 .env.*.local
+# Written by `make dev-posture`: the .env it replaced, credentials and all.
+.env.bak-*
 deployment.yaml
 # Written by the track-latest daemon: the stack version it last applied.
 .dfe-stack-applied

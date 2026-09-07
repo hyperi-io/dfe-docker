@@ -197,11 +197,11 @@ In `dev` mode, they build from each repo's own Dockerfile (not the shared Rust b
 |--------------------|--------------------------------------------------------------------|
 | `make init`        | Create .env and per-service .env files from templates, minting the admin and break-glass passwords |
 | `make env-files`   | Assert every `env/<service>.env` exists, creating any the templates have gained |
-| `make creds`       | Print the access summary -- console URL, admin login, where the break-glass password lives |
+| `make creds`       | Print the access summary -- console URL, admin login, where the break-glass password lives. The password prints on a TTY only; a pipe, a file or `DFE_CREDS_SHOW=0` gets the `.env` key instead |
 | `make up`          | Start the pinned stack and print the access summary                |
 | `make dev`         | Build local DFE images from source and start the stack (`LOCAL="..."` builds only those, rest pinned) |
 | `make dev-build`   | Build local DFE images from source (no start)                      |
-| `make ci`          | Pull and start infra and registry DFE images                       |
+| `make ci`          | Pull and start infra and registry DFE images. Prints no credentials -- `make up` is the same start plus `make creds` |
 | `make ci-pull`     | Pull infra and registry DFE images (no start)                      |
 | `make infra`       | Start infrastructure services                                      |
 | `make ps`          | Show running containers                                            |
@@ -214,6 +214,7 @@ In `dev` mode, they build from each repo's own Dockerfile (not the shared Rust b
 | Command            | Description                                                       |
 |--------------------|-------------------------------------------------------------------|
 | `make test-e2e`    | End-to-end test executor                                          |
+| `make check-tests` | Unit tests over the credential helpers (`scripts/tests`)          |
 
 The e2e harness (`scripts/test_e2e.py`, config `tests/e2e/e2e-tests.yaml`) runs
 the core data-path acceptance: POST known JSON at the ingest edge and assert the

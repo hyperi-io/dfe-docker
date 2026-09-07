@@ -10,16 +10,21 @@
 """Hand the operator the credentials this deployment minted.
 
 `make init` mints the admin and break-glass passwords into .env and prints
-neither, so something has to hand them over afterwards. This is it: `make up`,
-`make dev` and `make ci` end with it, and `make creds` prints it again on demand.
-The engine names the same command on its login page while first-run setup is
-incomplete (deployment_hints.credential_fetch_command for the docker target), so
-an operator who lands on the login page with no password is one line from having
-one.
+neither, so something has to hand them over afterwards. This is it: `make up` and
+`make dev` end with it, and `make creds` prints it again on demand. The engine
+names the same command on its login page while first-run setup is incomplete
+(deployment_hints.credential_fetch_command for the docker target), so an operator
+who lands on the login page with no password is one line from having one.
 
-The admin password is printed. The break-glass password is NOT: the engine hashes
-it into the deploy repo on its first boot and never stores the plaintext, so this
-says where it lives and leaves reading it a deliberate act.
+The admin password prints ONLY to a terminal. A pipe, a file or a CI job log gets
+the line that says which key in .env holds it instead, because a build log is
+read by more people, for longer, than the person who ran the command.
+DFE_CREDS_SHOW=0 takes the same branch on a terminal. `make ci` does not call this
+at all.
+
+The break-glass password is never printed: the engine hashes it into the deploy
+repo on its first boot and never stores the plaintext, so this says where it
+lives and leaves reading it a deliberate act.
 
 Values are read out of .env with the same minimal parser compose uses. A key with
 no value reads as missing and is reported as such rather than printed blank.
@@ -27,14 +32,19 @@ no value reads as missing and is reported as such rather than printed blank.
 
 from __future__ import annotations
 
+import os
 import sys
 
 from _common import (
     DOTENV_FILE,
+    FALSY,
     _dotenv_values,
     _print,
     _rel_path,
 )
+
+# Set to 0 to keep the password off a terminal too.
+_SHOW_KEY = "DFE_CREDS_SHOW"
 
 # The account names the engine seeds. `breakglass` is fixed in the engine
 # (auth/breakglass.py); `admin` is overridable per deployment.
@@ -71,7 +81,15 @@ def default_admin_password(password: str) -> bool:
     return not password.strip() or password.strip() == _DEFAULT_PASSWORD
 
 
-def summary_lines(*, values: dict[str, str]) -> list[str]:
+def show_password(*, is_tty: bool, setting: str) -> bool:
+    """True when the admin password may be printed -- a terminal, not turned off."""
+    # An unset DFE_CREDS_SHOW reads as "", which is in FALSY and must not count.
+    if setting.strip() and setting.strip().lower() in FALSY:
+        return False
+    return is_tty
+
+
+def summary_lines(*, values: dict[str, str], reveal: bool = True) -> list[str]:
     """The access summary, one line per thing the operator needs."""
     environment = values.get("DFE_ENV", "").strip() or "dev"
     admin = values.get(_ADMIN_NAME_KEY, "").strip() or "admin"
@@ -83,14 +101,23 @@ def summary_lines(*, values: dict[str, str]) -> list[str]:
         f"    console      {_url(values=values, port_key='DFE_UI_PORT', default_port='3000')}",
         f"    engine API   {_url(values=values, port_key='DFE_ENGINE_PORT', default_port='8003')}",
     ]
-    if password:
+    if password and reveal:
         lines.append(f"    login        {admin} / {password}")
+    elif password:
+        lines.append(
+            f"    login        {admin} / the value of {_ADMIN_PASSWORD_KEY} in "
+            f"{_rel_path(path=DOTENV_FILE)}"
+        )
+        lines.append(
+            "                 not printed -- stdout is not a terminal, so run "
+            "`make creds` on one to see it"
+        )
     else:
         lines.append(
             f"    login        {admin} / NOT MINTED -- run `make init` to mint "
             f"{_ADMIN_PASSWORD_KEY}"
         )
-    if default_admin_password(password) and is_dev_posture(environment):
+    if reveal and default_admin_password(password) and is_dev_posture(environment):
         lines.append(
             f"                 DFE_ENV={environment}, so the engine accepts this "
             "default and asks for a change at first login"
@@ -121,7 +148,10 @@ def main() -> int:
             msg="Missing -- run `make init` to mint this deployment's credentials",
         )
         return 1
-    for line in summary_lines(values=_dotenv_values()):
+    reveal = show_password(
+        is_tty=sys.stdout.isatty(), setting=os.environ.get(_SHOW_KEY, "")
+    )
+    for line in summary_lines(values=_dotenv_values(), reveal=reveal):
         print(line)
     return 0
 

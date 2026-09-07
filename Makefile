@@ -41,7 +41,7 @@ endif
 # any more (both sweep every profile), and requiring a resolvable profile to STOP
 # a stack is the same lockout the compose secret comments argue against -- set
 # DFE_PROFILE to something that does not exist and you could not tear down.
-BOOTSTRAP_GOALS := init env-files creds dev-posture help login stack dial modes down clean limits check check-compose check-hardfail check-dockerfile check-docs check-python
+BOOTSTRAP_GOALS := init env-files creds dev-posture help login stack dial modes down clean limits check check-compose check-hardfail check-dockerfile check-docs check-python check-tests
 
 # Resolve the active profile only when a goal actually needs the compose stack
 ifneq (,$(filter-out $(BOOTSTRAP_GOALS),$(or $(MAKECMDGOALS),help)))
@@ -222,17 +222,18 @@ env-files: ## Assert every env/<service>.env exists, creating any the templates 
 	@python3 scripts/env_files.py
 
 # `make init` mints the admin and break-glass passwords and prints neither, so
-# this is the hand-over. The start targets end with it, and the engine names it on
-# its own login page while first-run setup is incomplete.
+# this is the hand-over. `make up` and `make dev` end with it; `make ci` does not
+# call it, because its stdout is a build log.
 .PHONY: creds
-creds: ## Print the access summary -- console URL, admin login, where the break-glass password lives
+creds: ## Print the access summary. The admin password prints on a TTY only -- a pipe, a file, a CI log or DFE_CREDS_SHOW=0 gets the .env key instead
 	@python3 scripts/creds.py
 
 # A dev tyre-kick logs in without looking anything up, so `make dev` writes the
 # KNOWN default password and DFE_ENV=dev, the one posture the engine accepts it in.
-# It refuses on any other DFE_ENV rather than downgrading a deployment's posture.
+# It refuses with exit 2 on any other DFE_ENV, and copies .env to .env.bak-<utc>
+# before overwriting a minted password.
 .PHONY: dev-posture
-dev-posture: .env ## Put .env into the dev posture (known admin password, DFE_ENV=dev)
+dev-posture: .env ## Put .env into the dev posture (known admin password, DFE_ENV=dev), backing the old .env up first
 	@python3 scripts/dev_posture.py
 
 # GHCR auth for the private dfe-* images and the signed stack-manifest. A no-op
@@ -280,7 +281,7 @@ ifneq ($(strip $(DFE_DATA_ROOT)),)
 endif
 
 .PHONY: dev
-dev: env-files dev-posture down storage-dirs ## Build local DFE images from source and start the dev stack (LOCAL="svc ..." builds only those, rest pinned)
+dev: env-files dev-posture down storage-dirs ## Build local DFE images from source and start the dev stack (LOCAL="svc ..." builds only those, rest pinned), then print the access summary
 	docker compose $(DEV_PULL_FLAGS) $(PROFILE_FLAGS) pull
 	python3 scripts/build_dev_images.py $(DEV_OVERLAY_ARG) $(DEV_BUILD)
 	docker compose $(DEV_FLAGS) $(PROFILE_FLAGS) up -d $(ACTIVE_SERVICES)
@@ -297,17 +298,18 @@ dev-build: ## Build local DFE images from source (no start; honours LOCAL)
 # ---------------------------------------------------------------------------
 
 .PHONY: ci
-ci: login env-files down storage-dirs  ## Pull and start infra and registry DFE images
+ci: login env-files down storage-dirs  ## Pull and start infra and registry DFE images. Prints no credentials -- run `make creds` for those
 	docker compose -f docker-compose.yml $(STORAGE_FLAGS) $(UI_FLAGS) $(PROFILE_FLAGS) pull
 	docker compose -f docker-compose.yml $(STORAGE_FLAGS) $(UI_FLAGS) $(PROFILE_FLAGS) pull $(ACTIVE_SERVICES)
 	docker compose -f docker-compose.yml $(STORAGE_FLAGS) $(UI_FLAGS) $(PROFILE_FLAGS) up -d $(ACTIVE_SERVICES)
 	@$(MAKE) --no-print-directory post || { echo "post: SELF TEST FAILED -- the stack is up, but it did not prove it moves data. Run 'make post' for detail."; exit 1; }
-	@$(MAKE) --no-print-directory creds
 
 # The operator-facing name for the registry start, and the one the engine prints
-# when it tells someone how to apply a rotated password.
+# when it tells someone how to apply a rotated password. It is `ci` plus the
+# hand-over, which is the whole difference between the two.
 .PHONY: up
-up: ci ## Start the stack from the pinned registry images, then print the access summary
+up: ci ## Start the stack from the pinned registry images, then print the access summary (password on a TTY only)
+	@$(MAKE) --no-print-directory creds
 
 .PHONY: ci-pull
 ci-pull: login ## Pull infra and registry DFE images
@@ -330,12 +332,13 @@ infra: storage-dirs ## Start infrastructure services
 # Safe on a fresh checkout: no stack SSoT and no credentials needed. Two honest
 # caveats. Make remakes the `-include .env` above before any target, so a fresh
 # checkout gets a generated .env as a side effect of running these -- CI therefore
-# leaves one on the runner. And check-dockerfile pulls the pinned hadolint image,
-# so it wants a registry the first time; the other three need no network.
+# leaves one on the runner. And check-dockerfile pulls the pinned hadolint image
+# while check-tests resolves the pinned pytest, so those two want a network the
+# first time; the rest need none.
 # ---------------------------------------------------------------------------
 
 .PHONY: check
-check: check-compose check-hardfail check-dockerfile check-docs check-python ## Run every static check CI runs
+check: check-compose check-hardfail check-dockerfile check-docs check-python check-tests ## Run every static check CI runs
 
 .PHONY: limits
 limits: ## Show the resource limits and totals, computed from the resolved config
@@ -355,6 +358,20 @@ print-ruff-version:
 check-python: ## Lint the helper scripts (config in ruff.toml)
 	$(RUFF) check scripts/ ops/
 	$(RUFF) format --check scripts/ ops/
+
+# Pinned for the same reason RUFF is, and installed the same way in CI
+# (PYTEST=pytest). Unit tests over the credential-handling helpers only: they
+# touch a tmp_path .env and start nothing, so they belong with the static checks.
+PYTEST_VERSION := 9.1.1
+PYTEST ?= uvx pytest@$(PYTEST_VERSION)
+
+.PHONY: print-pytest-version
+print-pytest-version:
+	@echo $(PYTEST_VERSION)
+
+.PHONY: check-tests
+check-tests: ## Run the helper-script unit tests (scripts/tests)
+	$(PYTEST) -q scripts/tests
 
 .PHONY: check-compose
 check-compose: ## Resolve compose on the registry, dev and live paths, both Kafka backends

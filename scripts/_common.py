@@ -60,11 +60,14 @@ _REQUIRED_VAR_RE = re.compile(r"\$\{([A-Z][A-Z0-9_]*):\?")
 
 
 def _print(
-    *, file: typing.TextIO | None = sys.stderr, header: str | None = None, msg: str
+    *, file: typing.TextIO | None = None, header: str | None = None, msg: str
 ) -> None:
     """Print a custom message with caller script name prefixed."""
+    # Resolved at call time, not bound as a default: a caller that replaces
+    # sys.stderr (pytest's capture) must still see the message.
     print(
-        f"{Path(sys.argv[0]).stem}{f' ({header})' if header else ''}: {msg}", file=file
+        f"{Path(sys.argv[0]).stem}{f' ({header})' if header else ''}: {msg}",
+        file=file or sys.stderr,
     )
 
 
