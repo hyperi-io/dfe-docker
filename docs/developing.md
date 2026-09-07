@@ -189,6 +189,7 @@ The rest are fine-grained data-plane shapes. The e2e suite pins them by name.
 | `kafka-full` | kafka | archiver, fetcher, loader, receiver |
 | `kafka-full-transform-vrl` | kafka | fetcher, loader, receiver, transform-vrl |
 | `kafka-filebeat` | kafka | loader, receiver, transform-vrl, transform-vrl-filebeat |
+| `kafka-filebeat-vector` | kafka | loader, receiver, transform-vector, transform-vector-filebeat |
 | `grpc-minimal` | grpc | loader |
 | `grpc-fetcher` | grpc | fetcher, loader |
 | `grpc-receiver` | grpc | loader, receiver |

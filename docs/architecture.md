@@ -72,35 +72,52 @@ Both transforms and `dfe-archiver` are Kafka-only: each reads a topic and writes
 a topic or a volume. With a transform in the profile the loader switches to
 `config/loader/kafka-load.yaml` and consumes `default_load`.
 
-### A source with its own transform gets its own instance
+## A source with its own transform gets its own instance
 
 A source with a transform stops sharing `default_land`: the receiver routes it to
 `<source>_land`, and only a transform reading THAT topic sees it. So a transform
 is deployed once per source, as the Kubernetes tier deploys one per Source
 definition -- input topic, program directory and output topic all carry the name.
 
-`kafka-filebeat` is the shipped example, and the shape another source copies. All
-ten pieces are needed: the first five carry the data, the rest keep dev mode,
-profile resolution and the checks working.
+Two shipped examples, one per transform app, and the shape another source copies.
+All eleven pieces are needed: the first five carry the data, the rest keep dev
+mode, profile resolution and the checks working.
 
-| Piece | For `filebeat` |
-|---|---|
-| Compose service | `dfe-transform-vrl-filebeat`, the same image, its own metrics port |
-| Config | `config/transform-vrl/filebeat.yaml` -- `filebeat_land` in, `filebeat_load` out |
-| Program | `config/transform-vrl/transforms-filebeat/`, vendored from dfe-transform-vrl |
-| Loader | `config/loader/kafka-load-filebeat.yaml` lists `filebeat_load` alongside `default_load` |
-| Table | `dfe.filebeat`, from the `_load` topic name -- the loader strips the suffix and routes on it |
-| Enrichment data | `config/transform-vrl/data/`, mounted beside the program dir -- the transform scans that dir for programs |
-| Dev images | an override block plus `IMAGE_CONSUMERS` in `scripts/build_dev_images.py`, or `make dev` leaves it on the registry pin |
-| Env file | `env.example/transform-vrl-filebeat.env` for its own overrides; `make init` copies it into `env/` |
-| Profile resolution | `SERVICES` and `SERVICE_TO_CONFIG_VAR` in `scripts/resolve_profile.py`, so a profile can run it without the passthrough instance |
-| Check coverage | `_DFE_OWNED_SERVICES` in `scripts/check_compose.py`, which holds it to the `/livez` health surface |
-| Metrics port | a free host port (`DFE_TRANSFORM_VRL_FILEBEAT_PROMETHEUS_PORT`, 9097): every instance serves 9090 and two cannot publish one |
+| Piece | `kafka-filebeat`, on dfe-transform-vrl | `kafka-filebeat-vector`, on dfe-transform-vector |
+|---|---|---|
+| Compose service | `dfe-transform-vrl-filebeat`, the same image, its own metrics port | `dfe-transform-vector-filebeat`, likewise |
+| Config | `config/transform-vrl/filebeat.yaml` -- `filebeat_land` in, `filebeat_load` out | `config/transform-vector/filebeat.yaml` -- `dfe_source: filebeat-vector` derives both topics |
+| Program | `config/transform-vrl/transforms-filebeat/`, vendored from dfe-transform-vrl | `config/transform-vector/transforms-filebeat/`, the same VRL inside a Vector `remap`, vendored from dfe-transform-vector |
+| Loader | `config/loader/kafka-load-filebeat.yaml` lists `filebeat_load` alongside `default_load` | `config/loader/kafka-load-filebeat-vector.yaml` lists `filebeat-vector_load` |
+| Table | `dfe.filebeat`, from the `_load` topic name -- the loader strips the suffix and routes on it | ``dfe.`filebeat-vector` ``, the same way |
+| Enrichment data | `config/transform-vrl/data/`, mounted beside the program dir -- the transform scans that dir for programs | the same directory, mounted at `/etc/dfe-transform-vector/data` -- one table, not a copy per app |
+| Dev images | an override block plus `IMAGE_CONSUMERS` in `scripts/build_dev_images.py`, or `make dev` leaves it on the registry pin | the same |
+| Env file | `env.example/transform-vrl-filebeat.env` for its own overrides; `make init` copies it into `env/` | `env.example/transform-vector-filebeat.env` |
+| Profile resolution | `SERVICES` and `SERVICE_TO_CONFIG_VAR` in `scripts/resolve_profile.py`, so a profile can run it without the passthrough instance | the same |
+| Check coverage | `_DFE_OWNED_SERVICES` in `scripts/check_compose.py`, which holds it to the `/livez` health surface | the same |
+| Metrics ports | a free host port (`DFE_TRANSFORM_VRL_FILEBEAT_PROMETHEUS_PORT`, 9097): every instance serves 9090 and two cannot publish one | two of them: 9090 for the scalo surface (9098) and 9598 for Vector's own `internal_metrics` (9599) |
 
-`dfe.filebeat` is dfe-engine's to create from the `meta/beats/filebeat` meta
-schema -- nothing here provisions it. Create the source before sending it data: a
-loader that meets rows for a table it has no schema for buffers them, then
-dead-letters them.
+Only the scalo surface reaches self-monitoring. scalo pushes its own registry
+over OTLP, and Vector's `internal_metrics` sit behind a separate
+`prometheus_exporter` that nothing scrapes, so `vector_*` is readable on the
+published port and absent from the otel database until
+dfe-transform-vector#68 merges the two.
+
+The two profiles are deliberately disjoint -- own source name, own topics, own
+table -- so a deployment can run both and compare what the two transform apps
+make of one corpus.
+
+Both tables are dfe-engine's to create from the `meta/beats/filebeat` meta
+schema -- nothing here provisions them. Create the source before sending it
+data: a loader that meets rows for a table it has no schema for buffers them,
+then dead-letters them.
+
+The source NAME propagates character for character: the engine requires a
+Kubernetes DNS-1123 label (hyphens, never underscores, because a source-bound
+app deploys one instance named for its source), the receiver substitutes it into
+`<_source>_land`, and the loader strips `_load` back off for the table. So
+`filebeat-vector` gives `filebeat-vector_land`, `filebeat-vector_load` and a
+table name that needs backticks in SQL.
 
 `make check` asserts the wiring: a transform whose output topic no loader in the
 profile reads fails, as does an enrichment table no mount resolves.

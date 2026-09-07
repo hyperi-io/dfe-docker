@@ -78,12 +78,18 @@ def _config_topics(*, path: Path) -> tuple[set[str], set[str], str]:
 
     A deliberately small reader rather than a YAML parse: the service configs use
     three topic keys and nothing else, and the callers have to run with no PyYAML
-    (CI installs it for ``make test-e2e`` only). A config that derives its topics
-    from a ``dfe_source`` instead of naming them returns empty sets.
+    (CI installs it for ``make test-e2e`` only).
+
+    A dfe-transform-vector config names one source instead of its topics, and the
+    app derives ``<source>_land`` in and ``<source>_load`` out from it. Deriving
+    them here too is what keeps such a config inside the wiring and topic-init
+    checks rather than silently outside them. Named topics still win, exactly as
+    they do in the app.
     """
     subscribed: set[str] = set()
     produced: set[str] = set()
     regex = ""
+    dfe_source = ""
     in_list = False
     for raw in path.read_text(encoding="utf-8", errors="replace").splitlines():
         line = raw.strip()
@@ -97,6 +103,11 @@ def _config_topics(*, path: Path) -> tuple[set[str], set[str], str]:
             produced.add(line.split(": ", 1)[1].strip().strip("\"'"))
         elif line.startswith("topic_regex: "):
             regex = line.split(": ", 1)[1].strip().strip("\"'")
+        elif line.startswith("dfe_source: "):
+            dfe_source = line.split(": ", 1)[1].strip().strip("\"'")
+    if dfe_source:
+        subscribed = subscribed or {f"{dfe_source}_land"}
+        produced = produced or {f"{dfe_source}_load"}
     return subscribed, produced, regex
 
 
