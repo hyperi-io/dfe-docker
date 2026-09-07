@@ -36,7 +36,7 @@ exist, and how a profile decides which of them run.
 ```bash
 make init                  # generate .env and env/<service>.env
 make stack VERSION=X.Y.Z   # pin the image versions
-make ci                    # pull and start, then run the self test
+make up                    # pull and start, self test, then print the login
 ```
 
 `make init` copies `.env.example` to `.env` and every `env.example/<service>.env`
@@ -60,6 +60,40 @@ survive the merge.
 Skipping `make stack` is not a soft failure. Nearly every image pin uses
 `${VAR:?...}`, so an unpinned checkout aborts the compose command with a message
 naming the key.
+
+## Logging in the first time
+
+The deploy mints the credentials, the engine never ships one. `make init` writes
+two random passwords into `.env` and prints neither.
+
+| Target | What it does |
+|---|---|
+| `make init` | mints `DFE_AUTH_LOCAL_ADMIN_PASSWORD` (the `admin` login) and `DFE_AUTH_BREAKGLASS_PASSWORD` (the `breakglass` recovery login) |
+| `make up` | starts the pinned stack, runs the self test, then prints the access summary with the login |
+| `make creds` | prints that summary again, any time |
+
+`make creds` is also the line the engine puts on its own login page while
+first-run setup is incomplete, so an operator who lands there with no password is
+one command from having one.
+
+The two accounts are durable in different ways, deliberately. `admin` is
+reasserted from `.env` on every engine boot, so a teardown and rebuild restores
+exactly the password `make init` minted. `breakglass` is hashed into the engine's
+deploy repo on its first boot and the variable is ignored from then on, so it
+still works when the engine, the UI and `.env` are all gone. `make creds` says
+where its password lives rather than printing it.
+
+The engine **refuses to start** on an empty or `changeme`
+`DFE_AUTH_LOCAL_ADMIN_PASSWORD` unless `DFE_ENV` names a dev posture. `make
+check-compose` asserts the compose file never hands it one, so that is caught
+before a container crash-loops.
+
+`make dev` is the exception and says so: it writes the known default password and
+`DFE_ENV=dev` into `.env`, because a dev loop should not need a lookup to log in.
+The engine accepts the default in that posture and asks for a change at first
+login. It **refuses** to run when `.env` already declares a non-dev `DFE_ENV` --
+downgrading a deployment's posture and overwriting its admin password is not a
+build target's call. Start that stack with `make up`.
 
 ## Dev mode compiles your source; registry mode pulls GHCR
 

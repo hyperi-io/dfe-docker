@@ -39,7 +39,12 @@ from _common import (
 # enforces them: DFE_UI_NEXTAUTH_SECRET and HYPERDX_POSTGRES_PASSWORD via its
 # WEAK_SECRET_DEFAULTS service-map, CLICKHOUSE_PASSWORD via its own external-CH
 # check (its default is empty, not a sentinel string), and
-# DFE_AUTH_LOCAL_ADMIN_PASSWORD by logging in with it. Keep the four in step.
+# DFE_AUTH_LOCAL_ADMIN_PASSWORD by logging in with it. Keep them in step.
+#
+# The deploy mints two logins: DFE_AUTH_LOCAL_ADMIN_PASSWORD is `admin`, reasserted
+# from .env on every engine boot. DFE_AUTH_BREAKGLASS_PASSWORD is the recovery admin
+# the engine hashes into the deploy repo on first boot and ignores thereafter.
+# Neither is printed here; `make creds` is the hand-over.
 #
 # CLICKHOUSE_PASSWORD is a BREAKING change on upgrade: a ClickHouse data volume
 # created with the old empty password does not re-authenticate against a generated
@@ -65,6 +70,7 @@ _LEN_COOKIE = 32
 # NextAuth value is a session-signing KEY, so it takes the 256-bit tier.
 GENERATED_SECRETS = {
     "CLICKHOUSE_PASSWORD": _LEN_CREDENTIAL,
+    "DFE_AUTH_BREAKGLASS_PASSWORD": _LEN_CREDENTIAL,
     "DFE_AUTH_LOCAL_ADMIN_PASSWORD": _LEN_CREDENTIAL,
     "HYPERDX_POSTGRES_PASSWORD": _LEN_CREDENTIAL,
     "DFE_UI_NEXTAUTH_SECRET": _LEN_KEY,

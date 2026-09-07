@@ -812,10 +812,21 @@ services:
       # The engine refuses to start at `production` without real auth, and
       # compose mode is god-mode. docs/operating.md#there-is-no-authentication
       DFE_ENV: ${DFE_ENV:-dev}
-      # Break-glass login, seeded on the engine's FIRST start. `make init`
-      # generates the password; unset, the engine seeds "changeme".
+      # Names the fetch command the engine puts on the login page: `make creds`.
+      DFE_DEPLOYMENT_TARGET: docker
+      # The everyday admin, reasserted from .env on every boot. The engine refuses
+      # to start on an empty or "changeme" value unless DFE_ENV is a dev posture.
       DFE_AUTH_LOCAL_ADMIN_NAME: ${DFE_AUTH_LOCAL_ADMIN_NAME:-admin}
       DFE_AUTH_LOCAL_ADMIN_PASSWORD: ${DFE_AUTH_LOCAL_ADMIN_PASSWORD:-}
+      # The recovery admin. Mint-once: the engine hashes it into the deploy repo
+      # on the first boot with no hash committed, and ignores it from then on.
+      DFE_AUTH_BREAKGLASS_PASSWORD: ${DFE_AUTH_BREAKGLASS_PASSWORD:-}
+      # The deploy repo the break-glass hash and the governance settings live in.
+      # Local-only here: no repo_url, so nothing is pushed anywhere. It sits inside
+      # the config volume because a volume mounted on a path the image does not own
+      # lands root-owned and the engine runs as UID 1000.
+      DFE_GITOPS_ENABLED: ${DFE_GITOPS_ENABLED:-true}
+      DFE_GITOPS_LOCAL_PATH: ${DFE_ENGINE_CONFIG_DIR:-/app/config}/deploy-repo
       DFE_CLICKHOUSE_HOST: ${CLICKHOUSE_HOST:-clickhouse}
       DFE_CLICKHOUSE_PORT: ${CLICKHOUSE_HTTP_PORT:-8123}
       DFE_CLICKHOUSE_NATIVE_PORT: ${CLICKHOUSE_NATIVE_PORT:-9000}
