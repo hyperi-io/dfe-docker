@@ -91,6 +91,15 @@ jobs:
       - name: Python
         run: make check-python RUFF=ruff
 
+      # The credential helpers rewrite .env and decide whether a minted password
+      # reaches stdout, so they carry unit tests. Stdlib only, on a tmp_path .env:
+      # nothing here starts a stack or touches the runner's own files.
+      - name: Install pytest
+        run: pipx install "pytest==$(make -s print-pytest-version)"
+
+      - name: Tests
+        run: make check-tests PYTEST=pytest
+
   dockerfile:
     name: Dockerfile
     runs-on: ubuntu-latest

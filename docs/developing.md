@@ -29,6 +29,7 @@ exist, and how a profile decides which of them run.
 | Python 3 | the helper scripts under `scripts/` |
 | PyYAML | `make test-e2e` only (`pip install pyyaml`, or `uv run --with pyyaml`) |
 | ruff | `make check-python` only |
+| pytest | `make check-tests` only (`uvx` fetches the pin if you have it) |
 | git credentials for the hyperi-io repos (or `DFE_SRC_ROOT` checkouts) | `make dev` |
 
 ## First run
@@ -72,6 +73,11 @@ two random passwords into `.env` and prints neither.
 | `make up` | starts the pinned stack, runs the self test, then prints the access summary with the login |
 | `make creds` | prints that summary again, any time |
 
+The password prints to a **terminal** only. Redirect it, pipe it, or run it in
+CI and you get the `.env` key holding the value instead; `DFE_CREDS_SHOW=0` does
+the same on a terminal. `make ci` does not call it at all, which is why `make up`
+exists as the operator-facing name for the same start.
+
 `make creds` is also the line the engine puts on its own login page while
 first-run setup is incomplete, so an operator who lands there with no password is
 one command from having one.
@@ -91,9 +97,13 @@ before a container crash-loops.
 `make dev` is the exception and says so: it writes the known default password and
 `DFE_ENV=dev` into `.env`, because a dev loop should not need a lookup to log in.
 The engine accepts the default in that posture and asks for a change at first
-login. It **refuses** to run when `.env` already declares a non-dev `DFE_ENV` --
-downgrading a deployment's posture and overwriting its admin password is not a
-build target's call. Start that stack with `make up`.
+login. It **refuses** (exit 2) to run when `.env` already declares a non-dev
+`DFE_ENV` -- downgrading a deployment's posture and overwriting its admin password
+is not a build target's call. Start that stack with `make up`.
+
+When it does rewrite, it copies the file it replaced to `.env.bak-<utc>` first,
+mode 0600, and prints the path: a minted password is gone once overwritten. A run
+with nothing to change writes neither.
 
 ## Dev mode compiles your source; registry mode pulls GHCR
 
@@ -339,6 +349,7 @@ Two things about the runner worth knowing before you debug it:
 | `make check-dockerfile` | hadolint on `docker/dfe-rust-builder.Dockerfile` |
 | `make check-docs` | asserts every relative link across the README and the five docs resolves |
 | `make check-python` | `ruff check` and `ruff format --check` on `scripts/` |
+| `make check-tests` | `pytest scripts/tests` -- unit tests over the credential helpers |
 
 `check-compose` is hermetic: it reads the mandatory `${VAR:?}` keys out of the
 compose file and substitutes placeholders, so it needs neither the stack SSoT nor
@@ -351,8 +362,9 @@ for why a lower ceiling takes health endpoints dark.
 external URLs and does not check `#anchors`, so a live file with a stale anchor
 still passes.
 
-`check-dockerfile` pulls the pinned hadolint image, so it wants a registry the
-first time. The rest need no network.
+`check-dockerfile` pulls the pinned hadolint image and `check-tests` resolves the
+pinned pytest through `uvx`, so both want a network the first time. The rest need
+none.
 
 ## Port collisions on a shared dev host
 

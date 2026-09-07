@@ -611,10 +611,10 @@ services:
   # ===========================================================================
   # dfe-transform-vector
   #
-  # Two metrics ports, not one: 9090 carries the scalo surface, which scalo
-  # pushes to OTLP, and 9598 carries Vector's own `internal_metrics` through a
-  # `prometheus_exporter` sink that nothing reads and no OTel path collects
-  # (dfe-transform-vector#68 merges them into the scalo registry).
+  # One metrics port: 9090 carries the scalo surface AND the `vector_*` series,
+  # which the wrapper scrapes off the `prometheus_exporter` sink and merges into
+  # the scalo registry (dfe-transform-vector#70). The sink still listens on 9598,
+  # loopback-only inside the container, and is published nowhere.
   # ===========================================================================
 
   dfe-transform-vector:
@@ -625,7 +625,6 @@ services:
     deploy: *limits-service
     ports:
       - ${DFE_BIND_HOST:-127.0.0.1}:${DFE_TRANSFORM_VECTOR_PROMETHEUS_PORT:-9095}:9090
-      - ${DFE_BIND_HOST:-127.0.0.1}:${DFE_TRANSFORM_VECTOR_INTERNAL_METRICS_PORT:-9598}:9598
       - ${DFE_BIND_HOST:-127.0.0.1}:${DFE_TRANSFORM_VECTOR_API_PORT:-8686}:8686
     env_file:
       - path: env/transform-vector.env
@@ -674,7 +673,6 @@ services:
     deploy: *limits-service
     ports:
       - ${DFE_BIND_HOST:-127.0.0.1}:${DFE_TRANSFORM_VECTOR_FILEBEAT_PROMETHEUS_PORT:-9098}:9090
-      - ${DFE_BIND_HOST:-127.0.0.1}:${DFE_TRANSFORM_VECTOR_FILEBEAT_INTERNAL_METRICS_PORT:-9599}:9598
       - ${DFE_BIND_HOST:-127.0.0.1}:${DFE_TRANSFORM_VECTOR_FILEBEAT_API_PORT:-8687}:8686
     env_file:
       - path: env/transform-vector-filebeat.env

@@ -95,13 +95,12 @@ mode, profile resolution and the checks working.
 | Env file | `env.example/transform-vrl-filebeat.env` for its own overrides; `make init` copies it into `env/` | `env.example/transform-vector-filebeat.env` |
 | Profile resolution | `SERVICES` and `SERVICE_TO_CONFIG_VAR` in `scripts/resolve_profile.py`, so a profile can run it without the passthrough instance | the same |
 | Check coverage | `_DFE_OWNED_SERVICES` in `scripts/check_compose.py`, which holds it to the `/livez` health surface | the same |
-| Metrics ports | a free host port (`DFE_TRANSFORM_VRL_FILEBEAT_PROMETHEUS_PORT`, 9097): every instance serves 9090 and two cannot publish one | two of them: 9090 for the scalo surface (9098) and 9598 for Vector's own `internal_metrics` (9599) |
+| Metrics ports | a free host port (`DFE_TRANSFORM_VRL_FILEBEAT_PROMETHEUS_PORT`, 9097): every instance serves 9090 and two cannot publish one | the same (`DFE_TRANSFORM_VECTOR_FILEBEAT_PROMETHEUS_PORT`, 9098) |
 
-Only the scalo surface reaches self-monitoring. scalo pushes its own registry
-over OTLP, and Vector's `internal_metrics` sit behind a separate
-`prometheus_exporter` that nothing scrapes, so `vector_*` is readable on the
-published port and absent from the otel database until
-dfe-transform-vector#68 merges the two.
+One port carries everything. The wrapper scrapes Vector's `internal_metrics` off
+its `prometheus_exporter` on loopback and registers the samples on scalo's own
+recorder (dfe-transform-vector#70), so `vector_*` reads on the published port AND
+rides the OTLP push into the otel database. The exporter's 9598 is not published.
 
 The two profiles are deliberately disjoint -- own source name, own topics, own
 table -- so a deployment can run both and compare what the two transform apps
