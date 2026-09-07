@@ -9,7 +9,7 @@
 ##############################################################################
 # VENDORED, byte-identical below this block.
 #
-# Source: dfe-transform-vector pipelines/filebeat/filebeat.yaml @ 177148b,
+# Source: dfe-transform-vector pipelines/filebeat/filebeat.yaml @ 2227cda,
 # renamed for the numeric ordering the transforms directory applies. That file
 # embeds dfe-transform-vrl pipelines/filebeat/filebeat.vrl @ e0b7087, so the
 # VRL instance and this one run the same program.
