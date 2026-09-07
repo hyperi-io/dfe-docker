@@ -70,6 +70,8 @@ Beyond resolution, these semantic assertions ride along.
   and no two transforms may consume one topic. See `_transform_wiring_failures`.
 - Every enrichment table a transform config names must resolve to a file through
   that service's own bind mounts. See `_enrichment_table_failures`.
+- The engine must never receive an empty or `changeme` admin password outside a
+  dev posture, because it refuses to start on one. See `_credential_failures`.
 """
 
 from __future__ import annotations
@@ -188,6 +190,31 @@ _AUTH_ENV = {
     "DFE_OAUTH2_PROXY_COOKIE_SECRET": "0123456789abcdef0123456789abcdef",
 }
 
+# The engine refuses to start on an unset or shipped-default admin password unless
+# DFE_ENV names a dev posture, so a compose file that hands it one outside dev
+# produces a container that crash-loops on boot. The posture list mirrors
+# dfe_engine.settings.is_dev_posture; compose's own `${DFE_ENV:-dev}` default is
+# what makes the unset case a dev posture rather than a fault.
+_ENGINE_SERVICE = "dfe-engine"
+_ADMIN_PASSWORD_KEY = "DFE_AUTH_LOCAL_ADMIN_PASSWORD"
+_POSTURE_KEY = "DFE_ENV"
+_DEFAULT_PASSWORD = "changeme"
+_DEV_POSTURES = frozenset({"dev", "development", "local", "test", "ci"})
+# An env file compose loads INSTEAD of .env, so a case describes the whole input.
+_EMPTY_ENV_FILE = REPO_ROOT / ".tmp" / "compose-check-empty.env"
+# (label, DFE_ENV, admin password, must the rule flag it). The negative half: a
+# rule that flags nothing passes every stack, so the cases that must NOT flag are
+# checked as hard as the ones that must.
+_CREDENTIAL_CASES: tuple[tuple[str, str, str, bool], ...] = (
+    ("production, no password", "production", "", True),
+    (f"production, {_DEFAULT_PASSWORD}", "production", _DEFAULT_PASSWORD, True),
+    ("staging, no password", "staging", "", True),
+    ("production, minted password", "production", "aMintedValue123", False),
+    ("dev, no password", "dev", "", False),
+    (f"dev, {_DEFAULT_PASSWORD}", "dev", _DEFAULT_PASSWORD, False),
+    ("posture unset, no password", "", "", False),
+)
+
 # Services this project owns and therefore holds to that surface. hyperdx,
 # clickhouse, the brokers and kafka-ui are third-party and keep their own.
 _DFE_OWNED_SERVICES = {
@@ -283,7 +310,11 @@ def _retired_health_failures(*, config: dict) -> list[str]:
 
 
 def _config_json(
-    *, env: dict[str, str], files: list[str], extra_profiles: tuple[str, ...] = ()
+    *,
+    env: dict[str, str],
+    files: list[str],
+    extra_profiles: tuple[str, ...] = (),
+    env_file: Path | None = None,
 ) -> dict | None:
     """Return the fully interpolated compose model, or None if it did not resolve.
 
@@ -291,8 +322,13 @@ def _config_json(
     every service a reader might assert about. `auth` is opt-in and therefore only
     arrives through `extra_profiles`. Resolution failures are reported by the loop
     in main(), so a None here needs no second message.
+
+    `env_file` replaces the .env compose would otherwise load, which is what lets a
+    caller assert about a variable this checkout happens to have set.
     """
     cmd = ["docker", "compose"]
+    if env_file is not None:
+        cmd += ["--env-file", str(env_file)]
     for path in files:
         cmd += ["-f", path]
     for profile in [*_BASE_PROFILES, _KAFKA_BACKENDS[0], *extra_profiles]:
@@ -680,6 +716,72 @@ def _enrichment_table_failures(*, env: dict[str, str]) -> tuple[list[str], int]:
     return failures, made
 
 
+def _credential_fault(*, config: dict) -> str:
+    """Return why the engine's admin credential is unusable, or empty when it is fine."""
+    service = config.get("services", {}).get(_ENGINE_SERVICE, {})
+    environment = service.get("environment") or {}
+    posture = str(environment.get(_POSTURE_KEY) or "").strip().lower()
+    password = str(environment.get(_ADMIN_PASSWORD_KEY) or "").strip()
+    if password and password != _DEFAULT_PASSWORD:
+        return ""
+    if posture in _DEV_POSTURES:
+        return ""
+    return (
+        f"{_ENGINE_SERVICE} receives "
+        f"{'no ' + _ADMIN_PASSWORD_KEY if not password else _ADMIN_PASSWORD_KEY + '=' + _DEFAULT_PASSWORD}"
+        f" with {_POSTURE_KEY}={posture or 'unset'} -- the engine refuses to start on "
+        "that outside a dev posture, so the container crash-loops. Run `make init` to "
+        f"mint one, or `make dev` for a dev stack"
+    )
+
+
+def _credential_failures(*, env: dict[str, str]) -> tuple[list[str], int]:
+    """Return (messages, assertions made) for the engine's admin credential.
+
+    Two things are checked. This checkout's own resolved stack must not hand the
+    engine a credential it will refuse -- that is the assertion an operator wants.
+    Then the matrix in `_CREDENTIAL_CASES` runs the rule against inputs whose answer
+    is known, so a rule that has stopped flagging anything fails here rather than
+    passing every stack silently.
+    """
+    failures: list[str] = []
+    made = 1
+    live = _config_json(env=env, files=[COMPOSE_FILE.name])
+    if live is None:
+        return (
+            ["the registry path did not resolve, so the credential is unknown"],
+            made,
+        )
+    fault = _credential_fault(config=live)
+    if fault:
+        failures.append(fault)
+
+    _EMPTY_ENV_FILE.parent.mkdir(parents=True, exist_ok=True)
+    _EMPTY_ENV_FILE.write_text("", encoding="utf-8", newline="\n")
+    base = {
+        k: v for k, v in env.items() if k not in (_POSTURE_KEY, _ADMIN_PASSWORD_KEY)
+    }
+    for label, posture, password, want_flagged in _CREDENTIAL_CASES:
+        made += 1
+        case = {**base, _ADMIN_PASSWORD_KEY: password}
+        if posture:
+            case[_POSTURE_KEY] = posture
+        config = _config_json(
+            env=case, files=[COMPOSE_FILE.name], env_file=_EMPTY_ENV_FILE
+        )
+        if config is None:
+            failures.append(f"the credential case {label!r} did not resolve")
+            continue
+        flagged = bool(_credential_fault(config=config))
+        if flagged != want_flagged:
+            failures.append(
+                f"credential case {label!r}: the check "
+                f"{'flagged it' if flagged else 'let it through'}, and it must "
+                f"{'flag it' if want_flagged else 'let it through'}"
+            )
+    return failures, made
+
+
 def _override_coverage_failures(*, env: dict[str, str]) -> list[str]:
     """Return one message per service the committed override leaves on the registry.
 
@@ -867,6 +969,16 @@ def main() -> int:
     _print(
         msg="Every enrichment table a transform config names resolves to a file "
         f"through that service's bind mounts ({table_made} assertions)"
+    )
+
+    credential_failures, credential_made = _credential_failures(env=env)
+    for message in credential_failures:
+        _print(msg=f"FAIL {message}")
+    if credential_failures:
+        return 1
+    _print(
+        msg=f"{_ENGINE_SERVICE} never receives an empty or {_DEFAULT_PASSWORD!r} admin "
+        f"password outside a dev posture ({credential_made} assertions)"
     )
 
     coverage_failures = _override_coverage_failures(env=env)

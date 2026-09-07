@@ -258,10 +258,11 @@ shortage of CPU.
 
 ### The self test fails on the console login
 
-`make post` logs in as the break-glass admin with `DFE_AUTH_LOCAL_ADMIN_PASSWORD`
-from `.env`. The setup wizard's last step rotates that password, so after
-onboarding the value in `.env` is stale and the login step returns 401. Pass the
-current one on the command line, since the shell environment beats `.env`:
+`make post` logs in as `admin` with `DFE_AUTH_LOCAL_ADMIN_PASSWORD` from `.env`,
+the same value `make creds` prints. A 401 here means the running engine holds a
+different password from the one in `.env` -- a rotation applied to the store
+alone, say. Pass the current one on the command line, since the shell environment
+beats `.env`:
 
 ```bash
 DFE_AUTH_LOCAL_ADMIN_PASSWORD='the rotated password' make post

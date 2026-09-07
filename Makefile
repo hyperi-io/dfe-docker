@@ -41,7 +41,7 @@ endif
 # any more (both sweep every profile), and requiring a resolvable profile to STOP
 # a stack is the same lockout the compose secret comments argue against -- set
 # DFE_PROFILE to something that does not exist and you could not tear down.
-BOOTSTRAP_GOALS := init env-files help login stack dial modes down clean limits check check-compose check-hardfail check-dockerfile check-docs check-python
+BOOTSTRAP_GOALS := init env-files creds dev-posture help login stack dial modes down clean limits check check-compose check-hardfail check-dockerfile check-docs check-python
 
 # Resolve the active profile only when a goal actually needs the compose stack
 ifneq (,$(filter-out $(BOOTSTRAP_GOALS),$(or $(MAKECMDGOALS),help)))
@@ -221,6 +221,20 @@ init: ## Create .env and per-service env/<service>.env files from templates
 env-files: ## Assert every env/<service>.env exists, creating any the templates have gained
 	@python3 scripts/env_files.py
 
+# `make init` mints the admin and break-glass passwords and prints neither, so
+# this is the hand-over. The start targets end with it, and the engine names it on
+# its own login page while first-run setup is incomplete.
+.PHONY: creds
+creds: ## Print the access summary -- console URL, admin login, where the break-glass password lives
+	@python3 scripts/creds.py
+
+# A dev tyre-kick logs in without looking anything up, so `make dev` writes the
+# KNOWN default password and DFE_ENV=dev, the one posture the engine accepts it in.
+# It refuses on any other DFE_ENV rather than downgrading a deployment's posture.
+.PHONY: dev-posture
+dev-posture: .env ## Put .env into the dev posture (known admin password, DFE_ENV=dev)
+	@python3 scripts/dev_posture.py
+
 # GHCR auth for the private dfe-* images and the signed stack-manifest. A no-op
 # when DFE_GHCR_* are unset (a daemon authed out of band), so it is safe as an
 # unconditional prerequisite. The helper reads .env itself and pipes the token on
@@ -266,11 +280,12 @@ ifneq ($(strip $(DFE_DATA_ROOT)),)
 endif
 
 .PHONY: dev
-dev: env-files down storage-dirs ## Build local DFE images from source and start the dev stack (LOCAL="svc ..." builds only those, rest pinned)
+dev: env-files dev-posture down storage-dirs ## Build local DFE images from source and start the dev stack (LOCAL="svc ..." builds only those, rest pinned)
 	docker compose $(DEV_PULL_FLAGS) $(PROFILE_FLAGS) pull
 	python3 scripts/build_dev_images.py $(DEV_OVERLAY_ARG) $(DEV_BUILD)
 	docker compose $(DEV_FLAGS) $(PROFILE_FLAGS) up -d $(ACTIVE_SERVICES)
 	@$(MAKE) --no-print-directory post || { echo "post: SELF TEST FAILED -- the stack is up, but it did not prove it moves data. Run 'make post' for detail."; exit 1; }
+	@$(MAKE) --no-print-directory creds
 
 .PHONY: dev-build
 dev-build: ## Build local DFE images from source (no start; honours LOCAL)
@@ -287,6 +302,12 @@ ci: login env-files down storage-dirs  ## Pull and start infra and registry DFE 
 	docker compose -f docker-compose.yml $(STORAGE_FLAGS) $(UI_FLAGS) $(PROFILE_FLAGS) pull $(ACTIVE_SERVICES)
 	docker compose -f docker-compose.yml $(STORAGE_FLAGS) $(UI_FLAGS) $(PROFILE_FLAGS) up -d $(ACTIVE_SERVICES)
 	@$(MAKE) --no-print-directory post || { echo "post: SELF TEST FAILED -- the stack is up, but it did not prove it moves data. Run 'make post' for detail."; exit 1; }
+	@$(MAKE) --no-print-directory creds
+
+# The operator-facing name for the registry start, and the one the engine prints
+# when it tells someone how to apply a rotated password.
+.PHONY: up
+up: ci ## Start the stack from the pinned registry images, then print the access summary
 
 .PHONY: ci-pull
 ci-pull: login ## Pull infra and registry DFE images

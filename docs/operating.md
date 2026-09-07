@@ -21,11 +21,15 @@ work, choose Kubernetes.
 
 ## Only the console authenticates -- everything else is bounded by that
 
-The engine's API requires a login. `make init` generates
-`DFE_AUTH_LOCAL_ADMIN_PASSWORD` into `.env`, and the engine seeds that break-glass
-admin on its FIRST start -- a stack whose account store already exists keeps
-whatever password it was first given, so rotate through the UI rather than
-expecting the generated value to take.
+The engine's API requires a login. `make init` mints two passwords into `.env` and
+`make creds` hands them over: `admin` from `DFE_AUTH_LOCAL_ADMIN_PASSWORD`,
+reasserted on every engine boot, and the `breakglass` recovery admin, whose hash
+the engine commits to its deploy repo on the first boot and which therefore
+outlives the engine, the UI and `.env`. Rotate `admin` by changing the value in
+`.env` and running `make up` -- the store is not the source, so a rotation the
+engine alone performed would be undone on the next boot. The engine refuses to
+start when `DFE_AUTH_LOCAL_ADMIN_PASSWORD` is empty or `changeme` and `DFE_ENV` is
+not a dev posture.
 
 Nothing else in the stack authenticates anyone, and that is the hard limit on what
 "production" can mean here: the ingest edges, every metrics port, ClickHouse and

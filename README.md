@@ -195,8 +195,10 @@ In `dev` mode, they build from each repo's own Dockerfile (not the shared Rust b
 
 | Command            | Description                                                        |
 |--------------------|--------------------------------------------------------------------|
-| `make init`        | Create .env and per-service .env files from templates              |
+| `make init`        | Create .env and per-service .env files from templates, minting the admin and break-glass passwords |
 | `make env-files`   | Assert every `env/<service>.env` exists, creating any the templates have gained |
+| `make creds`       | Print the access summary -- console URL, admin login, where the break-glass password lives |
+| `make up`          | Start the pinned stack and print the access summary                |
 | `make dev`         | Build local DFE images from source and start the stack (`LOCAL="..."` builds only those, rest pinned) |
 | `make dev-build`   | Build local DFE images from source (no start)                      |
 | `make ci`          | Pull and start infra and registry DFE images                       |
