@@ -197,10 +197,15 @@ _DFE_OWNED_SERVICES = {
     "dfe-loader",
     "dfe-receiver",
     "dfe-transform-vector",
+    "dfe-transform-vector-filebeat",
     "dfe-transform-vrl",
     "dfe-transform-vrl-filebeat",
     "dfe-ui",
 }
+
+# A dfe-transform-vector pipeline declares its own enrichment tables, and the
+# service mounts the directory holding it rather than the file.
+_TRANSFORM_FILE_SUFFIXES = (".yaml", ".yml")
 
 # Profile services whose config declares a Kafka sink topic somebody has to read.
 _TRANSFORM_PREFIX = "dfe-transform-"
@@ -626,6 +631,11 @@ def _enrichment_table_failures(*, env: dict[str, str]) -> tuple[list[str], int]:
     cannot open one fails to compile its programs at startup -- a running-stack
     failure compose resolution never sees. So each path is mapped back through the
     service's own bind mounts and the file is required to exist on disk.
+
+    Every YAML the service mounts is read, files and mounted directories alike:
+    dfe-transform-vrl declares its tables in the service config, and
+    dfe-transform-vector declares them in the pipeline file inside its transforms
+    directory.
     """
     config = _config_json(env=env, files=[COMPOSE_FILE.name])
     if config is None:
@@ -643,7 +653,17 @@ def _enrichment_table_failures(*, env: dict[str, str]) -> tuple[list[str], int]:
             for volume in service.get("volumes") or []
             if volume.get("type") == "bind" and volume.get("source")
         }
-        for source in sorted(path for path in binds.values() if path.is_file()):
+        mounted: set[Path] = set()
+        for path in binds.values():
+            if path.is_file():
+                mounted.add(path)
+            elif path.is_dir():
+                mounted |= {
+                    child
+                    for child in path.iterdir()
+                    if child.is_file() and child.suffix in _TRANSFORM_FILE_SUFFIXES
+                }
+        for source in sorted(mounted):
             for target in sorted(_config_enrichment_paths(path=source)):
                 made += 1
                 host = _bind_host_path(binds=binds, target=target)

@@ -263,6 +263,7 @@ Off by default. `DFE_HYPERDX_ENABLED=true` starts `hyperdx` (API + App) plus its
 | 8090  | hyperdx              | App UI             |
 | 8123  | ClickHouse           | HTTP API           |
 | 8686  | dfe-transform-vector | Vector API         |
+| 8687  | dfe-transform-vector-filebeat | Vector API |
 | 9000  | ClickHouse           | Native protocol    |
 | 9090  | dfe-receiver         | Prometheus metrics |
 | 9091  | dfe-loader           | Prometheus metrics |
@@ -271,6 +272,10 @@ Off by default. `DFE_HYPERDX_ENABLED=true` starts `hyperdx` (API + App) plus its
 | 9094  | dfe-fetcher          | Prometheus metrics |
 | 9095  | dfe-transform-vector | Prometheus metrics |
 | 9096  | dfe-transform-vrl    | Prometheus metrics |
+| 9097  | dfe-transform-vrl-filebeat | Prometheus metrics |
+| 9098  | dfe-transform-vector-filebeat | Prometheus metrics |
+| 9598  | dfe-transform-vector | Vector internal_metrics |
+| 9599  | dfe-transform-vector-filebeat | Vector internal_metrics |
 | 13133 | otel-collector       | health_check       |
 | 19092 | Kafka (any backend)  | Plaintext host     |
 | 50051 | dfe-loader           | gRPC               |

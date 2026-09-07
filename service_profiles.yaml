@@ -140,6 +140,23 @@ profiles:
       dfe-transform-vrl-filebeat:
         config_path: transform-vrl/filebeat.yaml
 
+  # The same per-source shape as kafka-filebeat, with dfe-transform-vector doing
+  # the transforming: the bundled filebeat VRL runs inside a Vector remap instead
+  # of the embedded VRL engine. Its own source name, topics and table, so a
+  # deployment can run this profile and kafka-filebeat side by side and compare
+  # what the two transform apps make of the same corpus.
+  kafka-filebeat-vector:
+    transport: kafka
+    services:
+      dfe-loader:
+        config_path: loader/kafka-load-filebeat-vector.yaml
+      dfe-receiver:
+        config_path: receiver/kafka.yaml
+      dfe-transform-vector:
+        config_path: transform-vector/kafka.yaml
+      dfe-transform-vector-filebeat:
+        config_path: transform-vector/filebeat.yaml
+
   kafka-receiver-archiver:
     transport: kafka
     services:

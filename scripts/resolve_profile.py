@@ -119,6 +119,7 @@ SERVICE_TO_CONFIG_VAR = {
     "dfe-loader": "DFE_LOADER_CONFIG",
     "dfe-receiver": "DFE_RECEIVER_CONFIG",
     "dfe-transform-vector": "DFE_TRANSFORM_VECTOR_CONFIG",
+    "dfe-transform-vector-filebeat": "DFE_TRANSFORM_VECTOR_FILEBEAT_CONFIG",
     "dfe-transform-vrl": "DFE_TRANSFORM_VRL_CONFIG",
     "dfe-transform-vrl-filebeat": "DFE_TRANSFORM_VRL_FILEBEAT_CONFIG",
 }
@@ -130,6 +131,7 @@ SERVICES = [
     "dfe-loader",
     "dfe-receiver",
     "dfe-transform-vector",
+    "dfe-transform-vector-filebeat",
     "dfe-transform-vrl",
     "dfe-transform-vrl-filebeat",
 ]

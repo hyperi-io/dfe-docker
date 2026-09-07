@@ -155,10 +155,15 @@ ClickHouse cluster.
 | `kafka-receiver`                  | Kafka     |              |             |     X      |      X       |                   |                      |
 | `kafka-receiver-archiver`         | Kafka     |      X       |             |     X      |      X       |                   |                      |
 | `kafka-receiver-transform-vector` | Kafka     |              |             |     X      |      X       |                   |           X          |
+| `kafka-filebeat`                  | Kafka     |              |             |     X      |      X       |        X2         |                      |
+| `kafka-filebeat-vector`           | Kafka     |              |             |     X      |      X       |                   |          X2          |
 | `grpc-fetcher`                    | gRPC      |              |      X      |     X      |              |                   |                      |
 | `grpc-full`                       | gRPC      |              |      X      |     X      |      X       |                   |                      |
 | `grpc-minimal`                    | gRPC      |              |             |     X      |              |                   |                      |
 | `grpc-receiver`                   | gRPC      |              |             |     X      |      X       |                   |                      |
+
+`X2` is two instances of that app: the shared passthrough one, plus the filebeat
+source's own with the bundled filebeat program.
 
 ### Infrastructure Profiles (docker-compose.yml)
 
