@@ -363,6 +363,18 @@ Eight named volumes hold all durable state:
 eight, which now includes the warehouse. It always removed volumes; what changed
 is that ClickHouse data is in one.
 
+### Retention
+
+Every time-series table DFE deploys, the OTel tables included, keeps rows for
+`DFE_CLICKHOUSE_DEFAULT_TTL_DAYS` days -- 90 unless set, and 0 disables the
+default TTL. `make init` asks for it once, on a TTY, when it creates `.env` and
+writes the answer as a live line; a non-interactive run keeps the template's
+commented 90, and the key already set in the environment pre-answers it. The
+value reaches dfe-engine and `dfe-schema-init`, whose apply reconciles existing
+tables, so changing it later is a `.env` edit and a `make ci`. A source, or a
+dfe-schemas definition, that declares its own TTL keeps it. The same knob is
+`retention.default_ttl_days` in `deployment.yaml`.
+
 ### External data location
 
 ClickHouse and Kafka grow, and `/var/lib/docker` is rarely the disk sized for
