@@ -24,7 +24,9 @@ at all.
 
 The break-glass password is never printed: the engine hashes it into the deploy
 repo on its first boot and never stores the plaintext, so this says where it
-lives and leaves reading it a deliberate act.
+lives and leaves reading it a deliberate act. The OIDC fixture password is never
+printed either -- it is one shared login across every tester, so the summary
+names the key holding it and stops there.
 
 Values are read out of .env with the same minimal parser compose uses. A key with
 no value reads as missing and is reported as such rather than printed blank.
@@ -33,6 +35,7 @@ no value reads as missing and is reported as such rather than printed blank.
 from __future__ import annotations
 
 import os
+import re
 import sys
 
 from _common import (
@@ -52,6 +55,15 @@ _ADMIN_NAME_KEY = "DFE_AUTH_LOCAL_ADMIN_NAME"
 _ADMIN_PASSWORD_KEY = "DFE_AUTH_LOCAL_ADMIN_PASSWORD"
 _BREAKGLASS_NAME = "breakglass"
 _BREAKGLASS_PASSWORD_KEY = "DFE_AUTH_BREAKGLASS_PASSWORD"
+
+# The tester login the console acceptance specs sign in with. Same names in every
+# DFE repo; the default user is the one the fixture provisioners create.
+_FIXTURE_USER_KEY = "DFE_OIDC_FIXTURE_USER"
+_FIXTURE_PASSWORD_KEY = "DFE_OIDC_FIXTURE_PASSWORD"
+_FIXTURE_DEFAULT_USER = "dfe-test@dfe-oidc.test"
+# A per-provider override, where the group is the provider name uppercased as
+# /api/v1/auth/setup-status reports it. The generic pair above cannot match.
+_FIXTURE_OVERRIDE_RE = re.compile(r"^DFE_OIDC_([A-Z0-9]+)_FIXTURE_(?:USER|PASSWORD)$")
 
 # Postures the engine treats as dev, where it tolerates the shipped default
 # password. Mirrors dfe_engine.settings.is_dev_posture.
@@ -87,6 +99,42 @@ def show_password(*, is_tty: bool, setting: str) -> bool:
     if setting.strip() and setting.strip().lower() in FALSY:
         return False
     return is_tty
+
+
+def fixture_providers(*, values: dict[str, str]) -> list[str]:
+    """Provider names carrying a per-provider fixture override with a value."""
+    return sorted(
+        {
+            match.group(1)
+            for key, value in values.items()
+            if value.strip() and (match := _FIXTURE_OVERRIDE_RE.match(key.strip()))
+        }
+    )
+
+
+def fixture_lines(*, values: dict[str, str]) -> list[str]:
+    """The OIDC fixture login, as a user and a key name -- never as a password.
+
+    Empty when neither generic key is set: an operator who never signs in through
+    an external provider has no fixture login to be told about.
+    """
+    user = values.get(_FIXTURE_USER_KEY, "").strip()
+    password = values.get(_FIXTURE_PASSWORD_KEY, "").strip()
+    if not (user or password):
+        return []
+    where = (
+        f"the value of {_FIXTURE_PASSWORD_KEY} in {_rel_path(path=DOTENV_FILE)}"
+        if password
+        else f"NO PASSWORD -- {_FIXTURE_PASSWORD_KEY} is unset, so the specs skip"
+    )
+    lines = [f"    oidc test    {user or _FIXTURE_DEFAULT_USER} / {where}"]
+    providers = fixture_providers(values=values)
+    if providers:
+        lines.append(
+            f"                 per-provider override set for {', '.join(providers)} "
+            "-- see DFE_OIDC_<PROVIDER>_FIXTURE_*"
+        )
+    return lines
 
 
 def summary_lines(*, values: dict[str, str], reveal: bool = True) -> list[str]:
@@ -136,6 +184,7 @@ def summary_lines(*, values: dict[str, str], reveal: bool = True) -> list[str]:
             f"    break-glass  none -- {_BREAKGLASS_PASSWORD_KEY} is unset, so no "
             "recovery admin was minted"
         )
+    lines.extend(fixture_lines(values=values))
     lines.append("    show again   make creds")
     lines.append("")
     return lines
