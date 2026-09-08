@@ -106,3 +106,10 @@ docker:
 ## thin caller inject it from bao). Left empty, the in-stack container is used.
 endpoints:
   clickhouse_host: ""
+
+## RETENTION -- the deployment-wide TTL for every time-series table DFE deploys,
+## the OTel tables included. Whole days; 0 disables the default TTL. A source, or
+## a dfe-schemas definition, that declares its own TTL overrides it. Same field as
+## the dfe-infra dial; renders to DFE_CLICKHOUSE_DEFAULT_TTL_DAYS.
+retention:
+  default_ttl_days: 90

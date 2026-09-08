@@ -399,6 +399,9 @@ services:
       DFE_CLICKHOUSE_USERNAME: ${CLICKHOUSE_USERNAME:-default}
       DFE_CLICKHOUSE_PASSWORD: ${CLICKHOUSE_PASSWORD:-}
       DFE_CLICKHOUSE_SECURE: ${CLICKHOUSE_SECURE:-false}
+      # The apply reconciles existing tables, so it runs with the same TTL the
+      # engine does. 0 = no default TTL.
+      DFE_CLICKHOUSE_DEFAULT_TTL_DAYS: ${DFE_CLICKHOUSE_DEFAULT_TTL_DAYS:-90}
       # Unset by default: the image resolves its own bundled schemas. Point this
       # at a full dfe-schemas tree to override.
       DFE_SCHEMAS_DIR: ${DFE_ENGINE_SCHEMAS_DIR:-}
@@ -832,6 +835,9 @@ services:
       DFE_CLICKHOUSE_USERNAME: ${CLICKHOUSE_USERNAME:-default}
       DFE_CLICKHOUSE_PASSWORD: ${CLICKHOUSE_PASSWORD:-}
       DFE_CLICKHOUSE_SECURE: ${CLICKHOUSE_SECURE:-false}
+      # Default TTL for every time-series table; 0 = none; a source or a
+      # dfe-schemas TTL overrides it. dfe-schema-init carries the same value.
+      DFE_CLICKHOUSE_DEFAULT_TTL_DAYS: ${DFE_CLICKHOUSE_DEFAULT_TTL_DAYS:-90}
       DFE_CONFIG_DIR: ${DFE_ENGINE_CONFIG_DIR:-/app/config}
       DFE_SCHEMAS_DIR: ${DFE_ENGINE_SCHEMAS_DIR:-/app/schemas}
       OTEL_EXPORTER_OTLP_ENDPOINT: ${DFE_OTEL_EXPORTER_ENDPOINT:-}

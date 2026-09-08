@@ -31,13 +31,14 @@ if str(SCRIPTS_DIR) not in sys.path:
 import _common  # noqa: E402
 import creds  # noqa: E402
 import dev_posture  # noqa: E402
+import init  # noqa: E402
 
 
 @pytest.fixture
 def dotenv(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     """Return the path of a throwaway .env every module under test points at."""
     path = tmp_path / ".env"
-    for module in (_common, creds, dev_posture):
+    for module in (_common, creds, dev_posture, init):
         monkeypatch.setattr(module, "DOTENV_FILE", path)
     # _rel_path resolves REPO_ROOT at call time, so display paths stay renderable.
     monkeypatch.setattr(_common, "REPO_ROOT", tmp_path)
