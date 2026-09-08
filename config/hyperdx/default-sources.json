@@ -1,12 +1,12 @@
 [
   {
-    "id": "dfe-default",
-    "name": "DFE Default",
+    "id": "dfe-main",
+    "name": "DFE Main",
     "kind": "log",
     "connection": "local",
     "from": {
       "databaseName": "dfe",
-      "tableName": "default"
+      "tableName": "main"
     },
     "timestampValueExpression": "_timestamp",
     "displayedTimestampValueExpression": "_timestamp",
