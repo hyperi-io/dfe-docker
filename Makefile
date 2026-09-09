@@ -432,6 +432,10 @@ check-dockerfile: ## Lint the dev builder Dockerfile (hadolint gates on error se
 test-e2e: ## End-to-end test executor (pass test names via E2E_TESTS)
 	@python3 ./scripts/test_e2e.py $(E2E_TESTS)
 
+.PHONY: test-flows
+test-flows: ## Flow shapes against a running stack (needs DFE_ENGINE_REPO; FLOW_ARGS passes flags)
+	@python3 ./scripts/test_flows.py $(FLOW_ARGS)
+
 # ---------------------------------------------------------------------------
 # Power-on self test
 # Runs automatically after `make dev` / `make ci`. Opt OUT with
