@@ -43,8 +43,11 @@
 active_profile: kafka-fetcher
 
 profiles:
-  # Mirrors the Kubernetes slim tier: gRPC transport, no broker, the
-  # receiver/loader ingest path, and the collector that tier also runs.
+  # BEGIN projected profiles -- rendered by `make render-profiles`
+  # Kubernetes is the master for these two: edit dfe-infra
+  # argocd/values/profile-<mode>.yaml, then re-render. See docs/profiles.md.
+  # Mirrors the Kubernetes slim tier: grpc transport, no broker, the receiver/loader
+  # ingest path, the warehouse, the core surface and self-monitoring.
   slim:
     transport: grpc
     clickhouse: true
@@ -55,14 +58,8 @@ profiles:
         config_path: loader/grpc.yaml
       dfe-receiver:
         config_path: receiver/grpc.yaml
-
-  # One node of the whole PLATFORM, with Kafka: warehouse, core surface, Kafka UI
-  # and self-monitoring. The data plane is receiver + loader ONLY, because those
-  # two are the pair that runs from a default deploy with nothing external
-  # configured. dfe-archiver, dfe-fetcher and the transforms need endpoints or
-  # credentials this profile cannot supply, so they stay opt-in on the
-  # fine-grained profiles below. HyperDX is opt-in too, matching the Kubernetes
-  # profile.
+  # Mirrors the Kubernetes single tier: kafka transport, the receiver/loader
+  # ingest path, the warehouse, the core surface and self-monitoring.
   single:
     transport: kafka
     clickhouse: true
@@ -74,7 +71,13 @@ profiles:
         config_path: loader/kafka.yaml
       dfe-receiver:
         config_path: receiver/kafka.yaml
+  # END projected profiles
 
+  # Hand-crafted from here down. The two profiles above run receiver + loader
+  # only, because that pair runs from a default deploy with nothing external
+  # configured; dfe-archiver, dfe-fetcher and the transforms need endpoints or
+  # credentials neither can supply, so they are opt-in on these. HyperDX is
+  # opt-in too, matching Kubernetes.
   kafka-minimal:
     transport: kafka
     services:

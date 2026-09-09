@@ -15,6 +15,7 @@ can apply - read both if so.
 | Working out why a stack is misbehaving - yours or someone else's. | **Troubleshooting** | [docs/troubleshooting.md](docs/troubleshooting.md) |
 | Standing a deployment up, or moving one to a newer certified stack. | **Deploying** | [docs/deploying.md](docs/deploying.md) |
 | Asking what the stack reports about itself - health endpoints, self-telemetry, what a passing self test proves. | **Observability** | [docs/observability.md](docs/observability.md) |
+| Adding or changing a profile, and wanting to know which ones are yours to edit. | **Profiles** | [docs/profiles.md](docs/profiles.md) |
 | Wanting to know how the pieces fit together, before any of the above. | **Everyone** | [docs/architecture.md](docs/architecture.md) |
 
 Two things worth knowing before you start, whichever you are:
@@ -139,31 +140,11 @@ make dev LOCAL="dfe-engine dfe-ui"      # Build only these from source; the rest
 
 ### Application Profiles (service_profiles.yaml)
 
-`slim` and `single` name a whole-stack shape and share their names with the
-Kubernetes tier, so one deployment dial reads the same on both. `single` is the
-complete stack. There is no `scale` - Compose cannot run an HA broker or a
-ClickHouse cluster.
-
-| Profile                           | Transport | dfe-archiver | dfe-fetcher | dfe-loader | dfe-receiver | dfe-transform-vrl | dfe-transform-vector |
-|-----------------------------------|-----------|:------------:|:-----------:|:----------:|:------------:|:-----------------:|:--------------------:|
-| `slim`                            | gRPC      |              |             |     X      |      X       |                   |                      |
-| `single`                          | Kafka     |      X       |      X      |     X      |      X       |         X         |                      |
-| `kafka-fetcher`                   | Kafka     |              |      X      |     X      |              |                   |                      |
-| `kafka-full`                      | Kafka     |      X       |      X      |     X      |      X       |                   |                      |
-| `kafka-full-transform-vrl`        | Kafka     |              |      X      |     X      |      X       |         X         |                      |
-| `kafka-minimal`                   | Kafka     |              |             |     X      |              |                   |                      |
-| `kafka-receiver`                  | Kafka     |              |             |     X      |      X       |                   |                      |
-| `kafka-receiver-archiver`         | Kafka     |      X       |             |     X      |      X       |                   |                      |
-| `kafka-receiver-transform-vector` | Kafka     |              |             |     X      |      X       |                   |           X          |
-| `kafka-filebeat`                  | Kafka     |              |             |     X      |      X       |        X2         |                      |
-| `kafka-filebeat-vector`           | Kafka     |              |             |     X      |      X       |                   |          X2          |
-| `grpc-fetcher`                    | gRPC      |              |      X      |     X      |              |                   |                      |
-| `grpc-full`                       | gRPC      |              |      X      |     X      |      X       |                   |                      |
-| `grpc-minimal`                    | gRPC      |              |             |     X      |              |                   |                      |
-| `grpc-receiver`                   | gRPC      |              |             |     X      |      X       |                   |                      |
-
-`X2` is two instances of that app: the shared passthrough one, plus the filebeat
-source's own with the bundled filebeat program.
+`slim` and `single` share their names with the Kubernetes tiers and are rendered
+from them, so they are edited THERE and re-rendered here; every other profile is
+a hand-crafted data-plane shape you own. There is no `scale` - Compose cannot run
+an HA broker or a ClickHouse cluster. Which profile runs what, and how the two
+projected ones are re-rendered: [docs/profiles.md](docs/profiles.md).
 
 ### Infrastructure Profiles (docker-compose.yml)
 
