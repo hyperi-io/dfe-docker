@@ -16,6 +16,13 @@ names the same command on its login page while first-run setup is incomplete
 (deployment_hints.credential_fetch_command for the docker target), so an operator
 who lands on the login page with no password is one line from having one.
 
+`--write` also writes access-summary.md next to .env, in the same shape
+dfe-infra's `dfe-ops access-summary` writes after a kubernetes deploy -- same
+heading, same table, same closing steps -- so an operator reads one artefact
+whichever deployer they used. It carries BOTH minted passwords in plaintext,
+which is why it is 0600, gitignored, and told to be deleted -- it exists to be
+read once and removed, and the terminal print below is the every-day path.
+
 The admin password prints ONLY to a terminal. A pipe, a file or a CI job log gets
 the line that says which key in .env holds it instead, because a build log is
 read by more people, for longer, than the person who ran the command.
@@ -37,8 +44,10 @@ from __future__ import annotations
 import os
 import re
 import sys
+from pathlib import Path
 
 from _common import (
+    ACCESS_SUMMARY_FILE,
     DOTENV_FILE,
     FALSY,
     _dotenv_values,
@@ -73,6 +82,18 @@ _DEV_POSTURES = {"dev", "development", "local", "test", "ci"}
 _UNSET_POSTURE = "production"
 # The shipped placeholder the engine refuses outside a dev posture.
 _DEFAULT_PASSWORD = "changeme"
+
+# The written summary's heading, account labels and closing steps, copied from
+# dfe-infra scripts/access_summary.py so both deployers hand over one file shape.
+# Changing any of these diverges the two artefacts.
+_SUMMARY_HEADING = "# DFE access -- first login"
+_ADMIN_LABEL = "Admin"
+_BREAKGLASS_LABEL = "Break-Glass"
+_NEXT_STEPS = (
+    "Log in at the console URL above and finish the setup wizard.",
+    "Retire the bootstrap admin from the wizard's last step once your own admin exists.",
+    "Keep the break-glass password somewhere safe, then delete this file.",
+)
 
 
 def _url(*, values: dict[str, str], port_key: str, default_port: str) -> str:
@@ -197,21 +218,99 @@ def summary_lines(*, values: dict[str, str], reveal: bool = True) -> list[str]:
     lines.extend(fixture_lines(values=values))
     lines.append("    show again   make creds")
     lines.append("")
+    lines.append("  Next")
+    lines.append("    1. Finish the first-run wizard in the console.")
+    lines.append(
+        "    2. Retire the bootstrap admin from its last step once your own admin "
+        f"exists, then delete {_ADMIN_PASSWORD_KEY} from {_rel_path(path=DOTENV_FILE)}."
+    )
+    lines.append(
+        "    3. Keep the break-glass password offline and delete its plaintext -- "
+        "the engine keeps only the hash."
+    )
+    lines.append("")
     return lines
 
 
-def main() -> int:
+def _password_cell(*, password: str, key: str) -> str:
+    """A password table cell, or what to run when the deployment has not minted one."""
+    return (
+        f"`{password}`" if password else f"NOT MINTED -- run `make init` to mint {key}"
+    )
+
+
+def summary_markdown(*, values: dict[str, str]) -> str:
+    """The access summary as a file: both minted passwords, and what to do next.
+
+    The plaintext is the point -- this is the artefact an operator reads once
+    while finishing setup, and the closing steps are what let them delete it.
+
+    The one line dfe-infra's file does not carry is the .env note: deleting this
+    file is the whole clean-up after a kubernetes deploy, but here .env keeps its
+    own copy of both passwords and has to be cleaned up as well.
+    """
+    admin = values.get(_ADMIN_NAME_KEY, "").strip() or "admin"
+    admin_password = values.get(_ADMIN_PASSWORD_KEY, "").strip()
+    breakglass_password = values.get(_BREAKGLASS_PASSWORD_KEY, "").strip()
+    console = _url(values=values, port_key="DFE_UI_PORT", default_port="3000")
+    api = _url(values=values, port_key="DFE_ENGINE_PORT", default_port="8003")
+    dotenv = _rel_path(path=DOTENV_FILE)
+    lines = [
+        _SUMMARY_HEADING,
+        "",
+        f"- Console: {console}",
+        f"- Engine API: {api}",
+        "",
+        "| Account | Username | Password |",
+        "|---------|----------|----------|",
+        f"| {_ADMIN_LABEL} | `{admin}` | "
+        f"{_password_cell(password=admin_password, key=_ADMIN_PASSWORD_KEY)} |",
+        f"| {_BREAKGLASS_LABEL} | `{_BREAKGLASS_NAME}` | "
+        f"{_password_cell(password=breakglass_password, key=_BREAKGLASS_PASSWORD_KEY)} |",
+        "",
+        f"Both are also in `{dotenv}`, as `{_ADMIN_PASSWORD_KEY}` and "
+        f"`{_BREAKGLASS_PASSWORD_KEY}` -- delete those two keys as well as this file. "
+        "`make creds` prints the admin one again on a terminal.",
+        "",
+    ]
+    lines += [f"{number}. {step}" for number, step in enumerate(_NEXT_STEPS, start=1)]
+    return "\n".join(lines) + "\n"
+
+
+def write_summary(*, values: dict[str, str], path: Path) -> Path:
+    """Write the summary 0600, creating it that way rather than fixing it after.
+
+    An existing file is truncated and its mode reasserted: a rerun must not leave
+    passwords behind a mode a previous run or an editor widened.
+    """
+    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(fd, "w", encoding="utf-8", newline="\n") as handle:
+        handle.write(summary_markdown(values=values))
+    os.chmod(path, 0o600)
+    return path
+
+
+def main(argv: list[str] | None = None) -> int:
+    write = "--write" in (argv if argv is not None else sys.argv[1:])
     if not (DOTENV_FILE.is_file()):
         _print(
             header=_rel_path(path=DOTENV_FILE),
             msg="Missing -- run `make init` to mint this deployment's credentials",
         )
         return 1
+    values = _dotenv_values()
     reveal = show_password(
         is_tty=sys.stdout.isatty(), setting=os.environ.get(_SHOW_KEY, "")
     )
-    for line in summary_lines(values=_dotenv_values(), reveal=reveal):
+    for line in summary_lines(values=values, reveal=reveal):
         print(line)
+    if write:
+        path = write_summary(values=values, path=ACCESS_SUMMARY_FILE)
+        print(
+            f"    file         {_rel_path(path=path)} -- both passwords in plaintext, "
+            "delete it when you are done"
+        )
+        print("")
     return 0
 
 

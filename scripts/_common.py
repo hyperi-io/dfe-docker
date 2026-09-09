@@ -37,6 +37,9 @@ FALSY = {"", "0", "false", "no", "off"}
 
 # Repo constants
 REPO_ROOT = __find_repo_root()
+# Written by `make init` / `make up`: the launcher's copy of the access summary,
+# both minted passwords in plaintext. Gitignored, 0600, meant to be deleted.
+ACCESS_SUMMARY_FILE = REPO_ROOT / "access-summary.md"
 CONFIG_DIR = REPO_ROOT / "config"
 DEPLOYMENT_DIAL = REPO_ROOT / "deployment.yaml"
 DEPLOYMENT_DIAL_TEMPLATE = REPO_ROOT / "deployment.example.yaml"

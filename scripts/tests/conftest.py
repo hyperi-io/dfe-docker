@@ -40,6 +40,8 @@ def dotenv(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     path = tmp_path / ".env"
     for module in (_common, creds, dev_posture, init):
         monkeypatch.setattr(module, "DOTENV_FILE", path)
+    # The access summary carries plaintext passwords, so it goes to tmp_path too.
+    monkeypatch.setattr(creds, "ACCESS_SUMMARY_FILE", tmp_path / "access-summary.md")
     # _rel_path resolves REPO_ROOT at call time, so display paths stay renderable.
     monkeypatch.setattr(_common, "REPO_ROOT", tmp_path)
     return path
