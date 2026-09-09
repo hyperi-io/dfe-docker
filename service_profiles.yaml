@@ -133,7 +133,7 @@ profiles:
         config_path: transform-vrl/kafka.yaml
 
   # The per-source transform shape: two dfe-transform-vrl instances, one on the
-  # shared default_land and one on the filebeat source's own filebeat_land, with
+  # shared main_land and one on the filebeat source's own filebeat_land, with
   # a loader consuming both output topics. A source with its own transform gets
   # its own instance and its own table; adding a second means adding a service,
   # not reconfiguring this one.

@@ -147,7 +147,7 @@ the collector, giving it every container log on the host. Use
 `make post` makes up to two claims, and both must hold:
 
 - **Ingest.** Three marked events posted at the profile's ingest edge come back
-  as those exact rows in `dfe.default` inside 60s.
+  as those exact rows in `dfe.main` inside 60s.
 - **Self-monitoring**, when a collector is running. Rows in the `dfe.otel_*` tables
   NEWER than five minutes.
 

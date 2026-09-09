@@ -263,7 +263,7 @@ does not move data.
 `make dev` and `make ci` finish by running `scripts/post.py`. It injects three
 marked events at the ingest edge of the **resolved profile** (receiver if the
 profile has one, otherwise fetcher) and waits for those exact rows in
-`dfe.default`.
+`dfe.main`.
 
 ```bash
 make post                        # against an already-running stack
@@ -295,7 +295,7 @@ Each entry under `tests:` names a `service_profiles.yaml` profile, optionally
 `config_overrides` keyed by service name.
 
 The runner brings ClickHouse and `dfe-engine` up first and gates on the engine's
-health, because the engine provisions `dfe.default` and registers the schemas the
+health, because the engine provisions `dfe.main` and registers the schemas the
 loader pre-warms. Then it asserts **two** things per test: the row-count delta
 from a per-test baseline, and that those rows carry this run's marker in `_tags`.
 The delta alone would pass on somebody else's rows; the marker alone would not
@@ -314,8 +314,8 @@ Two things about the runner worth knowing before you debug it:
   topic-init services are one-shots that must exit. Waiting on the profile sweeps
   them in and fails regardless of broker health.
 - **It deletes the `_load` sibling of every expected `_land` topic before each
-  run.** Broker volumes outlive containers, so a `default_load` left by any
-  transform run suppresses `default_land` for every non-transform loader
+  run.** Broker volumes outlive containers, so a `main_load` left by any
+  transform run suppresses `main_land` for every non-transform loader
   thereafter. See
   [troubleshooting.md](troubleshooting.md#configloaderkafka-loadyaml-consumes-a-topic-nothing-pre-creates).
   Deleting it per run makes a run depend on the test definition, not on broker

@@ -84,13 +84,13 @@ KAFKA_BACKEND=apache make -e dev  # -e flips the precedence
 
 ```mermaid
 flowchart LR
-    recv["dfe-receiver"] --> land["default_land"]
+    recv["dfe-receiver"] --> land["main_land"]
     fetch["dfe-fetcher"] --> land
     land --> arch["dfe-archiver"]
     land --> vrl["dfe-transform-vrl"]
     land -->|topic_regex .*_land| ldr1["dfe-loader<br/>loader/kafka.yaml"]
-    vrl --> load["default_load"]
-    load -->|topic default_load| ldr2["dfe-loader<br/>loader/kafka-load.yaml"]
+    vrl --> load["main_load"]
+    load -->|topic main_load| ldr2["dfe-loader<br/>loader/kafka-load.yaml"]
 
     classDef made fill:#009E73,color:#ffffff,stroke:#000000
     classDef notmade fill:#D55E00,color:#ffffff,stroke:#000000
@@ -98,8 +98,8 @@ flowchart LR
     class load notmade
 ```
 
-`kafka-init-redpanda` and `kafka-init-apache` each pre-create `default_land` and
-nothing else. `config/loader/kafka-load.yaml` subscribes to `default_load`, which
+`kafka-init-redpanda` and `kafka-init-apache` each pre-create `main_land` and
+nothing else. `config/loader/kafka-load.yaml` subscribes to `main_load`, which
 is produced by `config/transform-vrl/kafka.yaml`. That topic exists only if broker
 auto-creation makes it. The profiles affected are the ones that point the loader
 at `kafka-load.yaml`: `kafka-receiver-transform-vector` and
@@ -116,21 +116,21 @@ tooling, so choosing Apache Kafka to stay clear of the BSL never pulls a BSL
 artefact. Downstream services depend on both with `required: false`; exactly one
 exists for any profile, so the other is a no-op.
 
-**Do not close this gap by pre-creating `default_load` in the init services.**
+**Do not close this gap by pre-creating `main_load` in the init services.**
 The loader auto-discovers topics and scalo suppresses `<base>_land` whenever
 `<base>_load` exists, on the reasoning that a `_load` topic means a transform has
-already produced the loadable form. Creating `default_load` on every Kafka profile
-therefore drops `default_land` from the subscription of every loader not running a
+already produced the loadable form. Creating `main_load` on every Kafka profile
+therefore drops `main_land` from the subscription of every loader not running a
 transform, which is most of them. The symptom is maximally misleading: ingest
-returns 200, the receiver produces to `default_land`, the topic shows a rising
+returns 200, the receiver produces to `main_land`, the topic shows a rising
 high watermark, and no rows reach ClickHouse.
 
 Reverting the change does not restore a broker that already has the topic.
 `kafka-redpanda-data` and `kafka-apache-data` outlive the containers, so the topic
-persists and keeps suppressing `default_land` on every later run. Delete it:
+persists and keeps suppressing `main_land` on every later run. Delete it:
 
 ```bash
-docker compose exec kafka-redpanda rpk topic delete default_load -X brokers=kafka:9092
+docker compose exec kafka-redpanda rpk topic delete main_load -X brokers=kafka:9092
 ```
 
 The e2e harness now does this for itself: `clean_topics` deletes the `_load`
@@ -146,7 +146,7 @@ order.
 flowchart TD
     start(["Ingest returns 2xx, no rows in ClickHouse"])
     loader{"Loader /readyz OK?"}
-    schema{"dfe.default exists<br/>in ClickHouse?"}
+    schema{"dfe.main exists<br/>in ClickHouse?"}
     topic{"Consumed topic<br/>exists on broker?"}
     dlq{"Files under<br/>/var/spool/dfe?"}
 
@@ -169,7 +169,7 @@ tells you.
 inside its own image, creates the ClickHouse objects at startup, and the loader
 pre-warms those schemas into its cache. Nothing in this repo provisions tables.
 If the engine has not provisioned, the loader holds every message pending-schema
-and dead-letters after a timeout. Check `dfe.default` exists and that the engine
+and dead-letters after a timeout. Check `dfe.main` exists and that the engine
 is healthy.
 
 **Then the topic.** On a Kafka profile, do not check that the topic exists -- check
@@ -183,7 +183,7 @@ docker compose exec kafka-redpanda rpk group describe dfe-loader -X brokers=kafk
 ```
 
 If the topic the receiver produces to is missing from the resolved list, read the
-`default_load` issue above -- a `_load` sibling suppresses the `_land` topic.
+`main_load` issue above -- a `_load` sibling suppresses the `_land` topic.
 Kafbat on `:8081` shows the produced-to topic and its high watermark, which is the
 other half of the picture.
 

@@ -44,7 +44,7 @@ flowchart LR
         vector["dfe-transform-vector"]:::dfe
     end
 
-    load[(Kafka default_load)]:::broker
+    load[(Kafka main_load)]:::broker
     archiver["dfe-archiver"]:::dfe
     loader["dfe-loader"]:::dfe
     ch[(ClickHouse)]:::store
@@ -70,11 +70,11 @@ broker -- the ingest components dial `dfe-loader:50051` directly.
 
 Both transforms and `dfe-archiver` are Kafka-only: each reads a topic and writes
 a topic or a volume. With a transform in the profile the loader switches to
-`config/loader/kafka-load.yaml` and consumes `default_load`.
+`config/loader/kafka-load.yaml` and consumes `main_load`.
 
 ## A source with its own transform gets its own instance
 
-A source with a transform stops sharing `default_land`: the receiver routes it to
+A source with a transform stops sharing `main_land`: the receiver routes it to
 `<source>_land`, and only a transform reading THAT topic sees it. So a transform
 is deployed once per source, as the Kubernetes tier deploys one per Source
 definition -- input topic, program directory and output topic all carry the name.
@@ -88,7 +88,7 @@ mode, profile resolution and the checks working.
 | Compose service | `dfe-transform-vrl-filebeat`, the same image, its own metrics port | `dfe-transform-vector-filebeat`, likewise |
 | Config | `config/transform-vrl/filebeat.yaml` -- `filebeat_land` in, `filebeat_load` out | `config/transform-vector/filebeat.yaml` -- `dfe_source: filebeat-vector` derives both topics |
 | Program | `config/transform-vrl/transforms-filebeat/`, vendored from dfe-transform-vrl | `config/transform-vector/transforms-filebeat/`, the same VRL inside a Vector `remap`, vendored from dfe-transform-vector |
-| Loader | `config/loader/kafka-load-filebeat.yaml` lists `filebeat_load` alongside `default_load` | `config/loader/kafka-load-filebeat-vector.yaml` lists `filebeat-vector_load` |
+| Loader | `config/loader/kafka-load-filebeat.yaml` lists `filebeat_load` alongside `main_load` | `config/loader/kafka-load-filebeat-vector.yaml` lists `filebeat-vector_load` |
 | Table | `dfe.filebeat`, from the `_load` topic name -- the loader strips the suffix and routes on it | ``dfe.`filebeat-vector` ``, the same way |
 | Enrichment data | `config/transform-vrl/data/`, mounted beside the program dir -- the transform scans that dir for programs | the same directory, mounted at `/etc/dfe-transform-vector/data` -- one table, not a copy per app |
 | Dev images | an override block plus `IMAGE_CONSUMERS` in `scripts/build_dev_images.py`, or `make dev` leaves it on the registry pin | the same |

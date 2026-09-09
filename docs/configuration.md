@@ -290,7 +290,7 @@ startup; the loader pre-warms those schemas into its cache. Nothing in this repo
 provisions tables.
 
 - `dfe` - master database for all DFE related tables
-- `dfe.default` - catch-all for unrouted events, carrying `_tags` (JSON) among
+- `dfe.main` - catch-all for unrouted events, carrying `_tags` (JSON) among
   the profile columns
 
 That last detail matters more than it looks: the e2e suite and the power-on self

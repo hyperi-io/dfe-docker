@@ -8,7 +8,7 @@
 #
 # One topic per transform instance, listed rather than matched: the loader strips
 # the _load suffix to get _source, and routes each to the table of that name, so
-# filebeat_load lands in dfe.filebeat and default_load in dfe.default.
+# filebeat_load lands in dfe.filebeat and main_load in dfe.main.
 
 clickhouse:
   hosts:
@@ -23,7 +23,7 @@ kafka:
     - kafka:9092
   group: dfe-loader
   topics:
-    - default_load
+    - main_load
     - filebeat_load
 
 routing:

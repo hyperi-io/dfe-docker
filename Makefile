@@ -446,7 +446,7 @@ test-flows: ## Flow shapes against a running stack (needs DFE_ENGINE_REPO; FLOW_
 # `make post` itself exits non-zero on failure, so it is usable as a gate. The
 # auto-run after dev/ci deliberately does NOT abort the target: it has been seen
 # to fail on a clean-slate kafka-fetcher stack for reasons not yet isolated (the
-# loader's topic resolver did not pick up default_land), and until that is
+# loader's topic resolver did not pick up main_land), and until that is
 # understood it must not brick the primary start command. Wire it to fail the
 # target once it is proven stable -- that is the intended end state, not this.
 # ---------------------------------------------------------------------------
