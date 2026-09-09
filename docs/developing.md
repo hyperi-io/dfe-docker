@@ -205,39 +205,12 @@ stack manifest.
 mounts. `active_profile` is the default; `DFE_PROFILE` overrides it for one
 invocation.
 
-Two profiles name a whole-stack shape and share their names with the Kubernetes
-tier, so one deployment dial reads the same on both:
-
-| Profile | Transport | Services | Also starts |
-|---|---|---|---|
-| `slim` | grpc | loader, receiver | ClickHouse, core |
-| `single` | kafka | loader, receiver | ClickHouse, core, kafka-ui, otel-collector |
-
-`single` is the whole PLATFORM on one box, and the only shape an OIDC issuer
-would front if one is wired in. Its data plane is receiver + loader only:
-those two run from a default deploy with nothing external configured, while
-dfe-archiver, dfe-fetcher and the transforms need endpoints or credentials the
-profile cannot supply. Take those from the fine-grained profiles below. HyperDX
-is opt-in too, matching the Kubernetes profile. There is no `scale`: Compose
-cannot run an HA broker or a ClickHouse cluster.
-
-The rest are fine-grained data-plane shapes. The e2e suite pins them by name.
-
-| Profile | Transport | Services |
-|---|---|---|
-| `kafka-minimal` | kafka | loader |
-| `kafka-fetcher` | kafka | fetcher, loader |
-| `kafka-receiver` | kafka | loader, receiver |
-| `kafka-receiver-archiver` | kafka | archiver, loader, receiver |
-| `kafka-receiver-transform-vector` | kafka | loader, receiver, transform-vector |
-| `kafka-full` | kafka | archiver, fetcher, loader, receiver |
-| `kafka-full-transform-vrl` | kafka | fetcher, loader, receiver, transform-vrl |
-| `kafka-filebeat` | kafka | loader, receiver, transform-vrl, transform-vrl-filebeat |
-| `kafka-filebeat-vector` | kafka | loader, receiver, transform-vector, transform-vector-filebeat |
-| `grpc-minimal` | grpc | loader |
-| `grpc-fetcher` | grpc | fetcher, loader |
-| `grpc-receiver` | grpc | loader, receiver |
-| `grpc-full` | grpc | fetcher, loader, receiver |
+`slim` and `single` are whole-stack shapes RENDERED from the Kubernetes tiers of
+the same name, so a change to either belongs in dfe-infra and comes back here
+through `make render-profiles`. The rest are fine-grained data-plane shapes the
+e2e suite pins by name. Which profile runs what, and how the rendering works:
+[profiles.md](profiles.md). There is no `scale`: Compose cannot run an HA broker
+or a ClickHouse cluster.
 
 ```bash
 DFE_PROFILE=grpc-full make dev        # override the profile

@@ -373,6 +373,21 @@ print-pytest-version:
 check-tests: ## Run the helper-script unit tests (scripts/tests)
 	$(PYTEST) -q scripts/tests
 
+# `slim` and `single` are projections of the Kubernetes tiers of the same name,
+# so both targets need DFE_INFRA_DIR pointed at a dfe-infra checkout. Unset,
+# check-profiles reports SKIPPED rather than passing: it cannot read the master.
+.PHONY: render-profiles
+render-profiles: ## Re-render the projected slim/single profiles from dfe-infra (DFE_INFRA_DIR=...)
+	@python3 scripts/render_profiles.py
+
+.PHONY: check-profiles
+check-profiles: ## Assert the projected profiles match the Kubernetes ones (DFE_INFRA_DIR=...)
+ifeq ($(strip $(DFE_INFRA_DIR)),)
+	@echo "check-profiles: DFE_INFRA_DIR unset -- projection NOT checked (not a pass)"
+else
+	@python3 scripts/render_profiles.py --check
+endif
+
 .PHONY: check-compose
 check-compose: ## Resolve compose on the registry, dev and live paths, both Kafka backends
 	@python3 scripts/check_compose.py
