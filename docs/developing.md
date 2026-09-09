@@ -105,6 +105,16 @@ When it does rewrite, it copies the file it replaced to `.env.bak-<utc>` first,
 mode 0600, and prints the path: a minted password is gone once overwritten. A run
 with nothing to change writes neither.
 
+`AUTH=real` is the same local build against a deployment's authentication flow,
+for when the login is the thing under test. It mints a password and writes
+`DFE_ENV=production`, leaving either alone where it is already real, so it never
+refuses. `make creds` reads the password back.
+
+```bash
+make dev              # local images, known default password, DFE_ENV=dev
+make dev AUTH=real    # local images, minted password, DFE_ENV=production
+```
+
 ## Dev mode compiles your source; registry mode pulls GHCR
 
 ```bash

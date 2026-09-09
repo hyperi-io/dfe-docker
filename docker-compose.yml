@@ -811,9 +811,12 @@ services:
       - path: env/engine.env
         required: false
     environment:
-      # The engine refuses to start at `production` without real auth, and
-      # compose mode is god-mode. docs/operating.md#there-is-no-authentication
-      DFE_ENV: ${DFE_ENV:-dev}
+      # The engine refuses to start at `production` without real auth, which is
+      # what an unset DFE_ENV should get: `make init` mints a password, so the
+      # refusal only ever catches a stack that has no credential to speak of.
+      # `make dev` writes DFE_ENV=dev for a tyre-kick that logs in on the shipped
+      # default. docs/operating.md#there-is-no-authentication
+      DFE_ENV: ${DFE_ENV:-production}
       # Names the fetch command the engine puts on the login page: `make creds`.
       DFE_DEPLOYMENT_TARGET: docker
       # The everyday admin, reasserted from .env on every boot. The engine refuses
@@ -823,6 +826,10 @@ services:
       # The recovery admin. Mint-once: the engine hashes it into the deploy repo
       # on the first boot with no hash committed, and ignores it from then on.
       DFE_AUTH_BREAKGLASS_PASSWORD: ${DFE_AUTH_BREAKGLASS_PASSWORD:-}
+      # Keys the OIDC session cookie. The engine ships a known placeholder and
+      # refuses to start on it outside a dev posture, the same as the admin
+      # password above, so `make init` mints this one too.
+      DFE_API_JWT_SECRET: ${DFE_API_JWT_SECRET:-}
       # The deploy repo the break-glass hash and the governance settings live in.
       # Local-only here: no repo_url, so nothing is pushed anywhere. It sits inside
       # the config volume because a volume mounted on a path the image does not own
@@ -840,6 +847,10 @@ services:
       # dfe-schemas TTL overrides it. dfe-schema-init carries the same value.
       DFE_CLICKHOUSE_DEFAULT_TTL_DAYS: ${DFE_CLICKHOUSE_DEFAULT_TTL_DAYS:-90}
       DFE_CONFIG_DIR: ${DFE_ENGINE_CONFIG_DIR:-/app/config}
+      # Onto the config VOLUME, because the engine mints its ES384 JWT signing
+      # key here on first use: left on the container filesystem it is remade on
+      # every recreate, and every session issued before it stops verifying.
+      DFE_SECRETS_PATH: ${DFE_ENGINE_CONFIG_DIR:-/app/config}/.secrets
       DFE_SCHEMAS_DIR: ${DFE_ENGINE_SCHEMAS_DIR:-/app/schemas}
       OTEL_EXPORTER_OTLP_ENDPOINT: ${DFE_OTEL_EXPORTER_ENDPOINT:-}
       OTEL_SERVICE_NAME: dfe-engine
@@ -884,7 +895,10 @@ services:
       - path: env/engine.env
         required: false
     environment:
-      DFE_ENV: ${DFE_ENV:-dev}
+      DFE_ENV: ${DFE_ENV:-production}
+      # The runner builds the same DFESettings the API does, so it hits the same
+      # start-up refusal without this.
+      DFE_API_JWT_SECRET: ${DFE_API_JWT_SECRET:-}
       DFE_CLICKHOUSE_HOST: ${CLICKHOUSE_HOST:-clickhouse}
       DFE_CLICKHOUSE_PORT: ${CLICKHOUSE_HTTP_PORT:-8123}
       DFE_CLICKHOUSE_NATIVE_PORT: ${CLICKHOUSE_NATIVE_PORT:-9000}
@@ -893,6 +907,8 @@ services:
       DFE_CLICKHOUSE_PASSWORD: ${CLICKHOUSE_PASSWORD:-}
       DFE_CLICKHOUSE_SECURE: ${CLICKHOUSE_SECURE:-false}
       DFE_CONFIG_DIR: ${DFE_ENGINE_CONFIG_DIR:-/app/config}
+      # Same volume as the API's, so both read the one signing key.
+      DFE_SECRETS_PATH: ${DFE_ENGINE_CONFIG_DIR:-/app/config}/.secrets
       DFE_HUNTS_DIR: ${DFE_ENGINE_CONFIG_DIR:-/app/config}/hunts
       DFE_HUNTS_RULES_DIR: ${DFE_ENGINE_CONFIG_DIR:-/app/config}/rules
       DFE_SCHEMAS_DIR: ${DFE_ENGINE_SCHEMAS_DIR:-/app/schemas}

@@ -29,7 +29,8 @@ outlives the engine, the UI and `.env`. Rotate `admin` by changing the value in
 `.env` and running `make up` -- the store is not the source, so a rotation the
 engine alone performed would be undone on the next boot. The engine refuses to
 start when `DFE_AUTH_LOCAL_ADMIN_PASSWORD` is empty or `changeme` and `DFE_ENV` is
-not a dev posture.
+not a dev posture. An unset `DFE_ENV` counts as `production`, so only a `.env` that
+says `dev` gets to run on the shipped password.
 
 Nothing else in the stack authenticates anyone, and that is the hard limit on what
 "production" can mean here: the ingest edges, every metrics port, ClickHouse and

@@ -71,12 +71,14 @@ _LEN_KEY = 48  # signing keys and other long-lived key material
 _LEN_COOKIE = 32
 
 # Name -> length tier. DB passwords are the 128-bit credential tier; the dfe-ui
-# NextAuth value is a session-signing KEY, so it takes the 256-bit tier.
+# NextAuth and engine JWT values are session-signing KEYS, so they take the
+# 256-bit tier.
 GENERATED_SECRETS = {
     "CLICKHOUSE_PASSWORD": _LEN_CREDENTIAL,
     "DFE_AUTH_BREAKGLASS_PASSWORD": _LEN_CREDENTIAL,
     "DFE_AUTH_LOCAL_ADMIN_PASSWORD": _LEN_CREDENTIAL,
     "HYPERDX_POSTGRES_PASSWORD": _LEN_CREDENTIAL,
+    "DFE_API_JWT_SECRET": _LEN_KEY,
     "DFE_UI_NEXTAUTH_SECRET": _LEN_KEY,
     "DFE_OAUTH2_PROXY_COOKIE_SECRET": _LEN_COOKIE,
 }

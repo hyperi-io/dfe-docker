@@ -1,65 +1,58 @@
 #!/usr/bin/env python3
 #  Project:      dfe-docker
 #  File:         dev_posture.py
-#  Purpose:      Put .env into the dev posture `make dev` needs -- known password, DFE_ENV=dev
+#  Purpose:      Put .env into the posture `make dev` needs -- a tyre-kick or a real login
 #  Language:     Python
 #
 #  License:      BUSL-1.1
 #  Copyright:    (c) 2026 HYPERI PTY LIMITED
 
-"""Declare a dev tyre-kick, in .env, so the engine and the operator agree.
+"""Declare what kind of dev stack this is, in .env, so the engine and the operator agree.
 
-`make init` mints a random admin password, which is right for a deployment and
-wrong for a dev loop: the point of `make dev` is a stack you can log into without
-looking anything up. So it writes the KNOWN default and DFE_ENV=dev, which is the
-one posture the engine accepts that default in -- it banners and asks for a change
-at first login instead of refusing to start.
+Two postures, because `make dev` is asked for two different things. The default is
+a tyre-kick: a stack you can log into without looking anything up, so it writes the
+KNOWN default password and DFE_ENV=dev, the one posture the engine accepts that
+default in. `--real` is the other: local images running the authentication flow a
+deployment gets, so it mints a password and writes a non-dev posture, leaving both
+alone where they already hold real values.
 
-It refuses on any other DFE_ENV rather than rewriting it, exit 2. A .env that says
-`production` belongs to a deployment, and quietly downgrading its posture and
-overwriting its admin password is not something a build target gets to do.
+The tyre-kick refuses on any other DFE_ENV rather than rewriting it, exit 2. A .env
+that says `production` belongs to a deployment, and quietly downgrading its posture
+and overwriting its admin password is not something a build target gets to do.
+`--real` never refuses, because it destroys nothing.
 
-Only the two keys are touched; everything else in .env is left as it stands. The
-minted password this overwrites is unrecoverable once it is gone, so the file it
-replaces is copied to `.env.bak-<utc>` first, 0600 like the credentials in it, and
+Only those two keys are touched; everything else in .env is left as it stands. The
+minted password a tyre-kick overwrites is unrecoverable once it is gone, so the file
+it replaces is copied to `.env.bak-<utc>` first, 0600 like the credentials in it, and
 the path is printed. Nothing to change means nothing is written and no backup is
 made, which keeps a `make dev` loop from littering the checkout with copies.
 """
 
 from __future__ import annotations
 
+import argparse
 import datetime
 import os
 import sys
 from pathlib import Path
 
 from _common import DOTENV_FILE, _dotenv_values, _print, _rel_path
-from creds import _DEFAULT_PASSWORD, _DEV_POSTURES, is_dev_posture
-from init import _setting_key
+from creds import (
+    _ADMIN_PASSWORD_KEY,
+    _DEFAULT_PASSWORD,
+    _DEV_POSTURES,
+    default_admin_password,
+    is_dev_posture,
+)
+from init import GENERATED_SECRETS, _generate_secret, _setting_key
 
-# The posture written, and the password written with it.
+# The two postures written, and what each means for the admin password.
 _DEV_ENV = "dev"
-_KEYS = {"DFE_ENV": _DEV_ENV, "DFE_AUTH_LOCAL_ADMIN_PASSWORD": _DEFAULT_PASSWORD}
+_REAL_ENV = "production"
+_POSTURE_KEY = "DFE_ENV"
 # Exit code for the refusal, distinct from 1 (no .env at all) so a caller can tell
 # "you are not a dev box" from "you have not run make init".
 _REFUSED = 2
-
-
-def _rewrite(*, text: str, wanted: dict[str, str]) -> str:
-    """Return the dotenv text with each wanted key assigned, in place where it exists."""
-    pending = dict(wanted)
-    lines = []
-    for line in text.splitlines():
-        key = _setting_key(line=line)
-        if key in pending:
-            lines.append(f"{key}={pending.pop(key)}")
-            continue
-        lines.append(line)
-    if pending:
-        lines.append("")
-        lines.append("## Written by `make dev` - a dev tyre-kick, not a deployment.")
-        lines.extend(f"{key}={value}" for key, value in sorted(pending.items()))
-    return "\n".join(lines) + "\n"
 
 
 def _backup(*, text: str) -> Path:
@@ -73,7 +66,45 @@ def _backup(*, text: str) -> Path:
     return path
 
 
-def main() -> int:
+def _rewrite(*, banner: str, text: str, wanted: dict[str, str]) -> str:
+    """Return the dotenv text with each wanted key assigned, in place where it exists."""
+    pending = dict(wanted)
+    lines = []
+    for line in text.splitlines():
+        key = _setting_key(line=line)
+        if key in pending:
+            lines.append(f"{key}={pending.pop(key)}")
+            continue
+        lines.append(line)
+    if pending:
+        lines.append("")
+        lines.append(banner)
+        lines.extend(f"{key}={value}" for key, value in sorted(pending.items()))
+    return "\n".join(lines) + "\n"
+
+
+def _wanted_real(*, values: dict[str, str]) -> dict[str, str]:
+    """The keys `--real` assigns, omitting any that already holds a real value."""
+    wanted = {}
+    if is_dev_posture(values.get(_POSTURE_KEY, "")):
+        wanted[_POSTURE_KEY] = _REAL_ENV
+    if default_admin_password(values.get(_ADMIN_PASSWORD_KEY, "")):
+        wanted[_ADMIN_PASSWORD_KEY] = _generate_secret(
+            GENERATED_SECRETS[_ADMIN_PASSWORD_KEY]
+        )
+    return wanted
+
+
+def main(*, argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument(
+        "--real",
+        action="store_true",
+        help="mint an admin password and write a non-dev posture, for exercising "
+        "the authentication flow against locally built images",
+    )
+    args = parser.parse_args(args=argv)
+
     if not (DOTENV_FILE.is_file()):
         _print(
             header=_rel_path(path=DOTENV_FILE),
@@ -82,33 +113,52 @@ def main() -> int:
         return 1
 
     values = _dotenv_values()
-    environment = values.get("DFE_ENV", "").strip()
-    if environment and not (is_dev_posture(environment)):
+    environment = values.get(_POSTURE_KEY, "").strip()
+    if not (args.real) and environment and not (is_dev_posture(environment)):
         _print(
             header=_rel_path(path=DOTENV_FILE),
             msg=f"DFE_ENV={environment} is not a dev posture, so `make dev` refuses to "
             f"run: it would overwrite this deployment's admin password with the shipped "
-            f"default. Start it with `make up`, or set DFE_ENV to one of "
-            f"{', '.join(sorted(_DEV_POSTURES))} if this really is a dev box.",
+            f"default. Start it with `make up`, use `make dev AUTH=real` to keep a real "
+            f"login, or set DFE_ENV to one of {', '.join(sorted(_DEV_POSTURES))} if this "
+            f"really is a dev box.",
         )
         return _REFUSED
 
+    wanted = (
+        _wanted_real(values=values)
+        if args.real
+        else {_POSTURE_KEY: _DEV_ENV, _ADMIN_PASSWORD_KEY: _DEFAULT_PASSWORD}
+    )
+    banner = (
+        "## Written by `make dev AUTH=real` - local images, deployment credentials."
+        if args.real
+        else "## Written by `make dev` - a dev tyre-kick, not a deployment."
+    )
+    settled = (
+        f"Real posture already set: DFE_ENV={environment}, admin password is minted"
+        if args.real
+        else f"Dev posture already set: DFE_ENV={_DEV_ENV}, admin password is the known default"
+    )
+
     text = DOTENV_FILE.read_text(encoding="utf-8")
-    rewritten = _rewrite(text=text, wanted=_KEYS)
+    rewritten = _rewrite(banner=banner, text=text, wanted=wanted)
     if rewritten == text:
-        _print(
-            header=_rel_path(path=DOTENV_FILE),
-            msg=f"Dev posture already set: DFE_ENV={_DEV_ENV}, admin password is the known default",
-        )
+        _print(header=_rel_path(path=DOTENV_FILE), msg=settled)
         return 0
 
     backup = _backup(text=text)
     with DOTENV_FILE.open("w", encoding="utf-8", newline="\n") as handle:
         handle.write(rewritten)
+    written = (
+        f"Real posture: DFE_ENV={wanted.get(_POSTURE_KEY, environment)}, admin password "
+        f"minted. Read it with `make creds`."
+        if args.real
+        else f"Dev posture: DFE_ENV={_DEV_ENV}, admin password set to the known default."
+    )
     _print(
         header=_rel_path(path=DOTENV_FILE),
-        msg=f"Dev posture: DFE_ENV={_DEV_ENV}, admin password set to the known default. "
-        f"The file it replaced is {_rel_path(path=backup)}",
+        msg=f"{written} The file it replaced is {_rel_path(path=backup)}",
     )
     return 0
 
