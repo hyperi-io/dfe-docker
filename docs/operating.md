@@ -32,6 +32,13 @@ start when `DFE_AUTH_LOCAL_ADMIN_PASSWORD` is empty or `changeme` and `DFE_ENV` 
 not a dev posture. An unset `DFE_ENV` counts as `production`, so only a `.env` that
 says `dev` gets to run on the shipped password.
 
+`make init` and `make up` also write `access-summary.md` (0600, gitignored) with
+both minted passwords in plaintext. Retire the bootstrap admin from the console
+wizard's last step, or `POST /api/v1/auth/setup/retire-admin`, once your own admin
+exists, then delete `DFE_AUTH_LOCAL_ADMIN_PASSWORD` from `.env` -- the account
+stays disabled and is never reseeded. Keep the break-glass password offline and
+delete both plaintexts, including that file: the engine keeps only the hash.
+
 Nothing else in the stack authenticates anyone, and that is the hard limit on what
 "production" can mean here: the ingest edges, every metrics port, ClickHouse and
 Kafka are open to whoever can route to them. Kafbat and HyperDX are too, unless

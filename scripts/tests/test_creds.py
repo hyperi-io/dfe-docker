@@ -12,8 +12,12 @@
 is a terminal. These pin the branch: the value on a TTY, the .env key that holds
 it otherwise, and DFE_CREDS_SHOW=0 taking the second branch on a TTY too.
 
-The break-glass and OIDC fixture passwords have no such branch -- they are named,
-never printed, and these pin that on both.
+The break-glass and OIDC fixture passwords have no such branch on the terminal --
+they are named, never printed, and these pin that on both.
+
+`--write` is the other artefact: a 0600 file that DOES carry both passwords, for
+the operator to read once and delete. These pin the mode, the plaintext, and the
+three closing steps that let it be deleted.
 """
 
 from __future__ import annotations
@@ -121,6 +125,99 @@ def test_the_fixture_password_is_never_printed(
     assert _FIXTURE_PASSWORD not in out
     assert "dfe-test@dfe-oidc.test" in out
     assert "DFE_OIDC_FIXTURE_PASSWORD" in out
+
+
+def test_write_leaves_a_0600_file_with_both_passwords(
+    dotenv: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    dotenv.write_text(_ENV, encoding="utf-8", newline="\n")
+    monkeypatch.setattr("sys.stdout.isatty", lambda: False)
+
+    assert creds.main(["--write"]) == 0
+
+    summary = creds.ACCESS_SUMMARY_FILE
+    assert summary.stat().st_mode & 0o777 == 0o600
+    body = summary.read_text(encoding="utf-8")
+    assert _MINTED in body
+    assert "another-minted-value" in body
+    assert "access-summary.md" in capsys.readouterr().out
+
+
+def test_the_terminal_summary_tells_the_operator_what_to_do_next(
+    dotenv: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    dotenv.write_text(_ENV, encoding="utf-8", newline="\n")
+    monkeypatch.setattr("sys.stdout.isatty", lambda: True)
+    monkeypatch.delenv("DFE_CREDS_SHOW", raising=False)
+
+    assert creds.main([]) == 0
+
+    out = capsys.readouterr().out
+    assert "Finish the first-run wizard" in out
+    assert "Retire the bootstrap admin" in out
+    assert "keeps only the hash" in out
+
+
+# The literals, not the constants: pinning the constant against itself would pass
+# whatever it drifted to, and drifting from dfe-infra is the failure to catch.
+def test_the_file_is_the_shape_dfe_infra_writes(dotenv: Path) -> None:
+    dotenv.write_text(_ENV, encoding="utf-8", newline="\n")
+
+    body = creds.summary_markdown(values=creds._dotenv_values())
+
+    assert body.startswith("# DFE access -- first login\n")
+    assert "| Account | Username | Password |" in body
+    assert "1. Log in at the console URL above and finish the setup wizard.\n" in body
+    assert (
+        "2. Retire the bootstrap admin from the wizard's last step once your own "
+        "admin exists.\n"
+    ) in body
+    assert body.endswith(
+        "3. Keep the break-glass password somewhere safe, then delete this file.\n"
+    )
+
+
+def test_the_file_also_names_the_two_dotenv_keys(dotenv: Path) -> None:
+    """Deleting the file is the whole clean-up for dfe-infra, but not here."""
+    dotenv.write_text(_ENV, encoding="utf-8", newline="\n")
+
+    body = creds.summary_markdown(values=creds._dotenv_values())
+
+    assert "DFE_AUTH_LOCAL_ADMIN_PASSWORD" in body
+    assert "DFE_AUTH_BREAKGLASS_PASSWORD" in body
+
+
+def test_a_rerun_reasserts_the_mode(
+    dotenv: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    dotenv.write_text(_ENV, encoding="utf-8", newline="\n")
+    monkeypatch.setattr("sys.stdout.isatty", lambda: False)
+    creds.main(["--write"])
+    creds.ACCESS_SUMMARY_FILE.chmod(0o644)
+
+    creds.main(["--write"])
+
+    assert creds.ACCESS_SUMMARY_FILE.stat().st_mode & 0o777 == 0o600
+
+
+def test_without_write_no_file_is_left_behind(
+    dotenv: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    dotenv.write_text(_ENV, encoding="utf-8", newline="\n")
+    monkeypatch.setattr("sys.stdout.isatty", lambda: False)
+
+    assert creds.main([]) == 0
+
+    assert not creds.ACCESS_SUMMARY_FILE.exists()
+
+
+def test_an_unminted_password_says_so_rather_than_printing_blank(dotenv: Path) -> None:
+    dotenv.write_text("DFE_ENV=dev\n", encoding="utf-8", newline="\n")
+
+    body = creds.summary_markdown(values=creds._dotenv_values())
+
+    assert "NOT MINTED" in body
+    assert "make init" in body
 
 
 def test_no_fixture_keys_prints_no_fixture_line() -> None:

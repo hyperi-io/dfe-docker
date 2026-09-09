@@ -210,8 +210,9 @@ FORCE:
 # ---------------------------------------------------------------------------
 
 .PHONY: init
-init: ## Create .env and per-service env/<service>.env files from templates
+init: ## Create .env and per-service env/<service>.env files from templates, and write access-summary.md
 	@python3 scripts/init.py
+	@python3 scripts/creds.py --write
 
 # Start targets require every per-service env file (dfe-ui reads INTERNAL_API_URL
 # from env/ui.env). Compose marks them optional so `make down` never needs them.
@@ -223,7 +224,8 @@ env-files: ## Assert every env/<service>.env exists, creating any the templates 
 
 # `make init` mints the admin and break-glass passwords and prints neither, so
 # this is the hand-over. `make up` and `make dev` end with it; `make ci` does not
-# call it, because its stdout is a build log.
+# call it, because its stdout is a build log. `make init` and `make up` pass
+# --write, which also leaves access-summary.md (0600, gitignored) for the operator.
 .PHONY: creds
 creds: ## Print the access summary. The admin password prints on a TTY only -- a pipe, a file, a CI log or DFE_CREDS_SHOW=0 gets the .env key instead
 	@python3 scripts/creds.py
@@ -318,8 +320,8 @@ ci: login env-files down storage-dirs  ## Pull and start infra and registry DFE 
 # when it tells someone how to apply a rotated password. It is `ci` plus the
 # hand-over, which is the whole difference between the two.
 .PHONY: up
-up: ci ## Start the stack from the pinned registry images, then print the access summary (password on a TTY only)
-	@$(MAKE) --no-print-directory creds
+up: ci ## Start the stack from the pinned registry images, then print the access summary (password on a TTY only) and write access-summary.md
+	@python3 scripts/creds.py --write
 
 .PHONY: ci-pull
 ci-pull: login ## Pull infra and registry DFE images
