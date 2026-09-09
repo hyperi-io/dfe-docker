@@ -856,6 +856,10 @@ services:
       # every recreate, and every session issued before it stops verifying.
       DFE_SECRETS_PATH: ${DFE_ENGINE_CONFIG_DIR:-/app/config}/.secrets
       DFE_SCHEMAS_DIR: ${DFE_ENGINE_SCHEMAS_DIR:-/app/schemas}
+      # Content another repo ships (transform templates, a source catalogue),
+      # copied onto this volume by a per-pin init service; the engine seeds its
+      # library from it at startup and an empty directory is a no-op.
+      DFE_LIBRARY_SEED_DIR: ${DFE_ENGINE_CONTENT_DIR:-/app/content}/library
       OTEL_EXPORTER_OTLP_ENDPOINT: ${DFE_OTEL_EXPORTER_ENDPOINT:-}
       OTEL_SERVICE_NAME: dfe-engine
       # scalo's CLI falls back to the prometheus backend, so the endpoint alone
@@ -864,6 +868,7 @@ services:
     volumes:
       - dfe-engine-config:${DFE_ENGINE_CONFIG_DIR:-/app/config}
       - dfe-engine-schemas:${DFE_ENGINE_SCHEMAS_DIR:-/app/schemas}
+      - dfe-engine-content:${DFE_ENGINE_CONTENT_DIR:-/app/content}
     depends_on:
       clickhouse:
         condition: service_healthy
@@ -1250,4 +1255,5 @@ volumes:
   dlq-spool:
   dfe-engine-config:
   dfe-engine-schemas:
+  dfe-engine-content:
   hyperdx-pg-data:
