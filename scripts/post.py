@@ -83,7 +83,9 @@ READY_TIMEOUT_SECONDS = 90.0
 READY_INTERVAL_SECONDS = 2.0
 
 TARGET_DB = "dfe"
-TARGET_TABLE = "default"
+# The engine's catch-all landing table, DFE_CLICKHOUSE_LANDING_TABLE. A deployment
+# that moved it points POST at the same name through DFE_POST_TABLE.
+TARGET_TABLE = "main"
 
 # Self-monitoring assertion. The collector batches on a 5s timeout and the SDKs
 # export on their own interval, so the window is generous and the timeout is the
@@ -266,11 +268,11 @@ def _cleanup(database: str, table: str, marker: str) -> None:
     """Report that this run's synthetic rows remain. It cannot remove them.
 
     We tried deleting them and it does not work: the engine-provisioned
-    `dfe.default` carries PROJECTIONS, and ClickHouse refuses a lightweight
+    `dfe.main` carries PROJECTIONS, and ClickHouse refuses a lightweight
     DELETE on such a table unless `lightweight_mutation_projection_mode` is
     changed:
 
-        Code: 344. DELETE query is not allowed for table dfe.default because
+        Code: 344. DELETE query is not allowed for table dfe.main because
         as it has projections and setting lightweight_mutation_projection_mode
         is set to THROW.
 
