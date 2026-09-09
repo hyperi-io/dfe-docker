@@ -22,8 +22,8 @@ source's own with the bundled filebeat program.
 
 | Profile                           | Transport | dfe-archiver | dfe-fetcher | dfe-loader | dfe-receiver | dfe-transform-vrl | dfe-transform-vector |
 |-----------------------------------|-----------|:------------:|:-----------:|:----------:|:------------:|:-----------------:|:--------------------:|
-| `slim` (projected)                | gRPC      |              |             |     X      |      X       |                   |                      |
-| `single` (projected)              | Kafka     |              |             |     X      |      X       |                   |                      |
+| `slim` (projected)                | gRPC      |      X       |             |     X      |      X       |                   |                      |
+| `single` (projected)              | Kafka     |      X       |             |     X      |      X       |                   |                      |
 | `kafka-fetcher`                   | Kafka     |              |      X      |     X      |              |                   |                      |
 | `kafka-full`                      | Kafka     |      X       |      X      |     X      |      X       |                   |                      |
 | `kafka-full-transform-vrl`        | Kafka     |              |      X      |     X      |      X       |         X         |                      |
@@ -38,9 +38,18 @@ source's own with the bundled filebeat program.
 | `grpc-minimal`                    | gRPC      |              |             |     X      |              |                   |                      |
 | `grpc-receiver`                   | gRPC      |              |             |     X      |      X       |                   |                      |
 
-The two projected profiles run the receiver and the loader only. The archiver,
-the fetcher and the transforms need endpoints or credentials a default deploy
-cannot supply, so they are opt-in on the hand-crafted profiles.
+The two projected profiles run the default composition: the receiver, the
+loader and the archiver, plus the engine, the UI and HyperDX from the `core`
+and `hyperdx` footprint keys. The archiver starts with no destination and idles
+Ready until one is configured, which is why being deployed unconfigured costs a
+container and nothing else.
+
+**No fetcher on Compose.** The fetcher's config model has one stanza per source
+TYPE, so one resident container cannot carry several sources of the same type
+the way the Kubernetes deployment does with one instance per source. A Compose
+deployment configures fetching by choosing a hand-crafted profile
+(`grpc-fetcher`, `kafka-fetcher`, ...) with a config file it edits. Closing
+that gap is a change to the fetcher's config model, not to this projection.
 
 ## Why the two tiers are projected
 
@@ -64,14 +73,22 @@ itself, and skips the same way when the run has no token for it.
 
 ## What the projection maps
 
-| Compose key | Kubernetes value it comes from |
+| Compose key | Where it comes from |
 |---|---|
 | `transport` | `kafka.mode` -- `disabled` is `grpc`, any other mode is `kafka` |
 | `clickhouse` | the tier deploys a warehouse (every Kubernetes profile does) |
-| `core` | the tier deploys the engine and the UI (every Kubernetes profile does) |
+| `core` | `dfe-engine` and `dfe-ui` are default in `apps.yaml` |
+| `hyperdx` | `hyperdx` is default in `apps.yaml` |
 | `kafbat` | `kafbat.enabled`, and only on the `kafka` transport |
 | `otel` | the tier deploys the collector (every Kubernetes profile does) |
+| `services[]` | every other app `apps.yaml` makes default in `docker-<mode>` |
 | `services[].config_path` | `<app>/<transport>.yaml` under `config/` |
+
+WHICH apps a projected profile runs is dfe-infra `apps.yaml`'s `default_in` for
+the matching `docker-<mode>` profile. That is the one place the default
+composition is declared, for Kubernetes and Compose alike, so adding an app to
+the default path is a manifest edit and a re-render rather than a list per
+platform.
 
 Replica counts, KEDA dials and operator choices do not cross: Compose runs one
 of each and has no autoscaler, so what survives the projection is WHICH
@@ -79,9 +96,10 @@ components run, not how many.
 
 ## Changing a projected profile
 
-Change the Kubernetes tier, then re-render:
+Change the master, then re-render:
 
-1. Edit `argocd/values/profile-<mode>.yaml` in dfe-infra.
+1. In dfe-infra, edit `argocd/values/profile-<mode>.yaml` for the tier's shape,
+   or `apps.yaml`'s `default_in` for which apps it runs.
 2. `make render-profiles DFE_INFRA_DIR=...` here.
 3. Commit both, so the two repos move together.
 
