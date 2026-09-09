@@ -193,8 +193,9 @@ _AUTH_ENV = {
 # The engine refuses to start on an unset or shipped-default admin password unless
 # DFE_ENV names a dev posture, so a compose file that hands it one outside dev
 # produces a container that crash-loops on boot. The posture list mirrors
-# dfe_engine.settings.is_dev_posture; compose's own `${DFE_ENV:-dev}` default is
-# what makes the unset case a dev posture rather than a fault.
+# dfe_engine.settings.is_dev_posture; compose's own `${DFE_ENV:-production}` default
+# is what makes the unset case a fault rather than a dev posture, so only a .env
+# that says `dev` gets to run on the shipped password.
 _ENGINE_SERVICE = "dfe-engine"
 _ADMIN_PASSWORD_KEY = "DFE_AUTH_LOCAL_ADMIN_PASSWORD"
 _POSTURE_KEY = "DFE_ENV"
@@ -212,7 +213,9 @@ _CREDENTIAL_CASES: tuple[tuple[str, str, str, bool], ...] = (
     ("production, minted password", "production", "aMintedValue123", False),
     ("dev, no password", "dev", "", False),
     (f"dev, {_DEFAULT_PASSWORD}", "dev", _DEFAULT_PASSWORD, False),
-    ("posture unset, no password", "", "", False),
+    ("posture unset, no password", "", "", True),
+    (f"posture unset, {_DEFAULT_PASSWORD}", "", _DEFAULT_PASSWORD, True),
+    ("posture unset, minted password", "", "aMintedValue123", False),
 )
 
 # Services this project owns and therefore holds to that surface. hyperdx,

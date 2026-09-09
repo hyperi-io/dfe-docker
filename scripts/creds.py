@@ -68,6 +68,9 @@ _FIXTURE_OVERRIDE_RE = re.compile(r"^DFE_OIDC_([A-Z0-9]+)_FIXTURE_(?:USER|PASSWO
 # Postures the engine treats as dev, where it tolerates the shipped default
 # password. Mirrors dfe_engine.settings.is_dev_posture.
 _DEV_POSTURES = {"dev", "development", "local", "test", "ci"}
+# What an unset DFE_ENV resolves to. Mirrors compose's own `${DFE_ENV:-production}`,
+# so the summary names the posture the engine is actually running in.
+_UNSET_POSTURE = "production"
 # The shipped placeholder the engine refuses outside a dev posture.
 _DEFAULT_PASSWORD = "changeme"
 
@@ -85,7 +88,7 @@ def _url(*, values: dict[str, str], port_key: str, default_port: str) -> str:
 
 def is_dev_posture(environment: str) -> bool:
     """True when DFE_ENV names a posture the engine tolerates defaults in."""
-    return (environment.strip() or "dev").lower() in _DEV_POSTURES
+    return (environment.strip() or _UNSET_POSTURE).lower() in _DEV_POSTURES
 
 
 def default_admin_password(password: str) -> bool:
@@ -139,7 +142,7 @@ def fixture_lines(*, values: dict[str, str]) -> list[str]:
 
 def summary_lines(*, values: dict[str, str], reveal: bool = True) -> list[str]:
     """The access summary, one line per thing the operator needs."""
-    environment = values.get("DFE_ENV", "").strip() or "dev"
+    environment = values.get("DFE_ENV", "").strip() or _UNSET_POSTURE
     admin = values.get(_ADMIN_NAME_KEY, "").strip() or "admin"
     password = values.get(_ADMIN_PASSWORD_KEY, "").strip()
 
@@ -169,6 +172,13 @@ def summary_lines(*, values: dict[str, str], reveal: bool = True) -> list[str]:
         lines.append(
             f"                 DFE_ENV={environment}, so the engine accepts this "
             "default and asks for a change at first login"
+        )
+    # Not gated on `reveal`: a stack that cannot boot is worth saying in a log too.
+    elif password and default_admin_password(password):
+        lines.append(
+            f"                 DFE_ENV={environment} is not a dev posture, so the "
+            "engine REFUSES this default and will not start -- mint one with "
+            "`make dev AUTH=real`, or set DFE_ENV=dev for a tyre-kick"
         )
     if values.get(_BREAKGLASS_PASSWORD_KEY, "").strip():
         lines.append(

@@ -232,9 +232,19 @@ creds: ## Print the access summary. The admin password prints on a TTY only -- a
 # KNOWN default password and DFE_ENV=dev, the one posture the engine accepts it in.
 # It refuses with exit 2 on any other DFE_ENV, and copies .env to .env.bak-<utc>
 # before overwriting a minted password.
+#
+# `AUTH=real` is the other half: local images running the same authentication flow
+# a deployment gets, so it mints a password and writes a non-dev posture instead.
+AUTH ?=
+ifeq ($(strip $(AUTH)),real)
+    DEV_POSTURE_ARG := --real
+else
+    DEV_POSTURE_ARG :=
+endif
+
 .PHONY: dev-posture
-dev-posture: .env ## Put .env into the dev posture (known admin password, DFE_ENV=dev), backing the old .env up first
-	@python3 scripts/dev_posture.py
+dev-posture: .env ## Put .env into the dev posture (known admin password, DFE_ENV=dev); AUTH=real mints one and writes a non-dev posture instead
+	@python3 scripts/dev_posture.py $(DEV_POSTURE_ARG)
 
 # GHCR auth for the private dfe-* images and the signed stack-manifest. A no-op
 # when DFE_GHCR_* are unset (a daemon authed out of band), so it is safe as an
@@ -281,7 +291,7 @@ ifneq ($(strip $(DFE_DATA_ROOT)),)
 endif
 
 .PHONY: dev
-dev: env-files dev-posture down storage-dirs ## Build local DFE images from source and start the dev stack (LOCAL="svc ..." builds only those, rest pinned), then print the access summary
+dev: env-files dev-posture down storage-dirs ## Build local DFE images from source and start the dev stack (LOCAL="svc ..." builds only those; AUTH=real for a minted login), then print the access summary
 	docker compose $(DEV_PULL_FLAGS) $(PROFILE_FLAGS) pull
 	python3 scripts/build_dev_images.py $(DEV_OVERLAY_ARG) $(DEV_BUILD)
 	docker compose $(DEV_FLAGS) $(PROFILE_FLAGS) up -d $(ACTIVE_SERVICES)
