@@ -913,8 +913,11 @@ services:
       DFE_CONFIG_DIR: ${DFE_ENGINE_CONFIG_DIR:-/app/config}
       # Same volume as the API's, so both read the one signing key.
       DFE_SECRETS_PATH: ${DFE_ENGINE_CONFIG_DIR:-/app/config}/.secrets
-      DFE_HUNTS_DIR: ${DFE_ENGINE_CONFIG_DIR:-/app/config}/hunts
-      DFE_HUNTS_RULES_DIR: ${DFE_ENGINE_CONFIG_DIR:-/app/config}/rules
+      # The engine governs hunts and rules in the deploy repo it clones into the
+      # shared config volume, so the runner reads that working tree; a runner
+      # pointed at the bare config dir polls a directory nothing writes.
+      DFE_HUNTS_DIR: ${DFE_ENGINE_CONFIG_DIR:-/app/config}/deploy-repo/config/hunts
+      DFE_HUNTS_RULES_DIR: ${DFE_ENGINE_CONFIG_DIR:-/app/config}/deploy-repo/config/rules
       DFE_SCHEMAS_DIR: ${DFE_ENGINE_SCHEMAS_DIR:-/app/schemas}
       OTEL_EXPORTER_OTLP_ENDPOINT: ${DFE_OTEL_EXPORTER_ENDPOINT:-}
       OTEL_SERVICE_NAME: dfe-hunt-runner
