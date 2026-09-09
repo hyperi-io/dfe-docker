@@ -14,8 +14,8 @@
 #
 # Verification, the two default DFE acceptances. INGEST: dfe-engine owns the
 # schema and the loader drops unmapped fields, so the runner asserts the row-count
-# DELTA plus this run's marker in the engine-provisioned default table
-# (dfe.default). SELF-MONITORING: on a profile declaring `otel`, that the stack's
+# DELTA plus this run's marker in the engine-provisioned landing table
+# (dfe.main). SELF-MONITORING: on a profile declaring `otel`, that the stack's
 # own telemetry is landing FRESH in the otel database.
 #
 # Per-service config overrides can be set via `config_overrides`, keyed by
