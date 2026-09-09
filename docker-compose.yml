@@ -414,7 +414,8 @@ services:
 
   # ===========================================================================
   # dfe-archiver
-  # Only supports Kafka input transport.
+  # Reads the landing topics off the broker, or receives on its scalo Push
+  # listener where the profile has no broker (config/archiver/<transport>.yaml).
   # ===========================================================================
 
   dfe-archiver:
