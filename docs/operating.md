@@ -414,7 +414,7 @@ Tunables: `DFE_POST_HOST` (default `localhost`), `DFE_POST_DATABASE` (`dfe`),
 
 A PASS proves exactly this: the ingest edge accepted three events, and within 60
 seconds at least three rows carrying that run's unique marker were readable in
-`dfe.default`. Not "containers started", not "ports answer" -- data moved from
+`dfe.main`. Not "containers started", not "ports answer" -- data moved from
 one end to the other. It is transport-agnostic by construction, so it means the
 same thing on the Kafka and gRPC profiles.
 

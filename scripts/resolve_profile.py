@@ -100,7 +100,7 @@ FOOTPRINT_KEYS = {
 # Topics kafka-init pre-creates: the stack default plus the ones this profile's
 # transforms name. dfe-transform-vrl exits on a missing topic, its sink included.
 KAFKA_INIT_TOPICS_VAR = "KAFKA_INIT_TOPICS"
-KAFKA_INIT_TOPIC_DEFAULT = "default_land"
+KAFKA_INIT_TOPIC_DEFAULT = "main_land"
 TRANSFORM_SERVICE_PREFIX = "dfe-transform-"
 
 PROFILE_ENV_VAR = "DFE_PROFILE"

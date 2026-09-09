@@ -12,7 +12,7 @@ kafka:
   brokers:
     - kafka:9092
   topics:
-    - default_land
+    - main_land
 
 # The compose stack mounts a named volume here (docker-compose.yml,
 # archiver-data). The app has no default destination: an archiver with nowhere

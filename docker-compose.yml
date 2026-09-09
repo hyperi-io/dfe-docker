@@ -255,7 +255,7 @@ services:
   # Kafka never pulls a BSL artefact. Dependents gate on both with
   # `required: false`; exactly one exists per profile.
   #
-  # The list is KAFKA_INIT_TOPICS, written by resolve_profile.py: `default_land`
+  # The list is KAFKA_INIT_TOPICS, written by resolve_profile.py: `main_land`
   # plus whatever the profile's own transforms consume and produce. Do not
   # hardcode a `_load` topic here -- created unconditionally it suppresses the
   # matching `_land` out of every non-transform loader's subscription and
@@ -274,7 +274,7 @@ services:
     entrypoint: ["/bin/sh", "-c"]
     command:
       - |
-        for topic in ${KAFKA_INIT_TOPICS:-default_land}; do
+        for topic in ${KAFKA_INIT_TOPICS:-main_land}; do
           created=""
           for i in $$(seq 1 30); do
             rpk topic describe $$topic -X brokers=kafka:9092 >/dev/null 2>&1 && created=yes && break
@@ -299,7 +299,7 @@ services:
     entrypoint: ["/bin/sh", "-c"]
     command:
       - |
-        for topic in ${KAFKA_INIT_TOPICS:-default_land}; do
+        for topic in ${KAFKA_INIT_TOPICS:-main_land}; do
           created=""
           for i in $$(seq 1 30); do
             /opt/kafka/bin/kafka-topics.sh --bootstrap-server kafka:9092 --create --if-not-exists \
