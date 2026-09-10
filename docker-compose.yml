@@ -831,6 +831,10 @@ services:
       # The tier this stack runs, by the manifest's name: the engine seeds the
       # profile's default app instances from it and reports it as its profile.
       DFE_PROFILE: ${DFE_STACK_PROFILE:-docker-slim}
+      # The certified stack `make stack` pinned this deployment from. Compose has
+      # no deploy repo for the engine to read pins out of, so this is the only
+      # thing /system/deployment can tell the console footer.
+      DFE_STACK_VERSION: ${DFE_STACK_VERSION:-}
       # The transport the tier's stages are bound to (resolve_profile exports it
       # from the profile); the defaults are the slim tier's.
       DFE_TRANSPORT_DEFAULT: ${DFE_TRANSPORT_DEFAULT:-direct}
@@ -1016,6 +1020,10 @@ services:
       - ${DFE_UI_BIND_HOST:-127.0.0.1}:${DFE_HYPERDX_EMBED_PORT:-8091}:8091
     environment:
       DFE_HYPERDX_EMBED_ANCESTOR: ${DFE_HYPERDX_APP_URL:-${DFE_EXTERNAL_ORIGIN:-http://localhost}}:${DFE_UI_PORT:-3000}
+      # The one identity every HyperDX request carries on Compose. HyperDX makes
+      # the first group the team name, so the group and DFE_HYPERDX_TEAM agree.
+      DFE_HYPERDX_IDENTITY_EMAIL: ${DFE_HYPERDX_IDENTITY_EMAIL:-admin@dfe.local}
+      DFE_HYPERDX_IDENTITY_GROUPS: ${DFE_HYPERDX_IDENTITY_GROUPS:-${DFE_HYPERDX_TEAM:-dfe}}
     volumes:
       - ./config/proxy/envoy.yaml:/etc/envoy/envoy.yaml:ro
     depends_on:
@@ -1052,6 +1060,9 @@ services:
       # The health_check extension. Operator surface, and the only way in: the
       # image is distroless, so a HEALTHCHECK has no client to probe it with.
       - ${DFE_BIND_HOST:-127.0.0.1}:${DFE_OTEL_HEALTH_PORT:-13133}:13133
+      # Container stdout, in. Published because the DOCKER DAEMON connects to it,
+      # and the daemon is on the host rather than on the compose network.
+      - ${DFE_BIND_HOST:-127.0.0.1}:${DFE_OTEL_FLUENT_PORT:-24224}:24224
     environment:
       CLICKHOUSE_HOST: ${CLICKHOUSE_HOST:-clickhouse}
       CLICKHOUSE_NATIVE_PORT: ${CLICKHOUSE_NATIVE_PORT:-9000}
@@ -1078,6 +1089,27 @@ services:
   # HyperDX (observability UI)
   # Opt-in via DFE_HYPERDX_ENABLED
   # ===========================================================================
+
+  # dfe-engine is the SSoT for the dashboard CONTENT; this copies it out of the
+  # engine image into a volume HyperDX's own provisioner reads, so there is one
+  # copy of a dashboard in the product and bumping the engine pin ships new ones.
+  # The k8s hyperdx chart runs the identical command as an init container.
+  dfe-dashboards:
+    image: ${IMAGE_REGISTRY:-ghcr.io/hyperi-io}/dfe-engine:${DFE_ENGINE_VERSION:?run 'make stack VERSION=X.Y.Z' to pin DFE_ENGINE_VERSION}
+    container_name: dfe-dashboards
+    profiles: ["hyperdx"]
+    deploy: *limits-sidecar
+    # A fresh named volume mounted at a path the image does not create is owned by
+    # root, and the engine image runs as uid 1000 -- so this one-shot writes as
+    # root. It reaches no network and no host path, and exits after seven files.
+    user: "0:0"
+    # Overriding the entrypoint bypasses `dfe-engine run`, so no config, no
+    # secrets store and no database is touched.
+    entrypoint: ["python"]
+    command: ["-m", "dfe_engine.hyperdx.dashboards", "--out", "/etc/hyperdx/dashboards"]
+    volumes:
+      - hyperdx-dashboards:/etc/hyperdx/dashboards
+    restart: "no"
 
   hyperdx-postgres:
     image: ghcr.io/ferretdb/postgres-documentdb:${HYPERDX_POSTGRES_VERSION:?run 'make stack VERSION=X.Y.Z' to pin HYPERDX_POSTGRES_VERSION}
@@ -1132,31 +1164,42 @@ services:
     profiles: ["hyperdx"]
     restart: unless-stopped
     deploy: *limits-service
-    ports:
-      # One UI in two ports: the browser bundle calls this API directly, so the
-      # pair publishes together or the app is broken. INFRA class, so
-      # DFE_INFRA_UIS_EXTERNAL=false unpublishes both.
-      - ${DFE_UI_BIND_HOST:-127.0.0.1}:${DFE_HYPERDX_API_PORT:-8000}:8000
-      # Next.js inlines NEXT_PUBLIC_* into the client bundle, so anyone who loads
-      # this page reads CLICKHOUSE_PASSWORD out of the JavaScript with no login in
-      # front of it -- DFE_BIND_SCOPE=all publishes that to the LAN.
-      # docs/operating.md#port-exposure-is-split-by-audience
-      - ${DFE_UI_BIND_HOST:-127.0.0.1}:${DFE_HYPERDX_APP_PORT:-8090}:${DFE_HYPERDX_APP_PORT:-8090}
+    # No published ports. dfe-proxy fronts both origins so it can inject the
+    # identity headers header-dev mode reads; publishing here would bypass them.
     env_file:
       - path: env/hyperdx.env
         required: false
     environment:
-      # The UI reads /api/connections, seeded from these. The NEXT_PUBLIC_HDX_LOCAL_*
-      # pair below is browser-side and this build ignores it, so without these the
-      # UI reports "no database connections found". Host resolves in-container --
-      # queries go through HyperDX's own /clickhouse-proxy. The name must be
-      # `local` or config/hyperdx/default-sources.json drops every source silently.
+      # Seeded server-side onto each team as it is created (setupTeamDefaults), so
+      # connections, sources, dashboards and saved searches live in FerretDB and
+      # survive a browser change. Host resolves in-container -- queries go through
+      # HyperDX's own /clickhouse-proxy, so the credential never leaves the stack.
+      # The name must be `platform`: the shipped dashboards reference their
+      # connection by that name and are skipped for a team that has no match.
       # 8123 is the container port and a constant; CLICKHOUSE_HTTP_PORT is the
       # host binding, so dialling it in-network breaks a moved port (#32).
-      DEFAULT_CONNECTIONS: '[{"name":"local","host":"http://clickhouse:8123","username":"${CLICKHOUSE_USERNAME:-default}","password":"${CLICKHOUSE_PASSWORD:-}"}]'
+      DEFAULT_CONNECTIONS: '[{"name":"platform","host":"http://clickhouse:8123","username":"${CLICKHOUSE_USERNAME:-default}","password":"${CLICKHOUSE_PASSWORD:-}"}]'
       DEFAULT_SOURCES_FILE: /etc/hyperdx/default-sources.json
+      # Identity comes from the headers dfe-proxy injects, the same seam Envoy
+      # fills on Kubernetes -- so the header NAMES match the k8s chart's.
+      DFE_AUTH_MODE: header-dev
+      DFE_AUTH_HEADER_EMAIL: ${DFE_HYPERDX_IDENTITY_HEADER_EMAIL:-x-oidc-subject}
+      DFE_AUTH_HEADER_GROUPS: ${DFE_HYPERDX_IDENTITY_HEADER_GROUPS:-x-oidc-groups}
+      DFE_AUTH_DEFAULT_TEAM: ${DFE_HYPERDX_TEAM:-dfe}
+      # Setting the directory is what starts the provisioner: entry.prod.sh
+      # launches the provision-dashboards task only when it is present. It then
+      # re-runs on a one-minute cron, which is how a team created after startup
+      # still gets its dashboards.
+      DASHBOARD_PROVISIONER_DIR: /etc/hyperdx/dashboards
+      DASHBOARD_PROVISIONER_ALL_TEAMS: "true"
+      # Skip a dashboard whose source the team does not hold, rather than writing
+      # it with dead tiles.
+      DASHBOARD_PROVISIONER_REQUIRE_REFS: "true"
       HYPERDX_API_PORT: 8000
-      HYPERDX_APP_PORT: ${DFE_HYPERDX_APP_PORT:-8090}
+      # Container ports, both constants, because dfe-proxy dials them by name on
+      # the compose network. DFE_HYPERDX_APP_PORT is the HOST binding only, so
+      # moving it no longer moves the port the proxy has to find (#32).
+      HYPERDX_APP_PORT: 8090
       HYPERDX_APP_URL: ${DFE_HYPERDX_APP_URL:-${DFE_EXTERNAL_ORIGIN:-http://localhost}}
       FRONTEND_URL: ${DFE_HYPERDX_APP_URL:-${DFE_EXTERNAL_ORIGIN:-http://localhost}}:${DFE_HYPERDX_APP_PORT:-8090}
       # Link-back origin so the embedded HyperDX opens a created rule in the DFE
@@ -1165,24 +1208,56 @@ services:
       NEXT_PUBLIC_DFE_UI_BASE_URL: ${DFE_HYPERDX_APP_URL:-${DFE_EXTERNAL_ORIGIN:-http://localhost}}:${DFE_UI_PORT:-3000}
       # HyperDX talks Mongo wire protocol; FerretDB serves it over Postgres.
       MONGO_URI: mongodb://${HYPERDX_POSTGRES_USER:-hyperdx}:${HYPERDX_POSTGRES_PASSWORD:-hyperdx}@hyperdx-ferretdb:27017/hyperdx?authSource=admin
-      NEXT_PUBLIC_IS_LOCAL_MODE: "true"
-      # The source mapping is read from the mounted file below.
-      NEXT_PUBLIC_HDX_LOCAL_DEFAULT_CONNECTIONS: '[{"id":"local","name":"ClickHouse","host":"${DFE_HYPERDX_APP_URL:-${DFE_EXTERNAL_ORIGIN:-http://localhost}}:${CLICKHOUSE_HTTP_PORT:-8123}","username":"${CLICKHOUSE_USERNAME:-default}","password":"${CLICKHOUSE_PASSWORD:-}"}]'
-      NEXT_PUBLIC_HDX_LOCAL_DEFAULT_SOURCES_FILE: /etc/hyperdx/default-sources.json
       NEXT_PUBLIC_THEME: ${HYPERDX_THEME:-dfe}
     volumes:
       - ./config/hyperdx/default-sources.json:/etc/hyperdx/default-sources.json:ro
+      - hyperdx-dashboards:/etc/hyperdx/dashboards:ro
     depends_on:
       hyperdx-ferretdb:
         condition: service_healthy
       clickhouse:
         condition: service_healthy
         required: false
+      # The provisioner reads the directory on startup, so the engine has to have
+      # written it first. Not `required` -- a stack without the engine image still
+      # starts HyperDX, it just provisions nothing.
+      dfe-dashboards:
+        condition: service_completed_successfully
+        required: false
     healthcheck:
       test: ["CMD", "node", "-e", "fetch('http://localhost:8000/health').then((r) => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))"]
       interval: 10s
       timeout: 3s
       start_period: 30s
+      retries: 5
+
+  # HyperDX's edge. It carries the two HyperDX host ports because HyperDX takes
+  # its identity from the headers this injects (config/proxy/hyperdx.yaml), so a
+  # port published off the hyperdx container would reach it unidentified.
+  dfe-hyperdx-proxy:
+    image: envoyproxy/envoy:${DFE_PROXY_VERSION:?run 'make stack VERSION=X.Y.Z' to pin DFE_PROXY_VERSION}
+    container_name: dfe-hyperdx-proxy
+    profiles: ["hyperdx"]
+    restart: unless-stopped
+    deploy: *limits-sidecar
+    ports:
+      # INFRA class, both origins: DFE_INFRA_UIS_EXTERNAL=false unpublishes them.
+      - ${DFE_UI_BIND_HOST:-127.0.0.1}:${DFE_HYPERDX_APP_PORT:-8090}:8090
+      - ${DFE_UI_BIND_HOST:-127.0.0.1}:${DFE_HYPERDX_API_PORT:-8000}:8000
+    environment:
+      # The one identity every HyperDX request carries on Compose. HyperDX makes
+      # the first group the team name, so the group and DFE_HYPERDX_TEAM agree.
+      DFE_HYPERDX_IDENTITY_EMAIL: ${DFE_HYPERDX_IDENTITY_EMAIL:-admin@dfe.local}
+      DFE_HYPERDX_IDENTITY_GROUPS: ${DFE_HYPERDX_IDENTITY_GROUPS:-${DFE_HYPERDX_TEAM:-dfe}}
+    volumes:
+      - ./config/proxy/hyperdx.yaml:/etc/envoy/envoy.yaml:ro
+    healthcheck:
+      # The image ships no curl/wget; drive the local admin /ready over
+      # bash's /dev/tcp (admin binds 127.0.0.1 only, never published).
+      test: ["CMD", "bash", "-c", "exec 3<>/dev/tcp/127.0.0.1/9901 && printf 'GET /ready HTTP/1.1\\r\\nHost: localhost\\r\\nConnection: close\\r\\n\\r\\n' >&3 && grep -q LIVE <&3"]
+      interval: 10s
+      timeout: 3s
+      start_period: 10s
       retries: 5
 
   # ===========================================================================
@@ -1229,23 +1304,23 @@ services:
       - ${DFE_UI_BIND_HOST:-127.0.0.1}:${DFE_HYPERDX_APP_PORT:-8090}:4180
     environment:
       <<: *oauth2-proxy-env
-      OAUTH2_PROXY_UPSTREAMS: http://hyperdx:${DFE_HYPERDX_APP_PORT:-8090}
+      # dfe-hyperdx-proxy, not hyperdx: HyperDX takes its identity from the headers
+      # that proxy injects, so a gate in front of anything else reaches it
+      # unidentified.
+      OAUTH2_PROXY_UPSTREAMS: http://dfe-hyperdx-proxy:8090
       OAUTH2_PROXY_REDIRECT_URL: ${DFE_OAUTH2_PROXY_EXTERNAL_ORIGIN:-${DFE_EXTERNAL_ORIGIN:-http://localhost}}:${DFE_HYPERDX_APP_PORT:-8090}/oauth2/callback
     depends_on:
       hyperdx:
         condition: service_healthy
         required: false
 
-  # The SECOND HyperDX origin. One oauth2-proxy serves exactly one
-  # --http-address, and HyperDX's browser bundle calls its API by absolute
-  # origin rather than by a path under the app, so the two ports cannot collapse
-  # into one proxy without changing the fork. Same cookie secret and name as the
-  # app proxy above, and cookies are not port-scoped, so signing in at the app
-  # authorises this one too.
-  #
-  # KNOWN EDGE: an expired session on this origin answers a cross-origin XHR
-  # with a redirect to the IdP, which the browser blocks. The app shows failed
-  # requests rather than a login prompt -- reload the app page to sign back in.
+  # The SECOND HyperDX origin, and an OPERATOR one: the browser calls the API at
+  # a relative /api/* under the app, which the Next.js server proxies on container
+  # loopback, so nothing in the page depends on this port. It is gated all the
+  # same because the API answers the same questions the app does. One oauth2-proxy
+  # serves exactly one --http-address, hence a second service. Same cookie secret
+  # and name as the app proxy above, and cookies are not port-scoped, so signing
+  # in at the app authorises this one too.
   oauth2-proxy-hyperdx-api:
     image: quay.io/oauth2-proxy/oauth2-proxy:${DFE_OAUTH2_PROXY_VERSION:-v7.15.4@sha256:b1b2021fe8f4004573e8d690dec6c7bb29cc44364572cf8510a05bf3a0ae2ded}
     container_name: dfe-oauth2-proxy-hyperdx-api
@@ -1256,7 +1331,7 @@ services:
       - ${DFE_UI_BIND_HOST:-127.0.0.1}:${DFE_HYPERDX_API_PORT:-8000}:4180
     environment:
       <<: *oauth2-proxy-env
-      OAUTH2_PROXY_UPSTREAMS: http://hyperdx:8000
+      OAUTH2_PROXY_UPSTREAMS: http://dfe-hyperdx-proxy:8000
       OAUTH2_PROXY_REDIRECT_URL: ${DFE_OAUTH2_PROXY_EXTERNAL_ORIGIN:-${DFE_EXTERNAL_ORIGIN:-http://localhost}}:${DFE_HYPERDX_API_PORT:-8000}/oauth2/callback
       # Host header and every upstream response header pass through untouched
       # (--pass-host-header defaults true), so HyperDX's own CORS headers reach
@@ -1276,4 +1351,5 @@ volumes:
   dfe-engine-config:
   dfe-engine-schemas:
   dfe-engine-content:
+  hyperdx-dashboards:
   hyperdx-pg-data:

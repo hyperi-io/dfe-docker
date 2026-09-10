@@ -157,7 +157,9 @@ _RETIRED_HEALTH_PATHS = ("/healthz", "/health/live", "/health/ready", "/health/s
 _UI_EXPOSURE: dict[str, tuple[str, str]] = {
     "dfe-engine": ("product", "docker-compose.unpublish-engine-api.yml"),
     "dfe-proxy": ("product", "docker-compose.unpublish-dfe-ui.yml"),
-    "hyperdx": ("infra", "docker-compose.unpublish-hyperdx.yml"),
+    # HyperDX is published by the proxy that injects its identity headers, never
+    # by the hyperdx container itself.
+    "dfe-hyperdx-proxy": ("infra", "docker-compose.unpublish-hyperdx.yml"),
     "kafka-ui": ("infra", "docker-compose.unpublish-kafbat.yml"),
 }
 
@@ -170,7 +172,7 @@ _BIND_SCOPE_ADDRS = ("127.0.0.1", "0.0.0.0")
 # HyperDX is one UI across two.
 _AUTH_PROFILE = "auth"
 _AUTH_PROXIES: dict[str, tuple[tuple[str, ...], str]] = {
-    "hyperdx": (
+    "dfe-hyperdx-proxy": (
         ("oauth2-proxy-hyperdx", "oauth2-proxy-hyperdx-api"),
         "docker-compose.unpublish-auth-hyperdx.yml",
     ),

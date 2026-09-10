@@ -21,6 +21,18 @@ receivers:
       http:
         endpoint: 0.0.0.0:4318
 
+  # Container stdout, delivered by Docker's own fluentd log driver. Kubernetes
+  # takes the same lines off the node with a DaemonSet filelog receiver; Compose
+  # has no equivalent that a product can rely on -- the log files sit under the
+  # daemon's data-root, which is deployment-specific and unreachable from the
+  # host under Docker Desktop, and listing the directory needs root.
+  #
+  # The driver tags each stream with its container name, which is what attributes
+  # the record below. Docker connects to this from the HOST, not the compose
+  # network, so the port is published.
+  fluentforward:
+    endpoint: 0.0.0.0:24224
+
   # Server-side ClickHouse health, read from system tables rather than the :9363
   # Prometheus endpoint, which the stack's image does not expose. Mirrors the k8s
   # gateway so the DFE ClickHouse Health dashboard renders on both tiers.
@@ -160,6 +172,18 @@ processors:
         value: clickhouse
         action: upsert
 
+  # The ClickHouse exporter reads ServiceName off the RESOURCE, and a fluentd
+  # record carries the container name as a log attribute instead.
+  transform/container_logs:
+    error_mode: ignore
+    log_statements:
+      - context: log
+        statements:
+          - set(resource.attributes["service.name"], attributes["fluent.tag"]) where attributes["fluent.tag"] != nil
+          # The Rust services colour their output whether or not a terminal is
+          # attached, and the escapes are unreadable in a log viewer.
+          - replace_pattern(body, "\\x1b\\[[0-9;]*m", "")
+
 exporters:
   clickhouse:
     endpoint: tcp://${env:CLICKHOUSE_HOST}:${env:CLICKHOUSE_NATIVE_PORT}
@@ -206,4 +230,10 @@ service:
     logs:
       receivers: [otlp]
       processors: [memory_limiter, batch]
+      exporters: [clickhouse]
+    # Separate pipeline so the container-name attribution and the ANSI strip only
+    # touch what came off the log driver.
+    logs/containers:
+      receivers: [fluentforward]
+      processors: [memory_limiter, transform/container_logs, batch]
       exporters: [clickhouse]

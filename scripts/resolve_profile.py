@@ -73,7 +73,17 @@ CORE_ENABLED_ENV_VAR = "DFE_CORE_ENABLED"
 CORE_SERVICES = ["dfe-engine", "dfe-hunt-runner", "dfe-ui", "dfe-proxy"]
 
 HYPERDX_ENABLED_ENV_VAR = "DFE_HYPERDX_ENABLED"
-HYPERDX_SERVICES = ["hyperdx", "hyperdx-ferretdb", "hyperdx-postgres"]
+# dfe-dashboards is the one-shot that writes the engine's shipped dashboards into
+# the volume HyperDX's provisioner reads; it exits before hyperdx starts.
+# dfe-hyperdx-proxy carries the host ports, because HyperDX takes its identity
+# from headers that proxy injects.
+HYPERDX_SERVICES = [
+    "dfe-dashboards",
+    "dfe-hyperdx-proxy",
+    "hyperdx",
+    "hyperdx-ferretdb",
+    "hyperdx-postgres",
+]
 
 OTEL_ENABLED_ENV_VAR = "DFE_OTEL_ENABLED"
 OTEL_SERVICES = ["otel-collector"]
@@ -422,6 +432,12 @@ def main() -> int:
         # false would make the included file re-settle on every make pass.
         lines.append(
             f"export DFE_AUTH_RESOLVED := {'true' if footprint['auth'] else 'false'}"
+        )
+
+        # Same contract for the collector: container stdout is shipped to it, so
+        # the log-driver fragment only makes sense where it is running.
+        lines.append(
+            f"export DFE_OTEL_RESOLVED := {'true' if footprint['otel'] else 'false'}"
         )
 
         # Point the services at the bundled collector, unless .env already names

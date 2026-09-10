@@ -10,9 +10,12 @@
 # when the kill switch DFE_INFRA_UIS_EXTERNAL=false covers every infra UI. See
 # docker-compose.unpublish-dfe-ui.yml for why an opt-out is a `!reset` fragment.
 #
-# Both ports go together: the browser bundle calls the API origin directly, so
-# publishing the app without it serves a page that cannot load anything.
+# Both ports go together: they are one UI across two origins, and the API answers
+# the same questions the app does.
+#
+# The ports sit on dfe-hyperdx-proxy, not on hyperdx: HyperDX takes its identity
+# from the headers that proxy injects, so it is never published directly.
 
 services:
-  hyperdx:
+  dfe-hyperdx-proxy:
     ports: !reset []

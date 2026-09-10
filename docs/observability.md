@@ -68,6 +68,8 @@ a broken ingest pipeline cannot take the reporting on it down too.
 ```mermaid
 flowchart LR
     apps["DFE services"] -->|OTLP push :4317| col["otel-collector"]
+    apps -->|stdout| drv["Docker log driver"]
+    drv -->|fluentforward :24224| col
     chsrv[("ClickHouse<br/>system tables")] -->|sqlquery pull| col
     col -->|self-telemetry :8888| col
     col -->|clickhouse exporter| ch[(`dfe.otel_*` tables)]
@@ -121,9 +123,10 @@ edge -- data coming in from your estate, pointing the other way.
 
 | Component | Pushes? | Why |
 |---|---|---|
-| the six Rust services | yes, when built against scalo >= 2.10.11 | scalo's `metrics` feature pulls `otel-metrics` and `otel-tracing`, so OTLP export is on by default (scalo-rs#30) |
-| dfe-engine | yes, once the profile sets the backend | scalo-py has an exporter, its CLI defaults the backend to prometheus (scalo-py#11) |
-| dfe-ui | no | `@opentelemetry/api` only, no SDK. Serves `/metrics` on `:3000` |
+| the six Rust services | metrics and traces, when built against scalo >= 2.10.11 | scalo's `metrics` feature pulls `otel-metrics` and `otel-tracing`, so OTLP export is on by default (scalo-rs#30) |
+| dfe-engine | metrics and traces, once the profile sets the backend | scalo-py has an exporter, its CLI defaults the backend to prometheus (scalo-py#11) |
+| dfe-ui | no metrics | `@opentelemetry/api` only, no SDK. Serves `/metrics` on `:3000` |
+| every DFE service | LOGS, via Docker's log driver | nothing in the stack exports logs over OTLP, so stdout is shipped instead -- see below |
 
 `OTEL_EXPORTER_OTLP_ENDPOINT` is set on every service regardless, so a rebuilt
 component starts reporting with no config change here.
@@ -137,25 +140,64 @@ The `opentelemetry` backend is DUAL -- it pushes and keeps serving `/metrics`
 (`readers=[otlp(grpc)->..., prometheus(/metrics)]`), so the switch costs a
 scraping estate nothing.
 
-Container logs and node metrics are not collected. Kubernetes gets both from a
-daemonset; the Docker equivalent would mount `/var/lib/docker/containers` into
-the collector, giving it every container log on the host. Use
-`docker compose logs`.
+## Container logs go through the log driver, not a file reader
+
+Nothing in the stack exports logs over OTLP, so the lines a service writes to
+stdout reach ClickHouse a different way: Docker's own `fluentd` log driver sends
+them to the collector's `fluentforward` receiver, which turns the driver's tag
+into `ServiceName` and writes `dfe.otel_logs`. Search them in HyperDX on the
+`otel_logs` source.
+
+Kubernetes reads the same lines off the node with a DaemonSet filelog receiver.
+That does not port: the files live under the daemon's data-root, which is not
+`/var/lib/docker` on every host and is not on the host at all under Docker
+Desktop, and listing that directory needs root. The log driver needs no host path
+and no privilege.
+
+**`docker compose logs` cannot read back a fluentd-driven stream.** Only DFE's
+own services move onto the driver -- ClickHouse, the broker, the proxies and
+HyperDX keep `json-file`, because those are what you read when the DFE side is
+the thing that is broken. Put every service back with:
+
+```
+DFE_CONTAINER_LOGS_ENABLED=false
+```
+
+| Variable | Default | Effect |
+|---|---|---|
+| `DFE_CONTAINER_LOGS_ENABLED` | `true` | ships DFE container stdout when a collector runs |
+| `DFE_CONTAINER_LOG_ADDRESS` | `tcp://127.0.0.1:24224` | where the DAEMON sends it |
+| `DFE_OTEL_FLUENT_PORT` | `24224` | the collector's receiver, on `DFE_BIND_HOST` |
+
+The driver runs with `fluentd-async`, so a container starts whether or not the
+collector is up. Without it Docker refuses to create a container it cannot reach
+a logging endpoint for, which would put the collector on the startup path of the
+whole stack. The trade is that lines written while the collector is down are
+dropped rather than queued.
+
+Node metrics are still not collected.
 
 ## What a passing self test proves
 
-`make post` makes up to two claims, and both must hold:
+`make post` makes up to five claims, and each one the profile can make must hold:
 
 - **Ingest.** Three marked events posted at the profile's ingest edge come back
   as those exact rows in `dfe.main` inside 60s.
 - **Self-monitoring**, when a collector is running. Rows in the `dfe.otel_*` tables
-  NEWER than five minutes.
+  NEWER than five minutes, and a row in `dfe.otel_logs` under each of
+  `dfe-engine`, `dfe-loader` and `dfe-receiver`.
+- **Observability**, when HyperDX is running. Its API returns the six seeded
+  sources and at least one provisioned dashboard, read through the proxy that
+  gives it an identity.
+- **Console.** Those same marked rows read back through the engine query API.
+- **Hunts.** A hunt created while the runner is up is picked up and writes
+  detections.
 
 The freshness window is what makes the second claim mean "streaming now" rather
-than "streamed once". These are the pair the Kubernetes bootstrap smoke asserts
-as CORE 1 and CORE 2.
+than "streamed once". The first two are the pair the Kubernetes bootstrap smoke
+asserts as CORE 1 and CORE 2.
 
-`complete-single-node-stack` asserts both, plus the HTTP surface through the
+`complete-single-node-stack` asserts them, plus the HTTP surface through the
 proxy. Outcomes and opt-out:
 [operating.md](operating.md#the-power-on-self-test-and-what-a-pass-proves).
 

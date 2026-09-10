@@ -1,9 +1,8 @@
 [
   {
-    "id": "dfe-main",
-    "name": "DFE Main",
+    "name": "default",
     "kind": "log",
-    "connection": "local",
+    "connection": "platform",
     "from": {
       "databaseName": "dfe",
       "tableName": "main"
@@ -17,10 +16,9 @@
     "defaultTableSelectExpression": "_timestamp,_source,_json"
   },
   {
-    "id": "dfe-hunts",
     "name": "hunts",
     "kind": "log",
-    "connection": "local",
+    "connection": "platform",
     "from": {
       "databaseName": "dfe",
       "tableName": "detection"
@@ -33,16 +31,15 @@
     "defaultTableSelectExpression": "_timestamp,severity,hunt_name,rule_name,source_table,matched_uuid,rule_id,_json"
   },
   {
-    "id": "dfe-self-logs",
-    "name": "DFE Self (logs)",
+    "name": "otel_logs",
     "kind": "log",
-    "connection": "local",
+    "connection": "platform",
     "from": {
       "databaseName": "dfe",
       "tableName": "otel_logs"
     },
-    "timestampValueExpression": "TimestampTime",
-    "displayedTimestampValueExpression": "TimestampTime",
+    "timestampValueExpression": "Timestamp",
+    "displayedTimestampValueExpression": "Timestamp",
     "implicitColumnExpression": "Body",
     "bodyExpression": "Body",
     "serviceNameExpression": "ServiceName",
@@ -51,13 +48,12 @@
     "spanIdExpression": "SpanId",
     "eventAttributesExpression": "LogAttributes",
     "resourceAttributesExpression": "ResourceAttributes",
-    "defaultTableSelectExpression": "TimestampTime,ServiceName,SeverityText,Body"
+    "defaultTableSelectExpression": "Timestamp, ServiceName as service, SeverityText as level, Body"
   },
   {
-    "id": "dfe-self-traces",
-    "name": "DFE Self (traces)",
+    "name": "otel_traces",
     "kind": "trace",
-    "connection": "local",
+    "connection": "platform",
     "from": {
       "databaseName": "dfe",
       "tableName": "otel_traces"
@@ -74,15 +70,15 @@
     "serviceNameExpression": "ServiceName",
     "statusCodeExpression": "StatusCode",
     "statusMessageExpression": "StatusMessage",
+    "implicitColumnExpression": "SpanName",
     "eventAttributesExpression": "SpanAttributes",
     "resourceAttributesExpression": "ResourceAttributes",
-    "defaultTableSelectExpression": "Timestamp,ServiceName,StatusCode,round(Duration/1e6),SpanName"
+    "defaultTableSelectExpression": "Timestamp, ServiceName as service, StatusCode as level, round(Duration / 1e6) as duration, SpanName"
   },
   {
-    "id": "dfe-self-metrics",
-    "name": "DFE Self (metrics)",
+    "name": "otel_metrics",
     "kind": "metric",
-    "connection": "local",
+    "connection": "platform",
     "from": {
       "databaseName": "dfe",
       "tableName": ""
@@ -92,10 +88,26 @@
     "resourceAttributesExpression": "ResourceAttributes",
     "metricTables": {
       "gauge": "otel_metrics_gauge",
-      "histogram": "otel_metrics_histogram",
       "sum": "otel_metrics_sum",
-      "summary": "otel_metrics_summary",
-      "exponential histogram": "otel_metrics_exponential_histogram"
+      "histogram": "otel_metrics_histogram",
+      "exponential histogram": "otel_metrics_exponential_histogram",
+      "summary": "otel_metrics_summary"
     }
+  },
+  {
+    "name": "clickhouse_system",
+    "kind": "log",
+    "connection": "platform",
+    "from": {
+      "databaseName": "system",
+      "tableName": "text_log"
+    },
+    "timestampValueExpression": "event_time",
+    "displayedTimestampValueExpression": "event_time",
+    "implicitColumnExpression": "message",
+    "bodyExpression": "message",
+    "severityTextExpression": "level",
+    "serviceNameExpression": "logger_name",
+    "defaultTableSelectExpression": "event_time, level, logger_name, message, query_id"
   }
 ]
