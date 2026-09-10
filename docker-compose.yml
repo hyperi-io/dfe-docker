@@ -830,6 +830,9 @@ services:
       # from the profile); the defaults are the slim tier's.
       DFE_TRANSPORT_DEFAULT: ${DFE_TRANSPORT_DEFAULT:-direct}
       DFE_TRANSPORT_BUS_PRESENT: ${DFE_TRANSPORT_BUS_PRESENT:-false}
+      # The broker the engine creates a source's topics on: the in-stack one on a
+      # kafka tier unless .env names another, and nothing on a direct tier.
+      DFE_KAFKA_BOOTSTRAP_SERVERS: ${DFE_KAFKA_BOOTSTRAP_SERVERS:-}
       # The everyday admin, reasserted from .env on every boot. The engine refuses
       # to start on an empty or "changeme" value unless DFE_ENV is a dev posture.
       DFE_AUTH_LOCAL_ADMIN_NAME: ${DFE_AUTH_LOCAL_ADMIN_NAME:-admin}

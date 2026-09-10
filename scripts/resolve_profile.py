@@ -66,6 +66,9 @@ AUTH_REQUIRED_ENV_VARS = (
 # membership, which is authn alone -- exactly what the infra gate exists to stop.
 AUTH_NON_BLANK_IF_SET = ("DFE_OIDC_ALLOWED_GROUPS",)
 
+ENGINE_BROKER_ENV_VAR = "DFE_KAFKA_BOOTSTRAP_SERVERS"
+IN_STACK_BROKER = "kafka:9092"
+
 CORE_ENABLED_ENV_VAR = "DFE_CORE_ENABLED"
 CORE_SERVICES = ["dfe-engine", "dfe-hunt-runner", "dfe-ui", "dfe-proxy"]
 
@@ -396,6 +399,14 @@ def main() -> int:
         lines.append(
             f"export DFE_TRANSPORT_BUS_PRESENT := {'true' if bus else 'false'}"
         )
+        # The engine creates a source's topics on the in-stack broker, which every
+        # kafka tier reaches by the `kafka` alias; .env names an external broker
+        # instead, and a direct tier hands the engine no broker at all.
+        if bus:
+            broker = (
+                os.environ.get(ENGINE_BROKER_ENV_VAR, "").strip() or IN_STACK_BROKER
+            )
+            lines.append(f"export {ENGINE_BROKER_ENV_VAR} := {broker}")
 
         # `LOCAL=` names components to BUILD, which is a smaller set than the
         # services a profile runs, so make validates it against the builder's own
