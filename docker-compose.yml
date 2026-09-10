@@ -823,6 +823,9 @@ services:
       DFE_GITOPS_MODE: ${DFE_GITOPS_MODE:-solo}
       # Names the fetch command the engine puts on the login page: `make creds`.
       DFE_DEPLOYMENT_TARGET: docker
+      # The tier this stack runs, by the manifest's name: the engine seeds the
+      # profile's default app instances from it and reports it as its profile.
+      DFE_PROFILE: ${DFE_STACK_PROFILE:-docker-slim}
       # The everyday admin, reasserted from .env on every boot. The engine refuses
       # to start on an empty or "changeme" value unless DFE_ENV is a dev posture.
       DFE_AUTH_LOCAL_ADMIN_NAME: ${DFE_AUTH_LOCAL_ADMIN_NAME:-admin}

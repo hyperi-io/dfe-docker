@@ -246,8 +246,8 @@ def _parse_yaml(*, text: str) -> dict[str, object]:
 
 def _resolve_profile(
     *, data: dict[str, object]
-) -> tuple[str, dict[str, object], dict[str, bool]]:
-    """Resolve active profile and return (transport, services_dict, footprint)."""
+) -> tuple[str, str, dict[str, object], dict[str, bool]]:
+    """Resolve active profile and return (name, transport, services_dict, footprint)."""
     active_profile = os.environ.get(PROFILE_ENV_VAR, "") or data.get(
         PROFILE_ACTIVE_YAML_FIELD, None
     )
@@ -312,7 +312,12 @@ def _resolve_profile(
                 msg=f"Config file {_rel_path(path=config_file)!r} not found.",
             )
 
-    return transport, services, _footprint(profile=profile, profile_name=active_profile)
+    return (
+        active_profile,
+        transport,
+        services,
+        _footprint(profile=profile, profile_name=active_profile),
+    )
 
 
 def main() -> int:
@@ -327,7 +332,7 @@ def main() -> int:
         data = _parse_yaml(
             text=SERVICE_PROFILES_FILE.read_text(encoding="utf-8", errors="replace")
         )
-        transport, services, footprint = _resolve_profile(data=data)
+        active_profile, transport, services, footprint = _resolve_profile(data=data)
 
         # Build infra compose profile flags
         profiles = []
@@ -378,6 +383,11 @@ def main() -> int:
             if footprint["hyperdx"]:
                 service_list.extend(AUTH_HYPERDX_SERVICES)
         lines.append(f"export DFE_SERVICES := {' '.join(service_list)}")
+
+        # The manifest's name for this Compose tier (dfe-infra apps.yaml says
+        # docker-slim, docker-single), which the engine seeds its default app
+        # instances from and reports as its deployment profile.
+        lines.append(f"export DFE_STACK_PROFILE := docker-{active_profile}")
 
         # `LOCAL=` names components to BUILD, which is a smaller set than the
         # services a profile runs, so make validates it against the builder's own
