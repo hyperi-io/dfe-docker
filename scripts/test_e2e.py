@@ -96,7 +96,7 @@ KNOWN_DFE_SERVICES = set(SERVICE_CONFIG_MOUNTS.keys())
 # Schema Authority
 # - dfe-engine is brought up as INFRA, health-gated before the DFE services,
 #   because the loader pre-warms the schemas it registers. The harness sends with
-#   _source = the target table, so rows land in the engine-provisioned default
+#   _source = the target table, so rows land in the engine-provisioned main
 #   table. docs/developing.md#end-to-end-suite----one-stack-per-test
 # ------------------------------------------------------------------------------
 SCHEMA_AUTHORITY_SERVICE = "dfe-engine"
@@ -114,7 +114,7 @@ OTEL_FRESH_WINDOW_SECONDS = 300
 OTEL_TIMEOUT_SECONDS = 120.0
 OTEL_INTERVAL_SECONDS = 5.0
 TARGET_DB = "dfe"
-TARGET_TABLE = "default"
+TARGET_TABLE = "main"
 
 # Marker lookup lives in _pipeline, shared with the power-on self test.
 
@@ -704,7 +704,7 @@ def stack_up(mode, test, services):
 
     compose_files += ["-f", override_file]
 
-    # Schema authority: dfe-engine provisions dfe.default and registers the schemas
+    # Schema authority: dfe-engine provisions dfe.main and registers the schemas
     # the loader pre-warms on startup. Bring it up with ClickHouse and gate on its
     # health BEFORE the DFE services, so the loader caches the schema instead of
     # holding every message pending-schema and dead-lettering it.

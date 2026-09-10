@@ -47,14 +47,14 @@ runs a receiver - the shipped default (`kafka-fetcher`) does not:
 
 ```bash
 # Default profile (kafka-fetcher): the fetcher is the ingest edge.
-curl -X POST http://localhost:8082/ingest/default \
+curl -X POST http://localhost:8082/ingest/main \
   -H 'Content-Type: application/json' \
-  -d '{"_source":"default","message":"hello dfe"}'
+  -d '{"_source":"main","message":"hello dfe"}'
 
 # Any profile that runs dfe-receiver (grpc-receiver, kafka-receiver, ...).
 curl -X POST http://localhost:8080/ingest \
   -H 'Content-Type: application/json' \
-  -d '{"_source":"default","message":"hello dfe"}'
+  -d '{"_source":"main","message":"hello dfe"}'
 ```
 
 `make post` works this out for you from the resolved profile, so if you are not
@@ -63,11 +63,11 @@ sure which you have, run that instead.
 Then look for it:
 
 ```bash
-curl 'http://localhost:8123/?query=SELECT%20*%20FROM%20dfe.default%20ORDER%20BY%20_timestamp_load%20DESC%20LIMIT%205%20FORMAT%20Vertical'
+curl 'http://localhost:8123/?query=SELECT%20*%20FROM%20dfe.main%20ORDER%20BY%20_timestamp_load%20DESC%20LIMIT%205%20FORMAT%20Vertical'
 ```
 
 `_source` is what routes the event - the loader writes it to
-`<database>.<_source>`, so `"_source":"default"` lands in `dfe.default`.
+`<database>.<_source>`, so `"_source":"main"` lands in `dfe.main`.
 
 It will not appear instantly. The pipeline is asynchronous, and via Kafka
 genuinely so; a couple of seconds is normal.

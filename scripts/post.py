@@ -9,12 +9,14 @@
 
 """Power-on self test (POST) for a stack that is ALREADY running.
 
-Three claims. INGEST: uniquely-marked events put in at the ingest edge come out as
+Four claims. INGEST: uniquely-marked events put in at the ingest edge come out as
 those exact rows in ClickHouse. SELF-MONITORING: when the profile runs a collector,
 the stack's own telemetry is landing FRESH in the otel database. CONSOLE: those
 same marked rows read back through the engine query API that dfe-ui uses, so the
 data is not merely stored but reachable from the surface an operator works in.
-None of the three is "the containers started" or "the ports answer".
+HUNTS: a hunt created through the API while the runner is already running is picked
+up and executed, and its detections land in the detection table. None of the four is
+"the containers started" or "the ports answer".
 
 Transport-agnostic by construction. It posts to the ingest edge and reads
 ClickHouse, so it works identically on the Kafka and the gRPC (kafka-less)
@@ -26,9 +28,9 @@ OPT-OUT, not opt-in: it runs unless `DFE_POST_ENABLED=false`. Something that onl
 runs when you remember to ask for it is not a power-on self test.
 
 Exit codes:
-  0  the pipeline moved the marked events (or the POST was skipped for a stated
-     reason -- disabled, or the running profile has no ingest component)
-  1  the events did not land, or landed unverifiably
+  0  every claim the active profile can make, held (or the POST was skipped for a
+     stated reason -- disabled, or the running profile has no ingest component)
+  1  a claim failed, or could not be checked
 
 Deliberately NOT a Docker HEALTHCHECK or a component entrypoint step. This
 assertion is cross-service and needs the whole stack up, which no single
@@ -40,17 +42,22 @@ that is a scalo contract change, not a Compose one.
 
 from __future__ import annotations
 
+import json
 import os
 import sys
 import time
+from urllib.parse import quote
 
 from _common import FALSY, _load_dotenv, _print, _resolved_services
 from _pipeline import (
     MARKER_EXPRESSIONS,
     ch_count,
+    ch_int,
     ch_marker_count,
     escape_literal,
+    http_delete,
     http_get,
+    http_get_json,
     http_post,
     http_post_json,
     marked_event,
@@ -76,7 +83,9 @@ READY_TIMEOUT_SECONDS = 90.0
 READY_INTERVAL_SECONDS = 2.0
 
 TARGET_DB = "dfe"
-TARGET_TABLE = "default"
+# The engine's catch-all landing table, DFE_CLICKHOUSE_LANDING_TABLE. A deployment
+# that moved it points POST at the same name through DFE_POST_TABLE.
+TARGET_TABLE = "main"
 
 # Self-monitoring assertion. The collector batches on a 5s timeout and the SDKs
 # export on their own interval, so the window is generous and the timeout is the
@@ -93,6 +102,27 @@ UI_QUERY_SERVICES = ("dfe-engine", "dfe-ui")
 UI_QUERY_DATASOURCE = "clickhouse:default"
 UI_QUERY_TIMEOUT_SECONDS = 30.0
 UI_QUERY_INTERVAL_SECONDS = 3.0
+
+# Hunt assertion. The runner runs the engine image off the ENGINE's config volume,
+# so a hunt the API writes is a file the runner reads -- which is what makes
+# "created while the runner was already up" a claim worth making.
+HUNT_SERVICES = ("dfe-engine", "dfe-hunt-runner")
+HUNT_TARGET_TABLE = "detection"
+
+# The tightest schedule a hunt config expresses, and the only way in: POST
+# /hunts/{name}/run answers 501, so no ad-hoc trigger can shorten the wait.
+HUNT_CRON = "* * * * *"
+
+# One runner reload plus the hunt's phase offset, which is a stable hash in
+# [0, 0.8*interval) -- up to 48s on a 60s hunt. The stuck-runner backstop.
+HUNT_PICKUP_TIMEOUT_SECONDS = 150.0
+HUNT_PICKUP_INTERVAL_SECONDS = 3.0
+
+# The fire that claims the hunt is not always the fire that matches: the hunt
+# carries log_buffer 60, so rows younger than that sit outside the window and are
+# picked up by the NEXT minute's fire. Long enough to cover that second fire.
+HUNT_DETECTION_TIMEOUT_SECONDS = 150.0
+HUNT_DETECTION_INTERVAL_SECONDS = 3.0
 
 # Compose defaults that mean "nobody ran `make init`". They are deterministic and
 # committed, so a stack running them has a signing key and a database password
@@ -238,11 +268,11 @@ def _cleanup(database: str, table: str, marker: str) -> None:
     """Report that this run's synthetic rows remain. It cannot remove them.
 
     We tried deleting them and it does not work: the engine-provisioned
-    `dfe.default` carries PROJECTIONS, and ClickHouse refuses a lightweight
+    `dfe.main` carries PROJECTIONS, and ClickHouse refuses a lightweight
     DELETE on such a table unless `lightweight_mutation_projection_mode` is
     changed:
 
-        Code: 344. DELETE query is not allowed for table dfe.default because
+        Code: 344. DELETE query is not allowed for table dfe.main because
         as it has projections and setting lightweight_mutation_projection_mode
         is set to THROW.
 
@@ -315,6 +345,37 @@ def _verify_self_monitoring() -> int:
     return 0
 
 
+def _engine_base() -> str:
+    """The engine's /api/v1 base URL for this stack."""
+    bind = os.environ.get("DFE_POST_HOST", "localhost")
+    return f"http://{bind}:{os.environ.get('DFE_ENGINE_PORT', '8003')}/api/v1"
+
+
+def _login(base: str) -> tuple[str, int, str]:
+    """Log a console account in. Returns (token, status, username).
+
+    An empty token with status 0 means no password was available, which is a
+    different fault from a rejected login and reads differently to an operator.
+    """
+    # DFE_POST_LOGIN_* names any account; the break-glass admin is the fallback.
+    username = (
+        os.environ.get("DFE_POST_LOGIN_USER", "").strip()
+        or os.environ.get("DFE_AUTH_LOCAL_ADMIN_NAME", "admin").strip()
+        or "admin"
+    )
+    password = (
+        os.environ.get("DFE_POST_LOGIN_PASSWORD", "").strip()
+        or os.environ.get("DFE_AUTH_LOCAL_ADMIN_PASSWORD", "").strip()
+    )
+    if not (password):
+        return "", 0, username
+    status, body = http_post_json(
+        f"{base}/auth/login", {"username": username, "password": password}
+    )
+    token = body.get("access_token", "") if isinstance(body, dict) else ""
+    return token, status, username
+
+
 def _ui_query_count(
     *, base: str, database: str, marker: str, table: str, token: str
 ) -> int | None:
@@ -350,6 +411,18 @@ def _ui_query_count(
     return None
 
 
+def _wizard_rotated_admin_password(*, base: str) -> bool:
+    """True when the engine's setup-status says the wizard already rotated the break-glass password."""
+    try:
+        status = json.loads(http_get(f"{base}/auth/setup-status"))
+    except Exception:  # noqa: BLE001
+        return False
+    if not isinstance(status, dict):
+        return False
+    initial = status.get("initial_setup") or {}
+    return "admin_password" in (initial.get("completed_steps") or [])
+
+
 def _verify_ui_query(*, database: str, marker: str, table: str) -> int:
     """Prove the console's query path returns THIS run's rows.
 
@@ -366,25 +439,29 @@ def _verify_ui_query(*, database: str, marker: str, table: str) -> int:
         )
         return 0
 
-    bind = os.environ.get("DFE_POST_HOST", "localhost")
-    base = f"http://{bind}:{os.environ.get('DFE_ENGINE_PORT', '8003')}/api/v1"
-    username = os.environ.get("DFE_AUTH_LOCAL_ADMIN_NAME", "admin").strip() or "admin"
-    password = os.environ.get("DFE_AUTH_LOCAL_ADMIN_PASSWORD", "").strip()
-    if not (password):
+    base = _engine_base()
+    token, status, username = _login(base)
+    if status == 0:
+        if _wizard_rotated_admin_password(base=base):
+            _print(
+                msg="SKIP  the setup wizard rotated the break-glass password, so no "
+                "console credential lives in the env -- set DFE_POST_LOGIN_USER and "
+                "DFE_POST_LOGIN_PASSWORD to prove the query path"
+            )
+            return 0
         _print(msg="FAIL  DFE_AUTH_LOCAL_ADMIN_PASSWORD is unset -- run `make init`")
         return 1
 
     _print(msg=f"Querying {database}.{table} through the engine API as {username!r}")
-    status, body = http_post_json(
-        f"{base}/auth/login", {"username": username, "password": password}
-    )
-    token = body.get("access_token", "") if isinstance(body, dict) else ""
     if status != 200 or not (token):
-        # An engine seeded before this password was generated holds the old one, so
-        # retrying cannot help.
+        # An engine seeded before this password was generated holds the old one, and
+        # the setup wizard's last step rotates it: either way retrying cannot help.
         _print(
             msg=f"FAIL  login as {username!r} returned HTTP {status} -- the console "
-            "cannot authenticate, so nobody can read this data through dfe-ui"
+            "cannot authenticate, so nobody can read this data through dfe-ui. "
+            "If the setup wizard rotated the break-glass password, pass the current "
+            "one on the command line (shell env beats .env): "
+            "DFE_AUTH_LOCAL_ADMIN_PASSWORD=... make post"
         )
         return 1
 
@@ -411,6 +488,283 @@ def _verify_ui_query(*, database: str, marker: str, table: str) -> int:
 
     _print(
         msg=f"PASS  dfe-ui's query path returned {matched}/{EVENT_COUNT} of this run's rows"
+    )
+    return 0
+
+
+def _create_hunt_rule(
+    *, base: str, database: str, marker: str, name: str, table: str, token: str
+) -> str:
+    """Create the detection rule this run's hunt names. Returns '' or the fault."""
+    escaped = escape_literal(marker)
+    status, body = http_post_json(
+        f"{base}/rules",
+        {
+            "name": name,
+            "severity": "high",
+            "source_type": "raw",
+            "user_sql": (
+                f"SELECT * FROM {database}.{table} "
+                f"WHERE {MARKER_EXPRESSIONS[0]} = '{escaped}'"
+            ),
+        },
+        token=token,
+    )
+    return "" if status == 201 else f"POST /rules returned HTTP {status}: {body}"
+
+
+def _create_hunt(
+    *, base: str, database: str, name: str, rule: str, table: str, token: str
+) -> str:
+    """Create the hunt over this run's rows. Returns '' or the fault."""
+    status, body = http_post_json(
+        f"{base}/hunts",
+        {
+            "name": name,
+            "cron": HUNT_CRON,
+            "log_buffer": 60,
+            "customers": ["post"],
+            "rules": [rule],
+            "global_source_table_name": f"{database}.{table}",
+            "global_target_table_name": f"{database}.{HUNT_TARGET_TABLE}",
+            "checkpoint_timestamp_field": "_timestamp_load",
+        },
+        token=token,
+    )
+    return "" if status == 201 else f"POST /hunts returned HTTP {status}: {body}"
+
+
+def _remove(url: str, *, kind: str, name: str, token: str) -> None:
+    """Delete one thing this run created, and say so when it does not go."""
+    status = http_delete(url, token=token)
+    if status not in (200, 204):
+        _print(msg=f"      note: {kind} {name!r} was not removed (HTTP {status})")
+
+
+def _hunt_status(*, base: str, token: str) -> tuple[bool, int]:
+    """Read (running, hunt_count) off GET /hunts/status, or (False, -1) if unreadable."""
+    status, body = http_get_json(f"{base}/hunts/status", token=token, timeout=10)
+    if status != 200 or not (isinstance(body, dict)):
+        return False, -1
+    return bool(body.get("running")), int(body.get("hunt_count", -1))
+
+
+def _hunt_http_status(*, base: str, hunt: str, token: str) -> int:
+    """Return the HTTP status GET /hunts/<name> answers with: 200 present, 404 absent."""
+    status, _ = http_get_json(
+        f"{base}/hunts/{quote(hunt, safe='')}", token=token, timeout=10
+    )
+    return status
+
+
+def _assert_hunt_removed(*, base: str, hunt: str, token: str) -> int:
+    """Prove the hunt this run created is gone, so a passing run leaves the stack as it found it."""
+    status = _hunt_http_status(base=base, hunt=hunt, token=token)
+    if status == 404:
+        return 0
+    if status == 200:
+        _print(
+            msg=f"FAIL  GET /hunts/{hunt} still returns the hunt after the delete -- "
+            "this run left a hunt behind on the stack"
+        )
+        return 1
+    _print(
+        msg=f"      note: GET /hunts/{hunt} returned HTTP {status} after the delete, "
+        "so whether the hunt is gone could not be read"
+    )
+    return 0
+
+
+def _verify_hunt(*, database: str, marker: str, table: str) -> int:
+    """Prove a hunt created while the runner is running is picked up and executed.
+
+    Two things have to be true and only one of them is about ClickHouse. The
+    runner must SEE a hunt written to the shared config volume seconds ago without
+    anything being restarted, and it must then run it into the detection table.
+    A stack where hunts only start working after a bounce is a stack where the
+    hunts page lies to whoever just used it.
+    """
+    absent = [name for name in HUNT_SERVICES if name not in set(_resolved_services())]
+    if absent:
+        _print(
+            msg=f"SKIP  {', '.join(absent)} not in the active profile -- no hunt runner to prove"
+        )
+        return 0
+
+    base = _engine_base()
+    token, status, username = _login(base)
+    if status == 0 and _wizard_rotated_admin_password(base=base):
+        _print(
+            msg="SKIP  the setup wizard rotated the break-glass password, so no "
+            "console credential lives in the env -- set DFE_POST_LOGIN_USER and "
+            "DFE_POST_LOGIN_PASSWORD to prove the hunt path"
+        )
+        return 0
+    if status == 0:
+        _print(
+            msg="FAIL  no password for the console is available -- set "
+            "DFE_AUTH_LOCAL_ADMIN_PASSWORD (run `make init`) or DFE_POST_LOGIN_PASSWORD, "
+            "so this run can create the hunt it needs"
+        )
+        return 1
+    if status != 200 or not (token):
+        _print(
+            msg=f"FAIL  login as {username!r} returned HTTP {status} -- the hunt API "
+            "rejected the credential, so this run cannot create the hunt it needs"
+        )
+        return 1
+
+    hunt_name = marker
+    rule_name = f"{marker}-rule"
+    _print(
+        msg=f"Creating rule {rule_name!r} and hunt {hunt_name!r} over this run's rows"
+    )
+
+    fault = _create_hunt_rule(
+        base=base,
+        database=database,
+        marker=marker,
+        name=rule_name,
+        table=table,
+        token=token,
+    )
+    if fault:
+        _print(msg=f"FAIL  {fault}")
+        return 1
+
+    try:
+        fault = _create_hunt(
+            base=base,
+            database=database,
+            name=hunt_name,
+            rule=rule_name,
+            table=table,
+            token=token,
+        )
+        if fault:
+            _print(msg=f"FAIL  {fault}")
+            return 1
+        try:
+            result = _await_hunt(
+                base=base, database=database, hunt=hunt_name, token=token
+            )
+        finally:
+            _remove(
+                f"{base}/hunts/{hunt_name}", kind="hunt", name=hunt_name, token=token
+            )
+        return result or _assert_hunt_removed(base=base, hunt=hunt_name, token=token)
+    finally:
+        _remove(f"{base}/rules/{rule_name}", kind="rule", name=rule_name, token=token)
+
+
+def _await_hunt(*, base: str, database: str, hunt: str, token: str) -> int:
+    """Wait for the runner to load the new hunt, run it, and write its detections."""
+    escaped = escape_literal(hunt)
+    running, _ = _hunt_status(base=base, token=token)
+    # This run's own hunt, not the global count: a concurrent `make post` or an
+    # operator deleting an unrelated hunt moves the count either way.
+    present = _hunt_http_status(base=base, hunt=hunt, token=token)
+    if present != 200:
+        _print(
+            msg=f"FAIL  GET /hunts/{hunt} returned HTTP {present} straight after the "
+            "engine accepted it -- the hunt was not written where the engine reports "
+            "hunts from"
+        )
+        return 1
+
+    seen_running = {"flag": running}
+
+    # The watermark is the runner's fingerprint -- the engine never writes one --
+    # so a row for a hunt that did not exist a moment ago is the runner having
+    # re-read its dir, with nothing restarted in between.
+    def _picked_up():
+        live, _ = _hunt_status(base=base, token=token)
+        seen_running["flag"] = seen_running["flag"] or live
+        return ch_int(
+            f"SELECT count() FROM {database}.hunt_watermark WHERE hunt_id = '{escaped}'"
+        )
+
+    def _report(attempt, result):
+        _print(msg=f"  attempt {attempt}: hunt_watermark rows = {result}")
+
+    _print(msg=f"Waiting for the running hunt-runner to pick up {hunt!r} (no restart)")
+    watermarks = poll_until(
+        _picked_up,
+        timeout=HUNT_PICKUP_TIMEOUT_SECONDS,
+        interval=HUNT_PICKUP_INTERVAL_SECONDS,
+        done=lambda result: result is not None and result > 0,
+        on_attempt=_report,
+    )
+
+    if watermarks is None:
+        _print(
+            msg=f"FAIL  {database}.hunt_watermark could not be read -- the hunt "
+            "coordination schema is missing, so no runner has ever started"
+        )
+        return 1
+    if watermarks <= 0:
+        _print(
+            msg=f"FAIL  the runner did not claim {hunt!r} within "
+            f"{HUNT_PICKUP_TIMEOUT_SECONDS:.0f}s -- a hunt created through the API is "
+            "not reaching the runner, so hunts only work after a restart"
+        )
+        return 1
+    _print(
+        msg=f"PASS  the already-running hunt-runner loaded {hunt!r} and ran it without a restart"
+    )
+
+    # `running` is true only while a hunt holds a lease, and a lease is released as
+    # soon as the run commits, so a healthy runner reads as running for well under
+    # a second per fire. Reported, never asserted -- see the engine issue.
+    if seen_running["flag"]:
+        _print(msg="PASS  GET /hunts/status reported running: true during the fire")
+    else:
+        _print(
+            msg="      note: GET /hunts/status never reported running: true -- it counts "
+            "in-flight leases, not whether a runner process is alive"
+        )
+
+    def _detections():
+        return ch_int(
+            f"SELECT count() FROM {database}.{HUNT_TARGET_TABLE} "
+            f"WHERE hunt_name = '{escaped}'"
+        )
+
+    def _report_rows(attempt, result):
+        _print(msg=f"  attempt {attempt}: {HUNT_TARGET_TABLE} rows = {result}")
+
+    matched = poll_until(
+        _detections,
+        timeout=HUNT_DETECTION_TIMEOUT_SECONDS,
+        interval=HUNT_DETECTION_INTERVAL_SECONDS,
+        done=lambda result: result is not None and result > 0,
+        on_attempt=_report_rows,
+    )
+
+    if matched is None:
+        _print(
+            msg=f"FAIL  {database}.{HUNT_TARGET_TABLE} could not be read -- the hunt "
+            "output table does not exist, so no hunt on this stack can land anywhere"
+        )
+        return 1
+    if matched <= 0:
+        _print(
+            msg=f"FAIL  the runner ran {hunt!r} but wrote no row to "
+            f"{database}.{HUNT_TARGET_TABLE} within {HUNT_DETECTION_TIMEOUT_SECONDS:.0f}s"
+        )
+        _print(
+            msg="      the runner claimed the hunt and completed the run, so it is the "
+            "detection write that did not happen -- check the hunt-runner logs and the "
+            "rule the hunt names"
+        )
+        return 1
+
+    _print(
+        msg=f"PASS  {hunt!r} wrote {matched} row(s) to {database}.{HUNT_TARGET_TABLE}"
+    )
+    _print(
+        msg=f"      note: those row(s) remain, tagged hunt_name = {hunt} -- the hunt and "
+        "its rule are removed"
     )
     return 0
 
@@ -511,10 +865,11 @@ def main() -> int:
             msg=f"PASS  {matched}/{EVENT_COUNT} marked event(s) landed in {database}.{table}"
         )
         _cleanup(database, table, marker)
-        # Both remaining claims run even when the first of them fails, so one boot
+        # Every remaining claim runs even when an earlier one fails, so one boot
         # reports every broken pipeline rather than the first one.
         failed = _verify_self_monitoring()
         failed += _verify_ui_query(database=database, marker=marker, table=table)
+        failed += _verify_hunt(database=database, marker=marker, table=table)
         return 1 if failed else 0
 
     _print(

@@ -1,12 +1,12 @@
 [
   {
-    "id": "dfe-default",
-    "name": "DFE Default",
+    "id": "dfe-main",
+    "name": "DFE Main",
     "kind": "log",
     "connection": "local",
     "from": {
       "databaseName": "dfe",
-      "tableName": "default"
+      "tableName": "main"
     },
     "timestampValueExpression": "_timestamp",
     "displayedTimestampValueExpression": "_timestamp",
@@ -15,6 +15,22 @@
     "serviceNameExpression": "_source",
     "eventAttributesExpression": "_json",
     "defaultTableSelectExpression": "_timestamp,_source,_json"
+  },
+  {
+    "id": "dfe-hunts",
+    "name": "hunts",
+    "kind": "log",
+    "connection": "local",
+    "from": {
+      "databaseName": "dfe",
+      "tableName": "detection"
+    },
+    "timestampValueExpression": "_timestamp",
+    "displayedTimestampValueExpression": "_timestamp",
+    "implicitColumnExpression": "rule_name",
+    "bodyExpression": "_json",
+    "eventAttributesExpression": "_json",
+    "defaultTableSelectExpression": "_timestamp,severity,hunt_name,rule_name,source_table,matched_uuid,rule_id,_json"
   },
   {
     "id": "dfe-self-logs",
@@ -59,7 +75,8 @@
     "statusCodeExpression": "StatusCode",
     "statusMessageExpression": "StatusMessage",
     "eventAttributesExpression": "SpanAttributes",
-    "resourceAttributesExpression": "ResourceAttributes"
+    "resourceAttributesExpression": "ResourceAttributes",
+    "defaultTableSelectExpression": "Timestamp,ServiceName,StatusCode,round(Duration/1e6),SpanName"
   },
   {
     "id": "dfe-self-metrics",

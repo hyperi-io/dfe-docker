@@ -1,0 +1,32 @@
+# Project:   dfe-docker
+# File:      config/loader/kafka-load-filebeat-vector.yaml
+# Purpose:   dfe-loader config - the shared transform output plus the Vector filebeat source's own
+# Language:  YAML
+#
+# License:   BUSL-1.1
+# Copyright: (c) 2026 HYPERI PTY LIMITED
+#
+# One topic per transform instance, listed rather than matched: the loader strips
+# the _load suffix to get _source, and routes each to the table of that name, so
+# filebeat-vector_load lands in dfe.`filebeat-vector` and main_load in
+# dfe.main.
+
+clickhouse:
+  hosts:
+    - clickhouse:8123
+  database: dfe
+  protocol: http
+  username: env:CLICKHOUSE_USERNAME
+  password: env:CLICKHOUSE_PASSWORD
+
+kafka:
+  brokers:
+    - kafka:9092
+  group: dfe-loader
+  topics:
+    - main_load
+    - filebeat-vector_load
+
+routing:
+  dlq:
+    enabled: false

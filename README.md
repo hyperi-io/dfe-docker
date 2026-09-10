@@ -15,6 +15,7 @@ can apply - read both if so.
 | Working out why a stack is misbehaving - yours or someone else's. | **Troubleshooting** | [docs/troubleshooting.md](docs/troubleshooting.md) |
 | Standing a deployment up, or moving one to a newer certified stack. | **Deploying** | [docs/deploying.md](docs/deploying.md) |
 | Asking what the stack reports about itself - health endpoints, self-telemetry, what a passing self test proves. | **Observability** | [docs/observability.md](docs/observability.md) |
+| Adding or changing a profile, and wanting to know which ones are yours to edit. | **Profiles** | [docs/profiles.md](docs/profiles.md) |
 | Wanting to know how the pieces fit together, before any of the above. | **Everyone** | [docs/architecture.md](docs/architecture.md) |
 
 Two things worth knowing before you start, whichever you are:
@@ -117,7 +118,7 @@ All three, in full, plus what an upgrade does to an existing stack:
 
 ## Service Profiles
 
-Service selection is controlled by `service_profiles.yaml` at the repo root. Each profile declares a transport mode, which DFE services to start, and optionally its whole footprint - the `clickhouse`, `core`, `kafbat`, `hyperdx` and `otel` keys. The `active_profile` field is used to define the profile set and can be overridden with the `DFE_PROFILE` env var. The matching `.env` flags (`DFE_CLICKHOUSE_ENABLED`, `DFE_CORE_ENABLED`, `KAFBAT_ENABLED`, `DFE_HYPERDX_ENABLED`, `DFE_OTEL_ENABLED`) override the profile's keys.
+Service selection is controlled by `service_profiles.yaml` at the repo root. Each profile declares a transport mode, which DFE services to start, and optionally its whole footprint - the `clickhouse`, `core`, `kafbat`, `hyperdx` and `otel` keys. The `active_profile` field is used to define the profile set and can be overridden with the `DFE_PROFILE` env var; it ships as `slim`, the Compose default, the way a Kubernetes deploy defaults to `scale`. The matching `.env` flags (`DFE_CLICKHOUSE_ENABLED`, `DFE_CORE_ENABLED`, `KAFBAT_ENABLED`, `DFE_HYPERDX_ENABLED`, `DFE_OTEL_ENABLED`) override the profile's keys.
 
 For `kafka` transport profiles, the Kafka backend is selected via `KAFKA_BACKEND` (default `redpanda`).
 
@@ -134,30 +135,16 @@ To start only a subset of the resolved profile for a single invocation, pass `SE
 ```bash
 make dev SERVICES="dfe-loader dfe-ui"   # Start dev images of dfe-loader and dfe-ui only
 make ci  SERVICES="dfe-loader dfe-ui"   # Same, against registry images
+make dev LOCAL="dfe-engine dfe-ui"      # Build only these from source; the rest run the pinned registry images
 ```
 
 ### Application Profiles (service_profiles.yaml)
 
-`slim` and `single` name a whole-stack shape and share their names with the
-Kubernetes tier, so one deployment dial reads the same on both. `single` is the
-complete stack. There is no `scale` - Compose cannot run an HA broker or a
-ClickHouse cluster.
-
-| Profile                           | Transport | dfe-archiver | dfe-fetcher | dfe-loader | dfe-receiver | dfe-transform-vrl | dfe-transform-vector |
-|-----------------------------------|-----------|:------------:|:-----------:|:----------:|:------------:|:-----------------:|:--------------------:|
-| `slim`                            | gRPC      |              |             |     X      |      X       |                   |                      |
-| `single`                          | Kafka     |      X       |      X      |     X      |      X       |         X         |                      |
-| `kafka-fetcher`                   | Kafka     |              |      X      |     X      |              |                   |                      |
-| `kafka-full`                      | Kafka     |      X       |      X      |     X      |      X       |                   |                      |
-| `kafka-full-transform-vrl`        | Kafka     |              |      X      |     X      |      X       |         X         |                      |
-| `kafka-minimal`                   | Kafka     |              |             |     X      |              |                   |                      |
-| `kafka-receiver`                  | Kafka     |              |             |     X      |      X       |                   |                      |
-| `kafka-receiver-archiver`         | Kafka     |      X       |             |     X      |      X       |                   |                      |
-| `kafka-receiver-transform-vector` | Kafka     |              |             |     X      |      X       |                   |           X          |
-| `grpc-fetcher`                    | gRPC      |              |      X      |     X      |              |                   |                      |
-| `grpc-full`                       | gRPC      |              |      X      |     X      |      X       |                   |                      |
-| `grpc-minimal`                    | gRPC      |              |             |     X      |              |                   |                      |
-| `grpc-receiver`                   | gRPC      |              |             |     X      |      X       |                   |                      |
+`slim` and `single` share their names with the Kubernetes tiers and are rendered
+from them, so they are edited THERE and re-rendered here; every other profile is
+a hand-crafted data-plane shape you own. There is no `scale` - Compose cannot run
+an HA broker or a ClickHouse cluster. Which profile runs what, and how the two
+projected ones are re-rendered: [docs/profiles.md](docs/profiles.md).
 
 ### Infrastructure Profiles (docker-compose.yml)
 
@@ -189,10 +176,13 @@ In `dev` mode, they build from each repo's own Dockerfile (not the shared Rust b
 
 | Command            | Description                                                        |
 |--------------------|--------------------------------------------------------------------|
-| `make init`        | Create .env and per-service .env files from templates              |
-| `make dev`         | Build local DFE images from source and start the stack             |
+| `make init`        | Create .env and per-service .env files from templates, minting the admin and break-glass passwords |
+| `make env-files`   | Assert every `env/<service>.env` exists, creating any the templates have gained |
+| `make creds`       | Print the access summary -- console URL, admin login, where the break-glass password lives. The password prints on a TTY only; a pipe, a file or `DFE_CREDS_SHOW=0` gets the `.env` key instead |
+| `make up`          | Start the pinned stack and print the access summary                |
+| `make dev`         | Build local DFE images from source and start the stack (`LOCAL="..."` builds only those, rest pinned) |
 | `make dev-build`   | Build local DFE images from source (no start)                      |
-| `make ci`          | Pull and start infra and registry DFE images                       |
+| `make ci`          | Pull and start infra and registry DFE images. Prints no credentials -- `make up` is the same start plus `make creds` |
 | `make ci-pull`     | Pull infra and registry DFE images (no start)                      |
 | `make infra`       | Start infrastructure services                                      |
 | `make ps`          | Show running containers                                            |
@@ -205,6 +195,7 @@ In `dev` mode, they build from each repo's own Dockerfile (not the shared Rust b
 | Command            | Description                                                       |
 |--------------------|-------------------------------------------------------------------|
 | `make test-e2e`    | End-to-end test executor                                          |
+| `make check-tests` | Unit tests over the credential helpers (`scripts/tests`)          |
 
 The e2e harness (`scripts/test_e2e.py`, config `tests/e2e/e2e-tests.yaml`) runs
 the core data-path acceptance: POST known JSON at the ingest edge and assert the

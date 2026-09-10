@@ -41,7 +41,7 @@ endif
 # any more (both sweep every profile), and requiring a resolvable profile to STOP
 # a stack is the same lockout the compose secret comments argue against -- set
 # DFE_PROFILE to something that does not exist and you could not tear down.
-BOOTSTRAP_GOALS := init help login stack dial modes down clean limits check check-compose check-hardfail check-dockerfile check-docs check-python
+BOOTSTRAP_GOALS := init env-files creds dev-posture help login stack dial modes down clean limits check check-compose check-hardfail check-dockerfile check-docs check-python check-tests
 
 # Resolve the active profile only when a goal actually needs the compose stack
 ifneq (,$(filter-out $(BOOTSTRAP_GOALS),$(or $(MAKECMDGOALS),help)))
@@ -50,11 +50,58 @@ ifneq (,$(filter-out $(BOOTSTRAP_GOALS),$(or $(MAKECMDGOALS),help)))
     ifeq ($(strip $(SERVICES)),)
         ACTIVE_SERVICES := $(DFE_SERVICES)
     else
-        INVALID_SERVICES := $(filter-out $(DFE_SERVICES),$(SERVICES))
-        ifneq ($(INVALID_SERVICES),)
-            $(error 'SERVICES' contains names not in the resolved stack: $(INVALID_SERVICES). Available: $(DFE_SERVICES))
+        # On a fresh checkout make parses once before .profile.mk exists, then
+        # remakes it and parses again; the name check only means anything on
+        # the second pass, when DFE_SERVICES is populated.
+        ifneq ($(strip $(DFE_SERVICES)),)
+            INVALID_SERVICES := $(filter-out $(DFE_SERVICES),$(SERVICES))
+            ifneq ($(INVALID_SERVICES),)
+                $(error 'SERVICES' contains names not in the resolved stack: $(INVALID_SERVICES). Available: $(DFE_SERVICES))
+            endif
         endif
         ACTIVE_SERVICES := $(filter $(SERVICES),$(DFE_SERVICES))
+    endif
+    # `make dev LOCAL="dfe-engine dfe-ui"` builds only those and keeps the rest
+    # on the registry pins: the build writes docker-compose.local.yml for the
+    # built components and the compose call names its files explicitly, which
+    # keeps the auto-loaded all-local override out. Empty LOCAL is plain dev.
+    LOCAL ?=
+    LOCAL_OVERLAY := docker-compose.local.yml
+    # The pull runs before the build writes any overlay, so it names none either
+    # way and resolves every image to its registry pin. The auto-loaded override
+    # otherwise sends it after a `:local` tag nothing has built yet, reached
+    # through an image consumer (dfe-schema-init runs dfe-engine's image), so it
+    # bites even when the profile holds no DFE service of its own.
+    DEV_PULL_FLAGS := -f docker-compose.yml $(STORAGE_FLAGS) $(UI_FLAGS)
+    ifeq ($(strip $(LOCAL)),)
+        DEV_BUILD := $(ACTIVE_SERVICES)
+        DEV_FLAGS :=
+        DEV_OVERLAY_ARG :=
+    else
+        # Validated against the buildable set rather than the resolved stack: a
+        # name the builder skips builds nothing and leaves nothing to overlay.
+        ifneq ($(strip $(DFE_BUILDABLE_SERVICES)),)
+            UNBUILDABLE_LOCAL := $(filter-out $(DFE_BUILDABLE_SERVICES),$(LOCAL))
+            ifneq ($(UNBUILDABLE_LOCAL),)
+                $(error 'LOCAL' contains names this repo cannot build from source: $(UNBUILDABLE_LOCAL). Buildable: $(DFE_BUILDABLE_SERVICES))
+            endif
+        endif
+        ifneq ($(strip $(DFE_SERVICES)),)
+            INVALID_LOCAL := $(filter-out $(DFE_SERVICES),$(LOCAL))
+            ifneq ($(INVALID_LOCAL),)
+                $(error 'LOCAL' contains names not in the resolved stack: $(INVALID_LOCAL). Available: $(DFE_SERVICES))
+            endif
+        endif
+        DEV_BUILD := $(LOCAL)
+        # The local overlay takes the committed override's slot, keeping the
+        # default chain's relative order so `LIVE=1` resolves the engine volumes
+        # the same way with and without LOCAL.
+        DEV_FLAGS := -f docker-compose.yml -f $(LOCAL_OVERLAY)
+        ifneq ($(strip $(LIVE)),)
+            DEV_FLAGS += -f docker-compose.live.yml
+        endif
+        DEV_FLAGS += $(STORAGE_FLAGS) $(UI_FLAGS)
+        DEV_OVERLAY_ARG := --overlay $(LOCAL_OVERLAY)
     endif
 endif
 
@@ -165,8 +212,43 @@ FORCE:
 # ---------------------------------------------------------------------------
 
 .PHONY: init
-init: ## Create .env and per-service env/<service>.env files from templates
+init: ## Create .env and per-service env/<service>.env files from templates, and write access-summary.md
 	@python3 scripts/init.py
+	@python3 scripts/creds.py --write
+
+# Start targets require every per-service env file (dfe-ui reads INTERNAL_API_URL
+# from env/ui.env). Compose marks them optional so `make down` never needs them.
+# The guard creates what is missing (init is non-destructive) rather than refusing,
+# so a release that adds a template does not stop an initialised deployment.
+.PHONY: env-files
+env-files: ## Assert every env/<service>.env exists, creating any the templates have gained
+	@python3 scripts/env_files.py
+
+# `make init` mints the admin and break-glass passwords and prints neither, so
+# this is the hand-over. `make up` and `make dev` end with it; `make ci` does not
+# call it, because its stdout is a build log. `make init` and `make up` pass
+# --write, which also leaves access-summary.md (0600, gitignored) for the operator.
+.PHONY: creds
+creds: ## Print the access summary. The admin password prints on a TTY only -- a pipe, a file, a CI log or DFE_CREDS_SHOW=0 gets the .env key instead
+	@python3 scripts/creds.py
+
+# A dev tyre-kick logs in without looking anything up, so `make dev` writes the
+# KNOWN default password and DFE_ENV=dev, the one posture the engine accepts it in.
+# It refuses with exit 2 on any other DFE_ENV, and copies .env to .env.bak-<utc>
+# before overwriting a minted password.
+#
+# `AUTH=real` is the other half: local images running the same authentication flow
+# a deployment gets, so it mints a password and writes a non-dev posture instead.
+AUTH ?=
+ifeq ($(strip $(AUTH)),real)
+    DEV_POSTURE_ARG := --real
+else
+    DEV_POSTURE_ARG :=
+endif
+
+.PHONY: dev-posture
+dev-posture: .env ## Put .env into the dev posture (known admin password, DFE_ENV=dev); AUTH=real mints one and writes a non-dev posture instead
+	@python3 scripts/dev_posture.py $(DEV_POSTURE_ARG)
 
 # GHCR auth for the private dfe-* images and the signed stack-manifest. A no-op
 # when DFE_GHCR_* are unset (a daemon authed out of band), so it is safe as an
@@ -213,27 +295,35 @@ ifneq ($(strip $(DFE_DATA_ROOT)),)
 endif
 
 .PHONY: dev
-dev: down storage-dirs ## Build local DFE images from source and start the dev stack
-	docker compose $(PROFILE_FLAGS) pull
-	python3 scripts/build_dev_images.py $(ACTIVE_SERVICES)
-	docker compose $(PROFILE_FLAGS) up -d $(ACTIVE_SERVICES)
-	@$(MAKE) --no-print-directory post || echo "post: SELF TEST FAILED -- the stack is up, but it did not prove it moves data. Run 'make post' for detail."
+dev: env-files dev-posture down storage-dirs ## Build local DFE images from source and start the dev stack (LOCAL="svc ..." builds only those; AUTH=real for a minted login), then print the access summary
+	docker compose $(DEV_PULL_FLAGS) $(PROFILE_FLAGS) pull
+	python3 scripts/build_dev_images.py $(DEV_OVERLAY_ARG) $(DEV_BUILD)
+	docker compose $(DEV_FLAGS) $(PROFILE_FLAGS) up -d $(ACTIVE_SERVICES)
+	@$(MAKE) --no-print-directory post || { echo "post: SELF TEST FAILED -- the stack is up, but it did not prove it moves data. Run 'make post' for detail."; exit 1; }
+	@$(MAKE) --no-print-directory creds
 
 .PHONY: dev-build
-dev-build: ## Build local DFE images from source (no start)
-	docker compose $(PROFILE_FLAGS) pull
-	python3 scripts/build_dev_images.py $(ACTIVE_SERVICES)
+dev-build: ## Build local DFE images from source (no start; honours LOCAL)
+	docker compose $(DEV_PULL_FLAGS) $(PROFILE_FLAGS) pull
+	python3 scripts/build_dev_images.py $(DEV_OVERLAY_ARG) $(DEV_BUILD)
 
 # ---------------------------------------------------------------------------
 # CI / registry images (skips docker-compose.override.yml)
 # ---------------------------------------------------------------------------
 
 .PHONY: ci
-ci: login down storage-dirs  ## Pull and start infra and registry DFE images
+ci: login env-files down storage-dirs  ## Pull and start infra and registry DFE images. Prints no credentials -- run `make creds` for those
 	docker compose -f docker-compose.yml $(STORAGE_FLAGS) $(UI_FLAGS) $(PROFILE_FLAGS) pull
 	docker compose -f docker-compose.yml $(STORAGE_FLAGS) $(UI_FLAGS) $(PROFILE_FLAGS) pull $(ACTIVE_SERVICES)
 	docker compose -f docker-compose.yml $(STORAGE_FLAGS) $(UI_FLAGS) $(PROFILE_FLAGS) up -d $(ACTIVE_SERVICES)
-	@$(MAKE) --no-print-directory post || echo "post: SELF TEST FAILED -- the stack is up, but it did not prove it moves data. Run 'make post' for detail."
+	@$(MAKE) --no-print-directory post || { echo "post: SELF TEST FAILED -- the stack is up, but it did not prove it moves data. Run 'make post' for detail."; exit 1; }
+
+# The operator-facing name for the registry start, and the one the engine prints
+# when it tells someone how to apply a rotated password. It is `ci` plus the
+# hand-over, which is the whole difference between the two.
+.PHONY: up
+up: ci ## Start the stack from the pinned registry images, then print the access summary (password on a TTY only) and write access-summary.md
+	@python3 scripts/creds.py --write
 
 .PHONY: ci-pull
 ci-pull: login ## Pull infra and registry DFE images
@@ -256,12 +346,13 @@ infra: storage-dirs ## Start infrastructure services
 # Safe on a fresh checkout: no stack SSoT and no credentials needed. Two honest
 # caveats. Make remakes the `-include .env` above before any target, so a fresh
 # checkout gets a generated .env as a side effect of running these -- CI therefore
-# leaves one on the runner. And check-dockerfile pulls the pinned hadolint image,
-# so it wants a registry the first time; the other three need no network.
+# leaves one on the runner. And check-dockerfile pulls the pinned hadolint image
+# while check-tests resolves the pinned pytest, so those two want a network the
+# first time; the rest need none.
 # ---------------------------------------------------------------------------
 
 .PHONY: check
-check: check-compose check-hardfail check-dockerfile check-docs check-python ## Run every static check CI runs
+check: check-compose check-hardfail check-dockerfile check-docs check-python check-tests ## Run every static check CI runs
 
 .PHONY: limits
 limits: ## Show the resource limits and totals, computed from the resolved config
@@ -281,6 +372,35 @@ print-ruff-version:
 check-python: ## Lint the helper scripts (config in ruff.toml)
 	$(RUFF) check scripts/ ops/
 	$(RUFF) format --check scripts/ ops/
+
+# Pinned for the same reason RUFF is, and installed the same way in CI
+# (PYTEST=pytest). Unit tests over the credential-handling helpers only: they
+# touch a tmp_path .env and start nothing, so they belong with the static checks.
+PYTEST_VERSION := 9.1.1
+PYTEST ?= uvx pytest@$(PYTEST_VERSION)
+
+.PHONY: print-pytest-version
+print-pytest-version:
+	@echo $(PYTEST_VERSION)
+
+.PHONY: check-tests
+check-tests: ## Run the helper-script unit tests (scripts/tests)
+	$(PYTEST) -q scripts/tests
+
+# `slim` and `single` are projections of the Kubernetes tiers of the same name,
+# so both targets need DFE_INFRA_DIR pointed at a dfe-infra checkout. Unset,
+# check-profiles reports SKIPPED rather than passing: it cannot read the master.
+.PHONY: render-profiles
+render-profiles: ## Re-render the projected slim/single profiles from dfe-infra (DFE_INFRA_DIR=...)
+	@python3 scripts/render_profiles.py
+
+.PHONY: check-profiles
+check-profiles: ## Assert the projected profiles match the Kubernetes ones (DFE_INFRA_DIR=...)
+ifeq ($(strip $(DFE_INFRA_DIR)),)
+	@echo "check-profiles: DFE_INFRA_DIR unset -- projection NOT checked (not a pass)"
+else
+	@python3 scripts/render_profiles.py --check
+endif
 
 .PHONY: check-compose
 check-compose: ## Resolve compose on the registry, dev and live paths, both Kafka backends
@@ -316,6 +436,10 @@ check-dockerfile: ## Lint the dev builder Dockerfile (hadolint gates on error se
 test-e2e: ## End-to-end test executor (pass test names via E2E_TESTS)
 	@python3 ./scripts/test_e2e.py $(E2E_TESTS)
 
+.PHONY: test-flows
+test-flows: ## Flow shapes against a running stack (needs DFE_ENGINE_REPO; FLOW_ARGS passes flags)
+	@python3 ./scripts/test_flows.py $(FLOW_ARGS)
+
 # ---------------------------------------------------------------------------
 # Power-on self test
 # Runs automatically after `make dev` / `make ci`. Opt OUT with
@@ -326,7 +450,7 @@ test-e2e: ## End-to-end test executor (pass test names via E2E_TESTS)
 # `make post` itself exits non-zero on failure, so it is usable as a gate. The
 # auto-run after dev/ci deliberately does NOT abort the target: it has been seen
 # to fail on a clean-slate kafka-fetcher stack for reasons not yet isolated (the
-# loader's topic resolver did not pick up default_land), and until that is
+# loader's topic resolver did not pick up main_land), and until that is
 # understood it must not brick the primary start command. Wire it to fail the
 # target once it is proven stable -- that is the intended end state, not this.
 # ---------------------------------------------------------------------------

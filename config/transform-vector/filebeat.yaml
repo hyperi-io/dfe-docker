@@ -1,0 +1,36 @@
+# Project:   dfe-docker
+# File:      config/transform-vector/filebeat.yaml
+# Purpose:   dfe-transform-vector config - the per-source instance for the filebeat source
+# Language:  YAML
+#
+# License:   BUSL-1.1
+# Copyright: (c) 2026 HYPERI PTY LIMITED
+#
+# One transform instance per source, the same shape the Kubernetes tier deploys
+# and the same shape kafka-filebeat gives dfe-transform-vrl. The pipeline itself
+# is pre-canned: transforms.dir holds the bundled filebeat program and nothing
+# here needs hand-editing to run it.
+
+# The only topic setting. The app derives filebeat-vector_land in,
+# filebeat-vector_load out, and the consumer group
+# dfe-transform-vector-filebeat-vector -- which is what keeps this instance off
+# the passthrough instance's group. The name is the engine's source name
+# verbatim, because the receiver substitutes _source into <value>_land.
+dfe_source: filebeat-vector
+
+pipeline:
+  name: filebeat-vector
+
+source:
+  brokers:
+    - kafka:9092
+  # The corpus is usually on the topic before this instance finishes validating
+  # a 5.5K-line program, and the default (largest) would skip it.
+  auto_offset_reset: smallest
+
+transforms:
+  dir: /etc/dfe-transform-vector/transforms
+
+sink:
+  brokers:
+    - kafka:9092

@@ -10,7 +10,7 @@ source:
   brokers:
     - kafka:9092
   topics:
-    - default_land
+    - main_land
 
 transforms:
   dir: /etc/dfe-transform-vrl/transforms
@@ -18,7 +18,7 @@ transforms:
 sink:
   brokers:
     - kafka:9092
-  topic: default_load
+  topic: main_load
   # Workaround: scalo's KafkaTransport::new always creates a
   # BaseConsumer alongside the FutureProducer, even when only the producer
   # side is used. Empty group.id makes librdkafka treat the instance as
