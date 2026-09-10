@@ -297,9 +297,9 @@ docker compose logs dfe-engine | grep "Metrics initialized"
 `backend=prometheus` on that last line means it is not pushing. The profile sets
 `DFE_ENGINE_METRICS_BACKEND=opentelemetry`; a value in `.env` overrides it.
 
-Every app in the profile should appear -- on `single` that is dfe-engine,
-dfe-receiver and dfe-loader. A service that is running but missing from the
-results IS a fault. The Rust services push whenever their
+Every DFE app the profile runs should appear, dfe-ui aside. A service that is
+running but missing from the results IS a fault. The Rust services push whenever
+their
 `OTEL_EXPORTER_OTLP_ENDPOINT` is set, so check that env on the absent container
 the same way. Which components push, and since when, is in
 [observability.md](observability.md).

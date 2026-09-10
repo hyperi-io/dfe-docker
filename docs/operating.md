@@ -457,8 +457,8 @@ The stack's own telemetry goes out over OTLP to a collector, which writes the
 `dfe.otel_*` tables that HyperDX reads. Turn it on with `otel: true` on a
 profile (`single` has it) or `DFE_OTEL_ENABLED=true`.
 
-The apps push over OTLP -- on `single` that is dfe-engine, dfe-receiver and
-dfe-loader. Two things do scrape: the collector scrapes its own metrics on
+Every DFE app the profile runs pushes over OTLP, dfe-ui aside. Two things do
+scrape: the collector scrapes its own metrics on
 127.0.0.1:8888, and `sqlquery` reads ClickHouse. Nothing on this path sends
 logs -- there is no container-log collector, and the apps export metrics and
 traces only -- so `dfe.otel_logs` stays empty even though the collector has a
