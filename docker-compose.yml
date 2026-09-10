@@ -57,11 +57,16 @@ x-limits-clickhouse: &limits-clickhouse
       cpus: "${DFE_CLICKHOUSE_CPUS:-2.0}"
       memory: ${DFE_CLICKHOUSE_MEMORY:-3G}
 
+# Redpanda subtracts the HOST's vm.min_free_kbytes from the container limit
+# before checking it against --memory, so the usable figure is not the limit.
+# At 1536M a host with min_free_kbytes over ~512MB leaves under the 1G request
+# and the broker refuses to start. Headroom here rather than a smaller --memory,
+# because --memory is what the broker actually gets to work with.
 x-limits-broker: &limits-broker
   resources:
     limits:
       cpus: "${DFE_BROKER_CPUS:-1.5}"
-      memory: ${DFE_BROKER_MEMORY:-1536M}
+      memory: ${DFE_BROKER_MEMORY:-2560M}
 
 # 2.0 CPUs is a FLOOR, not a sizing estimate. Below it Tokio gives a scalo service
 # one worker thread, the Kafka poll loop owns it, and the whole observability port
