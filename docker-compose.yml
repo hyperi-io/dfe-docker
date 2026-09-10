@@ -970,6 +970,11 @@ services:
       # `make init` generates this. NOT a `:?` hard-fail -- that would abort even
       # `make down` for everyone. The sentinel is what makes a missing one loud.
       NEXTAUTH_SECRET: ${DFE_UI_NEXTAUTH_SECRET:-RUN-make-init-TO-GENERATE-A-REAL-SECRET}
+      # Every absolute URL next-auth builds, the post-logout redirect included.
+      # Unset, it resolves to a hardcoded http://localhost:3000 and every logout
+      # leaves the origin the browser arrived on -- so this always carries a
+      # value, and DFE_EXTERNAL_ORIGIN is what an operator moves.
+      NEXTAUTH_URL: ${DFE_EXTERNAL_ORIGIN:-http://localhost}:${DFE_UI_PORT:-3000}
       OTEL_EXPORTER_OTLP_ENDPOINT: ${DFE_OTEL_EXPORTER_ENDPOINT:-}
       OTEL_SERVICE_NAME: dfe-ui
     healthcheck:
@@ -1005,7 +1010,7 @@ services:
       # it. The app's own port stays infra class on the hyperdx service.
       - ${DFE_UI_BIND_HOST:-127.0.0.1}:${DFE_HYPERDX_EMBED_PORT:-8091}:8091
     environment:
-      DFE_HYPERDX_EMBED_ANCESTOR: ${DFE_HYPERDX_APP_URL:-http://localhost}:${DFE_UI_PORT:-3000}
+      DFE_HYPERDX_EMBED_ANCESTOR: ${DFE_HYPERDX_APP_URL:-${DFE_EXTERNAL_ORIGIN:-http://localhost}}:${DFE_UI_PORT:-3000}
     volumes:
       - ./config/proxy/envoy.yaml:/etc/envoy/envoy.yaml:ro
     depends_on:
@@ -1147,17 +1152,17 @@ services:
       DEFAULT_SOURCES_FILE: /etc/hyperdx/default-sources.json
       HYPERDX_API_PORT: 8000
       HYPERDX_APP_PORT: ${DFE_HYPERDX_APP_PORT:-8090}
-      HYPERDX_APP_URL: ${DFE_HYPERDX_APP_URL:-http://localhost}
-      FRONTEND_URL: ${DFE_HYPERDX_APP_URL:-http://localhost}:${DFE_HYPERDX_APP_PORT:-8090}
+      HYPERDX_APP_URL: ${DFE_HYPERDX_APP_URL:-${DFE_EXTERNAL_ORIGIN:-http://localhost}}
+      FRONTEND_URL: ${DFE_HYPERDX_APP_URL:-${DFE_EXTERNAL_ORIGIN:-http://localhost}}:${DFE_HYPERDX_APP_PORT:-8090}
       # Link-back origin so the embedded HyperDX opens a created rule in the DFE
       # UI (served by dfe-proxy on DFE_UI_PORT), not the HyperDX origin. Matches
       # the k8s hyperdx chart. next-runtime-env reads it per request.
-      NEXT_PUBLIC_DFE_UI_BASE_URL: ${DFE_HYPERDX_APP_URL:-http://localhost}:${DFE_UI_PORT:-3000}
+      NEXT_PUBLIC_DFE_UI_BASE_URL: ${DFE_HYPERDX_APP_URL:-${DFE_EXTERNAL_ORIGIN:-http://localhost}}:${DFE_UI_PORT:-3000}
       # HyperDX talks Mongo wire protocol; FerretDB serves it over Postgres.
       MONGO_URI: mongodb://${HYPERDX_POSTGRES_USER:-hyperdx}:${HYPERDX_POSTGRES_PASSWORD:-hyperdx}@hyperdx-ferretdb:27017/hyperdx?authSource=admin
       NEXT_PUBLIC_IS_LOCAL_MODE: "true"
       # The source mapping is read from the mounted file below.
-      NEXT_PUBLIC_HDX_LOCAL_DEFAULT_CONNECTIONS: '[{"id":"local","name":"ClickHouse","host":"${DFE_HYPERDX_APP_URL:-http://localhost}:${CLICKHOUSE_HTTP_PORT:-8123}","username":"${CLICKHOUSE_USERNAME:-default}","password":"${CLICKHOUSE_PASSWORD:-}"}]'
+      NEXT_PUBLIC_HDX_LOCAL_DEFAULT_CONNECTIONS: '[{"id":"local","name":"ClickHouse","host":"${DFE_HYPERDX_APP_URL:-${DFE_EXTERNAL_ORIGIN:-http://localhost}}:${CLICKHOUSE_HTTP_PORT:-8123}","username":"${CLICKHOUSE_USERNAME:-default}","password":"${CLICKHOUSE_PASSWORD:-}"}]'
       NEXT_PUBLIC_HDX_LOCAL_DEFAULT_SOURCES_FILE: /etc/hyperdx/default-sources.json
       NEXT_PUBLIC_THEME: ${HYPERDX_THEME:-dfe}
     volumes:
@@ -1203,7 +1208,7 @@ services:
     environment:
       <<: *oauth2-proxy-env
       OAUTH2_PROXY_UPSTREAMS: http://kafka-ui:8080
-      OAUTH2_PROXY_REDIRECT_URL: ${DFE_OAUTH2_PROXY_EXTERNAL_ORIGIN:-http://localhost}:${KAFBAT_PORT:-8081}/oauth2/callback
+      OAUTH2_PROXY_REDIRECT_URL: ${DFE_OAUTH2_PROXY_EXTERNAL_ORIGIN:-${DFE_EXTERNAL_ORIGIN:-http://localhost}}:${KAFBAT_PORT:-8081}/oauth2/callback
     depends_on:
       kafka-ui:
         condition: service_started
@@ -1220,7 +1225,7 @@ services:
     environment:
       <<: *oauth2-proxy-env
       OAUTH2_PROXY_UPSTREAMS: http://hyperdx:${DFE_HYPERDX_APP_PORT:-8090}
-      OAUTH2_PROXY_REDIRECT_URL: ${DFE_OAUTH2_PROXY_EXTERNAL_ORIGIN:-http://localhost}:${DFE_HYPERDX_APP_PORT:-8090}/oauth2/callback
+      OAUTH2_PROXY_REDIRECT_URL: ${DFE_OAUTH2_PROXY_EXTERNAL_ORIGIN:-${DFE_EXTERNAL_ORIGIN:-http://localhost}}:${DFE_HYPERDX_APP_PORT:-8090}/oauth2/callback
     depends_on:
       hyperdx:
         condition: service_healthy
@@ -1247,7 +1252,7 @@ services:
     environment:
       <<: *oauth2-proxy-env
       OAUTH2_PROXY_UPSTREAMS: http://hyperdx:8000
-      OAUTH2_PROXY_REDIRECT_URL: ${DFE_OAUTH2_PROXY_EXTERNAL_ORIGIN:-http://localhost}:${DFE_HYPERDX_API_PORT:-8000}/oauth2/callback
+      OAUTH2_PROXY_REDIRECT_URL: ${DFE_OAUTH2_PROXY_EXTERNAL_ORIGIN:-${DFE_EXTERNAL_ORIGIN:-http://localhost}}:${DFE_HYPERDX_API_PORT:-8000}/oauth2/callback
       # Host header and every upstream response header pass through untouched
       # (--pass-host-header defaults true), so HyperDX's own CORS headers reach
       # the browser exactly as the API sent them.
