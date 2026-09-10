@@ -248,19 +248,27 @@ Off by default. `DFE_OTEL_ENABLED=true` (or a profile declaring `otel: true`, as
 | `DFE_OTEL_DATABASE`                              | ClickHouse database the collector writes                                             | `dfe`                                                              |
 | `DFE_OTEL_HEALTH_PORT`                           | Collector `health_check` host port                                                   | `13133`                                                             |
 | `DFE_OTEL_COLLECTOR_LOG_LEVEL`                   | Collector's own log level                                                            | `warn`                                                              |
+| `DFE_OTEL_FLUENT_PORT`                           | Collector `fluentforward` host port, where the daemon sends container stdout         | `24224`                                                             |
+| `DFE_CONTAINER_LOGS_ENABLED`                     | Ship DFE container stdout; `false` puts every service back on `json-file`            | `true`                                                              |
+| `DFE_CONTAINER_LOG_ADDRESS`                      | Where the DOCKER DAEMON sends it                                                     | `tcp://127.0.0.1:24224`                                             |
 | `DFE_ENGINE_METRICS_BACKEND`                     | dfe-engine metrics backend; `opentelemetry` is dual (push + `/metrics`)              | `prometheus` (the profile sets `opentelemetry`)                     |
 
 ## HyperDX (opt-in observability)
 
-Off by default. `DFE_HYPERDX_ENABLED=true` starts `hyperdx` (API + App) plus its `hyperdx-ferretdb` and `hyperdx-postgres` dependencies, sharing the always-on ClickHouse.
+Off by default. `DFE_HYPERDX_ENABLED=true` starts `hyperdx` (API + App), the `dfe-hyperdx-proxy` that fronts both origins, a one-shot `dfe-dashboards` that copies the engine's shipped dashboards into a volume, plus `hyperdx-ferretdb` and `hyperdx-postgres`, sharing the always-on ClickHouse.
+
+HyperDX runs in `header-dev` mode. The proxy stamps one fixed operator identity onto every request, and HyperDX seeds that operator's team with the connection and sources from `config/hyperdx/default-sources.json` and provisions the dashboards. There is no login: whoever reaches the port is that operator. Gate it with the `auth` profile, a VPN or a tunnel -- [operating.md](operating.md#only-the-console-authenticates--everything-else-is-bounded-by-that).
 
 | Variable                                         | Use                                                                                  | Default                                                             |
 |--------------------------------------------------|--------------------------------------------------------------------------------------|---------------------------------------------------------------------|
-| `DFE_HYPERDX_ENABLED`                            | Toggle to start HyperDX + FerretDB + Postgres                                        | `false`                                                             |
+| `DFE_HYPERDX_ENABLED`                            | Toggle to start HyperDX + its proxy + FerretDB + Postgres                            | `false`                                                             |
 | `DFE_HYPERDX_VERSION`                            | Version of the dfe-hyperdx fork image to use                                         | pinned by `make stack` from the SSoT (fail-loud, like every image)  |
-| `DFE_HYPERDX_API_PORT`                           | HyperDX API host port                                                                | `8000`                                                              |
-| `DFE_HYPERDX_APP_PORT`                           | HyperDX App UI host port                                                             | `8090`                                                              |
+| `DFE_HYPERDX_API_PORT`                           | HyperDX API host port, on `dfe-hyperdx-proxy`                                        | `8000`                                                              |
+| `DFE_HYPERDX_APP_PORT`                           | HyperDX App UI host port, on `dfe-hyperdx-proxy`                                     | `8090`                                                              |
 | `DFE_HYPERDX_APP_URL`                            | Base URL the browser uses to reach HyperDX; overrides `DFE_EXTERNAL_ORIGIN`          | follows `DFE_EXTERNAL_ORIGIN`                                       |
+| `DFE_HYPERDX_IDENTITY_EMAIL`                     | The operator every HyperDX request is stamped as                                     | `admin@dfe.local`                                                   |
+| `DFE_HYPERDX_IDENTITY_GROUPS`                    | Its groups; the first one names the team                                             | follows `DFE_HYPERDX_TEAM`                                          |
+| `DFE_HYPERDX_TEAM`                               | Team name when the identity carries no group                                         | `dfe`                                                               |
 | `HYPERDX_THEME`                                  | UI theme (NEXT_PUBLIC_THEME)                                                         | `dfe`                                                               |
 | `HYPERDX_POSTGRES_USER`                          | FerretDB/Postgres user                                                               | `hyperdx`                                                           |
 | `HYPERDX_POSTGRES_PASSWORD`                      | FerretDB/Postgres password                                                           | `hyperdx`                                                           |

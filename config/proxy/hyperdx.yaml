@@ -1,0 +1,123 @@
+# Project:   dfe-docker
+# File:      config/proxy/hyperdx.yaml
+# Purpose:   Identity-injecting reverse proxy in front of HyperDX
+# Language:  Envoy static config
+#
+# License:   BUSL-1.1
+# Copyright: (c) 2026 HYPERI PTY LIMITED
+#
+# HyperDX runs in DFE_AUTH_MODE=header-dev and takes its identity from two
+# request headers, so its host ports live here rather than on the hyperdx
+# container: a request that reached it directly would carry no identity and fall
+# through to a login it has no way to satisfy. Same seam Envoy fills at the
+# Kubernetes edge from a verified OIDC token, and the header NAMES are the k8s
+# chart's; here the value is one fixed operator, because a Compose deployment has
+# no issuer of its own. Wire an issuer and the `auth` profile puts oauth2-proxy
+# in front of this.
+#
+# Two origins, one UI:
+#    :8090  the app     -> hyperdx:8090
+#    :8000  the API     -> hyperdx:8000
+# The browser only ever uses the first. HyperDX's bundle calls its API at a
+# relative /api/*, which the Next.js server proxies on container loopback, so the
+# identity injected on the app origin reaches both halves. :8000 is the operator
+# and machine surface, published so `make post` and an operator can read it.
+#
+# The DFE UI iframes a THIRD origin, config/proxy/envoy.yaml's embed listener on
+# dfe-proxy, which rewrites frame-ancestors and injects the same identity.
+#
+# STRICT_DNS resolves per refresh via Docker's embedded DNS, so this boots while
+# HyperDX is still starting and recovers when it arrives.
+
+admin:
+  # Local healthcheck surface only -- never published by compose.
+  address:
+    socket_address: { address: 127.0.0.1, port_value: 9901 }
+
+static_resources:
+  listeners:
+    - name: hyperdx-app
+      address:
+        socket_address: { address: 0.0.0.0, port_value: 8090 }
+      filter_chains:
+        - filters:
+            - name: envoy.filters.network.http_connection_manager
+              typed_config:
+                "@type": type.googleapis.com/envoy.extensions.filters.network.http_connection_manager.v3.HttpConnectionManager
+                stat_prefix: hyperdx_app
+                use_remote_address: true
+                upgrade_configs:
+                  - upgrade_type: websocket
+                http_filters:
+                  # AUTH SEAM: the oauth2 filter chains in here when an OIDC
+                  # issuer fronts this origin, in place of the `auth` profile's
+                  # oauth2-proxy container.
+                  - name: envoy.filters.http.router
+                    typed_config:
+                      "@type": type.googleapis.com/envoy.extensions.filters.http.router.v3.Router
+                route_config:
+                  name: hyperdx_app
+                  virtual_hosts:
+                    - name: hyperdx
+                      domains: ["*"]
+                      # OVERWRITE, so a caller cannot choose who it is by sending
+                      # the header itself. Anchored here and aliased by the API
+                      # listener, so one identity serves both origins.
+                      request_headers_to_add: &identity_headers
+                        - header:
+                            key: X-OIDC-Subject
+                            value: "%ENVIRONMENT(DFE_HYPERDX_IDENTITY_EMAIL)%"
+                          append_action: OVERWRITE_IF_EXISTS_OR_ADD
+                        - header:
+                            key: X-OIDC-Groups
+                            value: "%ENVIRONMENT(DFE_HYPERDX_IDENTITY_GROUPS)%"
+                          append_action: OVERWRITE_IF_EXISTS_OR_ADD
+                      routes:
+                        - match: { prefix: / }
+                          route: { cluster: hyperdx }
+    - name: hyperdx-api
+      address:
+        socket_address: { address: 0.0.0.0, port_value: 8000 }
+      filter_chains:
+        - filters:
+            - name: envoy.filters.network.http_connection_manager
+              typed_config:
+                "@type": type.googleapis.com/envoy.extensions.filters.network.http_connection_manager.v3.HttpConnectionManager
+                stat_prefix: hyperdx_api
+                use_remote_address: true
+                http_filters:
+                  - name: envoy.filters.http.router
+                    typed_config:
+                      "@type": type.googleapis.com/envoy.extensions.filters.http.router.v3.Router
+                route_config:
+                  name: hyperdx_api
+                  virtual_hosts:
+                    - name: hyperdx
+                      domains: ["*"]
+                      request_headers_to_add: *identity_headers
+                      routes:
+                        - match: { prefix: / }
+                          route: { cluster: hyperdx-api }
+  clusters:
+    # Both ports are constants inside the image (HYPERDX_APP_PORT,
+    # HYPERDX_API_PORT); the DFE_HYPERDX_*_PORT dials are host bindings only.
+    - name: hyperdx
+      type: STRICT_DNS
+      dns_lookup_family: V4_ONLY
+      load_assignment:
+        cluster_name: hyperdx
+        endpoints:
+          - lb_endpoints:
+              - endpoint:
+                  address:
+                    socket_address: { address: hyperdx, port_value: 8090 }
+    - name: hyperdx-api
+      type: STRICT_DNS
+      dns_lookup_family: V4_ONLY
+      load_assignment:
+        cluster_name: hyperdx-api
+        endpoints:
+          - lb_endpoints:
+              - endpoint:
+                  address:
+                    socket_address: { address: hyperdx, port_value: 8000 }

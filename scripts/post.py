@@ -9,14 +9,17 @@
 
 """Power-on self test (POST) for a stack that is ALREADY running.
 
-Four claims. INGEST: uniquely-marked events put in at the ingest edge come out as
+Five claims. INGEST: uniquely-marked events put in at the ingest edge come out as
 those exact rows in ClickHouse. SELF-MONITORING: when the profile runs a collector,
-the stack's own telemetry is landing FRESH in the otel database. CONSOLE: those
-same marked rows read back through the engine query API that dfe-ui uses, so the
-data is not merely stored but reachable from the surface an operator works in.
-HUNTS: a hunt created through the API while the runner is already running is picked
-up and executed, and its detections land in the detection table. None of the four is
-"the containers started" or "the ports answer".
+the stack's own telemetry is landing FRESH in the otel database, and each named
+service's stdout is landing under its own name. OBSERVABILITY: HyperDX holds the
+sources this deployment seeds it and the dashboards the engine ships, read through
+the proxy that gives it an identity. CONSOLE: those same marked rows read back
+through the engine query API that dfe-ui uses, so the data is not merely stored but
+reachable from the surface an operator works in. HUNTS: a hunt created through the
+API while the runner is already running is picked up and executed, and its
+detections land in the detection table. None of the five is "the containers
+started" or "the ports answer".
 
 Transport-agnostic by construction. It posts to the ingest edge and reads
 ClickHouse, so it works identically on the Kafka and the gRPC (kafka-less)
@@ -94,6 +97,29 @@ OTEL_SERVICE = "otel-collector"
 OTEL_FRESH_WINDOW_SECONDS = 300
 OTEL_TIMEOUT_SECONDS = 120.0
 OTEL_INTERVAL_SECONDS = 5.0
+# Container stdout reaches the collector over Docker's fluentd log driver, which
+# the Makefile wires up alongside the collector unless this is false. Named on
+# its own because metrics arriving says nothing about whether logs are.
+OTEL_LOGS_TABLE = "otel_logs"
+CONTAINER_LOGS_KEY = "DFE_CONTAINER_LOGS_ENABLED"
+# The services whose logs a stack has to be able to show. Every DFE service ships
+# them; these three are the data path plus the control plane.
+CONTAINER_LOG_SERVICES = ("dfe-engine", "dfe-loader", "dfe-receiver")
+
+# HyperDX assertion. The team is created by the first identified request, its
+# sources are seeded with it, and the dashboard provisioner runs on a one-minute
+# cron -- so this polls rather than probing once.
+HYPERDX_SERVICE = "hyperdx"
+HYPERDX_SEEDED_SOURCES = (
+    "clickhouse_system",
+    "hunts",
+    "main",
+    "otel_logs",
+    "otel_metrics",
+    "otel_traces",
+)
+HYPERDX_TIMEOUT_SECONDS = 180.0
+HYPERDX_INTERVAL_SECONDS = 5.0
 
 # Console assertion. dfe-ui holds no ClickHouse credential of its own -- it reads
 # through the engine's query API -- so exercising that API with the break-glass
@@ -319,11 +345,21 @@ def _verify_self_monitoring() -> int:
         )
         _print(msg=f"  attempt {attempt}: {summary}")
 
+    # Metrics arrive within seconds of a service starting; container logs wait on
+    # the collector accepting its first fluentd connection, so both are given the
+    # same window and the poll only stops once each half it expects has landed.
+    wants_logs = _container_logs_expected()
+
+    def _done(result):
+        if result is None or not (any(result.values())):
+            return False
+        return not (wants_logs) or bool(result.get(OTEL_LOGS_TABLE))
+
     counts = poll_until(
         _fresh,
         timeout=OTEL_TIMEOUT_SECONDS,
         interval=OTEL_INTERVAL_SECONDS,
-        done=lambda result: result is not None and any(result.values()),
+        done=_done,
         on_attempt=_report,
     )
 
@@ -342,7 +378,163 @@ def _verify_self_monitoring() -> int:
         return 1
     summary = ", ".join(f"{table}={count}" for table, count in sorted(landed.items()))
     _print(msg=f"PASS  self-telemetry is streaming into {database} ({summary})")
+    if wants_logs:
+        return _verify_container_logs(database=database)
+    _print(
+        msg=f"SKIP  {CONTAINER_LOGS_KEY} is false -- container stdout is not shipped"
+    )
     return 0
+
+
+def _container_logs_expected() -> bool:
+    """Whether this stack ships container stdout to the collector.
+
+    The same two conditions the Makefile chains the log-driver fragment on, so
+    the assertion and the wiring cannot disagree about what is running.
+    """
+    if OTEL_SERVICE not in set(_resolved_services()):
+        return False
+    return os.environ.get(CONTAINER_LOGS_KEY, "true").strip().lower() not in FALSY
+
+
+def _verify_container_logs(*, database: str) -> int:
+    """Prove each named service's stdout is reaching the otel log table.
+
+    Freshness alone would pass on one container talking, so this asks per service:
+    the log driver tags every stream with its container name, and the collector
+    turns that tag into ServiceName.
+    """
+    names = ", ".join(CONTAINER_LOG_SERVICES)
+    _print(
+        msg=f"Waiting for container stdout in {database}.{OTEL_LOGS_TABLE} ({names})"
+    )
+
+    def _per_service():
+        found: dict[str, int] = {}
+        for service in CONTAINER_LOG_SERVICES:
+            count = ch_int(
+                f"SELECT count() FROM {database}.{OTEL_LOGS_TABLE} "
+                f"WHERE ServiceName = '{escape_literal(service)}' "
+                f"AND Timestamp > now() - INTERVAL {OTEL_FRESH_WINDOW_SECONDS} SECOND"
+            )
+            found[service] = 0 if count is None else count
+        return found
+
+    def _report(attempt, result):
+        summary = ", ".join(f"{name}={count}" for name, count in sorted(result.items()))
+        _print(msg=f"  attempt {attempt}: {summary}")
+
+    counts = poll_until(
+        _per_service,
+        timeout=OTEL_TIMEOUT_SECONDS,
+        interval=OTEL_INTERVAL_SECONDS,
+        done=lambda result: all(result.values()),
+        on_attempt=_report,
+    )
+
+    silent = sorted(name for name, count in counts.items() if not (count))
+    if silent:
+        _print(
+            msg=f"FAIL  no rows in {database}.{OTEL_LOGS_TABLE} for {', '.join(silent)} "
+            f"within {OTEL_TIMEOUT_SECONDS:.0f}s -- container stdout is not reaching "
+            "the collector"
+        )
+        return 1
+    summary = ", ".join(f"{name}={count}" for name, count in sorted(counts.items()))
+    _print(msg=f"PASS  container stdout is landing per service ({summary})")
+    return 0
+
+
+def _hyperdx_base() -> str:
+    """The HyperDX API base URL for this stack, through its identity-injecting proxy."""
+    bind = os.environ.get("DFE_POST_HOST", "localhost")
+    return f"http://{bind}:{os.environ.get('DFE_HYPERDX_API_PORT', '8000')}"
+
+
+def _verify_hyperdx() -> int:
+    """Prove HyperDX holds its seeded sources and the release's provisioned dashboards.
+
+    Both are SERVER-side state, which is the whole point: they are what an operator
+    finds on a fresh browser, and what a browser-local HyperDX could never have.
+    Read through the proxy that injects the identity, so a pass also proves the
+    header seam works end to end.
+    """
+    if HYPERDX_SERVICE not in set(_resolved_services()):
+        _print(
+            msg=f"SKIP  {HYPERDX_SERVICE} not in the active profile -- nothing to prove"
+        )
+        return 0
+
+    base = _hyperdx_base()
+    _print(msg=f"Waiting for seeded sources and provisioned dashboards at {base}")
+
+    def _state():
+        try:
+            source_status, sources = http_get_json(f"{base}/sources")
+            dash_status, dashboards = http_get_json(f"{base}/dashboards")
+        except Exception:  # noqa: BLE001 - any failure is "not ready yet"
+            return None
+        if source_status != 200 or dash_status != 200:
+            return (source_status, dash_status)
+        names = {s.get("name") for s in sources or [] if isinstance(s, dict)}
+        provisioned = [
+            d for d in dashboards or [] if isinstance(d, dict) and d.get("provisioned")
+        ]
+        return (sorted(n for n in names if n), len(provisioned))
+
+    def _report(attempt, result):
+        if result is None:
+            _print(msg=f"  attempt {attempt}: the API did not answer")
+        elif isinstance(result[0], int):
+            _print(msg=f"  attempt {attempt}: HTTP {result[0]}/{result[1]}")
+        else:
+            _print(
+                msg=f"  attempt {attempt}: {len(result[0])} source(s), {result[1]} dashboard(s)"
+            )
+
+    def _ready(result):
+        if result is None or isinstance(result[0], int):
+            return False
+        names, provisioned = result
+        return set(HYPERDX_SEEDED_SOURCES).issubset(names) and provisioned > 0
+
+    state = poll_until(
+        _state,
+        timeout=HYPERDX_TIMEOUT_SECONDS,
+        interval=HYPERDX_INTERVAL_SECONDS,
+        done=_ready,
+        on_attempt=_report,
+    )
+
+    if state is None or isinstance(state[0], int):
+        _print(
+            msg=f"FAIL  the HyperDX API at {base} did not answer with an identity "
+            f"within {HYPERDX_TIMEOUT_SECONDS:.0f}s -- the proxy is not injecting one"
+        )
+        return 1
+
+    names, provisioned = state
+    missing = sorted(set(HYPERDX_SEEDED_SOURCES) - set(names))
+    failed = 0
+    if missing:
+        _print(
+            msg=f"FAIL  HyperDX is missing seeded source(s) {', '.join(missing)} -- "
+            "the shipped dashboards resolve their tiles by these names"
+        )
+        failed = 1
+    else:
+        _print(
+            msg=f"PASS  HyperDX holds all {len(HYPERDX_SEEDED_SOURCES)} seeded sources"
+        )
+    if provisioned < 1:
+        _print(
+            msg=f"FAIL  HyperDX has no provisioned dashboard within "
+            f"{HYPERDX_TIMEOUT_SECONDS:.0f}s -- the engine's dashboards did not reach it"
+        )
+        failed = 1
+    else:
+        _print(msg=f"PASS  HyperDX carries {provisioned} provisioned dashboard(s)")
+    return failed
 
 
 def _engine_base() -> str:
@@ -799,7 +991,7 @@ def main() -> int:
         # (loader-only), so there is nothing to prove end to end. Self-monitoring
         # is a separate pipeline and is still worth asserting.
         _print(msg=f"SKIP  {reason} -- nothing to prove end to end")
-        return _verify_self_monitoring()
+        return _verify_self_monitoring() + _verify_hyperdx()
     except IngestNotReady as reason:
         _print(msg=f"FAIL  {reason}")
         return 1
@@ -868,6 +1060,7 @@ def main() -> int:
         # Every remaining claim runs even when an earlier one fails, so one boot
         # reports every broken pipeline rather than the first one.
         failed = _verify_self_monitoring()
+        failed += _verify_hyperdx()
         failed += _verify_ui_query(database=database, marker=marker, table=table)
         failed += _verify_hunt(database=database, marker=marker, table=table)
         return 1 if failed else 0

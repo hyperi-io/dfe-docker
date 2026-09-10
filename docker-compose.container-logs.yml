@@ -1,0 +1,61 @@
+# Project:   dfe-docker
+# File:      docker-compose.container-logs.yml
+# Purpose:   Ship DFE container stdout to the collector via Docker's fluentd driver
+# Language:  YAML
+#
+# License:   BUSL-1.1
+# Copyright: (c) 2026 HYPERI PTY LIMITED
+#
+# NOT auto-loaded. The Makefile chains it when self-monitoring resolves ON and
+# DFE_CONTAINER_LOGS_ENABLED is not false.
+#
+# Kubernetes collects container logs off the node with a DaemonSet filelog
+# receiver. Compose has no equivalent a product can rely on: the log files live
+# under the daemon's data-root (which is not `/var/lib/docker` on every host, and
+# is not on the host at all under Docker Desktop), and listing that directory
+# needs root. Docker's own fluentd driver needs neither a host path nor a
+# privilege, and it tags each stream with the container name, so the collector
+# attributes ServiceName from a DECLARED name rather than a guessed one.
+#
+# THE TRADE: `docker compose logs` cannot read back a fluentd-driven stream, so
+# these services' logs are in `dfe.otel_logs` and in HyperDX rather than in the
+# CLI. Only DFE's own services move; ClickHouse, the broker, the proxies and
+# HyperDX keep json-file, because those are what an operator reads when the DFE
+# side is the thing that is broken. DFE_CONTAINER_LOGS_ENABLED=false puts every
+# service back on json-file.
+#
+# fluentd-async is what keeps the collector off the startup path: without it
+# Docker REFUSES to create a container whose logging endpoint is unreachable, so
+# a collector that is still starting would block the whole stack.
+
+x-container-logs: &container-logs
+  driver: fluentd
+  options:
+    fluentd-address: ${DFE_CONTAINER_LOG_ADDRESS:-tcp://127.0.0.1:24224}
+    fluentd-async: "true"
+    # The container name, which every DFE service sets explicitly.
+    tag: "{{.Name}}"
+
+services:
+  dfe-archiver:
+    logging: *container-logs
+  dfe-engine:
+    logging: *container-logs
+  dfe-fetcher:
+    logging: *container-logs
+  dfe-hunt-runner:
+    logging: *container-logs
+  dfe-loader:
+    logging: *container-logs
+  dfe-receiver:
+    logging: *container-logs
+  dfe-transform-vector:
+    logging: *container-logs
+  dfe-transform-vector-filebeat:
+    logging: *container-logs
+  dfe-transform-vrl:
+    logging: *container-logs
+  dfe-transform-vrl-filebeat:
+    logging: *container-logs
+  dfe-ui:
+    logging: *container-logs

@@ -69,7 +69,7 @@ flowchart LR
         proxy["dfe-proxy :3000 -- product"]
         engine["dfe-engine :8003 -- product"]
         kafbat["kafka-ui :8081 -- infra"]
-        hdx["hyperdx :8090 :8000 -- infra"]
+        hdx["dfe-hyperdx-proxy :8090 :8000 -- infra"]
     end
 
     subgraph operator["DFE_BIND_HOST -- default 127.0.0.1"]
@@ -96,16 +96,17 @@ dfe-engine API on the Docker network (`config/proxy/envoy.yaml`). Unpublishing
 the engine's own `:8003` does not protect that API -- the same endpoints answer
 through the proxy, unauthenticated, to anyone who can reach `:3000`.
 
-**HyperDX serves the ClickHouse password to browsers.** It runs with
-`NEXT_PUBLIC_IS_LOCAL_MODE=true` (no login), and its browser bundle is handed a
-ClickHouse connection via `NEXT_PUBLIC_HDX_LOCAL_DEFAULT_CONNECTIONS`. Whatever
-you set `CLICKHOUSE_PASSWORD` to is shipped to every browser that loads the
-HyperDX app. Setting a password does not make HyperDX safe to expose; it moves
-the credential somewhere more people can read it.
+**HyperDX answers as one fixed operator.** It runs in `header-dev` mode, and
+`dfe-hyperdx-proxy` stamps every request with the identity in
+`DFE_HYPERDX_IDENTITY_EMAIL` / `_GROUPS` before it reaches the app. Whoever
+opens `:8090` is that operator. Its ClickHouse credential stays server-side --
+queries go through HyperDX's own proxy -- so reaching the page no longer hands
+out the database password, but it does hand out everything the page can see.
 
 So put the stack behind something: a VPN, an SSH tunnel, a firewall, or an
-authenticating reverse proxy in front of `:3000` and `:8090`. The bindings below
-reduce the accidental surface. They are not access control.
+authenticating reverse proxy in front of `:3000` and `:8090`. Wire an OIDC issuer
+and the `auth` profile does the last of those for you. The bindings below reduce
+the accidental surface. They are not access control.
 
 ## Port exposure is split by audience
 
@@ -125,8 +126,8 @@ Per-port, as published in `docker-compose.yml`:
 | 6000 | dfe-receiver | ingress | Vector protocol ingest |
 | 8080 | dfe-receiver | ingress | HTTP ingest |
 | 8082 | dfe-fetcher | ingress | HTTP ingest |
-| 8090 | hyperdx | ui | HyperDX app UI |
-| 8000 | hyperdx | ui | HyperDX API |
+| 8090 | dfe-hyperdx-proxy | ui | HyperDX app UI |
+| 8000 | dfe-hyperdx-proxy | ui | HyperDX API |
 | 8003 | dfe-engine | ui | Config and schema API (container `:8000`) |
 | 8081 | kafka-ui | ui | Kafbat UI (container `:8080`) |
 | 8123 / 9000 | clickhouse | operator | HTTP and native protocol |
@@ -141,9 +142,11 @@ Per-port, as published in `docker-compose.yml`:
 | 13133 | otel-collector | operator | `health_check` extension |
 | 50051 | dfe-loader | operator | Internal `DfeTransport/Push` gRPC |
 
-`dfe-ui`, `hyperdx-postgres` and `hyperdx-ferretdb` publish no host ports at all
--- they are reached over the Docker network. Nor does the collector publish its
-OTLP ports: self-monitoring stays on the Compose network. The receiver's OTLP
+`dfe-ui`, `hyperdx`, `hyperdx-postgres` and `hyperdx-ferretdb` publish no host
+ports at all -- they are reached over the Docker network, HyperDX through the
+proxy that gives it an identity. The collector publishes only `24224`, which the
+DOCKER DAEMON sends container stdout to; its OTLP ports stay on the Compose
+network. The receiver's OTLP
 (`4317`, `4318`), Beats (`5044`) and HEC (`8088`) mappings are present but
 commented out; uncomment them to expose those ingest protocols. Note that those
 `4317`/`4318` are the receiver's *ingest* edge, not the collector's.
@@ -171,7 +174,7 @@ Each UI carries a class, and the class decides what can take it dark:
 | DFE UI | dfe-proxy | product | `DFE_UI_EXTERNAL` |
 | Engine API | dfe-engine | product | `DFE_ENGINE_API_EXTERNAL` |
 | Kafbat | kafka-ui | infra | `DFE_KAFBAT_UI_EXTERNAL` |
-| HyperDX | hyperdx | infra | `DFE_HYPERDX_UI_EXTERNAL` |
+| HyperDX | dfe-hyperdx-proxy | infra | `DFE_HYPERDX_UI_EXTERNAL` |
 
 `DFE_INFRA_UIS_EXTERNAL=false` is the kill switch: it unpublishes every
 infra-class UI at once and beats their individual flags. The product UIs are
@@ -206,7 +209,7 @@ HyperDX is one UI across two origins:
 |---|---|---|
 | 8081 | oauth2-proxy-kafbat | kafka-ui |
 | 8090 | oauth2-proxy-hyperdx | HyperDX app |
-| 8000 | oauth2-proxy-hyperdx-api | HyperDX API, which the browser calls directly |
+| 8000 | oauth2-proxy-hyperdx-api | HyperDX API, an operator surface |
 
 They take those ports over and the UIs stop publishing their own, so nothing
 moves for anyone using them. All three share one cookie secret, and cookies are

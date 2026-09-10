@@ -38,6 +38,23 @@ Ports bind `DFE_BIND_HOST` (`127.0.0.1`), so curl them from the box. The full
 port table, which path each HEALTHCHECK uses and why, and dfe-ui's 200-on-unknown
 -paths trap are in [observability.md](observability.md).
 
+## Where a DFE service's logs are
+
+With self-monitoring on, DFE's own services log through Docker's `fluentd`
+driver, so `docker compose logs dfe-loader` answers **"configured logging driver
+does not support reading logs"**. Those lines are in ClickHouse instead --
+search the `otel_logs` source in HyperDX, or read them directly:
+
+```bash
+docker exec dfe-clickhouse clickhouse-client --query \
+  "SELECT Timestamp, Body FROM dfe.otel_logs WHERE ServiceName = 'dfe-loader' ORDER BY Timestamp DESC LIMIT 50"
+```
+
+ClickHouse, the broker, the proxies and HyperDX keep `json-file`, so
+`docker compose logs` still works on those. To put every service back on it, set
+`DFE_CONTAINER_LOGS_ENABLED=false` and restart. Every `docker compose logs
+dfe-*` below assumes you have.
+
 ## Known issues
 
 These are real and open. Each one has a symptom that misleads.
