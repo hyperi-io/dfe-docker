@@ -169,6 +169,12 @@ A service that runs a component's image under another name follows it:
 engine image. The map is `IMAGE_CONSUMERS` in `scripts/build_dev_images.py`, and
 `make check-compose` asserts the override covers all of it.
 
+Two of them are started by a `depends_on` rather than named by a profile
+(`IMPLICIT_CONSUMERS`, same file): the archiver for `dlq-init`, the engine for
+`dfe-schema-init`. `make dev` builds those even on a profile that runs no service
+of its own from them, or the override points them at a `:local` tag the run never
+produced.
+
 ### Some from source, the rest pinned
 
 ```bash

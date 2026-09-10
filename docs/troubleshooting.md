@@ -215,9 +215,11 @@ Three ways that arrangement fails:
    the warning.
 2. uid 1000 is hard-coded and nothing verifies it, so an image that renumbers
    appuser breaks the DLQ silently.
-3. In dev mode dlq-init resolves to the **registry** archiver image, because
-   `docker-compose.override.yml` does not map it. `make dev` therefore needs GHCR
-   access and a pinned `DFE_ARCHIVER_VERSION` even on profiles with no archiver.
+3. In dev mode `docker-compose.override.yml` maps dlq-init to
+   `dfe-archiver:local`, so `make dev` builds the archiver from source even on
+   profiles that run no archiver. `make dev LOCAL=...` without `dfe-archiver` in
+   the list leaves dlq-init on the **registry** image instead, which needs GHCR
+   access and a pinned `DFE_ARCHIVER_VERSION`.
 
 **Files under `/var/spool/dfe/dlq` mean events were accepted and then could not be
 delivered.** They are evidence, not noise: read them to see what was rejected and

@@ -45,6 +45,14 @@ IMAGE_CONSUMERS: dict[str, tuple[str, ...]] = {
     "dfe-transform-vector": ("dfe-transform-vector-filebeat",),
     "dfe-transform-vrl": ("dfe-transform-vrl-filebeat",),
 }
+# The IMAGE_CONSUMERS no profile names, mapped to the services whose
+# `depends_on` starts them. The committed override repoints them at `:local`
+# like every other consumer, so a build of the profile's own services alone
+# leaves them on a tag nothing produced.
+IMPLICIT_CONSUMERS: dict[str, tuple[str, ...]] = {
+    "dfe-schema-init": ("dfe-loader", "otel-collector"),
+    "dlq-init": ("dfe-archiver", "dfe-fetcher", "dfe-loader", "dfe-receiver"),
+}
 RUST_COMPONENTS = [
     "dfe-archiver",
     "dfe-fetcher",
@@ -226,6 +234,23 @@ def _git_capture(*, args: list[str]) -> subprocess.CompletedProcess:
     )
 
 
+def _implicit_components(*, services: list[str]) -> dict[str, str]:
+    """Return {consumer: component} for the consumers this run's stack starts and no profile names.
+
+    A consumer is only pulled in when one of its dependents is in the stack, so a
+    profile that runs none of them costs nothing.
+    """
+    requested = set(services)
+    needed = {}
+    for component, consumers in IMAGE_CONSUMERS.items():
+        if component in requested:
+            continue
+        for consumer in consumers:
+            if requested.intersection(IMPLICIT_CONSUMERS.get(consumer, ())):
+                needed[consumer] = component
+    return dict(sorted(needed.items()))
+
+
 def _resolve_ref(*, checkout: Path, ref: str, service: str) -> str:
     """Resolve ref to a commit SHA, preferring the remote branch of that name."""
     for candidate in (f"origin/{ref}", ref):
@@ -362,8 +387,22 @@ def main() -> int:
     _load_dotenv()
     args = _parse_args(sys.argv[1:])
     try:
+        targets = list(args.services)
+        # Only the committed-override path needs this: the generated overlay
+        # repoints just what this run builds, so a consumer it skips keeps the
+        # registry pin, while the override repoints every consumer there is.
+        if args.overlay is None:
+            for consumer, component in _implicit_components(services=targets).items():
+                if component in targets:
+                    continue
+                _print(
+                    header=component,
+                    msg=f"Building it too -- no profile names it, but {consumer!r} "
+                    "runs its image and the stack starts that",
+                )
+                targets.append(component)
         built = []
-        for service in args.services:
+        for service in targets:
             if (service in RUST_COMPONENTS) or (service in SELF_CONTAINED_COMPONENTS):
                 _build_image(service=service)
                 built.append(service)

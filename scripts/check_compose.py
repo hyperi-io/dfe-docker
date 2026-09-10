@@ -66,6 +66,9 @@ Beyond resolution, these semantic assertions ride along.
   See `_local_overlay_failures`.
 - That overlay must describe THIS run: a build that builds nothing removes it
   rather than leaving the previous run's. See `_overlay_staleness_failures`.
+- The builder's IMPLICIT_CONSUMERS must match the compose graph, or a `depends_on`
+  edge added here silently stops `make dev` building an image the stack starts.
+  See `_implicit_consumer_failures`.
 - Every profile's transform output topic must be read by that profile's loader,
   and no two transforms may consume one topic. See `_transform_wiring_failures`.
 - Every enrichment table a transform config names must resolve to a file through
@@ -96,7 +99,12 @@ from _common import (
     _print,
     _required_compose_vars,
 )
-from build_dev_images import buildable_components, local_image_services, overlay_text
+from build_dev_images import (
+    IMPLICIT_CONSUMERS,
+    buildable_components,
+    local_image_services,
+    overlay_text,
+)
 from resolve_profile import _parse_yaml
 
 # The overlay `make dev LOCAL=...` generates, rendered for dfe-engine because it
@@ -903,6 +911,42 @@ def _overlay_staleness_failures() -> tuple[list[str], int]:
     return failures, 2
 
 
+def _implicit_consumer_failures(*, env: dict[str, str]) -> tuple[list[str], int]:
+    """Return (messages, assertions made) for IMPLICIT_CONSUMERS matching the compose graph.
+
+    The builder reads that table to work out which images a profile's stack needs
+    without naming the service that runs them, so a `depends_on` edge changed here
+    and not there costs `make dev` an image it never builds.
+    """
+    config = _config_json(env=env, files=[COMPOSE_FILE.name])
+    if config is None:
+        return (["the registry path did not resolve, so depends_on is unknown"], 0)
+    services = config.get("services", {})
+    failures = []
+    made = 0
+    for consumer, dependents in sorted(IMPLICIT_CONSUMERS.items()):
+        made += 1
+        if consumer not in services:
+            failures.append(
+                f"build_dev_images.py: {consumer} is in IMPLICIT_CONSUMERS but not in "
+                "the stack"
+            )
+            continue
+        graph = sorted(
+            [
+                name
+                for name, service_config in services.items()
+                if consumer in (service_config.get("depends_on") or {})
+            ]
+        )
+        if graph != sorted(dependents):
+            failures.append(
+                f"build_dev_images.py: IMPLICIT_CONSUMERS[{consumer!r}] lists "
+                f"{sorted(dependents)}, and compose starts it from {graph}"
+            )
+    return failures, made
+
+
 def main() -> int:
     if not (COMPOSE_FILE.is_file()):
         _print(header=COMPOSE_FILE.name, msg="Not found")
@@ -1014,6 +1058,16 @@ def main() -> int:
     _print(
         msg="A build that builds nothing removes the overlay instead of leaving the "
         f"previous run's ({stale_made} assertions)"
+    )
+
+    implicit_failures, implicit_made = _implicit_consumer_failures(env=env)
+    for message in implicit_failures:
+        _print(msg=f"FAIL {message}")
+    if implicit_failures:
+        return 1
+    _print(
+        msg="Every consumer the builder treats as implicitly started is started by "
+        f"exactly the services it lists ({implicit_made} assertions)"
     )
 
     ui_failures, ui_made = _ui_exposure_failures(env=env)

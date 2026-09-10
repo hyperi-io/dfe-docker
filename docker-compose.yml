@@ -350,8 +350,8 @@ services:
   # uid 1000, so without this dfe-archiver crash-loops on its eager DLQ writer.
   #
   # Three sharp edges -- `required: false` means a FAILED dlq-init only warns,
-  # uid 1000 is hard-coded, and dev mode still pulls the REGISTRY archiver image
-  # for it. docs/troubleshooting.md#the-dlq-spool
+  # uid 1000 is hard-coded, and no profile names this service, so dev mode builds
+  # the archiver for it. docs/troubleshooting.md#the-dlq-spool
   # ===========================================================================
 
   dlq-init:
