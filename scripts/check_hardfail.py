@@ -33,9 +33,12 @@ Scope, stated plainly so a green run is not read as more than it earns: this
 proves the stack refuses to resolve with NOTHING set. It does NOT prove every
 image is pinned. Compose aborts on the FIRST missing variable, so one surviving
 ``${VAR:?}`` anywhere is enough to make this pass -- a new ``${SOMETHING:-latest}``
-slipping in alongside it would not be caught. ``hyperi-hyperdx`` is already
-exactly such a case, deliberately: the fork is unpublished, so the stack SSoT
-cannot pin it.
+slipping in alongside it would not be caught.
+
+Nor does it prove a pin is a DIGEST. Every ``*_VERSION`` the stack SSoT renders is
+``tag@sha256:...``, including ``DFE_HYPERDX_VERSION`` now that versions.yaml carries
+a ``digests.dfe-hyperdx`` entry. The render falls back to a bare tag whenever that
+key is absent, so absence downgrades the pin silently rather than failing.
 """
 
 from __future__ import annotations

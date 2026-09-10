@@ -33,7 +33,7 @@ registry: ghcr.io/hyperi-io
 version:
   ## Pinned release -- written to DFE_STACK_VERSION, which `make stack` pins the
   ## whole certified set from. An explicit `make stack VERSION=...` still wins.
-  pin: 2.2.0-rc.3
+  pin: 2.2.0-rc.11
   ## Track-latest instead: comment out `pin` above and use these. The daemon owns
   ## the roll; leave DFE_STACK_VERSION unset.
   # track: latest
@@ -88,6 +88,12 @@ docker:
   engine_api_external: "true"
   kafbat_ui_external: "true"
   hyperdx_ui_external: "true"
+  ## The scheme and host a BROWSER reaches this box on, no port and no trailing
+  ## slash -- every service appends its own. The UI's post-logout redirect, the
+  ## oauth2-proxy callbacks and HyperDX's link-backs all build on it, and empty
+  ## means they all assume localhost. Set it to a real hostname on anything but
+  ## a workstation.
+  external_origin: ""
   ## Infra UI authentication. auth_enabled puts an oauth2-proxy in front of each
   ## infra UI, gating on OIDC sign-in AND group membership. It needs an issuer,
   ## so it stays off until a deployment has one. The client SECRET is not a dial
@@ -97,12 +103,18 @@ docker:
   oidc_issuer_url: ""
   oidc_client_id: ""
   oidc_allowed_groups: dfe-infra,dfe-admin
-  ## Base origin the OAuth redirect URLs are built from -- the hostname a browser
-  ## reaches this box on, not localhost, on anything but a workstation.
-  oauth2_proxy_external_origin: http://localhost
+  ## Per-surface override of external_origin, which it follows when left empty.
+  oauth2_proxy_external_origin: ""
 
 ## External endpoints -- BLANK here. Point a local engine at a remote ClickHouse
 ## for integration tests by setting clickhouse_host in deployment.yaml (or let the
 ## thin caller inject it from bao). Left empty, the in-stack container is used.
 endpoints:
   clickhouse_host: ""
+
+## RETENTION -- the deployment-wide TTL for every time-series table DFE deploys,
+## the OTel tables included. Whole days; 0 disables the default TTL. A source, or
+## a dfe-schemas definition, that declares its own TTL overrides it. Same field as
+## the dfe-infra dial; renders to DFE_CLICKHOUSE_DEFAULT_TTL_DAYS.
+retention:
+  default_ttl_days: 90

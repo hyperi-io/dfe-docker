@@ -43,6 +43,23 @@ table and the UI classes.
 | `DFE_KAFBAT_UI_EXTERNAL`                         | Publish Kafbat (`:8081`); infra class                                                | `true`                                                              |
 | `DFE_HYPERDX_UI_EXTERNAL`                        | Publish HyperDX (`:8090` and its API `:8000`); infra class                           | `true`                                                              |
 
+### External origin
+
+The scheme and host a browser reaches this box on, with no port and no trailing
+slash -- every service appends its own port. Three surfaces build absolute URLs
+from it and each sends the browser to the wrong place when it says `localhost`
+and the browser did not: the DFE UI's post-logout redirect, the oauth2-proxy
+callbacks registered with the IdP, and HyperDX's link-backs into the DFE UI.
+
+It defaults to `http://localhost`, and nothing infers the real one -- so
+reaching the stack on a hostname without setting this is what sends every
+logout to `http://localhost:3000`. Set it on any deployment a browser reaches
+by anything other than `localhost`.
+
+| Variable                                         | Use                                                                                  | Default                                                             |
+|--------------------------------------------------|--------------------------------------------------------------------------------------|---------------------------------------------------------------------|
+| `DFE_EXTERNAL_ORIGIN`                            | Browser-facing scheme and host for every absolute URL the stack builds                | `http://localhost`                                                  |
+
 ### Infra UI authentication (opt-in)
 
 Arms an oauth2-proxy per infra-UI origin --
@@ -60,7 +77,7 @@ other profile may require an issuer.
 | `DFE_OAUTH2_PROXY_COOKIE_SECRET`                 | Session cookie key, shared by all three proxies; `make init` generates 32 bytes      | generated                                                           |
 | `DFE_OAUTH2_PROXY_COOKIE_DOMAIN`                 | Cookie domain; blank is a host-only cookie, which shares one session across the box  | blank                                                               |
 | `DFE_OAUTH2_PROXY_COOKIE_SECURE`                 | Set the Secure cookie flag; `true` only behind real TLS                              | `false`                                                             |
-| `DFE_OAUTH2_PROXY_EXTERNAL_ORIGIN`               | Base origin the OAuth redirect URLs are built from                                   | `http://localhost`                                                  |
+| `DFE_OAUTH2_PROXY_EXTERNAL_ORIGIN`               | Base origin the OAuth redirect URLs are built from; overrides `DFE_EXTERNAL_ORIGIN`  | follows `DFE_EXTERNAL_ORIGIN`                                       |
 | `DFE_OAUTH2_PROXY_VERSION`                       | Override the oauth2-proxy image pin; not SSoT-derived, keep the `tag@sha256` form    | pinned in `docker-compose.yml`                                      |
 
 ### Image Registry
@@ -142,6 +159,10 @@ credential fields are `env:`-interpolated. Change it there.
 |--------------------------------------------------|--------------------------------------------------------------------------------------|---------------------------------------------------------------------|
 | `DFE_TRANSFORM_VRL_VERSION`                      | Version of dfe-transform-vrl to use                                                  | none -- `make stack` pins it; unset is a hard-fail                                                            |
 | `DFE_TRANSFORM_VRL_PROMETHEUS_PORT`              | Transform VRL Prometheus port                                                        | `9096`                                                              |
+| `DFE_TRANSFORM_VRL_FILEBEAT_PROMETHEUS_PORT`     | Prometheus port of the filebeat instance -- it runs the same image, so it needs its own | `9097`                                                           |
+
+The filebeat instance takes its version from `DFE_TRANSFORM_VRL_VERSION` as well:
+it is a second deployment of the one component, not a component of its own.
 
 ### ClickHouse
 
@@ -154,6 +175,7 @@ credential fields are `env:`-interpolated. Change it there.
 | `CLICKHOUSE_DB`                                  | ClickHouse initialisation database                                                   | `default`                                                           |
 | `CLICKHOUSE_USERNAME`                            | ClickHouse username to connect with                                                  | `default`                                                           |
 | `CLICKHOUSE_PASSWORD`                            | ClickHouse password associated to user                                               | -                                                                   |
+| `DFE_CLICKHOUSE_DEFAULT_TTL_DAYS`                | Days every time-series table keeps rows, the OTel tables included; 0 disables the default TTL; a source or dfe-schemas TTL overrides it | `90`                                                                |
 
 ### Kafka - General
 
@@ -235,10 +257,10 @@ Off by default. `DFE_HYPERDX_ENABLED=true` starts `hyperdx` (API + App) plus its
 | Variable                                         | Use                                                                                  | Default                                                             |
 |--------------------------------------------------|--------------------------------------------------------------------------------------|---------------------------------------------------------------------|
 | `DFE_HYPERDX_ENABLED`                            | Toggle to start HyperDX + FerretDB + Postgres                                        | `false`                                                             |
-| `DFE_HYPERDX_VERSION`                            | Version of hyperi-hyperdx to use                                                     | pinned by `make stack` from the SSoT (fail-loud, like every image)  |
+| `DFE_HYPERDX_VERSION`                            | Version of the dfe-hyperdx fork image to use                                         | pinned by `make stack` from the SSoT (fail-loud, like every image)  |
 | `DFE_HYPERDX_API_PORT`                           | HyperDX API host port                                                                | `8000`                                                              |
 | `DFE_HYPERDX_APP_PORT`                           | HyperDX App UI host port                                                             | `8090`                                                              |
-| `DFE_HYPERDX_APP_URL`                            | Base URL the browser uses to reach HyperDX                                           | `http://localhost`                                                  |
+| `DFE_HYPERDX_APP_URL`                            | Base URL the browser uses to reach HyperDX; overrides `DFE_EXTERNAL_ORIGIN`          | follows `DFE_EXTERNAL_ORIGIN`                                       |
 | `HYPERDX_THEME`                                  | UI theme (NEXT_PUBLIC_THEME)                                                         | `dfe`                                                               |
 | `HYPERDX_POSTGRES_USER`                          | FerretDB/Postgres user                                                               | `hyperdx`                                                           |
 | `HYPERDX_POSTGRES_PASSWORD`                      | FerretDB/Postgres password                                                           | `hyperdx`                                                           |
@@ -259,6 +281,7 @@ Off by default. `DFE_HYPERDX_ENABLED=true` starts `hyperdx` (API + App) plus its
 | 8090  | hyperdx              | App UI             |
 | 8123  | ClickHouse           | HTTP API           |
 | 8686  | dfe-transform-vector | Vector API         |
+| 8687  | dfe-transform-vector-filebeat | Vector API |
 | 9000  | ClickHouse           | Native protocol    |
 | 9090  | dfe-receiver         | Prometheus metrics |
 | 9091  | dfe-loader           | Prometheus metrics |
@@ -267,6 +290,8 @@ Off by default. `DFE_HYPERDX_ENABLED=true` starts `hyperdx` (API + App) plus its
 | 9094  | dfe-fetcher          | Prometheus metrics |
 | 9095  | dfe-transform-vector | Prometheus metrics |
 | 9096  | dfe-transform-vrl    | Prometheus metrics |
+| 9097  | dfe-transform-vrl-filebeat | Prometheus metrics |
+| 9098  | dfe-transform-vector-filebeat | Prometheus metrics |
 | 13133 | otel-collector       | health_check       |
 | 19092 | Kafka (any backend)  | Plaintext host     |
 | 50051 | dfe-loader           | gRPC               |
@@ -282,7 +307,7 @@ startup; the loader pre-warms those schemas into its cache. Nothing in this repo
 provisions tables.
 
 - `dfe` - master database for all DFE related tables
-- `dfe.default` - catch-all for unrouted events, carrying `_tags` (JSON) among
+- `dfe.main` - catch-all for unrouted events, carrying `_tags` (JSON) among
   the profile columns
 
 That last detail matters more than it looks: the e2e suite and the power-on self

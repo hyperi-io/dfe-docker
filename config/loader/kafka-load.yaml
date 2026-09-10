@@ -19,7 +19,7 @@ kafka:
     - kafka:9092
   group: dfe-loader
   topics:
-    - default_load
+    - main_load
 
 routing:
   dlq:

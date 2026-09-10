@@ -14,8 +14,8 @@
 #
 # Verification, the two default DFE acceptances. INGEST: dfe-engine owns the
 # schema and the loader drops unmapped fields, so the runner asserts the row-count
-# DELTA plus this run's marker in the engine-provisioned default table
-# (dfe.default). SELF-MONITORING: on a profile declaring `otel`, that the stack's
+# DELTA plus this run's marker in the engine-provisioned landing table
+# (dfe.main). SELF-MONITORING: on a profile declaring `otel`, that the stack's
 # own telemetry is landing FRESH in the otel database.
 #
 # Per-service config overrides can be set via `config_overrides`, keyed by
@@ -38,13 +38,13 @@ tests:
   - name: simple-receiver-to-loader-kafka
     profile: kafka-receiver
     expected_topics:
-      - default_land
+      - main_land
       - simple_receiver_to_loader_kafka_land
 
   - name: simple-receiver-to-loader-kafka-with-archiver
     profile: kafka-receiver-archiver
     expected_topics:
-      - default_land
+      - main_land
       - simple_receiver_to_loader_kafka_with_archiver_land
 
   - name: simple-fetcher-to-loader
@@ -53,7 +53,7 @@ tests:
   - name: simple-fetcher-to-loader-kafka
     profile: kafka-fetcher
     expected_topics:
-      - default_land
+      - main_land
       - simple_fetcher_to_loader_kafka_land
 
   # The complete single-node stack: receiver, fetcher, transform, loader and
@@ -63,7 +63,7 @@ tests:
   - name: complete-single-node-stack
     profile: single
     expected_topics:
-      - default_land
+      - main_land
       - complete_single_node_stack_land
     expected_http:
       - url: http://localhost:3000/livez

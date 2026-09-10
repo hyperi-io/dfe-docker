@@ -254,14 +254,17 @@ services:
 
   # ===========================================================================
   # Kafka Init
-  # Pre-creates `default_land` so consumers don't fail on an empty broker.
+  # Pre-creates the topics consumers would otherwise fail on, on an empty broker.
   #
   # One init per backend, each using ITS OWN broker's tooling, so choosing Apache
   # Kafka never pulls a BSL artefact. Dependents gate on both with
   # `required: false`; exactly one exists per profile.
   #
-  # DO NOT add `default_load` here -- it suppresses `default_land` out of every
-  # non-transform loader's subscription and silently zeroes the data path.
+  # The list is KAFKA_INIT_TOPICS, written by resolve_profile.py: `main_land`
+  # plus whatever the profile's own transforms consume and produce. Do not
+  # hardcode a `_load` topic here -- created unconditionally it suppresses the
+  # matching `_land` out of every non-transform loader's subscription and
+  # silently zeroes the data path.
   # docs/troubleshooting.md#configloaderkafka-loadyaml-consumes-a-topic-nothing-pre-creates
   # ===========================================================================
 
@@ -276,13 +279,18 @@ services:
     entrypoint: ["/bin/sh", "-c"]
     command:
       - |
-        for i in $$(seq 1 30); do
-          rpk topic describe default_land -X brokers=kafka:9092 >/dev/null 2>&1 && exit 0
-          rpk topic create default_land --partitions 1 --replicas 1 -X brokers=kafka:9092 2>&1 || true
-          sleep 1
+        for topic in ${KAFKA_INIT_TOPICS:-main_land}; do
+          created=""
+          for i in $$(seq 1 30); do
+            rpk topic describe $$topic -X brokers=kafka:9092 >/dev/null 2>&1 && created=yes && break
+            rpk topic create $$topic --partitions 1 --replicas 1 -X brokers=kafka:9092 2>&1 || true
+            sleep 1
+          done
+          if [ -z "$$created" ]; then
+            echo "FAILED: $$topic topic not created after 30 attempts (~30s; rpk fails fast)" >&2
+            exit 1
+          fi
         done
-        echo "FAILED: default_land topic not created after 30 attempts (~30s; rpk fails fast)" >&2
-        exit 1
     restart: "no"
 
   kafka-init-apache:
@@ -296,18 +304,23 @@ services:
     entrypoint: ["/bin/sh", "-c"]
     command:
       - |
-        for i in $$(seq 1 30); do
-          /opt/kafka/bin/kafka-topics.sh --bootstrap-server kafka:9092 --create --if-not-exists \
-            --topic default_land --partitions 1 --replication-factor 1 >/dev/null 2>&1 && exit 0
-          sleep 1
+        for topic in ${KAFKA_INIT_TOPICS:-main_land}; do
+          created=""
+          for i in $$(seq 1 30); do
+            /opt/kafka/bin/kafka-topics.sh --bootstrap-server kafka:9092 --create --if-not-exists \
+              --topic $$topic --partitions 1 --replication-factor 1 >/dev/null 2>&1 && created=yes && break
+            sleep 1
+          done
+          # Unlike rpk, kafka-topics.sh BLOCKS on its own request timeout (~60s)
+          # when the broker is unreachable, so these attempts are not 1s apart --
+          # the worst case here is tens of minutes, not 30 seconds. In practice
+          # depends_on gates on kafka-apache being healthy first, so a retry at all
+          # means something is genuinely wrong rather than merely slow.
+          if [ -z "$$created" ]; then
+            echo "FAILED: $$topic topic not created after 30 attempts" >&2
+            exit 1
+          fi
         done
-        # Unlike rpk, kafka-topics.sh BLOCKS on its own request timeout (~60s)
-        # when the broker is unreachable, so these attempts are not 1s apart --
-        # the worst case here is tens of minutes, not 30 seconds. In practice
-        # depends_on gates on kafka-apache being healthy first, so a retry at all
-        # means something is genuinely wrong rather than merely slow.
-        echo "FAILED: default_land topic not created after 30 attempts" >&2
-        exit 1
     restart: "no"
 
   # ===========================================================================
@@ -342,8 +355,8 @@ services:
   # uid 1000, so without this dfe-archiver crash-loops on its eager DLQ writer.
   #
   # Three sharp edges -- `required: false` means a FAILED dlq-init only warns,
-  # uid 1000 is hard-coded, and dev mode still pulls the REGISTRY archiver image
-  # for it. docs/troubleshooting.md#the-dlq-spool
+  # uid 1000 is hard-coded, and no profile names this service, so dev mode builds
+  # the archiver for it. docs/troubleshooting.md#the-dlq-spool
   # ===========================================================================
 
   dlq-init:
@@ -391,6 +404,9 @@ services:
       DFE_CLICKHOUSE_USERNAME: ${CLICKHOUSE_USERNAME:-default}
       DFE_CLICKHOUSE_PASSWORD: ${CLICKHOUSE_PASSWORD:-}
       DFE_CLICKHOUSE_SECURE: ${CLICKHOUSE_SECURE:-false}
+      # The apply reconciles existing tables, so it runs with the same TTL the
+      # engine does. 0 = no default TTL.
+      DFE_CLICKHOUSE_DEFAULT_TTL_DAYS: ${DFE_CLICKHOUSE_DEFAULT_TTL_DAYS:-90}
       # Unset by default: the image resolves its own bundled schemas. Point this
       # at a full dfe-schemas tree to override.
       DFE_SCHEMAS_DIR: ${DFE_ENGINE_SCHEMAS_DIR:-}
@@ -403,7 +419,8 @@ services:
 
   # ===========================================================================
   # dfe-archiver
-  # Only supports Kafka input transport.
+  # Reads the landing topics off the broker, or receives on its scalo Push
+  # listener where the profile has no broker (config/archiver/<transport>.yaml).
   # ===========================================================================
 
   dfe-archiver:
@@ -602,6 +619,11 @@ services:
 
   # ===========================================================================
   # dfe-transform-vector
+  #
+  # One metrics port: 9090 carries the scalo surface AND the `vector_*` series,
+  # which the wrapper scrapes off the `prometheus_exporter` sink and merges into
+  # the scalo registry (dfe-transform-vector#70). The sink still listens on 9598,
+  # loopback-only inside the container, and is published nowhere.
   # ===========================================================================
 
   dfe-transform-vector:
@@ -631,6 +653,56 @@ services:
         required: false
     volumes:
       - ./config/${DFE_TRANSFORM_VECTOR_CONFIG:-transform-vector/kafka.yaml}:/etc/dfe-transform-vector/config.yaml:ro
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://localhost:9090/livez"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+
+  # ===========================================================================
+  # dfe-transform-vector-filebeat
+  # A SECOND instance of the same image, for the filebeat source alone -- the
+  # dfe-transform-vector half of the shape dfe-transform-vrl-filebeat carries
+  # below. The receiver routes _source=filebeat-vector to filebeat-vector_land,
+  # this instance is the only consumer of it, and its output topic names the
+  # table dfe-loader writes. The two transform apps stay on separate topics and
+  # separate tables, so one deployment can run both and compare them.
+  #
+  # The pipeline is pre-canned: the transforms directory holds the bundled
+  # filebeat program and the timezone table it looks up is mounted from the
+  # filebeat pipeline's own data directory, shared with the VRL instance rather
+  # than copied.
+  # ===========================================================================
+
+  dfe-transform-vector-filebeat:
+    image: ${IMAGE_REGISTRY:-ghcr.io/hyperi-io}/dfe-transform-vector:${DFE_TRANSFORM_VECTOR_VERSION:?run 'make stack VERSION=X.Y.Z' to pin DFE_TRANSFORM_VECTOR_VERSION}
+    container_name: dfe-transform-vector-filebeat
+    profiles: ["dfe"]
+    restart: unless-stopped
+    deploy: *limits-service
+    ports:
+      - ${DFE_BIND_HOST:-127.0.0.1}:${DFE_TRANSFORM_VECTOR_FILEBEAT_PROMETHEUS_PORT:-9098}:9090
+      - ${DFE_BIND_HOST:-127.0.0.1}:${DFE_TRANSFORM_VECTOR_FILEBEAT_API_PORT:-8687}:8686
+    env_file:
+      - path: env/transform-vector-filebeat.env
+        required: false
+    environment:
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+      LOG_FORMAT: ${LOG_FORMAT:-text}
+      OTEL_EXPORTER_OTLP_ENDPOINT: ${DFE_OTEL_EXPORTER_ENDPOINT:-}
+      OTEL_SERVICE_NAME: dfe-transform-vector-filebeat
+    depends_on:
+      # No dlq-init here: this service does not mount dlq-spool.
+      kafka-init-apache:
+        condition: service_completed_successfully
+        required: false
+      kafka-init-redpanda:
+        condition: service_completed_successfully
+        required: false
+    volumes:
+      - ./config/${DFE_TRANSFORM_VECTOR_FILEBEAT_CONFIG:-transform-vector/filebeat.yaml}:/etc/dfe-transform-vector/config.yaml:ro
+      - ./config/transform-vector/transforms-filebeat:/etc/dfe-transform-vector/transforms:ro
+      - ./config/transform-vrl/data:/etc/dfe-transform-vector/data:ro
     healthcheck:
       test: ["CMD", "curl", "-sf", "http://localhost:9090/livez"]
       interval: 10s
@@ -675,6 +747,52 @@ services:
       retries: 5
 
   # ===========================================================================
+  # dfe-transform-vrl-filebeat
+  # A SECOND instance of the same image, for the filebeat source alone. The
+  # Kubernetes tier deploys one transform per source and this is that shape on
+  # one box: the receiver routes _source=filebeat to filebeat_land, this
+  # instance is the only consumer of it, and its output topic names the table
+  # dfe-loader writes. Adding another source means another block like this
+  # one, its own config and its own program directory -- nothing here is shared
+  # with the passthrough instance except the image.
+  # ===========================================================================
+
+  dfe-transform-vrl-filebeat:
+    image: ${IMAGE_REGISTRY:-ghcr.io/hyperi-io}/dfe-transform-vrl:${DFE_TRANSFORM_VRL_VERSION:?run 'make stack VERSION=X.Y.Z' to pin DFE_TRANSFORM_VRL_VERSION}
+    container_name: dfe-transform-vrl-filebeat
+    profiles: ["dfe"]
+    restart: unless-stopped
+    deploy: *limits-service
+    ports:
+      - ${DFE_BIND_HOST:-127.0.0.1}:${DFE_TRANSFORM_VRL_FILEBEAT_PROMETHEUS_PORT:-9097}:9090
+    env_file:
+      - path: env/transform-vrl-filebeat.env
+        required: false
+    environment:
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+      LOG_FORMAT: ${LOG_FORMAT:-text}
+      OTEL_EXPORTER_OTLP_ENDPOINT: ${DFE_OTEL_EXPORTER_ENDPOINT:-}
+      OTEL_SERVICE_NAME: dfe-transform-vrl-filebeat
+    depends_on:
+      # No dlq-init here: this service does not mount dlq-spool.
+      kafka-init-apache:
+        condition: service_completed_successfully
+        required: false
+      kafka-init-redpanda:
+        condition: service_completed_successfully
+        required: false
+    volumes:
+      - ./config/${DFE_TRANSFORM_VRL_FILEBEAT_CONFIG:-transform-vrl/filebeat.yaml}:/etc/dfe-transform-vrl/config.yaml:ro
+      - ./config/transform-vrl/transforms-filebeat:/etc/dfe-transform-vrl/transforms:ro
+      # Enrichment tables mount beside the program directory, never inside it.
+      - ./config/transform-vrl/data:/etc/dfe-transform-vrl/data:ro
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://localhost:9090/livez"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+
+  # ===========================================================================
   # dfe-engine
   # dfe-schemas rides INSIDE this image: /app/schemas is baked into dfe-engine
   # (pinned by DFE_ENGINE_VERSION) and seeds the dfe-engine-schemas named volume
@@ -698,13 +816,45 @@ services:
       - path: env/engine.env
         required: false
     environment:
-      # The engine refuses to start at `production` without real auth, and
-      # compose mode is god-mode. docs/operating.md#there-is-no-authentication
-      DFE_ENV: ${DFE_ENV:-dev}
-      # Break-glass login, seeded on the engine's FIRST start. `make init`
-      # generates the password; unset, the engine seeds "changeme".
+      # The engine refuses to start at `production` without real auth, which is
+      # what an unset DFE_ENV should get: `make init` mints a password, so the
+      # refusal only ever catches a stack that has no credential to speak of.
+      # `make dev` writes DFE_ENV=dev for a tyre-kick that logs in on the shipped
+      # default. docs/operating.md#there-is-no-authentication
+      DFE_ENV: ${DFE_ENV:-production}
+      # A Compose stack is one operator with no forge: a hunt or rule written at
+      # production+team lands on a review branch nothing can merge, and the
+      # engine then 404s on the object it just accepted. solo commits to main.
+      DFE_GITOPS_MODE: ${DFE_GITOPS_MODE:-solo}
+      # Names the fetch command the engine puts on the login page: `make creds`.
+      DFE_DEPLOYMENT_TARGET: docker
+      # The tier this stack runs, by the manifest's name: the engine seeds the
+      # profile's default app instances from it and reports it as its profile.
+      DFE_PROFILE: ${DFE_STACK_PROFILE:-docker-slim}
+      # The transport the tier's stages are bound to (resolve_profile exports it
+      # from the profile); the defaults are the slim tier's.
+      DFE_TRANSPORT_DEFAULT: ${DFE_TRANSPORT_DEFAULT:-direct}
+      DFE_TRANSPORT_BUS_PRESENT: ${DFE_TRANSPORT_BUS_PRESENT:-false}
+      # The broker the engine creates a source's topics on: the in-stack one on a
+      # kafka tier unless .env names another, and nothing on a direct tier.
+      DFE_KAFKA_BOOTSTRAP_SERVERS: ${DFE_KAFKA_BOOTSTRAP_SERVERS:-}
+      # The everyday admin, reasserted from .env on every boot. The engine refuses
+      # to start on an empty or "changeme" value unless DFE_ENV is a dev posture.
       DFE_AUTH_LOCAL_ADMIN_NAME: ${DFE_AUTH_LOCAL_ADMIN_NAME:-admin}
       DFE_AUTH_LOCAL_ADMIN_PASSWORD: ${DFE_AUTH_LOCAL_ADMIN_PASSWORD:-}
+      # The recovery admin. Mint-once: the engine hashes it into the deploy repo
+      # on the first boot with no hash committed, and ignores it from then on.
+      DFE_AUTH_BREAKGLASS_PASSWORD: ${DFE_AUTH_BREAKGLASS_PASSWORD:-}
+      # Keys the OIDC session cookie. The engine ships a known placeholder and
+      # refuses to start on it outside a dev posture, the same as the admin
+      # password above, so `make init` mints this one too.
+      DFE_API_JWT_SECRET: ${DFE_API_JWT_SECRET:-}
+      # The deploy repo the break-glass hash and the governance settings live in.
+      # Local-only here: no repo_url, so nothing is pushed anywhere. It sits inside
+      # the config volume because a volume mounted on a path the image does not own
+      # lands root-owned and the engine runs as UID 1000.
+      DFE_GITOPS_ENABLED: ${DFE_GITOPS_ENABLED:-true}
+      DFE_GITOPS_LOCAL_PATH: ${DFE_ENGINE_CONFIG_DIR:-/app/config}/deploy-repo
       DFE_CLICKHOUSE_HOST: ${CLICKHOUSE_HOST:-clickhouse}
       DFE_CLICKHOUSE_PORT: ${CLICKHOUSE_HTTP_PORT:-8123}
       DFE_CLICKHOUSE_NATIVE_PORT: ${CLICKHOUSE_NATIVE_PORT:-9000}
@@ -712,8 +862,19 @@ services:
       DFE_CLICKHOUSE_USERNAME: ${CLICKHOUSE_USERNAME:-default}
       DFE_CLICKHOUSE_PASSWORD: ${CLICKHOUSE_PASSWORD:-}
       DFE_CLICKHOUSE_SECURE: ${CLICKHOUSE_SECURE:-false}
+      # Default TTL for every time-series table; 0 = none; a source or a
+      # dfe-schemas TTL overrides it. dfe-schema-init carries the same value.
+      DFE_CLICKHOUSE_DEFAULT_TTL_DAYS: ${DFE_CLICKHOUSE_DEFAULT_TTL_DAYS:-90}
       DFE_CONFIG_DIR: ${DFE_ENGINE_CONFIG_DIR:-/app/config}
+      # Onto the config VOLUME, because the engine mints its ES384 JWT signing
+      # key here on first use: left on the container filesystem it is remade on
+      # every recreate, and every session issued before it stops verifying.
+      DFE_SECRETS_PATH: ${DFE_ENGINE_CONFIG_DIR:-/app/config}/.secrets
       DFE_SCHEMAS_DIR: ${DFE_ENGINE_SCHEMAS_DIR:-/app/schemas}
+      # Content another repo ships (transform templates, a source catalogue),
+      # copied onto this volume by a per-pin init service; the engine seeds its
+      # library from it at startup and an empty directory is a no-op.
+      DFE_LIBRARY_SEED_DIR: ${DFE_ENGINE_CONTENT_DIR:-/app/content}/library
       OTEL_EXPORTER_OTLP_ENDPOINT: ${DFE_OTEL_EXPORTER_ENDPOINT:-}
       OTEL_SERVICE_NAME: dfe-engine
       # scalo's CLI falls back to the prometheus backend, so the endpoint alone
@@ -722,6 +883,7 @@ services:
     volumes:
       - dfe-engine-config:${DFE_ENGINE_CONFIG_DIR:-/app/config}
       - dfe-engine-schemas:${DFE_ENGINE_SCHEMAS_DIR:-/app/schemas}
+      - dfe-engine-content:${DFE_ENGINE_CONTENT_DIR:-/app/content}
     depends_on:
       clickhouse:
         condition: service_healthy
@@ -734,6 +896,65 @@ services:
       timeout: 3s
       start_period: 30s
       retries: 5
+
+  # ===========================================================================
+  # dfe-hunt-runner -- the pull-based hunt executor (engine image, own process).
+  # One instance per stack, the same shape the Kubernetes chart runs. It reads
+  # the hunt and rule YAML the engine governs off the engine's config volume,
+  # so a hunt created through the UI is picked up on the next poll.
+  # ===========================================================================
+
+  dfe-hunt-runner:
+    image: ${IMAGE_REGISTRY:-ghcr.io/hyperi-io}/dfe-engine:${DFE_ENGINE_VERSION:?run 'make stack VERSION=X.Y.Z' to pin DFE_ENGINE_VERSION}
+    container_name: dfe-hunt-runner
+    profiles: ["core"]
+    restart: unless-stopped
+    deploy: *limits-service
+    # The image's entrypoint is the engine CLI; the runner is its own console script.
+    entrypoint: ["dfe-hunt-runner"]
+    # --reload-every 1 is what makes "picked up on the next poll" true: the default
+    # re-reads the hunt dir every 20 ticks, which is five minutes at this poll.
+    command: ["run", "--poll", "15", "--cap", "8", "--reload-every", "1"]
+    env_file:
+      - path: env/engine.env
+        required: false
+    environment:
+      DFE_ENV: ${DFE_ENV:-production}
+      # The runner builds the same DFESettings the API does, so it hits the same
+      # start-up refusal without this.
+      DFE_API_JWT_SECRET: ${DFE_API_JWT_SECRET:-}
+      DFE_CLICKHOUSE_HOST: ${CLICKHOUSE_HOST:-clickhouse}
+      DFE_CLICKHOUSE_PORT: ${CLICKHOUSE_HTTP_PORT:-8123}
+      DFE_CLICKHOUSE_NATIVE_PORT: ${CLICKHOUSE_NATIVE_PORT:-9000}
+      DFE_CLICKHOUSE_DATABASE: ${CLICKHOUSE_DB:-default}
+      DFE_CLICKHOUSE_USERNAME: ${CLICKHOUSE_USERNAME:-default}
+      DFE_CLICKHOUSE_PASSWORD: ${CLICKHOUSE_PASSWORD:-}
+      DFE_CLICKHOUSE_SECURE: ${CLICKHOUSE_SECURE:-false}
+      DFE_CONFIG_DIR: ${DFE_ENGINE_CONFIG_DIR:-/app/config}
+      # Same volume as the API's, so both read the one signing key.
+      DFE_SECRETS_PATH: ${DFE_ENGINE_CONFIG_DIR:-/app/config}/.secrets
+      # The engine governs hunts and rules in the deploy repo it clones into the
+      # shared config volume, so the runner reads that working tree; a runner
+      # pointed at the bare config dir polls a directory nothing writes.
+      DFE_HUNTS_DIR: ${DFE_ENGINE_CONFIG_DIR:-/app/config}/deploy-repo/config/hunts
+      DFE_HUNTS_RULES_DIR: ${DFE_ENGINE_CONFIG_DIR:-/app/config}/deploy-repo/config/rules
+      DFE_SCHEMAS_DIR: ${DFE_ENGINE_SCHEMAS_DIR:-/app/schemas}
+      OTEL_EXPORTER_OTLP_ENDPOINT: ${DFE_OTEL_EXPORTER_ENDPOINT:-}
+      OTEL_SERVICE_NAME: dfe-hunt-runner
+    volumes:
+      - dfe-engine-config:${DFE_ENGINE_CONFIG_DIR:-/app/config}
+      - dfe-engine-schemas:${DFE_ENGINE_SCHEMAS_DIR:-/app/schemas}
+    depends_on:
+      dfe-engine:
+        condition: service_healthy
+      clickhouse:
+        condition: service_healthy
+        required: false
+    # The runner has no HTTP listener, so the engine image's HEALTHCHECK (:9090/livez)
+    # can never pass here. Liveness is the ClickHouse lease the runner renews.
+    healthcheck:
+      disable: true
+    working_dir: /home/appuser
 
   # ===========================================================================
   # dfe-ui
@@ -749,11 +970,16 @@ services:
       - path: env/ui.env
         required: false
     environment:
-      HYPERDX_PORT: ${DFE_HYPERDX_APP_PORT:-8090}
+      HYPERDX_PORT: ${DFE_HYPERDX_EMBED_PORT:-8091}
       NODE_ENV: ${DFE_UI_NODE_ENV:-production}
       # `make init` generates this. NOT a `:?` hard-fail -- that would abort even
       # `make down` for everyone. The sentinel is what makes a missing one loud.
       NEXTAUTH_SECRET: ${DFE_UI_NEXTAUTH_SECRET:-RUN-make-init-TO-GENERATE-A-REAL-SECRET}
+      # Every absolute URL next-auth builds, the post-logout redirect included.
+      # Unset, it resolves to a hardcoded http://localhost:3000 and every logout
+      # leaves the origin the browser arrived on -- so this always carries a
+      # value, and DFE_EXTERNAL_ORIGIN is what an operator moves.
+      NEXTAUTH_URL: ${DFE_EXTERNAL_ORIGIN:-http://localhost}:${DFE_UI_PORT:-3000}
       OTEL_EXPORTER_OTLP_ENDPOINT: ${DFE_OTEL_EXPORTER_ENDPOINT:-}
       OTEL_SERVICE_NAME: dfe-ui
     healthcheck:
@@ -785,6 +1011,11 @@ services:
       # DFE_UI_BIND_HOST (the DFE_BIND_SCOPE dial) and the infra kill switch
       # never covers it, so only DFE_UI_EXTERNAL=false takes it dark.
       - ${DFE_UI_BIND_HOST:-127.0.0.1}:${DFE_UI_PORT:-3000}:8080
+      # HyperDX, re-served with frame-ancestors rewritten so the UI can iframe
+      # it. The app's own port stays infra class on the hyperdx service.
+      - ${DFE_UI_BIND_HOST:-127.0.0.1}:${DFE_HYPERDX_EMBED_PORT:-8091}:8091
+    environment:
+      DFE_HYPERDX_EMBED_ANCESTOR: ${DFE_HYPERDX_APP_URL:-${DFE_EXTERNAL_ORIGIN:-http://localhost}}:${DFE_UI_PORT:-3000}
     volumes:
       - ./config/proxy/envoy.yaml:/etc/envoy/envoy.yaml:ro
     depends_on:
@@ -862,7 +1093,8 @@ services:
     volumes:
       - hyperdx-pg-data:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${HYPERDX_POSTGRES_USER:-hyperdx}"]
+      # -d names the real database: without it libpq dials one named after the user.
+      test: ["CMD-SHELL", "pg_isready -U ${HYPERDX_POSTGRES_USER:-hyperdx} -d postgres"]
       interval: 5s
       timeout: 3s
       retries: 10
@@ -892,7 +1124,10 @@ services:
     # Pinned from the stack SSoT like every other image: the fork now publishes,
     # so `make stack` renders DFE_HYPERDX_VERSION from versions.yaml
     # (content.dfe-hyperdx). Fail-loud `:?` -- no floating `latest`.
-    image: ${IMAGE_REGISTRY:-ghcr.io/hyperi-io}/hyperi-hyperdx:${DFE_HYPERDX_VERSION:?run 'make stack VERSION=X.Y.Z' to pin DFE_HYPERDX_VERSION}
+    # Same image name the k8s chart pulls; ghcr.io/hyperi-io/hyperi-hyperdx does not exist.
+    # Digest-pinned like the rest: versions.yaml carries digests.dfe-hyperdx, which
+    # the render appends as tag@sha256.
+    image: ${IMAGE_REGISTRY:-ghcr.io/hyperi-io}/dfe-hyperdx:${DFE_HYPERDX_VERSION:?run 'make stack VERSION=X.Y.Z' to pin DFE_HYPERDX_VERSION}
     container_name: dfe-hyperdx
     profiles: ["hyperdx"]
     restart: unless-stopped
@@ -911,19 +1146,28 @@ services:
       - path: env/hyperdx.env
         required: false
     environment:
+      # The UI reads /api/connections, seeded from these. The NEXT_PUBLIC_HDX_LOCAL_*
+      # pair below is browser-side and this build ignores it, so without these the
+      # UI reports "no database connections found". Host resolves in-container --
+      # queries go through HyperDX's own /clickhouse-proxy. The name must be
+      # `local` or config/hyperdx/default-sources.json drops every source silently.
+      # 8123 is the container port and a constant; CLICKHOUSE_HTTP_PORT is the
+      # host binding, so dialling it in-network breaks a moved port (#32).
+      DEFAULT_CONNECTIONS: '[{"name":"local","host":"http://clickhouse:8123","username":"${CLICKHOUSE_USERNAME:-default}","password":"${CLICKHOUSE_PASSWORD:-}"}]'
+      DEFAULT_SOURCES_FILE: /etc/hyperdx/default-sources.json
       HYPERDX_API_PORT: 8000
       HYPERDX_APP_PORT: ${DFE_HYPERDX_APP_PORT:-8090}
-      HYPERDX_APP_URL: ${DFE_HYPERDX_APP_URL:-http://localhost}
-      FRONTEND_URL: ${DFE_HYPERDX_APP_URL:-http://localhost}:${DFE_HYPERDX_APP_PORT:-8090}
+      HYPERDX_APP_URL: ${DFE_HYPERDX_APP_URL:-${DFE_EXTERNAL_ORIGIN:-http://localhost}}
+      FRONTEND_URL: ${DFE_HYPERDX_APP_URL:-${DFE_EXTERNAL_ORIGIN:-http://localhost}}:${DFE_HYPERDX_APP_PORT:-8090}
       # Link-back origin so the embedded HyperDX opens a created rule in the DFE
       # UI (served by dfe-proxy on DFE_UI_PORT), not the HyperDX origin. Matches
       # the k8s hyperdx chart. next-runtime-env reads it per request.
-      NEXT_PUBLIC_DFE_UI_BASE_URL: ${DFE_HYPERDX_APP_URL:-http://localhost}:${DFE_UI_PORT:-3000}
+      NEXT_PUBLIC_DFE_UI_BASE_URL: ${DFE_HYPERDX_APP_URL:-${DFE_EXTERNAL_ORIGIN:-http://localhost}}:${DFE_UI_PORT:-3000}
       # HyperDX talks Mongo wire protocol; FerretDB serves it over Postgres.
       MONGO_URI: mongodb://${HYPERDX_POSTGRES_USER:-hyperdx}:${HYPERDX_POSTGRES_PASSWORD:-hyperdx}@hyperdx-ferretdb:27017/hyperdx?authSource=admin
       NEXT_PUBLIC_IS_LOCAL_MODE: "true"
       # The source mapping is read from the mounted file below.
-      NEXT_PUBLIC_HDX_LOCAL_DEFAULT_CONNECTIONS: '[{"id":"local","name":"ClickHouse","host":"${DFE_HYPERDX_APP_URL:-http://localhost}:${CLICKHOUSE_HTTP_PORT:-8123}","username":"${CLICKHOUSE_USERNAME:-default}","password":"${CLICKHOUSE_PASSWORD:-}"}]'
+      NEXT_PUBLIC_HDX_LOCAL_DEFAULT_CONNECTIONS: '[{"id":"local","name":"ClickHouse","host":"${DFE_HYPERDX_APP_URL:-${DFE_EXTERNAL_ORIGIN:-http://localhost}}:${CLICKHOUSE_HTTP_PORT:-8123}","username":"${CLICKHOUSE_USERNAME:-default}","password":"${CLICKHOUSE_PASSWORD:-}"}]'
       NEXT_PUBLIC_HDX_LOCAL_DEFAULT_SOURCES_FILE: /etc/hyperdx/default-sources.json
       NEXT_PUBLIC_THEME: ${HYPERDX_THEME:-dfe}
     volumes:
@@ -969,7 +1213,7 @@ services:
     environment:
       <<: *oauth2-proxy-env
       OAUTH2_PROXY_UPSTREAMS: http://kafka-ui:8080
-      OAUTH2_PROXY_REDIRECT_URL: ${DFE_OAUTH2_PROXY_EXTERNAL_ORIGIN:-http://localhost}:${KAFBAT_PORT:-8081}/oauth2/callback
+      OAUTH2_PROXY_REDIRECT_URL: ${DFE_OAUTH2_PROXY_EXTERNAL_ORIGIN:-${DFE_EXTERNAL_ORIGIN:-http://localhost}}:${KAFBAT_PORT:-8081}/oauth2/callback
     depends_on:
       kafka-ui:
         condition: service_started
@@ -986,7 +1230,7 @@ services:
     environment:
       <<: *oauth2-proxy-env
       OAUTH2_PROXY_UPSTREAMS: http://hyperdx:${DFE_HYPERDX_APP_PORT:-8090}
-      OAUTH2_PROXY_REDIRECT_URL: ${DFE_OAUTH2_PROXY_EXTERNAL_ORIGIN:-http://localhost}:${DFE_HYPERDX_APP_PORT:-8090}/oauth2/callback
+      OAUTH2_PROXY_REDIRECT_URL: ${DFE_OAUTH2_PROXY_EXTERNAL_ORIGIN:-${DFE_EXTERNAL_ORIGIN:-http://localhost}}:${DFE_HYPERDX_APP_PORT:-8090}/oauth2/callback
     depends_on:
       hyperdx:
         condition: service_healthy
@@ -1013,7 +1257,7 @@ services:
     environment:
       <<: *oauth2-proxy-env
       OAUTH2_PROXY_UPSTREAMS: http://hyperdx:8000
-      OAUTH2_PROXY_REDIRECT_URL: ${DFE_OAUTH2_PROXY_EXTERNAL_ORIGIN:-http://localhost}:${DFE_HYPERDX_API_PORT:-8000}/oauth2/callback
+      OAUTH2_PROXY_REDIRECT_URL: ${DFE_OAUTH2_PROXY_EXTERNAL_ORIGIN:-${DFE_EXTERNAL_ORIGIN:-http://localhost}}:${DFE_HYPERDX_API_PORT:-8000}/oauth2/callback
       # Host header and every upstream response header pass through untouched
       # (--pass-host-header defaults true), so HyperDX's own CORS headers reach
       # the browser exactly as the API sent them.
@@ -1031,4 +1275,5 @@ volumes:
   dlq-spool:
   dfe-engine-config:
   dfe-engine-schemas:
+  dfe-engine-content:
   hyperdx-pg-data:

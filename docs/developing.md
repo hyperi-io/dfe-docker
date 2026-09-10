@@ -29,6 +29,7 @@ exist, and how a profile decides which of them run.
 | Python 3 | the helper scripts under `scripts/` |
 | PyYAML | `make test-e2e` only (`pip install pyyaml`, or `uv run --with pyyaml`) |
 | ruff | `make check-python` only |
+| pytest | `make check-tests` only (`uvx` fetches the pin if you have it) |
 | git credentials for the hyperi-io repos (or `DFE_SRC_ROOT` checkouts) | `make dev` |
 
 ## First run
@@ -36,7 +37,7 @@ exist, and how a profile decides which of them run.
 ```bash
 make init                  # generate .env and env/<service>.env
 make stack VERSION=X.Y.Z   # pin the image versions
-make ci                    # pull and start, then run the self test
+make up                    # pull and start, self test, then print the login
 ```
 
 `make init` copies `.env.example` to `.env` and every `env.example/<service>.env`
@@ -61,6 +62,59 @@ Skipping `make stack` is not a soft failure. Nearly every image pin uses
 `${VAR:?...}`, so an unpinned checkout aborts the compose command with a message
 naming the key.
 
+## Logging in the first time
+
+The deploy mints the credentials, the engine never ships one. `make init` writes
+two random passwords into `.env` and prints neither.
+
+| Target | What it does |
+|---|---|
+| `make init` | mints `DFE_AUTH_LOCAL_ADMIN_PASSWORD` (the `admin` login) and `DFE_AUTH_BREAKGLASS_PASSWORD` (the `breakglass` recovery login) |
+| `make up` | starts the pinned stack, runs the self test, then prints the access summary with the login |
+| `make creds` | prints that summary again, any time |
+
+The password prints to a **terminal** only. Redirect it, pipe it, or run it in
+CI and you get the `.env` key holding the value instead; `DFE_CREDS_SHOW=0` does
+the same on a terminal. `make ci` does not call it at all, which is why `make up`
+exists as the operator-facing name for the same start.
+
+`make creds` is also the line the engine puts on its own login page while
+first-run setup is incomplete, so an operator who lands there with no password is
+one command from having one.
+
+The two accounts are durable in different ways, deliberately. `admin` is
+reasserted from `.env` on every engine boot, so a teardown and rebuild restores
+exactly the password `make init` minted. `breakglass` is hashed into the engine's
+deploy repo on its first boot and the variable is ignored from then on, so it
+still works when the engine, the UI and `.env` are all gone. `make creds` says
+where its password lives rather than printing it.
+
+The engine **refuses to start** on an empty or `changeme`
+`DFE_AUTH_LOCAL_ADMIN_PASSWORD` unless `DFE_ENV` names a dev posture. `make
+check-compose` asserts the compose file never hands it one, so that is caught
+before a container crash-loops.
+
+`make dev` is the exception and says so: it writes the known default password and
+`DFE_ENV=dev` into `.env`, because a dev loop should not need a lookup to log in.
+The engine accepts the default in that posture and asks for a change at first
+login. It **refuses** (exit 2) to run when `.env` already declares a non-dev
+`DFE_ENV` -- downgrading a deployment's posture and overwriting its admin password
+is not a build target's call. Start that stack with `make up`.
+
+When it does rewrite, it copies the file it replaced to `.env.bak-<utc>` first,
+mode 0600, and prints the path: a minted password is gone once overwritten. A run
+with nothing to change writes neither.
+
+`AUTH=real` is the same local build against a deployment's authentication flow,
+for when the login is the thing under test. It mints a password and writes
+`DFE_ENV=production`, leaving either alone where it is already real, so it never
+refuses. `make creds` reads the password back.
+
+```bash
+make dev              # local images, known default password, DFE_ENV=dev
+make dev AUTH=real    # local images, minted password, DFE_ENV=production
+```
+
 ## Dev mode compiles your source; registry mode pulls GHCR
 
 ```bash
@@ -72,6 +126,11 @@ make ci     # pull the pinned GHCR images, then start
 auto-loaded by Compose with no flags. It repoints each DFE service at
 `<service>:local`. `make ci` passes `-f docker-compose.yml` explicitly, which
 skips the override and therefore uses registry images only.
+
+Both start targets run `make env-files` first: it asserts every
+`env.example/<service>.env` has a counterpart in `env/`, runs `make init` for the
+ones a release added, and fails only if one is still missing. It warns, never
+edits, when a template gains a key inside a file you already have.
 
 `scripts/build_dev_images.py` builds the `:local` images in two stages for every
 Rust component:
@@ -104,6 +163,29 @@ from their own Dockerfile.
 
 A service that is not a locally buildable DFE component (ClickHouse, the broker,
 `kafka-ui`) is skipped with a message rather than failing the build.
+
+A service that runs a component's image under another name follows it:
+`dlq-init` runs the archiver image, `dfe-schema-init` and `dfe-hunt-runner` the
+engine image. The map is `IMAGE_CONSUMERS` in `scripts/build_dev_images.py`, and
+`make check-compose` asserts the override covers all of it.
+
+Two of them are started by a `depends_on` rather than named by a profile
+(`IMPLICIT_CONSUMERS`, same file): the archiver for `dlq-init`, the engine for
+`dfe-schema-init`. `make dev` builds those even on a profile that runs no service
+of its own from them, or the override points them at a `:local` tag the run never
+produced.
+
+### Some from source, the rest pinned
+
+```bash
+make dev LOCAL="dfe-engine dfe-ui"   # build these two; everything else from GHCR
+```
+
+The build writes `docker-compose.local.yml` (not committed) repointing only the
+named components and the services sharing their image at `:local`, and compose
+runs with explicit `-f` files so the all-local override stays out. `SERVICES`
+still filters what starts, `LIVE=1` still layers the engine bind-mounts, and a
+name outside the resolved stack is a hard error.
 
 ### Where it looks for your source
 
@@ -139,37 +221,12 @@ stack manifest.
 mounts. `active_profile` is the default; `DFE_PROFILE` overrides it for one
 invocation.
 
-Two profiles name a whole-stack shape and share their names with the Kubernetes
-tier, so one deployment dial reads the same on both:
-
-| Profile | Transport | Services | Also starts |
-|---|---|---|---|
-| `slim` | grpc | loader, receiver | ClickHouse, core |
-| `single` | kafka | loader, receiver | ClickHouse, core, kafka-ui, otel-collector |
-
-`single` is the whole PLATFORM on one box, and the only shape an OIDC issuer
-would front if one is wired in. Its data plane is receiver + loader only:
-those two run from a default deploy with nothing external configured, while
-dfe-archiver, dfe-fetcher and the transforms need endpoints or credentials the
-profile cannot supply. Take those from the fine-grained profiles below. HyperDX
-is opt-in too, matching the Kubernetes profile. There is no `scale`: Compose
-cannot run an HA broker or a ClickHouse cluster.
-
-The rest are fine-grained data-plane shapes. The e2e suite pins them by name.
-
-| Profile | Transport | Services |
-|---|---|---|
-| `kafka-minimal` | kafka | loader |
-| `kafka-fetcher` | kafka | fetcher, loader |
-| `kafka-receiver` | kafka | loader, receiver |
-| `kafka-receiver-archiver` | kafka | archiver, loader, receiver |
-| `kafka-receiver-transform-vector` | kafka | loader, receiver, transform-vector |
-| `kafka-full` | kafka | archiver, fetcher, loader, receiver |
-| `kafka-full-transform-vrl` | kafka | fetcher, loader, receiver, transform-vrl |
-| `grpc-minimal` | grpc | loader |
-| `grpc-fetcher` | grpc | fetcher, loader |
-| `grpc-receiver` | grpc | loader, receiver |
-| `grpc-full` | grpc | fetcher, loader, receiver |
+`slim` and `single` are whole-stack shapes RENDERED from the Kubernetes tiers of
+the same name, so a change to either belongs in dfe-infra and comes back here
+through `make render-profiles`. The rest are fine-grained data-plane shapes the
+e2e suite pins by name. Which profile runs what, and how the rendering works:
+[profiles.md](profiles.md). There is no `scale`: Compose cannot run an HA broker
+or a ClickHouse cluster.
 
 ```bash
 DFE_PROFILE=grpc-full make dev        # override the profile
@@ -212,7 +269,7 @@ does not move data.
 `make dev` and `make ci` finish by running `scripts/post.py`. It injects three
 marked events at the ingest edge of the **resolved profile** (receiver if the
 profile has one, otherwise fetcher) and waits for those exact rows in
-`dfe.default`.
+`dfe.main`.
 
 ```bash
 make post                        # against an already-running stack
@@ -244,7 +301,7 @@ Each entry under `tests:` names a `service_profiles.yaml` profile, optionally
 `config_overrides` keyed by service name.
 
 The runner brings ClickHouse and `dfe-engine` up first and gates on the engine's
-health, because the engine provisions `dfe.default` and registers the schemas the
+health, because the engine provisions `dfe.main` and registers the schemas the
 loader pre-warms. Then it asserts **two** things per test: the row-count delta
 from a per-test baseline, and that those rows carry this run's marker in `_tags`.
 The delta alone would pass on somebody else's rows; the marker alone would not
@@ -263,8 +320,8 @@ Two things about the runner worth knowing before you debug it:
   topic-init services are one-shots that must exit. Waiting on the profile sweeps
   them in and fails regardless of broker health.
 - **It deletes the `_load` sibling of every expected `_land` topic before each
-  run.** Broker volumes outlive containers, so a `default_load` left by any
-  transform run suppresses `default_land` for every non-transform loader
+  run.** Broker volumes outlive containers, so a `main_load` left by any
+  transform run suppresses `main_land` for every non-transform loader
   thereafter. See
   [troubleshooting.md](troubleshooting.md#configloaderkafka-loadyaml-consumes-a-topic-nothing-pre-creates).
   Deleting it per run makes a run depend on the test definition, not on broker
@@ -276,11 +333,12 @@ Two things about the runner worth knowing before you debug it:
 
 | Target | What it does |
 |---|---|
-| `make check-compose` | `docker compose config` on the registry and dev paths, against both Kafka backends, plus the CPU floor assertion |
+| `make check-compose` | `docker compose config` on the registry, dev, live and `LOCAL=` paths, against both Kafka backends, plus the CPU floor and override-coverage assertions |
 | `make check-hardfail` | asserts an unpinned checkout refuses to resolve instead of pulling `latest` |
 | `make check-dockerfile` | hadolint on `docker/dfe-rust-builder.Dockerfile` |
 | `make check-docs` | asserts every relative link across the README and the five docs resolves |
 | `make check-python` | `ruff check` and `ruff format --check` on `scripts/` |
+| `make check-tests` | `pytest scripts/tests` -- unit tests over the credential helpers |
 
 `check-compose` is hermetic: it reads the mandatory `${VAR:?}` keys out of the
 compose file and substitutes placeholders, so it needs neither the stack SSoT nor
@@ -293,8 +351,9 @@ for why a lower ceiling takes health endpoints dark.
 external URLs and does not check `#anchors`, so a live file with a stale anchor
 still passes.
 
-`check-dockerfile` pulls the pinned hadolint image, so it wants a registry the
-first time. The rest need no network.
+`check-dockerfile` pulls the pinned hadolint image and `check-tests` resolves the
+pinned pytest through `uvx`, so both want a network the first time. The rest need
+none.
 
 ## Port collisions on a shared dev host
 

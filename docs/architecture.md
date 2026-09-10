@@ -44,7 +44,7 @@ flowchart LR
         vector["dfe-transform-vector"]:::dfe
     end
 
-    load[(Kafka default_load)]:::broker
+    load[(Kafka main_load)]:::broker
     archiver["dfe-archiver"]:::dfe
     loader["dfe-loader"]:::dfe
     ch[(ClickHouse)]:::store
@@ -68,9 +68,58 @@ ingest components produce to a `*_land` topic derived from the event's `_source`
 and the loader consumes `topic_regex: .*_land`. On a `grpc-*` profile there is no
 broker -- the ingest components dial `dfe-loader:50051` directly.
 
-Both transforms and `dfe-archiver` are Kafka-only by construction: each reads a
-topic and writes a topic or a volume. With a transform in the profile the loader
-switches to `config/loader/kafka-load.yaml` and consumes `default_load` instead.
+Both transforms and `dfe-archiver` are Kafka-only: each reads a topic and writes
+a topic or a volume. With a transform in the profile the loader switches to
+`config/loader/kafka-load.yaml` and consumes `main_load`.
+
+## A source with its own transform gets its own instance
+
+A source with a transform stops sharing `main_land`: the receiver routes it to
+`<source>_land`, and only a transform reading THAT topic sees it. So a transform
+is deployed once per source, as the Kubernetes tier deploys one per Source
+definition -- input topic, program directory and output topic all carry the name.
+
+Two shipped examples, one per transform app, and the shape another source copies.
+All eleven pieces are needed: the first five carry the data, the rest keep dev
+mode, profile resolution and the checks working.
+
+| Piece | `kafka-filebeat`, on dfe-transform-vrl | `kafka-filebeat-vector`, on dfe-transform-vector |
+|---|---|---|
+| Compose service | `dfe-transform-vrl-filebeat`, the same image, its own metrics port | `dfe-transform-vector-filebeat`, likewise |
+| Config | `config/transform-vrl/filebeat.yaml` -- `filebeat_land` in, `filebeat_load` out | `config/transform-vector/filebeat.yaml` -- `dfe_source: filebeat-vector` derives both topics |
+| Program | `config/transform-vrl/transforms-filebeat/`, vendored from dfe-transform-vrl | `config/transform-vector/transforms-filebeat/`, the same VRL inside a Vector `remap`, vendored from dfe-transform-vector |
+| Loader | `config/loader/kafka-load-filebeat.yaml` lists `filebeat_load` alongside `main_load` | `config/loader/kafka-load-filebeat-vector.yaml` lists `filebeat-vector_load` |
+| Table | `dfe.filebeat`, from the `_load` topic name -- the loader strips the suffix and routes on it | ``dfe.`filebeat-vector` ``, the same way |
+| Enrichment data | `config/transform-vrl/data/`, mounted beside the program dir -- the transform scans that dir for programs | the same directory, mounted at `/etc/dfe-transform-vector/data` -- one table, not a copy per app |
+| Dev images | an override block plus `IMAGE_CONSUMERS` in `scripts/build_dev_images.py`, or `make dev` leaves it on the registry pin | the same |
+| Env file | `env.example/transform-vrl-filebeat.env` for its own overrides; `make init` copies it into `env/` | `env.example/transform-vector-filebeat.env` |
+| Profile resolution | `SERVICES` and `SERVICE_TO_CONFIG_VAR` in `scripts/resolve_profile.py`, so a profile can run it without the passthrough instance | the same |
+| Check coverage | `_DFE_OWNED_SERVICES` in `scripts/check_compose.py`, which holds it to the `/livez` health surface | the same |
+| Metrics ports | a free host port (`DFE_TRANSFORM_VRL_FILEBEAT_PROMETHEUS_PORT`, 9097): every instance serves 9090 and two cannot publish one | the same (`DFE_TRANSFORM_VECTOR_FILEBEAT_PROMETHEUS_PORT`, 9098) |
+
+One port carries everything. The wrapper scrapes Vector's `internal_metrics` off
+its `prometheus_exporter` on loopback and registers the samples on scalo's own
+recorder (dfe-transform-vector#70), so `vector_*` reads on the published port AND
+rides the OTLP push into the otel database. The exporter's 9598 is not published.
+
+The two profiles are deliberately disjoint -- own source name, own topics, own
+table -- so a deployment can run both and compare what the two transform apps
+make of one corpus.
+
+Both tables are dfe-engine's to create from the `meta/beats/filebeat` meta
+schema -- nothing here provisions them. Create the source before sending it
+data: a loader that meets rows for a table it has no schema for buffers them,
+then dead-letters them.
+
+The source NAME propagates character for character: the engine requires a
+Kubernetes DNS-1123 label (hyphens, never underscores, because a source-bound
+app deploys one instance named for its source), the receiver substitutes it into
+`<_source>_land`, and the loader strips `_load` back off for the table. So
+`filebeat-vector` gives `filebeat-vector_land`, `filebeat-vector_load` and a
+table name that needs backticks in SQL.
+
+`make check` asserts the wiring: a transform whose output topic no loader in the
+profile reads fails, as does an enrichment table no mount resolves.
 
 ## The management plane rides alongside
 
@@ -146,7 +195,7 @@ flowchart TD
 | `kafka-redpanda` | `kafka-redpanda`, `kafka-init-redpanda` |
 | `kafka-apache` | `kafka-apache`, `kafka-init-apache` |
 | `kafka-ui` | `kafka-ui` (Kafbat) |
-| `dfe` | `dlq-init`, archiver, fetcher, loader, receiver, both transforms |
+| `dfe` | `dlq-init`, archiver, fetcher, loader, receiver, every transform instance |
 | `core` | `dfe-engine`, `dfe-ui`, `dfe-proxy` |
 | `hyperdx` | `hyperdx`, `hyperdx-ferretdb`, `hyperdx-postgres` |
 | `otel` | `otel-collector` |
@@ -194,7 +243,7 @@ Dev builds fetch source into a managed git cache, or from your own checkouts whe
 | `dfe-loader` | Rust | Writes ClickHouse; hosts `DfeTransport/Push` | `dfe` |
 | `dfe-archiver` | Rust | Archive sink (filesystem, S3, MinIO, GCS, Azure Blob) | `dfe` |
 | `dfe-transform-vector` | Rust | Vector.dev subprocess wrapper, Kafka to Kafka | `dfe` |
-| `dfe-transform-vrl` | Rust | Embedded VRL transform engine | `dfe` |
+| `dfe-transform-vrl` | Rust | Embedded VRL transform engine; deployed once per source that has a transform | `dfe` |
 | `dfe-engine` | Python | Config and schema API; the schema authority | `core` |
 | `dfe-ui` | TypeScript | Web console | `core` |
 | `dfe-hyperdx` | TypeScript | HyperDX fork. Repo and published image are both `dfe-hyperdx` | `hyperdx` |
