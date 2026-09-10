@@ -389,6 +389,14 @@ def main() -> int:
         # instances from and reports as its deployment profile.
         lines.append(f"export DFE_STACK_PROFILE := docker-{active_profile}")
 
+        # The one transport this tier binds its stages to, in the engine's own
+        # vocabulary: it refuses a source on the other one at save.
+        bus = transport == "kafka"
+        lines.append(f"export DFE_TRANSPORT_DEFAULT := {'bus' if bus else 'direct'}")
+        lines.append(
+            f"export DFE_TRANSPORT_BUS_PRESENT := {'true' if bus else 'false'}"
+        )
+
         # `LOCAL=` names components to BUILD, which is a smaller set than the
         # services a profile runs, so make validates it against the builder's own
         # list rather than against DFE_SERVICES.

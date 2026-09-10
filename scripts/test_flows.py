@@ -152,6 +152,8 @@ def main(argv: list[str] | None = None) -> int:
         f"==> profile {profile}, transport {transport}, suite from {repo}",
         file=sys.stderr,
     )
+    # Serial: every source the suite writes rolls the receiver, so a parallel
+    # worker would post into a container that is restarting.
     pytest_args = args.pytest_args or [
         "tests/e2e/flows",
         "-m",
@@ -160,6 +162,8 @@ def main(argv: list[str] | None = None) -> int:
         "--no-cov",
         "-p",
         "no:randomly",
+        "-n",
+        "0",
     ]
     return subprocess.run(
         ["uv", "run", "pytest", *pytest_args], cwd=repo, env=env
