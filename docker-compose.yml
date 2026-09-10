@@ -826,6 +826,10 @@ services:
       # The tier this stack runs, by the manifest's name: the engine seeds the
       # profile's default app instances from it and reports it as its profile.
       DFE_PROFILE: ${DFE_STACK_PROFILE:-docker-slim}
+      # The transport the tier's stages are bound to (resolve_profile exports it
+      # from the profile); the defaults are the slim tier's.
+      DFE_TRANSPORT_DEFAULT: ${DFE_TRANSPORT_DEFAULT:-direct}
+      DFE_TRANSPORT_BUS_PRESENT: ${DFE_TRANSPORT_BUS_PRESENT:-false}
       # The everyday admin, reasserted from .env on every boot. The engine refuses
       # to start on an empty or "changeme" value unless DFE_ENV is a dev posture.
       DFE_AUTH_LOCAL_ADMIN_NAME: ${DFE_AUTH_LOCAL_ADMIN_NAME:-admin}
