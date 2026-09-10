@@ -40,7 +40,7 @@
 # The transport-shaped names below `single` are the fine-grained data-plane
 # shapes; the e2e suite pins them by name.
 
-active_profile: kafka-fetcher
+active_profile: slim
 
 profiles:
   # BEGIN projected profiles -- rendered by `make render-profiles`

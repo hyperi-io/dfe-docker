@@ -817,8 +817,15 @@ services:
       # `make dev` writes DFE_ENV=dev for a tyre-kick that logs in on the shipped
       # default. docs/operating.md#there-is-no-authentication
       DFE_ENV: ${DFE_ENV:-production}
+      # A Compose stack is one operator with no forge: a hunt or rule written at
+      # production+team lands on a review branch nothing can merge, and the
+      # engine then 404s on the object it just accepted. solo commits to main.
+      DFE_GITOPS_MODE: ${DFE_GITOPS_MODE:-solo}
       # Names the fetch command the engine puts on the login page: `make creds`.
       DFE_DEPLOYMENT_TARGET: docker
+      # The tier this stack runs, by the manifest's name: the engine seeds the
+      # profile's default app instances from it and reports it as its profile.
+      DFE_PROFILE: ${DFE_STACK_PROFILE:-docker-slim}
       # The everyday admin, reasserted from .env on every boot. The engine refuses
       # to start on an empty or "changeme" value unless DFE_ENV is a dev posture.
       DFE_AUTH_LOCAL_ADMIN_NAME: ${DFE_AUTH_LOCAL_ADMIN_NAME:-admin}
@@ -852,6 +859,10 @@ services:
       # every recreate, and every session issued before it stops verifying.
       DFE_SECRETS_PATH: ${DFE_ENGINE_CONFIG_DIR:-/app/config}/.secrets
       DFE_SCHEMAS_DIR: ${DFE_ENGINE_SCHEMAS_DIR:-/app/schemas}
+      # Content another repo ships (transform templates, a source catalogue),
+      # copied onto this volume by a per-pin init service; the engine seeds its
+      # library from it at startup and an empty directory is a no-op.
+      DFE_LIBRARY_SEED_DIR: ${DFE_ENGINE_CONTENT_DIR:-/app/content}/library
       OTEL_EXPORTER_OTLP_ENDPOINT: ${DFE_OTEL_EXPORTER_ENDPOINT:-}
       OTEL_SERVICE_NAME: dfe-engine
       # scalo's CLI falls back to the prometheus backend, so the endpoint alone
@@ -860,6 +871,7 @@ services:
     volumes:
       - dfe-engine-config:${DFE_ENGINE_CONFIG_DIR:-/app/config}
       - dfe-engine-schemas:${DFE_ENGINE_SCHEMAS_DIR:-/app/schemas}
+      - dfe-engine-content:${DFE_ENGINE_CONTENT_DIR:-/app/content}
     depends_on:
       clickhouse:
         condition: service_healthy
@@ -909,8 +921,11 @@ services:
       DFE_CONFIG_DIR: ${DFE_ENGINE_CONFIG_DIR:-/app/config}
       # Same volume as the API's, so both read the one signing key.
       DFE_SECRETS_PATH: ${DFE_ENGINE_CONFIG_DIR:-/app/config}/.secrets
-      DFE_HUNTS_DIR: ${DFE_ENGINE_CONFIG_DIR:-/app/config}/hunts
-      DFE_HUNTS_RULES_DIR: ${DFE_ENGINE_CONFIG_DIR:-/app/config}/rules
+      # The engine governs hunts and rules in the deploy repo it clones into the
+      # shared config volume, so the runner reads that working tree; a runner
+      # pointed at the bare config dir polls a directory nothing writes.
+      DFE_HUNTS_DIR: ${DFE_ENGINE_CONFIG_DIR:-/app/config}/deploy-repo/config/hunts
+      DFE_HUNTS_RULES_DIR: ${DFE_ENGINE_CONFIG_DIR:-/app/config}/deploy-repo/config/rules
       DFE_SCHEMAS_DIR: ${DFE_ENGINE_SCHEMAS_DIR:-/app/schemas}
       OTEL_EXPORTER_OTLP_ENDPOINT: ${DFE_OTEL_EXPORTER_ENDPOINT:-}
       OTEL_SERVICE_NAME: dfe-hunt-runner
@@ -1243,4 +1258,5 @@ volumes:
   dlq-spool:
   dfe-engine-config:
   dfe-engine-schemas:
+  dfe-engine-content:
   hyperdx-pg-data:
