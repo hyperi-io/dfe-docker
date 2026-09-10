@@ -43,6 +43,23 @@ table and the UI classes.
 | `DFE_KAFBAT_UI_EXTERNAL`                         | Publish Kafbat (`:8081`); infra class                                                | `true`                                                              |
 | `DFE_HYPERDX_UI_EXTERNAL`                        | Publish HyperDX (`:8090` and its API `:8000`); infra class                           | `true`                                                              |
 
+### External origin
+
+The scheme and host a browser reaches this box on, with no port and no trailing
+slash -- every service appends its own port. Three surfaces build absolute URLs
+from it and each sends the browser to the wrong place when it says `localhost`
+and the browser did not: the DFE UI's post-logout redirect, the oauth2-proxy
+callbacks registered with the IdP, and HyperDX's link-backs into the DFE UI.
+
+It defaults to `http://localhost`, and nothing infers the real one -- so
+reaching the stack on a hostname without setting this is what sends every
+logout to `http://localhost:3000`. Set it on any deployment a browser reaches
+by anything other than `localhost`.
+
+| Variable                                         | Use                                                                                  | Default                                                             |
+|--------------------------------------------------|--------------------------------------------------------------------------------------|---------------------------------------------------------------------|
+| `DFE_EXTERNAL_ORIGIN`                            | Browser-facing scheme and host for every absolute URL the stack builds                | `http://localhost`                                                  |
+
 ### Infra UI authentication (opt-in)
 
 Arms an oauth2-proxy per infra-UI origin --
@@ -60,7 +77,7 @@ other profile may require an issuer.
 | `DFE_OAUTH2_PROXY_COOKIE_SECRET`                 | Session cookie key, shared by all three proxies; `make init` generates 32 bytes      | generated                                                           |
 | `DFE_OAUTH2_PROXY_COOKIE_DOMAIN`                 | Cookie domain; blank is a host-only cookie, which shares one session across the box  | blank                                                               |
 | `DFE_OAUTH2_PROXY_COOKIE_SECURE`                 | Set the Secure cookie flag; `true` only behind real TLS                              | `false`                                                             |
-| `DFE_OAUTH2_PROXY_EXTERNAL_ORIGIN`               | Base origin the OAuth redirect URLs are built from                                   | `http://localhost`                                                  |
+| `DFE_OAUTH2_PROXY_EXTERNAL_ORIGIN`               | Base origin the OAuth redirect URLs are built from; overrides `DFE_EXTERNAL_ORIGIN`  | follows `DFE_EXTERNAL_ORIGIN`                                       |
 | `DFE_OAUTH2_PROXY_VERSION`                       | Override the oauth2-proxy image pin; not SSoT-derived, keep the `tag@sha256` form    | pinned in `docker-compose.yml`                                      |
 
 ### Image Registry
@@ -243,7 +260,7 @@ Off by default. `DFE_HYPERDX_ENABLED=true` starts `hyperdx` (API + App) plus its
 | `DFE_HYPERDX_VERSION`                            | Version of the dfe-hyperdx fork image to use                                         | pinned by `make stack` from the SSoT (fail-loud, like every image)  |
 | `DFE_HYPERDX_API_PORT`                           | HyperDX API host port                                                                | `8000`                                                              |
 | `DFE_HYPERDX_APP_PORT`                           | HyperDX App UI host port                                                             | `8090`                                                              |
-| `DFE_HYPERDX_APP_URL`                            | Base URL the browser uses to reach HyperDX                                           | `http://localhost`                                                  |
+| `DFE_HYPERDX_APP_URL`                            | Base URL the browser uses to reach HyperDX; overrides `DFE_EXTERNAL_ORIGIN`          | follows `DFE_EXTERNAL_ORIGIN`                                       |
 | `HYPERDX_THEME`                                  | UI theme (NEXT_PUBLIC_THEME)                                                         | `dfe`                                                               |
 | `HYPERDX_POSTGRES_USER`                          | FerretDB/Postgres user                                                               | `hyperdx`                                                           |
 | `HYPERDX_POSTGRES_PASSWORD`                      | FerretDB/Postgres password                                                           | `hyperdx`                                                           |
