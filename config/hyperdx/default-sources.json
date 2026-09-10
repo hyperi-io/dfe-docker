@@ -1,6 +1,6 @@
 [
   {
-    "name": "default",
+    "name": "main",
     "kind": "log",
     "connection": "platform",
     "from": {

@@ -112,8 +112,8 @@ CONTAINER_LOG_SERVICES = ("dfe-engine", "dfe-loader", "dfe-receiver")
 HYPERDX_SERVICE = "hyperdx"
 HYPERDX_SEEDED_SOURCES = (
     "clickhouse_system",
-    "default",
     "hunts",
+    "main",
     "otel_logs",
     "otel_metrics",
     "otel_traces",
