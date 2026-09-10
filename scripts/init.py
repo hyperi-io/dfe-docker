@@ -16,14 +16,18 @@ Two things happen beyond a plain copy:
 Generated secrets. The keys in GENERATED_SECRETS have deterministic, committed defaults in docker-compose.yml, which means a stack that never ran this script is using a signing key and a database password anyone with the repo already knows. This script mints a random value for each - into a new .env, and topped up into an existing .env that predates the key. Compose cannot hard-fail on them (its interpolation is not profile-gated, so a `:?` would abort `make down` too, for services the operator may not even run), so the enforcement lives in the power-on self test: scripts/post.py refuses to pass while a default is still in place.
 
 Drift report. A re-run reports template keys that never reached .env. The copy is one-shot, so an operator who ran `make init` months ago otherwise never learns that .env.example grew a setting. Reporting is all it does - editing an operator's .env is theirs to do, not ours.
+
+The retention question. A NEW .env is asked, once and on a TTY only, for the default TTL every time-series table gets, and the answer lands as a live DFE_CLICKHOUSE_DEFAULT_TTL_DAYS line. The environment pre-answers it; a non-interactive run keeps the template's commented 90; an existing .env is never re-asked.
 """
 
 from __future__ import annotations
 
+import os
 import re
 import secrets
 import shutil
 import string
+import sys
 from pathlib import Path
 
 from _common import (
@@ -39,7 +43,12 @@ from _common import (
 # enforces them: DFE_UI_NEXTAUTH_SECRET and HYPERDX_POSTGRES_PASSWORD via its
 # WEAK_SECRET_DEFAULTS service-map, CLICKHOUSE_PASSWORD via its own external-CH
 # check (its default is empty, not a sentinel string), and
-# DFE_AUTH_LOCAL_ADMIN_PASSWORD by logging in with it. Keep the four in step.
+# DFE_AUTH_LOCAL_ADMIN_PASSWORD by logging in with it. Keep them in step.
+#
+# The deploy mints two logins: DFE_AUTH_LOCAL_ADMIN_PASSWORD is `admin`, reasserted
+# from .env on every engine boot. DFE_AUTH_BREAKGLASS_PASSWORD is the recovery admin
+# the engine hashes into the deploy repo on first boot and ignores thereafter.
+# Neither is printed here; `make creds` is the hand-over.
 #
 # CLICKHOUSE_PASSWORD is a BREAKING change on upgrade: a ClickHouse data volume
 # created with the old empty password does not re-authenticate against a generated
@@ -62,11 +71,14 @@ _LEN_KEY = 48  # signing keys and other long-lived key material
 _LEN_COOKIE = 32
 
 # Name -> length tier. DB passwords are the 128-bit credential tier; the dfe-ui
-# NextAuth value is a session-signing KEY, so it takes the 256-bit tier.
+# NextAuth and engine JWT values are session-signing KEYS, so they take the
+# 256-bit tier.
 GENERATED_SECRETS = {
     "CLICKHOUSE_PASSWORD": _LEN_CREDENTIAL,
+    "DFE_AUTH_BREAKGLASS_PASSWORD": _LEN_CREDENTIAL,
     "DFE_AUTH_LOCAL_ADMIN_PASSWORD": _LEN_CREDENTIAL,
     "HYPERDX_POSTGRES_PASSWORD": _LEN_CREDENTIAL,
+    "DFE_API_JWT_SECRET": _LEN_KEY,
     "DFE_UI_NEXTAUTH_SECRET": _LEN_KEY,
     "DFE_OAUTH2_PROXY_COOKIE_SECRET": _LEN_COOKIE,
 }
@@ -82,6 +94,15 @@ GENERATED_SECRETS = {
 # comment explaining the key, that documentation line would be replaced by a live
 # random assignment.
 _SETTING_RE = re.compile(r"^[ \t]*(?:#[ \t]?)?(?P<key>[A-Z][A-Z0-9_]*)[ \t]*=")
+
+# The retention every time-series table gets unless a source or a dfe-schemas
+# definition sets its own. Whole days; 0 disables the default TTL.
+RETENTION_KEY = "DFE_CLICKHOUSE_DEFAULT_TTL_DAYS"
+RETENTION_DEFAULT = "90"
+_RETENTION_PROMPT = (
+    f"Default retention for every time-series table, in days [{RETENTION_DEFAULT}]: "
+)
+_DAYS_RE = re.compile(r"[0-9]+")
 
 
 def _generate_secret(length: int) -> str:
@@ -153,6 +174,65 @@ def _create_dotenv(*, dst_path: Path, src_path: Path) -> None:
     )
 
 
+def _retention_answer() -> str | None:
+    """Return the retention days to write live, or None to keep the template line.
+
+    The environment pre-answers; otherwise a TTY is asked, and anything else keeps
+    the commented template default. Junk from the prompt is re-asked; junk from
+    the environment is refused, because nobody is there to correct it.
+    """
+    preset = os.environ.get(RETENTION_KEY)
+    if preset is not None:
+        preset = preset.strip()
+        if not (_DAYS_RE.fullmatch(preset)):
+            raise SystemExit(
+                f"{RETENTION_KEY}={preset!r} in the environment is not a whole "
+                "number of days (0 disables the default TTL)"
+            )
+        return preset
+    if not (sys.stdin.isatty()):
+        return None
+    while True:
+        try:
+            answer = input(_RETENTION_PROMPT).strip()
+        except EOFError:
+            return None
+        if not (answer):
+            return RETENTION_DEFAULT
+        if _DAYS_RE.fullmatch(answer):
+            return answer
+        _print(msg="enter a whole number of days; 0 disables the default TTL")
+
+
+def _set_live(*, text: str, key: str, value: str) -> str:
+    """Replace key's line, commented or live, with a live assignment; append if absent."""
+    found = False
+    rendered = []
+    for line in text.splitlines():
+        if _setting_key(line=line) == key:
+            if not (found):
+                rendered.append(f"{key}={value}")
+            found = True
+            continue
+        rendered.append(line)
+    if not (found):
+        rendered.append("")
+        rendered.append("## Set by `make init`.")
+        rendered.append(f"{key}={value}")
+    return "\n".join(rendered) + "\n"
+
+
+def _ask_retention(*, dotenv_path: Path) -> None:
+    """Write the retention answer into a NEW .env as a live line."""
+    days = _retention_answer()
+    if days is None:
+        return
+    text = dotenv_path.read_text(encoding="utf-8")
+    with dotenv_path.open("w", encoding="utf-8", newline="\n") as handle:
+        handle.write(_set_live(text=text, key=RETENTION_KEY, value=days))
+    _print(header=_rel_path(path=dotenv_path), msg=f"{RETENTION_KEY}={days}")
+
+
 def _top_up_secrets(*, dotenv_path: Path) -> None:
     """Give every GENERATED_SECRETS key a real value in an existing .env.
 
@@ -194,11 +274,20 @@ def _top_up_secrets(*, dotenv_path: Path) -> None:
     )
 
 
-def _report_drift(*, dotenv_path: Path, template_path: Path) -> None:
-    """Report template keys absent from an existing .env - the copy is one-shot, so it drifts."""
+def drift_keys(*, dotenv_path: Path, template_path: Path) -> list[str]:
+    """Return the template keys an existing dotenv file never received.
+
+    Key-level, so it catches a template that grew a setting inside a file that
+    already exists - which a file-level check cannot see.
+    """
     template_keys = _all_keys(text=template_path.read_text(encoding="utf-8"))
     dotenv_keys = _all_keys(text=dotenv_path.read_text(encoding="utf-8"))
-    missing = sorted(template_keys - dotenv_keys)
+    return sorted(template_keys - dotenv_keys)
+
+
+def _report_drift(*, dotenv_path: Path, template_path: Path) -> None:
+    """Report template keys absent from an existing .env - the copy is one-shot, so it drifts."""
+    missing = drift_keys(dotenv_path=dotenv_path, template_path=template_path)
     if not (missing):
         return
     _print(
@@ -231,6 +320,7 @@ def main() -> int:
         _report_drift(dotenv_path=DOTENV_FILE, template_path=DOTENV_TEMPLATE)
     else:
         _create_dotenv(dst_path=DOTENV_FILE, src_path=DOTENV_TEMPLATE)
+        _ask_retention(dotenv_path=DOTENV_FILE)
 
     ENV_DIR.mkdir(exist_ok=True, parents=True)
 

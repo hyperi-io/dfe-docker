@@ -36,10 +36,12 @@ from _common import (
     FALSY,
     PROFILE_MK,
     SERVICE_PROFILES_FILE,
+    _config_topics,
     _load_dotenv,
     _print,
     _rel_path,
 )
+from build_dev_images import buildable_components
 
 AUTH_ENABLED_ENV_VAR = "DFE_AUTH_ENABLED"
 # One proxy per infra-UI ORIGIN, not per UI: oauth2-proxy serves a single
@@ -64,8 +66,11 @@ AUTH_REQUIRED_ENV_VARS = (
 # membership, which is authn alone -- exactly what the infra gate exists to stop.
 AUTH_NON_BLANK_IF_SET = ("DFE_OIDC_ALLOWED_GROUPS",)
 
+ENGINE_BROKER_ENV_VAR = "DFE_KAFKA_BOOTSTRAP_SERVERS"
+IN_STACK_BROKER = "kafka:9092"
+
 CORE_ENABLED_ENV_VAR = "DFE_CORE_ENABLED"
-CORE_SERVICES = ["dfe-engine", "dfe-ui", "dfe-proxy"]
+CORE_SERVICES = ["dfe-engine", "dfe-hunt-runner", "dfe-ui", "dfe-proxy"]
 
 HYPERDX_ENABLED_ENV_VAR = "DFE_HYPERDX_ENABLED"
 HYPERDX_SERVICES = ["hyperdx", "hyperdx-ferretdb", "hyperdx-postgres"]
@@ -95,6 +100,12 @@ FOOTPRINT_KEYS = {
     "otel": (OTEL_ENABLED_ENV_VAR, False),
 }
 
+# Topics kafka-init pre-creates: the stack default plus the ones this profile's
+# transforms name. dfe-transform-vrl exits on a missing topic, its sink included.
+KAFKA_INIT_TOPICS_VAR = "KAFKA_INIT_TOPICS"
+KAFKA_INIT_TOPIC_DEFAULT = "main_land"
+TRANSFORM_SERVICE_PREFIX = "dfe-transform-"
+
 PROFILE_ENV_VAR = "DFE_PROFILE"
 PROFILE_ACTIVE_YAML_FIELD = "active_profile"
 PROFILE_LIST_YAML_FIELD = "profiles"
@@ -111,15 +122,21 @@ SERVICE_TO_CONFIG_VAR = {
     "dfe-loader": "DFE_LOADER_CONFIG",
     "dfe-receiver": "DFE_RECEIVER_CONFIG",
     "dfe-transform-vector": "DFE_TRANSFORM_VECTOR_CONFIG",
+    "dfe-transform-vector-filebeat": "DFE_TRANSFORM_VECTOR_FILEBEAT_CONFIG",
     "dfe-transform-vrl": "DFE_TRANSFORM_VRL_CONFIG",
+    "dfe-transform-vrl-filebeat": "DFE_TRANSFORM_VRL_FILEBEAT_CONFIG",
 }
+# A per-source transform instance is a service of its own here, because a
+# profile has to be able to run one without the other.
 SERVICES = [
     "dfe-archiver",
     "dfe-fetcher",
     "dfe-loader",
     "dfe-receiver",
     "dfe-transform-vector",
+    "dfe-transform-vector-filebeat",
     "dfe-transform-vrl",
+    "dfe-transform-vrl-filebeat",
 ]
 
 TRANSPORT_TYPES = ["grpc", "kafka"]
@@ -172,6 +189,18 @@ def _validate_auth() -> None:
     )
 
 
+def _init_topics(*, services: dict[str, object]) -> list[str]:
+    """Return the topics kafka-init must create for this profile, sorted."""
+    topics = {KAFKA_INIT_TOPIC_DEFAULT}
+    for service_name, service_config in services.items():
+        if not (service_name.startswith(TRANSFORM_SERVICE_PREFIX)):
+            continue
+        path = CONFIG_DIR / service_config[PROFILE_SERVICE_CONFIG_YAML_FIELD]
+        subscribed, produced, _ = _config_topics(path=path)
+        topics |= subscribed | produced
+    return sorted(topics)
+
+
 def _footprint(*, profile: dict[str, object], profile_name: str) -> dict[str, bool]:
     """Resolve which footprint components run: env var, else profile key, else default."""
     resolved: dict[str, bool] = {}
@@ -220,8 +249,8 @@ def _parse_yaml(*, text: str) -> dict[str, object]:
 
 def _resolve_profile(
     *, data: dict[str, object]
-) -> tuple[str, dict[str, object], dict[str, bool]]:
-    """Resolve active profile and return (transport, services_dict, footprint)."""
+) -> tuple[str, str, dict[str, object], dict[str, bool]]:
+    """Resolve active profile and return (name, transport, services_dict, footprint)."""
     active_profile = os.environ.get(PROFILE_ENV_VAR, "") or data.get(
         PROFILE_ACTIVE_YAML_FIELD, None
     )
@@ -286,7 +315,12 @@ def _resolve_profile(
                 msg=f"Config file {_rel_path(path=config_file)!r} not found.",
             )
 
-    return transport, services, _footprint(profile=profile, profile_name=active_profile)
+    return (
+        active_profile,
+        transport,
+        services,
+        _footprint(profile=profile, profile_name=active_profile),
+    )
 
 
 def main() -> int:
@@ -301,7 +335,7 @@ def main() -> int:
         data = _parse_yaml(
             text=SERVICE_PROFILES_FILE.read_text(encoding="utf-8", errors="replace")
         )
-        transport, services, footprint = _resolve_profile(data=data)
+        active_profile, transport, services, footprint = _resolve_profile(data=data)
 
         # Build infra compose profile flags
         profiles = []
@@ -331,6 +365,9 @@ def main() -> int:
         lines = []
         profile_flags = " ".join(f"--profile {profile}" for profile in profiles)
         lines.append(f"export PROFILE_FLAGS := {profile_flags}")
+        lines.append(
+            f"export {KAFKA_INIT_TOPICS_VAR} := {' '.join(_init_topics(services=services))}"
+        )
         # ClickHouse stays out of this list -- it starts via its compose profile
         # and the depends_on of whatever needs it. DFE_SERVICES is also what
         # build_dev_images.py builds and what `SERVICES=` narrows against.
@@ -349,6 +386,34 @@ def main() -> int:
             if footprint["hyperdx"]:
                 service_list.extend(AUTH_HYPERDX_SERVICES)
         lines.append(f"export DFE_SERVICES := {' '.join(service_list)}")
+
+        # The manifest's name for this Compose tier (dfe-infra apps.yaml says
+        # docker-slim, docker-single), which the engine seeds its default app
+        # instances from and reports as its deployment profile.
+        lines.append(f"export DFE_STACK_PROFILE := docker-{active_profile}")
+
+        # The one transport this tier binds its stages to, in the engine's own
+        # vocabulary: it refuses a source on the other one at save.
+        bus = transport == "kafka"
+        lines.append(f"export DFE_TRANSPORT_DEFAULT := {'bus' if bus else 'direct'}")
+        lines.append(
+            f"export DFE_TRANSPORT_BUS_PRESENT := {'true' if bus else 'false'}"
+        )
+        # The engine creates a source's topics on the in-stack broker, which every
+        # kafka tier reaches by the `kafka` alias; .env names an external broker
+        # instead, and a direct tier hands the engine no broker at all.
+        if bus:
+            broker = (
+                os.environ.get(ENGINE_BROKER_ENV_VAR, "").strip() or IN_STACK_BROKER
+            )
+            lines.append(f"export {ENGINE_BROKER_ENV_VAR} := {broker}")
+
+        # `LOCAL=` names components to BUILD, which is a smaller set than the
+        # services a profile runs, so make validates it against the builder's own
+        # list rather than against DFE_SERVICES.
+        lines.append(
+            f"export DFE_BUILDABLE_SERVICES := {' '.join(buildable_components())}"
+        )
 
         # The Makefile decides the compose fragment chain from this, so profile
         # key and env var can never disagree about whether auth is armed.

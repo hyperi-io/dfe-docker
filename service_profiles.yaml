@@ -19,7 +19,7 @@
 # always has:
 #
 #   clickhouse  (default true)   the warehouse container
-#   core        (default true)   dfe-engine, dfe-ui, dfe-proxy
+#   core        (default true)   dfe-engine, dfe-hunt-runner, dfe-ui, dfe-proxy
 #   kafbat      (default true)   the Kafka UI; kafka transport only
 #   hyperdx     (default false)  hyperdx + its Postgres and FerretDB
 #   otel        (default false)  the collector that takes the stack's OWN telemetry
@@ -40,41 +40,50 @@
 # The transport-shaped names below `single` are the fine-grained data-plane
 # shapes; the e2e suite pins them by name.
 
-active_profile: kafka-fetcher
+active_profile: slim
 
 profiles:
-  # Mirrors the Kubernetes slim tier: gRPC transport, no broker, the
-  # receiver/loader ingest path, and the collector that tier also runs.
+  # BEGIN projected profiles -- rendered by `make render-profiles`
+  # Kubernetes is the master for these two: edit dfe-infra
+  # argocd/values/profile-<mode>.yaml, then re-render. See docs/profiles.md.
+  # Mirrors the Kubernetes slim tier: grpc transport, no broker, the warehouse,
+  # self-monitoring, and the apps apps.yaml makes default there.
   slim:
     transport: grpc
     clickhouse: true
     core: true
+    hyperdx: true
     otel: true
     services:
+      dfe-archiver:
+        config_path: archiver/grpc.yaml
       dfe-loader:
         config_path: loader/grpc.yaml
       dfe-receiver:
         config_path: receiver/grpc.yaml
-
-  # One node of the whole PLATFORM, with Kafka: warehouse, core surface, Kafka UI
-  # and self-monitoring. The data plane is receiver + loader ONLY, because those
-  # two are the pair that runs from a default deploy with nothing external
-  # configured. dfe-archiver, dfe-fetcher and the transforms need endpoints or
-  # credentials this profile cannot supply, so they stay opt-in on the
-  # fine-grained profiles below. HyperDX is opt-in too, matching the Kubernetes
-  # profile.
+  # Mirrors the Kubernetes single tier: kafka transport, the warehouse,
+  # self-monitoring, and the apps apps.yaml makes default there.
   single:
     transport: kafka
     clickhouse: true
     core: true
+    hyperdx: true
     kafbat: true
     otel: true
     services:
+      dfe-archiver:
+        config_path: archiver/kafka.yaml
       dfe-loader:
         config_path: loader/kafka.yaml
       dfe-receiver:
         config_path: receiver/kafka.yaml
+  # END projected profiles
 
+  # Hand-crafted from here down. WHICH apps the two projected profiles run is
+  # dfe-infra apps.yaml's `default_in`, not a choice made here: they idle Ready
+  # until an operator configures them, so being deployed unconfigured costs a
+  # pod and nothing else. dfe-fetcher and the transforms stay off both, because
+  # an instance of either IS a source and arrives when the source is written.
   kafka-minimal:
     transport: kafka
     services:
@@ -122,6 +131,40 @@ profiles:
         config_path: receiver/kafka.yaml
       dfe-transform-vrl:
         config_path: transform-vrl/kafka.yaml
+
+  # The per-source transform shape: two dfe-transform-vrl instances, one on the
+  # shared main_land and one on the filebeat source's own filebeat_land, with
+  # a loader consuming both output topics. A source with its own transform gets
+  # its own instance and its own table; adding a second means adding a service,
+  # not reconfiguring this one.
+  kafka-filebeat:
+    transport: kafka
+    services:
+      dfe-loader:
+        config_path: loader/kafka-load-filebeat.yaml
+      dfe-receiver:
+        config_path: receiver/kafka.yaml
+      dfe-transform-vrl:
+        config_path: transform-vrl/kafka.yaml
+      dfe-transform-vrl-filebeat:
+        config_path: transform-vrl/filebeat.yaml
+
+  # The same per-source shape as kafka-filebeat, with dfe-transform-vector doing
+  # the transforming: the bundled filebeat VRL runs inside a Vector remap instead
+  # of the embedded VRL engine. Its own source name, topics and table, so a
+  # deployment can run this profile and kafka-filebeat side by side and compare
+  # what the two transform apps make of the same corpus.
+  kafka-filebeat-vector:
+    transport: kafka
+    services:
+      dfe-loader:
+        config_path: loader/kafka-load-filebeat-vector.yaml
+      dfe-receiver:
+        config_path: receiver/kafka.yaml
+      dfe-transform-vector:
+        config_path: transform-vector/kafka.yaml
+      dfe-transform-vector-filebeat:
+        config_path: transform-vector/filebeat.yaml
 
   kafka-receiver-archiver:
     transport: kafka

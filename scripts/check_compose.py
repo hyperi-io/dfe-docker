@@ -38,13 +38,16 @@ Paths checked:
 - live: dev plus ``docker-compose.live.yml``, the path ``make dev LIVE=1``
   takes. Its ``${DFE_SRC_ROOT:?...}`` mounts are hard-fail by design, so the
   placeholder injection covers that key the same way it covers image pins.
+- local: the registry path plus the overlay ``make dev LOCAL=...`` generates,
+  rendered here for one representative component so the generator's output is
+  checked, not just its source.
 
 Each is checked against both Kafka backends, because the two are mutually
 exclusive and a change can easily satisfy one and break the other -- which is
 precisely what happened with the topic-init service that ran a Redpanda image on
 the Apache profile.
 
-Beyond resolution, three semantic assertions ride along.
+Beyond resolution, these semantic assertions ride along.
 
 - No service that gates on a health endpoint may carry a CPU ceiling under
   `_MIN_HEALTH_CPUS` -- see that constant for why a lower ceiling takes the
@@ -55,24 +58,62 @@ Beyond resolution, three semantic assertions ride along.
 - The opt-in auth profile must gate without holes: no stack needs an OIDC setting
   to resolve, an armed profile moves every infra-UI origin behind a proxy, and
   the infra kill switch takes the proxies down with the UIs. See `_AUTH_PROXIES`.
+- The committed override must repoint every service that runs a buildable
+  component's image, consumers included, or `make dev` runs two builds of one
+  component. See `_override_coverage_failures`.
+- The overlay `make dev LOCAL=...` generates must put the named component and its
+  image consumers on `:local` and leave every other service on its registry pin.
+  See `_local_overlay_failures`.
+- That overlay must describe THIS run: a build that builds nothing removes it
+  rather than leaving the previous run's. See `_overlay_staleness_failures`.
+- The builder's IMPLICIT_CONSUMERS must match the compose graph, or a `depends_on`
+  edge added here silently stops `make dev` building an image the stack starts.
+  See `_implicit_consumer_failures`.
+- Every profile's transform output topic must be read by that profile's loader,
+  and no two transforms may consume one topic. See `_transform_wiring_failures`.
+- Every enrichment table a transform config names must resolve to a file through
+  that service's own bind mounts. See `_enrichment_table_failures`.
+- The engine must never receive an empty or `changeme` admin password outside a
+  dev posture, because it refuses to start on one. See `_credential_failures`.
 """
 
 from __future__ import annotations
 
 import json
 import os
+import re
 import subprocess
 import sys
+from pathlib import Path
 
 from _common import (
     COMPOSE_FILE,
     COMPOSE_LIVE_FILE,
     COMPOSE_OVERRIDE_FILE,
+    CONFIG_DIR,
     REPO_ROOT,
+    SERVICE_PROFILES_FILE,
+    _config_enrichment_paths,
+    _config_topics,
     _dotenv_values,
     _print,
     _required_compose_vars,
 )
+from build_dev_images import (
+    IMPLICIT_CONSUMERS,
+    buildable_components,
+    local_image_services,
+    overlay_text,
+)
+from resolve_profile import _parse_yaml
+
+# The overlay `make dev LOCAL=...` generates, rendered for dfe-engine because it
+# is the component with IMAGE_CONSUMERS followers. Written under .tmp so compose
+# resolves it relative to the repo like the shipped files.
+_LOCAL_SAMPLE = ["dfe-engine"]
+_LOCAL_RENDER = REPO_ROOT / ".tmp" / "compose-check-local.yml"
+# A stack service the builder cannot build, for the overlay staleness assertion.
+_UNBUILDABLE_SAMPLE = "kafka-ui"
 
 # Enough to satisfy interpolation and produce a parseable image reference.
 _PLACEHOLDER = "0.0.0-compose-check"
@@ -157,6 +198,34 @@ _AUTH_ENV = {
     "DFE_OAUTH2_PROXY_COOKIE_SECRET": "0123456789abcdef0123456789abcdef",
 }
 
+# The engine refuses to start on an unset or shipped-default admin password unless
+# DFE_ENV names a dev posture, so a compose file that hands it one outside dev
+# produces a container that crash-loops on boot. The posture list mirrors
+# dfe_engine.settings.is_dev_posture; compose's own `${DFE_ENV:-production}` default
+# is what makes the unset case a fault rather than a dev posture, so only a .env
+# that says `dev` gets to run on the shipped password.
+_ENGINE_SERVICE = "dfe-engine"
+_ADMIN_PASSWORD_KEY = "DFE_AUTH_LOCAL_ADMIN_PASSWORD"
+_POSTURE_KEY = "DFE_ENV"
+_DEFAULT_PASSWORD = "changeme"
+_DEV_POSTURES = frozenset({"dev", "development", "local", "test", "ci"})
+# An env file compose loads INSTEAD of .env, so a case describes the whole input.
+_EMPTY_ENV_FILE = REPO_ROOT / ".tmp" / "compose-check-empty.env"
+# (label, DFE_ENV, admin password, must the rule flag it). The negative half: a
+# rule that flags nothing passes every stack, so the cases that must NOT flag are
+# checked as hard as the ones that must.
+_CREDENTIAL_CASES: tuple[tuple[str, str, str, bool], ...] = (
+    ("production, no password", "production", "", True),
+    (f"production, {_DEFAULT_PASSWORD}", "production", _DEFAULT_PASSWORD, True),
+    ("staging, no password", "staging", "", True),
+    ("production, minted password", "production", "aMintedValue123", False),
+    ("dev, no password", "dev", "", False),
+    (f"dev, {_DEFAULT_PASSWORD}", "dev", _DEFAULT_PASSWORD, False),
+    ("posture unset, no password", "", "", True),
+    (f"posture unset, {_DEFAULT_PASSWORD}", "", _DEFAULT_PASSWORD, True),
+    ("posture unset, minted password", "", "aMintedValue123", False),
+)
+
 # Services this project owns and therefore holds to that surface. hyperdx,
 # clickhouse, the brokers and kafka-ui are third-party and keep their own.
 _DFE_OWNED_SERVICES = {
@@ -166,9 +235,19 @@ _DFE_OWNED_SERVICES = {
     "dfe-loader",
     "dfe-receiver",
     "dfe-transform-vector",
+    "dfe-transform-vector-filebeat",
     "dfe-transform-vrl",
+    "dfe-transform-vrl-filebeat",
     "dfe-ui",
 }
+
+# A dfe-transform-vector pipeline declares its own enrichment tables, and the
+# service mounts the directory holding it rather than the file.
+_TRANSFORM_FILE_SUFFIXES = (".yaml", ".yml")
+
+# Profile services whose config declares a Kafka sink topic somebody has to read.
+_TRANSFORM_PREFIX = "dfe-transform-"
+_LOADER_SERVICE = "dfe-loader"
 
 
 def _check_env() -> tuple[dict[str, str], list[str]]:
@@ -242,7 +321,11 @@ def _retired_health_failures(*, config: dict) -> list[str]:
 
 
 def _config_json(
-    *, env: dict[str, str], files: list[str], extra_profiles: tuple[str, ...] = ()
+    *,
+    env: dict[str, str],
+    files: list[str],
+    extra_profiles: tuple[str, ...] = (),
+    env_file: Path | None = None,
 ) -> dict | None:
     """Return the fully interpolated compose model, or None if it did not resolve.
 
@@ -250,8 +333,13 @@ def _config_json(
     every service a reader might assert about. `auth` is opt-in and therefore only
     arrives through `extra_profiles`. Resolution failures are reported by the loop
     in main(), so a None here needs no second message.
+
+    `env_file` replaces the .env compose would otherwise load, which is what lets a
+    caller assert about a variable this checkout happens to have set.
     """
     cmd = ["docker", "compose"]
+    if env_file is not None:
+        cmd += ["--env-file", str(env_file)]
     for path in files:
         cmd += ["-f", path]
     for profile in [*_BASE_PROFILES, _KAFKA_BACKENDS[0], *extra_profiles]:
@@ -480,6 +568,14 @@ def _health_cpu_failures(*, env: dict[str, str], files: list[str]) -> list[str]:
     return failures
 
 
+def _render_local_overlay() -> None:
+    """Render the `make dev LOCAL=...` overlay for the sample component, uncommitted."""
+    _LOCAL_RENDER.parent.mkdir(parents=True, exist_ok=True)
+    _LOCAL_RENDER.write_text(
+        overlay_text(_LOCAL_SAMPLE), encoding="utf-8", newline="\n"
+    )
+
+
 def _paths() -> list[tuple[str, list[str]]]:
     """Return the (label, compose file list) pairs we ship and therefore must check."""
     for shipped in (COMPOSE_OVERRIDE_FILE, COMPOSE_LIVE_FILE):
@@ -499,7 +595,356 @@ def _paths() -> list[tuple[str, list[str]]]:
             "live",
             [COMPOSE_FILE.name, COMPOSE_OVERRIDE_FILE.name, COMPOSE_LIVE_FILE.name],
         ),
+        ("local", [COMPOSE_FILE.name, str(_LOCAL_RENDER.relative_to(REPO_ROOT))]),
     ]
+
+
+def _transform_wiring_failures() -> tuple[list[str], int]:
+    """Return (messages, assertions made) for every profile's transform topics.
+
+    Two properties, both of them things a profile can get wrong while every
+    service still starts and reports healthy:
+
+    - a transform's output topic must be read by that profile's loader, or the
+      events reach a topic and stop there (dfe-docker#66);
+    - two transform instances in one profile must not consume the same topic,
+      because each event would then take whichever program won the partition.
+    """
+    data = _parse_yaml(
+        text=SERVICE_PROFILES_FILE.read_text(encoding="utf-8", errors="replace")
+    )
+    failures: list[str] = []
+    made = 0
+    for name, profile in sorted(data.get("profiles", {}).items()):
+        services = profile.get("services", {})
+        transforms = {}
+        for service, config in services.items():
+            if not (service.startswith(_TRANSFORM_PREFIX)):
+                continue
+            config_path = config.get("config_path")
+            if config_path is None:
+                failures.append(
+                    f"{name}: {service} declares no config_path -- its topics cannot "
+                    "be read, so nothing checks what it consumes or produces"
+                )
+                continue
+            transforms[service] = config_path
+        if not (transforms):
+            continue
+        loader = services.get(_LOADER_SERVICE, {}).get("config_path")
+        consumed, _, pattern = (
+            _config_topics(path=CONFIG_DIR / loader) if loader else (set(), set(), "")
+        )
+        seen: dict[str, str] = {}
+        for service, config_path in sorted(transforms.items()):
+            subscribed, produced, _ = _config_topics(path=CONFIG_DIR / config_path)
+            for topic in sorted(produced):
+                made += 1
+                if topic in consumed or (pattern and re.fullmatch(pattern, topic)):
+                    continue
+                failures.append(
+                    f"{name}: {service} produces {topic} and no loader in the profile "
+                    "consumes it -- events reach the topic and stop there"
+                )
+            for topic in sorted(subscribed):
+                made += 1
+                if topic in seen:
+                    failures.append(
+                        f"{name}: {service} and {seen[topic]} both consume {topic} -- "
+                        "an event would take whichever program won the partition"
+                    )
+                seen[topic] = service
+    return failures, made
+
+
+def _bind_host_path(*, binds: dict[str, Path], target: str) -> Path | None:
+    """Return the file on disk a container path resolves to, or None if nothing mounts it.
+
+    Longest mount first, so a nested mount wins over the directory containing it.
+    """
+    for mount, source in sorted(binds.items(), key=lambda item: -len(item[0])):
+        mount = mount.rstrip("/")
+        if target == mount:
+            return source
+        if target.startswith(f"{mount}/"):
+            return source / target[len(mount) + 1 :]
+    return None
+
+
+def _enrichment_table_failures(*, env: dict[str, str]) -> tuple[list[str], int]:
+    """Return (messages, assertions made) for the enrichment tables the transforms name.
+
+    An `enrichment_tables` entry names a CONTAINER path, and a transform that
+    cannot open one fails to compile its programs at startup -- a running-stack
+    failure compose resolution never sees. So each path is mapped back through the
+    service's own bind mounts and the file is required to exist on disk.
+
+    Every YAML the service mounts is read, files and mounted directories alike:
+    dfe-transform-vrl declares its tables in the service config, and
+    dfe-transform-vector declares them in the pipeline file inside its transforms
+    directory.
+    """
+    config = _config_json(env=env, files=[COMPOSE_FILE.name])
+    if config is None:
+        return (
+            ["the registry path did not resolve, so enrichment tables are unknown"],
+            0,
+        )
+    failures: list[str] = []
+    made = 0
+    for name, service in sorted(config.get("services", {}).items()):
+        if not (name.startswith(_TRANSFORM_PREFIX)):
+            continue
+        binds = {
+            volume["target"]: Path(volume["source"])
+            for volume in service.get("volumes") or []
+            if volume.get("type") == "bind" and volume.get("source")
+        }
+        mounted: set[Path] = set()
+        for path in binds.values():
+            if path.is_file():
+                mounted.add(path)
+            elif path.is_dir():
+                mounted |= {
+                    child
+                    for child in path.iterdir()
+                    if child.is_file() and child.suffix in _TRANSFORM_FILE_SUFFIXES
+                }
+        for source in sorted(mounted):
+            for target in sorted(_config_enrichment_paths(path=source)):
+                made += 1
+                host = _bind_host_path(binds=binds, target=target)
+                if host is None:
+                    failures.append(
+                        f"{name}: enrichment table {target} is under no bind mount -- "
+                        "the transform cannot open it and fails to compile its programs"
+                    )
+                elif not (host.is_file()):
+                    failures.append(
+                        f"{name}: enrichment table {target} maps to {host}, which is "
+                        "not a file -- the transform fails to compile its programs"
+                    )
+    return failures, made
+
+
+def _credential_fault(*, config: dict) -> str:
+    """Return why the engine's admin credential is unusable, or empty when it is fine."""
+    service = config.get("services", {}).get(_ENGINE_SERVICE, {})
+    environment = service.get("environment") or {}
+    # Engine contract: settings.is_dev_posture strips and lowercases DFE_ENV, and
+    # auth.bootstrap.default_credentials_in_use strips the password before comparing.
+    posture = str(environment.get(_POSTURE_KEY) or "").strip().lower()
+    password = str(environment.get(_ADMIN_PASSWORD_KEY) or "").strip()
+    if password and password != _DEFAULT_PASSWORD:
+        return ""
+    if posture in _DEV_POSTURES:
+        return ""
+    return (
+        f"{_ENGINE_SERVICE} receives "
+        f"{'no ' + _ADMIN_PASSWORD_KEY if not password else _ADMIN_PASSWORD_KEY + '=' + _DEFAULT_PASSWORD}"
+        f" with {_POSTURE_KEY}={posture or 'unset'} -- the engine refuses to start on "
+        "that outside a dev posture, so the container crash-loops. Run `make init` to "
+        f"mint one, or `make dev` for a dev stack"
+    )
+
+
+def _credential_failures(*, env: dict[str, str]) -> tuple[list[str], int]:
+    """Return (messages, assertions made) for the engine's admin credential.
+
+    Two things are checked. This checkout's own resolved stack must not hand the
+    engine a credential it will refuse -- that is the assertion an operator wants.
+    Then the matrix in `_CREDENTIAL_CASES` runs the rule against inputs whose answer
+    is known, so a rule that has stopped flagging anything fails here rather than
+    passing every stack silently.
+    """
+    failures: list[str] = []
+    made = 1
+    live = _config_json(env=env, files=[COMPOSE_FILE.name])
+    if live is None:
+        return (
+            ["the registry path did not resolve, so the credential is unknown"],
+            made,
+        )
+    fault = _credential_fault(config=live)
+    if fault:
+        failures.append(fault)
+
+    _EMPTY_ENV_FILE.parent.mkdir(parents=True, exist_ok=True)
+    _EMPTY_ENV_FILE.write_text("", encoding="utf-8", newline="\n")
+    base = {
+        k: v for k, v in env.items() if k not in (_POSTURE_KEY, _ADMIN_PASSWORD_KEY)
+    }
+    for label, posture, password, want_flagged in _CREDENTIAL_CASES:
+        made += 1
+        case = {**base, _ADMIN_PASSWORD_KEY: password}
+        if posture:
+            case[_POSTURE_KEY] = posture
+        config = _config_json(
+            env=case, files=[COMPOSE_FILE.name], env_file=_EMPTY_ENV_FILE
+        )
+        if config is None:
+            failures.append(f"the credential case {label!r} did not resolve")
+            continue
+        flagged = bool(_credential_fault(config=config))
+        if flagged != want_flagged:
+            failures.append(
+                f"credential case {label!r}: the check "
+                f"{'flagged it' if flagged else 'let it through'}, and it must "
+                f"{'flag it' if want_flagged else 'let it through'}"
+            )
+    return failures, made
+
+
+def _override_coverage_failures(*, env: dict[str, str]) -> list[str]:
+    """Return one message per service the committed override leaves on the registry.
+
+    Read off the interpolated dev model: every service that runs a buildable
+    component's image must resolve to `<component>:local` there.
+    """
+    config = _config_json(
+        env=env, files=[COMPOSE_FILE.name, COMPOSE_OVERRIDE_FILE.name]
+    )
+    if config is None:
+        return ["the dev path did not resolve, so override coverage is unknown"]
+    services = config.get("services", {})
+    failures = []
+    for service, image in sorted(local_image_services(buildable_components()).items()):
+        if service not in services:
+            continue
+        got = services[service].get("image", "")
+        if got != image:
+            failures.append(
+                f"{COMPOSE_OVERRIDE_FILE.name}: {service} runs {got}, not {image} -- "
+                "a local build of that component would sit beside a registry one"
+            )
+    return failures
+
+
+def _local_overlay_failures(*, env: dict[str, str]) -> tuple[list[str], int]:
+    """Return (messages, assertions made) for the images the generated LOCAL overlay resolves to.
+
+    The overlay is what `make dev LOCAL=...` puts in front of the registry path,
+    so it is checked by VALUE and not merely parsed: the named component and every
+    service running its image must resolve to `:local`, and every other service
+    must keep the image the registry path gives it.
+    """
+    registry = _config_json(env=env, files=[COMPOSE_FILE.name])
+    local = _config_json(
+        env=env,
+        files=[COMPOSE_FILE.name, str(_LOCAL_RENDER.relative_to(REPO_ROOT))],
+    )
+    if registry is None or local is None:
+        return (
+            ["the local overlay path did not resolve, so its images are unknown"],
+            0,
+        )
+
+    want = local_image_services(_LOCAL_SAMPLE)
+    services = local.get("services", {})
+    failures = []
+    made = 0
+    for service, image in sorted(want.items()):
+        made += 1
+        if service not in services:
+            failures.append(
+                f"{_LOCAL_RENDER.name}: {service} runs a {', '.join(_LOCAL_SAMPLE)} "
+                "image but is not in the resolved stack"
+            )
+            continue
+        got = services[service].get("image", "")
+        if got != image:
+            failures.append(
+                f"{_LOCAL_RENDER.name}: {service} runs {got}, not {image} -- a "
+                "LOCAL build leaves a follower on the registry image"
+            )
+    for service, service_config in sorted(services.items()):
+        if service in want:
+            continue
+        made += 1
+        pinned = registry.get("services", {}).get(service, {}).get("image", "")
+        got = service_config.get("image", "")
+        if got != pinned:
+            failures.append(
+                f"{_LOCAL_RENDER.name}: {service} runs {got}, not its pin {pinned} -- "
+                "LOCAL builds only what it names and leaves the rest on the registry"
+            )
+    return failures, made
+
+
+def _overlay_staleness_failures() -> tuple[list[str], int]:
+    """Return (messages, assertions made) for the overlay always describing THIS run.
+
+    Runs the builder for a name it cannot build. The overlay must be gone and the
+    run must fail: leaving the previous run's file would start services on
+    `:local` images nothing rebuilt.
+    """
+    stale = REPO_ROOT / ".tmp" / "compose-check-stale-local.yml"
+    stale.parent.mkdir(parents=True, exist_ok=True)
+    stale.write_text(overlay_text(_LOCAL_SAMPLE), encoding="utf-8", newline="\n")
+    result = subprocess.run(
+        [
+            sys.executable,
+            "scripts/build_dev_images.py",
+            "--overlay",
+            str(stale),
+            _UNBUILDABLE_SAMPLE,
+        ],
+        capture_output=True,
+        cwd=REPO_ROOT,
+        encoding="utf-8",
+        errors="replace",
+        text=True,
+    )
+    failures = []
+    if stale.exists():
+        stale.unlink()
+        failures.append(
+            f"build_dev_images.py left {stale.name} in place after building nothing "
+            f"-- a `make dev LOCAL={_UNBUILDABLE_SAMPLE}` would run the previous "
+            "run's overlay"
+        )
+    if result.returncode == 0:
+        failures.append(
+            f"build_dev_images.py exited 0 with nothing built for "
+            f"{_UNBUILDABLE_SAMPLE!r} -- the compose call that follows has no overlay"
+        )
+    return failures, 2
+
+
+def _implicit_consumer_failures(*, env: dict[str, str]) -> tuple[list[str], int]:
+    """Return (messages, assertions made) for IMPLICIT_CONSUMERS matching the compose graph.
+
+    The builder reads that table to work out which images a profile's stack needs
+    without naming the service that runs them, so a `depends_on` edge changed here
+    and not there costs `make dev` an image it never builds.
+    """
+    config = _config_json(env=env, files=[COMPOSE_FILE.name])
+    if config is None:
+        return (["the registry path did not resolve, so depends_on is unknown"], 0)
+    services = config.get("services", {})
+    failures = []
+    made = 0
+    for consumer, dependents in sorted(IMPLICIT_CONSUMERS.items()):
+        made += 1
+        if consumer not in services:
+            failures.append(
+                f"build_dev_images.py: {consumer} is in IMPLICIT_CONSUMERS but not in "
+                "the stack"
+            )
+            continue
+        graph = sorted(
+            [
+                name
+                for name, service_config in services.items()
+                if consumer in (service_config.get("depends_on") or {})
+            ]
+        )
+        if graph != sorted(dependents):
+            failures.append(
+                f"build_dev_images.py: IMPLICIT_CONSUMERS[{consumer!r}] lists "
+                f"{sorted(dependents)}, and compose starts it from {graph}"
+            )
+    return failures, made
 
 
 def main() -> int:
@@ -508,6 +953,7 @@ def main() -> int:
         return 1
 
     try:
+        _render_local_overlay()
         paths = _paths()
     except FileNotFoundError as error:
         _print(msg=str(error))
@@ -553,6 +999,76 @@ def main() -> int:
         f"on all {len(paths)} path(s)"
     )
     _print(msg="No healthcheck targets a retired health path")
+
+    wiring_failures, wiring_made = _transform_wiring_failures()
+    for message in wiring_failures:
+        _print(msg=f"FAIL {message}")
+    if wiring_failures:
+        return 1
+    _print(
+        msg="Every transform output topic is read by its profile's loader, and no two "
+        f"transforms in a profile consume the same topic ({wiring_made} assertions)"
+    )
+
+    table_failures, table_made = _enrichment_table_failures(env=env)
+    for message in table_failures:
+        _print(msg=f"FAIL {message}")
+    if table_failures:
+        return 1
+    _print(
+        msg="Every enrichment table a transform config names resolves to a file "
+        f"through that service's bind mounts ({table_made} assertions)"
+    )
+
+    credential_failures, credential_made = _credential_failures(env=env)
+    for message in credential_failures:
+        _print(msg=f"FAIL {message}")
+    if credential_failures:
+        return 1
+    _print(
+        msg=f"{_ENGINE_SERVICE} never receives an empty or {_DEFAULT_PASSWORD!r} admin "
+        f"password outside a dev posture ({credential_made} assertions)"
+    )
+
+    coverage_failures = _override_coverage_failures(env=env)
+    for message in coverage_failures:
+        _print(msg=f"FAIL {message}")
+    if coverage_failures:
+        return 1
+    _print(
+        msg=f"{COMPOSE_OVERRIDE_FILE.name} repoints every service that runs a buildable "
+        "component's image, consumers included"
+    )
+
+    local_failures, local_made = _local_overlay_failures(env=env)
+    for message in local_failures:
+        _print(msg=f"FAIL {message}")
+    if local_failures:
+        return 1
+    _print(
+        msg=f"The generated LOCAL overlay puts {', '.join(_LOCAL_SAMPLE)} and its "
+        f"consumers on :local and everything else on its pin ({local_made} assertions)"
+    )
+
+    stale_failures, stale_made = _overlay_staleness_failures()
+    for message in stale_failures:
+        _print(msg=f"FAIL {message}")
+    if stale_failures:
+        return 1
+    _print(
+        msg="A build that builds nothing removes the overlay instead of leaving the "
+        f"previous run's ({stale_made} assertions)"
+    )
+
+    implicit_failures, implicit_made = _implicit_consumer_failures(env=env)
+    for message in implicit_failures:
+        _print(msg=f"FAIL {message}")
+    if implicit_failures:
+        return 1
+    _print(
+        msg="Every consumer the builder treats as implicitly started is started by "
+        f"exactly the services it lists ({implicit_made} assertions)"
+    )
 
     ui_failures, ui_made = _ui_exposure_failures(env=env)
     for message in ui_failures:

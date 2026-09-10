@@ -37,6 +37,9 @@ FALSY = {"", "0", "false", "no", "off"}
 
 # Repo constants
 REPO_ROOT = __find_repo_root()
+# Written by `make init` / `make up`: the launcher's copy of the access summary,
+# both minted passwords in plaintext. Gitignored, 0600, meant to be deleted.
+ACCESS_SUMMARY_FILE = REPO_ROOT / "access-summary.md"
 CONFIG_DIR = REPO_ROOT / "config"
 DEPLOYMENT_DIAL = REPO_ROOT / "deployment.yaml"
 DEPLOYMENT_DIAL_TEMPLATE = REPO_ROOT / "deployment.example.yaml"
@@ -46,6 +49,8 @@ ENV_DIR = REPO_ROOT / "env"
 ENV_TEMPLATE_DIR = REPO_ROOT / "env.example"
 COMPOSE_FILE = REPO_ROOT / "docker-compose.yml"
 COMPOSE_LIVE_FILE = REPO_ROOT / "docker-compose.live.yml"
+# Generated per run by `make dev LOCAL=...`, never committed.
+COMPOSE_LOCAL_FILE = REPO_ROOT / "docker-compose.local.yml"
 COMPOSE_OVERRIDE_FILE = REPO_ROOT / "docker-compose.override.yml"
 PROFILE_MK = REPO_ROOT / ".profile.mk"
 RUST_BUILDER = REPO_ROOT / "docker" / "dfe-rust-builder.Dockerfile"
@@ -58,17 +63,81 @@ _REQUIRED_VAR_RE = re.compile(r"\$\{([A-Z][A-Z0-9_]*):\?")
 
 
 def _print(
-    *, file: typing.TextIO | None = sys.stderr, header: str | None = None, msg: str
+    *, file: typing.TextIO | None = None, header: str | None = None, msg: str
 ) -> None:
     """Print a custom message with caller script name prefixed."""
+    # Resolved at call time, not bound as a default: a caller that replaces
+    # sys.stderr (pytest's capture) must still see the message.
     print(
-        f"{Path(sys.argv[0]).stem}{f' ({header})' if header else ''}: {msg}", file=file
+        f"{Path(sys.argv[0]).stem}{f' ({header})' if header else ''}: {msg}",
+        file=file or sys.stderr,
     )
 
 
 def _rel_path(*, path: Path) -> str:
     """Return path relative to the repo root for display."""
     return str(path.relative_to(REPO_ROOT))
+
+
+def _config_topics(*, path: Path) -> tuple[set[str], set[str], str]:
+    """Return (subscribed topics, produced topics, subscription regex) of one service config.
+
+    A deliberately small reader rather than a YAML parse: the service configs use
+    three topic keys and nothing else, and the callers have to run with no PyYAML
+    (CI installs it for ``make test-e2e`` only).
+
+    A dfe-transform-vector config names one source instead of its topics, and the
+    app derives ``<source>_land`` in and ``<source>_load`` out from it. Deriving
+    them here too is what keeps such a config inside the wiring and topic-init
+    checks rather than silently outside them. Named topics still win, exactly as
+    they do in the app.
+    """
+    subscribed: set[str] = set()
+    produced: set[str] = set()
+    regex = ""
+    dfe_source = ""
+    in_list = False
+    for raw in path.read_text(encoding="utf-8", errors="replace").splitlines():
+        line = raw.strip()
+        if not (line) or line.startswith("#"):
+            continue
+        if in_list and line.startswith("- "):
+            subscribed.add(line[2:].strip().strip("\"'"))
+            continue
+        in_list = line == "topics:"
+        if line.startswith("topic: "):
+            produced.add(line.split(": ", 1)[1].strip().strip("\"'"))
+        elif line.startswith("topic_regex: "):
+            regex = line.split(": ", 1)[1].strip().strip("\"'")
+        elif line.startswith("dfe_source: "):
+            dfe_source = line.split(": ", 1)[1].strip().strip("\"'")
+    if dfe_source:
+        subscribed = subscribed or {f"{dfe_source}_land"}
+        produced = produced or {f"{dfe_source}_load"}
+    return subscribed, produced, regex
+
+
+def _config_enrichment_paths(*, path: Path) -> set[str]:
+    """Return the container paths a service config's `enrichment_tables` entries name.
+
+    The same deliberately small reader as `_config_topics`, for the same reason:
+    the callers run with no PyYAML. A config with no enrichment tables returns an
+    empty set.
+    """
+    paths: set[str] = set()
+    in_block = False
+    for raw in path.read_text(encoding="utf-8", errors="replace").splitlines():
+        line = raw.strip()
+        if not (line) or line.startswith("#"):
+            continue
+        if line == "enrichment_tables:":
+            in_block = True
+            continue
+        if in_block and not (raw.startswith((" ", "\t"))):
+            in_block = False
+        if in_block and (line.startswith("path: ") or line.startswith("- path: ")):
+            paths.add(line.split("path: ", 1)[1].strip().strip("\"'"))
+    return paths
 
 
 def _dotenv_values() -> dict[str, str]:

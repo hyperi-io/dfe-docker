@@ -21,11 +21,23 @@ work, choose Kubernetes.
 
 ## Only the console authenticates -- everything else is bounded by that
 
-The engine's API requires a login. `make init` generates
-`DFE_AUTH_LOCAL_ADMIN_PASSWORD` into `.env`, and the engine seeds that break-glass
-admin on its FIRST start -- a stack whose account store already exists keeps
-whatever password it was first given, so rotate through the UI rather than
-expecting the generated value to take.
+The engine's API requires a login. `make init` mints two passwords into `.env` and
+`make creds` hands them over: `admin` from `DFE_AUTH_LOCAL_ADMIN_PASSWORD`,
+reasserted on every engine boot, and the `breakglass` recovery admin, whose hash
+the engine commits to its deploy repo on the first boot and which therefore
+outlives the engine, the UI and `.env`. Rotate `admin` by changing the value in
+`.env` and running `make up` -- the store is not the source, so a rotation the
+engine alone performed would be undone on the next boot. The engine refuses to
+start when `DFE_AUTH_LOCAL_ADMIN_PASSWORD` is empty or `changeme` and `DFE_ENV` is
+not a dev posture. An unset `DFE_ENV` counts as `production`, so only a `.env` that
+says `dev` gets to run on the shipped password.
+
+`make init` and `make up` also write `access-summary.md` (0600, gitignored) with
+both minted passwords in plaintext. Retire the bootstrap admin from the console
+wizard's last step, or `POST /api/v1/auth/setup/retire-admin`, once your own admin
+exists, then delete `DFE_AUTH_LOCAL_ADMIN_PASSWORD` from `.env` -- the account
+stays disabled and is never reseeded. Keep the break-glass password offline and
+delete both plaintexts, including that file: the engine keeps only the hash.
 
 Nothing else in the stack authenticates anyone, and that is the hard limit on what
 "production" can mean here: the ingest edges, every metrics port, ClickHouse and
@@ -359,6 +371,18 @@ Eight named volumes hold all durable state:
 eight, which now includes the warehouse. It always removed volumes; what changed
 is that ClickHouse data is in one.
 
+### Retention
+
+Every time-series table DFE deploys, the OTel tables included, keeps rows for
+`DFE_CLICKHOUSE_DEFAULT_TTL_DAYS` days -- 90 unless set, and 0 disables the
+default TTL. `make init` asks for it once, on a TTY, when it creates `.env` and
+writes the answer as a live line; a non-interactive run keeps the template's
+commented 90, and the key already set in the environment pre-answers it. The
+value reaches dfe-engine and `dfe-schema-init`, whose apply reconciles existing
+tables, so changing it later is a `.env` edit and a `make ci`. A source, or a
+dfe-schemas definition, that declares its own TTL keeps it. The same knob is
+`retention.default_ttl_days` in `deployment.yaml`.
+
 ### External data location
 
 ClickHouse and Kafka grow, and `/var/lib/docker` is rarely the disk sized for
@@ -397,7 +421,7 @@ Tunables: `DFE_POST_HOST` (default `localhost`), `DFE_POST_DATABASE` (`dfe`),
 
 A PASS proves exactly this: the ingest edge accepted three events, and within 60
 seconds at least three rows carrying that run's unique marker were readable in
-`dfe.default`. Not "containers started", not "ports answer" -- data moved from
+`dfe.main`. Not "containers started", not "ports answer" -- data moved from
 one end to the other. It is transport-agnostic by construction, so it means the
 same thing on the Kafka and gRPC profiles.
 
