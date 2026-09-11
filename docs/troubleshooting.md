@@ -154,6 +154,12 @@ The e2e harness now does this for itself: `clean_topics` deletes the `_load`
 sibling of every expected `_land` topic, so a run depends on the test definition
 rather than on the broker's history.
 
+The same trap has a second door: `scripts/resolve_profile.py` builds
+`KAFKA_INIT_TOPICS` from the topics a profile's transforms name, and an IDLE
+transform still has to name a sink it never writes to. That sink is excluded, and
+`make post` asserts the loader is fetching a topic before it injects anything, so
+an empty subscription is reported as one.
+
 ## Events are accepted but nothing lands
 
 The ingest edge returning 2xx only means the event was accepted. Work down this

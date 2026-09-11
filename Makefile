@@ -455,15 +455,12 @@ test-flows: ## Flow shapes against a running stack (needs DFE_ENGINE_REPO; FLOW_
 # Power-on self test
 # Runs automatically after `make dev` / `make ci`. Opt OUT with
 # DFE_POST_ENABLED=false -- a self test you have to remember to run is not one.
-# Transport-agnostic: it injects at the ingest edge and reads ClickHouse, so it
-# behaves identically on the kafka and kafka-less (grpc) profiles.
+# The ingest claim is transport-agnostic: it injects at the ingest edge and reads
+# ClickHouse, so it behaves identically on the kafka and kafka-less (grpc)
+# profiles.
 #
-# `make post` itself exits non-zero on failure, so it is usable as a gate. The
-# auto-run after dev/ci deliberately does NOT abort the target: it has been seen
-# to fail on a clean-slate kafka-fetcher stack for reasons not yet isolated (the
-# loader's topic resolver did not pick up main_land), and until that is
-# understood it must not brick the primary start command. Wire it to fail the
-# target once it is proven stable -- that is the intended end state, not this.
+# `make post` exits non-zero on failure and the auto-run after dev/ci aborts the
+# target with it, so a stack that cannot move data is never handed over as ready.
 # ---------------------------------------------------------------------------
 
 .PHONY: post

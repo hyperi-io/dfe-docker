@@ -98,6 +98,7 @@ from _common import (
     _dotenv_values,
     _print,
     _required_compose_vars,
+    _transform_topics,
 )
 from build_dev_images import (
     IMPLICIT_CONSUMERS,
@@ -639,10 +640,8 @@ def _transform_wiring_failures() -> tuple[list[str], int]:
         )
         seen: dict[str, str] = {}
         for service, config_path in sorted(transforms.items()):
-            subscribed, produced, _ = _config_topics(path=CONFIG_DIR / config_path)
-            # An idle transform subscribes to nothing and so writes nothing, and
-            # the sink it is required to name is not a topic events stop at.
-            for topic in sorted(produced if subscribed else ()):
+            subscribed, written = _transform_topics(path=CONFIG_DIR / config_path)
+            for topic in sorted(written):
                 made += 1
                 if topic in consumed or (pattern and re.fullmatch(pattern, topic)):
                     continue

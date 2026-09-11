@@ -259,3 +259,15 @@ def _required_compose_vars(*, files: tuple[Path, ...] = (COMPOSE_FILE,)) -> set[
     for path in files:
         found |= set(_REQUIRED_VAR_RE.findall(path.read_text(encoding="utf-8")))
     return found
+
+
+def _transform_topics(*, path: Path) -> tuple[set[str], set[str]]:
+    """Return the (subscribed, written) topics of one transform config.
+
+    A transform that subscribes to nothing is IDLE: it joins no consumer group and
+    produces nothing, so the sink it is still required to name is not a topic of
+    this deployment. The config reads the same either way, so the predicate is
+    shared rather than repeated at each caller.
+    """
+    subscribed, produced, _ = _config_topics(path=path)
+    return subscribed, produced if subscribed else set()

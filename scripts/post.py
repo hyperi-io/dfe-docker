@@ -9,8 +9,10 @@
 
 """Power-on self test (POST) for a stack that is ALREADY running.
 
-Six claims. INGEST: uniquely-marked events put in at the ingest edge come out as
-those exact rows in ClickHouse. SELF-MONITORING: when the profile runs a collector,
+Seven claims. SUBSCRIPTION: where the tier has a bus, the loader is fetching at
+least one topic, so the events about to be injected have a consumer at all.
+INGEST: uniquely-marked events put in at the ingest edge come out as those exact
+rows in ClickHouse. SELF-MONITORING: when the profile runs a collector,
 the stack's own telemetry is landing FRESH in the otel database, and each named
 service's stdout is landing under its own name. OBSERVABILITY: HyperDX holds the
 sources this deployment seeds it and the dashboards the engine ships, read through
@@ -20,13 +22,13 @@ reachable from the surface an operator works in. HUNTS: a hunt created through t
 API while the runner is already running is picked up and executed, and its
 detections land in the detection table. IDLE APPS: each app the tier starts with
 no work is serving and doing nothing, which is the whole point of starting it.
-None of the six is "the containers started" or "the ports answer".
+None of the seven is "the containers started" or "the ports answer".
 
-Transport-agnostic by construction. It posts to the ingest edge and reads
-ClickHouse, so it works identically on the Kafka and the gRPC (kafka-less)
-profiles -- there is nothing in here that knows which is in play, and that is
-deliberate. A self test that only worked on one transport would be a self test
-for the transport, not for the stack.
+The INGEST claim is transport-agnostic by construction: it posts to the ingest
+edge and reads ClickHouse, so it runs identically on the Kafka and the gRPC
+(kafka-less) profiles. A self test that only worked on one transport would be a
+self test for the transport, not for the stack. SUBSCRIPTION is the one claim
+that is bus-shaped, and it SKIPS where the resolved tier has no bus.
 
 OPT-OUT, not opt-in: it runs unless `DFE_POST_ENABLED=false`. Something that only
 runs when you remember to ask for it is not a power-on self test.
@@ -85,6 +87,22 @@ LAND_INTERVAL_SECONDS = 3.0
 # still warming; a single probe would decide "not ready" a second after boot.
 READY_TIMEOUT_SECONDS = 90.0
 READY_INTERVAL_SECONDS = 2.0
+
+# Subscription assertion. A loader whose topic resolver matches nothing stays
+# healthy and consumes nothing, which surfaces only as rows that never arrive.
+LOADER_SERVICE = "dfe-loader"
+LOADER_PROMETHEUS_PORT = "9091"
+# rdkafka reports a partition's consumer lag only while it is assigned and
+# fetching it, so a topic label here is the subscription, not the config.
+LOADER_TOPIC_METRIC = "rdkafka_topic_partition_consumer_lag"
+LOADER_TOPIC_LABEL = "topic"
+# The resolver re-runs every 60s and rdkafka publishes its statistics every 5s,
+# so this covers two missed refreshes rather than an expected duration.
+LOADER_TOPIC_TIMEOUT_SECONDS = 150.0
+LOADER_TOPIC_INTERVAL_SECONDS = 5.0
+# `.profile.mk`'s resolved answer to "does this deployment have a bus", so the
+# claim is skipped on the gRPC tiers rather than failing on them.
+TRANSPORT_BUS_KEY = "DFE_TRANSPORT_BUS_PRESENT"
 
 TARGET_DB = "dfe"
 # The engine's catch-all landing table, DFE_CLICKHOUSE_LANDING_TABLE. A deployment
@@ -478,6 +496,79 @@ def _metric_value(body: str, name: str) -> float | None:
         except ValueError:
             return None
     return None
+
+
+def _metric_label_values(body: str, name: str, label: str) -> set[str]:
+    """Every value one label takes across a labelled metric's samples.
+
+    Topic and partition labels carry no comma or brace, so splitting the label set
+    is enough here and a Prometheus parser is not.
+    """
+    found: set[str] = set()
+    for line in body.splitlines():
+        if line.startswith("#") or not (line.startswith(f"{name}{{")):
+            continue
+        for pair in line[len(name) + 1 : line.rfind("}")].split(","):
+            key, _, value = pair.partition("=")
+            if key.strip() == label:
+                found.add(value.strip().strip('"'))
+    return found
+
+
+def _verify_loader_subscription() -> int:
+    """Prove the loader is fetching a topic, on a tier that has a bus.
+
+    The loader discovers its topics from the broker, so a topic that never appears
+    -- or one scalo suppresses in favour of a `_load` sibling -- leaves it ready
+    and healthy with nothing to read. Asserted before the injection, because after
+    it the same fault is indistinguishable from a broken loader or a missing table.
+    """
+    if _profile_mk_value(key=TRANSPORT_BUS_KEY)[:1] != ["true"]:
+        _print(msg="SKIP  this tier has no bus -- the loader is handed its events")
+        return 0
+    if LOADER_SERVICE not in set(_resolved_services()):
+        _print(
+            msg=f"SKIP  {LOADER_SERVICE} not in the active profile -- no subscription to prove"
+        )
+        return 0
+
+    bind = os.environ.get("DFE_POST_HOST", "localhost")
+    port = (
+        os.environ.get(_service_var(LOADER_SERVICE, "PROMETHEUS_PORT"), "").strip()
+        or LOADER_PROMETHEUS_PORT
+    )
+    base = f"http://{bind}:{port}"
+    _print(msg=f"Waiting for {LOADER_SERVICE} to be fetching a topic at {base}")
+
+    def _fetching():
+        try:
+            body = http_get(f"{base}/metrics", timeout=5)
+        except Exception:  # noqa: BLE001 - unreachable and not-yet-serving are one answer
+            return set()
+        return _metric_label_values(body, LOADER_TOPIC_METRIC, LOADER_TOPIC_LABEL)
+
+    def _report(attempt, result):
+        _print(
+            msg=f"  attempt {attempt}: topics fetched = {', '.join(sorted(result)) or 'none'}"
+        )
+
+    topics = poll_until(
+        _fetching,
+        timeout=LOADER_TOPIC_TIMEOUT_SECONDS,
+        interval=LOADER_TOPIC_INTERVAL_SECONDS,
+        on_attempt=_report,
+    )
+    if not (topics):
+        _print(
+            msg=f"FAIL  {LOADER_SERVICE} is fetching no topic within "
+            f"{LOADER_TOPIC_TIMEOUT_SECONDS:.0f}s -- it resolved an empty subscription, "
+            "so events reach the broker and stop there. Read its resolved set with "
+            "`docker compose logs dfe-loader` (grep 'Resolved Kafka topics') and see "
+            "the `main_load` entry in docs/troubleshooting.md"
+        )
+        return 1
+    _print(msg=f"PASS  {LOADER_SERVICE} is fetching {', '.join(sorted(topics))}")
+    return 0
 
 
 def _idle_apps() -> list[tuple[str, str]]:
@@ -1098,6 +1189,12 @@ def main() -> int:
     except IngestNotReady as reason:
         _print(msg=f"FAIL  {reason}")
         return 1
+
+    # Fails fast rather than joining the tally below: injecting into a pipeline
+    # whose consumer is not attached proves nothing about the pipeline.
+    if _verify_loader_subscription():
+        return 1
+
     marker = _run_id()
     _print(msg=f"Injecting {EVENT_COUNT} marked event(s) via {service} at {ingest_url}")
     _print(msg=f"Marker: {marker}")
