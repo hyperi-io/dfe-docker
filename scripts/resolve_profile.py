@@ -36,10 +36,10 @@ from _common import (
     FALSY,
     PROFILE_MK,
     SERVICE_PROFILES_FILE,
-    _config_topics,
     _load_dotenv,
     _print,
     _rel_path,
+    _transform_topics,
 )
 from build_dev_images import buildable_components
 
@@ -118,7 +118,8 @@ FOOTPRINT_KEYS = {
 }
 
 # Topics kafka-init pre-creates: the stack default plus the ones this profile's
-# transforms name. dfe-transform-vrl exits on a missing topic, its sink included.
+# WORKING transforms name -- dfe-transform-vrl exits on a missing topic it is
+# configured to use, its sink included. An idle transform uses neither.
 KAFKA_INIT_TOPICS_VAR = "KAFKA_INIT_TOPICS"
 KAFKA_INIT_TOPIC_DEFAULT = "main_land"
 TRANSFORM_SERVICE_PREFIX = "dfe-transform-"
@@ -207,14 +208,21 @@ def _validate_auth() -> None:
 
 
 def _init_topics(*, services: dict[str, object]) -> list[str]:
-    """Return the topics kafka-init must create for this profile, sorted."""
+    """Return the topics kafka-init must create for this profile, sorted.
+
+    An IDLE transform's sink is excluded rather than unioned in. scalo's resolver
+    drops `<base>_land` from an auto-discovered subscription whenever
+    `<base>_load` exists, so pre-creating the sink of a transform that produces
+    nothing silences the loader on a stack where every container is healthy. See
+    docs/troubleshooting.md.
+    """
     topics = {KAFKA_INIT_TOPIC_DEFAULT}
     for service_name, service_config in services.items():
         if not (service_name.startswith(TRANSFORM_SERVICE_PREFIX)):
             continue
         path = CONFIG_DIR / service_config[PROFILE_SERVICE_CONFIG_YAML_FIELD]
-        subscribed, produced, _ = _config_topics(path=path)
-        topics |= subscribed | produced
+        subscribed, written = _transform_topics(path=path)
+        topics |= subscribed | written
     return sorted(topics)
 
 
