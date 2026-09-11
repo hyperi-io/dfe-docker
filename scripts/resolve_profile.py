@@ -35,6 +35,7 @@ from _common import (
     CONFIG_DIR,
     FALSY,
     PROFILE_MK,
+    PROJECTED_PROFILES,
     SERVICE_PROFILES_FILE,
     _load_dotenv,
     _print,
@@ -143,6 +144,28 @@ SERVICE_TO_CONFIG_VAR = {
     "dfe-transform-vector-filebeat": "DFE_TRANSFORM_VECTOR_FILEBEAT_CONFIG",
     "dfe-transform-vrl": "DFE_TRANSFORM_VRL_CONFIG",
     "dfe-transform-vrl-filebeat": "DFE_TRANSFORM_VRL_FILEBEAT_CONFIG",
+}
+
+# The engine is the Compose stand-in for the ConfigMap an app's chart renders on
+# Kubernetes: it merges each instance's values overlay over the committed config
+# above and writes the app's own config file into a volume the container mounts.
+# It runs on the PROJECTED tiers only -- the hand-crafted profiles ship a config
+# that says exactly what they exist to exercise, and a compile from the sources
+# would overwrite it. A second instance of one app (the -filebeat services) has
+# no overlay of its own, so it keeps its committed file either way.
+ENGINE_APP_CONFIG_DIR_VAR = "DFE_ENGINE_APP_CONFIG_DIR"
+ENGINE_APP_CONFIG_DIR = "/app/app-config"
+ENGINE_APP_CONFIG_BASE_DIR_VAR = "DFE_ENGINE_APP_CONFIG_BASE_DIR"
+ENGINE_APP_CONFIG_BASE_DIR = "/app/app-config-base"
+APP_CONFIG_MOUNT_VAR = "DFE_APP_CONFIG_MOUNT"
+APP_CONFIG_MOUNT = "/etc/dfe/apps"
+# Where each app reads its rendered config, by the manifest's `consumes.config`.
+SERVICE_TO_RENDERED_CONFIG = {
+    "dfe-archiver": ("DFE_ARCHIVER_CONFIG_FILE", "archiver.yaml"),
+    "dfe-fetcher": ("DFE_FETCHER_CONFIG_FILE", "fetcher.yaml"),
+    "dfe-loader": ("DFE_LOADER_CONFIG_FILE", "loader.yaml"),
+    "dfe-receiver": ("DFE_RECEIVER_CONFIG_FILE", "config.yaml"),
+    "dfe-transform-vrl": ("DFE_TRANSFORM_VRL_CONFIG_FILE", "config.yaml"),
 }
 # A per-source transform instance is a service of its own here, because a
 # profile has to be able to run one without the other.
@@ -481,6 +504,26 @@ def main() -> int:
         for service_name, service_config in services.items():
             var_name = SERVICE_TO_CONFIG_VAR[service_name]
             lines.append(f"export {var_name} := {service_config['config_path']}")
+
+        # Emitted unconditionally, empty when the engine is not the writer here:
+        # a line that vanishes with its own value would make the included file
+        # re-settle on every make pass.
+        renders = (active_profile in PROJECTED_PROFILES) and footprint["core"]
+        lines.append(
+            f"export {ENGINE_APP_CONFIG_DIR_VAR} := {ENGINE_APP_CONFIG_DIR if renders else ''}"
+        )
+        lines.append(
+            f"export {ENGINE_APP_CONFIG_BASE_DIR_VAR} := "
+            f"{ENGINE_APP_CONFIG_BASE_DIR if renders else ''}"
+        )
+        lines.append(f"export {APP_CONFIG_MOUNT_VAR} := {APP_CONFIG_MOUNT}")
+        for service_name, (var_name, file_name) in SERVICE_TO_RENDERED_CONFIG.items():
+            rendered = (
+                f"{APP_CONFIG_MOUNT}/{service_name}/{file_name}"
+                if renders and service_name in services
+                else ""
+            )
+            lines.append(f"export {var_name} := {rendered}")
 
         new_content = "\n".join(lines) + "\n"
         if (

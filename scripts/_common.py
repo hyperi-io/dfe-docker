@@ -35,6 +35,13 @@ def __find_repo_root(*, marker: str = _REPO_MARKER) -> Path:
 # Basic constants
 FALSY = {"", "0", "false", "no", "off"}
 
+# The profiles that are PROJECTIONS of the Kubernetes tiers of the same name,
+# rendered by render_profiles.py. Their app set comes from dfe-infra apps.yaml
+# `default_in` and every app in it idles until something configures it, so these
+# are also the tiers whose app config dfe-engine renders. Every other profile is
+# a hand-crafted data-plane shape that ships its own config and must keep it.
+PROJECTED_PROFILES = ("slim", "single")
+
 # Repo constants
 REPO_ROOT = __find_repo_root()
 # Written by `make init` / `make up`: the launcher's copy of the access summary,

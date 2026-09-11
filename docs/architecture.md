@@ -86,11 +86,28 @@ nothing else. It is there because Compose declares its services in this repo and
 creates none at run time: an app that cannot be added later has to be present
 before anything needs it.
 
-They stay inert until something gives them work. Today that is an operator
-editing `config/<app>/kafka.yaml`; the engine writing the config itself, so a
-source created in the console turns one on, is the stack release after this one.
-Until then dfe-engine refuses a fetcher or transform source on a Compose
-deployment rather than storing one nothing runs.
+They stay inert until something gives them work, and on these two tiers that is a
+source created through the engine.
+
+## The engine renders each app's config on the projected tiers
+
+On Kubernetes an app's chart turns its values overlay into a ConfigMap the pod
+mounts. Compose runs no chart, so on `slim` and `single` dfe-engine does that
+step: it merges each instance's overlay over the committed
+`config/<app>/<transport>.yaml` and writes the app's config file, its programs
+and its enrichment tables into the `dfe-app-config` volume, one directory per
+app. Every app mounts that volume read-only at `/etc/dfe/apps`.
+
+The committed file stays the DEPLOYMENT's -- brokers, warehouse credentials, the
+spool -- and the overlay wins wherever the two name the same key, so nothing
+deployment-specific is written into the deploy repo. `resolve_profile.py` turns
+this on for the projected tiers only: every other profile ships the config it
+exists to exercise.
+
+Nothing restarts a container. A change the running app cannot take in place is
+reported by the API as `restart required: docker compose restart <app>`; an app
+that was IDLE needs no restart, because scalo's gate re-reads the file and starts
+the service on the spot.
 
 ## A source with its own transform gets its own instance
 
