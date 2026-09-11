@@ -58,6 +58,14 @@ If neither is available it fails loudly -- there is no silent `latest`. Only
 `*_VERSION` keys are rewritten; your ports, hosts, credentials and profile
 survive the merge.
 
+`make stack VERSION=latest` is the development-currency variant, for when the
+certified stack lags the component you are working against. It takes the newest
+certified stack for the third-party images, then repins every DFE image at its own
+newest published GHCR tag. Those pins still carry digests, so the box stays
+reproducible -- it is just a combination nobody certified, which is why `make
+modes` reports LATEST rather than PINNED and why it is not a deploy. `VERSION=rc`
+ranks pre-releases throughout.
+
 Skipping `make stack` is not a soft failure. Nearly every image pin uses
 `${VAR:?...}`, so an unpinned checkout aborts the compose command with a message
 naming the key.

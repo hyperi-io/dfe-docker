@@ -14,6 +14,16 @@ stack and merges its ``*_VERSION=tag@digest`` lines into ``.env``. Only those
 keys are overwritten; every other key (ports, hosts, creds, profile) is left
 exactly as it was, so the merge is idempotent and safe to re-run.
 
+``VERSION=latest`` is the DEV CURRENCY mode: it resolves the newest certified
+stack for the third-party images, then repins every image we publish to
+``ghcr.io/hyperi-io`` at its own newest published tag. That combination is newer
+than any stack anyone certified, so it is for development and integration, never
+a deployment -- `make modes` reports it as unpinned. The pins it writes still
+carry digests; nothing here ever emits a floating tag.
+
+``latest`` prefers a release and falls back to the newest pre-release on a repo
+that has published none; ``rc`` ranks pre-releases alongside releases throughout.
+
 Transport is EXPLICIT-LOCAL-FIRST, OCI-DEFAULT:
 
 1. A local dfe-infra checkout, ONLY when ``DFE_INFRA_DIR`` names one (no
@@ -40,10 +50,19 @@ import tempfile
 from pathlib import Path
 
 from _common import (
+    COMPOSE_FILE,
     DOTENV_FILE,
     DOTENV_TEMPLATE,
+    _dotenv_values,
     _print,
     _rel_path,
+)
+from _registry import (
+    DISCOVERY_WORDS,
+    RegistryError,
+    latest_tag,
+    manifest_repo,
+    resolve_digest,
 )
 
 # `make stack` depends on `.env` existing, and creating one is init's job -- it is
@@ -52,12 +71,16 @@ from _common import (
 # `make post`.
 from init import _create_dotenv
 
-# OCI repository for the signed stack-manifest artifact (air-gap / CI path).
-DEFAULT_MANIFEST_REPO = "ghcr.io/hyperi-io/dfe-stack-manifest"
-
 # A rendered pin line: KEY=value[  # annotation]. Keys are UPPER_SNAKE ending in
 # _VERSION; only such active (non-comment) lines from the fragment are merged.
 _PIN_LINE = re.compile(r"^(?P<key>[A-Z][A-Z0-9_]*)=(?P<rest>.+)$")
+
+# A compose image line for an image WE publish: the registry default is captured
+# so `.env` need not set IMAGE_REGISTRY for the repo to be known.
+_OUR_IMAGE_LINE = re.compile(
+    r"^\s*image:\s*\$\{IMAGE_REGISTRY:-(?P<registry>[^}]+)\}/(?P<name>[\w.-]+)"
+    r":\$\{(?P<key>[A-Z][A-Z0-9_]*)[:}]"
+)
 
 
 class StackError(Exception):
@@ -123,9 +146,7 @@ def _render_oci(version: str) -> str:
             "cannot pull the OCI stack manifest (set DFE_INFRA_DIR to a "
             "dfe-infra checkout, or install oras)"
         )
-    repo = (
-        os.environ.get("DFE_STACK_MANIFEST_REPO", "").strip() or DEFAULT_MANIFEST_REPO
-    )
+    repo = manifest_repo()
     ref = f"{repo}:{version}"
     member = (
         os.environ.get("DFE_STACK_ENV_MEMBER", "").strip() or f"dfe-env-{version}.txt"
@@ -146,10 +167,7 @@ def _resolve_fragment(version: str) -> tuple[str, str]:
     infra = _infra_dir()
     if infra is not None:
         return _render_local(infra, version), f"local dfe-infra checkout ({infra})"
-    repo = (
-        os.environ.get("DFE_STACK_MANIFEST_REPO", "").strip() or DEFAULT_MANIFEST_REPO
-    )
-    return _render_oci(version), f"OCI stack manifest ({repo}:{version})"
+    return _render_oci(version), f"OCI stack manifest ({manifest_repo()}:{version})"
 
 
 def _parse_pins(fragment: str) -> dict[str, str]:
@@ -166,6 +184,33 @@ def _parse_pins(fragment: str) -> dict[str, str]:
         if not key.endswith("_VERSION"):
             continue
         pins[key] = f"{key}={match.group('rest').strip()}"
+    return pins
+
+
+def _our_image_repos() -> dict[str, str]:
+    """Map each pin key to the ghcr.io/hyperi-io image repo that compose tags with it.
+
+    Read out of docker-compose.yml rather than listed here, so a service added to
+    the stack cannot silently escape the repin. ``IMAGE_REGISTRY`` in ``.env``
+    wins over the compose default, which is what a registry mirror sets.
+    """
+    override = _dotenv_values().get("IMAGE_REGISTRY", "").strip()
+    repos: dict[str, str] = {}
+    for line in COMPOSE_FILE.read_text(encoding="utf-8", errors="replace").splitlines():
+        match = _OUR_IMAGE_LINE.match(line)
+        if match is None:
+            continue
+        repos[match["key"]] = f"{override or match['registry']}/{match['name']}"
+    return repos
+
+
+def _latest_image_pins(*, prereleases: str) -> dict[str, str]:
+    """Return a pin line per DFE image, at its newest published tag plus digest."""
+    pins: dict[str, str] = {}
+    for key, repo in sorted(_our_image_repos().items()):
+        tag = latest_tag(prereleases=prereleases, repo=repo)
+        digest = resolve_digest(reference=f"{repo}:{tag}")
+        pins[key] = f"{key}={tag}@{digest}  # {repo}, newest published"
     return pins
 
 
@@ -217,15 +262,24 @@ def main() -> int:
         prog="stack.py", description=__doc__.split("\n")[0].strip()
     )
     parser.add_argument(
-        "version", nargs="?", help="stack version to pin, e.g. 2.2.0 or 2.2.0-rc.1"
+        "version",
+        nargs="?",
+        help="stack version to pin (2.2.0, 2.2.0-rc.1), or `latest` / `rc` to "
+        "discover the newest and repin the DFE images on top of it",
     )
     args = parser.parse_args()
-    version = (args.version or "").strip()
+    requested = (args.version or "").strip()
     try:
-        if not version:
+        if not requested:
             raise StackError(
-                "no VERSION given -- usage: make stack VERSION=X.Y.Z[-rc.N]"
+                "no VERSION given -- usage: make stack VERSION=X.Y.Z[-rc.N]|latest"
             )
+        discover = requested in DISCOVERY_WORDS
+        version = (
+            latest_tag(prereleases=DISCOVERY_WORDS[requested], repo=manifest_repo())
+            if discover
+            else requested
+        )
         _ensure_env()
         fragment, source = _resolve_fragment(version)
         pins = _parse_pins(fragment)
@@ -234,10 +288,17 @@ def main() -> int:
                 f"stack render for {version!r} produced no *_VERSION pins "
                 f"(source: {source})"
             )
+        if discover:
+            pins |= _latest_image_pins(prereleases=DISCOVERY_WORDS[requested])
         # Record WHICH stack these pins came from, alongside them. `make modes`
         # reports this key and `VERSION ?= $(DFE_STACK_VERSION)` defaults from
         # it, so a stale value makes both describe a stack the box is not on.
-        marker = {"DFE_STACK_VERSION": f"DFE_STACK_VERSION={version}"}
+        # A discovered set records the WORD, so a re-run refreshes rather than
+        # freezing on the stack that happened to be newest at the time.
+        marker = {
+            "DFE_STACK_VERSION": f"DFE_STACK_VERSION={requested}"
+            + (f"  # resolved {version} + newest DFE images" if discover else "")
+        }
         merged = _merge_into_env(
             DOTENV_FILE.read_text(encoding="utf-8", errors="replace"), pins | marker
         )
@@ -250,8 +311,20 @@ def main() -> int:
         )
         for key in pins:
             _print(msg=f"  {pins[key]}")
-        _print(msg=f"  {marker['DFE_STACK_VERSION']}  # the stack these came from")
-    except StackError as error:
+        stamped = marker["DFE_STACK_VERSION"]
+        _print(
+            msg=f"  {stamped}"
+            if discover
+            else f"  {stamped}  # the stack these came from"
+        )
+        if discover:
+            _print(
+                msg=(
+                    "This set is NEWER than any certified stack -- for development "
+                    "and integration, not a deployment. Pin a version to deploy."
+                )
+            )
+    except (RegistryError, StackError) as error:
         _print(msg=f"error: {error}")
         return 1
     return 0

@@ -88,6 +88,11 @@ make ci     # Uses active_profile from service_profiles.yaml
 make down   # Stop everything
 ```
 
+`VERSION=latest` instead pins the newest certified stack and then repins every
+DFE image at its own newest published tag - development currency, not a
+deployment. `make modes` states the three modes and which one this checkout is
+on.
+
 ### 2. Dev mode (builds from component source)
 
 Source comes from a managed git cache by default, or your own checkouts when

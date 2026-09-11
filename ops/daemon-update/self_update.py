@@ -48,18 +48,15 @@ from __future__ import annotations
 
 import argparse
 import os
-import re
 import subprocess
 import sys
 from pathlib import Path
 
-# The signed stack-manifest artifact repo (mirrors scripts/stack.py's default).
-DEFAULT_MANIFEST_REPO = "ghcr.io/hyperi-io/dfe-stack-manifest"
+# The tag discovery is shared with `make stack VERSION=latest`, so it lives in
+# the checkout's scripts/ and is imported from there.
+sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "scripts"))
 
-# X.Y.Z with an optional -rc.N / -beta.N style pre-release suffix.
-_SEMVER = re.compile(
-    r"^(?P<major>\d+)\.(?P<minor>\d+)\.(?P<patch>\d+)(?:-(?P<pre>[0-9A-Za-z.-]+))?$"
-)
+from _registry import RegistryError, latest_tag, manifest_repo  # noqa: E402
 
 # Records the version this VM last successfully applied. Gitignored; lives beside
 # the checkout so it survives across timer runs.
@@ -74,12 +71,6 @@ def _log(message: str) -> None:
     print(f"[dfe-docker-update] {message}", flush=True)
 
 
-def _repo() -> str:
-    return (
-        os.environ.get("DFE_STACK_MANIFEST_REPO", "").strip() or DEFAULT_MANIFEST_REPO
-    )
-
-
 def _run(cmd: list[str], cwd: Path | None = None) -> subprocess.CompletedProcess:
     return subprocess.run(
         cmd,
@@ -90,52 +81,6 @@ def _run(cmd: list[str], cwd: Path | None = None) -> subprocess.CompletedProcess
         errors="replace",
         check=False,
     )
-
-
-def _list_tags(repo: str) -> list[str]:
-    """Return the tags on the manifest repo via `oras repo tags`."""
-    import shutil
-
-    if shutil.which("oras") is None:
-        raise UpdateError("`oras` is not installed - cannot list stack-manifest tags")
-    out = _run(["oras", "repo", "tags", repo])
-    if out.returncode != 0:
-        detail = out.stderr.strip() or out.stdout.strip()
-        raise UpdateError(f"`oras repo tags {repo}` failed: {detail}")
-    return [line.strip() for line in out.stdout.splitlines() if line.strip()]
-
-
-def _pre_key(pre: str) -> tuple:
-    """Pre-release precedence: all-digit identifiers compare numerically and rank below alphanumeric ones."""
-    return tuple(
-        (0, int(ident), "") if ident.isdigit() else (1, 0, ident)
-        for ident in pre.split(".")
-    )
-
-
-def _sort_key(version: str) -> tuple:
-    """Semver sort key. A release ranks ABOVE its own pre-releases."""
-    m = _SEMVER.match(version)
-    if m is None:
-        raise UpdateError(f"not a semver tag: {version!r}")
-    core = (int(m["major"]), int(m["minor"]), int(m["patch"]))
-    # No pre-release sorts higher than any pre-release of the same core.
-    return (*core, 1) if m["pre"] is None else (*core, 0, _pre_key(pre=m["pre"]))
-
-
-def _is_stable(version: str) -> bool:
-    m = _SEMVER.match(version)
-    return m is not None and m["pre"] is None
-
-
-def _latest_version(repo: str, allow_prerelease: bool) -> str:
-    tags = [t for t in _list_tags(repo) if _SEMVER.match(t)]
-    if not allow_prerelease:
-        tags = [t for t in tags if _is_stable(t)]
-    if not tags:
-        kind = "semver" if allow_prerelease else "stable semver"
-        raise UpdateError(f"no {kind} tags found on {repo}")
-    return max(tags, key=_sort_key)
 
 
 def _applied_version(state_path: Path) -> str | None:
@@ -273,8 +218,10 @@ def main() -> int:
     try:
         if not (repo_dir / "Makefile").is_file():
             raise UpdateError(f"{repo_dir} is not a dfe-docker checkout (no Makefile)")
-        repo = _repo()
-        latest = _latest_version(repo, allow_prerelease)
+        repo = manifest_repo()
+        latest = latest_tag(
+            prereleases="include" if allow_prerelease else "exclude", repo=repo
+        )
         applied = _applied_version(state_path)
         _log(f"repo={repo} latest={latest} applied={applied or '(none)'}")
 
@@ -295,7 +242,7 @@ def main() -> int:
         _apply(repo_dir, latest)
         _record_applied(state_path, latest)
         _log(f"updated to {latest}")
-    except UpdateError as error:
+    except (RegistryError, UpdateError) as error:
         _log(f"error: {error}")
         return 1
     return 0

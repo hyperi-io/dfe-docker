@@ -272,10 +272,13 @@ login: ## Authenticate docker + oras to the image registry from .env (DFE_GHCR_U
 # `make stack VERSION=X.Y.Z` pins the certified set. `make dial` writes the dial's
 # version.pin to DFE_STACK_VERSION in .env, so `make dial && make stack` pins
 # straight from the deployment dial. An explicit VERSION= on the command line wins.
+# VERSION=latest (rc to include pre-releases) instead takes the newest certified
+# stack and repins every ghcr.io/hyperi-io image at its own newest published tag
+# -- development currency, not a deployment. Still digest-pinned either way.
 VERSION ?= $(DFE_STACK_VERSION)
 
 .PHONY: stack
-stack: .env login ## Pin image versions into .env from the DFE stack SSoT (VERSION=X.Y.Z[-rc.N])
+stack: .env login ## Pin image versions into .env from the DFE stack SSoT (VERSION=X.Y.Z[-rc.N], or latest|rc for newest DFE images)
 	@python3 scripts/stack.py $(VERSION)
 
 # The deployment dial (deployment.yaml) is the single SSoT a deployment turns.
