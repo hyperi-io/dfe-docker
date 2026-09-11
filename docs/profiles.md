@@ -18,12 +18,13 @@ delete.
 ## Which profile runs what
 
 `X2` is two instances of that app: the shared passthrough one, plus the filebeat
-source's own with the bundled filebeat program.
+source's own with the bundled filebeat program. `idle` is one instance started
+with a config that gives it no work.
 
 | Profile                           | Transport | dfe-archiver | dfe-fetcher | dfe-loader | dfe-receiver | dfe-transform-vrl | dfe-transform-vector |
 |-----------------------------------|-----------|:------------:|:-----------:|:----------:|:------------:|:-----------------:|:--------------------:|
-| `slim` (projected)                | gRPC      |      X       |             |     X      |      X       |                   |                      |
-| `single` (projected)              | Kafka     |      X       |             |     X      |      X       |                   |                      |
+| `slim` (projected)                | gRPC      |              |             |     X      |      X       |                   |                      |
+| `single` (projected)              | Kafka     |     idle     |     idle    |     X      |      X       |       idle        |                      |
 | `kafka-fetcher`                   | Kafka     |              |      X      |     X      |              |                   |                      |
 | `kafka-full`                      | Kafka     |      X       |      X      |     X      |      X       |                   |                      |
 | `kafka-full-transform-vrl`        | Kafka     |              |      X      |     X      |      X       |         X         |                      |
@@ -38,18 +39,19 @@ source's own with the bundled filebeat program.
 | `grpc-minimal`                    | gRPC      |              |             |     X      |              |                   |                      |
 | `grpc-receiver`                   | gRPC      |              |             |     X      |      X       |                   |                      |
 
-The two projected profiles run the default composition: the receiver, the
-loader and the archiver, plus the engine, the UI and HyperDX from the `core`
-and `hyperdx` footprint keys. The archiver starts with no destination and idles
-Ready until one is configured, which is why being deployed unconfigured costs a
-container and nothing else.
+Both projected profiles run the core data path -- the receiver and the loader --
+plus the engine, the UI and HyperDX from the `core` and `hyperdx` footprint keys.
+`slim` runs nothing else. `single` adds one archiver, one fetcher and one
+transform-vrl, each started with a config that gives it no work: they are Ready,
+serve health and metrics, open no broker connection and hold `pipeline_idle` at
+1. `make post` asserts that on every start.
 
-**No fetcher on Compose.** The fetcher's config model has one stanza per source
-TYPE, so one resident container cannot carry several sources of the same type
-the way the Kubernetes deployment does with one instance per source. A Compose
-deployment configures fetching by choosing a hand-crafted profile
-(`grpc-fetcher`, `kafka-fetcher`, ...) with a config file it edits. Closing
-that gap is a change to the fetcher's config model, not to this projection.
+**One of each app, and no more.** Compose declares its services in this repo and
+creates none at run time, so the apps a Kubernetes tier deploys one-per-source
+cannot arrive with a source here. `single` therefore starts one of each in
+advance, and an operator turns one on by giving it work. A second fetcher source
+or a second transform source needs Kubernetes, and dfe-engine refuses it at save
+rather than writing a definition nothing runs.
 
 ## Why the two tiers are projected
 

@@ -9,7 +9,7 @@
 
 """Power-on self test (POST) for a stack that is ALREADY running.
 
-Five claims. INGEST: uniquely-marked events put in at the ingest edge come out as
+Six claims. INGEST: uniquely-marked events put in at the ingest edge come out as
 those exact rows in ClickHouse. SELF-MONITORING: when the profile runs a collector,
 the stack's own telemetry is landing FRESH in the otel database, and each named
 service's stdout is landing under its own name. OBSERVABILITY: HyperDX holds the
@@ -18,8 +18,9 @@ the proxy that gives it an identity. CONSOLE: those same marked rows read back
 through the engine query API that dfe-ui uses, so the data is not merely stored but
 reachable from the surface an operator works in. HUNTS: a hunt created through the
 API while the runner is already running is picked up and executed, and its
-detections land in the detection table. None of the five is "the containers
-started" or "the ports answer".
+detections land in the detection table. IDLE APPS: each app the tier starts with
+no work is serving and doing nothing, which is the whole point of starting it.
+None of the six is "the containers started" or "the ports answer".
 
 Transport-agnostic by construction. It posts to the ingest edge and reads
 ClickHouse, so it works identically on the Kafka and the gRPC (kafka-less)
@@ -51,7 +52,7 @@ import sys
 import time
 from urllib.parse import quote
 
-from _common import FALSY, _load_dotenv, _print, _resolved_services
+from _common import FALSY, _load_dotenv, _print, _profile_mk_value, _resolved_services
 from _pipeline import (
     MARKER_EXPRESSIONS,
     ch_count,
@@ -149,6 +150,16 @@ HUNT_PICKUP_INTERVAL_SECONDS = 3.0
 # picked up by the NEXT minute's fire. Long enough to cover that second fire.
 HUNT_DETECTION_TIMEOUT_SECONDS = 150.0
 HUNT_DETECTION_INTERVAL_SECONDS = 3.0
+
+# Idle-app assertion: the config that gives each app no work, and the metrics
+# port compose publishes it on. dfe-infra apps.yaml declares the idle predicate
+# and the app evaluates it; this reads the answer the app publishes.
+IDLE_APPS: dict[str, tuple[str, str]] = {
+    "dfe-archiver": ("archiver/kafka.yaml", "9093"),
+    "dfe-fetcher": ("fetcher/kafka.yaml", "9094"),
+    "dfe-transform-vrl": ("transform-vrl/kafka.yaml", "9096"),
+}
+IDLE_GAUGE = "pipeline_idle"
 
 # Compose defaults that mean "nobody ran `make init`". They are deterministic and
 # committed, so a stack running them has a signing key and a database password
@@ -443,6 +454,98 @@ def _verify_container_logs(*, database: str) -> int:
     summary = ", ".join(f"{name}={count}" for name, count in sorted(counts.items()))
     _print(msg=f"PASS  container stdout is landing per service ({summary})")
     return 0
+
+
+def _service_var(service: str, suffix: str) -> str:
+    """The .env / .profile.mk variable naming one service's setting.
+
+    Every per-service key follows it -- DFE_TRANSFORM_VRL_CONFIG,
+    DFE_ARCHIVER_PROMETHEUS_PORT -- so it is derived rather than tabulated.
+    """
+    return f"DFE_{service.removeprefix('dfe-').upper().replace('-', '_')}_{suffix}"
+
+
+def _metric_value(body: str, name: str) -> float | None:
+    """One unlabelled gauge out of a Prometheus exposition body, or None if absent."""
+    for line in body.splitlines():
+        if line.startswith("#"):
+            continue
+        key, _, value = line.partition(" ")
+        if key.split("{", 1)[0] != name:
+            continue
+        try:
+            return float(value)
+        except ValueError:
+            return None
+    return None
+
+
+def _idle_apps() -> list[tuple[str, str]]:
+    """The (service, metrics port) pairs this run started with an idle config.
+
+    Read off the resolved profile rather than the profile NAME: a data-plane
+    profile pointing the same app at a config that gives it work is not one of
+    these, and must not be asserted inert.
+    """
+    running = set(_resolved_services())
+    found: list[tuple[str, str]] = []
+    for service, (config, default_port) in sorted(IDLE_APPS.items()):
+        if service not in running:
+            continue
+        resolved = _profile_mk_value(key=_service_var(service, "CONFIG"))
+        if resolved[:1] != [config]:
+            continue
+        port = os.environ.get(_service_var(service, "PROMETHEUS_PORT"), "").strip()
+        found.append((service, port or default_port))
+    return found
+
+
+def _verify_idle_apps() -> int:
+    """Prove each app the tier starts with no work is serving and doing nothing.
+
+    Two-sided on purpose. A container that crash-looped on the idle config fails
+    the readiness half; one that is quietly archiving, polling or consuming fails
+    the gauge half, and neither shows up as a missing row anywhere else.
+    """
+    expected = _idle_apps()
+    if not expected:
+        _print(
+            msg="SKIP  this profile starts no app with an idle config -- nothing to prove"
+        )
+        return 0
+
+    bind = os.environ.get("DFE_POST_HOST", "localhost")
+    failed = 0
+    for service, port in expected:
+        base = f"http://{bind}:{port}"
+        _print(msg=f"Waiting for {service} to report {IDLE_GAUGE} at {base}")
+        if not (_wait_ready(f"{base}/readyz")):
+            _print(
+                msg=f"FAIL  {service} runs an idle config but never became ready within "
+                f"{READY_TIMEOUT_SECONDS:.0f}s -- it did not start on a config that gives "
+                "it no work"
+            )
+            failed += 1
+            continue
+        try:
+            idle = _metric_value(http_get(f"{base}/metrics", timeout=5), IDLE_GAUGE)
+        except Exception:  # noqa: BLE001 - unreachable and unreadable are one answer here
+            idle = None
+        if idle is None:
+            _print(
+                msg=f"FAIL  {service} serves no {IDLE_GAUGE} on {base}/metrics, so whether "
+                "it is inert cannot be read"
+            )
+            failed += 1
+        elif idle != 1:
+            _print(
+                msg=f"FAIL  {service} reports {IDLE_GAUGE}={idle:g} -- it was given a config "
+                "with no work and is working anyway"
+            )
+            failed += 1
+        else:
+            _print(msg=f"PASS  {service} is ready and inert ({IDLE_GAUGE}=1)")
+    return failed
 
 
 def _hyperdx_base() -> str:
@@ -991,7 +1094,7 @@ def main() -> int:
         # (loader-only), so there is nothing to prove end to end. Self-monitoring
         # is a separate pipeline and is still worth asserting.
         _print(msg=f"SKIP  {reason} -- nothing to prove end to end")
-        return _verify_self_monitoring() + _verify_hyperdx()
+        return _verify_self_monitoring() + _verify_hyperdx() + _verify_idle_apps()
     except IngestNotReady as reason:
         _print(msg=f"FAIL  {reason}")
         return 1
@@ -1063,6 +1166,7 @@ def main() -> int:
         failed += _verify_hyperdx()
         failed += _verify_ui_query(database=database, marker=marker, table=table)
         failed += _verify_hunt(database=database, marker=marker, table=table)
+        failed += _verify_idle_apps()
         return 1 if failed else 0
 
     _print(

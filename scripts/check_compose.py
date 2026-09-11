@@ -607,8 +607,8 @@ def _transform_wiring_failures() -> tuple[list[str], int]:
     Two properties, both of them things a profile can get wrong while every
     service still starts and reports healthy:
 
-    - a transform's output topic must be read by that profile's loader, or the
-      events reach a topic and stop there (dfe-docker#66);
+    - a WORKING transform's output topic must be read by that profile's loader,
+      or the events reach a topic and stop there (dfe-docker#66);
     - two transform instances in one profile must not consume the same topic,
       because each event would then take whichever program won the partition.
     """
@@ -640,7 +640,9 @@ def _transform_wiring_failures() -> tuple[list[str], int]:
         seen: dict[str, str] = {}
         for service, config_path in sorted(transforms.items()):
             subscribed, produced, _ = _config_topics(path=CONFIG_DIR / config_path)
-            for topic in sorted(produced):
+            # An idle transform subscribes to nothing and so writes nothing, and
+            # the sink it is required to name is not a topic events stop at.
+            for topic in sorted(produced if subscribed else ()):
                 made += 1
                 if topic in consumed or (pattern and re.fullmatch(pattern, topic)):
                     continue

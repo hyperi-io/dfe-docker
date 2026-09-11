@@ -69,6 +69,12 @@ AUTH_NON_BLANK_IF_SET = ("DFE_OIDC_ALLOWED_GROUPS",)
 ENGINE_BROKER_ENV_VAR = "DFE_KAFKA_BOOTSTRAP_SERVERS"
 IN_STACK_BROKER = "kafka:9092"
 
+# `make stack` pins dfe-ui as a container reference (tag@sha256:...), which is
+# what the image line needs and is not a version anyone reads. The engine reports
+# the console's version, so it is handed the tag under its own name.
+UI_VERSION_ENV_VAR = "DFE_UI_VERSION"
+UI_VERSION_TAG_VAR = "DFE_UI_VERSION_TAG"
+
 CORE_ENABLED_ENV_VAR = "DFE_CORE_ENABLED"
 CORE_SERVICES = ["dfe-engine", "dfe-hunt-runner", "dfe-ui", "dfe-proxy"]
 
@@ -418,6 +424,11 @@ def main() -> int:
                 os.environ.get(ENGINE_BROKER_ENV_VAR, "").strip() or IN_STACK_BROKER
             )
             lines.append(f"export {ENGINE_BROKER_ENV_VAR} := {broker}")
+
+        # The console version the engine reports. Emitted unconditionally, empty
+        # when nothing is pinned, so the included file settles on every make pass.
+        ui_ref = os.environ.get(UI_VERSION_ENV_VAR, "").strip()
+        lines.append(f"export {UI_VERSION_TAG_VAR} := {ui_ref.split('@', 1)[0]}")
 
         # `LOCAL=` names components to BUILD, which is a smaller set than the
         # services a profile runs, so make validates it against the builder's own

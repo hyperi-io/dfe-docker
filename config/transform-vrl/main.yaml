@@ -1,30 +1,24 @@
 # Project:   dfe-docker
-# File:      config/transform-vrl/kafka.yaml
-# Purpose:   dfe-transform-vrl config - the idle instance the single tier starts
+# File:      config/transform-vrl/main.yaml
+# Purpose:   dfe-transform-vrl config - the passthrough instance on main_land
 # Language:  YAML
 #
 # License:   BUSL-1.1
 # Copyright: (c) 2026 HYPERI PTY LIMITED
 #
-# It names no source topic, which is the transform's own idle predicate
-# (dfe-infra apps.yaml `idle_when`): it starts, stays Ready, holds the
-# pipeline_idle gauge at 1 and joins no consumer group. The source it is later
-# given names both ends; transform-vrl/main.yaml is the profile that ships with
-# a pair already set.
+# The data-plane profiles that exist to exercise transforming name this file. The
+# single tier starts the same app idle from transform-vrl/kafka.yaml instead.
 
 source:
   brokers:
     - kafka:9092
-  # Explicitly empty: an omitted list defaults to `events`, which is a topic to
-  # consume and so not idle.
-  topics: []
+  topics:
+    - main_land
 
 transforms:
   dir: /etc/dfe-transform-vrl/transforms
 
 sink:
-  # The app refuses an empty sink topic even with nothing to read, so this names
-  # the catch-all's transformed topic until a source replaces both ends.
   brokers:
     - kafka:9092
   topic: main_load

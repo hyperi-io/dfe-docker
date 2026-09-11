@@ -68,9 +68,29 @@ ingest components produce to a `*_land` topic derived from the event's `_source`
 and the loader consumes `topic_regex: .*_land`. On a `grpc-*` profile there is no
 broker -- the ingest components dial `dfe-loader:50051` directly.
 
-Both transforms and `dfe-archiver` are Kafka-only: each reads a topic and writes
-a topic or a volume. With a transform in the profile the loader switches to
-`config/loader/kafka-load.yaml` and consumes `main_load`.
+The two transforms are bus-only today: each reads a topic and writes a topic.
+`dfe-archiver` runs on either -- it consumes the landing topics on Kafka and
+answers a scalo Push listener on gRPC (`config/archiver/grpc.yaml`). With a
+transform in the profile the loader switches to `config/loader/kafka-load.yaml`
+and consumes `main_load`.
+
+## What each tier runs, and what starts with nothing to do
+
+`slim` is the core data path alone: receiver, loader, engine, UI and HyperDX.
+`single` adds the broker and three more apps -- one archiver, one fetcher, one
+transform-vrl -- each started from a config that gives it no work.
+
+An idle app is Ready, serves health and metrics, opens no broker connection and
+holds `pipeline_idle` at 1, so being deployed unconfigured costs a container and
+nothing else. It is there because Compose declares its services in this repo and
+creates none at run time: an app that cannot be added later has to be present
+before anything needs it.
+
+They stay inert until something gives them work. Today that is an operator
+editing `config/<app>/kafka.yaml`; the engine writing the config itself, so a
+source created in the console turns one on, is the stack release after this one.
+Until then dfe-engine refuses a fetcher or transform source on a Compose
+deployment rather than storing one nothing runs.
 
 ## A source with its own transform gets its own instance
 
@@ -258,8 +278,12 @@ and is not co-equal -- if both would work, choose Kubernetes. What makes Compose
 safe to deploy is that it consumes the SAME image from the SAME registry, pinned
 from the same stack SSoT, so both run identical digests.
 
-Two deliberate asymmetries:
+Three deliberate asymmetries:
 
+- **One of each app.** Kubernetes deploys a fetcher and a transform per source
+  and the engine writes each instance; Compose declares its services here and
+  creates none at run time, so `single` starts one of each idle instead and a
+  second source of either kind needs Kubernetes.
 - **No authentication.** Compose runs god-mode. Envoy fronts both tiers, but its
   OIDC filters stay unconfigured here, because Docker mode can never assume an
   issuer exists. An OIDC issuer (the engine as provider, or an external IdP)

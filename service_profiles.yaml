@@ -55,8 +55,6 @@ profiles:
     hyperdx: true
     otel: true
     services:
-      dfe-archiver:
-        config_path: archiver/grpc.yaml
       dfe-loader:
         config_path: loader/grpc.yaml
       dfe-receiver:
@@ -73,17 +71,23 @@ profiles:
     services:
       dfe-archiver:
         config_path: archiver/kafka.yaml
+      dfe-fetcher:
+        config_path: fetcher/kafka.yaml
       dfe-loader:
         config_path: loader/kafka.yaml
       dfe-receiver:
         config_path: receiver/kafka.yaml
+      dfe-transform-vrl:
+        config_path: transform-vrl/kafka.yaml
   # END projected profiles
 
   # Hand-crafted from here down. WHICH apps the two projected profiles run is
   # dfe-infra apps.yaml's `default_in`, not a choice made here: they idle Ready
   # until an operator configures them, so being deployed unconfigured costs a
-  # pod and nothing else. dfe-fetcher and the transforms stay off both, because
-  # an instance of either IS a source and arrives when the source is written.
+  # container and nothing else. The single tier therefore starts one archiver,
+  # one fetcher and one transform-vrl idle, and the configs named `<app>/kafka.yaml`
+  # are those idle ones; a profile below that exists to exercise an app names the
+  # config that ships it work instead.
   kafka-minimal:
     transport: kafka
     services:
@@ -94,7 +98,7 @@ profiles:
     transport: kafka
     services:
       dfe-archiver:
-        config_path: archiver/kafka.yaml
+        config_path: archiver/kafka-archive.yaml
       dfe-fetcher:
         config_path: fetcher/aws-kafka.yaml
       dfe-loader:
@@ -130,7 +134,7 @@ profiles:
       dfe-receiver:
         config_path: receiver/kafka.yaml
       dfe-transform-vrl:
-        config_path: transform-vrl/kafka.yaml
+        config_path: transform-vrl/main.yaml
 
   # The per-source transform shape: two dfe-transform-vrl instances, one on the
   # shared main_land and one on the filebeat source's own filebeat_land, with
@@ -145,7 +149,7 @@ profiles:
       dfe-receiver:
         config_path: receiver/kafka.yaml
       dfe-transform-vrl:
-        config_path: transform-vrl/kafka.yaml
+        config_path: transform-vrl/main.yaml
       dfe-transform-vrl-filebeat:
         config_path: transform-vrl/filebeat.yaml
 
@@ -170,7 +174,7 @@ profiles:
     transport: kafka
     services:
       dfe-archiver:
-        config_path: archiver/kafka.yaml
+        config_path: archiver/kafka-archive.yaml
       dfe-loader:
         config_path: loader/kafka.yaml
       dfe-receiver:

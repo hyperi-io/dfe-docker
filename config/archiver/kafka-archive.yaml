@@ -1,0 +1,23 @@
+# Project:   dfe-docker
+# File:      config/archiver/kafka-archive.yaml
+# Purpose:   dfe-archiver config - archives the landing topics off the broker
+# Language:  YAML
+#
+# License:   BUSL-1.1
+# Copyright: (c) 2026 HYPERI PTY LIMITED
+#
+# The data-plane profiles that exist to exercise archiving name this file. The
+# single tier starts the same app idle from archiver/kafka.yaml instead.
+
+transport: kafka
+
+kafka:
+  brokers:
+    - kafka:9092
+  topics:
+    - main_land
+
+# The compose stack mounts a named volume here (docker-compose.yml,
+# archiver-data).
+archive:
+  destination: file:///var/data/archive

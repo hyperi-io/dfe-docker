@@ -496,7 +496,7 @@ services:
         condition: service_completed_successfully
         required: false
     volumes:
-      - ./config/${DFE_FETCHER_CONFIG:-fetcher/aws-kafka.yaml}:/etc/dfe/fetcher.yaml:ro
+      - ./config/${DFE_FETCHER_CONFIG:-fetcher/kafka.yaml}:/etc/dfe/fetcher.yaml:ro
       - dlq-spool:/var/spool/dfe
     healthcheck:
       test: ["CMD", "curl", "-sf", "http://localhost:9090/livez"]
@@ -835,6 +835,9 @@ services:
       # no deploy repo for the engine to read pins out of, so this is the only
       # thing /system/deployment can tell the console footer.
       DFE_STACK_VERSION: ${DFE_STACK_VERSION:-}
+      # The console version /system/version reports. resolve_profile strips the
+      # digest off the ui pin, because a container reference is not a version.
+      DFE_UI_VERSION: ${DFE_UI_VERSION_TAG:-}
       # The transport the tier's stages are bound to (resolve_profile exports it
       # from the profile); the defaults are the slim tier's.
       DFE_TRANSPORT_DEFAULT: ${DFE_TRANSPORT_DEFAULT:-direct}
