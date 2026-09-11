@@ -1,0 +1,18 @@
+# Project:   dfe-docker
+# File:      config/fetcher/kafka.yaml
+# Purpose:   dfe-fetcher config - the idle instance the single tier starts
+# Language:  YAML
+#
+# License:   BUSL-1.1
+# Copyright: (c) 2026 HYPERI PTY LIMITED
+#
+# Compose declares its services in this repo and creates none at run time, so the
+# one fetcher the single tier runs is started here rather than arriving with a
+# source. It names where records go and nothing to poll, which is the fetcher's
+# own idle predicate (dfe-infra apps.yaml `idle_when`): it starts, stays Ready,
+# holds the pipeline_idle gauge at 1 and opens no upstream connection.
+
+output:
+  kafka:
+    brokers:
+      - kafka:9092

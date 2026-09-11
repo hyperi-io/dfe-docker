@@ -440,6 +440,12 @@ hold: that the stack's own telemetry is landing fresh in the `dfe.otel_*` tables
 That is the pair the Kubernetes bootstrap smoke asserts as CORE 1 and CORE 2 --
 the two pipelines a complete deployment has to move.
 
+On a profile that starts an app with no work -- the archiver, fetcher and
+transform-vrl `single` carries -- it makes a third: each of them is ready AND
+reports `pipeline_idle` 1. A container that crash-looped on the idle config fails
+the first half, and one that is quietly archiving, polling or consuming fails the
+second.
+
 What it does not prove: anything about tables other than the target, about
 profiles you are not running, or about throughput. Three rows is deliberate -- a
 self test that writes thousands of rows into a landing table on every boot is one
@@ -460,6 +466,8 @@ The other outcomes are as informative as the PASS:
   tables. It cannot reach ClickHouse; read its logs.
 - **FAIL, no fresh rows** -- the tables exist and nothing recent is in them, so
   the services are not exporting. See below.
+- **FAIL, not inert** -- an app the tier started with no work reports
+  `pipeline_idle` 0, or serves no such gauge, so it cannot be said to be idle.
 
 ## Self-monitoring
 

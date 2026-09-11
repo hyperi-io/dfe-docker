@@ -117,7 +117,7 @@ flowchart LR
 
 `kafka-init-redpanda` and `kafka-init-apache` each pre-create `main_land` and
 nothing else. `config/loader/kafka-load.yaml` subscribes to `main_load`, which
-is produced by `config/transform-vrl/kafka.yaml`. That topic exists only if broker
+is produced by `config/transform-vrl/main.yaml`. That topic exists only if broker
 auto-creation makes it. The profiles affected are the ones that point the loader
 at `kafka-load.yaml`: `kafka-receiver-transform-vector` and
 `kafka-full-transform-vrl`.

@@ -1,10 +1,16 @@
 # Project:   dfe-docker
 # File:      config/archiver/kafka.yaml
-# Purpose:   dfe-archiver config - archives the landing topics off the broker
+# Purpose:   dfe-archiver config - the idle instance the single tier starts
 # Language:  YAML
 #
 # License:   BUSL-1.1
 # Copyright: (c) 2026 HYPERI PTY LIMITED
+#
+# It knows what to read and has nowhere to write, which is the archiver's own
+# idle predicate (dfe-infra apps.yaml `idle_when`): it starts, stays Ready, holds
+# the pipeline_idle gauge at 1 and opens no consumer group. An operator naming a
+# destination is what turns it on; archiver/kafka-archive.yaml is the profile
+# that ships with one.
 
 transport: kafka
 
@@ -13,9 +19,3 @@ kafka:
     - kafka:9092
   topics:
     - main_land
-
-# The compose stack mounts a named volume here (docker-compose.yml,
-# archiver-data). The app has no default destination: an archiver with nowhere
-# to write idles rather than filling a container's own filesystem.
-archive:
-  destination: file:///var/data/archive
