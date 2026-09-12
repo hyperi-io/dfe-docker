@@ -335,6 +335,33 @@ Two things about the runner worth knowing before you debug it:
   Deleting it per run makes a run depend on the test definition, not on broker
   history.
 
+### Post-deploy source test -- what an operator does first
+
+```bash
+DFE_INFRA_DIR=../dfe-infra make test-source
+DFE_INFRA_DIR=../dfe-infra make test-source SOURCE_ARGS="--case cloudwatch --aws-service cloudtrail"
+```
+
+Neither harness above adds a source. This one creates one in the console,
+attaches a transform, deploys it, feeds it real data and reads the rows back,
+driving a browser to do it. The runner is dfe-infra's
+(`scripts/acceptance/source/run.py`), the same one `dfe-ops acceptance --suite
+source` calls for Kubernetes; `scripts/test_source.py` supplies what this repo
+owns -- the published ports, the archiver container, and the admin login from
+`.env`. `SOURCE_ARGS` reaches the runner untouched (`--keep`, `--per-module`,
+`--headed`).
+
+Beyond a running stack it needs `DFE_INFRA_DIR` (the runner), `DFE_ENGINE_REPO`
+and `DFE_TRANSFORM_VRL_REPO` (the corpus wrapper, the bundled pipeline), and an
+interpreter carrying Playwright -- `DFE_ACCEPTANCE_PYTHON` where the system one
+is externally managed. The cloudwatch case polls a real AWS upstream and writes
+nothing to it: put the two `AWS_*` credentials in `env/fetcher.env` and
+`DFE_AWS_REGION` in `.env`.
+
+Every step is a report row and a screenshot under `--shots-dir` (`.tmp/source`).
+A step the console cannot do falls back to the engine API and says so, because
+that is a finding about the console rather than about the pipeline.
+
 ## Static checks
 
 `make check` runs what CI runs, so a green local run means a green pipeline.
