@@ -18,7 +18,10 @@ kafka:
   brokers:
     - kafka:9092
   group: dfe-loader
-  topic_regex: .*_land
+  # Both suffixes, because a source with a transform is read at its `_load` end.
+  # scalo drops `<base>_land` whenever `<base>_load` exists, so a source without
+  # a transform is still read once and only at its landing topic.
+  topic_regex: .*_(land|load)
 
 routing:
   dlq:
