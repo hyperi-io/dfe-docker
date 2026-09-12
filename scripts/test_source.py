@@ -171,7 +171,9 @@ def _suite_env(*, host: str, ui_host: str) -> dict[str, str]:
             "DFE_E2E_CH_PORT": os.environ.get("CLICKHOUSE_HTTP_PORT", "8123"),
             "DFE_E2E_CH_USER": os.environ.get("CLICKHOUSE_USERNAME", "default"),
             "DFE_E2E_CH_PASSWORD": os.environ.get("CLICKHOUSE_PASSWORD", ""),
-            "DFE_E2E_CH_DB": os.environ.get("DFE_OTEL_DATABASE", "dfe"),
+            # The data-path database the loader writes to (config/loader/*.yaml
+            # all pin `database: dfe`), never DFE_OTEL_DATABASE's.
+            "DFE_E2E_CH_DB": os.environ.get("DFE_E2E_CH_DB", "dfe"),
             "DFE_E2E_ENGINE_URL": f"http://{ui_host}:{os.environ.get('DFE_ENGINE_PORT', '8003')}",
             "DFE_E2E_ENGINE_USER": os.environ.get("DFE_AUTH_LOCAL_ADMIN_NAME", "admin"),
             "DFE_E2E_ENGINE_PASSWORD": password,

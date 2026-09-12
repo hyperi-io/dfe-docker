@@ -1004,14 +1004,15 @@ def _declared_fragments() -> set[str]:
     )
 
 
-def _dev_compose_files(*, output: str) -> dict[str, list[str]]:
-    """Return the `-f` file list of each `docker compose` line `make -n dev` prints.
+def _dev_compose_files(*, output: str) -> dict[str, list[list[str]]]:
+    """Return the `-f` file lists of the `docker compose` lines `make -n dev` prints.
 
     Keyed by subcommand, so the pull and the start are asserted separately: they
     are built from different variables, and a fix to one says nothing about the
-    other.
+    other. Every matching line is kept, because a goal that prints two `up -d`
+    lines gets both asserted rather than only the last.
     """
-    found: dict[str, list[str]] = {}
+    found: dict[str, list[list[str]]] = {}
     for line in output.splitlines():
         line = line.strip()
         if not (line.startswith("docker compose ")):
@@ -1020,9 +1021,9 @@ def _dev_compose_files(*, output: str) -> dict[str, list[str]]:
         for label, markers in _DEV_SUBCOMMANDS.items():
             if not (all(marker in tokens for marker in markers)):
                 continue
-            found[label] = [
-                tokens[i + 1] for i, token in enumerate(tokens[:-1]) if token == "-f"
-            ]
+            found.setdefault(label, []).append(
+                [tokens[i + 1] for i, token in enumerate(tokens[:-1]) if token == "-f"]
+            )
     return found
 
 
@@ -1073,19 +1074,21 @@ def _dev_path_fragment_failures() -> tuple[list[str], int]:
     lines = _dev_compose_files(output=dev.stdout)
     for label in sorted(_DEV_SUBCOMMANDS):
         made += 1
-        files = lines.get(label)
-        if files is None:
+        occurrences = lines.get(label)
+        if not (occurrences):
             failures.append(
                 f"`make -n dev LOCAL=...` printed no `docker compose ... {label}` line"
             )
             continue
-        missing = sorted(want - set(files))
-        if missing:
-            failures.append(
-                f"`make dev LOCAL=...` runs its {label} without {', '.join(missing)} -- "
-                "the COMPOSE_FILE chain carries them and this path does not, so every "
-                "dial they hold is ignored on it"
-            )
+        for files in occurrences:
+            made += 1
+            missing = sorted(want - set(files))
+            if missing:
+                failures.append(
+                    f"`make dev LOCAL=...` runs its {label} without {', '.join(missing)} -- "
+                    "the COMPOSE_FILE chain carries them and this path does not, so every "
+                    "dial they hold is ignored on it"
+                )
     return failures, made
 
 
