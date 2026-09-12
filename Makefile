@@ -72,7 +72,8 @@ ifneq (,$(filter-out $(BOOTSTRAP_GOALS),$(or $(MAKECMDGOALS),help)))
     # otherwise sends it after a `:local` tag nothing has built yet, reached
     # through an image consumer (dfe-schema-init runs dfe-engine's image), so it
     # bites even when the profile holds no DFE service of its own.
-    DEV_PULL_FLAGS := -f docker-compose.yml $(STORAGE_FLAGS) $(UI_FLAGS)
+    # DEV_PULL_FLAGS and DEV_FLAGS expand at use time: UI_FLAGS is filled below.
+    DEV_PULL_FLAGS = -f docker-compose.yml $(STORAGE_FLAGS) $(UI_FLAGS)
     ifeq ($(strip $(LOCAL)),)
         DEV_BUILD := $(ACTIVE_SERVICES)
         DEV_FLAGS :=
@@ -96,7 +97,7 @@ ifneq (,$(filter-out $(BOOTSTRAP_GOALS),$(or $(MAKECMDGOALS),help)))
         # The local overlay takes the committed override's slot, keeping the
         # default chain's relative order so `LIVE=1` resolves the engine volumes
         # the same way with and without LOCAL.
-        DEV_FLAGS := -f docker-compose.yml -f $(LOCAL_OVERLAY)
+        DEV_FLAGS = -f docker-compose.yml -f $(LOCAL_OVERLAY)
         ifneq ($(strip $(LIVE)),)
             DEV_FLAGS += -f docker-compose.live.yml
         endif
@@ -415,6 +416,12 @@ ifeq ($(strip $(DFE_INFRA_DIR)),)
 else
 	@python3 scripts/render_profiles.py --check
 endif
+
+# The resolved chain, for check-compose to compare the `make dev LOCAL=...` file
+# list against. Not a bootstrap goal: the chain depends on DFE_AUTH_RESOLVED.
+.PHONY: print-compose-file
+print-compose-file:
+	@echo "COMPOSE_FILE=$(COMPOSE_FILE)"
 
 .PHONY: check-compose
 check-compose: ## Resolve compose on the registry, dev and live paths, both Kafka backends
