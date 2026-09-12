@@ -461,6 +461,13 @@ test-e2e: ## End-to-end test executor (pass test names via E2E_TESTS)
 test-flows: ## Flow shapes against a running stack (needs DFE_ENGINE_REPO; FLOW_ARGS passes flags)
 	@python3 ./scripts/test_flows.py $(FLOW_ARGS)
 
+# The post-deploy source test: add a source through the console and prove every
+# hop. The runner is dfe-infra's, the same one `dfe-ops acceptance --suite
+# source` calls, so both targets test one definition of the steps.
+.PHONY: test-source
+test-source: ## Post-deploy source test against a running stack (needs DFE_INFRA_DIR + DFE_ENGINE_REPO; SOURCE_ARGS passes flags)
+	@python3 ./scripts/test_source.py $(SOURCE_ARGS)
+
 # ---------------------------------------------------------------------------
 # Power-on self test
 # Runs automatically after `make dev` / `make ci`. Opt OUT with

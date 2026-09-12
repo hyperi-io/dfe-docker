@@ -9,7 +9,7 @@
 
 """Power-on self test (POST) for a stack that is ALREADY running.
 
-Seven claims. SUBSCRIPTION: where the tier has a bus, the loader is fetching at
+Eight claims. SUBSCRIPTION: where the tier has a bus, the loader is fetching at
 least one topic, so the events about to be injected have a consumer at all.
 INGEST: uniquely-marked events put in at the ingest edge come out as those exact
 rows in ClickHouse. SELF-MONITORING: when the profile runs a collector,
@@ -22,7 +22,10 @@ reachable from the surface an operator works in. HUNTS: a hunt created through t
 API while the runner is already running is picked up and executed, and its
 detections land in the detection table. IDLE APPS: each app the tier starts with
 no work is serving and doing nothing, which is the whole point of starting it.
-None of the seven is "the containers started" or "the ports answer".
+ROUTING: where the engine renders this tier's app config, a source created
+through the API reaches the RUNNING receiver, and a record matching its rule
+lands in a table of its own. None of the eight is "the containers started" or
+"the ports answer".
 
 The INGEST claim is transport-agnostic by construction: it posts to the ingest
 edge and reads ClickHouse, so it runs identically on the Kafka and the gRPC
@@ -178,6 +181,19 @@ IDLE_APPS: dict[str, tuple[str, str]] = {
     "dfe-transform-vrl": ("transform-vrl/kafka.yaml", "9096"),
 }
 IDLE_GAUGE = "pipeline_idle"
+
+# Routing assertion. A source created through the API compiles a receiver rule,
+# and on this target the engine renders that rule into the file the RUNNING
+# receiver polls. The receiver re-reads on a 5s mtime poll and rebuilds its
+# router in place, so the wait is that poll plus the trip through the broker and
+# the loader's batch -- nothing here waits on a deploy controller.
+ROUTING_SERVICES = ("dfe-engine", "dfe-receiver", "dfe-loader")
+ROUTING_SOURCE_PREFIX = "postroute"
+ROUTING_TIMEOUT_SECONDS = 45.0
+ROUTING_INTERVAL_SECONDS = 3.0
+# `.profile.mk`'s answer to "does the engine render this tier's app config": the
+# claim is only makeable where it does.
+APP_CONFIG_DIR_KEY = "DFE_ENGINE_APP_CONFIG_DIR"
 
 # Compose defaults that mean "nobody ran `make init`". They are deterministic and
 # committed, so a stack running them has a signing key and a database password
@@ -637,6 +653,122 @@ def _verify_idle_apps() -> int:
         else:
             _print(msg=f"PASS  {service} is ready and inert ({IDLE_GAUGE}=1)")
     return failed
+
+
+def _create_routed_source(*, base: str, name: str, token: str) -> str:
+    """Create and deploy a source with a rule of its own. Returns '' or the fault.
+
+    The deploy is what makes the source live: it creates the landing table, ensures
+    the topic and pushes the compiled routing into the apps' overlays.
+    """
+    status, body = http_post_json(
+        f"{base}/sources",
+        {
+            "source": name,
+            "display_name": "POST routing self test",
+            "match": {"field": "_source", "operator": "equals", "value": name},
+            "header": {"type": "common-header/timeseries", "version": "1.0.1"},
+            "schema": {"meta_schema": "meta/syslog", "meta_schema_version": "1.0.0"},
+        },
+        token=token,
+    )
+    if status != 201:
+        return f"POST /sources returned HTTP {status}: {body}"
+    status, body = http_post_json(f"{base}/sources/{name}/deploy", {}, token=token)
+    if status != 200 or not (isinstance(body, dict) and body.get("applied")):
+        return f"POST /sources/{name}/deploy returned HTTP {status}: {body}"
+    if body.get("apps_sync_error"):
+        return f"the apps could not follow the source: {body['apps_sync_error']}"
+    for hint in body.get("restart_required") or []:
+        _print(msg=f"      {hint}")
+    return ""
+
+
+def _verify_routing_applied(*, database: str) -> int:
+    """Prove a source created through the API reaches the RUNNING receiver.
+
+    The artefact is a row in the new source's own table, not a file on a volume:
+    a rendered config the receiver never re-read would satisfy any check that
+    looked at the write instead of the landing.
+    """
+    if not (_profile_mk_value(key=APP_CONFIG_DIR_KEY)):
+        _print(
+            msg="SKIP  the engine does not render this tier's app config -- its apps "
+            "read a committed config, so no API write reaches them"
+        )
+        return 0
+    absent = [
+        name for name in ROUTING_SERVICES if name not in set(_resolved_services())
+    ]
+    if absent:
+        _print(
+            msg=f"SKIP  {', '.join(absent)} not in the active profile -- no routing to prove"
+        )
+        return 0
+
+    base = _engine_base()
+    token, status, username = _login(base)
+    if status != 200 or not (token):
+        _print(
+            msg=f"FAIL  login as {username!r} returned HTTP {status} -- this run cannot "
+            "create the source it needs to prove the routing reaches the receiver"
+        )
+        return 1
+
+    name = f"{ROUTING_SOURCE_PREFIX}{_run_id()[-8:]}"
+    _print(msg=f"Creating source {name!r} and posting one event that matches its rule")
+    fault = _create_routed_source(base=base, name=name, token=token)
+    if fault:
+        _print(msg=f"FAIL  {fault}")
+        _remove(f"{base}/sources/{name}", kind="source", name=name, token=token)
+        return 1
+
+    try:
+        return _await_routed_row(database=database, name=name)
+    finally:
+        _remove(f"{base}/sources/{name}", kind="source", name=name, token=token)
+
+
+def _await_routed_row(*, database: str, name: str) -> int:
+    """Post to the receiver until a record lands in the new source's own table."""
+    try:
+        service, ingest_url = _ingest_target(table=name)
+    except (NoIngestComponent, IngestNotReady) as reason:
+        _print(msg=f"FAIL  {reason}")
+        return 1
+    marker = _run_id()
+
+    def _landed():
+        # Re-posted every attempt: before the receiver has re-read its config the
+        # record takes the catch-all, so the early posts are the wait rather than
+        # a failure.
+        try:
+            http_post(ingest_url, marked_event(marker=marker, source=name))
+        except Exception:  # noqa: BLE001 - a refused post is another attempt
+            return 0
+        return ch_marker_count(database, name, marker) or 0
+
+    def _report(attempt, result):
+        _print(msg=f"  attempt {attempt}: rows in {database}.{name} = {result}")
+
+    landed = poll_until(
+        _landed,
+        timeout=ROUTING_TIMEOUT_SECONDS,
+        interval=ROUTING_INTERVAL_SECONDS,
+        done=lambda result: bool(result),
+        on_attempt=_report,
+    )
+    if not (landed):
+        _print(
+            msg=f"FAIL  nothing reached {database}.{name} within "
+            f"{ROUTING_TIMEOUT_SECONDS:.0f}s, so the rule the engine compiled for "
+            f"{name!r} never reached the running receiver via {service}"
+        )
+        return 1
+    _print(
+        msg=f"PASS  the receiver routed {name!r} into {database}.{name} ({landed} row(s))"
+    )
+    return 0
 
 
 def _hyperdx_base() -> str:
@@ -1264,6 +1396,7 @@ def main() -> int:
         failed += _verify_ui_query(database=database, marker=marker, table=table)
         failed += _verify_hunt(database=database, marker=marker, table=table)
         failed += _verify_idle_apps()
+        failed += _verify_routing_applied(database=database)
         return 1 if failed else 0
 
     _print(

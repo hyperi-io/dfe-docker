@@ -38,10 +38,10 @@ import subprocess
 import sys
 from pathlib import Path
 
-from _common import SERVICE_PROFILES_FILE, _print, _rel_path
+from _common import PROJECTED_PROFILES, SERVICE_PROFILES_FILE, _print, _rel_path
 
-# The profiles that are projections. Order is the order they are written in.
-PROJECTED = ("slim", "single")
+# Order is the order they are written in.
+PROJECTED = PROJECTED_PROFILES
 
 BEGIN = "  # BEGIN projected profiles -- rendered by `make render-profiles`\n"
 END = "  # END projected profiles\n"

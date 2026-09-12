@@ -441,6 +441,11 @@ services:
       OTEL_EXPORTER_OTLP_ENDPOINT: ${DFE_OTEL_EXPORTER_ENDPOINT:-}
       OTEL_SERVICE_NAME: dfe-archiver
     depends_on:
+      # The writer of the rendered config below, so it must have written before
+      # this container reads. `required: false` for the tiers that run no engine.
+      dfe-engine:
+        condition: service_healthy
+        required: false
       dlq-init:
         condition: service_completed_successfully
         required: false
@@ -451,8 +456,12 @@ services:
         condition: service_completed_successfully
         required: false
     working_dir: /home/appuser
+    # The engine renders this app's config from the sources on the tiers that run
+    # it; everywhere else the committed file below is what it reads.
+    command: ["--config", "${DFE_ARCHIVER_CONFIG_FILE:-/etc/dfe/archiver.yaml}"]
     volumes:
       - ./config/${DFE_ARCHIVER_CONFIG:-archiver/kafka.yaml}:/etc/dfe/archiver.yaml:ro
+      - dfe-app-config:/etc/dfe/apps:ro
       - archiver-data:/var/data/archive
       - dlq-spool:/var/spool/dfe
     healthcheck:
@@ -486,6 +495,11 @@ services:
       dfe-loader:
         condition: service_healthy
         required: false
+      # The writer of the rendered config below, so it must have written before
+      # this container reads. `required: false` for the tiers that run no engine.
+      dfe-engine:
+        condition: service_healthy
+        required: false
       dlq-init:
         condition: service_completed_successfully
         required: false
@@ -495,8 +509,12 @@ services:
       kafka-init-redpanda:
         condition: service_completed_successfully
         required: false
+    # The engine renders this app's config from the sources on the tiers that run
+    # it; everywhere else the committed file below is what it reads.
+    command: ["--config", "${DFE_FETCHER_CONFIG_FILE:-/etc/dfe/fetcher.yaml}"]
     volumes:
       - ./config/${DFE_FETCHER_CONFIG:-fetcher/kafka.yaml}:/etc/dfe/fetcher.yaml:ro
+      - dfe-app-config:/etc/dfe/apps:ro
       - dlq-spool:/var/spool/dfe
     healthcheck:
       test: ["CMD", "curl", "-sf", "http://localhost:9090/livez"]
@@ -553,8 +571,12 @@ services:
       kafka-init-redpanda:
         condition: service_completed_successfully
         required: false
+    # The engine renders this app's config from the sources on the tiers that run
+    # it; everywhere else the committed file below is what it reads.
+    command: ["--config", "${DFE_LOADER_CONFIG_FILE:-/etc/dfe/loader.yaml}"]
     volumes:
       - ./config/${DFE_LOADER_CONFIG:-loader/kafka.yaml}:/etc/dfe/loader.yaml:ro
+      - dfe-app-config:/etc/dfe/apps:ro
       - dlq-spool:/var/spool/dfe
     healthcheck:
       test: ["CMD", "curl", "-sf", "http://localhost:9090/readyz"]
@@ -596,6 +618,11 @@ services:
       dfe-loader:
         condition: service_healthy
         required: false
+      # The writer of the rendered config below, so it must have written before
+      # this container reads. `required: false` for the tiers that run no engine.
+      dfe-engine:
+        condition: service_healthy
+        required: false
       dlq-init:
         condition: service_completed_successfully
         required: false
@@ -605,8 +632,12 @@ services:
       kafka-init-redpanda:
         condition: service_completed_successfully
         required: false
+    # The engine renders this app's config from the sources on the tiers that run
+    # it; everywhere else the committed file below is what it reads.
+    command: ["--config", "${DFE_RECEIVER_CONFIG_FILE:-/etc/dfe-receiver/config.yaml}"]
     volumes:
       - ./config/${DFE_RECEIVER_CONFIG:-receiver/kafka.yaml}:/etc/dfe-receiver/config.yaml:ro
+      - dfe-app-config:/etc/dfe/apps:ro
       - dlq-spool:/var/spool/dfe
       # Uncomment to enable TLS on gRPC inbound (:6000):
       # - ./certs/dev/receiver.crt:/etc/ssl/receiver.crt:ro
@@ -731,15 +762,25 @@ services:
       OTEL_SERVICE_NAME: dfe-transform-vrl
     depends_on:
       # No dlq-init here: this service does not mount dlq-spool.
+      # The writer of the rendered config below, so it must have written before
+      # this container reads. `required: false` for the tiers that run no engine.
+      dfe-engine:
+        condition: service_healthy
+        required: false
       kafka-init-apache:
         condition: service_completed_successfully
         required: false
       kafka-init-redpanda:
         condition: service_completed_successfully
         required: false
+    # The engine renders this app's config, its programs and its enrichment
+    # tables from the source it is given, on the tiers that run it; everywhere
+    # else the committed files below are what it reads.
+    command: ["--config", "${DFE_TRANSFORM_VRL_CONFIG_FILE:-/etc/dfe-transform-vrl/config.yaml}"]
     volumes:
       - ./config/${DFE_TRANSFORM_VRL_CONFIG:-transform-vrl/kafka.yaml}:/etc/dfe-transform-vrl/config.yaml:ro
       - ./config/transform-vrl/transforms:/etc/dfe-transform-vrl/transforms:ro
+      - dfe-app-config:/etc/dfe/apps:ro
     healthcheck:
       test: ["CMD", "curl", "-sf", "http://localhost:9090/livez"]
       interval: 10s
@@ -872,6 +913,14 @@ services:
       # Default TTL for every time-series table; 0 = none; a source or a
       # dfe-schemas TTL overrides it. dfe-schema-init carries the same value.
       DFE_CLICKHOUSE_DEFAULT_TTL_DAYS: ${DFE_CLICKHOUSE_DEFAULT_TTL_DAYS:-90}
+      # Where the engine renders each app's own config, which is the Compose
+      # stand-in for the ConfigMap an app's chart renders on Kubernetes. Empty
+      # turns the writer off, which is every tier whose apps read a committed
+      # config instead. The apps mount the same volume read-only, at their own
+      # path, which is what the MOUNT value names.
+      DFE_DEPLOYMENT_APP_CONFIG_DIR: ${DFE_ENGINE_APP_CONFIG_DIR:-}
+      DFE_DEPLOYMENT_APP_CONFIG_BASE_DIR: ${DFE_ENGINE_APP_CONFIG_BASE_DIR:-}
+      DFE_DEPLOYMENT_APP_CONFIG_MOUNT: ${DFE_APP_CONFIG_MOUNT:-/etc/dfe/apps}
       DFE_CONFIG_DIR: ${DFE_ENGINE_CONFIG_DIR:-/app/config}
       # Onto the config VOLUME, because the engine mints its ES384 JWT signing
       # key here on first use: left on the container filesystem it is remade on
@@ -891,6 +940,17 @@ services:
       - dfe-engine-config:${DFE_ENGINE_CONFIG_DIR:-/app/config}
       - dfe-engine-schemas:${DFE_ENGINE_SCHEMAS_DIR:-/app/schemas}
       - dfe-engine-content:${DFE_ENGINE_CONTENT_DIR:-/app/content}
+      # The only writer of this volume; every app mounts it read-only.
+      - dfe-app-config:/app/app-config
+      # Each app's base config, as THIS tier committed it. The instance overlay
+      # is merged over it, so the broker, the warehouse credentials and the spool
+      # stay with the deployment rather than being written into the deploy repo.
+      - ./config/${DFE_ARCHIVER_CONFIG:-archiver/kafka.yaml}:/app/app-config-base/dfe-archiver.yaml:ro
+      - ./config/${DFE_FETCHER_CONFIG:-fetcher/kafka.yaml}:/app/app-config-base/dfe-fetcher.yaml:ro
+      - ./config/${DFE_LOADER_CONFIG:-loader/kafka.yaml}:/app/app-config-base/dfe-loader.yaml:ro
+      - ./config/${DFE_RECEIVER_CONFIG:-receiver/kafka.yaml}:/app/app-config-base/dfe-receiver.yaml:ro
+      - ./config/${DFE_TRANSFORM_VRL_CONFIG:-transform-vrl/kafka.yaml}:/app/app-config-base/dfe-transform-vrl.yaml:ro
+      - ./config/${DFE_TRANSFORM_VECTOR_CONFIG:-transform-vector/kafka.yaml}:/app/app-config-base/dfe-transform-vector.yaml:ro
     depends_on:
       clickhouse:
         condition: service_healthy
@@ -1354,5 +1414,10 @@ volumes:
   dfe-engine-config:
   dfe-engine-schemas:
   dfe-engine-content:
+  # What the engine renders each app's own config into, one directory per app.
+  # Its own volume rather than a corner of dfe-engine-config, which also holds
+  # the engine's JWT signing key and the deploy repo -- neither of which a
+  # data-plane container has any business reading.
+  dfe-app-config:
   hyperdx-dashboards:
   hyperdx-pg-data:
