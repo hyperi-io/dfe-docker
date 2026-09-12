@@ -66,6 +66,9 @@ Beyond resolution, these semantic assertions ride along.
   See `_local_overlay_failures`.
 - That overlay must describe THIS run: a build that builds nothing removes it
   rather than leaving the previous run's. See `_overlay_staleness_failures`.
+- `make dev LOCAL=...` names its compose files explicitly instead of riding
+  COMPOSE_FILE, so it must still chain every overlay fragment that chain does.
+  See `_dev_path_fragment_failures`.
 - The builder's IMPLICIT_CONSUMERS must match the compose graph, or a `depends_on`
   edge added here silently stops `make dev` building an image the stack starts.
   See `_implicit_consumer_failures`.
@@ -82,6 +85,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import shlex
 import subprocess
 import sys
 from pathlib import Path
@@ -200,6 +204,28 @@ _AUTH_ENV = {
     "DFE_OIDC_CLIENT_SECRET": "compose-check",
     "DFE_OAUTH2_PROXY_COOKIE_SECRET": "0123456789abcdef0123456789abcdef",
 }
+
+# Every overlay fragment the Makefile chains, read back out of its own
+# `chain_fragment` calls, so a fragment added there needs no edit here.
+_MAKEFILE = REPO_ROOT / "Makefile"
+_CHAIN_FRAGMENT_RE = re.compile(r"chain_fragment,([^),]+)\)")
+# The chain is a make variable and the LOCAL overlay only exists once a build has
+# written it, so neither resolves through `docker compose config` on the fresh
+# checkout every check-* target must run on.
+_COMPOSE_FILE_GOAL = "print-compose-file"
+_COMPOSE_FILE_PREFIX = "COMPOSE_FILE="
+# The dials that gate a fragment, set so every one chains. Two come from
+# .profile.mk, where only a make command-line variable beats the include.
+_FRAGMENT_DIALS = {
+    "DFE_AUTH_RESOLVED": "true",
+    "DFE_OTEL_RESOLVED": "true",
+    "DFE_CONTAINER_LOGS_ENABLED": "true",
+    "DFE_INFRA_UIS_EXTERNAL": "false",
+    "DFE_UI_EXTERNAL": "false",
+    "DFE_ENGINE_API_EXTERNAL": "false",
+}
+# The two `docker compose` lines `make dev` runs, by the tokens that identify one.
+_DEV_SUBCOMMANDS = {"pull": ("pull",), "up": ("up", "-d")}
 
 # The engine refuses to start on an unset or shipped-default admin password unless
 # DFE_ENV names a dev posture, so a compose file that hands it one outside dev
@@ -950,6 +976,119 @@ def _implicit_consumer_failures(*, env: dict[str, str]) -> tuple[list[str], int]
     return failures, made
 
 
+def _make(
+    *, goals: list[str], variables: dict[str, str], dry_run: bool = False
+) -> subprocess.CompletedProcess:
+    """Run make for one goal set, with `VAR=value` overrides on the command line."""
+    cmd = ["make", "--no-print-directory"]
+    if dry_run:
+        cmd.append("-n")
+    cmd += goals
+    cmd += [f"{key}={value}" for key, value in sorted(variables.items())]
+    return subprocess.run(
+        cmd,
+        capture_output=True,
+        cwd=REPO_ROOT,
+        encoding="utf-8",
+        errors="replace",
+        text=True,
+    )
+
+
+def _declared_fragments() -> set[str]:
+    """Return every overlay fragment name the Makefile passes to `chain_fragment`."""
+    return set(
+        _CHAIN_FRAGMENT_RE.findall(
+            _MAKEFILE.read_text(encoding="utf-8", errors="replace")
+        )
+    )
+
+
+def _dev_compose_files(*, output: str) -> dict[str, list[str]]:
+    """Return the `-f` file list of each `docker compose` line `make -n dev` prints.
+
+    Keyed by subcommand, so the pull and the start are asserted separately: they
+    are built from different variables, and a fix to one says nothing about the
+    other.
+    """
+    found: dict[str, list[str]] = {}
+    for line in output.splitlines():
+        line = line.strip()
+        if not (line.startswith("docker compose ")):
+            continue
+        tokens = shlex.split(line)
+        for label, markers in _DEV_SUBCOMMANDS.items():
+            if not (all(marker in tokens for marker in markers)):
+                continue
+            found[label] = [
+                tokens[i + 1] for i, token in enumerate(tokens[:-1]) if token == "-f"
+            ]
+    return found
+
+
+def _dev_path_fragment_failures() -> tuple[list[str], int]:
+    """Return (messages, assertions made) for the LOCAL dev path's overlay fragments.
+
+    `make dev LOCAL=...` names its compose files explicitly rather than riding
+    COMPOSE_FILE, so the two lists are assembled by different code and can
+    disagree -- and did (dfe-docker#104): the explicit lists expanded UI_FLAGS
+    before the block that fills it had run, which dropped every unpublish
+    fragment and the container-logs one from the path a developer uses most. The
+    unpublish half is the dangerous one: an operator who asked for a port to be
+    closed still got it published.
+
+    Every dial is forced on first, and the chain is required to carry the full
+    declared set before anything is compared -- a run that chains fewer would
+    make this assert nothing.
+    """
+    declared = _declared_fragments()
+    made = 1
+    reference = _make(goals=[_COMPOSE_FILE_GOAL], variables=_FRAGMENT_DIALS)
+    if reference.returncode != 0:
+        detail = reference.stderr.strip() or reference.stdout.strip()
+        return ([f"`make {_COMPOSE_FILE_GOAL}` failed:\n{detail}"], made)
+    chain: list[str] = []
+    for line in reference.stdout.splitlines():
+        if line.startswith(_COMPOSE_FILE_PREFIX):
+            chain = line[len(_COMPOSE_FILE_PREFIX) :].strip().split(":")
+    want = {name for name in chain if name in declared}
+    if want != declared:
+        return (
+            [
+                f"the COMPOSE_FILE chain leaves out {', '.join(sorted(declared - want))} "
+                "with every dial forced on -- this check would compare nothing"
+            ],
+            made,
+        )
+
+    failures: list[str] = []
+    dev = _make(
+        goals=["dev"],
+        variables={**_FRAGMENT_DIALS, "LOCAL": " ".join(_LOCAL_SAMPLE)},
+        dry_run=True,
+    )
+    if dev.returncode != 0:
+        detail = dev.stderr.strip() or dev.stdout.strip()
+        return ([f"`make -n dev LOCAL=...` failed:\n{detail}"], made)
+    lines = _dev_compose_files(output=dev.stdout)
+    for label in sorted(_DEV_SUBCOMMANDS):
+        made += 1
+        files = lines.get(label)
+        if files is None:
+            failures.append(
+                f"`make -n dev LOCAL=...` printed no `docker compose ... {label}` line"
+            )
+            continue
+        missing = sorted(want - set(files))
+        if missing:
+            failures.append(
+                f"`make dev LOCAL=...` runs its {label} without {', '.join(missing)} -- "
+                "the COMPOSE_FILE chain carries them and this path does not, so every "
+                "dial they hold is ignored on it"
+            )
+    return failures, made
+
+
 def main() -> int:
     if not (COMPOSE_FILE.is_file()):
         _print(header=COMPOSE_FILE.name, msg="Not found")
@@ -1091,6 +1230,16 @@ def main() -> int:
     _print(
         msg=f"No stack needs an OIDC setting, and the {_AUTH_PROFILE} profile moves every "
         f"infra UI behind a proxy the kill switch still covers ({auth_made} assertions)"
+    )
+
+    fragment_failures, fragment_made = _dev_path_fragment_failures()
+    for message in fragment_failures:
+        _print(msg=f"FAIL {message}")
+    if fragment_failures:
+        return 1
+    _print(
+        msg="`make dev LOCAL=...` pulls and starts with the same overlay fragments the "
+        f"COMPOSE_FILE chain carries ({fragment_made} assertions)"
     )
     return 0
 
