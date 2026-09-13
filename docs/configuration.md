@@ -36,7 +36,7 @@ table and the UI classes.
 |--------------------------------------------------|--------------------------------------------------------------------------------------|---------------------------------------------------------------------|
 | `DFE_INGRESS_BIND_HOST`                          | Interface the receiver and fetcher ingest ports bind                                 | `0.0.0.0`                                                           |
 | `DFE_BIND_HOST`                                  | Interface the datastore, broker, metrics and internal gRPC ports bind                | `127.0.0.1`                                                         |
-| `DFE_BIND_SCOPE`                                 | Where every web UI publishes (`localhost`\|`all`); `make` resolves it to `DFE_UI_BIND_HOST` | `localhost`                                                  |
+| `DFE_BIND_SCOPE`                                 | Where every web UI publishes (`localhost`\|`all`); `make` resolves it to `DFE_UI_BIND_HOST`, and `all` requires `DFE_EXTERNAL_ORIGIN` | `localhost`                            |
 | `DFE_INFRA_UIS_EXTERNAL`                         | Kill switch -- `false` unpublishes every infra-class UI and beats their own flags    | `true`                                                              |
 | `DFE_UI_EXTERNAL`                                | Publish the DFE UI (dfe-proxy `:3000`); product class, kill switch never covers it   | `true`                                                              |
 | `DFE_ENGINE_API_EXTERNAL`                        | Publish the engine API (`:8003`); product class                                      | `true`                                                              |
@@ -46,15 +46,22 @@ table and the UI classes.
 ### External origin
 
 The scheme and host a browser reaches this box on, with no port and no trailing
-slash -- every service appends its own port. Three surfaces build absolute URLs
-from it and each sends the browser to the wrong place when it says `localhost`
-and the browser did not: the DFE UI's post-logout redirect, the oauth2-proxy
-callbacks registered with the IdP, and HyperDX's link-backs into the DFE UI.
+slash -- every service appends its own port. Four surfaces build absolute URLs
+from it, and each is wrong when it says `localhost` and the browser did not: the
+DFE UI's post-logout redirect, the oauth2-proxy callbacks registered with the
+IdP, HyperDX's link-backs into the DFE UI, and the `frame-ancestors` policy the
+proxy serves HyperDX under. The first three send the browser somewhere it cannot
+follow; the fourth blocks the console's embedded views outright.
 
 It defaults to `http://localhost`, and nothing infers the real one -- so
 reaching the stack on a hostname without setting this is what sends every
 logout to `http://localhost:3000`. Set it on any deployment a browser reaches
-by anything other than `localhost`.
+by anything other than `localhost`; `DFE_BIND_SCOPE=all` requires it, and `make`
+stops the start goals until it is set.
+
+The ancestors list keeps `http://localhost` and `http://127.0.0.1` at the UI port
+alongside it, so setting an origin never takes the console away from an operator
+working on the box itself.
 
 | Variable                                         | Use                                                                                  | Default                                                             |
 |--------------------------------------------------|--------------------------------------------------------------------------------------|---------------------------------------------------------------------|

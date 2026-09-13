@@ -60,10 +60,34 @@ curl -X POST http://localhost:8080/ingest \
 `make post` works this out for you from the resolved profile, so if you are not
 sure which you have, run that instead.
 
-Then look for it:
+Then look for it. `make init` gave ClickHouse's `default` user a generated
+password, so the read needs it -- and a password on a command line is read back
+out of `ps` and your shell history, so this reads it from `.env` and sends it as
+a header:
 
 ```bash
-curl 'http://localhost:8123/?query=SELECT%20*%20FROM%20dfe.main%20ORDER%20BY%20_timestamp_load%20DESC%20LIMIT%205%20FORMAT%20Vertical'
+python3 - <<'PY'
+import urllib.request
+from pathlib import Path
+
+password = dict(
+    line.split("=", 1)
+    for line in Path(".env").read_text().splitlines()
+    if "=" in line and not line.startswith("#")
+)["CLICKHOUSE_PASSWORD"]
+query = "SELECT * FROM dfe.main ORDER BY _timestamp_load DESC LIMIT 5 FORMAT Vertical"
+print(
+    urllib.request.urlopen(
+        urllib.request.Request(
+            "http://localhost:8123/",
+            data=query.encode(),
+            headers={"X-ClickHouse-User": "default", "X-ClickHouse-Key": password},
+        )
+    )
+    .read()
+    .decode()
+)
+PY
 ```
 
 `_source` is what routes the event - the loader writes it to
@@ -81,11 +105,15 @@ genuinely so; a couple of seconds is normal.
 | http://localhost:8123 | ClickHouse HTTP |
 | http://localhost:8003 | dfe-engine API |
 
+The console asks for a login; Kafbat, HyperDX and the ClickHouse port do not
+authenticate you as a person. `make creds` prints the console login again.
+
 The ingest ports bind all interfaces so anything can push to them. Everything
 else -- every web UI included -- binds loopback by default, so the four links
 above work on this box and nowhere else. `DFE_BIND_SCOPE=all` publishes the UIs
-on every interface; read the auth section of [operating.md](operating.md) first,
-because there is no authentication anywhere in this stack.
+on every interface, and needs `DFE_EXTERNAL_ORIGIN` set to the address browsers
+use -- `make` stops and says so otherwise. Read the auth section of
+[operating.md](operating.md) before you widen anything.
 
 ## Stopping
 
@@ -103,10 +131,15 @@ It **is** the same image, from the same registry, that a Kubernetes deployment
 would run. There is no separate "demo build" - what you are evaluating is the
 real thing, packaged differently.
 
-It is **not** secured. There is no login on anything, by design: authentication
-is a Kubernetes concern in DFE, so Docker mode runs open. That is fine on your
-machine and on a throwaway demo box. It is not fine on anything reachable by
-people you have not met.
+It is **not** secured, though it is not open either. `make init` mints two
+logins -- `admin` for the console and the engine API, and `breakglass` for
+recovery -- and generates ClickHouse's password with them. `make creds` prints
+the admin one on a terminal and names the `.env` key holding the other;
+`access-summary.md`, written beside `.env` and readable only by you, carries
+both. Kafbat and HyperDX answer to anyone who can reach them on these profiles,
+the opt-in `auth` profile puts an OIDC sign-in in front of both, and nothing here
+serves TLS. That is fine on your machine and on a throwaway demo box. It is not
+fine on anything reachable by people you have not met.
 
 If the proof of concept goes well and the box becomes something real - even
 something small - read [operating.md](operating.md) before it does. Small is
