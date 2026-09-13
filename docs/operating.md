@@ -39,11 +39,12 @@ exists, then delete `DFE_AUTH_LOCAL_ADMIN_PASSWORD` from `.env` -- the account
 stays disabled and is never reseeded. Keep the break-glass password offline and
 delete both plaintexts, including that file: the engine keeps only the hash.
 
-Nothing else in the stack authenticates anyone, and that is the hard limit on what
-"production" can mean here: the ingest edges, every metrics port, ClickHouse and
-Kafka are open to whoever can route to them. Kafbat and HyperDX are too, unless
-the opt-in `auth` profile below is armed -- and even then the gate is at the
-proxy, not inside those UIs.
+HyperDX is the one other thing that authenticates, and it does it by verifying the
+engine's token rather than by holding logins of its own. Nothing else does, and
+that is the hard limit on what "production" can mean here: the ingest edges, every
+metrics port, ClickHouse and Kafka are open to whoever can route to them. So is
+Kafbat, unless the opt-in `auth` profile below is armed -- and even then the gate
+is at the proxy, not inside the UI.
 
 Envoy is the entrypoint on both tiers now, so the boundary is worth stating
 exactly. **dfe-docker can never assume an OIDC issuer exists**, and no profile
@@ -96,17 +97,19 @@ dfe-engine API on the Docker network (`config/proxy/envoy.yaml`). Unpublishing
 the engine's own `:8003` does not protect that API -- the same endpoints answer
 through the proxy, unauthenticated, to anyone who can reach `:3000`.
 
-**HyperDX answers as one fixed operator.** It runs in `header-dev` mode, and
-`dfe-hyperdx-proxy` stamps every request with the identity in
-`DFE_HYPERDX_IDENTITY_EMAIL` / `_GROUPS` before it reaches the app. Whoever
-opens `:8090` is that operator. Its ClickHouse credential stays server-side --
-queries go through HyperDX's own proxy -- so reaching the page no longer hands
-out the database password, but it does hand out everything the page can see.
+**HyperDX asks the engine who you are.** It runs in `oidc-proxy` mode, as it does
+on Kubernetes: it verifies the engine's ES384 token against the engine's JWKS,
+and a caller carrying none is unauthenticated. The console mirrors its session
+into a `dfe_token` cookie and cookies ignore ports, so one console login covers
+`:8090`, `:8091` and `:8000` too. Its ClickHouse credential stays server-side --
+queries go through HyperDX's own proxy -- so the page never hands out the
+database password either.
 
-So put the stack behind something: a VPN, an SSH tunnel, a firewall, or an
-authenticating reverse proxy in front of `:3000` and `:8090`. Wire an OIDC issuer
-and the `auth` profile does the last of those for you. The bindings below reduce
-the accidental surface. They are not access control.
+Everything the console does not bound still answers whoever can route to it, so
+put the stack behind something: a VPN, an SSH tunnel, a firewall, or an
+authenticating reverse proxy in front of `:3000`. Wire an OIDC issuer and the
+`auth` profile does the last of those for the infra UIs. The bindings below
+reduce the accidental surface. They are not access control.
 
 ## Port exposure is split by audience
 
@@ -144,7 +147,7 @@ Per-port, as published in `docker-compose.yml`:
 
 `dfe-ui`, `hyperdx`, `hyperdx-postgres` and `hyperdx-ferretdb` publish no host
 ports at all -- they are reached over the Docker network, HyperDX through the
-proxy that gives it an identity. The collector publishes only `24224`, which the
+proxy that holds both its origins. The collector publishes only `24224`, which the
 DOCKER DAEMON sends container stdout to; its OTLP ports stay on the Compose
 network. The receiver's OTLP
 (`4317`, `4318`), Beats (`5044`) and HEC (`8088`) mappings are present but

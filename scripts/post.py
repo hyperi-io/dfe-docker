@@ -772,7 +772,7 @@ def _await_routed_row(*, database: str, name: str) -> int:
 
 
 def _hyperdx_base() -> str:
-    """The HyperDX API base URL for this stack, through its identity-injecting proxy."""
+    """The HyperDX API base URL for this stack, through the proxy holding its origins."""
     bind = os.environ.get("DFE_POST_HOST", "localhost")
     return f"http://{bind}:{os.environ.get('DFE_HYPERDX_API_PORT', '8000')}"
 
@@ -782,8 +782,8 @@ def _verify_hyperdx() -> int:
 
     Both are SERVER-side state, which is the whole point: they are what an operator
     finds on a fresh browser, and what a browser-local HyperDX could never have.
-    Read through the proxy that injects the identity, so a pass also proves the
-    header seam works end to end.
+    Read with a console token, because HyperDX verifies the engine's JWT -- so a
+    pass also proves that trust works end to end.
     """
     if HYPERDX_SERVICE not in set(_resolved_services()):
         _print(
@@ -791,13 +791,21 @@ def _verify_hyperdx() -> int:
         )
         return 0
 
+    token, status, username = _login(_engine_base())
+    if status != 200 or not (token):
+        _print(
+            msg=f"FAIL  login as {username!r} returned HTTP {status} -- HyperDX "
+            "verifies that token, so this run cannot read it"
+        )
+        return 1
+
     base = _hyperdx_base()
     _print(msg=f"Waiting for seeded sources and provisioned dashboards at {base}")
 
     def _state():
         try:
-            source_status, sources = http_get_json(f"{base}/sources")
-            dash_status, dashboards = http_get_json(f"{base}/dashboards")
+            source_status, sources = http_get_json(f"{base}/sources", token=token)
+            dash_status, dashboards = http_get_json(f"{base}/dashboards", token=token)
         except Exception:  # noqa: BLE001 - any failure is "not ready yet"
             return None
         if source_status != 200 or dash_status != 200:
@@ -834,8 +842,9 @@ def _verify_hyperdx() -> int:
 
     if state is None or isinstance(state[0], int):
         _print(
-            msg=f"FAIL  the HyperDX API at {base} did not answer with an identity "
-            f"within {HYPERDX_TIMEOUT_SECONDS:.0f}s -- the proxy is not injecting one"
+            msg=f"FAIL  the HyperDX API at {base} did not accept the console token "
+            f"within {HYPERDX_TIMEOUT_SECONDS:.0f}s -- it verifies that token against "
+            "the engine's JWKS"
         )
         return 1
 

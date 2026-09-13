@@ -6,25 +6,21 @@
 # License:   BUSL-1.1
 # Copyright: (c) 2026 HYPERI PTY LIMITED
 #
-# HyperDX runs in DFE_AUTH_MODE=header-dev and takes its identity from two
-# request headers, so its host ports live here rather than on the hyperdx
-# container: a request that reached it directly would carry no identity and fall
-# through to a login it has no way to satisfy. Same seam Envoy fills at the
-# Kubernetes edge from a verified OIDC token, and the header NAMES are the k8s
-# chart's; here the value is one fixed operator, because a Compose deployment has
-# no issuer of its own. Wire an issuer and the `auth` profile puts oauth2-proxy
-# in front of this.
+# HyperDX runs in DFE_AUTH_MODE=oidc-proxy and identifies a caller by the engine
+# token it carries, so this proxy injects nothing: its job is to hold both HyperDX
+# origins on one service, which is what the infra exposure dials and the `auth`
+# profile's oauth2-proxy attach to.
 #
 # Two origins, one UI:
 #    :8090  the app     -> hyperdx:8090
 #    :8000  the API     -> hyperdx:8000
 # The browser only ever uses the first. HyperDX's bundle calls its API at a
 # relative /api/*, which the Next.js server proxies on container loopback, so the
-# identity injected on the app origin reaches both halves. :8000 is the operator
-# and machine surface, published so `make post` and an operator can read it.
+# cookie sent to the app origin reaches both halves. :8000 is the operator and
+# machine surface, published so `make post` and an operator can read it.
 #
 # The DFE UI iframes a THIRD origin, config/proxy/envoy.yaml's embed listener on
-# dfe-proxy, which rewrites frame-ancestors and injects the same identity.
+# dfe-proxy, which rewrites frame-ancestors so the console can frame it.
 #
 # STRICT_DNS resolves per refresh via Docker's embedded DNS, so this boots while
 # HyperDX is still starting and recovers when it arrives.
@@ -60,18 +56,6 @@ static_resources:
                   virtual_hosts:
                     - name: hyperdx
                       domains: ["*"]
-                      # OVERWRITE, so a caller cannot choose who it is by sending
-                      # the header itself. Anchored here and aliased by the API
-                      # listener, so one identity serves both origins.
-                      request_headers_to_add: &identity_headers
-                        - header:
-                            key: X-OIDC-Subject
-                            value: "%ENVIRONMENT(DFE_HYPERDX_IDENTITY_EMAIL)%"
-                          append_action: OVERWRITE_IF_EXISTS_OR_ADD
-                        - header:
-                            key: X-OIDC-Groups
-                            value: "%ENVIRONMENT(DFE_HYPERDX_IDENTITY_GROUPS)%"
-                          append_action: OVERWRITE_IF_EXISTS_OR_ADD
                       routes:
                         - match: { prefix: / }
                           route: { cluster: hyperdx }
@@ -94,7 +78,6 @@ static_resources:
                   virtual_hosts:
                     - name: hyperdx
                       domains: ["*"]
-                      request_headers_to_add: *identity_headers
                       routes:
                         - match: { prefix: / }
                           route: { cluster: hyperdx-api }

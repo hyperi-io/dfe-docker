@@ -903,6 +903,12 @@ services:
       # lands root-owned and the engine runs as UID 1000.
       DFE_GITOPS_ENABLED: ${DFE_GITOPS_ENABLED:-true}
       DFE_GITOPS_LOCAL_PATH: ${DFE_ENGINE_CONFIG_DIR:-/app/config}/deploy-repo
+      # HyperDX's control surface: the engine confirms the fork's default team and
+      # seeds its connections and sources. Both follow the resolved footprint
+      # (scripts/resolve_profile.py), so one DFE_HYPERDX_ENABLED governs the
+      # HyperDX containers and the engine that drives them.
+      DFE_HYPERDX_ENABLED: ${DFE_HYPERDX_RESOLVED:-false}
+      DFE_HYPERDX_BASE_URL: ${DFE_HYPERDX_RESOLVED_BASE_URL:-}
       DFE_CLICKHOUSE_HOST: ${CLICKHOUSE_HOST:-clickhouse}
       DFE_CLICKHOUSE_PORT: ${CLICKHOUSE_HTTP_PORT:-8123}
       DFE_CLICKHOUSE_NATIVE_PORT: ${CLICKHOUSE_NATIVE_PORT:-9000}
@@ -1088,10 +1094,6 @@ services:
       # so both loopback forms stay in the list alongside the external origin. A
       # repeated entry is inert -- a source list is a set.
       DFE_HYPERDX_EMBED_ANCESTOR: http://localhost:${DFE_UI_PORT:-3000} http://127.0.0.1:${DFE_UI_PORT:-3000} ${DFE_HYPERDX_APP_URL:-${DFE_EXTERNAL_ORIGIN:-http://localhost}}:${DFE_UI_PORT:-3000}
-      # The one identity every HyperDX request carries on Compose. HyperDX makes
-      # the first group the team name, so the group and DFE_HYPERDX_TEAM agree.
-      DFE_HYPERDX_IDENTITY_EMAIL: ${DFE_HYPERDX_IDENTITY_EMAIL:-admin@dfe.local}
-      DFE_HYPERDX_IDENTITY_GROUPS: ${DFE_HYPERDX_IDENTITY_GROUPS:-${DFE_HYPERDX_TEAM:-dfe}}
     volumes:
       - ./config/proxy/envoy.yaml:/etc/envoy/envoy.yaml:ro
     depends_on:
@@ -1232,8 +1234,8 @@ services:
     profiles: ["hyperdx"]
     restart: unless-stopped
     deploy: *limits-service
-    # No published ports. dfe-proxy fronts both origins so it can inject the
-    # identity headers header-dev mode reads; publishing here would bypass them.
+    # No published ports: dfe-hyperdx-proxy carries both origins, so the infra
+    # exposure dials and the `auth` profile govern one service.
     env_file:
       - path: env/hyperdx.env
         required: false
@@ -1248,11 +1250,13 @@ services:
       # host binding, so dialling it in-network breaks a moved port (#32).
       DEFAULT_CONNECTIONS: '[{"name":"platform","host":"http://clickhouse:8123","username":"${CLICKHOUSE_USERNAME:-default}","password":"${CLICKHOUSE_PASSWORD:-}"}]'
       DEFAULT_SOURCES_FILE: /etc/hyperdx/default-sources.json
-      # Identity comes from the headers dfe-proxy injects, the same seam Envoy
-      # fills on Kubernetes -- so the header NAMES match the k8s chart's.
-      DFE_AUTH_MODE: header-dev
-      DFE_AUTH_HEADER_EMAIL: ${DFE_HYPERDX_IDENTITY_HEADER_EMAIL:-x-oidc-subject}
-      DFE_AUTH_HEADER_GROUPS: ${DFE_HYPERDX_IDENTITY_HEADER_GROUPS:-x-oidc-groups}
+      # The engine is the issuer here as it is on Kubernetes: HyperDX verifies its
+      # ES384 token against the engine's JWKS, taking it from a Bearer header or
+      # the dfe_token cookie the console mirrors. DFE_HYPERDX_AUTH_MODE=header-dev
+      # runs it off request headers instead, for a stack with no engine.
+      DFE_AUTH_MODE: ${DFE_HYPERDX_AUTH_MODE:-oidc-proxy}
+      DFE_ENGINE_JWKS_URL: ${DFE_ENGINE_JWKS_URL:-http://dfe-engine:8000/.well-known/jwks.json}
+      # The team a token carrying no group claim lands in.
       DFE_AUTH_DEFAULT_TEAM: ${DFE_HYPERDX_TEAM:-dfe}
       # Setting the directory is what starts the provisioner: entry.prod.sh
       # launches the provision-dashboards task only when it is present. It then
@@ -1299,9 +1303,8 @@ services:
       start_period: 30s
       retries: 5
 
-  # HyperDX's edge. It carries the two HyperDX host ports because HyperDX takes
-  # its identity from the headers this injects (config/proxy/hyperdx.yaml), so a
-  # port published off the hyperdx container would reach it unidentified.
+  # HyperDX's edge. It carries the two HyperDX host ports (config/proxy/hyperdx.yaml)
+  # so that one service answers to the infra exposure dials and the `auth` profile.
   dfe-hyperdx-proxy:
     image: envoyproxy/envoy:${DFE_PROXY_VERSION:?run 'make stack VERSION=X.Y.Z' to pin DFE_PROXY_VERSION}
     container_name: dfe-hyperdx-proxy
@@ -1312,11 +1315,6 @@ services:
       # INFRA class, both origins: DFE_INFRA_UIS_EXTERNAL=false unpublishes them.
       - ${DFE_UI_BIND_HOST:-127.0.0.1}:${DFE_HYPERDX_APP_PORT:-8090}:8090
       - ${DFE_UI_BIND_HOST:-127.0.0.1}:${DFE_HYPERDX_API_PORT:-8000}:8000
-    environment:
-      # The one identity every HyperDX request carries on Compose. HyperDX makes
-      # the first group the team name, so the group and DFE_HYPERDX_TEAM agree.
-      DFE_HYPERDX_IDENTITY_EMAIL: ${DFE_HYPERDX_IDENTITY_EMAIL:-admin@dfe.local}
-      DFE_HYPERDX_IDENTITY_GROUPS: ${DFE_HYPERDX_IDENTITY_GROUPS:-${DFE_HYPERDX_TEAM:-dfe}}
     volumes:
       - ./config/proxy/hyperdx.yaml:/etc/envoy/envoy.yaml:ro
     healthcheck:
