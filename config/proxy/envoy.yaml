@@ -30,7 +30,9 @@
 # The embed listener is the ONE HyperDX origin served from here, because the DFE
 # UI iframes it and only this proxy knows the DFE origin to allow. HyperDX's own
 # two origins are config/proxy/hyperdx.yaml on dfe-hyperdx-proxy, so the infra
-# exposure dials govern one service. All three inject the same identity headers.
+# exposure dials govern one service. The browser carries its own engine token to
+# all three -- dfe-ui mirrors the console session into a dfe_token cookie, and
+# cookies ignore ports.
 
 admin:
   # Local healthcheck surface only -- never published by compose.
@@ -106,18 +108,6 @@ static_resources:
                   virtual_hosts:
                     - name: hyperdx
                       domains: ["*"]
-                      # HyperDX runs in DFE_AUTH_MODE=header-dev and reads these.
-                      # OVERWRITE, so a caller cannot choose who it is by sending
-                      # the header itself.
-                      request_headers_to_add:
-                        - header:
-                            key: X-OIDC-Subject
-                            value: "%ENVIRONMENT(DFE_HYPERDX_IDENTITY_EMAIL)%"
-                          append_action: OVERWRITE_IF_EXISTS_OR_ADD
-                        - header:
-                            key: X-OIDC-Groups
-                            value: "%ENVIRONMENT(DFE_HYPERDX_IDENTITY_GROUPS)%"
-                          append_action: OVERWRITE_IF_EXISTS_OR_ADD
                       # OVERWRITE: browsers intersect multiple CSP headers. The
                       # variable carries the whole space-separated source list,
                       # which docker-compose.yml builds from the UI's origins.

@@ -264,7 +264,9 @@ Off by default. `DFE_OTEL_ENABLED=true` (or a profile declaring `otel: true`, as
 
 Off by default. `DFE_HYPERDX_ENABLED=true` starts `hyperdx` (API + App), the `dfe-hyperdx-proxy` that fronts both origins, a one-shot `dfe-dashboards` that copies the engine's shipped dashboards into a volume, plus `hyperdx-ferretdb` and `hyperdx-postgres`, sharing the always-on ClickHouse.
 
-HyperDX runs in `header-dev` mode. The proxy stamps one fixed operator identity onto every request, and HyperDX seeds that operator's team with the connection and sources from `config/hyperdx/default-sources.json` and provisions the dashboards. There is no login: whoever reaches the port is that operator. Gate it with the `auth` profile, a VPN or a tunnel -- [operating.md](operating.md#only-the-console-authenticates--everything-else-is-bounded-by-that).
+HyperDX runs in `oidc-proxy` mode, as it does on Kubernetes: it verifies the engine's ES384 token against the engine's JWKS, and a caller carrying none is unauthenticated. Signing in to the console is what signs a browser in here -- dfe-ui mirrors the session into a `dfe_token` cookie, and cookies ignore ports. The engine identifies with a service token of its own, which is how the team gets seeded with the connection and sources from `config/hyperdx/default-sources.json` before anyone logs in, and how a source added through the console reaches HyperDX at all.
+
+The same toggle points the engine at HyperDX: with it on, the engine receives `DFE_HYPERDX_ENABLED=true` and `DFE_HYPERDX_BASE_URL=http://hyperdx:8000`, so its `/api/v1/hyperdx/*` surface answers instead of returning `503 hyperdx_absent`.
 
 | Variable                                         | Use                                                                                  | Default                                                             |
 |--------------------------------------------------|--------------------------------------------------------------------------------------|---------------------------------------------------------------------|
@@ -273,9 +275,9 @@ HyperDX runs in `header-dev` mode. The proxy stamps one fixed operator identity 
 | `DFE_HYPERDX_API_PORT`                           | HyperDX API host port, on `dfe-hyperdx-proxy`                                        | `8000`                                                              |
 | `DFE_HYPERDX_APP_PORT`                           | HyperDX App UI host port, on `dfe-hyperdx-proxy`                                     | `8090`                                                              |
 | `DFE_HYPERDX_APP_URL`                            | Base URL the browser uses to reach HyperDX; overrides `DFE_EXTERNAL_ORIGIN`          | follows `DFE_EXTERNAL_ORIGIN`                                       |
-| `DFE_HYPERDX_IDENTITY_EMAIL`                     | The operator every HyperDX request is stamped as                                     | `admin@dfe.local`                                                   |
-| `DFE_HYPERDX_IDENTITY_GROUPS`                    | Its groups; the first one names the team                                             | follows `DFE_HYPERDX_TEAM`                                          |
-| `DFE_HYPERDX_TEAM`                               | Team name when the identity carries no group                                         | `dfe`                                                               |
+| `DFE_HYPERDX_AUTH_MODE`                          | `header-dev` runs HyperDX off request headers, for a stack with no engine            | `oidc-proxy`                                                        |
+| `DFE_HYPERDX_BASE_URL`                           | Where the ENGINE reaches HyperDX; name an external one here                          | `http://hyperdx:8000`                                               |
+| `DFE_HYPERDX_TEAM`                               | Team name when the token carries no group claim                                      | `dfe`                                                               |
 | `HYPERDX_THEME`                                  | UI theme (NEXT_PUBLIC_THEME)                                                         | `dfe`                                                               |
 | `HYPERDX_POSTGRES_USER`                          | FerretDB/Postgres user                                                               | `hyperdx`                                                           |
 | `HYPERDX_POSTGRES_PASSWORD`                      | FerretDB/Postgres password                                                           | `hyperdx`                                                           |

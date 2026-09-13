@@ -80,10 +80,18 @@ CORE_ENABLED_ENV_VAR = "DFE_CORE_ENABLED"
 CORE_SERVICES = ["dfe-engine", "dfe-hunt-runner", "dfe-ui", "dfe-proxy"]
 
 HYPERDX_ENABLED_ENV_VAR = "DFE_HYPERDX_ENABLED"
+# What the ENGINE is handed, so its HyperDX control surface follows the resolved
+# footprint rather than a second switch an operator has to remember.
+HYPERDX_RESOLVED_VAR = "DFE_HYPERDX_RESOLVED"
+HYPERDX_RESOLVED_BASE_URL_VAR = "DFE_HYPERDX_RESOLVED_BASE_URL"
+# The in-stack API by service name and container port; .env names an external
+# HyperDX instead, the same precedence the broker above has.
+HYPERDX_BASE_URL_ENV_VAR = "DFE_HYPERDX_BASE_URL"
+IN_STACK_HYPERDX = "http://hyperdx:8000"
 # dfe-dashboards is the one-shot that writes the engine's shipped dashboards into
 # the volume HyperDX's provisioner reads; it exits before hyperdx starts.
-# dfe-hyperdx-proxy carries the host ports, because HyperDX takes its identity
-# from headers that proxy injects.
+# dfe-hyperdx-proxy carries the two HyperDX host ports, so the infra exposure
+# dials and the `auth` profile govern one service.
 HYPERDX_SERVICES = [
     "dfe-dashboards",
     "dfe-hyperdx-proxy",
@@ -480,6 +488,21 @@ def main() -> int:
         # the log-driver fragment only makes sense where it is running.
         lines.append(
             f"export DFE_OTEL_RESOLVED := {'true' if footprint['otel'] else 'false'}"
+        )
+
+        # The engine drives HyperDX's team, connections and sources, so it is
+        # pointed at HyperDX exactly when the resolved footprint runs it. Both
+        # lines are emitted unconditionally, so the included file settles.
+        lines.append(
+            f"export {HYPERDX_RESOLVED_VAR} := "
+            f"{'true' if footprint['hyperdx'] else 'false'}"
+        )
+        hyperdx_base = (
+            os.environ.get(HYPERDX_BASE_URL_ENV_VAR, "").strip() or IN_STACK_HYPERDX
+        )
+        lines.append(
+            f"export {HYPERDX_RESOLVED_BASE_URL_VAR} := "
+            f"{hyperdx_base if footprint['hyperdx'] else ''}"
         )
 
         # Point the services at the bundled collector, unless .env already names
