@@ -167,6 +167,19 @@ Every web UI publishes by default. `DFE_BIND_SCOPE` says where:
 It moves the UI ports and nothing else. Ingest and the backing services keep the
 two surfaces above, so widening the UIs never opens ClickHouse.
 
+`all` also needs `DFE_EXTERNAL_ORIGIN` set to the address browsers use. The
+console embeds HyperDX behind a `frame-ancestors` policy built from that origin,
+and next-auth builds its redirects from it, so at the default both name the
+browser's own machine: the console loads with its observability views blocked and
+sends logins back to loopback. Nothing can infer the address, so `make dev`,
+`make ci`, `make up`, `make infra`, `make post`, `make test-source` and
+`make test-flows` stop and name the key instead of starting a console that is
+broken in that one place. The lifecycle and check goals are exempt -- `make down`
+has to work whatever the configuration says.
+
+The origin joins the ancestors list rather than replacing it: both loopback forms
+stay, so an operator on the box reads the same console the network does.
+
 Each UI carries a class, and the class decides what can take it dark:
 
 | UI | Service | Class | Flag |

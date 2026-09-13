@@ -118,7 +118,9 @@ static_resources:
                             key: X-OIDC-Groups
                             value: "%ENVIRONMENT(DFE_HYPERDX_IDENTITY_GROUPS)%"
                           append_action: OVERWRITE_IF_EXISTS_OR_ADD
-                      # OVERWRITE: browsers intersect multiple CSP headers.
+                      # OVERWRITE: browsers intersect multiple CSP headers. The
+                      # variable carries the whole space-separated source list,
+                      # which docker-compose.yml builds from the UI's origins.
                       response_headers_to_add:
                         - header:
                             key: Content-Security-Policy

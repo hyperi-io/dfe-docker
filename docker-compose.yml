@@ -1082,7 +1082,12 @@ services:
       # it. The app's own port stays infra class on the hyperdx service.
       - ${DFE_UI_BIND_HOST:-127.0.0.1}:${DFE_HYPERDX_EMBED_PORT:-8091}:8091
     environment:
-      DFE_HYPERDX_EMBED_ANCESTOR: ${DFE_HYPERDX_APP_URL:-${DFE_EXTERNAL_ORIGIN:-http://localhost}}:${DFE_UI_PORT:-3000}
+      # Every origin the console may be framed from, space-separated for the
+      # frame-ancestors source list in config/proxy/envoy.yaml. An operator on the
+      # box reads the console on loopback whatever the deployment publishes it as,
+      # so both loopback forms stay in the list alongside the external origin. A
+      # repeated entry is inert -- a source list is a set.
+      DFE_HYPERDX_EMBED_ANCESTOR: http://localhost:${DFE_UI_PORT:-3000} http://127.0.0.1:${DFE_UI_PORT:-3000} ${DFE_HYPERDX_APP_URL:-${DFE_EXTERNAL_ORIGIN:-http://localhost}}:${DFE_UI_PORT:-3000}
       # The one identity every HyperDX request carries on Compose. HyperDX makes
       # the first group the team name, so the group and DFE_HYPERDX_TEAM agree.
       DFE_HYPERDX_IDENTITY_EMAIL: ${DFE_HYPERDX_IDENTITY_EMAIL:-admin@dfe.local}

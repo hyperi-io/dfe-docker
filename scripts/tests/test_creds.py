@@ -18,6 +18,9 @@ they are named, never printed, and these pin that on both.
 `--write` is the other artefact: a 0600 file that DOES carry both passwords, for
 the operator to read once and delete. These pin the mode, the plaintext, and the
 three closing steps that let it be deleted.
+
+The URLs have a branch of their own: DFE_EXTERNAL_ORIGIN where a deployment has
+set one to an address browsers use, this box's own loopback otherwise.
 """
 
 from __future__ import annotations
@@ -250,6 +253,53 @@ def test_per_provider_overrides_are_named_not_printed() -> None:
     assert "per-provider override set for ENTRA, OKTA" in lines[1]
     assert "GOOGLE" not in lines[1]
     assert "okta-only" not in "".join(lines)
+
+
+@pytest.mark.parametrize(
+    ("values", "expected"),
+    [
+        ({}, "http://127.0.0.1:3000"),
+        ({"DFE_BIND_SCOPE": "all"}, "http://localhost:3000"),
+        ({"DFE_EXTERNAL_ORIGIN": "http://localhost"}, "http://127.0.0.1:3000"),
+        (
+            {"DFE_BIND_SCOPE": "all", "DFE_EXTERNAL_ORIGIN": "http://127.0.0.1"},
+            "http://localhost:3000",
+        ),
+        (
+            {"DFE_BIND_SCOPE": "all", "DFE_EXTERNAL_ORIGIN": "http://dfe.example.test"},
+            "http://dfe.example.test:3000",
+        ),
+        (
+            {"DFE_EXTERNAL_ORIGIN": "https://dfe.example.test/"},
+            "https://dfe.example.test:3000",
+        ),
+        (
+            {"DFE_EXTERNAL_ORIGIN": "http://dfe.example.test", "DFE_UI_PORT": "8443"},
+            "http://dfe.example.test:8443",
+        ),
+    ],
+)
+def test_the_console_url_follows_the_external_origin(
+    values: dict[str, str], expected: str
+) -> None:
+    """The origin wins when it names somewhere other than this box's loopback."""
+    assert (
+        creds._url(values=values, port_key="DFE_UI_PORT", default_port="3000")
+        == expected
+    )
+
+
+def test_the_summary_hands_over_the_external_origin(dotenv: Path) -> None:
+    dotenv.write_text(
+        f"{_ENV}DFE_BIND_SCOPE=all\nDFE_EXTERNAL_ORIGIN=http://dfe.example.test\n",
+        encoding="utf-8",
+        newline="\n",
+    )
+
+    body = creds.summary_markdown(values=creds._dotenv_values())
+
+    assert "- Console: http://dfe.example.test:3000" in body
+    assert "- Engine API: http://dfe.example.test:8003" in body
 
 
 @pytest.mark.parametrize(

@@ -35,6 +35,18 @@ def __find_repo_root(*, marker: str = _REPO_MARKER) -> Path:
 # Basic constants
 FALSY = {"", "0", "false", "no", "off"}
 
+# The key naming the address a BROWSER reaches this deployment on, and the values
+# of it that resolve on the box the stack runs on and nowhere else.
+EXTERNAL_ORIGIN_KEY = "DFE_EXTERNAL_ORIGIN"
+LOOPBACK_ORIGINS = frozenset(
+    {
+        "http://localhost",
+        "https://localhost",
+        "http://127.0.0.1",
+        "https://127.0.0.1",
+    }
+)
+
 # The profiles that are PROJECTIONS of the Kubernetes tiers of the same name,
 # rendered by render_profiles.py. Their app set comes from dfe-infra apps.yaml
 # `default_in` and every app in it idles until something configures it, so these
@@ -168,6 +180,16 @@ def _dotenv_values() -> dict[str, str]:
             value = value.split(" #", 1)[0].strip()
         values[key] = value.strip('"').strip("'")
     return values
+
+
+def _external_origin(*, values: typing.Mapping[str, str]) -> str:
+    """Return the address browsers reach this deployment on, else the empty string.
+
+    Empty covers both "unset" and "set to something only this box resolves", which
+    are the same answer to every caller: fall back to the address you already have.
+    """
+    origin = values.get(EXTERNAL_ORIGIN_KEY, "").strip().rstrip("/")
+    return "" if origin in LOOPBACK_ORIGINS else origin
 
 
 def _load_dotenv() -> None:

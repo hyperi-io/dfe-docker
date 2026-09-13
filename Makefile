@@ -139,6 +139,28 @@ else
     $(error DFE_BIND_SCOPE must be `localhost` or `all`, got '$(strip $(DFE_BIND_SCOPE))')
 endif
 
+# `all` publishes the UIs on addresses this box cannot infer, and two services
+# build absolute URLs from DFE_EXTERNAL_ORIGIN -- dfe-proxy's frame-ancestors
+# policy for the embedded HyperDX views, and next-auth's redirects. At loopback
+# both name the browser's own machine, so the console comes up with its
+# observability views blocked.
+#
+# Only the goals that start or self-test the stack ask for it. The bootstrap
+# goals are exempt for the reason BOOTSTRAP_GOALS gives: needing a key to stop a
+# stack, or to check a file, is a lockout.
+ORIGIN_GOALS := dev ci up infra post test-source test-flows
+# Origins a browser on another machine cannot use; scripts/_common.py keeps the
+# same set for the helpers that read the key.
+LOOPBACK_ORIGINS := http://localhost https://localhost http://127.0.0.1 https://127.0.0.1
+ifeq ($(strip $(DFE_BIND_SCOPE)),all)
+    ifneq (,$(filter $(ORIGIN_GOALS),$(or $(MAKECMDGOALS),help)))
+        ORIGIN_UNUSABLE := $(if $(strip $(DFE_EXTERNAL_ORIGIN)),$(filter $(strip $(DFE_EXTERNAL_ORIGIN)),$(LOOPBACK_ORIGINS)),unset)
+        ifneq ($(ORIGIN_UNUSABLE),)
+            $(error DFE_BIND_SCOPE=all publishes the UIs beyond loopback, so DFE_EXTERNAL_ORIGIN must name the address browsers use -- it is $(if $(strip $(DFE_EXTERNAL_ORIGIN)),'$(strip $(DFE_EXTERNAL_ORIGIN))',unset). HyperDX's frame-ancestors policy and every next-auth redirect are built from it, so the console loads with its observability views blocked and sends logins back to the wrong host. Set DFE_EXTERNAL_ORIGIN=http://<the address browsers use> in .env or the environment, or leave DFE_BIND_SCOPE=localhost)
+        endif
+    endif
+endif
+
 DFE_INFRA_UIS_EXTERNAL ?= true
 DFE_UI_EXTERNAL ?= true
 DFE_ENGINE_API_EXTERNAL ?= true

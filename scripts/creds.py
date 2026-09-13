@@ -35,6 +35,10 @@ lives and leaves reading it a deliberate act. The OIDC fixture password is never
 printed either -- it is one shared login across every tester, so the summary
 names the key holding it and stops there.
 
+The console and engine URLs follow DFE_EXTERNAL_ORIGIN wherever a deployment has
+set one, so the operator is handed the address browsers use rather than one that
+resolves only on the box the stack runs on.
+
 Values are read out of .env with the same minimal parser compose uses. A key with
 no value reads as missing and is reported as such rather than printed blank.
 """
@@ -51,6 +55,7 @@ from _common import (
     DOTENV_FILE,
     FALSY,
     _dotenv_values,
+    _external_origin,
     _print,
     _rel_path,
 )
@@ -97,14 +102,23 @@ _NEXT_STEPS = (
 
 
 def _url(*, values: dict[str, str], port_key: str, default_port: str) -> str:
-    """The URL a host-side browser reaches one published UI on."""
+    """The URL a browser reaches one published UI on.
+
+    A deployment that publishes beyond loopback sets DFE_EXTERNAL_ORIGIN, and that
+    is the address its operator hands out -- so the summary quotes it rather than
+    an address that only resolves on the box the stack runs on.
+    """
+    port = values.get(port_key, "").strip() or default_port
+    origin = _external_origin(values=values)
+    if origin:
+        return f"{origin}:{port}"
     # DFE_BIND_SCOPE=all publishes on every address; name the host's own.
     host = (
         "localhost"
         if values.get("DFE_BIND_SCOPE", "").strip() == "all"
         else "127.0.0.1"
     )
-    return f"http://{host}:{values.get(port_key, '').strip() or default_port}"
+    return f"http://{host}:{port}"
 
 
 def is_dev_posture(environment: str) -> bool:

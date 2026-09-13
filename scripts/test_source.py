@@ -14,7 +14,7 @@
 #    ./scripts/test_source.py -- --keep --per-module 5          # flags for the runner
 #    DFE_INFRA_DIR=../dfe-infra ./scripts/test_source.py
 
-"""The post-deploy source test, on the compose stack, over localhost ports.
+"""The post-deploy source test, on the compose stack, over its published ports.
 
 An operator's first real act on a working deployment is to add a source and see
 data land. The runner that drives that -- the console in a browser, the engine
@@ -38,7 +38,7 @@ import subprocess
 import sys
 from pathlib import Path
 
-from _common import _load_dotenv, _print
+from _common import _external_origin, _load_dotenv, _print
 
 PROJECT_DIR = Path(__file__).resolve().parent.parent
 # Compose pins the archiver's container name, so the archive assertion reaches it
@@ -148,7 +148,21 @@ def _ui_host(*, bound: str, host: str) -> str:
     return host if resolved == "0.0.0.0" else resolved
 
 
-def _suite_env(*, host: str, ui_host: str) -> dict[str, str]:
+def _ui_origin(*, bound: str, host: str) -> str:
+    """The scheme and host the console and the engine API answer on.
+
+    DFE_EXTERNAL_ORIGIN is the address this deployment hands to browsers, so the
+    suite drives the console there: the URL testers use is the one worth testing,
+    and it is the one the stack builds its own absolute URLs from. It falls back
+    to the published address where no such origin is set.
+    """
+    return (
+        _external_origin(values=os.environ)
+        or f"http://{_ui_host(bound=bound, host=host)}"
+    )
+
+
+def _suite_env(*, host: str, engine_url: str) -> dict[str, str]:
     """The DFE_E2E_* block, the same one dfe-ops exports for the Kubernetes lanes.
 
     There it comes from the cluster's secrets and port-forwards; here from .env
@@ -174,7 +188,7 @@ def _suite_env(*, host: str, ui_host: str) -> dict[str, str]:
             # The data-path database the loader writes to (config/loader/*.yaml
             # all pin `database: dfe`), never DFE_OTEL_DATABASE's.
             "DFE_E2E_CH_DB": os.environ.get("DFE_E2E_CH_DB", "dfe"),
-            "DFE_E2E_ENGINE_URL": f"http://{ui_host}:{os.environ.get('DFE_ENGINE_PORT', '8003')}",
+            "DFE_E2E_ENGINE_URL": engine_url,
             "DFE_E2E_ENGINE_USER": os.environ.get("DFE_AUTH_LOCAL_ADMIN_NAME", "admin"),
             "DFE_E2E_ENGINE_PASSWORD": password,
             "DFE_E2E_ADMIN_PASSWORD": password,
@@ -237,9 +251,9 @@ def main(argv: list[str] | None = None) -> int:
     # box and something else for a second one beside it. The same variable
     # `make post` reads, so the two runners reach the same containers.
     host = os.environ.get("DFE_POST_HOST", "localhost")
-    ui_host = _ui_host(bound=ui_bind, host=host)
-    ui_url = f"http://{ui_host}:{os.environ.get('DFE_UI_PORT', '3000')}"
-    engine_url = f"http://{ui_host}:{os.environ.get('DFE_ENGINE_PORT', '8003')}"
+    ui_origin = _ui_origin(bound=ui_bind, host=host)
+    ui_url = f"{ui_origin}:{os.environ.get('DFE_UI_PORT', '3000')}"
+    engine_url = f"{ui_origin}:{os.environ.get('DFE_ENGINE_PORT', '8003')}"
 
     runner = [
         python,
@@ -277,7 +291,9 @@ def main(argv: list[str] | None = None) -> int:
     runner += [arg for arg in runner_args if arg != "--"]
 
     _print(msg=f"case {args.case}, console {ui_url}, runner from {infra}")
-    return subprocess.run(runner, env=_suite_env(host=host, ui_host=ui_host)).returncode
+    return subprocess.run(
+        runner, env=_suite_env(host=host, engine_url=engine_url)
+    ).returncode
 
 
 if __name__ == "__main__":
