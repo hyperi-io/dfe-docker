@@ -21,23 +21,25 @@ delete.
 source's own with the bundled filebeat program. `idle` is one instance started
 with a config that gives it no work.
 
-| Profile                           | Transport | dfe-archiver | dfe-fetcher | dfe-loader | dfe-receiver | dfe-transform-vrl | dfe-transform-vector |
-|-----------------------------------|-----------|:------------:|:-----------:|:----------:|:------------:|:-----------------:|:--------------------:|
-| `slim` (projected)                | gRPC      |              |             |     X      |      X       |                   |                      |
-| `single` (projected)              | Kafka     |     idle     |     idle    |     X      |      X       |       idle        |                      |
-| `kafka-fetcher`                   | Kafka     |              |      X      |     X      |              |                   |                      |
-| `kafka-full`                      | Kafka     |      X       |      X      |     X      |      X       |                   |                      |
-| `kafka-full-transform-vrl`        | Kafka     |              |      X      |     X      |      X       |         X         |                      |
-| `kafka-minimal`                   | Kafka     |              |             |     X      |              |                   |                      |
-| `kafka-receiver`                  | Kafka     |              |             |     X      |      X       |                   |                      |
-| `kafka-receiver-archiver`         | Kafka     |      X       |             |     X      |      X       |                   |                      |
-| `kafka-receiver-transform-vector` | Kafka     |              |             |     X      |      X       |                   |           X          |
-| `kafka-filebeat`                  | Kafka     |              |             |     X      |      X       |        X2         |                      |
-| `kafka-filebeat-vector`           | Kafka     |              |             |     X      |      X       |                   |          X2          |
-| `grpc-fetcher`                    | gRPC      |              |      X      |     X      |              |                   |                      |
-| `grpc-full`                       | gRPC      |              |      X      |     X      |      X       |                   |                      |
-| `grpc-minimal`                    | gRPC      |              |             |     X      |              |                   |                      |
-| `grpc-receiver`                   | gRPC      |              |             |     X      |      X       |                   |                      |
+| Profile                           | Transport | dfe-archiver | dfe-fetcher | dfe-loader | dfe-receiver | dfe-transform-vrl | dfe-transform-vector | dfe-transform-elastic |
+|-----------------------------------|-----------|:------------:|:-----------:|:----------:|:------------:|:-----------------:|:--------------------:|:---------------------:|
+| `slim` (projected)                | gRPC      |              |             |     X      |      X       |                   |                      |                       |
+| `single` (projected)              | Kafka     |     idle     |     idle    |     X      |      X       |       idle        |                      |                       |
+| `kafka-fetcher`                   | Kafka     |              |      X      |     X      |              |                   |                      |                       |
+| `kafka-full`                      | Kafka     |      X       |      X      |     X      |      X       |                   |                      |                       |
+| `kafka-full-transform-vrl`        | Kafka     |              |      X      |     X      |      X       |         X         |                      |                       |
+| `kafka-full-transform-elastic`    | Kafka     |              |      X      |     X      |      X       |                   |                      |           X           |
+| `kafka-minimal`                   | Kafka     |              |             |     X      |              |                   |                      |                       |
+| `kafka-receiver`                  | Kafka     |              |             |     X      |      X       |                   |                      |                       |
+| `kafka-receiver-archiver`         | Kafka     |      X       |             |     X      |      X       |                   |                      |                       |
+| `kafka-receiver-transform-vector` | Kafka     |              |             |     X      |      X       |                   |           X          |                       |
+| `kafka-filebeat`                  | Kafka     |              |             |     X      |      X       |        X2         |                      |                       |
+| `kafka-filebeat-vector`           | Kafka     |              |             |     X      |      X       |                   |          X2          |                       |
+| `kafka-elastic-cisco-ios`         | Kafka     |              |             |     X      |      X       |                   |                      |           X           |
+| `grpc-fetcher`                    | gRPC      |              |      X      |     X      |              |                   |                      |                       |
+| `grpc-full`                       | gRPC      |              |      X      |     X      |      X       |                   |                      |                       |
+| `grpc-minimal`                    | gRPC      |              |             |     X      |              |                   |                      |                       |
+| `grpc-receiver`                   | gRPC      |              |             |     X      |      X       |                   |                      |                       |
 
 Both projected profiles run the core data path -- the receiver and the loader --
 plus the engine, the UI and HyperDX from the `core` and `hyperdx` footprint keys.

@@ -1,0 +1,47 @@
+# Project:   dfe-docker
+# File:      config/transform-elastic/kafka.yaml
+# Purpose:   dfe-transform-elastic config - the single instance dfe-engine overlays
+# Language:  YAML
+#
+# License:   BUSL-1.1
+# Copyright: (c) 2026 HYPERI PTY LIMITED
+#
+# The `<app>/<transport>.yaml` name a projected tier gives this app, so this is
+# the DEPLOYMENT's half of the config on a tier where dfe-engine renders the
+# rest: the source it is given replaces both topic ends and the group id.
+#
+# It is NOT idle, and cannot be. `Config::validate` in dfe-transform-elastic
+# refuses an empty `source.topics`, so there is no counterpart here to
+# transform-vrl/kafka.yaml's empty list. The pair below is a topic of its own
+# that nothing else produces to, deliberately NOT `main_land`: pre-creating
+# `main_load` for a transform with no work suppresses `main_land` out of every
+# loader's subscription and silently zeroes the catch-all path.
+# docs/troubleshooting.md#configloaderkafka-loadyaml-consumes-a-topic-nothing-pre-creates
+#
+# `source.name` is the compiled-in transform this instance runs. The app ships
+# one per Elastic data stream and selects exactly one, so an instance IS a
+# source's transform rather than a program set that branches -- which is why the
+# per-source file beside this one names its own topics rather than sharing these.
+
+pipeline_name: dfe-transform-elastic
+
+source:
+  name: filebeat.cisco_ios.default
+  brokers:
+    - kafka:9092
+  topics:
+    - elastic_land
+  group_id: dfe-transform-elastic
+
+sink:
+  brokers:
+    - kafka:9092
+  topic: elastic_load
+
+# Off, because the downloader writes to `geoip.auto_download.data_dir` and this
+# stack gives it nowhere to write: a named volume on a path the image does not
+# own lands root-owned and the container runs as uid 1000. Provisioning failure
+# only warns, so leaving it on would degrade the source pipelines that carry a
+# geoip processor without saying so.
+geoip:
+  enabled: false

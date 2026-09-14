@@ -152,6 +152,17 @@ credential fields are `env:`-interpolated. Change it there.
 | `DFE_RECEIVER_OTLP_HTTP_PORT`                    | Receiver OTLP HTTP port                                                              | `4318`                                                              |
 | `DFE_RECEIVER_PROMETHEUS_PORT`                   | Receiver Prometheus port                                                             | `9090`                                                              |
 
+### DFE Transform Elastic
+
+| Variable                                         | Use                                                                                  | Default                                                             |
+|--------------------------------------------------|--------------------------------------------------------------------------------------|---------------------------------------------------------------------|
+| `DFE_TRANSFORM_ELASTIC_VERSION`                  | Version of dfe-transform-elastic to use                                              | none -- `make stack` pins it; unset is a hard-fail                                                            |
+| `DFE_TRANSFORM_ELASTIC_PROMETHEUS_PORT`          | Transform Elastic Prometheus port                                                    | `9099`                                                              |
+| `DFE_TRANSFORM_ELASTIC_CISCO_IOS_PROMETHEUS_PORT` | Prometheus port of the cisco-ios instance -- it runs the same image, so it needs its own | `9100`                                                          |
+
+No image is published to GHCR yet, so the pin resolves to nothing and only
+`make dev LOCAL=dfe-transform-elastic` produces one.
+
 ### DFE Transform Vector
 
 | Variable                                         | Use                                                                                  | Default                                                             |
@@ -309,6 +320,8 @@ The same toggle points the engine at HyperDX: with it on, the engine receives `D
 | 9096  | dfe-transform-vrl    | Prometheus metrics |
 | 9097  | dfe-transform-vrl-filebeat | Prometheus metrics |
 | 9098  | dfe-transform-vector-filebeat | Prometheus metrics |
+| 9099  | dfe-transform-elastic | Prometheus metrics |
+| 9100  | dfe-transform-elastic-cisco-ios | Prometheus metrics |
 | 13133 | otel-collector       | health_check       |
 | 19092 | Kafka (any backend)  | Plaintext host     |
 | 50051 | dfe-loader           | gRPC               |
@@ -341,6 +354,7 @@ Images are published from the component repos:
 - `ghcr.io/hyperi-io/dfe-fetcher`
 - `ghcr.io/hyperi-io/dfe-loader`
 - `ghcr.io/hyperi-io/dfe-receiver`
+- `ghcr.io/hyperi-io/dfe-transform-elastic` (not published yet)
 - `ghcr.io/hyperi-io/dfe-transform-vector`
 - `ghcr.io/hyperi-io/dfe-transform-vrl`
 - `ghcr.io/hyperi-io/dfe-ui`
