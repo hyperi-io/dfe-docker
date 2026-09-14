@@ -177,6 +177,11 @@ A service that runs a component's image under another name follows it:
 engine image. The map is `IMAGE_CONSUMERS` in `scripts/build_dev_images.py`, and
 `make check-compose` asserts the override covers all of it.
 
+The `contract-<app>` one-shots are the deliberate exception: they emit the
+contract of the PINNED release and stay on the registry pin while a local build
+runs beside them, because moving them onto `:local` would make a core-only
+profile compile all six Rust components to emit six files.
+
 Two of them are started by a `depends_on` rather than named by a profile
 (`IMPLICIT_CONSUMERS`, same file): the archiver for `dlq-init`, the engine for
 `dfe-schema-init`. `make dev` builds those even on a profile that runs no service
