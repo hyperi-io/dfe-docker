@@ -178,6 +178,7 @@ HUNT_DETECTION_INTERVAL_SECONDS = 3.0
 IDLE_APPS: dict[str, tuple[str, str]] = {
     "dfe-archiver": ("archiver/kafka.yaml", "9093"),
     "dfe-fetcher": ("fetcher/kafka.yaml", "9094"),
+    "dfe-transform-elastic": ("transform-elastic/kafka.yaml", "9099"),
     "dfe-transform-vrl": ("transform-vrl/kafka.yaml", "9096"),
 }
 IDLE_GAUGE = "pipeline_idle"

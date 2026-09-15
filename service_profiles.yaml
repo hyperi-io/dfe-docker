@@ -77,6 +77,8 @@ profiles:
         config_path: loader/kafka.yaml
       dfe-receiver:
         config_path: receiver/kafka.yaml
+      dfe-transform-elastic:
+        config_path: transform-elastic/kafka.yaml
       dfe-transform-vrl:
         config_path: transform-vrl/kafka.yaml
   # END projected profiles

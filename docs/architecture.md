@@ -296,9 +296,7 @@ Dev builds fetch source into a managed git cache, or from your own checkouts whe
 | `dfe-hyperdx` | TypeScript | HyperDX fork. Repo and published image are both `dfe-hyperdx` | `hyperdx` |
 
 `dfe-transform-splack` and `dfe-transform-wasm` have repos but no service here,
-so this stack cannot run them. `dfe-transform-elastic` has its services and its
-profiles, and publishes no image to GHCR yet -- until it does, `make dev
-LOCAL=dfe-transform-elastic` is the only way to start one.
+so this stack cannot run them.
 
 ## Where this differs from Kubernetes
 

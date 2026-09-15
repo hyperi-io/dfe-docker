@@ -24,7 +24,7 @@ with a config that gives it no work.
 | Profile                           | Transport | dfe-archiver | dfe-fetcher | dfe-loader | dfe-receiver | dfe-transform-vrl | dfe-transform-vector | dfe-transform-elastic |
 |-----------------------------------|-----------|:------------:|:-----------:|:----------:|:------------:|:-----------------:|:--------------------:|:---------------------:|
 | `slim` (projected)                | gRPC      |              |             |     X      |      X       |                   |                      |                       |
-| `single` (projected)              | Kafka     |     idle     |     idle    |     X      |      X       |       idle        |                      |                       |
+| `single` (projected)              | Kafka     |     idle     |     idle    |     X      |      X       |       idle        |                      |         idle          |
 | `kafka-fetcher`                   | Kafka     |              |      X      |     X      |              |                   |                      |                       |
 | `kafka-full`                      | Kafka     |      X       |      X      |     X      |      X       |                   |                      |                       |
 | `kafka-full-transform-vrl`        | Kafka     |              |      X      |     X      |      X       |         X         |                      |                       |
@@ -43,8 +43,9 @@ with a config that gives it no work.
 
 Both projected profiles run the core data path -- the receiver and the loader --
 plus the engine, the UI and HyperDX from the `core` and `hyperdx` footprint keys.
-`slim` runs nothing else. `single` adds one archiver, one fetcher and one
-transform-vrl, each started with a config that gives it no work: they are Ready,
+`slim` runs nothing else. `single` adds one archiver, one fetcher, one
+transform-vrl and one transform-elastic, each started with a config that gives
+it no work: they are Ready,
 serve health and metrics, open no broker connection and hold `pipeline_idle` at
 1. `make post` asserts that on every start.
 

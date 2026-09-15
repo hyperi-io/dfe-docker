@@ -655,10 +655,9 @@ services:
   # so it has nothing to mount beside its config -- no transforms directory and
   # no enrichment tables.
   #
-  # It cannot be started idle. `Config::validate` refuses an empty
-  # `source.topics` (dfe-transform-elastic src/config.rs), so the config below
-  # names a working pair rather than the empty list transform-vrl/kafka.yaml
-  # carries.
+  # The single tier starts it idle: an empty `source.name` or `source.topics`
+  # parks it Ready with no consumer group, which is what lets a tier carry a
+  # transform ready for its first source rather than none until one is written.
   # ===========================================================================
 
   dfe-transform-elastic:
@@ -679,8 +678,8 @@ services:
       OTEL_SERVICE_NAME: dfe-transform-elastic
     depends_on:
       # No dlq-init here: this service does not mount dlq-spool.
-      # The writer of the rendered config below, so it must have written before
-      # this container reads. `required: false` for the tiers that run no engine.
+      # The writer of the rendered config, so it must have written before this
+      # container reads. `required: false` for the tiers that run no engine.
       dfe-engine:
         condition: service_healthy
         required: false
@@ -690,9 +689,10 @@ services:
       kafka-init-redpanda:
         condition: service_completed_successfully
         required: false
-    # The engine renders this app's config from the source it is given, on the
-    # tiers that run it; everywhere else the committed file below is what it
-    # reads. The path matches the image's own CMD.
+    # The committed file below, on every tier: the engine's bundled catalogue
+    # does not offer this app yet, so nothing renders a config for it
+    # (dfe-engine#389). The mount and the wait above are what it reads once the
+    # catalogue catches up. The path matches the image's own CMD.
     command: ["--config", "${DFE_TRANSFORM_ELASTIC_CONFIG_FILE:-/etc/dfe-transform-elastic/config.yaml}"]
     volumes:
       - ./config/${DFE_TRANSFORM_ELASTIC_CONFIG:-transform-elastic/kafka.yaml}:/etc/dfe-transform-elastic/config.yaml:ro

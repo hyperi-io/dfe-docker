@@ -175,7 +175,10 @@ SERVICE_TO_RENDERED_CONFIG = {
     "dfe-fetcher": ("DFE_FETCHER_CONFIG_FILE", "fetcher.yaml"),
     "dfe-loader": ("DFE_LOADER_CONFIG_FILE", "loader.yaml"),
     "dfe-receiver": ("DFE_RECEIVER_CONFIG_FILE", "config.yaml"),
-    "dfe-transform-elastic": ("DFE_TRANSFORM_ELASTIC_CONFIG_FILE", "config.yaml"),
+    # dfe-transform-elastic is absent because the catalogue bundled in the engine
+    # image gives it neither `consumes.config` nor a `default_in` covering this
+    # tier, so the engine renders no config for it (dfe-engine#389) and the
+    # committed idle config is what the container reads.
     "dfe-transform-vrl": ("DFE_TRANSFORM_VRL_CONFIG_FILE", "config.yaml"),
 }
 # A per-source transform instance is a service of its own here, because a

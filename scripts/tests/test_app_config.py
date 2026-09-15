@@ -83,6 +83,22 @@ def test_an_app_the_tier_does_not_run_is_given_no_rendered_path(
     assert values["DFE_ARCHIVER_CONFIG_FILE"] == ""
 
 
+def test_the_single_tier_leaves_transform_elastic_on_its_committed_config(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # The engine renders for transform-vrl on this tier but not for
+    # transform-elastic, whose bundled catalogue entry offers it nowhere
+    # (dfe-engine#389). A rendered path here would name a file nothing writes.
+    values = _resolved("single", tmp_path, monkeypatch)
+
+    assert "DFE_TRANSFORM_ELASTIC_CONFIG_FILE" not in values
+    assert values["DFE_TRANSFORM_ELASTIC_CONFIG"] == "transform-elastic/kafka.yaml"
+    assert (
+        values["DFE_TRANSFORM_VRL_CONFIG_FILE"]
+        == f"{resolve_profile.APP_CONFIG_MOUNT}/dfe-transform-vrl/config.yaml"
+    )
+
+
 @pytest.mark.parametrize("profile", [*PROJECTED_PROFILES, "kafka-filebeat"])
 def test_every_app_config_key_is_written_whatever_the_answer(
     profile: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch

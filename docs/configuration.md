@@ -160,9 +160,6 @@ credential fields are `env:`-interpolated. Change it there.
 | `DFE_TRANSFORM_ELASTIC_PROMETHEUS_PORT`          | Transform Elastic Prometheus port                                                    | `9099`                                                              |
 | `DFE_TRANSFORM_ELASTIC_CISCO_IOS_PROMETHEUS_PORT` | Prometheus port of the cisco-ios instance -- it runs the same image, so it needs its own | `9100`                                                          |
 
-No image is published to GHCR yet, so the pin resolves to nothing and only
-`make dev LOCAL=dfe-transform-elastic` produces one.
-
 ### DFE Transform Vector
 
 | Variable                                         | Use                                                                                  | Default                                                             |
@@ -354,7 +351,7 @@ Images are published from the component repos:
 - `ghcr.io/hyperi-io/dfe-fetcher`
 - `ghcr.io/hyperi-io/dfe-loader`
 - `ghcr.io/hyperi-io/dfe-receiver`
-- `ghcr.io/hyperi-io/dfe-transform-elastic` (not published yet)
+- `ghcr.io/hyperi-io/dfe-transform-elastic`
 - `ghcr.io/hyperi-io/dfe-transform-vector`
 - `ghcr.io/hyperi-io/dfe-transform-vrl`
 - `ghcr.io/hyperi-io/dfe-ui`
