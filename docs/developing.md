@@ -177,6 +177,11 @@ A service that runs a component's image under another name follows it:
 `IMAGE_CONSUMERS` in `scripts/build_dev_images.py`, and `make check-compose`
 asserts the override covers all of it.
 
+The `contract-<app>` one-shots are the deliberate exception: they emit the
+contract of the PINNED release and stay on the registry pin while a local build
+runs beside them, because moving them onto `:local` would make a core-only
+profile compile all six Rust components to emit six files.
+
 One of them is started by a `depends_on` rather than named by a profile
 (`IMPLICIT_CONSUMERS`, same file): the archiver for `dlq-init`. `make dev` builds
 it even on a profile that runs no archiver of its own, or the override points it

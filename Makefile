@@ -216,6 +216,13 @@ else
     endif
 endif
 
+# One service per app instance dfe-engine has rendered a config for, generated
+# with the profile (scripts/instances.py). Empty for the bootstrap goals, which
+# reads as off -- the safe direction for a target that only stops a stack.
+ifeq ($(strip $(DFE_INSTANCES_RESOLVED)),true)
+    $(eval $(call chain_fragment,docker-compose.instances.yml))
+endif
+
 # Container stdout to the collector. Off wherever the collector is, because the
 # fluentd driver cannot be read back by `docker compose logs` and would cost an
 # operator that with nothing collecting at the other end. Empty for the bootstrap

@@ -239,9 +239,39 @@ it is a second deployment of the one component, not a component of its own.
 | `DFE_ENGINE_PORT`                                | Port used by dfe-engine                                                              | `8003`                                                              |
 | `DFE_ENGINE_CONFIG_DIR`                          | Path to config directory                                                             | `/app/config`                                                       |
 | `DFE_ENGINE_SCHEMAS_DIR`                         | Path to schemas directory                                                            | `/app/schemas`                                                      |
+| `DFE_ENGINE_CONTENT_DIR`                         | Path the content volume mounts on, holding the emitted contracts and the seed library | `/app/content`                                                      |
 | `DFE_UI_VERSION`                                 | Version of dfe-ui to use                                                             | none -- `make stack` pins it; unset is a hard-fail                                                            |
 | `DFE_UI_PORT`                                    | Port used by dfe-ui                                                                  | `3000`                                                              |
 | `DFE_UI_NODE_ENV`                                | Node environment of dfe-ui                                                           | `production`                                                        |
+
+### App contracts, and the custom environment the console writes
+
+The console's app settings page reports what an app can be configured with, and
+it reads that from the app itself rather than from a list the engine carries. One
+`contract-<app>` one-shot per app runs that app's pinned image, writes its config
+schema and capability catalogue into the shared content volume, and exits; the
+engine reads them at `DFE_APP_CONTRACT_DIR`. An app that cannot emit leaves its
+contract absent and the engine starts anyway, so a settings page with nothing on
+it for one app means that app's one-shot logged a failure -- `docker compose logs
+contract-<app>`.
+
+A setting the app's own schema does not declare is written as an environment
+variable instead, into `env/<app>.custom.env` beside the file `make init` creates.
+Each app reads both, the custom file second, so a custom key beats the same key in
+`env/<app>.env`; the `environment:` block in `docker-compose.yml` beats both, which
+is what keeps a custom key from taking over the broker address or the warehouse
+credentials. Neither file has to exist.
+
+**A custom env write needs `docker compose up -d <service>`, not a restart.**
+Compose reads `env_file` when it creates a container, so `docker compose restart`
+gives you the same container with the environment it already had, and the change
+looks like it did nothing.
+
+The engine writes those files into the `env/` directory of the checkout it is
+started from: `DFE_DEPLOYMENT_APP_ENV_DIR` names it (`/app/app-env` inside the
+container, the sibling of `DFE_DEPLOYMENT_APP_CONFIG_DIR`) and it is a read-write
+bind mount of `./env`, so the deployment's own working tree is what changes when
+an operator saves a setting.
 
 ## Self-monitoring (opt-in)
 

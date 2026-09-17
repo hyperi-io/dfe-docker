@@ -54,6 +54,18 @@ LOOPBACK_ORIGINS = frozenset(
 # a hand-crafted data-plane shape that ships its own config and must keep it.
 PROJECTED_PROFILES = ("slim", "single")
 
+# The config file each app reads, by the manifest's `consumes.config`. Shared,
+# because the resident service reads it at <mount>/<app>/ and a per-source
+# instance at <mount>/<app>/<instance>/, and the two must name the same file.
+SERVICE_CONFIG_FILE = {
+    "dfe-archiver": "archiver.yaml",
+    "dfe-fetcher": "fetcher.yaml",
+    "dfe-loader": "loader.yaml",
+    "dfe-receiver": "config.yaml",
+    "dfe-transform-vector": "config.yaml",
+    "dfe-transform-vrl": "config.yaml",
+}
+
 # Repo constants
 REPO_ROOT = __find_repo_root()
 # Written by `make init` / `make up`: the launcher's copy of the access summary,

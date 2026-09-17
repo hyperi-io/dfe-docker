@@ -307,6 +307,172 @@ services:
     restart: "no"
 
   # ===========================================================================
+  # contract-<app>
+  # One one-shot per app, running that app's OWN pinned image: `config-schema`
+  # writes the config schema and capability catalogue of the exact binary this
+  # stack runs into dfe-engine-content, and the engine reads them back at
+  # /contract/<app>. The Kubernetes tier does the same with one init container
+  # per app (dfe-infra #305).
+  #
+  # An app that cannot emit must not wedge the engine. scalo exits non-zero when
+  # it fails to WRITE, so the command wraps the call and logs instead, and the
+  # engine's depends_on carries `required: false` on top of that.
+  #
+  # source.json names the ref that produced the directory: a contract is a
+  # property of one digest and none of the four files says which.
+  #
+  # These stay on the registry pin in dev -- the committed override repoints the
+  # app services and not these, so a local build's contract is the pin's.
+  # ===========================================================================
+
+  contract-dfe-archiver:
+    image: ${IMAGE_REGISTRY:-ghcr.io/hyperi-io}/dfe-archiver:${DFE_ARCHIVER_VERSION:?run 'make stack VERSION=X.Y.Z' to pin DFE_ARCHIVER_VERSION}
+    container_name: dfe-contract-dfe-archiver
+    profiles: ["core"]
+    deploy: *limits-sidecar
+    # Root because an empty named volume lands root-owned at a path no image
+    # creates, and the engine only ever reads this directory.
+    user: "0:0"
+    entrypoint: ["/bin/sh", "-c"]
+    environment:
+      # The ref this contract came from. The image line above hard-fails on an
+      # unset pin, so it never renders empty.
+      CONTRACT_REF: ${IMAGE_REGISTRY:-ghcr.io/hyperi-io}/dfe-archiver:${DFE_ARCHIVER_VERSION:-}
+    # A LIST with one element, for the reason dlq-init's command gives.
+    command:
+      - |
+        if dfe-archiver config-schema --dir /app/content/contract/dfe-archiver; then
+          printf '{"app":"dfe-archiver","ref":"%s","emitted_at":"%s"}\n' \
+            "$$CONTRACT_REF" "$$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+            > /app/content/contract/dfe-archiver/source.json
+        else
+          echo "contract: dfe-archiver emitted nothing, so the engine reports its contract absent" >&2
+        fi
+    volumes:
+      - dfe-engine-content:/app/content
+    restart: "no"
+
+  contract-dfe-fetcher:
+    image: ${IMAGE_REGISTRY:-ghcr.io/hyperi-io}/dfe-fetcher:${DFE_FETCHER_VERSION:?run 'make stack VERSION=X.Y.Z' to pin DFE_FETCHER_VERSION}
+    container_name: dfe-contract-dfe-fetcher
+    profiles: ["core"]
+    deploy: *limits-sidecar
+    # Root because an empty named volume lands root-owned at a path no image
+    # creates, and the engine only ever reads this directory.
+    user: "0:0"
+    entrypoint: ["/bin/sh", "-c"]
+    environment:
+      CONTRACT_REF: ${IMAGE_REGISTRY:-ghcr.io/hyperi-io}/dfe-fetcher:${DFE_FETCHER_VERSION:-}
+    command:
+      - |
+        if dfe-fetcher config-schema --dir /app/content/contract/dfe-fetcher; then
+          printf '{"app":"dfe-fetcher","ref":"%s","emitted_at":"%s"}\n' \
+            "$$CONTRACT_REF" "$$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+            > /app/content/contract/dfe-fetcher/source.json
+        else
+          echo "contract: dfe-fetcher emitted nothing, so the engine reports its contract absent" >&2
+        fi
+    volumes:
+      - dfe-engine-content:/app/content
+    restart: "no"
+
+  contract-dfe-loader:
+    image: ${IMAGE_REGISTRY:-ghcr.io/hyperi-io}/dfe-loader:${DFE_LOADER_VERSION:?run 'make stack VERSION=X.Y.Z' to pin DFE_LOADER_VERSION}
+    container_name: dfe-contract-dfe-loader
+    profiles: ["core"]
+    deploy: *limits-sidecar
+    # Root because an empty named volume lands root-owned at a path no image
+    # creates, and the engine only ever reads this directory.
+    user: "0:0"
+    entrypoint: ["/bin/sh", "-c"]
+    environment:
+      CONTRACT_REF: ${IMAGE_REGISTRY:-ghcr.io/hyperi-io}/dfe-loader:${DFE_LOADER_VERSION:-}
+    command:
+      - |
+        if dfe-loader config-schema --dir /app/content/contract/dfe-loader; then
+          printf '{"app":"dfe-loader","ref":"%s","emitted_at":"%s"}\n' \
+            "$$CONTRACT_REF" "$$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+            > /app/content/contract/dfe-loader/source.json
+        else
+          echo "contract: dfe-loader emitted nothing, so the engine reports its contract absent" >&2
+        fi
+    volumes:
+      - dfe-engine-content:/app/content
+    restart: "no"
+
+  contract-dfe-receiver:
+    image: ${IMAGE_REGISTRY:-ghcr.io/hyperi-io}/dfe-receiver:${DFE_RECEIVER_VERSION:?run 'make stack VERSION=X.Y.Z' to pin DFE_RECEIVER_VERSION}
+    container_name: dfe-contract-dfe-receiver
+    profiles: ["core"]
+    deploy: *limits-sidecar
+    # Root because an empty named volume lands root-owned at a path no image
+    # creates, and the engine only ever reads this directory.
+    user: "0:0"
+    entrypoint: ["/bin/sh", "-c"]
+    environment:
+      CONTRACT_REF: ${IMAGE_REGISTRY:-ghcr.io/hyperi-io}/dfe-receiver:${DFE_RECEIVER_VERSION:-}
+    command:
+      - |
+        if dfe-receiver config-schema --dir /app/content/contract/dfe-receiver; then
+          printf '{"app":"dfe-receiver","ref":"%s","emitted_at":"%s"}\n' \
+            "$$CONTRACT_REF" "$$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+            > /app/content/contract/dfe-receiver/source.json
+        else
+          echo "contract: dfe-receiver emitted nothing, so the engine reports its contract absent" >&2
+        fi
+    volumes:
+      - dfe-engine-content:/app/content
+    restart: "no"
+
+  contract-dfe-transform-vector:
+    image: ${IMAGE_REGISTRY:-ghcr.io/hyperi-io}/dfe-transform-vector:${DFE_TRANSFORM_VECTOR_VERSION:?run 'make stack VERSION=X.Y.Z' to pin DFE_TRANSFORM_VECTOR_VERSION}
+    container_name: dfe-contract-dfe-transform-vector
+    profiles: ["core"]
+    deploy: *limits-sidecar
+    # Root because an empty named volume lands root-owned at a path no image
+    # creates, and the engine only ever reads this directory.
+    user: "0:0"
+    entrypoint: ["/bin/sh", "-c"]
+    environment:
+      CONTRACT_REF: ${IMAGE_REGISTRY:-ghcr.io/hyperi-io}/dfe-transform-vector:${DFE_TRANSFORM_VECTOR_VERSION:-}
+    command:
+      - |
+        if dfe-transform-vector config-schema --dir /app/content/contract/dfe-transform-vector; then
+          printf '{"app":"dfe-transform-vector","ref":"%s","emitted_at":"%s"}\n' \
+            "$$CONTRACT_REF" "$$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+            > /app/content/contract/dfe-transform-vector/source.json
+        else
+          echo "contract: dfe-transform-vector emitted nothing, so the engine reports its contract absent" >&2
+        fi
+    volumes:
+      - dfe-engine-content:/app/content
+    restart: "no"
+
+  contract-dfe-transform-vrl:
+    image: ${IMAGE_REGISTRY:-ghcr.io/hyperi-io}/dfe-transform-vrl:${DFE_TRANSFORM_VRL_VERSION:?run 'make stack VERSION=X.Y.Z' to pin DFE_TRANSFORM_VRL_VERSION}
+    container_name: dfe-contract-dfe-transform-vrl
+    profiles: ["core"]
+    deploy: *limits-sidecar
+    # Root because an empty named volume lands root-owned at a path no image
+    # creates, and the engine only ever reads this directory.
+    user: "0:0"
+    entrypoint: ["/bin/sh", "-c"]
+    environment:
+      CONTRACT_REF: ${IMAGE_REGISTRY:-ghcr.io/hyperi-io}/dfe-transform-vrl:${DFE_TRANSFORM_VRL_VERSION:-}
+    command:
+      - |
+        if dfe-transform-vrl config-schema --dir /app/content/contract/dfe-transform-vrl; then
+          printf '{"app":"dfe-transform-vrl","ref":"%s","emitted_at":"%s"}\n' \
+            "$$CONTRACT_REF" "$$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+            > /app/content/contract/dfe-transform-vrl/source.json
+        else
+          echo "contract: dfe-transform-vrl emitted nothing, so the engine reports its contract absent" >&2
+        fi
+    volumes:
+      - dfe-engine-content:/app/content
+    restart: "no"
+
+  # ===========================================================================
   # dfe-archiver
   # Reads the landing topics off the broker, or receives on its scalo Push
   # listener where the profile has no broker (config/archiver/<transport>.yaml).
@@ -322,6 +488,11 @@ services:
       - ${DFE_BIND_HOST:-127.0.0.1}:${DFE_ARCHIVER_PROMETHEUS_PORT:-9093}:9090
     env_file:
       - path: env/archiver.env
+        required: false
+      # The custom keys the engine writes for this app, AFTER the file above so
+      # a custom key wins. Compose reads env_file at up-time, so a write needs
+      # `docker compose up -d dfe-archiver` and a restart keeps the old values.
+      - path: env/archiver.custom.env
         required: false
     environment:
       LOG_LEVEL: ${LOG_LEVEL:-info}
@@ -368,6 +539,10 @@ services:
       - ${DFE_BIND_HOST:-127.0.0.1}:${DFE_FETCHER_PROMETHEUS_PORT:-9094}:9090
     env_file:
       - path: env/fetcher.env
+        required: false
+      # The custom keys the engine writes for this app; an up -d applies them,
+      # a restart keeps the environment the container already has.
+      - path: env/fetcher.custom.env
         required: false
     environment:
       LOG_LEVEL: ${LOG_LEVEL:-info}
@@ -417,6 +592,10 @@ services:
       - ${DFE_BIND_HOST:-127.0.0.1}:${DFE_LOADER_GRPC_PORT:-50051}:50051
     env_file:
       - path: env/loader.env
+        required: false
+      # The custom keys the engine writes for this app; an up -d applies them,
+      # a restart keeps the environment the container already has.
+      - path: env/loader.custom.env
         required: false
     environment:
       CLICKHOUSE_USERNAME: ${CLICKHOUSE_USERNAME:-default}
@@ -478,6 +657,10 @@ services:
     env_file:
       - path: env/receiver.env
         required: false
+      # The custom keys the engine writes for this app; an up -d applies them,
+      # a restart keeps the environment the container already has.
+      - path: env/receiver.custom.env
+        required: false
     environment:
       LOG_LEVEL: ${LOG_LEVEL:-info}
       LOG_FORMAT: ${LOG_FORMAT:-text}
@@ -532,6 +715,10 @@ services:
     env_file:
       - path: env/transform-vector.env
         required: false
+      # The custom keys the engine writes for this app; an up -d applies them,
+      # a restart keeps the environment the container already has.
+      - path: env/transform-vector.custom.env
+        required: false
     environment:
       LOG_LEVEL: ${LOG_LEVEL:-info}
       LOG_FORMAT: ${LOG_FORMAT:-text}
@@ -580,6 +767,10 @@ services:
     env_file:
       - path: env/transform-vector-filebeat.env
         required: false
+      # The custom keys the engine writes for this app; an up -d applies them,
+      # a restart keeps the environment the container already has.
+      - path: env/transform-vector-filebeat.custom.env
+        required: false
     environment:
       LOG_LEVEL: ${LOG_LEVEL:-info}
       LOG_FORMAT: ${LOG_FORMAT:-text}
@@ -617,6 +808,10 @@ services:
       - ${DFE_BIND_HOST:-127.0.0.1}:${DFE_TRANSFORM_VRL_PROMETHEUS_PORT:-9096}:9090
     env_file:
       - path: env/transform-vrl.env
+        required: false
+      # The custom keys the engine writes for this app; an up -d applies them,
+      # a restart keeps the environment the container already has.
+      - path: env/transform-vrl.custom.env
         required: false
     environment:
       LOG_LEVEL: ${LOG_LEVEL:-info}
@@ -665,6 +860,10 @@ services:
       - ${DFE_BIND_HOST:-127.0.0.1}:${DFE_TRANSFORM_VRL_FILEBEAT_PROMETHEUS_PORT:-9097}:9090
     env_file:
       - path: env/transform-vrl-filebeat.env
+        required: false
+      # The custom keys the engine writes for this app; an up -d applies them,
+      # a restart keeps the environment the container already has.
+      - path: env/transform-vrl-filebeat.custom.env
         required: false
     environment:
       LOG_LEVEL: ${LOG_LEVEL:-info}
@@ -790,10 +989,20 @@ services:
       # every recreate, and every session issued before it stops verifying.
       DFE_SECRETS_PATH: ${DFE_ENGINE_CONFIG_DIR:-/app/config}/.secrets
       DFE_SCHEMAS_DIR: ${DFE_ENGINE_SCHEMAS_DIR:-/app/schemas}
-      # Content another repo ships (transform templates, a source catalogue),
-      # copied onto this volume by a per-pin init service; the engine seeds its
-      # library from it at startup and an empty directory is a no-op.
+      # Content another repo ships (transform templates, a source catalogue); the
+      # engine seeds its library from it at startup. Nothing writes it on Compose
+      # yet -- the contract one-shots fill the sibling directory, not this one --
+      # and an empty directory is a no-op.
       DFE_LIBRARY_SEED_DIR: ${DFE_ENGINE_CONTENT_DIR:-/app/content}/library
+      # Where the contract one-shots write, one directory per app, on the same
+      # volume. resolve_profile.py sets it EMPTY on a tier the engine renders no
+      # app config for; unset (compose run without make) keeps the volume's path.
+      DFE_APP_CONTRACT_DIR: ${DFE_ENGINE_CONTRACT_DIR-${DFE_ENGINE_CONTENT_DIR:-/app/content}/contract}
+      # Where the engine writes env/<app>.custom.env, the sibling of the app
+      # config directory above. A literal, because it names the bind mount below
+      # and the two have to stay the same path -- and that path is the host tree,
+      # so a write here changes the operator's checkout.
+      DFE_DEPLOYMENT_APP_ENV_DIR: /app/app-env
       OTEL_EXPORTER_OTLP_ENDPOINT: ${DFE_OTEL_EXPORTER_ENDPOINT:-}
       OTEL_SERVICE_NAME: dfe-engine
       # scalo's CLI falls back to the prometheus backend, so the endpoint alone
@@ -805,6 +1014,10 @@ services:
       - dfe-engine-content:${DFE_ENGINE_CONTENT_DIR:-/app/content}
       # The only writer of this volume; every app mounts it read-only.
       - dfe-app-config:/app/app-config
+      # The per-service env files, READ-WRITE: the engine writes an app's custom
+      # keys to env/<app>.custom.env, and compose reads env_file off the host
+      # tree rather than a volume. It is the operator's checkout being written.
+      - ./env:/app/app-env
       # Each app's base config, as THIS tier committed it. The instance overlay
       # is merged over it, so the broker, the warehouse credentials and the spool
       # stay with the deployment rather than being written into the deploy repo.
@@ -817,6 +1030,26 @@ services:
     depends_on:
       clickhouse:
         condition: service_healthy
+        required: false
+      # Each app's contract, emitted before the engine reads it. `required:
+      # false` for the tiers that run no such app, and a FAILED emit only warns.
+      contract-dfe-archiver:
+        condition: service_completed_successfully
+        required: false
+      contract-dfe-fetcher:
+        condition: service_completed_successfully
+        required: false
+      contract-dfe-loader:
+        condition: service_completed_successfully
+        required: false
+      contract-dfe-receiver:
+        condition: service_completed_successfully
+        required: false
+      contract-dfe-transform-vector:
+        condition: service_completed_successfully
+        required: false
+      contract-dfe-transform-vrl:
+        condition: service_completed_successfully
         required: false
     working_dir: /home/appuser
     healthcheck:
