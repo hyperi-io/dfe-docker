@@ -1123,6 +1123,18 @@ services:
       clickhouse:
         condition: service_healthy
         required: false
+      # The engine creates the declared bootstrap topics at its own startup, so
+      # it is the only service that needs the broker before it runs. One of the
+      # two is enabled by compose profile and the other is absent, which is what
+      # `required: false` is for -- as is the grpc tier, which runs neither.
+      # This edge is also what pulls the broker up at all: it is not in
+      # ACTIVE_SERVICES, so it starts as somebody's dependency or not at all.
+      kafka-redpanda:
+        condition: service_healthy
+        required: false
+      kafka-apache:
+        condition: service_healthy
+        required: false
       # Each app's contract, emitted before the engine reads it. `required:
       # false` for the tiers that run no such app, and a FAILED emit only warns.
       contract-dfe-archiver:
