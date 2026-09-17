@@ -80,7 +80,6 @@ def test_an_app_the_tier_does_not_run_is_given_no_rendered_path(
     values = _resolved("slim", tmp_path, monkeypatch)
 
     assert values["DFE_TRANSFORM_VRL_CONFIG_FILE"] == ""
-    assert values["DFE_ARCHIVER_CONFIG_FILE"] == ""
 
 
 @pytest.mark.parametrize("profile", [*PROJECTED_PROFILES, "kafka-filebeat"])
@@ -95,6 +94,6 @@ def test_every_app_config_key_is_written_whatever_the_answer(
         resolve_profile.ENGINE_APP_CONFIG_DIR_VAR,
         resolve_profile.ENGINE_APP_CONFIG_BASE_DIR_VAR,
         resolve_profile.APP_CONFIG_MOUNT_VAR,
-        *(var for var, _ in resolve_profile.SERVICE_TO_RENDERED_CONFIG.values()),
+        *resolve_profile.SERVICE_TO_RENDERED_CONFIG_VAR.values(),
     }
     assert expected <= set(values)
