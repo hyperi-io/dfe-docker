@@ -167,6 +167,13 @@ ENGINE_APP_CONFIG_BASE_DIR_VAR = "DFE_ENGINE_APP_CONFIG_BASE_DIR"
 ENGINE_APP_CONFIG_BASE_DIR = "/app/app-config-base"
 APP_CONFIG_MOUNT_VAR = "DFE_APP_CONFIG_MOUNT"
 APP_CONFIG_MOUNT = "/etc/dfe/apps"
+# Where the contract one-shots write each app's container contract, and where the
+# engine reads it back from. It hangs off the content volume's own mount, so an
+# operator who moves that path moves both halves together.
+ENGINE_CONTENT_DIR_VAR = "DFE_ENGINE_CONTENT_DIR"
+ENGINE_CONTENT_DIR = "/app/content"
+ENGINE_CONTRACT_DIR_VAR = "DFE_ENGINE_CONTRACT_DIR"
+ENGINE_CONTRACT_SUBDIR = "contract"
 # Where each app reads its rendered config, by the manifest's `consumes.config`.
 SERVICE_TO_RENDERED_CONFIG = {
     "dfe-archiver": ("DFE_ARCHIVER_CONFIG_FILE", "archiver.yaml"),
@@ -540,6 +547,16 @@ def main() -> int:
             f"{ENGINE_APP_CONFIG_BASE_DIR if renders else ''}"
         )
         lines.append(f"export {APP_CONFIG_MOUNT_VAR} := {APP_CONFIG_MOUNT}")
+        # The engine is given the contract directory on the same tiers it is
+        # given the rendered app config, and an empty value everywhere else.
+        # Emitted unconditionally, for the reason the keys above are.
+        content_dir = (
+            os.environ.get(ENGINE_CONTENT_DIR_VAR, "").strip() or ENGINE_CONTENT_DIR
+        )
+        lines.append(
+            f"export {ENGINE_CONTRACT_DIR_VAR} := "
+            f"{f'{content_dir}/{ENGINE_CONTRACT_SUBDIR}' if renders else ''}"
+        )
         for service_name, (var_name, file_name) in SERVICE_TO_RENDERED_CONFIG.items():
             rendered = (
                 f"{APP_CONFIG_MOUNT}/{service_name}/{file_name}"
