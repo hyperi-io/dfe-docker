@@ -52,13 +52,11 @@ APP_CONFIG_MOUNT = "/etc/dfe/apps"
 
 # `extends` does not carry depends_on, so each generated service declares its
 # own. These are the gates every per-source app shares: the engine writes the
-# config it reads, and the one-shots create the topics and the dead-letter queue
-# it produces to. All optional, for the tiers that run none of them.
+# config it reads and creates its topics, and dlq-init prepares the dead-letter
+# queue it produces to. All optional, for the tiers that run none of them.
 INSTANCE_DEPENDS_ON = (
     ("dfe-engine", "service_healthy"),
     ("dlq-init", "service_completed_successfully"),
-    ("kafka-init-apache", "service_completed_successfully"),
-    ("kafka-init-redpanda", "service_completed_successfully"),
 )
 
 HEADER = (
