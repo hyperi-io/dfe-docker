@@ -55,6 +55,8 @@ profiles:
     hyperdx: true
     otel: true
     services:
+      dfe-archiver:
+        config_path: archiver/grpc.yaml
       dfe-loader:
         config_path: loader/grpc.yaml
       dfe-receiver:
@@ -71,14 +73,10 @@ profiles:
     services:
       dfe-archiver:
         config_path: archiver/kafka.yaml
-      dfe-fetcher:
-        config_path: fetcher/kafka.yaml
       dfe-loader:
         config_path: loader/kafka.yaml
       dfe-receiver:
         config_path: receiver/kafka.yaml
-      dfe-transform-vrl:
-        config_path: transform-vrl/kafka.yaml
   # END projected profiles
 
   # Hand-crafted from here down. WHICH apps the two projected profiles run is
