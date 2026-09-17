@@ -17,7 +17,7 @@ That is a property of the repo rather than of a review: an init container that
 creates a table starts cleanly, exits 0 and passes every compose validation,
 because compose has no opinion about DDL in a command string. So it is swept for.
 
-Three assertions, each the reappearance of something this change deleted:
+Four assertions, each the reappearance of something this change deleted:
 
 1. No ClickHouse DDL and no topic-creation step in the compose files, scripts,
    config or ops trees.
@@ -25,6 +25,13 @@ Three assertions, each the reappearance of something this change deleted:
    running the `dfe-schema` entry point, and no KAFKA_INIT_TOPICS.
 3. Every service that reads a DFE table or topic gates on
    `dfe-engine: service_healthy`, which is what replaced them.
+4. The same of the services scripts/instances.py GENERATES, which the committed
+   file does not hold and check_compose.py never resolves: CI has no instance
+   index, so the fragment is empty there and every name in the generator's own
+   table goes unchecked. That is not hypothetical -- `INSTANCE_DEPENDS_ON` kept
+   `kafka-init-apache` and `kafka-init-redpanda` through this change, and
+   `required: false` does not excuse them: compose answers a depends_on naming a
+   service it cannot find with "invalid compose project" and starts nothing.
 
 `dlq-init` is deliberately untouched: it is a chown on a volume Docker creates
 root-owned, not schema.
@@ -39,6 +46,8 @@ import re
 from pathlib import Path
 
 import pytest
+
+import instances
 
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 COMPOSE = REPO_ROOT / "docker-compose.yml"
@@ -70,6 +79,10 @@ TOPIC_CREATE = re.compile(
     re.IGNORECASE,
 )
 
+# A bootstrapper by name, wherever the name can reach a container. `dlq-init` and
+# the `dfe-schemas` manifest are not matched -- neither creates anything here.
+BOOTSTRAPPER_NAME = re.compile(r"dfe-schema-init|kafka-init")
+
 # The e2e executor, which makes and drops its own throwaway topic and database
 # per run against a live stack to prove the pipeline, and this file, which quotes
 # what it forbids.
@@ -97,12 +110,12 @@ _DEPENDS_RE = re.compile(r"^      ([A-Za-z0-9][A-Za-z0-9._-]*):\s*$")
 _CONDITION_RE = re.compile(r"^        condition:\s*(\S+)\s*$")
 
 
-def _service_blocks() -> dict[str, list[str]]:
+def _blocks(text: str) -> dict[str, list[str]]:
     """Each service's own lines, keyed by name, from the `services:` mapping."""
     blocks: dict[str, list[str]] = {}
     current: str | None = None
     in_services = False
-    for line in COMPOSE.read_text(encoding="utf-8").splitlines():
+    for line in text.splitlines():
         if line.startswith("services:"):
             in_services = True
             continue
@@ -118,6 +131,17 @@ def _service_blocks() -> dict[str, list[str]]:
         if current is not None:
             blocks[current].append(line)
     return blocks
+
+
+def _generated_blocks() -> dict[str, list[str]]:
+    """The same, for the services scripts/instances.py writes at run time.
+
+    One instance of every app the generator knows, so the fragment is rendered
+    rather than read: the committed file holds none of this, and CI resolves none
+    of it either, because an instance index only exists once dfe-engine has run.
+    """
+    sample = {service: ["sample"] for service in sorted(instances.SERVICE_CONFIG_FILE)}
+    return _blocks(instances.fragment(sample))
 
 
 def _depends_on(block: list[str]) -> dict[str, str]:
@@ -177,7 +201,7 @@ def _offenders(pattern: re.Pattern[str]) -> list[str]:
 
 @pytest.fixture(scope="module")
 def services() -> dict[str, list[str]]:
-    blocks = _service_blocks()
+    blocks = _blocks(COMPOSE.read_text(encoding="utf-8"))
     # Loud rather than vacuous: a reader that found nothing would pass every
     # assertion below against an empty mapping.
     assert len(blocks) > 10, f"the compose reader found only {sorted(blocks)}"
@@ -233,3 +257,47 @@ def test_every_reader_waits_on_the_engine(
     assert depends["dfe-engine"] == "service_healthy", (
         f"{service} waits on dfe-engine on the wrong condition: {depends['dfe-engine']}"
     )
+
+
+def test_no_generated_service_names_a_bootstrapper() -> None:
+    """The generator's own table is rendered service text, so it is swept too."""
+    hits = []
+    for name, block in _generated_blocks().items():
+        hits += [
+            f"{name} -> {dependency}"
+            for dependency in _depends_on(block)
+            if BOOTSTRAPPER_NAME.search(dependency)
+        ]
+    assert hits == [], (
+        "a bootstrapper came back through the generator:\n  " + "\n  ".join(hits)
+    )
+
+
+def test_every_generated_dependency_is_a_declared_service(
+    services: dict[str, list[str]],
+) -> None:
+    """Compose refuses the whole project over a depends_on it cannot resolve.
+
+    `required: false` does not soften that -- it decides whether an absent
+    CONTAINER blocks the wait, not whether an undeclared SERVICE parses, so a
+    generated service naming one starts nothing at all.
+    """
+    undefined = []
+    for name, block in _generated_blocks().items():
+        undefined += [
+            f"{name} -> {dependency}"
+            for dependency in _depends_on(block)
+            if dependency not in services
+        ]
+    assert undefined == [], (
+        "a generated service depends on something this repo declares no service "
+        "for, which fails the whole project:\n  " + "\n  ".join(undefined)
+    )
+
+
+def test_every_generated_service_waits_on_the_engine() -> None:
+    for name, block in _generated_blocks().items():
+        depends = _depends_on(block)
+        assert depends.get("dfe-engine") == "service_healthy", (
+            f"{name} starts without waiting on the schema authority: {depends}"
+        )
