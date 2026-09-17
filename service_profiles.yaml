@@ -55,6 +55,8 @@ profiles:
     hyperdx: true
     otel: true
     services:
+      dfe-archiver:
+        config_path: archiver/grpc.yaml
       dfe-loader:
         config_path: loader/grpc.yaml
       dfe-receiver:
@@ -71,8 +73,6 @@ profiles:
     services:
       dfe-archiver:
         config_path: archiver/kafka.yaml
-      dfe-fetcher:
-        config_path: fetcher/kafka.yaml
       dfe-loader:
         config_path: loader/kafka.yaml
       dfe-receiver:

@@ -238,8 +238,8 @@ flowchart TD
 | Compose profile | Services |
 |---|---|
 | `clickhouse` | `clickhouse` |
-| `kafka-redpanda` | `kafka-redpanda`, `kafka-init-redpanda` |
-| `kafka-apache` | `kafka-apache`, `kafka-init-apache` |
+| `kafka-redpanda` | `kafka-redpanda` |
+| `kafka-apache` | `kafka-apache` |
 | `kafka-ui` | `kafka-ui` (Kafbat) |
 | `dfe` | `dlq-init`, archiver, fetcher, loader, receiver, every transform instance |
 | `core` | `dfe-engine`, `dfe-ui`, `dfe-proxy` |
@@ -251,18 +251,21 @@ A profile declares its whole footprint through the optional `clickhouse`, `core`
 Each service entry also names the config file it mounts, which is how one service
 gets a Kafka config and another a gRPC one without a second compose file.
 
-## dfe-engine owns the schema
+## dfe-engine owns the schema and the topics
 
-Nothing here provisions a ClickHouse table. `dfe-engine` ships `/app/schemas`
-inside its own image, creates the ClickHouse objects at startup, and registers the
-schemas `dfe-loader` pre-warms into its cache. A loader started before the engine
-is healthy holds messages pending-schema and dead-letters them, which is why the
-e2e harness gates on engine health before any DFE service.
+Nothing here provisions a ClickHouse table or a Kafka topic. `dfe-engine` ships
+`/app/schemas` inside its own image, applies every object and every bootstrap
+topic from that manifest at startup, and reports healthy only once that pass
+converged. Every service that reads one waits on
+`depends_on: dfe-engine: service_healthy` -- a loader started first holds messages
+pending-schema and dead-letters them, which reads as data loss and is really start
+ordering.
 
 `dfe-schemas` rides inside the engine image, so there is no separate schema pin
 here and a schema change is a `dfe-engine` release. The only file the ClickHouse
-service mounts is `clickhouse/default-user.xml`; a DDL file appearing in this repo
-is wrong by construction.
+service mounts is `clickhouse/default-user.xml`; a DDL file or a topic-creating
+step appearing in this repo is wrong by construction, and
+`scripts/tests/test_engine_only_schema_control.py` fails the build on one.
 
 ## The Kafka backend is swappable
 
@@ -270,11 +273,9 @@ Two brokers, mutually exclusive, chosen by `KAFKA_BACKEND` (`redpanda` default,
 `apache` opt-in). Both expose the network alias `kafka` on the same ports, so
 every config addresses `kafka:9092` and nothing downstream knows which is running.
 
-Each backend has its OWN topic-init using its own tooling, so choosing Apache to
-stay clear of the BSL never pulls a BSL artefact. Compose interpolates every
-service before profiles filter anything, so `REDPANDA_VERSION` must still be
-pinned for the file to resolve on the Apache path -- a pin is not a deployment,
-but it is a remaining reference.
+Compose interpolates every service before profiles filter anything, so
+`REDPANDA_VERSION` must still be pinned for the file to resolve on the Apache
+path -- a pin is not a deployment, but it is a remaining reference.
 
 ## Component source repos
 

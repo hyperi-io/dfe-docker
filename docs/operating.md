@@ -266,7 +266,7 @@ container takes the host down.
 | `DFE_CLICKHOUSE_*` | clickhouse |
 | `DFE_BROKER_*` | kafka-redpanda, kafka-apache |
 | `DFE_SERVICE_*` | the DFE components, engine, UI, kafka-ui, HyperDX, its Postgres and FerretDB |
-| `DFE_SIDECAR_*` | kafka-init, dlq-init, dfe-proxy |
+| `DFE_SIDECAR_*` | dlq-init, dfe-dashboards, dfe-proxy |
 
 For the actual values and totals, ask the stack rather than this page:
 
@@ -291,9 +291,8 @@ limit per service if you need a genuinely hard cap.
 
 Reservations are omitted deliberately: only memory maps outside Swarm, and a soft
 floor that half-applies reads as configuration doing more than it does. The
-sidecar tier is 512M rather than less because `kafka-init-apache` runs a JVM
-(`kafka-topics.sh`), and a smaller cap risks an OOM kill on a service whose whole
-job is to exit cleanly.
+sidecar tier is 512M rather than less because a sidecar's whole job is to exit
+cleanly, and a smaller cap risks an OOM kill on one.
 
 ### `DFE_SERVICE_CPUS` has a floor of 2.0, and it is not about speed
 
@@ -347,9 +346,9 @@ human, not an assumption.
 If it does not come back clean, `KAFKA_BACKEND=apache` selects Apache Kafka
 (Apache-2.0). The two backends are mutually exclusive, share the `kafka:9092`
 network alias and the same host ports, so nothing downstream changes -- configs
-address `kafka:9092` either way. Each backend brings its own topic-init service
-(`kafka-init-redpanda` uses `rpk`, `kafka-init-apache` uses `kafka-topics.sh`),
-so the Apache path pulls and runs no BSL-licensed artefact.
+address `kafka:9092` either way, and dfe-engine creates the bootstrap topic set
+over the Kafka protocol on both, so the Apache path pulls and runs no
+BSL-licensed artefact.
 
 Be precise about what that buys. No Redpanda image is pulled or run, but
 `REDPANDA_VERSION` must still be **pinned** for the compose file to resolve,
@@ -405,8 +404,8 @@ Every time-series table DFE deploys, the OTel tables included, keeps rows for
 default TTL. `make init` asks for it once, on a TTY, when it creates `.env` and
 writes the answer as a live line; a non-interactive run keeps the template's
 commented 90, and the key already set in the environment pre-answers it. The
-value reaches dfe-engine and `dfe-schema-init`, whose apply reconciles existing
-tables, so changing it later is a `.env` edit and a `make ci`. A source, or a
+value reaches dfe-engine, whose startup apply reconciles existing tables, so
+changing it later is a `.env` edit and a `make ci`. A source, or a
 dfe-schemas definition, that declares its own TTL keeps it. The same knob is
 `retention.default_ttl_days` in `deployment.yaml`.
 

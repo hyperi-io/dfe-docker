@@ -31,16 +31,17 @@ from __future__ import annotations
 import os
 from pathlib import Path
 
+import instances
 from _common import (
     CONFIG_DIR,
     FALSY,
     PROFILE_MK,
     PROJECTED_PROFILES,
+    SERVICE_CONFIG_FILE,
     SERVICE_PROFILES_FILE,
     _load_dotenv,
     _print,
     _rel_path,
-    _transform_topics,
 )
 from build_dev_images import buildable_components
 
@@ -126,13 +127,6 @@ FOOTPRINT_KEYS = {
     "otel": (OTEL_ENABLED_ENV_VAR, False),
 }
 
-# Topics kafka-init pre-creates: the stack default plus the ones this profile's
-# WORKING transforms name -- dfe-transform-vrl exits on a missing topic it is
-# configured to use, its sink included. An idle transform uses neither.
-KAFKA_INIT_TOPICS_VAR = "KAFKA_INIT_TOPICS"
-KAFKA_INIT_TOPIC_DEFAULT = "main_land"
-TRANSFORM_SERVICE_PREFIX = "dfe-transform-"
-
 PROFILE_ENV_VAR = "DFE_PROFILE"
 PROFILE_ACTIVE_YAML_FIELD = "active_profile"
 PROFILE_LIST_YAML_FIELD = "profiles"
@@ -169,14 +163,22 @@ ENGINE_APP_CONFIG_BASE_DIR_VAR = "DFE_ENGINE_APP_CONFIG_BASE_DIR"
 ENGINE_APP_CONFIG_BASE_DIR = "/app/app-config-base"
 APP_CONFIG_MOUNT_VAR = "DFE_APP_CONFIG_MOUNT"
 APP_CONFIG_MOUNT = "/etc/dfe/apps"
-# Where each app reads its rendered config, by the manifest's `consumes.config`.
-SERVICE_TO_RENDERED_CONFIG = {
-    "dfe-archiver": ("DFE_ARCHIVER_CONFIG_FILE", "archiver.yaml"),
-    "dfe-fetcher": ("DFE_FETCHER_CONFIG_FILE", "fetcher.yaml"),
-    "dfe-loader": ("DFE_LOADER_CONFIG_FILE", "loader.yaml"),
-    "dfe-receiver": ("DFE_RECEIVER_CONFIG_FILE", "config.yaml"),
-    "dfe-transform-elastic": ("DFE_TRANSFORM_ELASTIC_CONFIG_FILE", "config.yaml"),
-    "dfe-transform-vrl": ("DFE_TRANSFORM_VRL_CONFIG_FILE", "config.yaml"),
+# Where the contract one-shots write each app's container contract, and where the
+# engine reads it back from. It hangs off the content volume's own mount, so an
+# operator who moves that path moves both halves together.
+ENGINE_CONTENT_DIR_VAR = "DFE_ENGINE_CONTENT_DIR"
+ENGINE_CONTENT_DIR = "/app/content"
+ENGINE_CONTRACT_DIR_VAR = "DFE_ENGINE_CONTRACT_DIR"
+ENGINE_CONTRACT_SUBDIR = "contract"
+# Which variable names the file the resident single-instance service reads. The
+# file NAME is _common.SERVICE_CONFIG_FILE, which scripts/instances.py shares.
+SERVICE_TO_RENDERED_CONFIG_VAR = {
+    "dfe-archiver": "DFE_ARCHIVER_CONFIG_FILE",
+    "dfe-fetcher": "DFE_FETCHER_CONFIG_FILE",
+    "dfe-loader": "DFE_LOADER_CONFIG_FILE",
+    "dfe-receiver": "DFE_RECEIVER_CONFIG_FILE",
+    "dfe-transform-elastic": "DFE_TRANSFORM_ELASTIC_CONFIG_FILE",
+    "dfe-transform-vrl": "DFE_TRANSFORM_VRL_CONFIG_FILE",
 }
 # A per-source transform instance is a service of its own here, because a
 # profile has to be able to run one without the other.
@@ -243,23 +245,27 @@ def _validate_auth() -> None:
     )
 
 
-def _init_topics(*, services: dict[str, object]) -> list[str]:
-    """Return the topics kafka-init must create for this profile, sorted.
+def _instance_services(*, profile: str, renders: bool) -> list[str]:
+    """The per-source containers this tier declares, writing their compose fragment.
 
-    An IDLE transform's sink is excluded rather than unioned in. scalo's resolver
-    drops `<base>_land` from an auto-discovered subscription whenever
-    `<base>_load` exists, so pre-creating the sink of a transform that produces
-    nothing silences the loader on a stack where every container is healthy. See
-    docs/troubleshooting.md.
+    Only where the engine renders the app config: anywhere else the index is a
+    leftover from a tier this checkout ran earlier, and declaring containers off
+    it would start apps this profile does not run.
     """
-    topics = {KAFKA_INIT_TOPIC_DEFAULT}
-    for service_name, service_config in services.items():
-        if not (service_name.startswith(TRANSFORM_SERVICE_PREFIX)):
-            continue
-        path = CONFIG_DIR / service_config[PROFILE_SERVICE_CONFIG_YAML_FIELD]
-        subscribed, written = _transform_topics(path=path)
-        topics |= subscribed | written
-    return sorted(topics)
+    if not renders:
+        instances.write({})
+        return []
+    found = instances.declared()
+    unknown = instances.unknown_apps(found)
+    if unknown:
+        raise _ProfileError(
+            header=profile,
+            msg=f"dfe-engine named instances of {', '.join(unknown)}, which this repo "
+            "declares no compose service for. Add one, or every source bound to it is "
+            "stored and never run",
+        )
+    instances.write(found)
+    return instances.services(found)
 
 
 def _footprint(*, profile: dict[str, object], profile_name: str) -> dict[str, bool]:
@@ -426,13 +432,17 @@ def main() -> int:
         lines = []
         profile_flags = " ".join(f"--profile {profile}" for profile in profiles)
         lines.append(f"export PROFILE_FLAGS := {profile_flags}")
-        lines.append(
-            f"export {KAFKA_INIT_TOPICS_VAR} := {' '.join(_init_topics(services=services))}"
-        )
+        # Whether the ENGINE renders this tier's app config, which is also what
+        # decides whether its instance index is this deployment's or a leftover.
+        renders = (active_profile in PROJECTED_PROFILES) and footprint["core"]
+        instance_services = _instance_services(profile=active_profile, renders=renders)
+
         # ClickHouse stays out of this list -- it starts via its compose profile
         # and the depends_on of whatever needs it. DFE_SERVICES is also what
         # build_dev_images.py builds and what `SERVICES=` narrows against.
         service_list = sorted(services.keys())
+        # A generated instance service nothing names is a container never started.
+        service_list.extend(instance_services)
         if kafka_ui_enabled:
             service_list.append("kafka-ui")
         if footprint["core"]:
@@ -536,7 +546,6 @@ def main() -> int:
         # Emitted unconditionally, empty when the engine is not the writer here:
         # a line that vanishes with its own value would make the included file
         # re-settle on every make pass.
-        renders = (active_profile in PROJECTED_PROFILES) and footprint["core"]
         lines.append(
             f"export {ENGINE_APP_CONFIG_DIR_VAR} := {ENGINE_APP_CONFIG_DIR if renders else ''}"
         )
@@ -545,13 +554,29 @@ def main() -> int:
             f"{ENGINE_APP_CONFIG_BASE_DIR if renders else ''}"
         )
         lines.append(f"export {APP_CONFIG_MOUNT_VAR} := {APP_CONFIG_MOUNT}")
-        for service_name, (var_name, file_name) in SERVICE_TO_RENDERED_CONFIG.items():
+        # The engine is given the contract directory on the same tiers it is
+        # given the rendered app config, and an empty value everywhere else.
+        # Emitted unconditionally, for the reason the keys above are.
+        content_dir = (
+            os.environ.get(ENGINE_CONTENT_DIR_VAR, "").strip() or ENGINE_CONTENT_DIR
+        )
+        lines.append(
+            f"export {ENGINE_CONTRACT_DIR_VAR} := "
+            f"{f'{content_dir}/{ENGINE_CONTRACT_SUBDIR}' if renders else ''}"
+        )
+        for service_name, var_name in SERVICE_TO_RENDERED_CONFIG_VAR.items():
             rendered = (
-                f"{APP_CONFIG_MOUNT}/{service_name}/{file_name}"
+                f"{APP_CONFIG_MOUNT}/{service_name}/{SERVICE_CONFIG_FILE[service_name]}"
                 if renders and service_name in services
                 else ""
             )
             lines.append(f"export {var_name} := {rendered}")
+
+        # Whether the Makefile chains the generated fragment. Emitted
+        # unconditionally, for the reason the keys above are.
+        lines.append(
+            f"export DFE_INSTANCES_RESOLVED := {'true' if instance_services else 'false'}"
+        )
 
         new_content = "\n".join(lines) + "\n"
         if (

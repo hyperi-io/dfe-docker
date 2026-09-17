@@ -115,25 +115,19 @@ flowchart LR
     class load notmade
 ```
 
-`kafka-init-redpanda` and `kafka-init-apache` each pre-create `main_land` and
-nothing else. `config/loader/kafka-load.yaml` subscribes to `main_load`, which
-is produced by `config/transform-vrl/main.yaml`. That topic exists only if broker
-auto-creation makes it. The profiles affected are the ones that point the loader
-at `kafka-load.yaml`: `kafka-receiver-transform-vector` and
+`dfe-engine` creates the bootstrap topic set `dfe-schemas` declares, which is
+`main_land` and the five DLQ topics. `config/loader/kafka-load.yaml` subscribes to
+`main_load`, which is produced by `config/transform-vrl/main.yaml`. That topic
+exists only if broker auto-creation makes it. The profiles affected are the ones
+that point the loader at `kafka-load.yaml`: `kafka-receiver-transform-vector` and
 `kafka-full-transform-vrl`.
 
-The topic names are literals in those YAML files, not env-interpolated. If you
-change one, change it in the init services and the configs together. A single
+The topic names are literals in those YAML files, not env-interpolated. A single
 topic variable cannot work: the consumers name their topics in their own YAML, so
 setting it pre-creates a topic nobody consumes and stops pre-creating the one
 they do.
 
-There is one topic-init service per backend, each running its own broker's
-tooling, so choosing Apache Kafka to stay clear of the BSL never pulls a BSL
-artefact. Downstream services depend on both with `required: false`; exactly one
-exists for any profile, so the other is a no-op.
-
-**Do not close this gap by pre-creating `main_load` in the init services.**
+**Do not close this gap by adding `main_load` to the bootstrap topic set.**
 The loader auto-discovers topics and scalo suppresses `<base>_land` whenever
 `<base>_load` exists, on the reasoning that a `_load` topic means a transform has
 already produced the loadable form. Creating `main_load` on every Kafka profile
@@ -154,9 +148,6 @@ The e2e harness now does this for itself: `clean_topics` deletes the `_load`
 sibling of every expected `_land` topic, so a run depends on the test definition
 rather than on the broker's history.
 
-The same trap has a second door: `scripts/resolve_profile.py` builds
-`KAFKA_INIT_TOPICS` from the topics a profile's transforms name, and an IDLE
-transform still has to name a sink it never writes to. That sink is excluded, and
 `make post` asserts the loader is fetching a topic before it injects anything, so
 an empty subscription is reported as one.
 

@@ -70,7 +70,7 @@ ifneq (,$(filter-out $(BOOTSTRAP_GOALS),$(or $(MAKECMDGOALS),help)))
     # The pull runs before the build writes any overlay, so it names none either
     # way and resolves every image to its registry pin. The auto-loaded override
     # otherwise sends it after a `:local` tag nothing has built yet, reached
-    # through an image consumer (dfe-schema-init runs dfe-engine's image), so it
+    # through an image consumer (dfe-hunt-runner runs dfe-engine's image), so it
     # bites even when the profile holds no DFE service of its own.
     # DEV_PULL_FLAGS and DEV_FLAGS expand at use time: UI_FLAGS is filled below.
     DEV_PULL_FLAGS = -f docker-compose.yml $(STORAGE_FLAGS) $(UI_FLAGS)
@@ -214,6 +214,13 @@ else
     ifneq ($(HYPERDX_GATED),)
         $(eval $(call chain_fragment,docker-compose.unpublish-hyperdx.yml))
     endif
+endif
+
+# One service per app instance dfe-engine has rendered a config for, generated
+# with the profile (scripts/instances.py). Empty for the bootstrap goals, which
+# reads as off -- the safe direction for a target that only stops a stack.
+ifeq ($(strip $(DFE_INSTANCES_RESOLVED)),true)
+    $(eval $(call chain_fragment,docker-compose.instances.yml))
 endif
 
 # Container stdout to the collector. Off wherever the collector is, because the
