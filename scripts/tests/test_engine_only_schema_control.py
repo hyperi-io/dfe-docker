@@ -105,6 +105,10 @@ GATED_SERVICES = (
     "otel-collector",
 )
 
+# The two broker services, one per Kafka backend, each enabled by its own
+# compose profile -- so a wait on both is a wait on whichever this tier runs.
+BROKERS = ("kafka-redpanda", "kafka-apache")
+
 _SERVICE_RE = re.compile(r"^  ([A-Za-z0-9][A-Za-z0-9._-]*):\s*$")
 _DEPENDS_RE = re.compile(r"^      ([A-Za-z0-9][A-Za-z0-9._-]*):\s*$")
 _CONDITION_RE = re.compile(r"^        condition:\s*(\S+)\s*$")
@@ -301,3 +305,20 @@ def test_every_generated_service_waits_on_the_engine() -> None:
         assert depends.get("dfe-engine") == "service_healthy", (
             f"{name} starts without waiting on the schema authority: {depends}"
         )
+
+
+@pytest.mark.parametrize("broker", BROKERS)
+def test_the_engine_waits_on_the_broker_it_creates_topics_on(
+    services: dict[str, list[str]], broker: str
+) -> None:
+    """The engine is now the only thing that talks to the broker at boot.
+
+    It is also the only edge that STARTS one: a broker is in no profile's
+    started set, so it comes up as somebody's dependency or not at all. The
+    retired kafka-init one-shots used to carry that edge, and every reader
+    named one; when they went, the single tier came up with no broker.
+    """
+    depends = _depends_on(services["dfe-engine"])
+    assert depends.get(broker) == "service_healthy", (
+        f"dfe-engine does not wait on {broker}, so nothing starts it: {depends}"
+    )
