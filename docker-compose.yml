@@ -9,15 +9,18 @@
 # Profile        | Services                            | Notes                                     |
 # ---------------|-------------------------------------|-------------------------------------------|
 # clickhouse     | clickhouse                          |                                           |
-# kafka-redpanda | kafka-redpanda, kafka-init-redpanda | Redpanda (default); BSL -- see README      |
-# kafka-apache   | kafka-apache, kafka-init-apache     | Apache Kafka (opt-in); Apache-2.0 only     |
+# kafka-redpanda | kafka-redpanda                      | Redpanda (default); BSL -- see README      |
+# kafka-apache   | kafka-apache                        | Apache Kafka (opt-in); Apache-2.0 only     |
 # kafka-ui       | kafka-ui                            |                                           |
 # otel           | otel-collector                      | self-monitoring; opt-in                   |
 # auth           | oauth2-proxy-* (3)                  | edge OIDC + group check; opt-in           |
 #
 # The kafka-* profiles are mutually exclusive: all three share the network alias `kafka`, and downstream
-# configs always address `kafka:9092`. Each backend has its own topic-init so the Apache profile never
-# pulls a BSL artefact.
+# configs always address `kafka:9092`.
+#
+# Topics and ClickHouse objects are NOT created here. dfe-schemas declares them and dfe-engine applies
+# them at its own startup, reporting healthy only once that pass converged -- which is what every
+# `depends_on: dfe-engine: service_healthy` below is waiting for.
 #
 # DFE services carry profiles too -- `dfe`, `core`, `hyperdx`, `otel`. WHICH of them start is a second,
 # independent selection made by service_profiles.yaml, which also sets their config paths.
@@ -78,9 +81,8 @@ x-limits-service: &limits-service
       cpus: "${DFE_SERVICE_CPUS:-2.0}"
       memory: ${DFE_SERVICE_MEMORY:-768M}
 
-# 512M rather than less because kafka-init-apache runs a JVM (kafka-topics.sh);
-# verified it starts and completes under this cap, and a smaller one risks an OOM
-# kill on a service whose whole job is to exit cleanly.
+# 512M rather than less: a sidecar's whole job is to exit cleanly, and a tighter
+# cap risks an OOM kill on one.
 x-limits-sidecar: &limits-sidecar
   resources:
     limits:
@@ -253,77 +255,6 @@ services:
       start_period: 15s
 
   # ===========================================================================
-  # Kafka Init
-  # Pre-creates the topics consumers would otherwise fail on, on an empty broker.
-  #
-  # One init per backend, each using ITS OWN broker's tooling, so choosing Apache
-  # Kafka never pulls a BSL artefact. Dependents gate on both with
-  # `required: false`; exactly one exists per profile.
-  #
-  # The list is KAFKA_INIT_TOPICS, written by resolve_profile.py: `main_land`
-  # plus whatever the profile's own transforms consume and produce. Do not
-  # hardcode a `_load` topic here -- created unconditionally it suppresses the
-  # matching `_land` out of every non-transform loader's subscription and
-  # silently zeroes the data path.
-  # docs/troubleshooting.md#configloaderkafka-loadyaml-consumes-a-topic-nothing-pre-creates
-  # ===========================================================================
-
-  kafka-init-redpanda:
-    image: docker.redpanda.com/redpandadata/redpanda:${REDPANDA_VERSION:?run 'make stack VERSION=X.Y.Z' to pin REDPANDA_VERSION}
-    container_name: dfe-kafka-init-redpanda
-    profiles: ["kafka-redpanda"]
-    deploy: *limits-sidecar
-    depends_on:
-      kafka-redpanda:
-        condition: service_healthy
-    entrypoint: ["/bin/sh", "-c"]
-    command:
-      - |
-        for topic in ${KAFKA_INIT_TOPICS:-main_land}; do
-          created=""
-          for i in $$(seq 1 30); do
-            rpk topic describe $$topic -X brokers=kafka:9092 >/dev/null 2>&1 && created=yes && break
-            rpk topic create $$topic --partitions 1 --replicas 1 -X brokers=kafka:9092 2>&1 || true
-            sleep 1
-          done
-          if [ -z "$$created" ]; then
-            echo "FAILED: $$topic topic not created after 30 attempts (~30s; rpk fails fast)" >&2
-            exit 1
-          fi
-        done
-    restart: "no"
-
-  kafka-init-apache:
-    image: apache/kafka:${APACHE_KAFKA_VERSION:?run 'make stack VERSION=X.Y.Z' to pin APACHE_KAFKA_VERSION}
-    container_name: dfe-kafka-init-apache
-    profiles: ["kafka-apache"]
-    deploy: *limits-sidecar
-    depends_on:
-      kafka-apache:
-        condition: service_healthy
-    entrypoint: ["/bin/sh", "-c"]
-    command:
-      - |
-        for topic in ${KAFKA_INIT_TOPICS:-main_land}; do
-          created=""
-          for i in $$(seq 1 30); do
-            /opt/kafka/bin/kafka-topics.sh --bootstrap-server kafka:9092 --create --if-not-exists \
-              --topic $$topic --partitions 1 --replication-factor 1 >/dev/null 2>&1 && created=yes && break
-            sleep 1
-          done
-          # Unlike rpk, kafka-topics.sh BLOCKS on its own request timeout (~60s)
-          # when the broker is unreachable, so these attempts are not 1s apart --
-          # the worst case here is tens of minutes, not 30 seconds. In practice
-          # depends_on gates on kafka-apache being healthy first, so a retry at all
-          # means something is genuinely wrong rather than merely slow.
-          if [ -z "$$created" ]; then
-            echo "FAILED: $$topic topic not created after 30 attempts" >&2
-            exit 1
-          fi
-        done
-    restart: "no"
-
-  # ===========================================================================
   # Kafka UI
   # Opt-in UI for Kafka cluster.
   # ===========================================================================
@@ -373,48 +304,6 @@ services:
       - chown -R 1000:1000 /var/spool/dfe
     volumes:
       - dlq-spool:/var/spool/dfe
-    restart: "no"
-
-  # ===========================================================================
-  # dfe-schema-init
-  # Creates or reconciles every DFE ClickHouse table, then exits. Runs the
-  # `dfe-schema` entry point on the dfe-engine image -- the same code the engine
-  # runs on boot and the k8s deploy runs as a Job, so no target invents its own.
-  #
-  # In `dfe` AND `otel`, not `core`: a profile without dfe-engine still writes to
-  # these tables, and the otel collector now runs with create_schema=false, so a
-  # telemetry-only stack would otherwise have nothing to insert into.
-  # ===========================================================================
-
-  dfe-schema-init:
-    image: ${IMAGE_REGISTRY:-ghcr.io/hyperi-io}/dfe-engine:${DFE_ENGINE_VERSION:?run 'make stack VERSION=X.Y.Z' to pin DFE_ENGINE_VERSION}
-    container_name: dfe-schema-init
-    profiles: ["dfe", "otel"]
-    deploy: *limits-sidecar
-    entrypoint: ["dfe-schema"]
-    # ClickHouse reports healthy before it will accept DDL on a cold start, so
-    # the apply retries rather than failing the whole stack on a race.
-    command: ["apply", "--wait", "${DFE_SCHEMA_WAIT:-120}"]
-    environment:
-      # No DFE_ENV: dfe-schema loads only the ClickHouse settings, so the API
-      # posture validators a dev posture used to dodge never run here.
-      DFE_CLICKHOUSE_HOST: ${CLICKHOUSE_HOST:-clickhouse}
-      DFE_CLICKHOUSE_PORT: ${CLICKHOUSE_HTTP_PORT:-8123}
-      DFE_CLICKHOUSE_DATABASE: ${CLICKHOUSE_DB:-default}
-      DFE_CLICKHOUSE_USERNAME: ${CLICKHOUSE_USERNAME:-default}
-      DFE_CLICKHOUSE_PASSWORD: ${CLICKHOUSE_PASSWORD:-}
-      DFE_CLICKHOUSE_SECURE: ${CLICKHOUSE_SECURE:-false}
-      # The apply reconciles existing tables, so it runs with the same TTL the
-      # engine does. 0 = no default TTL.
-      DFE_CLICKHOUSE_DEFAULT_TTL_DAYS: ${DFE_CLICKHOUSE_DEFAULT_TTL_DAYS:-90}
-      # Unset by default: the image resolves its own bundled schemas. Point this
-      # at a full dfe-schemas tree to override.
-      DFE_SCHEMAS_DIR: ${DFE_ENGINE_SCHEMAS_DIR:-}
-      OTEL_SERVICE_NAME: dfe-schema
-    depends_on:
-      clickhouse:
-        condition: service_healthy
-        required: false
     restart: "no"
 
   # ===========================================================================
@@ -620,12 +509,6 @@ services:
       dlq-init:
         condition: service_completed_successfully
         required: false
-      kafka-init-apache:
-        condition: service_completed_successfully
-        required: false
-      kafka-init-redpanda:
-        condition: service_completed_successfully
-        required: false
     working_dir: /home/appuser
     # The engine renders this app's config from the sources on the tiers that run
     # it; everywhere else the committed file below is what it reads.
@@ -678,12 +561,6 @@ services:
       dlq-init:
         condition: service_completed_successfully
         required: false
-      kafka-init-apache:
-        condition: service_completed_successfully
-        required: false
-      kafka-init-redpanda:
-        condition: service_completed_successfully
-        required: false
     # The engine renders this app's config from the sources on the tiers that run
     # it; everywhere else the committed file below is what it reads.
     command: ["--config", "${DFE_FETCHER_CONFIG_FILE:-/etc/dfe/fetcher.yaml}"]
@@ -731,23 +608,15 @@ services:
       clickhouse:
         condition: service_healthy
         required: false
-      # The schema authority. A loader started first holds every message
-      # pending-schema and dead-letters it, which reads as data loss and is
-      # really start ordering. docs/troubleshooting.md#events-are-accepted-but-nothing-lands
-      # dfe-schema-init covers the profiles that run no engine.
-      dfe-schema-init:
-        condition: service_completed_successfully
-        required: false
+      # The schema authority: dfe-engine applies every table and every bootstrap
+      # topic at its own startup and reports healthy only once that pass
+      # converged. A loader started first holds every message pending-schema and
+      # dead-letters it, which reads as data loss and is really start ordering.
+      # docs/troubleshooting.md#events-are-accepted-but-nothing-lands
       dfe-engine:
         condition: service_healthy
         required: false
       dlq-init:
-        condition: service_completed_successfully
-        required: false
-      kafka-init-apache:
-        condition: service_completed_successfully
-        required: false
-      kafka-init-redpanda:
         condition: service_completed_successfully
         required: false
     # The engine renders this app's config from the sources on the tiers that run
@@ -809,12 +678,6 @@ services:
       dlq-init:
         condition: service_completed_successfully
         required: false
-      kafka-init-apache:
-        condition: service_completed_successfully
-        required: false
-      kafka-init-redpanda:
-        condition: service_completed_successfully
-        required: false
     # The engine renders this app's config from the sources on the tiers that run
     # it; everywhere else the committed file below is what it reads.
     command: ["--config", "${DFE_RECEIVER_CONFIG_FILE:-/etc/dfe-receiver/config.yaml}"]
@@ -863,11 +726,11 @@ services:
       OTEL_SERVICE_NAME: dfe-transform-vector
     depends_on:
       # No dlq-init here: this service does not mount dlq-spool.
-      kafka-init-apache:
-        condition: service_completed_successfully
-        required: false
-      kafka-init-redpanda:
-        condition: service_completed_successfully
+      # The topic authority: dfe-engine creates the declared topic set at its own
+      # startup, so a transform started first subscribes to nothing.
+      # `required: false` for the tiers that run no engine.
+      dfe-engine:
+        condition: service_healthy
         required: false
     volumes:
       - ./config/${DFE_TRANSFORM_VECTOR_CONFIG:-transform-vector/kafka.yaml}:/etc/dfe-transform-vector/config.yaml:ro
@@ -915,11 +778,11 @@ services:
       OTEL_SERVICE_NAME: dfe-transform-vector-filebeat
     depends_on:
       # No dlq-init here: this service does not mount dlq-spool.
-      kafka-init-apache:
-        condition: service_completed_successfully
-        required: false
-      kafka-init-redpanda:
-        condition: service_completed_successfully
+      # The topic authority: dfe-engine creates the declared topic set at its own
+      # startup, so a transform started first subscribes to nothing.
+      # `required: false` for the tiers that run no engine.
+      dfe-engine:
+        condition: service_healthy
         required: false
     volumes:
       - ./config/${DFE_TRANSFORM_VECTOR_FILEBEAT_CONFIG:-transform-vector/filebeat.yaml}:/etc/dfe-transform-vector/config.yaml:ro
@@ -961,12 +824,6 @@ services:
       # this container reads. `required: false` for the tiers that run no engine.
       dfe-engine:
         condition: service_healthy
-        required: false
-      kafka-init-apache:
-        condition: service_completed_successfully
-        required: false
-      kafka-init-redpanda:
-        condition: service_completed_successfully
         required: false
     # The engine renders this app's config, its programs and its enrichment
     # tables from the source it is given, on the tiers that run it; everywhere
@@ -1015,11 +872,11 @@ services:
       OTEL_SERVICE_NAME: dfe-transform-vrl-filebeat
     depends_on:
       # No dlq-init here: this service does not mount dlq-spool.
-      kafka-init-apache:
-        condition: service_completed_successfully
-        required: false
-      kafka-init-redpanda:
-        condition: service_completed_successfully
+      # The topic authority: dfe-engine creates the declared topic set at its own
+      # startup, so a transform started first subscribes to nothing.
+      # `required: false` for the tiers that run no engine.
+      dfe-engine:
+        condition: service_healthy
         required: false
     volumes:
       - ./config/${DFE_TRANSFORM_VRL_FILEBEAT_CONFIG:-transform-vrl/filebeat.yaml}:/etc/dfe-transform-vrl/config.yaml:ro
@@ -1116,7 +973,7 @@ services:
       DFE_CLICKHOUSE_PASSWORD: ${CLICKHOUSE_PASSWORD:-}
       DFE_CLICKHOUSE_SECURE: ${CLICKHOUSE_SECURE:-false}
       # Default TTL for every time-series table; 0 = none; a source or a
-      # dfe-schemas TTL overrides it. dfe-schema-init carries the same value.
+      # dfe-schemas TTL overrides it.
       DFE_CLICKHOUSE_DEFAULT_TTL_DAYS: ${DFE_CLICKHOUSE_DEFAULT_TTL_DAYS:-90}
       # Where the engine renders each app's own config, which is the Compose
       # stand-in for the ConfigMap an app's chart renders on Kubernetes. Empty
@@ -1380,9 +1237,10 @@ services:
         condition: service_healthy
         required: false
       # The exporter runs with create_schema=false, so the otel tables have to
-      # exist before it sends its first batch.
-      dfe-schema-init:
-        condition: service_completed_successfully
+      # exist before it sends its first batch. dfe-engine applies them at its own
+      # startup and reports healthy only once that pass converged.
+      dfe-engine:
+        condition: service_healthy
         required: false
     # No HEALTHCHECK: the image is distroless (no shell, no curl, no wget), so
     # there is nothing in it to probe :13133 with. Nothing gates on the

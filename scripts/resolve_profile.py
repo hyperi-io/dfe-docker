@@ -42,7 +42,6 @@ from _common import (
     _load_dotenv,
     _print,
     _rel_path,
-    _transform_topics,
 )
 from build_dev_images import buildable_components
 
@@ -127,13 +126,6 @@ FOOTPRINT_KEYS = {
     "kafbat": ("KAFBAT_ENABLED", True),
     "otel": (OTEL_ENABLED_ENV_VAR, False),
 }
-
-# Topics kafka-init pre-creates: the stack default plus the ones this profile's
-# WORKING transforms name -- dfe-transform-vrl exits on a missing topic it is
-# configured to use, its sink included. An idle transform uses neither.
-KAFKA_INIT_TOPICS_VAR = "KAFKA_INIT_TOPICS"
-KAFKA_INIT_TOPIC_DEFAULT = "main_land"
-TRANSFORM_SERVICE_PREFIX = "dfe-transform-"
 
 PROFILE_ENV_VAR = "DFE_PROFILE"
 PROFILE_ACTIVE_YAML_FIELD = "active_profile"
@@ -269,25 +261,6 @@ def _instance_services(*, profile: str, renders: bool) -> list[str]:
         )
     instances.write(found)
     return instances.services(found)
-
-
-def _init_topics(*, services: dict[str, object]) -> list[str]:
-    """Return the topics kafka-init must create for this profile, sorted.
-
-    An IDLE transform's sink is excluded rather than unioned in. scalo's resolver
-    drops `<base>_land` from an auto-discovered subscription whenever
-    `<base>_load` exists, so pre-creating the sink of a transform that produces
-    nothing silences the loader on a stack where every container is healthy. See
-    docs/troubleshooting.md.
-    """
-    topics = {KAFKA_INIT_TOPIC_DEFAULT}
-    for service_name, service_config in services.items():
-        if not (service_name.startswith(TRANSFORM_SERVICE_PREFIX)):
-            continue
-        path = CONFIG_DIR / service_config[PROFILE_SERVICE_CONFIG_YAML_FIELD]
-        subscribed, written = _transform_topics(path=path)
-        topics |= subscribed | written
-    return sorted(topics)
 
 
 def _footprint(*, profile: dict[str, object], profile_name: str) -> dict[str, bool]:
@@ -454,9 +427,6 @@ def main() -> int:
         lines = []
         profile_flags = " ".join(f"--profile {profile}" for profile in profiles)
         lines.append(f"export PROFILE_FLAGS := {profile_flags}")
-        lines.append(
-            f"export {KAFKA_INIT_TOPICS_VAR} := {' '.join(_init_topics(services=services))}"
-        )
         # Whether the ENGINE renders this tier's app config, which is also what
         # decides whether its instance index is this deployment's or a leftover.
         renders = (active_profile in PROJECTED_PROFILES) and footprint["core"]

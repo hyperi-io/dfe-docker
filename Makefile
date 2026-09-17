@@ -70,7 +70,7 @@ ifneq (,$(filter-out $(BOOTSTRAP_GOALS),$(or $(MAKECMDGOALS),help)))
     # The pull runs before the build writes any overlay, so it names none either
     # way and resolves every image to its registry pin. The auto-loaded override
     # otherwise sends it after a `:local` tag nothing has built yet, reached
-    # through an image consumer (dfe-schema-init runs dfe-engine's image), so it
+    # through an image consumer (dfe-hunt-runner runs dfe-engine's image), so it
     # bites even when the profile holds no DFE service of its own.
     # DEV_PULL_FLAGS and DEV_FLAGS expand at use time: UI_FLAGS is filled below.
     DEV_PULL_FLAGS = -f docker-compose.yml $(STORAGE_FLAGS) $(UI_FLAGS)
