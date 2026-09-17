@@ -41,7 +41,7 @@ IMAGE_TAG = "local"
 # build must repoint all of them or the stack runs two builds of one component.
 IMAGE_CONSUMERS: dict[str, tuple[str, ...]] = {
     "dfe-archiver": ("dlq-init",),
-    "dfe-engine": ("dfe-schema-init", "dfe-hunt-runner"),
+    "dfe-engine": ("dfe-hunt-runner",),
     "dfe-transform-vector": ("dfe-transform-vector-filebeat",),
     "dfe-transform-vrl": ("dfe-transform-vrl-filebeat",),
 }
@@ -50,7 +50,6 @@ IMAGE_CONSUMERS: dict[str, tuple[str, ...]] = {
 # like every other consumer, so a build of the profile's own services alone
 # leaves them on a tag nothing produced.
 IMPLICIT_CONSUMERS: dict[str, tuple[str, ...]] = {
-    "dfe-schema-init": ("dfe-loader", "otel-collector"),
     "dlq-init": ("dfe-archiver", "dfe-fetcher", "dfe-loader", "dfe-receiver"),
 }
 RUST_COMPONENTS = [
