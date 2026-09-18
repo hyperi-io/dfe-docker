@@ -42,6 +42,7 @@ flowchart LR
     subgraph xform [Transform - optional]
         vrl["dfe-transform-vrl"]:::dfe
         vector["dfe-transform-vector"]:::dfe
+        elastic["dfe-transform-elastic"]:::dfe
     end
 
     load[(Kafka main_load)]:::broker
@@ -68,7 +69,7 @@ ingest components produce to a `*_land` topic derived from the event's `_source`
 and the loader consumes `topic_regex: .*_land`. On a `grpc-*` profile there is no
 broker -- the ingest components dial `dfe-loader:50051` directly.
 
-The two transforms are bus-only today: each reads a topic and writes a topic.
+The three transforms are bus-only today: each reads a topic and writes a topic.
 `dfe-archiver` runs on either -- it consumes the landing topics on Kafka and
 answers a scalo Push listener on gRPC (`config/archiver/grpc.yaml`). With a
 transform in the profile the loader switches to `config/loader/kafka-load.yaml`
@@ -142,6 +143,14 @@ rides the OTLP push into the otel database. The exporter's 9598 is not published
 The two profiles are deliberately disjoint -- own source name, own topics, own
 table -- so a deployment can run both and compare what the two transform apps
 make of one corpus.
+
+`kafka-elastic-cisco-ios` is the same shape on `dfe-transform-elastic`, minus
+the program and enrichment rows: that app compiles its transforms in and names
+one per instance in `source.name`, so there is nothing to vendor and nothing to
+mount. Its source is `cisco-ios` rather than `filebeat` because
+`filebeat.cisco_ios.default` is one data stream, not an umbrella program. It
+also runs one instance rather than two -- there is no passthrough variant to
+pair it with, so the loader reads `main_land` itself through its `topic_regex`.
 
 Both tables are dfe-engine's to create from the `meta/beats/filebeat` meta
 schema -- nothing here provisions them. Create the source before sending it
@@ -229,8 +238,8 @@ flowchart TD
 | Compose profile | Services |
 |---|---|
 | `clickhouse` | `clickhouse` |
-| `kafka-redpanda` | `kafka-redpanda`, `kafka-init-redpanda` |
-| `kafka-apache` | `kafka-apache`, `kafka-init-apache` |
+| `kafka-redpanda` | `kafka-redpanda` |
+| `kafka-apache` | `kafka-apache` |
 | `kafka-ui` | `kafka-ui` (Kafbat) |
 | `dfe` | `dlq-init`, archiver, fetcher, loader, receiver, every transform instance |
 | `core` | `dfe-engine`, `dfe-ui`, `dfe-proxy` |
@@ -242,18 +251,21 @@ A profile declares its whole footprint through the optional `clickhouse`, `core`
 Each service entry also names the config file it mounts, which is how one service
 gets a Kafka config and another a gRPC one without a second compose file.
 
-## dfe-engine owns the schema
+## dfe-engine owns the schema and the topics
 
-Nothing here provisions a ClickHouse table. `dfe-engine` ships `/app/schemas`
-inside its own image, creates the ClickHouse objects at startup, and registers the
-schemas `dfe-loader` pre-warms into its cache. A loader started before the engine
-is healthy holds messages pending-schema and dead-letters them, which is why the
-e2e harness gates on engine health before any DFE service.
+Nothing here provisions a ClickHouse table or a Kafka topic. `dfe-engine` ships
+`/app/schemas` inside its own image, applies every object and every bootstrap
+topic from that manifest at startup, and reports healthy only once that pass
+converged. Every service that reads one waits on
+`depends_on: dfe-engine: service_healthy` -- a loader started first holds messages
+pending-schema and dead-letters them, which reads as data loss and is really start
+ordering.
 
 `dfe-schemas` rides inside the engine image, so there is no separate schema pin
 here and a schema change is a `dfe-engine` release. The only file the ClickHouse
-service mounts is `clickhouse/default-user.xml`; a DDL file appearing in this repo
-is wrong by construction.
+service mounts is `clickhouse/default-user.xml`; a DDL file or a topic-creating
+step appearing in this repo is wrong by construction, and
+`scripts/tests/test_engine_only_schema_control.py` fails the build on one.
 
 ## The Kafka backend is swappable
 
@@ -261,11 +273,9 @@ Two brokers, mutually exclusive, chosen by `KAFKA_BACKEND` (`redpanda` default,
 `apache` opt-in). Both expose the network alias `kafka` on the same ports, so
 every config addresses `kafka:9092` and nothing downstream knows which is running.
 
-Each backend has its OWN topic-init using its own tooling, so choosing Apache to
-stay clear of the BSL never pulls a BSL artefact. Compose interpolates every
-service before profiles filter anything, so `REDPANDA_VERSION` must still be
-pinned for the file to resolve on the Apache path -- a pin is not a deployment,
-but it is a remaining reference.
+Compose interpolates every service before profiles filter anything, so
+`REDPANDA_VERSION` must still be pinned for the file to resolve on the Apache
+path -- a pin is not a deployment, but it is a remaining reference.
 
 ## Component source repos
 
@@ -279,14 +289,15 @@ Dev builds fetch source into a managed git cache, or from your own checkouts whe
 | `dfe-fetcher` | Rust | Pull ingest from vendor APIs | `dfe` |
 | `dfe-loader` | Rust | Writes ClickHouse; hosts `DfeTransport/Push` | `dfe` |
 | `dfe-archiver` | Rust | Archive sink (filesystem, S3, MinIO, GCS, Azure Blob) | `dfe` |
+| `dfe-transform-elastic` | Rust | Beats and Elastic Agent pipelines compiled to Rust, one transform selected per instance by `source.name` | `dfe` |
 | `dfe-transform-vector` | Rust | Vector.dev subprocess wrapper, Kafka to Kafka | `dfe` |
 | `dfe-transform-vrl` | Rust | Embedded VRL transform engine; deployed once per source that has a transform | `dfe` |
 | `dfe-engine` | Python | Config and schema API; the schema authority | `core` |
 | `dfe-ui` | TypeScript | Web console | `core` |
 | `dfe-hyperdx` | TypeScript | HyperDX fork. Repo and published image are both `dfe-hyperdx` | `hyperdx` |
 
-`dfe-transform-elastic`, `dfe-transform-splack` and `dfe-transform-wasm` have
-repos but no service here, so this stack cannot run them.
+`dfe-transform-splack` and `dfe-transform-wasm` have repos but no service here,
+so this stack cannot run them.
 
 ## Where this differs from Kubernetes
 

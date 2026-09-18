@@ -55,6 +55,8 @@ profiles:
     hyperdx: true
     otel: true
     services:
+      dfe-archiver:
+        config_path: archiver/grpc.yaml
       dfe-loader:
         config_path: loader/grpc.yaml
       dfe-receiver:
@@ -71,12 +73,12 @@ profiles:
     services:
       dfe-archiver:
         config_path: archiver/kafka.yaml
-      dfe-fetcher:
-        config_path: fetcher/kafka.yaml
       dfe-loader:
         config_path: loader/kafka.yaml
       dfe-receiver:
         config_path: receiver/kafka.yaml
+      dfe-transform-elastic:
+        config_path: transform-elastic/kafka.yaml
       dfe-transform-vrl:
         config_path: transform-vrl/kafka.yaml
   # END projected profiles
@@ -136,6 +138,23 @@ profiles:
       dfe-transform-vrl:
         config_path: transform-vrl/main.yaml
 
+  # The same shape on dfe-transform-elastic, on the config a projected tier would
+  # give it. The loader is the topic_regex one rather than kafka-load.yaml,
+  # because this app has no passthrough: an instance runs ONE compiled-in
+  # transform, so nothing here moves main_land to main_load and the loader reads
+  # the landing topic itself.
+  kafka-full-transform-elastic:
+    transport: kafka
+    services:
+      dfe-fetcher:
+        config_path: fetcher/aws-kafka.yaml
+      dfe-loader:
+        config_path: loader/kafka.yaml
+      dfe-receiver:
+        config_path: receiver/kafka.yaml
+      dfe-transform-elastic:
+        config_path: transform-elastic/kafka.yaml
+
   # The per-source transform shape: two dfe-transform-vrl instances, one on the
   # shared main_land and one on the filebeat source's own filebeat_land, with
   # a loader consuming both output topics. A source with its own transform gets
@@ -169,6 +188,22 @@ profiles:
         config_path: transform-vector/kafka.yaml
       dfe-transform-vector-filebeat:
         config_path: transform-vector/filebeat.yaml
+
+  # The per-source shape on dfe-transform-elastic: the source is cisco-ios rather
+  # than filebeat because this app selects ONE compiled-in transform by name, and
+  # `filebeat.cisco_ios.default` is a data stream rather than an umbrella
+  # program. Its topics and its table are its own, disjoint from the two filebeat
+  # profiles. One transform instance, not two: there is no passthrough to pair it
+  # with, so the loader reads main_land directly through its topic_regex.
+  kafka-elastic-cisco-ios:
+    transport: kafka
+    services:
+      dfe-loader:
+        config_path: loader/kafka.yaml
+      dfe-receiver:
+        config_path: receiver/kafka.yaml
+      dfe-transform-elastic-cisco-ios:
+        config_path: transform-elastic/cisco-ios.yaml
 
   kafka-receiver-archiver:
     transport: kafka

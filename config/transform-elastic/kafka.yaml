@@ -1,0 +1,50 @@
+# Project:   dfe-docker
+# File:      config/transform-elastic/kafka.yaml
+# Purpose:   dfe-transform-elastic config - the idle instance the single tier starts
+# Language:  YAML
+#
+# License:   BUSL-1.1
+# Copyright: (c) 2026 HYPERI PTY LIMITED
+#
+# The `<app>/<transport>.yaml` name a projected tier gives this app, so this is
+# the DEPLOYMENT's half of the config on a tier where dfe-engine renders the
+# rest: the source it is given names the transform and replaces both topic ends
+# and the group id.
+#
+# It names no transform and no source topic, which is this app's idle predicate
+# (dfe-infra apps.yaml `idle_when` lists BOTH): it starts, stays Ready, holds
+# the pipeline_idle gauge at 1 and joins no consumer group. Either one being
+# empty is enough, and both are empty here because neither has an answer until
+# a source is written.
+#
+# The sink is empty for the same reason, which also keeps it out of the topics
+# kafka-init creates: pre-creating `<base>_load` for a transform that produces
+# nothing drops `<base>_land` from every loader's auto-discovered subscription.
+# docs/troubleshooting.md#configloaderkafka-loadyaml-consumes-a-topic-nothing-pre-creates
+
+pipeline_name: dfe-transform-elastic
+
+source:
+  # The compiled-in transform this instance runs. The app ships one per Elastic
+  # data stream and selects exactly one, so an instance IS a source's transform
+  # rather than a program set that branches.
+  name: ""
+  brokers:
+    - kafka:9092
+  # Explicitly empty: an omitted list defaults to `raw_events`, which is a topic
+  # to consume and so not idle.
+  topics: []
+  group_id: dfe-transform-elastic
+
+sink:
+  brokers:
+    - kafka:9092
+  topic: ""
+
+# Off, because the downloader writes to `geoip.auto_download.data_dir` and this
+# stack gives it nowhere to write: a named volume on a path the image does not
+# own lands root-owned and the container runs as uid 1000. Provisioning failure
+# only warns, so leaving it on would degrade the source pipelines that carry a
+# geoip processor without saying so.
+geoip:
+  enabled: false

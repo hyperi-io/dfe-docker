@@ -174,10 +174,9 @@ def main() -> int:
         print(f"{name:24} {memory / 2**30:8.2f}G  {cpus}")
         total += memory
         for backend in _MUTUALLY_EXCLUSIVE:
-            # Match on the backend TOKEN, not the profile name. `startswith` looks
-            # right and silently misses `kafka-init-redpanda`, which does not begin
-            # with `kafka-redpanda` -- so a per-backend init service was counted in
-            # the total but never subtracted, inflating the ceiling by its 512M.
+            # Match on the backend TOKEN, not the profile name: a service named
+            # after a backend does not always begin with the profile's own name,
+            # and one missed here is counted in the total and never subtracted.
             if name.endswith(backend.removeprefix("kafka-")):
                 exclusive[backend] = exclusive.get(backend, 0) + memory
 

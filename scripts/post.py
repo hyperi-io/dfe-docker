@@ -118,6 +118,15 @@ TARGET_DB = "dfe"
 # that moved it points POST at the same name through DFE_POST_TABLE.
 TARGET_TABLE = "main"
 
+# Schema control. dfe-engine applies every ClickHouse object and every bootstrap
+# topic at its own startup and names a `schema` check on /readyz that is true
+# only once that pass converged. The window covers a cold ClickHouse, which the
+# engine retries for DFE_CLICKHOUSE_BOOTSTRAP_WAIT_SECONDS (180) first.
+ENGINE_SERVICE = "dfe-engine"
+SCHEMA_READY_CHECK = "schema"
+SCHEMA_TIMEOUT_SECONDS = 300.0
+SCHEMA_INTERVAL_SECONDS = 5.0
+
 # Self-monitoring assertion. The collector batches on a 5s timeout and the SDKs
 # export on their own interval, so the window is generous and the timeout is the
 # stuck-dependency backstop.
@@ -221,6 +230,7 @@ HUNT_DETECTION_INTERVAL_SECONDS = 3.0
 IDLE_APPS: dict[str, tuple[str, str]] = {
     "dfe-archiver": ("archiver/kafka.yaml", "9093"),
     "dfe-fetcher": ("fetcher/kafka.yaml", "9094"),
+    "dfe-transform-elastic": ("transform-elastic/kafka.yaml", "9099"),
     "dfe-transform-vrl": ("transform-vrl/kafka.yaml", "9096"),
 }
 IDLE_GAUGE = "pipeline_idle"
@@ -453,6 +463,57 @@ def _wait_ready(url: str) -> bool:
             if time.monotonic() >= deadline:
                 return False
             time.sleep(READY_INTERVAL_SECONDS)
+
+
+def _schema_converged() -> bool | None:
+    """Whether the engine's `schema` readiness check is true right now.
+
+    None where the engine has not answered at all, so a stack still starting and
+    one reporting a failed apply do not read the same.
+    """
+    bind = os.environ.get("DFE_POST_HOST", "localhost")
+    port = os.environ.get("DFE_ENGINE_PORT", "8003")
+    try:
+        _, body = http_get_json(f"http://{bind}:{port}/readyz", timeout=5)
+    except Exception:  # noqa: BLE001 - unreachable is not-yet-answering here
+        return None
+    if not isinstance(body, dict):
+        return None
+    return bool((body.get("checks") or {}).get(SCHEMA_READY_CHECK))
+
+
+def _wait_schema_converged() -> int:
+    """Hold until dfe-engine reports its schema pass converged. 0 when it did.
+
+    Replaces the ordering the deleted schema-init container gave: nothing else
+    creates a table or a topic, so injecting before that pass converges proves
+    nothing about the pipeline and fails on an absent table.
+    """
+    if ENGINE_SERVICE not in _resolved_services():
+        _print(
+            msg=f"SKIP  {ENGINE_SERVICE} is not in the active profile -- no schema to wait on"
+        )
+        return 0
+
+    def _report(attempt, result):
+        _print(msg=f"  attempt {attempt}: engine schema check = {result}")
+
+    converged = poll_until(
+        _schema_converged,
+        timeout=SCHEMA_TIMEOUT_SECONDS,
+        interval=SCHEMA_INTERVAL_SECONDS,
+        done=lambda result: result is True,
+        on_attempt=_report,
+    )
+    if converged is not True:
+        _print(
+            msg=f"FAIL  {ENGINE_SERVICE} did not report its schema converged within "
+            f"{SCHEMA_TIMEOUT_SECONDS:.0f}s -- GET /api/v1/system/schema on the engine "
+            "carries the cause, object by object"
+        )
+        return 1
+    _print(msg=f"PASS  {ENGINE_SERVICE} reports its schema converged")
+    return 0
 
 
 class NoIngestComponent(Exception):
@@ -1598,6 +1659,10 @@ def main() -> int:
         for name, value in weak:
             _print(msg=f"FAIL  {name} is still the built-in default ({value!r})")
         _print(msg="      run `make init` to generate real values")
+        return 1
+
+    # Ahead of every claim below, which all read objects this pass makes.
+    if _wait_schema_converged():
         return 1
 
     try:

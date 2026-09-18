@@ -190,9 +190,10 @@ exporters:
     database: ${env:DFE_OTEL_DATABASE}
     username: ${env:CLICKHOUSE_USERNAME}
     password: ${env:CLICKHOUSE_PASSWORD}
-    # dfe-engine owns the otel table DDL, applied by dfe-schema-init before this
-    # starts. The exporter senses no topology, so tables it creates itself land
-    # on whichever node it connected to. With this off it only sends INSERTs.
+    # dfe-schemas declares the otel tables and dfe-engine applies them at its own
+    # startup, before this starts. The exporter senses no topology, so tables it
+    # creates itself land on whichever node it connected to. With this off it
+    # only sends INSERTs.
     create_schema: false
     timeout: 10s
     sending_queue:

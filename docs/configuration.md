@@ -152,6 +152,14 @@ credential fields are `env:`-interpolated. Change it there.
 | `DFE_RECEIVER_OTLP_HTTP_PORT`                    | Receiver OTLP HTTP port                                                              | `4318`                                                              |
 | `DFE_RECEIVER_PROMETHEUS_PORT`                   | Receiver Prometheus port                                                             | `9090`                                                              |
 
+### DFE Transform Elastic
+
+| Variable                                         | Use                                                                                  | Default                                                             |
+|--------------------------------------------------|--------------------------------------------------------------------------------------|---------------------------------------------------------------------|
+| `DFE_TRANSFORM_ELASTIC_VERSION`                  | Version of dfe-transform-elastic to use                                              | none -- `make stack` pins it; unset is a hard-fail                                                            |
+| `DFE_TRANSFORM_ELASTIC_PROMETHEUS_PORT`          | Transform Elastic Prometheus port                                                    | `9099`                                                              |
+| `DFE_TRANSFORM_ELASTIC_CISCO_IOS_PROMETHEUS_PORT` | Prometheus port of the cisco-ios instance -- it runs the same image, so it needs its own | `9100`                                                          |
+
 ### DFE Transform Vector
 
 | Variable                                         | Use                                                                                  | Default                                                             |
@@ -239,9 +247,39 @@ it is a second deployment of the one component, not a component of its own.
 | `DFE_ENGINE_PORT`                                | Port used by dfe-engine                                                              | `8003`                                                              |
 | `DFE_ENGINE_CONFIG_DIR`                          | Path to config directory                                                             | `/app/config`                                                       |
 | `DFE_ENGINE_SCHEMAS_DIR`                         | Path to schemas directory                                                            | `/app/schemas`                                                      |
+| `DFE_ENGINE_CONTENT_DIR`                         | Path the content volume mounts on, holding the emitted contracts and the seed library | `/app/content`                                                      |
 | `DFE_UI_VERSION`                                 | Version of dfe-ui to use                                                             | none -- `make stack` pins it; unset is a hard-fail                                                            |
 | `DFE_UI_PORT`                                    | Port used by dfe-ui                                                                  | `3000`                                                              |
 | `DFE_UI_NODE_ENV`                                | Node environment of dfe-ui                                                           | `production`                                                        |
+
+### App contracts, and the custom environment the console writes
+
+The console's app settings page reports what an app can be configured with, and
+it reads that from the app itself rather than from a list the engine carries. One
+`contract-<app>` one-shot per app runs that app's pinned image, writes its config
+schema and capability catalogue into the shared content volume, and exits; the
+engine reads them at `DFE_APP_CONTRACT_DIR`. An app that cannot emit leaves its
+contract absent and the engine starts anyway, so a settings page with nothing on
+it for one app means that app's one-shot logged a failure -- `docker compose logs
+contract-<app>`.
+
+A setting the app's own schema does not declare is written as an environment
+variable instead, into `env/<app>.custom.env` beside the file `make init` creates.
+Each app reads both, the custom file second, so a custom key beats the same key in
+`env/<app>.env`; the `environment:` block in `docker-compose.yml` beats both, which
+is what keeps a custom key from taking over the broker address or the warehouse
+credentials. Neither file has to exist.
+
+**A custom env write needs `docker compose up -d <service>`, not a restart.**
+Compose reads `env_file` when it creates a container, so `docker compose restart`
+gives you the same container with the environment it already had, and the change
+looks like it did nothing.
+
+The engine writes those files into the `env/` directory of the checkout it is
+started from: `DFE_DEPLOYMENT_APP_ENV_DIR` names it (`/app/app-env` inside the
+container, the sibling of `DFE_DEPLOYMENT_APP_CONFIG_DIR`) and it is a read-write
+bind mount of `./env`, so the deployment's own working tree is what changes when
+an operator saves a setting.
 
 ## Self-monitoring (opt-in)
 
@@ -309,6 +347,8 @@ The same toggle points the engine at HyperDX: with it on, the engine receives `D
 | 9096  | dfe-transform-vrl    | Prometheus metrics |
 | 9097  | dfe-transform-vrl-filebeat | Prometheus metrics |
 | 9098  | dfe-transform-vector-filebeat | Prometheus metrics |
+| 9099  | dfe-transform-elastic | Prometheus metrics |
+| 9100  | dfe-transform-elastic-cisco-ios | Prometheus metrics |
 | 13133 | otel-collector       | health_check       |
 | 19092 | Kafka (any backend)  | Plaintext host     |
 | 50051 | dfe-loader           | gRPC               |
@@ -341,6 +381,7 @@ Images are published from the component repos:
 - `ghcr.io/hyperi-io/dfe-fetcher`
 - `ghcr.io/hyperi-io/dfe-loader`
 - `ghcr.io/hyperi-io/dfe-receiver`
+- `ghcr.io/hyperi-io/dfe-transform-elastic`
 - `ghcr.io/hyperi-io/dfe-transform-vector`
 - `ghcr.io/hyperi-io/dfe-transform-vrl`
 - `ghcr.io/hyperi-io/dfe-ui`

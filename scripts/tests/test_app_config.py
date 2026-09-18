@@ -80,7 +80,18 @@ def test_an_app_the_tier_does_not_run_is_given_no_rendered_path(
     values = _resolved("slim", tmp_path, monkeypatch)
 
     assert values["DFE_TRANSFORM_VRL_CONFIG_FILE"] == ""
-    assert values["DFE_ARCHIVER_CONFIG_FILE"] == ""
+
+
+def test_the_single_tier_hands_both_transforms_the_engine_rendered_config(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Both transforms are seeded idle on this tier and the engine renders each
+    # one's config, so each reads the rendered path rather than its committed file.
+    values = _resolved("single", tmp_path, monkeypatch)
+
+    for app in ("dfe-transform-elastic", "dfe-transform-vrl"):
+        var = f"{app.upper().replace('-', '_')}_CONFIG_FILE"
+        assert values[var] == f"{resolve_profile.APP_CONFIG_MOUNT}/{app}/config.yaml"
 
 
 @pytest.mark.parametrize("profile", [*PROJECTED_PROFILES, "kafka-filebeat"])
@@ -95,6 +106,6 @@ def test_every_app_config_key_is_written_whatever_the_answer(
         resolve_profile.ENGINE_APP_CONFIG_DIR_VAR,
         resolve_profile.ENGINE_APP_CONFIG_BASE_DIR_VAR,
         resolve_profile.APP_CONFIG_MOUNT_VAR,
-        *(var for var, _ in resolve_profile.SERVICE_TO_RENDERED_CONFIG.values()),
+        *resolve_profile.SERVICE_TO_RENDERED_CONFIG_VAR.values(),
     }
     assert expected <= set(values)

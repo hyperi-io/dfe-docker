@@ -218,6 +218,7 @@ _COMPOSE_FILE_PREFIX = "COMPOSE_FILE="
 # .profile.mk, where only a make command-line variable beats the include.
 _FRAGMENT_DIALS = {
     "DFE_AUTH_RESOLVED": "true",
+    "DFE_INSTANCES_RESOLVED": "true",
     "DFE_OTEL_RESOLVED": "true",
     "DFE_CONTAINER_LOGS_ENABLED": "true",
     "DFE_INFRA_UIS_EXTERNAL": "false",
@@ -263,6 +264,8 @@ _DFE_OWNED_SERVICES = {
     "dfe-fetcher",
     "dfe-loader",
     "dfe-receiver",
+    "dfe-transform-elastic",
+    "dfe-transform-elastic-cisco-ios",
     "dfe-transform-vector",
     "dfe-transform-vector-filebeat",
     "dfe-transform-vrl",

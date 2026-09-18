@@ -9,15 +9,18 @@
 # Profile        | Services                            | Notes                                     |
 # ---------------|-------------------------------------|-------------------------------------------|
 # clickhouse     | clickhouse                          |                                           |
-# kafka-redpanda | kafka-redpanda, kafka-init-redpanda | Redpanda (default); BSL -- see README      |
-# kafka-apache   | kafka-apache, kafka-init-apache     | Apache Kafka (opt-in); Apache-2.0 only     |
+# kafka-redpanda | kafka-redpanda                      | Redpanda (default); BSL -- see README      |
+# kafka-apache   | kafka-apache                        | Apache Kafka (opt-in); Apache-2.0 only     |
 # kafka-ui       | kafka-ui                            |                                           |
 # otel           | otel-collector                      | self-monitoring; opt-in                   |
 # auth           | oauth2-proxy-* (3)                  | edge OIDC + group check; opt-in           |
 #
 # The kafka-* profiles are mutually exclusive: all three share the network alias `kafka`, and downstream
-# configs always address `kafka:9092`. Each backend has its own topic-init so the Apache profile never
-# pulls a BSL artefact.
+# configs always address `kafka:9092`.
+#
+# Topics and ClickHouse objects are NOT created here. dfe-schemas declares them and dfe-engine applies
+# them at its own startup, reporting healthy only once that pass converged -- which is what every
+# `depends_on: dfe-engine: service_healthy` below is waiting for.
 #
 # DFE services carry profiles too -- `dfe`, `core`, `hyperdx`, `otel`. WHICH of them start is a second,
 # independent selection made by service_profiles.yaml, which also sets their config paths.
@@ -78,9 +81,8 @@ x-limits-service: &limits-service
       cpus: "${DFE_SERVICE_CPUS:-2.0}"
       memory: ${DFE_SERVICE_MEMORY:-768M}
 
-# 512M rather than less because kafka-init-apache runs a JVM (kafka-topics.sh);
-# verified it starts and completes under this cap, and a smaller one risks an OOM
-# kill on a service whose whole job is to exit cleanly.
+# 512M rather than less: a sidecar's whole job is to exit cleanly, and a tighter
+# cap risks an OOM kill on one.
 x-limits-sidecar: &limits-sidecar
   resources:
     limits:
@@ -253,77 +255,6 @@ services:
       start_period: 15s
 
   # ===========================================================================
-  # Kafka Init
-  # Pre-creates the topics consumers would otherwise fail on, on an empty broker.
-  #
-  # One init per backend, each using ITS OWN broker's tooling, so choosing Apache
-  # Kafka never pulls a BSL artefact. Dependents gate on both with
-  # `required: false`; exactly one exists per profile.
-  #
-  # The list is KAFKA_INIT_TOPICS, written by resolve_profile.py: `main_land`
-  # plus whatever the profile's own transforms consume and produce. Do not
-  # hardcode a `_load` topic here -- created unconditionally it suppresses the
-  # matching `_land` out of every non-transform loader's subscription and
-  # silently zeroes the data path.
-  # docs/troubleshooting.md#configloaderkafka-loadyaml-consumes-a-topic-nothing-pre-creates
-  # ===========================================================================
-
-  kafka-init-redpanda:
-    image: docker.redpanda.com/redpandadata/redpanda:${REDPANDA_VERSION:?run 'make stack VERSION=X.Y.Z' to pin REDPANDA_VERSION}
-    container_name: dfe-kafka-init-redpanda
-    profiles: ["kafka-redpanda"]
-    deploy: *limits-sidecar
-    depends_on:
-      kafka-redpanda:
-        condition: service_healthy
-    entrypoint: ["/bin/sh", "-c"]
-    command:
-      - |
-        for topic in ${KAFKA_INIT_TOPICS:-main_land}; do
-          created=""
-          for i in $$(seq 1 30); do
-            rpk topic describe $$topic -X brokers=kafka:9092 >/dev/null 2>&1 && created=yes && break
-            rpk topic create $$topic --partitions 1 --replicas 1 -X brokers=kafka:9092 2>&1 || true
-            sleep 1
-          done
-          if [ -z "$$created" ]; then
-            echo "FAILED: $$topic topic not created after 30 attempts (~30s; rpk fails fast)" >&2
-            exit 1
-          fi
-        done
-    restart: "no"
-
-  kafka-init-apache:
-    image: apache/kafka:${APACHE_KAFKA_VERSION:?run 'make stack VERSION=X.Y.Z' to pin APACHE_KAFKA_VERSION}
-    container_name: dfe-kafka-init-apache
-    profiles: ["kafka-apache"]
-    deploy: *limits-sidecar
-    depends_on:
-      kafka-apache:
-        condition: service_healthy
-    entrypoint: ["/bin/sh", "-c"]
-    command:
-      - |
-        for topic in ${KAFKA_INIT_TOPICS:-main_land}; do
-          created=""
-          for i in $$(seq 1 30); do
-            /opt/kafka/bin/kafka-topics.sh --bootstrap-server kafka:9092 --create --if-not-exists \
-              --topic $$topic --partitions 1 --replication-factor 1 >/dev/null 2>&1 && created=yes && break
-            sleep 1
-          done
-          # Unlike rpk, kafka-topics.sh BLOCKS on its own request timeout (~60s)
-          # when the broker is unreachable, so these attempts are not 1s apart --
-          # the worst case here is tens of minutes, not 30 seconds. In practice
-          # depends_on gates on kafka-apache being healthy first, so a retry at all
-          # means something is genuinely wrong rather than merely slow.
-          if [ -z "$$created" ]; then
-            echo "FAILED: $$topic topic not created after 30 attempts" >&2
-            exit 1
-          fi
-        done
-    restart: "no"
-
-  # ===========================================================================
   # Kafka UI
   # Opt-in UI for Kafka cluster.
   # ===========================================================================
@@ -376,45 +307,169 @@ services:
     restart: "no"
 
   # ===========================================================================
-  # dfe-schema-init
-  # Creates or reconciles every DFE ClickHouse table, then exits. Runs the
-  # `dfe-schema` entry point on the dfe-engine image -- the same code the engine
-  # runs on boot and the k8s deploy runs as a Job, so no target invents its own.
+  # contract-<app>
+  # One one-shot per app, running that app's OWN pinned image: `config-schema`
+  # writes the config schema and capability catalogue of the exact binary this
+  # stack runs into dfe-engine-content, and the engine reads them back at
+  # /contract/<app>. The Kubernetes tier does the same with one init container
+  # per app (dfe-infra #305).
   #
-  # In `dfe` AND `otel`, not `core`: a profile without dfe-engine still writes to
-  # these tables, and the otel collector now runs with create_schema=false, so a
-  # telemetry-only stack would otherwise have nothing to insert into.
+  # An app that cannot emit must not wedge the engine. scalo exits non-zero when
+  # it fails to WRITE, so the command wraps the call and logs instead, and the
+  # engine's depends_on carries `required: false` on top of that.
+  #
+  # source.json names the ref that produced the directory: a contract is a
+  # property of one digest and none of the four files says which.
+  #
+  # These stay on the registry pin in dev -- the committed override repoints the
+  # app services and not these, so a local build's contract is the pin's.
   # ===========================================================================
 
-  dfe-schema-init:
-    image: ${IMAGE_REGISTRY:-ghcr.io/hyperi-io}/dfe-engine:${DFE_ENGINE_VERSION:?run 'make stack VERSION=X.Y.Z' to pin DFE_ENGINE_VERSION}
-    container_name: dfe-schema-init
-    profiles: ["dfe", "otel"]
+  contract-dfe-archiver:
+    image: ${IMAGE_REGISTRY:-ghcr.io/hyperi-io}/dfe-archiver:${DFE_ARCHIVER_VERSION:?run 'make stack VERSION=X.Y.Z' to pin DFE_ARCHIVER_VERSION}
+    container_name: dfe-contract-dfe-archiver
+    profiles: ["core"]
     deploy: *limits-sidecar
-    entrypoint: ["dfe-schema"]
-    # ClickHouse reports healthy before it will accept DDL on a cold start, so
-    # the apply retries rather than failing the whole stack on a race.
-    command: ["apply", "--wait", "${DFE_SCHEMA_WAIT:-120}"]
+    # Root because an empty named volume lands root-owned at a path no image
+    # creates, and the engine only ever reads this directory.
+    user: "0:0"
+    entrypoint: ["/bin/sh", "-c"]
     environment:
-      # No DFE_ENV: dfe-schema loads only the ClickHouse settings, so the API
-      # posture validators a dev posture used to dodge never run here.
-      DFE_CLICKHOUSE_HOST: ${CLICKHOUSE_HOST:-clickhouse}
-      DFE_CLICKHOUSE_PORT: ${CLICKHOUSE_HTTP_PORT:-8123}
-      DFE_CLICKHOUSE_DATABASE: ${CLICKHOUSE_DB:-default}
-      DFE_CLICKHOUSE_USERNAME: ${CLICKHOUSE_USERNAME:-default}
-      DFE_CLICKHOUSE_PASSWORD: ${CLICKHOUSE_PASSWORD:-}
-      DFE_CLICKHOUSE_SECURE: ${CLICKHOUSE_SECURE:-false}
-      # The apply reconciles existing tables, so it runs with the same TTL the
-      # engine does. 0 = no default TTL.
-      DFE_CLICKHOUSE_DEFAULT_TTL_DAYS: ${DFE_CLICKHOUSE_DEFAULT_TTL_DAYS:-90}
-      # Unset by default: the image resolves its own bundled schemas. Point this
-      # at a full dfe-schemas tree to override.
-      DFE_SCHEMAS_DIR: ${DFE_ENGINE_SCHEMAS_DIR:-}
-      OTEL_SERVICE_NAME: dfe-schema
-    depends_on:
-      clickhouse:
-        condition: service_healthy
-        required: false
+      # The ref this contract came from. The image line above hard-fails on an
+      # unset pin, so it never renders empty.
+      CONTRACT_REF: ${IMAGE_REGISTRY:-ghcr.io/hyperi-io}/dfe-archiver:${DFE_ARCHIVER_VERSION:-}
+    # A LIST with one element, for the reason dlq-init's command gives.
+    command:
+      - |
+        if dfe-archiver config-schema --dir /app/content/contract/dfe-archiver; then
+          printf '{"app":"dfe-archiver","ref":"%s","emitted_at":"%s"}\n' \
+            "$$CONTRACT_REF" "$$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+            > /app/content/contract/dfe-archiver/source.json
+        else
+          echo "contract: dfe-archiver emitted nothing, so the engine reports its contract absent" >&2
+        fi
+    volumes:
+      - dfe-engine-content:/app/content
+    restart: "no"
+
+  contract-dfe-fetcher:
+    image: ${IMAGE_REGISTRY:-ghcr.io/hyperi-io}/dfe-fetcher:${DFE_FETCHER_VERSION:?run 'make stack VERSION=X.Y.Z' to pin DFE_FETCHER_VERSION}
+    container_name: dfe-contract-dfe-fetcher
+    profiles: ["core"]
+    deploy: *limits-sidecar
+    # Root because an empty named volume lands root-owned at a path no image
+    # creates, and the engine only ever reads this directory.
+    user: "0:0"
+    entrypoint: ["/bin/sh", "-c"]
+    environment:
+      CONTRACT_REF: ${IMAGE_REGISTRY:-ghcr.io/hyperi-io}/dfe-fetcher:${DFE_FETCHER_VERSION:-}
+    command:
+      - |
+        if dfe-fetcher config-schema --dir /app/content/contract/dfe-fetcher; then
+          printf '{"app":"dfe-fetcher","ref":"%s","emitted_at":"%s"}\n' \
+            "$$CONTRACT_REF" "$$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+            > /app/content/contract/dfe-fetcher/source.json
+        else
+          echo "contract: dfe-fetcher emitted nothing, so the engine reports its contract absent" >&2
+        fi
+    volumes:
+      - dfe-engine-content:/app/content
+    restart: "no"
+
+  contract-dfe-loader:
+    image: ${IMAGE_REGISTRY:-ghcr.io/hyperi-io}/dfe-loader:${DFE_LOADER_VERSION:?run 'make stack VERSION=X.Y.Z' to pin DFE_LOADER_VERSION}
+    container_name: dfe-contract-dfe-loader
+    profiles: ["core"]
+    deploy: *limits-sidecar
+    # Root because an empty named volume lands root-owned at a path no image
+    # creates, and the engine only ever reads this directory.
+    user: "0:0"
+    entrypoint: ["/bin/sh", "-c"]
+    environment:
+      CONTRACT_REF: ${IMAGE_REGISTRY:-ghcr.io/hyperi-io}/dfe-loader:${DFE_LOADER_VERSION:-}
+    command:
+      - |
+        if dfe-loader config-schema --dir /app/content/contract/dfe-loader; then
+          printf '{"app":"dfe-loader","ref":"%s","emitted_at":"%s"}\n' \
+            "$$CONTRACT_REF" "$$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+            > /app/content/contract/dfe-loader/source.json
+        else
+          echo "contract: dfe-loader emitted nothing, so the engine reports its contract absent" >&2
+        fi
+    volumes:
+      - dfe-engine-content:/app/content
+    restart: "no"
+
+  contract-dfe-receiver:
+    image: ${IMAGE_REGISTRY:-ghcr.io/hyperi-io}/dfe-receiver:${DFE_RECEIVER_VERSION:?run 'make stack VERSION=X.Y.Z' to pin DFE_RECEIVER_VERSION}
+    container_name: dfe-contract-dfe-receiver
+    profiles: ["core"]
+    deploy: *limits-sidecar
+    # Root because an empty named volume lands root-owned at a path no image
+    # creates, and the engine only ever reads this directory.
+    user: "0:0"
+    entrypoint: ["/bin/sh", "-c"]
+    environment:
+      CONTRACT_REF: ${IMAGE_REGISTRY:-ghcr.io/hyperi-io}/dfe-receiver:${DFE_RECEIVER_VERSION:-}
+    command:
+      - |
+        if dfe-receiver config-schema --dir /app/content/contract/dfe-receiver; then
+          printf '{"app":"dfe-receiver","ref":"%s","emitted_at":"%s"}\n' \
+            "$$CONTRACT_REF" "$$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+            > /app/content/contract/dfe-receiver/source.json
+        else
+          echo "contract: dfe-receiver emitted nothing, so the engine reports its contract absent" >&2
+        fi
+    volumes:
+      - dfe-engine-content:/app/content
+    restart: "no"
+
+  contract-dfe-transform-vector:
+    image: ${IMAGE_REGISTRY:-ghcr.io/hyperi-io}/dfe-transform-vector:${DFE_TRANSFORM_VECTOR_VERSION:?run 'make stack VERSION=X.Y.Z' to pin DFE_TRANSFORM_VECTOR_VERSION}
+    container_name: dfe-contract-dfe-transform-vector
+    profiles: ["core"]
+    deploy: *limits-sidecar
+    # Root because an empty named volume lands root-owned at a path no image
+    # creates, and the engine only ever reads this directory.
+    user: "0:0"
+    entrypoint: ["/bin/sh", "-c"]
+    environment:
+      CONTRACT_REF: ${IMAGE_REGISTRY:-ghcr.io/hyperi-io}/dfe-transform-vector:${DFE_TRANSFORM_VECTOR_VERSION:-}
+    command:
+      - |
+        if dfe-transform-vector config-schema --dir /app/content/contract/dfe-transform-vector; then
+          printf '{"app":"dfe-transform-vector","ref":"%s","emitted_at":"%s"}\n' \
+            "$$CONTRACT_REF" "$$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+            > /app/content/contract/dfe-transform-vector/source.json
+        else
+          echo "contract: dfe-transform-vector emitted nothing, so the engine reports its contract absent" >&2
+        fi
+    volumes:
+      - dfe-engine-content:/app/content
+    restart: "no"
+
+  contract-dfe-transform-vrl:
+    image: ${IMAGE_REGISTRY:-ghcr.io/hyperi-io}/dfe-transform-vrl:${DFE_TRANSFORM_VRL_VERSION:?run 'make stack VERSION=X.Y.Z' to pin DFE_TRANSFORM_VRL_VERSION}
+    container_name: dfe-contract-dfe-transform-vrl
+    profiles: ["core"]
+    deploy: *limits-sidecar
+    # Root because an empty named volume lands root-owned at a path no image
+    # creates, and the engine only ever reads this directory.
+    user: "0:0"
+    entrypoint: ["/bin/sh", "-c"]
+    environment:
+      CONTRACT_REF: ${IMAGE_REGISTRY:-ghcr.io/hyperi-io}/dfe-transform-vrl:${DFE_TRANSFORM_VRL_VERSION:-}
+    command:
+      - |
+        if dfe-transform-vrl config-schema --dir /app/content/contract/dfe-transform-vrl; then
+          printf '{"app":"dfe-transform-vrl","ref":"%s","emitted_at":"%s"}\n' \
+            "$$CONTRACT_REF" "$$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+            > /app/content/contract/dfe-transform-vrl/source.json
+        else
+          echo "contract: dfe-transform-vrl emitted nothing, so the engine reports its contract absent" >&2
+        fi
+    volumes:
+      - dfe-engine-content:/app/content
     restart: "no"
 
   # ===========================================================================
@@ -434,6 +489,11 @@ services:
     env_file:
       - path: env/archiver.env
         required: false
+      # The custom keys the engine writes for this app, AFTER the file above so
+      # a custom key wins. Compose reads env_file at up-time, so a write needs
+      # `docker compose up -d dfe-archiver` and a restart keeps the old values.
+      - path: env/archiver.custom.env
+        required: false
     environment:
       LOG_LEVEL: ${LOG_LEVEL:-info}
       LOG_FORMAT: ${LOG_FORMAT:-text}
@@ -447,12 +507,6 @@ services:
         condition: service_healthy
         required: false
       dlq-init:
-        condition: service_completed_successfully
-        required: false
-      kafka-init-apache:
-        condition: service_completed_successfully
-        required: false
-      kafka-init-redpanda:
         condition: service_completed_successfully
         required: false
     working_dir: /home/appuser
@@ -486,6 +540,10 @@ services:
     env_file:
       - path: env/fetcher.env
         required: false
+      # The custom keys the engine writes for this app; an up -d applies them,
+      # a restart keeps the environment the container already has.
+      - path: env/fetcher.custom.env
+        required: false
     environment:
       LOG_LEVEL: ${LOG_LEVEL:-info}
       LOG_FORMAT: ${LOG_FORMAT:-text}
@@ -501,12 +559,6 @@ services:
         condition: service_healthy
         required: false
       dlq-init:
-        condition: service_completed_successfully
-        required: false
-      kafka-init-apache:
-        condition: service_completed_successfully
-        required: false
-      kafka-init-redpanda:
         condition: service_completed_successfully
         required: false
     # The engine renders this app's config from the sources on the tiers that run
@@ -541,6 +593,10 @@ services:
     env_file:
       - path: env/loader.env
         required: false
+      # The custom keys the engine writes for this app; an up -d applies them,
+      # a restart keeps the environment the container already has.
+      - path: env/loader.custom.env
+        required: false
     environment:
       CLICKHOUSE_USERNAME: ${CLICKHOUSE_USERNAME:-default}
       CLICKHOUSE_PASSWORD: ${CLICKHOUSE_PASSWORD:-}
@@ -552,23 +608,15 @@ services:
       clickhouse:
         condition: service_healthy
         required: false
-      # The schema authority. A loader started first holds every message
-      # pending-schema and dead-letters it, which reads as data loss and is
-      # really start ordering. docs/troubleshooting.md#events-are-accepted-but-nothing-lands
-      # dfe-schema-init covers the profiles that run no engine.
-      dfe-schema-init:
-        condition: service_completed_successfully
-        required: false
+      # The schema authority: dfe-engine applies every table and every bootstrap
+      # topic at its own startup and reports healthy only once that pass
+      # converged. A loader started first holds every message pending-schema and
+      # dead-letters it, which reads as data loss and is really start ordering.
+      # docs/troubleshooting.md#events-are-accepted-but-nothing-lands
       dfe-engine:
         condition: service_healthy
         required: false
       dlq-init:
-        condition: service_completed_successfully
-        required: false
-      kafka-init-apache:
-        condition: service_completed_successfully
-        required: false
-      kafka-init-redpanda:
         condition: service_completed_successfully
         required: false
     # The engine renders this app's config from the sources on the tiers that run
@@ -609,6 +657,10 @@ services:
     env_file:
       - path: env/receiver.env
         required: false
+      # The custom keys the engine writes for this app; an up -d applies them,
+      # a restart keeps the environment the container already has.
+      - path: env/receiver.custom.env
+        required: false
     environment:
       LOG_LEVEL: ${LOG_LEVEL:-info}
       LOG_FORMAT: ${LOG_FORMAT:-text}
@@ -626,12 +678,6 @@ services:
       dlq-init:
         condition: service_completed_successfully
         required: false
-      kafka-init-apache:
-        condition: service_completed_successfully
-        required: false
-      kafka-init-redpanda:
-        condition: service_completed_successfully
-        required: false
     # The engine renders this app's config from the sources on the tiers that run
     # it; everywhere else the committed file below is what it reads.
     command: ["--config", "${DFE_RECEIVER_CONFIG_FILE:-/etc/dfe-receiver/config.yaml}"]
@@ -642,6 +688,97 @@ services:
       # Uncomment to enable TLS on gRPC inbound (:6000):
       # - ./certs/dev/receiver.crt:/etc/ssl/receiver.crt:ro
       # - ./certs/dev/receiver.key:/etc/ssl/receiver.key:ro
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://localhost:9090/livez"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+
+  # ===========================================================================
+  # dfe-transform-elastic
+  # Beats and Elastic Agent JSON in, DFE-normalised events out. It selects ONE
+  # compiled-in transform by `source.name` and reads no authored program files,
+  # so it has nothing to mount beside its config -- no transforms directory and
+  # no enrichment tables.
+  #
+  # The single tier starts it idle: an empty `source.name` or `source.topics`
+  # parks it Ready with no consumer group, which is what lets a tier carry a
+  # transform ready for its first source rather than none until one is written.
+  # ===========================================================================
+
+  dfe-transform-elastic:
+    image: ${IMAGE_REGISTRY:-ghcr.io/hyperi-io}/dfe-transform-elastic:${DFE_TRANSFORM_ELASTIC_VERSION:?run 'make stack VERSION=X.Y.Z' to pin DFE_TRANSFORM_ELASTIC_VERSION}
+    container_name: dfe-transform-elastic
+    profiles: ["dfe"]
+    restart: unless-stopped
+    deploy: *limits-service
+    ports:
+      - ${DFE_BIND_HOST:-127.0.0.1}:${DFE_TRANSFORM_ELASTIC_PROMETHEUS_PORT:-9099}:9090
+    env_file:
+      - path: env/transform-elastic.env
+        required: false
+    environment:
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+      LOG_FORMAT: ${LOG_FORMAT:-text}
+      OTEL_EXPORTER_OTLP_ENDPOINT: ${DFE_OTEL_EXPORTER_ENDPOINT:-}
+      OTEL_SERVICE_NAME: dfe-transform-elastic
+    depends_on:
+      # No dlq-init here: this service does not mount dlq-spool.
+      # The writer of the rendered config, so it must have written before this
+      # container reads. `required: false` for the tiers that run no engine.
+      dfe-engine:
+        condition: service_healthy
+        required: false
+    # The committed file below, on every tier: the engine's bundled catalogue
+    # does not offer this app yet, so nothing renders a config for it
+    # (dfe-engine#389). The mount and the wait above are what it reads once the
+    # catalogue catches up. The path matches the image's own CMD.
+    command: ["--config", "${DFE_TRANSFORM_ELASTIC_CONFIG_FILE:-/etc/dfe-transform-elastic/config.yaml}"]
+    volumes:
+      - ./config/${DFE_TRANSFORM_ELASTIC_CONFIG:-transform-elastic/kafka.yaml}:/etc/dfe-transform-elastic/config.yaml:ro
+      - dfe-app-config:/etc/dfe/apps:ro
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://localhost:9090/livez"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+
+  # ===========================================================================
+  # dfe-transform-elastic-cisco-ios
+  # A SECOND instance of the same image, for the cisco-ios source alone -- the
+  # per-source shape dfe-transform-vrl-filebeat carries on the VRL side. The
+  # receiver routes _source=cisco-ios to cisco-ios_land, this instance is the
+  # only consumer of it, and its output topic names the table dfe-loader writes.
+  #
+  # `source.name` in the config is the whole difference between two instances of
+  # this app: the transform is compiled in, so a second source adds a block like
+  # this one and nothing else.
+  # ===========================================================================
+
+  dfe-transform-elastic-cisco-ios:
+    image: ${IMAGE_REGISTRY:-ghcr.io/hyperi-io}/dfe-transform-elastic:${DFE_TRANSFORM_ELASTIC_VERSION:?run 'make stack VERSION=X.Y.Z' to pin DFE_TRANSFORM_ELASTIC_VERSION}
+    container_name: dfe-transform-elastic-cisco-ios
+    profiles: ["dfe"]
+    restart: unless-stopped
+    deploy: *limits-service
+    ports:
+      - ${DFE_BIND_HOST:-127.0.0.1}:${DFE_TRANSFORM_ELASTIC_CISCO_IOS_PROMETHEUS_PORT:-9100}:9090
+    env_file:
+      - path: env/transform-elastic-cisco-ios.env
+        required: false
+    environment:
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+      LOG_FORMAT: ${LOG_FORMAT:-text}
+      OTEL_EXPORTER_OTLP_ENDPOINT: ${DFE_OTEL_EXPORTER_ENDPOINT:-}
+      OTEL_SERVICE_NAME: dfe-transform-elastic-cisco-ios
+    depends_on:
+      # No dlq-init here: this service does not mount dlq-spool. dfe-engine
+      # creates the topics it reads and writes, so it waits on that instead.
+      dfe-engine:
+        condition: service_healthy
+        required: false
+    volumes:
+      - ./config/${DFE_TRANSFORM_ELASTIC_CISCO_IOS_CONFIG:-transform-elastic/cisco-ios.yaml}:/etc/dfe-transform-elastic/config.yaml:ro
     healthcheck:
       test: ["CMD", "curl", "-sf", "http://localhost:9090/livez"]
       interval: 10s
@@ -669,6 +806,10 @@ services:
     env_file:
       - path: env/transform-vector.env
         required: false
+      # The custom keys the engine writes for this app; an up -d applies them,
+      # a restart keeps the environment the container already has.
+      - path: env/transform-vector.custom.env
+        required: false
     environment:
       LOG_LEVEL: ${LOG_LEVEL:-info}
       LOG_FORMAT: ${LOG_FORMAT:-text}
@@ -676,11 +817,11 @@ services:
       OTEL_SERVICE_NAME: dfe-transform-vector
     depends_on:
       # No dlq-init here: this service does not mount dlq-spool.
-      kafka-init-apache:
-        condition: service_completed_successfully
-        required: false
-      kafka-init-redpanda:
-        condition: service_completed_successfully
+      # The topic authority: dfe-engine creates the declared topic set at its own
+      # startup, so a transform started first subscribes to nothing.
+      # `required: false` for the tiers that run no engine.
+      dfe-engine:
+        condition: service_healthy
         required: false
     volumes:
       - ./config/${DFE_TRANSFORM_VECTOR_CONFIG:-transform-vector/kafka.yaml}:/etc/dfe-transform-vector/config.yaml:ro
@@ -717,6 +858,10 @@ services:
     env_file:
       - path: env/transform-vector-filebeat.env
         required: false
+      # The custom keys the engine writes for this app; an up -d applies them,
+      # a restart keeps the environment the container already has.
+      - path: env/transform-vector-filebeat.custom.env
+        required: false
     environment:
       LOG_LEVEL: ${LOG_LEVEL:-info}
       LOG_FORMAT: ${LOG_FORMAT:-text}
@@ -724,11 +869,11 @@ services:
       OTEL_SERVICE_NAME: dfe-transform-vector-filebeat
     depends_on:
       # No dlq-init here: this service does not mount dlq-spool.
-      kafka-init-apache:
-        condition: service_completed_successfully
-        required: false
-      kafka-init-redpanda:
-        condition: service_completed_successfully
+      # The topic authority: dfe-engine creates the declared topic set at its own
+      # startup, so a transform started first subscribes to nothing.
+      # `required: false` for the tiers that run no engine.
+      dfe-engine:
+        condition: service_healthy
         required: false
     volumes:
       - ./config/${DFE_TRANSFORM_VECTOR_FILEBEAT_CONFIG:-transform-vector/filebeat.yaml}:/etc/dfe-transform-vector/config.yaml:ro
@@ -755,6 +900,10 @@ services:
     env_file:
       - path: env/transform-vrl.env
         required: false
+      # The custom keys the engine writes for this app; an up -d applies them,
+      # a restart keeps the environment the container already has.
+      - path: env/transform-vrl.custom.env
+        required: false
     environment:
       LOG_LEVEL: ${LOG_LEVEL:-info}
       LOG_FORMAT: ${LOG_FORMAT:-text}
@@ -766,12 +915,6 @@ services:
       # this container reads. `required: false` for the tiers that run no engine.
       dfe-engine:
         condition: service_healthy
-        required: false
-      kafka-init-apache:
-        condition: service_completed_successfully
-        required: false
-      kafka-init-redpanda:
-        condition: service_completed_successfully
         required: false
     # The engine renders this app's config, its programs and its enrichment
     # tables from the source it is given, on the tiers that run it; everywhere
@@ -809,6 +952,10 @@ services:
     env_file:
       - path: env/transform-vrl-filebeat.env
         required: false
+      # The custom keys the engine writes for this app; an up -d applies them,
+      # a restart keeps the environment the container already has.
+      - path: env/transform-vrl-filebeat.custom.env
+        required: false
     environment:
       LOG_LEVEL: ${LOG_LEVEL:-info}
       LOG_FORMAT: ${LOG_FORMAT:-text}
@@ -816,11 +963,11 @@ services:
       OTEL_SERVICE_NAME: dfe-transform-vrl-filebeat
     depends_on:
       # No dlq-init here: this service does not mount dlq-spool.
-      kafka-init-apache:
-        condition: service_completed_successfully
-        required: false
-      kafka-init-redpanda:
-        condition: service_completed_successfully
+      # The topic authority: dfe-engine creates the declared topic set at its own
+      # startup, so a transform started first subscribes to nothing.
+      # `required: false` for the tiers that run no engine.
+      dfe-engine:
+        condition: service_healthy
         required: false
     volumes:
       - ./config/${DFE_TRANSFORM_VRL_FILEBEAT_CONFIG:-transform-vrl/filebeat.yaml}:/etc/dfe-transform-vrl/config.yaml:ro
@@ -917,7 +1064,7 @@ services:
       DFE_CLICKHOUSE_PASSWORD: ${CLICKHOUSE_PASSWORD:-}
       DFE_CLICKHOUSE_SECURE: ${CLICKHOUSE_SECURE:-false}
       # Default TTL for every time-series table; 0 = none; a source or a
-      # dfe-schemas TTL overrides it. dfe-schema-init carries the same value.
+      # dfe-schemas TTL overrides it.
       DFE_CLICKHOUSE_DEFAULT_TTL_DAYS: ${DFE_CLICKHOUSE_DEFAULT_TTL_DAYS:-90}
       # Where the engine renders each app's own config, which is the Compose
       # stand-in for the ConfigMap an app's chart renders on Kubernetes. Empty
@@ -933,10 +1080,20 @@ services:
       # every recreate, and every session issued before it stops verifying.
       DFE_SECRETS_PATH: ${DFE_ENGINE_CONFIG_DIR:-/app/config}/.secrets
       DFE_SCHEMAS_DIR: ${DFE_ENGINE_SCHEMAS_DIR:-/app/schemas}
-      # Content another repo ships (transform templates, a source catalogue),
-      # copied onto this volume by a per-pin init service; the engine seeds its
-      # library from it at startup and an empty directory is a no-op.
+      # Content another repo ships (transform templates, a source catalogue); the
+      # engine seeds its library from it at startup. Nothing writes it on Compose
+      # yet -- the contract one-shots fill the sibling directory, not this one --
+      # and an empty directory is a no-op.
       DFE_LIBRARY_SEED_DIR: ${DFE_ENGINE_CONTENT_DIR:-/app/content}/library
+      # Where the contract one-shots write, one directory per app, on the same
+      # volume. resolve_profile.py sets it EMPTY on a tier the engine renders no
+      # app config for; unset (compose run without make) keeps the volume's path.
+      DFE_APP_CONTRACT_DIR: ${DFE_ENGINE_CONTRACT_DIR-${DFE_ENGINE_CONTENT_DIR:-/app/content}/contract}
+      # Where the engine writes env/<app>.custom.env, the sibling of the app
+      # config directory above. A literal, because it names the bind mount below
+      # and the two have to stay the same path -- and that path is the host tree,
+      # so a write here changes the operator's checkout.
+      DFE_DEPLOYMENT_APP_ENV_DIR: /app/app-env
       OTEL_EXPORTER_OTLP_ENDPOINT: ${DFE_OTEL_EXPORTER_ENDPOINT:-}
       OTEL_SERVICE_NAME: dfe-engine
       # scalo's CLI falls back to the prometheus backend, so the endpoint alone
@@ -948,6 +1105,10 @@ services:
       - dfe-engine-content:${DFE_ENGINE_CONTENT_DIR:-/app/content}
       # The only writer of this volume; every app mounts it read-only.
       - dfe-app-config:/app/app-config
+      # The per-service env files, READ-WRITE: the engine writes an app's custom
+      # keys to env/<app>.custom.env, and compose reads env_file off the host
+      # tree rather than a volume. It is the operator's checkout being written.
+      - ./env:/app/app-env
       # Each app's base config, as THIS tier committed it. The instance overlay
       # is merged over it, so the broker, the warehouse credentials and the spool
       # stay with the deployment rather than being written into the deploy repo.
@@ -955,11 +1116,44 @@ services:
       - ./config/${DFE_FETCHER_CONFIG:-fetcher/kafka.yaml}:/app/app-config-base/dfe-fetcher.yaml:ro
       - ./config/${DFE_LOADER_CONFIG:-loader/kafka.yaml}:/app/app-config-base/dfe-loader.yaml:ro
       - ./config/${DFE_RECEIVER_CONFIG:-receiver/kafka.yaml}:/app/app-config-base/dfe-receiver.yaml:ro
+      - ./config/${DFE_TRANSFORM_ELASTIC_CONFIG:-transform-elastic/kafka.yaml}:/app/app-config-base/dfe-transform-elastic.yaml:ro
       - ./config/${DFE_TRANSFORM_VRL_CONFIG:-transform-vrl/kafka.yaml}:/app/app-config-base/dfe-transform-vrl.yaml:ro
       - ./config/${DFE_TRANSFORM_VECTOR_CONFIG:-transform-vector/kafka.yaml}:/app/app-config-base/dfe-transform-vector.yaml:ro
     depends_on:
       clickhouse:
         condition: service_healthy
+        required: false
+      # The engine creates the declared bootstrap topics at its own startup, so
+      # it is the only service that needs the broker before it runs. One of the
+      # two is enabled by compose profile and the other is absent, which is what
+      # `required: false` is for -- as is the grpc tier, which runs neither.
+      # This edge is also what pulls the broker up at all: it is not in
+      # ACTIVE_SERVICES, so it starts as somebody's dependency or not at all.
+      kafka-redpanda:
+        condition: service_healthy
+        required: false
+      kafka-apache:
+        condition: service_healthy
+        required: false
+      # Each app's contract, emitted before the engine reads it. `required:
+      # false` for the tiers that run no such app, and a FAILED emit only warns.
+      contract-dfe-archiver:
+        condition: service_completed_successfully
+        required: false
+      contract-dfe-fetcher:
+        condition: service_completed_successfully
+        required: false
+      contract-dfe-loader:
+        condition: service_completed_successfully
+        required: false
+      contract-dfe-receiver:
+        condition: service_completed_successfully
+        required: false
+      contract-dfe-transform-vector:
+        condition: service_completed_successfully
+        required: false
+      contract-dfe-transform-vrl:
+        condition: service_completed_successfully
         required: false
     working_dir: /home/appuser
     healthcheck:
@@ -1147,9 +1341,10 @@ services:
         condition: service_healthy
         required: false
       # The exporter runs with create_schema=false, so the otel tables have to
-      # exist before it sends its first batch.
-      dfe-schema-init:
-        condition: service_completed_successfully
+      # exist before it sends its first batch. dfe-engine applies them at its own
+      # startup and reports healthy only once that pass converged.
+      dfe-engine:
+        condition: service_healthy
         required: false
     # No HEALTHCHECK: the image is distroless (no shell, no curl, no wget), so
     # there is nothing in it to probe :13133 with. Nothing gates on the
