@@ -234,6 +234,9 @@ def _stub_main(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(post, "_load_dotenv", lambda: None)
     monkeypatch.setattr(post, "_weak_secrets", list)
     monkeypatch.setattr(post, "_cleanup", lambda *args: None)
+    # Unstubbed, this polls the engine's /readyz for 300s against whatever the
+    # developer happens to have on the host, and passes on a live stack.
+    monkeypatch.setattr(post, "_wait_schema_converged", lambda: 0)
     monkeypatch.setattr(post, "http_post", lambda *args, **kwargs: 200)
     monkeypatch.setattr(post, "ch_count", lambda *args, **kwargs: 0)
     monkeypatch.setattr(
