@@ -11,6 +11,7 @@
 #  Usage:
 #    ./scripts/test_source.py                                   # the filebeat case
 #    ./scripts/test_source.py --case cloudwatch --aws-service cloudtrail
+#    ./scripts/test_source.py --case elastic                    # dfe-transform-elastic
 #    ./scripts/test_source.py -- --keep --per-module 5          # flags for the runner
 #    DFE_INFRA_DIR=../dfe-infra ./scripts/test_source.py
 
@@ -45,6 +46,14 @@ PROJECT_DIR = Path(__file__).resolve().parent.parent
 # by name on any project.
 ARCHIVER_CONTAINER = "dfe-archiver"
 RUNNER_PATH = Path("scripts") / "acceptance" / "source" / "run.py"
+# The cases that push a corpus, and the checkout the runner reads it out of.
+# One repo for both: they feed the same corpus and the elastic case takes its
+# cisco_ios module out of it, so there is nothing of dfe-transform-elastic's own
+# to name. A case absent here passes no --transform-repo, which is the fetched
+# cloudwatch one.
+CORPUS_CASES = ("filebeat", "elastic")
+CORPUS_REPO_ENV_VAR = "DFE_TRANSFORM_VRL_REPO"
+CORPUS_MARKER = Path("pipelines") / "filebeat" / "filebeat.vrl"
 
 
 def _infra_repo(flag: str | None) -> Path:
@@ -82,18 +91,20 @@ def _engine_repo(flag: str | None) -> Path:
     return repo
 
 
-def _transform_repo(flag: str | None) -> Path | None:
-    """The dfe-transform-vrl checkout holding the bundled pipeline and the corpus.
+def _transform_repo(flag: str | None, case: str) -> Path | None:
+    """The checkout this case's corpus is read out of.
 
-    Optional: only the filebeat case reads it, and the runner falls back to the
+    Optional: a fetched case reads none, and the runner falls back to the
     checkout beside the engine repo when this is not passed.
     """
-    candidate = flag or os.environ.get("DFE_TRANSFORM_VRL_REPO")
+    if case not in CORPUS_CASES:
+        return None
+    candidate = flag or os.environ.get(CORPUS_REPO_ENV_VAR)
     if not candidate:
         return None
     repo = Path(candidate).expanduser().resolve()
-    if not ((repo / "pipelines" / "filebeat" / "filebeat.vrl").is_file()):
-        sys.exit(f"test_source: {repo} carries no pipelines/filebeat/filebeat.vrl")
+    if not ((repo / CORPUS_MARKER).is_file()):
+        sys.exit(f"test_source: {repo} carries no {CORPUS_MARKER}")
     return repo
 
 
@@ -214,7 +225,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "--transform-repo",
         default=None,
-        help="dfe-transform-vrl checkout holding the bundled pipeline and the corpus",
+        help="dfe-transform-vrl checkout holding the corpus the pushed cases feed",
     )
     parser.add_argument(
         "--python", default=None, help="interpreter carrying Playwright"
@@ -222,8 +233,10 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "--case",
         default="filebeat",
-        choices=("filebeat", "cloudwatch"),
-        help="filebeat pushes real lines at the receiver; cloudwatch lets a fetcher pull an AWS upstream",
+        choices=("filebeat", "cloudwatch", "elastic"),
+        help="filebeat and elastic push real lines at the receiver, through "
+        "dfe-transform-vrl and dfe-transform-elastic; cloudwatch lets a fetcher "
+        "pull an AWS upstream",
     )
     parser.add_argument(
         "--aws-service",
@@ -244,7 +257,7 @@ def main(argv: list[str] | None = None) -> int:
     _load_dotenv()
     infra = _infra_repo(args.infra_repo)
     engine = _engine_repo(args.engine_repo)
-    transform = _transform_repo(args.transform_repo)
+    transform = _transform_repo(args.transform_repo, args.case)
     python = _runner_python(args.python)
 
     # The address the stack publishes on, which is `localhost` for one stack on a

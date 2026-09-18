@@ -42,6 +42,7 @@ flowchart LR
     subgraph xform [Transform - optional]
         vrl["dfe-transform-vrl"]:::dfe
         vector["dfe-transform-vector"]:::dfe
+        elastic["dfe-transform-elastic"]:::dfe
     end
 
     load[(Kafka main_load)]:::broker
@@ -68,7 +69,7 @@ ingest components produce to a `*_land` topic derived from the event's `_source`
 and the loader consumes `topic_regex: .*_land`. On a `grpc-*` profile there is no
 broker -- the ingest components dial `dfe-loader:50051` directly.
 
-The two transforms are bus-only today: each reads a topic and writes a topic.
+The three transforms are bus-only today: each reads a topic and writes a topic.
 `dfe-archiver` runs on either -- it consumes the landing topics on Kafka and
 answers a scalo Push listener on gRPC (`config/archiver/grpc.yaml`). With a
 transform in the profile the loader switches to `config/loader/kafka-load.yaml`
@@ -142,6 +143,14 @@ rides the OTLP push into the otel database. The exporter's 9598 is not published
 The two profiles are deliberately disjoint -- own source name, own topics, own
 table -- so a deployment can run both and compare what the two transform apps
 make of one corpus.
+
+`kafka-elastic-cisco-ios` is the same shape on `dfe-transform-elastic`, minus
+the program and enrichment rows: that app compiles its transforms in and names
+one per instance in `source.name`, so there is nothing to vendor and nothing to
+mount. Its source is `cisco-ios` rather than `filebeat` because
+`filebeat.cisco_ios.default` is one data stream, not an umbrella program. It
+also runs one instance rather than two -- there is no passthrough variant to
+pair it with, so the loader reads `main_land` itself through its `topic_regex`.
 
 Both tables are dfe-engine's to create from the `meta/beats/filebeat` meta
 schema -- nothing here provisions them. Create the source before sending it
@@ -280,14 +289,15 @@ Dev builds fetch source into a managed git cache, or from your own checkouts whe
 | `dfe-fetcher` | Rust | Pull ingest from vendor APIs | `dfe` |
 | `dfe-loader` | Rust | Writes ClickHouse; hosts `DfeTransport/Push` | `dfe` |
 | `dfe-archiver` | Rust | Archive sink (filesystem, S3, MinIO, GCS, Azure Blob) | `dfe` |
+| `dfe-transform-elastic` | Rust | Beats and Elastic Agent pipelines compiled to Rust, one transform selected per instance by `source.name` | `dfe` |
 | `dfe-transform-vector` | Rust | Vector.dev subprocess wrapper, Kafka to Kafka | `dfe` |
 | `dfe-transform-vrl` | Rust | Embedded VRL transform engine; deployed once per source that has a transform | `dfe` |
 | `dfe-engine` | Python | Config and schema API; the schema authority | `core` |
 | `dfe-ui` | TypeScript | Web console | `core` |
 | `dfe-hyperdx` | TypeScript | HyperDX fork. Repo and published image are both `dfe-hyperdx` | `hyperdx` |
 
-`dfe-transform-elastic`, `dfe-transform-splack` and `dfe-transform-wasm` have
-repos but no service here, so this stack cannot run them.
+`dfe-transform-splack` and `dfe-transform-wasm` have repos but no service here,
+so this stack cannot run them.
 
 ## Where this differs from Kubernetes
 

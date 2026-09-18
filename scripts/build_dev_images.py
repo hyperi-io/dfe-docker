@@ -42,6 +42,7 @@ IMAGE_TAG = "local"
 IMAGE_CONSUMERS: dict[str, tuple[str, ...]] = {
     "dfe-archiver": ("dlq-init",),
     "dfe-engine": ("dfe-hunt-runner",),
+    "dfe-transform-elastic": ("dfe-transform-elastic-cisco-ios",),
     "dfe-transform-vector": ("dfe-transform-vector-filebeat",),
     "dfe-transform-vrl": ("dfe-transform-vrl-filebeat",),
 }
@@ -57,6 +58,7 @@ RUST_COMPONENTS = [
     "dfe-fetcher",
     "dfe-loader",
     "dfe-receiver",
+    "dfe-transform-elastic",
     "dfe-transform-vector",
     "dfe-transform-vrl",
 ]

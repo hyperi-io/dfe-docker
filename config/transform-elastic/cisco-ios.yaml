@@ -1,0 +1,40 @@
+# Project:   dfe-docker
+# File:      config/transform-elastic/cisco-ios.yaml
+# Purpose:   dfe-transform-elastic config - the per-source instance for the cisco-ios source
+# Language:  YAML
+#
+# License:   BUSL-1.1
+# Copyright: (c) 2026 HYPERI PTY LIMITED
+#
+# One transform instance per source, the same shape the Kubernetes tier deploys:
+# the receiver routes _source=cisco-ios to cisco-ios_land, this instance is the
+# only consumer of that topic, and dfe-loader derives the destination table from
+# the cisco-ios_load topic name.
+#
+# `sources.yaml` in dfe-transform-elastic gives cisco_ios the intakes `beats`
+# and `receiver`, so a device pushing at dfe-receiver and a Beats document both
+# reach this instance; `envelope` is left at its `auto` default, which reads the
+# wrapper off each event rather than pinning one.
+
+pipeline_name: dfe-transform-elastic
+
+source:
+  name: filebeat.cisco_ios.default
+  brokers:
+    - kafka:9092
+  topics:
+    - cisco-ios_land
+  # Explicit, because the single instance and this one must never share a group:
+  # Kafka assigns the union of a group's subscriptions across its members. The
+  # value is dfe-infra apps.yaml's `dfe-transform-elastic-{source}`.
+  group_id: dfe-transform-elastic-cisco-ios
+
+sink:
+  brokers:
+    - kafka:9092
+  topic: cisco-ios_load
+
+# Off for the reason given in transform-elastic/kafka.yaml: this stack has
+# nowhere writable to put the MMDB files.
+geoip:
+  enabled: false

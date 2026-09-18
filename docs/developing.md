@@ -344,6 +344,7 @@ Two things about the runner worth knowing before you debug it:
 ```bash
 DFE_INFRA_DIR=../dfe-infra make test-source
 DFE_INFRA_DIR=../dfe-infra make test-source SOURCE_ARGS="--case cloudwatch --aws-service cloudtrail"
+DFE_INFRA_DIR=../dfe-infra make test-source SOURCE_ARGS="--case elastic"
 ```
 
 Neither harness above adds a source. This one creates one in the console,

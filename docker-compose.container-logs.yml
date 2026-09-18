@@ -49,6 +49,10 @@ services:
     logging: *container-logs
   dfe-receiver:
     logging: *container-logs
+  dfe-transform-elastic:
+    logging: *container-logs
+  dfe-transform-elastic-cisco-ios:
+    logging: *container-logs
   dfe-transform-vector:
     logging: *container-logs
   dfe-transform-vector-filebeat:

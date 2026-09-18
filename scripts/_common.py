@@ -62,6 +62,7 @@ SERVICE_CONFIG_FILE = {
     "dfe-fetcher": "fetcher.yaml",
     "dfe-loader": "loader.yaml",
     "dfe-receiver": "config.yaml",
+    "dfe-transform-elastic": "config.yaml",
     "dfe-transform-vector": "config.yaml",
     "dfe-transform-vrl": "config.yaml",
 }

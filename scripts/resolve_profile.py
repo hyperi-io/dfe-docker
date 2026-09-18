@@ -142,6 +142,8 @@ SERVICE_TO_CONFIG_VAR = {
     "dfe-fetcher": "DFE_FETCHER_CONFIG",
     "dfe-loader": "DFE_LOADER_CONFIG",
     "dfe-receiver": "DFE_RECEIVER_CONFIG",
+    "dfe-transform-elastic": "DFE_TRANSFORM_ELASTIC_CONFIG",
+    "dfe-transform-elastic-cisco-ios": "DFE_TRANSFORM_ELASTIC_CISCO_IOS_CONFIG",
     "dfe-transform-vector": "DFE_TRANSFORM_VECTOR_CONFIG",
     "dfe-transform-vector-filebeat": "DFE_TRANSFORM_VECTOR_FILEBEAT_CONFIG",
     "dfe-transform-vrl": "DFE_TRANSFORM_VRL_CONFIG",
@@ -175,6 +177,7 @@ SERVICE_TO_RENDERED_CONFIG_VAR = {
     "dfe-fetcher": "DFE_FETCHER_CONFIG_FILE",
     "dfe-loader": "DFE_LOADER_CONFIG_FILE",
     "dfe-receiver": "DFE_RECEIVER_CONFIG_FILE",
+    "dfe-transform-elastic": "DFE_TRANSFORM_ELASTIC_CONFIG_FILE",
     "dfe-transform-vrl": "DFE_TRANSFORM_VRL_CONFIG_FILE",
 }
 # A per-source transform instance is a service of its own here, because a
@@ -184,6 +187,8 @@ SERVICES = [
     "dfe-fetcher",
     "dfe-loader",
     "dfe-receiver",
+    "dfe-transform-elastic",
+    "dfe-transform-elastic-cisco-ios",
     "dfe-transform-vector",
     "dfe-transform-vector-filebeat",
     "dfe-transform-vrl",

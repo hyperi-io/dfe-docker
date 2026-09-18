@@ -42,6 +42,12 @@ services:
   dfe-loader:
     image: dfe-loader:local
 
+  dfe-transform-elastic:
+    image: dfe-transform-elastic:local
+
+  dfe-transform-elastic-cisco-ios:
+    image: dfe-transform-elastic:local
+
   dfe-transform-vector:
     image: dfe-transform-vector:local
 

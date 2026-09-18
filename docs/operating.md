@@ -142,6 +142,7 @@ Per-port, as published in `docker-compose.yml`:
 | 9094 | dfe-fetcher | operator | Metrics and health |
 | 9095 | dfe-transform-vector | operator | Metrics and health |
 | 9096 | dfe-transform-vrl | operator | Metrics and health |
+| 9099 | dfe-transform-elastic | operator | Metrics and health |
 | 13133 | otel-collector | operator | `health_check` extension |
 | 50051 | dfe-loader | operator | Internal `DfeTransport/Push` gRPC |
 

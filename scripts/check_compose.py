@@ -264,6 +264,8 @@ _DFE_OWNED_SERVICES = {
     "dfe-fetcher",
     "dfe-loader",
     "dfe-receiver",
+    "dfe-transform-elastic",
+    "dfe-transform-elastic-cisco-ios",
     "dfe-transform-vector",
     "dfe-transform-vector-filebeat",
     "dfe-transform-vrl",
