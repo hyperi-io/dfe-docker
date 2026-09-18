@@ -35,15 +35,18 @@ image is pinned. Compose aborts on the FIRST missing variable, so one surviving
 ``${VAR:?}`` anywhere is enough to make this pass -- a new ``${SOMETHING:-latest}``
 slipping in alongside it would not be caught.
 
-Nor does it prove a pin is a DIGEST. Every ``*_VERSION`` the stack SSoT renders is
-``tag@sha256:...``, including ``DFE_HYPERDX_VERSION`` now that versions.yaml carries
-a ``digests.dfe-hyperdx`` entry. The render falls back to a bare tag whenever that
-key is absent, so absence downgrades the pin silently rather than failing.
+The second check covers what the first cannot see. Compose aborts on the FIRST
+missing variable, so one surviving ``${VAR:?}`` is enough to make the run above
+pass, and a new ``${SOMETHING:-latest}`` beside it would resolve to whatever the
+registry serves. So every ``image:`` is read directly and required to resolve to a
+DIGEST: a mandatory ``${VAR:?}`` whose value `make stack` refuses to write without
+one, or a default that carries the digest itself.
 """
 
 from __future__ import annotations
 
 import os
+import re
 import subprocess
 import sys
 import tempfile
@@ -53,6 +56,37 @@ from _common import COMPOSE_FILE, REPO_ROOT, _print, _required_compose_vars
 # What compose says when a `${VAR:?}` is unset. Matching on this rather than the
 # exit code alone distinguishes "hard-failed as designed" from "broken YAML".
 _EXPECTED = "is missing a value"
+
+_IMAGE_LINE = re.compile(r"^\s*image:\s*(?P<ref>\S.*?)\s*$")
+# `${NAME:-default}` or `${NAME:?message}`. Defaults carry no braces of their own.
+_INTERPOLATION = re.compile(
+    r"\$\{(?P<name>[A-Za-z_][A-Za-z0-9_]*)(?P<form>:[-?])(?P<default>[^}]*)\}"
+)
+_DIGEST = re.compile(r"@sha256:[0-9a-f]{64}")
+
+
+def _undigested_images() -> list[str]:
+    """Return a `file:line: reference` for every image that can resolve undigested.
+
+    The LAST interpolation on the line is the tag -- the first, where there is
+    one, is the registry prefix.
+    """
+    findings: list[str] = []
+    text = COMPOSE_FILE.read_text(encoding="utf-8", errors="replace")
+    for number, line in enumerate(text.splitlines(), start=1):
+        match = _IMAGE_LINE.match(line)
+        if not match:
+            continue
+        reference = match.group("ref")
+        interpolations = list(_INTERPOLATION.finditer(reference))
+        tag = interpolations[-1] if interpolations else None
+        if tag is not None and tag.group("form") == ":?":
+            continue
+        carrier = tag.group("default") if tag is not None else reference
+        if _DIGEST.search(carrier):
+            continue
+        findings.append(f"{COMPOSE_FILE.name}:{number}: {reference}")
+    return findings
 
 
 def _scrubbed_env() -> dict[str, str]:
@@ -109,6 +143,19 @@ def main() -> int:
 
     _print(msg=f"OK   unpinned stack hard-fails ({len(required)} mandatory key(s))")
     _print(msg=f"     {detail.splitlines()[0]}")
+
+    undigested = _undigested_images()
+    if undigested:
+        _print(
+            msg=f"{len(undigested)} image(s) can resolve without a digest -- give the "
+            "tag a mandatory `${VAR:?}` the stack pins, or a default carrying "
+            "`@sha256:`"
+        )
+        for finding in undigested:
+            _print(msg=f"     {finding}")
+        return 1
+
+    _print(msg="OK   every image resolves to a digest")
     return 0
 
 

@@ -75,6 +75,11 @@ from init import _create_dotenv
 # _VERSION; only such active (non-comment) lines from the fragment are merged.
 _PIN_LINE = re.compile(r"^(?P<key>[A-Z][A-Z0-9_]*)=(?P<rest>.+)$")
 
+# Which stack the pins came from. `make modes` reports it and `VERSION ?=
+# $(DFE_STACK_VERSION)` defaults from it, so it rides in `.env` beside the pins
+# while naming a stack rather than an image.
+STACK_VERSION_KEY = "DFE_STACK_VERSION"
+
 # A compose image line for an image WE publish: the registry default is captured
 # so `.env` need not set IMAGE_REGISTRY for the repo to be known.
 _OUR_IMAGE_LINE = re.compile(
@@ -187,6 +192,28 @@ def _parse_pins(fragment: str) -> dict[str, str]:
     return pins
 
 
+def _refuse_undigested(pins: dict[str, str]) -> None:
+    """Raise unless every pin carries a digest.
+
+    A tag is a moving pointer, so a pin without one names whatever the registry
+    serves at pull time rather than the image the stack was certified on. The
+    render emits a bare tag wherever versions.yaml has no `digests` entry for the
+    image, and nothing downstream can tell the difference.
+    """
+    bare = sorted(
+        key
+        for key, line in pins.items()
+        # The stack marker is a version string, not an image reference.
+        if key != STACK_VERSION_KEY
+        and "@sha256:" not in line.split("=", 1)[1].split("  #", 1)[0]
+    )
+    if bare:
+        raise StackError(
+            f"the render produced {len(bare)} pin(s) with no digest: "
+            f"{', '.join(bare)} -- add a `digests` entry for each in the stack SSoT"
+        )
+
+
 def _our_image_repos() -> dict[str, str]:
     """Map each pin key to the ghcr.io/hyperi-io image repo that compose tags with it.
 
@@ -290,13 +317,14 @@ def main() -> int:
             )
         if discover:
             pins |= _latest_image_pins(prereleases=DISCOVERY_WORDS[requested])
+        _refuse_undigested(pins)
         # Record WHICH stack these pins came from, alongside them. `make modes`
         # reports this key and `VERSION ?= $(DFE_STACK_VERSION)` defaults from
         # it, so a stale value makes both describe a stack the box is not on.
         # A discovered set records the WORD, so a re-run refreshes rather than
         # freezing on the stack that happened to be newest at the time.
         marker = {
-            "DFE_STACK_VERSION": f"DFE_STACK_VERSION={requested}"
+            STACK_VERSION_KEY: f"{STACK_VERSION_KEY}={requested}"
             + (f"  # resolved {version} + newest DFE images" if discover else "")
         }
         merged = _merge_into_env(
@@ -311,7 +339,7 @@ def main() -> int:
         )
         for key in pins:
             _print(msg=f"  {pins[key]}")
-        stamped = marker["DFE_STACK_VERSION"]
+        stamped = marker[STACK_VERSION_KEY]
         _print(
             msg=f"  {stamped}"
             if discover
