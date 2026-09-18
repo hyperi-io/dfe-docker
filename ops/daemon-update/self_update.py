@@ -24,6 +24,11 @@ Flow:
   4. If newer (or nothing applied yet): fast-forward the checkout, then
      `make stack VERSION=<new>` then `make ci`, and record the version on success.
 
+A target that ranks BELOW the applied version is refused at step 4 and logged. The
+newest PUBLISHED manifest can be older than what a VM runs -- a box installed from
+a cut branch is exactly that -- and applying it would roll the deployment
+backwards.
+
 A stack version is images PLUS the compose that runs them, so step 4 refreshes
 the checkout first. Pinning new images against an old docker-compose.yml is a
 half-update that reports success: the 2.2.0-rc.2 engine, for one, needs a
@@ -53,10 +58,16 @@ import sys
 from pathlib import Path
 
 # The tag discovery is shared with `make stack VERSION=latest`, so it lives in
-# the checkout's scripts/ and is imported from there.
+# the checkout's scripts/ and is imported from there. `_sort_key` comes with it so
+# the floor below ranks versions the same way the discovery does.
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "scripts"))
 
-from _registry import RegistryError, latest_tag, manifest_repo  # noqa: E402
+from _registry import (  # noqa: E402
+    RegistryError,
+    _sort_key,
+    latest_tag,
+    manifest_repo,
+)
 
 # Records the version this VM last successfully applied. Gitignored; lives beside
 # the checkout so it survives across timer runs.
@@ -88,6 +99,18 @@ def _applied_version(state_path: Path) -> str | None:
         return None
     value = state_path.read_text(encoding="utf-8", errors="replace").strip()
     return value or None
+
+
+def _is_downgrade(*, applied: str, target: str) -> bool:
+    """Whether the published target ranks BELOW the version this VM already runs.
+
+    A pair that cannot be ranked -- a hand-written state file, a tag that is not
+    semver -- is not a downgrade: there is no ordering to refuse on.
+    """
+    try:
+        return _sort_key(version=target) < _sort_key(version=applied)
+    except RegistryError:
+        return False
 
 
 def _record_applied(state_path: Path, version: str) -> None:
@@ -227,6 +250,13 @@ def main() -> int:
 
         if applied == latest:
             _log("already current - nothing to do")
+            return 0
+        if applied and _is_downgrade(applied=applied, target=latest):
+            _log(
+                f"refusing {applied} -> {latest}: the newest published manifest is "
+                "older than the version this VM has applied, so the update would "
+                "roll it backwards"
+            )
             return 0
         if args.dry_run:
             _log(f"dry-run: would update {applied or '(none)'} -> {latest}")

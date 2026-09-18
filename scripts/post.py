@@ -12,11 +12,12 @@
 Eight claims. SUBSCRIPTION: where the tier has a bus, the loader is fetching at
 least one topic, so the events about to be injected have a consumer at all.
 INGEST: uniquely-marked events put in at the ingest edge come out as those exact
-rows in ClickHouse. SELF-MONITORING: when the profile runs a collector,
-the stack's own telemetry is landing FRESH in the otel database, and each named
-service's stdout is landing under its own name. OBSERVABILITY: HyperDX holds the
-sources this deployment seeds it and the dashboards the engine ships, read through
-the proxy that gives it an identity. CONSOLE: those same marked rows read back
+rows in ClickHouse. SELF-MONITORING: when the profile runs a collector, the
+stack's own telemetry is landing FRESH in the otel database, every service that
+pushes is in it under its own name, and each named service's stdout is landing
+under its own name. OBSERVABILITY: HyperDX holds the sources this deployment
+seeds it and the dashboards the engine ships, read over the compose network
+through the proxy that fronts it. CONSOLE: those same marked rows read back
 through the engine query API that dfe-ui uses, so the data is not merely stored but
 reachable from the surface an operator works in. HUNTS: a hunt created through the
 API while the runner is already running is picked up and executed, and its
@@ -37,9 +38,10 @@ OPT-OUT, not opt-in: it runs unless `DFE_POST_ENABLED=false`. Something that onl
 runs when you remember to ask for it is not a power-on self test.
 
 Exit codes:
-  0  every claim the active profile can make, held (or the POST was skipped for a
-     stated reason -- disabled, or the running profile has no ingest component)
-  1  a claim failed, or could not be checked
+  0  every claim the active profile can make, held (or POST is switched off)
+  1  a claim failed, could not be checked, or the run asserted nothing at all --
+     each SKIP is honest on its own, but a run that proved nothing must not read
+     as a pass
 
 Deliberately NOT a Docker HEALTHCHECK or a component entrypoint step. This
 assertion is cross-service and needs the whole stack up, which no single
@@ -53,16 +55,20 @@ from __future__ import annotations
 
 import json
 import os
+import subprocess
 import sys
 import time
+import typing
 from urllib.parse import quote
 
 from _common import FALSY, _load_dotenv, _print, _profile_mk_value, _resolved_services
 from _pipeline import (
     MARKER_EXPRESSIONS,
+    _decoded,
     ch_count,
     ch_int,
     ch_marker_count,
+    ch_query,
     escape_literal,
     http_delete,
     http_get,
@@ -137,6 +143,30 @@ CONTAINER_LOGS_KEY = "DFE_CONTAINER_LOGS_ENABLED"
 # them; these three are the data path plus the control plane.
 CONTAINER_LOG_SERVICES = ("dfe-engine", "dfe-loader", "dfe-receiver")
 
+# The services whose OWN metrics have to reach the otel database, as name prefixes
+# so a per-source instance (dfe-transform-vrl-filebeat) is covered by its app.
+# dfe-ui carries the OTel API and no SDK, and dfe-hunt-runner keeps scalo-py's
+# prometheus backend, so neither pushes.
+OTEL_PUSHER_PREFIXES = (
+    "dfe-archiver",
+    "dfe-engine",
+    "dfe-fetcher",
+    "dfe-loader",
+    "dfe-receiver",
+    "dfe-transform-vector",
+    "dfe-transform-vrl",
+)
+# Metrics only: traces are sampled at 0.05, so a service missing from them is a
+# sampling outcome rather than one that is not exporting.
+OTEL_METRICS_TABLES = (
+    "otel_metrics_gauge",
+    "otel_metrics_histogram",
+    "otel_metrics_sum",
+)
+# The Rust apps push on a 60s export interval, so this outlasts one whole interval
+# plus the stagger between a service starting and the check asking.
+OTEL_SERVICE_TIMEOUT_SECONDS = 180.0
+
 # HyperDX assertion. The team is created by the first identified request, its
 # sources are seeded with it, and the dashboard provisioner runs on a one-minute
 # cron -- so this polls rather than probing once.
@@ -151,6 +181,19 @@ HYPERDX_SEEDED_SOURCES = (
 )
 HYPERDX_TIMEOUT_SECONDS = 180.0
 HYPERDX_INTERVAL_SECONDS = 5.0
+
+# HyperDX and the engine answer on UI-class ports, and whether those reach the
+# host is a deployment dial: DFE_HYPERDX_UI_EXTERNAL=false publishes neither
+# HyperDX origin, and a published UI port binds DFE_UI_BIND_HOST rather than the
+# ingest address. Both APIs are therefore read over the compose network, where the
+# addresses are the container ports and hold on every exposure setting.
+API_EXEC_SERVICE = "dfe-engine"
+API_REQUEST_KEY = "DFE_POST_API_REQUEST"
+ENGINE_NETWORK_BASE = "http://dfe-engine:8000/api/v1"
+HYPERDX_NETWORK_BASE = "http://dfe-hyperdx-proxy:8000"
+# Long enough for docker to start the exec on a loaded host, on top of whatever
+# the request itself is given.
+API_EXEC_MARGIN_SECONDS = 10
 
 # Console assertion. dfe-ui holds no ClickHouse credential of its own -- it reads
 # through the engine's query API -- so exercising that API with the break-glass
@@ -219,6 +262,21 @@ WEAK_SECRET_DEFAULTS = {
 }
 
 
+class Claim(typing.NamedTuple):
+    """One claim's outcome: whether it asserted at all, and what failed.
+
+    A skip and a pass both report no failure, so the two have to stay
+    distinguishable somewhere: a run that skipped everything proved nothing.
+    """
+
+    asserted: bool
+    failed: int
+
+
+SKIPPED = Claim(asserted=False, failed=0)
+HELD = Claim(asserted=True, failed=0)
+
+
 def _weak_secrets() -> list[tuple[str, str]]:
     """Return (name, value) for every in-use secret still at its built-in default.
 
@@ -259,6 +317,132 @@ def _enabled() -> bool:
     if raw is None:
         return True
     return raw.strip().lower() not in FALSY
+
+
+class ApiUnreachable(Exception):
+    """An API on the compose network could not be reached at all."""
+
+
+# Run inside API_EXEC_SERVICE by `_exec_request`, which is why the request arrives
+# in an environment variable rather than on the command line. It prints the status
+# on the first line and the body after it, and exits non-zero when there was no
+# response at all -- the split urlopen makes, so both transports read alike.
+_EXEC_REQUEST_SCRIPT = """
+import json
+import os
+import sys
+import urllib.error
+import urllib.request
+
+spec = json.loads(os.environ["DFE_POST_API_REQUEST"])
+body = spec["body"].encode() if spec["body"] else None
+request = urllib.request.Request(spec["url"], data=body, method=spec["method"])
+if body is not None:
+    request.add_header("Content-Type", "application/json")
+if spec["token"]:
+    request.add_header("Authorization", "Bearer " + spec["token"])
+try:
+    with urllib.request.urlopen(request, timeout=spec["timeout"]) as response:
+        print(response.status)
+        sys.stdout.write(response.read().decode())
+except urllib.error.HTTPError as error:
+    print(error.code)
+    sys.stdout.write(error.read().decode())
+except Exception as error:
+    sys.exit(f"{type(error).__name__}: {error}")
+"""
+
+
+def _over_network(url: str) -> bool:
+    """Whether this URL names a container, so only a caller inside can reach it."""
+    return url.startswith((ENGINE_NETWORK_BASE, HYPERDX_NETWORK_BASE))
+
+
+def _exec_request(
+    *, method: str, url: str, payload: dict | None, timeout: int, token: str
+) -> tuple[int, str]:
+    """Make one request from INSIDE the stack, returning (status, body text)."""
+    spec = {
+        "body": json.dumps(payload) if payload is not None else "",
+        "method": method,
+        "timeout": timeout,
+        "token": token,
+        "url": url,
+    }
+    result = subprocess.run(
+        [
+            "docker",
+            "exec",
+            "-e",
+            f"{API_REQUEST_KEY}={json.dumps(spec)}",
+            API_EXEC_SERVICE,
+            "python",
+            "-c",
+            _EXEC_REQUEST_SCRIPT,
+        ],
+        capture_output=True,
+        check=False,
+        text=True,
+        timeout=timeout + API_EXEC_MARGIN_SECONDS,
+    )
+    if result.returncode != 0:
+        raise ApiUnreachable(
+            f"{method} {url} from {API_EXEC_SERVICE}: "
+            f"{result.stderr.strip() or 'docker exec failed'}"
+        )
+    status, _, body = result.stdout.partition("\n")
+    try:
+        return int(status), body
+    except ValueError as error:
+        raise ApiUnreachable(
+            f"{method} {url} from {API_EXEC_SERVICE} answered no status: "
+            f"{result.stdout.strip()!r}"
+        ) from error
+
+
+def _api_get(url: str, timeout: int = 5) -> str:
+    """GET a URL over whichever transport reaches it, and return the body."""
+    if not (_over_network(url)):
+        return http_get(url, timeout=timeout)
+    status, body = _exec_request(
+        method="GET", url=url, payload=None, timeout=timeout, token=""
+    )
+    if status >= 400:
+        raise ApiUnreachable(f"GET {url} returned HTTP {status}")
+    return body
+
+
+def _api_get_json(
+    url: str, token: str = "", timeout: int = 30
+) -> tuple[int, typing.Any]:
+    """GET and return (status, decoded body), over whichever transport reaches it."""
+    if not (_over_network(url)):
+        return http_get_json(url, token=token, timeout=timeout)
+    status, body = _exec_request(
+        method="GET", url=url, payload=None, timeout=timeout, token=token
+    )
+    return status, _decoded(body)
+
+
+def _api_post_json(
+    url: str, payload: dict, token: str = "", timeout: int = 30
+) -> tuple[int, typing.Any]:
+    """POST JSON and return (status, decoded body), over whichever transport reaches it."""
+    if not (_over_network(url)):
+        return http_post_json(url, payload, token=token, timeout=timeout)
+    status, body = _exec_request(
+        method="POST", url=url, payload=payload, timeout=timeout, token=token
+    )
+    return status, _decoded(body)
+
+
+def _api_delete(url: str, token: str = "", timeout: int = 10) -> int:
+    """DELETE a resource over whichever transport reaches it, returning the status."""
+    if not (_over_network(url)):
+        return http_delete(url, token=token, timeout=timeout)
+    return _exec_request(
+        method="DELETE", url=url, payload=None, timeout=timeout, token=token
+    )[0]
 
 
 def _wait_ready(url: str) -> bool:
@@ -421,7 +605,7 @@ def _cleanup(database: str, table: str, marker: str) -> None:
     )
 
 
-def _verify_self_monitoring() -> int:
+def _verify_self_monitoring() -> Claim:
     """Prove the stack's OWN telemetry reaches ClickHouse, when a collector runs.
 
     The second of the two pipelines a complete stack has to land, matching the
@@ -431,7 +615,7 @@ def _verify_self_monitoring() -> int:
         _print(
             msg=f"SKIP  {OTEL_SERVICE} not in the active profile -- no self-telemetry to prove"
         )
-        return 0
+        return SKIPPED
 
     database = os.environ.get("DFE_OTEL_DATABASE", "dfe")
     _print(
@@ -474,20 +658,85 @@ def _verify_self_monitoring() -> int:
             msg=f"FAIL  no {database} table could be read within "
             f"{OTEL_TIMEOUT_SECONDS:.0f}s -- the collector never wrote its schema"
         )
-        return 1
+        return Claim(asserted=True, failed=1)
     landed = {table: count for table, count in counts.items() if count}
     if not (landed):
         _print(
             msg=f"FAIL  {database} exists but carries no rows newer than "
             f"{OTEL_FRESH_WINDOW_SECONDS}s -- the services are not exporting"
         )
-        return 1
+        return Claim(asserted=True, failed=1)
     summary = ", ".join(f"{table}={count}" for table, count in sorted(landed.items()))
     _print(msg=f"PASS  self-telemetry is streaming into {database} ({summary})")
+    failed = _verify_service_metrics(database=database)
     if wants_logs:
-        return _verify_container_logs(database=database)
+        failed += _verify_container_logs(database=database)
+    else:
+        _print(
+            msg=f"SKIP  {CONTAINER_LOGS_KEY} is false -- container stdout is not shipped"
+        )
+    return Claim(asserted=True, failed=failed)
+
+
+def _otel_expected_services() -> list[str]:
+    """The resolved services whose own metrics have to be in the otel database."""
+    return sorted(
+        service
+        for service in _resolved_services()
+        if service.startswith(OTEL_PUSHER_PREFIXES)
+    )
+
+
+def _otel_reporting_services(*, database: str) -> set[str]:
+    """Every ServiceName carrying fresh rows in the otel metrics tables."""
+    union = " UNION ALL ".join(
+        f"SELECT DISTINCT ServiceName FROM {database}.{table} "
+        f"WHERE TimeUnix > now() - INTERVAL {OTEL_FRESH_WINDOW_SECONDS} SECOND"
+        for table in OTEL_METRICS_TABLES
+    )
+    raw = ch_query(f"SELECT DISTINCT ServiceName FROM ({union})")
+    return {line.strip() for line in raw.splitlines() if line.strip()}
+
+
+def _verify_service_metrics(*, database: str) -> int:
+    """Prove every service that pushes is in the otel database under its own name.
+
+    Freshness alone passes on one service exporting, and the engine supplies a row
+    immediately, so the apps' own export interval was never waited out.
+    """
+    expected = _otel_expected_services()
+    if not (expected):
+        _print(
+            msg="      note: this profile runs no service that pushes its own metrics"
+        )
+        return 0
+
+    _print(msg=f"Waiting for per-service metrics in {database} ({', '.join(expected)})")
+
+    def _report(attempt, result):
+        _print(
+            msg=f"  attempt {attempt}: exporting = {', '.join(sorted(result)) or 'none'}"
+        )
+
+    reporting = poll_until(
+        lambda: _otel_reporting_services(database=database),
+        timeout=OTEL_SERVICE_TIMEOUT_SECONDS,
+        interval=OTEL_INTERVAL_SECONDS,
+        done=lambda result: set(expected).issubset(result),
+        on_attempt=_report,
+    )
+
+    silent = sorted(set(expected) - set(reporting))
+    if silent:
+        _print(
+            msg=f"FAIL  nothing in {database} under {', '.join(silent)} within "
+            f"{OTEL_SERVICE_TIMEOUT_SECONDS:.0f}s -- those services are not pushing "
+            "to the collector"
+        )
+        return 1
     _print(
-        msg=f"SKIP  {CONTAINER_LOGS_KEY} is false -- container stdout is not shipped"
+        msg=f"PASS  every pushing service is in {database} under its own name "
+        f"({', '.join(expected)})"
     )
     return 0
 
@@ -592,7 +841,7 @@ def _metric_label_values(body: str, name: str, label: str) -> set[str]:
     return found
 
 
-def _verify_loader_subscription() -> int:
+def _verify_loader_subscription() -> Claim:
     """Prove the loader is fetching a topic, on a tier that has a bus.
 
     The loader discovers its topics from the broker, so a topic that never appears
@@ -602,12 +851,12 @@ def _verify_loader_subscription() -> int:
     """
     if _profile_mk_value(key=TRANSPORT_BUS_KEY)[:1] != ["true"]:
         _print(msg="SKIP  this tier has no bus -- the loader is handed its events")
-        return 0
+        return SKIPPED
     if LOADER_SERVICE not in set(_resolved_services()):
         _print(
             msg=f"SKIP  {LOADER_SERVICE} not in the active profile -- no subscription to prove"
         )
-        return 0
+        return SKIPPED
 
     bind = os.environ.get("DFE_POST_HOST", "localhost")
     port = (
@@ -643,9 +892,9 @@ def _verify_loader_subscription() -> int:
             "`docker compose logs dfe-loader` (grep 'Resolved Kafka topics') and see "
             "the `main_load` entry in docs/troubleshooting.md"
         )
-        return 1
+        return Claim(asserted=True, failed=1)
     _print(msg=f"PASS  {LOADER_SERVICE} is fetching {', '.join(sorted(topics))}")
-    return 0
+    return HELD
 
 
 def _idle_apps() -> list[tuple[str, str]]:
@@ -668,7 +917,7 @@ def _idle_apps() -> list[tuple[str, str]]:
     return found
 
 
-def _verify_idle_apps() -> int:
+def _verify_idle_apps() -> Claim:
     """Prove each app the tier starts with no work is serving and doing nothing.
 
     Two-sided on purpose. A container that crash-looped on the idle config fails
@@ -680,7 +929,7 @@ def _verify_idle_apps() -> int:
         _print(
             msg="SKIP  this profile starts no app with an idle config -- nothing to prove"
         )
-        return 0
+        return SKIPPED
 
     bind = os.environ.get("DFE_POST_HOST", "localhost")
     failed = 0
@@ -713,7 +962,7 @@ def _verify_idle_apps() -> int:
             failed += 1
         else:
             _print(msg=f"PASS  {service} is ready and inert ({IDLE_GAUGE}=1)")
-    return failed
+    return Claim(asserted=True, failed=failed)
 
 
 def _create_routed_source(*, base: str, name: str, token: str) -> str:
@@ -722,7 +971,7 @@ def _create_routed_source(*, base: str, name: str, token: str) -> str:
     The deploy is what makes the source live: it creates the landing table, ensures
     the topic and pushes the compiled routing into the apps' overlays.
     """
-    status, body = http_post_json(
+    status, body = _api_post_json(
         f"{base}/sources",
         {
             "source": name,
@@ -735,7 +984,7 @@ def _create_routed_source(*, base: str, name: str, token: str) -> str:
     )
     if status != 201:
         return f"POST /sources returned HTTP {status}: {body}"
-    status, body = http_post_json(f"{base}/sources/{name}/deploy", {}, token=token)
+    status, body = _api_post_json(f"{base}/sources/{name}/deploy", {}, token=token)
     if status != 200 or not (isinstance(body, dict) and body.get("applied")):
         return f"POST /sources/{name}/deploy returned HTTP {status}: {body}"
     if body.get("apps_sync_error"):
@@ -745,7 +994,7 @@ def _create_routed_source(*, base: str, name: str, token: str) -> str:
     return ""
 
 
-def _verify_routing_applied(*, database: str) -> int:
+def _verify_routing_applied(*, database: str) -> Claim:
     """Prove a source created through the API reaches the RUNNING receiver.
 
     The artefact is a row in the new source's own table, not a file on a volume:
@@ -757,7 +1006,7 @@ def _verify_routing_applied(*, database: str) -> int:
             msg="SKIP  the engine does not render this tier's app config -- its apps "
             "read a committed config, so no API write reaches them"
         )
-        return 0
+        return SKIPPED
     absent = [
         name for name in ROUTING_SERVICES if name not in set(_resolved_services())
     ]
@@ -765,7 +1014,7 @@ def _verify_routing_applied(*, database: str) -> int:
         _print(
             msg=f"SKIP  {', '.join(absent)} not in the active profile -- no routing to prove"
         )
-        return 0
+        return SKIPPED
 
     base = _engine_base()
     token, status, username = _login(base)
@@ -774,7 +1023,7 @@ def _verify_routing_applied(*, database: str) -> int:
             msg=f"FAIL  login as {username!r} returned HTTP {status} -- this run cannot "
             "create the source it needs to prove the routing reaches the receiver"
         )
-        return 1
+        return Claim(asserted=True, failed=1)
 
     name = f"{ROUTING_SOURCE_PREFIX}{_run_id()[-8:]}"
     _print(msg=f"Creating source {name!r} and posting one event that matches its rule")
@@ -782,10 +1031,12 @@ def _verify_routing_applied(*, database: str) -> int:
     if fault:
         _print(msg=f"FAIL  {fault}")
         _remove(f"{base}/sources/{name}", kind="source", name=name, token=token)
-        return 1
+        return Claim(asserted=True, failed=1)
 
     try:
-        return _await_routed_row(database=database, name=name)
+        return Claim(
+            asserted=True, failed=_await_routed_row(database=database, name=name)
+        )
     finally:
         _remove(f"{base}/sources/{name}", kind="source", name=name, token=token)
 
@@ -833,12 +1084,11 @@ def _await_routed_row(*, database: str, name: str) -> int:
 
 
 def _hyperdx_base() -> str:
-    """The HyperDX API base URL for this stack, through the proxy holding its origins."""
-    bind = os.environ.get("DFE_POST_HOST", "localhost")
-    return f"http://{bind}:{os.environ.get('DFE_HYPERDX_API_PORT', '8000')}"
+    """The HyperDX API base URL, on the compose network through its own proxy."""
+    return HYPERDX_NETWORK_BASE
 
 
-def _verify_hyperdx() -> int:
+def _verify_hyperdx() -> Claim:
     """Prove HyperDX holds its seeded sources and the release's provisioned dashboards.
 
     Both are SERVER-side state, which is the whole point: they are what an operator
@@ -850,7 +1100,7 @@ def _verify_hyperdx() -> int:
         _print(
             msg=f"SKIP  {HYPERDX_SERVICE} not in the active profile -- nothing to prove"
         )
-        return 0
+        return SKIPPED
 
     token, status, username = _login(_engine_base())
     if status != 200 or not (token):
@@ -858,15 +1108,18 @@ def _verify_hyperdx() -> int:
             msg=f"FAIL  login as {username!r} returned HTTP {status} -- HyperDX "
             "verifies that token, so this run cannot read it"
         )
-        return 1
+        return Claim(asserted=True, failed=1)
 
     base = _hyperdx_base()
+    # HyperDX creates the team, its sources and its connections on the first
+    # identity-carrying request it serves, and provisions dashboards onto it from a
+    # one-minute cron, so the poll below is also what starts the seeding.
     _print(msg=f"Waiting for seeded sources and provisioned dashboards at {base}")
 
     def _state():
         try:
-            source_status, sources = http_get_json(f"{base}/sources", token=token)
-            dash_status, dashboards = http_get_json(f"{base}/dashboards", token=token)
+            source_status, sources = _api_get_json(f"{base}/sources", token=token)
+            dash_status, dashboards = _api_get_json(f"{base}/dashboards", token=token)
         except Exception:  # noqa: BLE001 - any failure is "not ready yet"
             return None
         if source_status != 200 or dash_status != 200:
@@ -907,7 +1160,7 @@ def _verify_hyperdx() -> int:
             f"within {HYPERDX_TIMEOUT_SECONDS:.0f}s -- it verifies that token against "
             "the engine's JWKS"
         )
-        return 1
+        return Claim(asserted=True, failed=1)
 
     names, provisioned = state
     missing = sorted(set(HYPERDX_SEEDED_SOURCES) - set(names))
@@ -930,13 +1183,12 @@ def _verify_hyperdx() -> int:
         failed = 1
     else:
         _print(msg=f"PASS  HyperDX carries {provisioned} provisioned dashboard(s)")
-    return failed
+    return Claim(asserted=True, failed=failed)
 
 
 def _engine_base() -> str:
-    """The engine's /api/v1 base URL for this stack."""
-    bind = os.environ.get("DFE_POST_HOST", "localhost")
-    return f"http://{bind}:{os.environ.get('DFE_ENGINE_PORT', '8003')}/api/v1"
+    """The engine's /api/v1 base URL, on the compose network."""
+    return ENGINE_NETWORK_BASE
 
 
 def _login(base: str) -> tuple[str, int, str]:
@@ -957,7 +1209,7 @@ def _login(base: str) -> tuple[str, int, str]:
     )
     if not (password):
         return "", 0, username
-    status, body = http_post_json(
+    status, body = _api_post_json(
         f"{base}/auth/login", {"username": username, "password": password}
     )
     token = body.get("access_token", "") if isinstance(body, dict) else ""
@@ -974,7 +1226,7 @@ def _ui_query_count(
     """
     escaped = escape_literal(marker)
     for expression in MARKER_EXPRESSIONS:
-        status, body = http_post_json(
+        status, body = _api_post_json(
             f"{base}/queries/raw",
             {
                 "datasource": UI_QUERY_DATASOURCE,
@@ -1002,7 +1254,7 @@ def _ui_query_count(
 def _wizard_rotated_admin_password(*, base: str) -> bool:
     """True when the engine's setup-status says the wizard already rotated the break-glass password."""
     try:
-        status = json.loads(http_get(f"{base}/auth/setup-status"))
+        status = json.loads(_api_get(f"{base}/auth/setup-status"))
     except Exception:  # noqa: BLE001
         return False
     if not isinstance(status, dict):
@@ -1011,7 +1263,7 @@ def _wizard_rotated_admin_password(*, base: str) -> bool:
     return "admin_password" in (initial.get("completed_steps") or [])
 
 
-def _verify_ui_query(*, database: str, marker: str, table: str) -> int:
+def _verify_ui_query(*, database: str, marker: str, table: str) -> Claim:
     """Prove the console's query path returns THIS run's rows.
 
     Rows in ClickHouse are not the same claim as rows an operator can see: the
@@ -1025,7 +1277,7 @@ def _verify_ui_query(*, database: str, marker: str, table: str) -> int:
         _print(
             msg=f"SKIP  {', '.join(absent)} not in the active profile -- no console query path to prove"
         )
-        return 0
+        return SKIPPED
 
     base = _engine_base()
     token, status, username = _login(base)
@@ -1036,9 +1288,9 @@ def _verify_ui_query(*, database: str, marker: str, table: str) -> int:
                 "console credential lives in the env -- set DFE_POST_LOGIN_USER and "
                 "DFE_POST_LOGIN_PASSWORD to prove the query path"
             )
-            return 0
+            return SKIPPED
         _print(msg="FAIL  DFE_AUTH_LOCAL_ADMIN_PASSWORD is unset -- run `make init`")
-        return 1
+        return Claim(asserted=True, failed=1)
 
     _print(msg=f"Querying {database}.{table} through the engine API as {username!r}")
     if status != 200 or not (token):
@@ -1051,7 +1303,7 @@ def _verify_ui_query(*, database: str, marker: str, table: str) -> int:
             "one on the command line (shell env beats .env): "
             "DFE_AUTH_LOCAL_ADMIN_PASSWORD=... make post"
         )
-        return 1
+        return Claim(asserted=True, failed=1)
 
     def _report(attempt, result):
         _print(msg=f"  attempt {attempt}: query API rows = {result}")
@@ -1072,12 +1324,12 @@ def _verify_ui_query(*, database: str, marker: str, table: str) -> int:
             f"/{EVENT_COUNT} of this run's rows within {UI_QUERY_TIMEOUT_SECONDS:.0f}s "
             "-- the rows are in ClickHouse but the console cannot read them"
         )
-        return 1
+        return Claim(asserted=True, failed=1)
 
     _print(
         msg=f"PASS  dfe-ui's query path returned {matched}/{EVENT_COUNT} of this run's rows"
     )
-    return 0
+    return HELD
 
 
 def _create_hunt_rule(
@@ -1085,7 +1337,7 @@ def _create_hunt_rule(
 ) -> str:
     """Create the detection rule this run's hunt names. Returns '' or the fault."""
     escaped = escape_literal(marker)
-    status, body = http_post_json(
+    status, body = _api_post_json(
         f"{base}/rules",
         {
             "name": name,
@@ -1105,7 +1357,7 @@ def _create_hunt(
     *, base: str, database: str, name: str, rule: str, table: str, token: str
 ) -> str:
     """Create the hunt over this run's rows. Returns '' or the fault."""
-    status, body = http_post_json(
+    status, body = _api_post_json(
         f"{base}/hunts",
         {
             "name": name,
@@ -1124,14 +1376,14 @@ def _create_hunt(
 
 def _remove(url: str, *, kind: str, name: str, token: str) -> None:
     """Delete one thing this run created, and say so when it does not go."""
-    status = http_delete(url, token=token)
+    status = _api_delete(url, token=token)
     if status not in (200, 204):
         _print(msg=f"      note: {kind} {name!r} was not removed (HTTP {status})")
 
 
 def _hunt_status(*, base: str, token: str) -> tuple[bool, int]:
     """Read (running, hunt_count) off GET /hunts/status, or (False, -1) if unreadable."""
-    status, body = http_get_json(f"{base}/hunts/status", token=token, timeout=10)
+    status, body = _api_get_json(f"{base}/hunts/status", token=token, timeout=10)
     if status != 200 or not (isinstance(body, dict)):
         return False, -1
     return bool(body.get("running")), int(body.get("hunt_count", -1))
@@ -1139,7 +1391,7 @@ def _hunt_status(*, base: str, token: str) -> tuple[bool, int]:
 
 def _hunt_http_status(*, base: str, hunt: str, token: str) -> int:
     """Return the HTTP status GET /hunts/<name> answers with: 200 present, 404 absent."""
-    status, _ = http_get_json(
+    status, _ = _api_get_json(
         f"{base}/hunts/{quote(hunt, safe='')}", token=token, timeout=10
     )
     return status
@@ -1163,7 +1415,7 @@ def _assert_hunt_removed(*, base: str, hunt: str, token: str) -> int:
     return 0
 
 
-def _verify_hunt(*, database: str, marker: str, table: str) -> int:
+def _verify_hunt(*, database: str, marker: str, table: str) -> Claim:
     """Prove a hunt created while the runner is running is picked up and executed.
 
     Two things have to be true and only one of them is about ClickHouse. The
@@ -1171,13 +1423,17 @@ def _verify_hunt(*, database: str, marker: str, table: str) -> int:
     anything being restarted, and it must then run it into the detection table.
     A stack where hunts only start working after a bounce is a stack where the
     hunts page lies to whoever just used it.
+
+    A brand-new hunt's first window looks back exactly one cron interval, so this
+    runs before the slower claims: anything ahead of it ages this run's rows out
+    of that window and the detection never fires.
     """
     absent = [name for name in HUNT_SERVICES if name not in set(_resolved_services())]
     if absent:
         _print(
             msg=f"SKIP  {', '.join(absent)} not in the active profile -- no hunt runner to prove"
         )
-        return 0
+        return SKIPPED
 
     base = _engine_base()
     token, status, username = _login(base)
@@ -1187,20 +1443,20 @@ def _verify_hunt(*, database: str, marker: str, table: str) -> int:
             "console credential lives in the env -- set DFE_POST_LOGIN_USER and "
             "DFE_POST_LOGIN_PASSWORD to prove the hunt path"
         )
-        return 0
+        return SKIPPED
     if status == 0:
         _print(
             msg="FAIL  no password for the console is available -- set "
             "DFE_AUTH_LOCAL_ADMIN_PASSWORD (run `make init`) or DFE_POST_LOGIN_PASSWORD, "
             "so this run can create the hunt it needs"
         )
-        return 1
+        return Claim(asserted=True, failed=1)
     if status != 200 or not (token):
         _print(
             msg=f"FAIL  login as {username!r} returned HTTP {status} -- the hunt API "
             "rejected the credential, so this run cannot create the hunt it needs"
         )
-        return 1
+        return Claim(asserted=True, failed=1)
 
     hunt_name = marker
     rule_name = f"{marker}-rule"
@@ -1218,7 +1474,7 @@ def _verify_hunt(*, database: str, marker: str, table: str) -> int:
     )
     if fault:
         _print(msg=f"FAIL  {fault}")
-        return 1
+        return Claim(asserted=True, failed=1)
 
     try:
         fault = _create_hunt(
@@ -1231,7 +1487,7 @@ def _verify_hunt(*, database: str, marker: str, table: str) -> int:
         )
         if fault:
             _print(msg=f"FAIL  {fault}")
-            return 1
+            return Claim(asserted=True, failed=1)
         try:
             result = _await_hunt(
                 base=base, database=database, hunt=hunt_name, token=token
@@ -1240,7 +1496,11 @@ def _verify_hunt(*, database: str, marker: str, table: str) -> int:
             _remove(
                 f"{base}/hunts/{hunt_name}", kind="hunt", name=hunt_name, token=token
             )
-        return result or _assert_hunt_removed(base=base, hunt=hunt_name, token=token)
+        return Claim(
+            asserted=True,
+            failed=result
+            or _assert_hunt_removed(base=base, hunt=hunt_name, token=token),
+        )
     finally:
         _remove(f"{base}/rules/{rule_name}", kind="rule", name=rule_name, token=token)
 
@@ -1357,6 +1617,27 @@ def _await_hunt(*, base: str, database: str, hunt: str, token: str) -> int:
     return 0
 
 
+def _report_claims(*, claims: dict[str, Claim]) -> int:
+    """Say what this run actually asserted, and return the exit code.
+
+    A run where every claim skipped exits non-zero: each SKIP is honest on its
+    own, but a zero exit over a set of them says only that POST ran.
+    """
+    asserted = [name for name, claim in claims.items() if claim.asserted]
+    skipped = [name for name, claim in claims.items() if not (claim.asserted)]
+    _print(
+        msg=f"{len(asserted)}/{len(claims)} claim(s) asserted"
+        + (f" -- skipped: {', '.join(skipped)}" if skipped else "")
+    )
+    if not (asserted):
+        _print(
+            msg="FAIL  this run asserted nothing -- no data moved and no claim was "
+            "checked, so there is nothing for the exit code to mean"
+        )
+        return 1
+    return 1 if sum(claim.failed for claim in claims.values()) else 0
+
+
 def main() -> int:
     _load_dotenv()
 
@@ -1391,14 +1672,22 @@ def main() -> int:
         # (loader-only), so there is nothing to prove end to end. Self-monitoring
         # is a separate pipeline and is still worth asserting.
         _print(msg=f"SKIP  {reason} -- nothing to prove end to end")
-        return _verify_self_monitoring() + _verify_hyperdx() + _verify_idle_apps()
+        return _report_claims(
+            claims={
+                "ingest": SKIPPED,
+                "self-monitoring": _verify_self_monitoring(),
+                "observability": _verify_hyperdx(),
+                "idle apps": _verify_idle_apps(),
+            }
+        )
     except IngestNotReady as reason:
         _print(msg=f"FAIL  {reason}")
         return 1
 
     # Fails fast rather than joining the tally below: injecting into a pipeline
     # whose consumer is not attached proves nothing about the pipeline.
-    if _verify_loader_subscription():
+    subscription = _verify_loader_subscription()
+    if subscription.failed:
         return 1
 
     marker = _run_id()
@@ -1464,14 +1753,23 @@ def main() -> int:
         )
         _cleanup(database, table, marker)
         # Every remaining claim runs even when an earlier one fails, so one boot
-        # reports every broken pipeline rather than the first one.
-        failed = _verify_self_monitoring()
-        failed += _verify_hyperdx()
-        failed += _verify_ui_query(database=database, marker=marker, table=table)
-        failed += _verify_hunt(database=database, marker=marker, table=table)
-        failed += _verify_idle_apps()
-        failed += _verify_routing_applied(database=database)
-        return 1 if failed else 0
+        # reports every broken pipeline rather than the first one. The hunt runs
+        # first because its first window looks back one cron interval from when it
+        # is created: behind a slow claim, this run's rows fall outside it.
+        return _report_claims(
+            claims={
+                "subscription": subscription,
+                "ingest": HELD,
+                "hunts": _verify_hunt(database=database, marker=marker, table=table),
+                "self-monitoring": _verify_self_monitoring(),
+                "observability": _verify_hyperdx(),
+                "console": _verify_ui_query(
+                    database=database, marker=marker, table=table
+                ),
+                "idle apps": _verify_idle_apps(),
+                "routing": _verify_routing_applied(database=database),
+            }
+        )
 
     _print(
         msg=f"FAIL  only {matched}/{EVENT_COUNT} marked event(s) reached "
