@@ -112,6 +112,31 @@ def test_a_repin_never_writes_a_floating_tag(monkeypatch: pytest.MonkeyPatch) ->
         assert not value.startswith("latest")
 
 
+def test_a_pin_with_no_digest_is_refused() -> None:
+    """A bare tag is what the render emits when versions.yaml has no digests entry."""
+    pins = {
+        "DFE_ENGINE_VERSION": f"DFE_ENGINE_VERSION=v1.21.2@sha256:{'a' * 64}",
+        "DFE_HYPERDX_VERSION": "DFE_HYPERDX_VERSION=v2.3.1  # no digests entry",
+    }
+
+    with pytest.raises(stack.StackError, match="DFE_HYPERDX_VERSION"):
+        stack._refuse_undigested(pins)
+
+
+def test_a_fully_digested_set_passes() -> None:
+    pins = {
+        "DFE_ENGINE_VERSION": f"DFE_ENGINE_VERSION=v1.21.2@sha256:{'a' * 64}",
+        "CLICKHOUSE_VERSION": f"CLICKHOUSE_VERSION=25.8@sha256:{'b' * 64}  # certified",
+    }
+
+    stack._refuse_undigested(pins)
+
+
+def test_the_stack_marker_is_not_read_as_an_image_pin() -> None:
+    """It names the stack these pins came from, so it carries no digest."""
+    stack._refuse_undigested({stack.STACK_VERSION_KEY: "DFE_STACK_VERSION=2.2.0-rc.14"})
+
+
 def test_the_discovery_words_are_the_two_the_makefile_documents() -> None:
     assert _registry.DISCOVERY_WORDS == {"latest": "fallback", "rc": "include"}
     assert set(_registry.DISCOVERY_WORDS.values()) <= set(_registry.PRERELEASES)
