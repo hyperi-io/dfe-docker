@@ -61,7 +61,14 @@ import time
 import typing
 from urllib.parse import quote
 
-from _common import FALSY, _load_dotenv, _print, _profile_mk_value, _resolved_services
+from _common import (
+    FALSY,
+    _container_name,
+    _load_dotenv,
+    _print,
+    _profile_mk_value,
+    _resolved_services,
+)
 from _pipeline import (
     MARKER_EXPRESSIONS,
     _decoded,
@@ -187,6 +194,8 @@ HYPERDX_INTERVAL_SECONDS = 5.0
 # HyperDX origin, and a published UI port binds DFE_UI_BIND_HOST rather than the
 # ingest address. Both APIs are therefore read over the compose network, where the
 # addresses are the container ports and hold on every exposure setting.
+# The exec target is a CONTAINER name, so it carries DFE_CONTAINER_PREFIX; the
+# two network bases below are compose service keys, which the prefix never moves.
 API_EXEC_SERVICE = "dfe-engine"
 API_REQUEST_KEY = "DFE_POST_API_REQUEST"
 ENGINE_NETWORK_BASE = "http://dfe-engine:8000/api/v1"
@@ -369,13 +378,14 @@ def _exec_request(
         "token": token,
         "url": url,
     }
+    container = _container_name(service=API_EXEC_SERVICE)
     result = subprocess.run(
         [
             "docker",
             "exec",
             "-e",
             f"{API_REQUEST_KEY}={json.dumps(spec)}",
-            API_EXEC_SERVICE,
+            container,
             "python",
             "-c",
             _EXEC_REQUEST_SCRIPT,
@@ -387,7 +397,7 @@ def _exec_request(
     )
     if result.returncode != 0:
         raise ApiUnreachable(
-            f"{method} {url} from {API_EXEC_SERVICE}: "
+            f"{method} {url} from {container}: "
             f"{result.stderr.strip() or 'docker exec failed'}"
         )
     status, _, body = result.stdout.partition("\n")
@@ -395,7 +405,7 @@ def _exec_request(
         return int(status), body
     except ValueError as error:
         raise ApiUnreachable(
-            f"{method} {url} from {API_EXEC_SERVICE} answered no status: "
+            f"{method} {url} from {container} answered no status: "
             f"{result.stdout.strip()!r}"
         ) from error
 

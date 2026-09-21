@@ -35,6 +35,11 @@ def __find_repo_root(*, marker: str = _REPO_MARKER) -> Path:
 # Basic constants
 FALSY = {"", "0", "false", "no", "off"}
 
+# The key re-prefixing every container_name so a second stack can run beside the
+# first: a container name is daemon-wide, so the compose project name alone does
+# not isolate one. Empty is today's names.
+CONTAINER_PREFIX_KEY = "DFE_CONTAINER_PREFIX"
+
 # The key naming the address a BROWSER reaches this deployment on, and the values
 # of it that resolve on the box the stack runs on and nowhere else.
 EXTERNAL_ORIGIN_KEY = "DFE_EXTERNAL_ORIGIN"
@@ -170,6 +175,17 @@ def _config_enrichment_paths(*, path: Path) -> set[str]:
         if in_block and (line.startswith("path: ") or line.startswith("- path: ")):
             paths.add(line.split("path: ", 1)[1].strip().strip("\"'"))
     return paths
+
+
+def _container_name(*, service: str) -> str:
+    """The daemon-wide container name a `docker` CLI call must use for a service.
+
+    Compose addresses a service by its key and resolves it on the network by that
+    same key, so only the raw `docker exec` / `inspect` / `logs` shapes need this.
+    Call it after _load_dotenv(): the prefix normally arrives from .env, not the
+    shell.
+    """
+    return os.environ.get(CONTAINER_PREFIX_KEY, "").strip() + service
 
 
 def _dotenv_values() -> dict[str, str]:

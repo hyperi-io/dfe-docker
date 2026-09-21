@@ -52,6 +52,7 @@ def test_the_exec_script_reads_the_key_the_request_is_passed_in() -> None:
 def test_a_request_over_the_network_carries_the_method_body_and_token(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    monkeypatch.delenv("DFE_CONTAINER_PREFIX", raising=False)
     recorded: dict[str, object] = {}
 
     def _run(args, **kwargs):
@@ -72,6 +73,27 @@ def test_a_request_over_the_network_carries_the_method_body_and_token(
     assert spec["method"] == "POST"
     assert spec["token"] == "bearer"
     assert json.loads(spec["body"]) == {"username": "admin"}
+
+
+def test_the_exec_target_carries_the_stack_prefix(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """`docker exec` resolves a container name, which a second stack re-prefixes."""
+    monkeypatch.setenv("DFE_CONTAINER_PREFIX", "accept-")
+    recorded: dict[str, object] = {}
+
+    def _run(args, **kwargs):
+        recorded["args"] = args
+        return _completed(stdout='200\n{"access_token": "t"}')
+
+    monkeypatch.setattr(post.subprocess, "run", _run)
+
+    post._api_post_json(
+        f"{post.ENGINE_NETWORK_BASE}/auth/login", {"username": "admin"}, token="bearer"
+    )
+
+    assert "accept-dfe-engine" in recorded["args"]
+    assert post.API_EXEC_SERVICE not in recorded["args"]
 
 
 def test_a_host_address_never_reaches_for_docker(

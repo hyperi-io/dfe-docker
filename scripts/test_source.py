@@ -39,12 +39,12 @@ import subprocess
 import sys
 from pathlib import Path
 
-from _common import _external_origin, _load_dotenv, _print
+from _common import _container_name, _external_origin, _load_dotenv, _print
 
 PROJECT_DIR = Path(__file__).resolve().parent.parent
-# Compose pins the archiver's container name, so the archive assertion reaches it
-# by name on any project.
-ARCHIVER_CONTAINER = "dfe-archiver"
+# The archive assertion reaches the archiver by container name on any project, so
+# it has to apply DFE_CONTAINER_PREFIX the way compose does.
+ARCHIVER_SERVICE = "dfe-archiver"
 RUNNER_PATH = Path("scripts") / "acceptance" / "source" / "run.py"
 # The cases that push a corpus, and the checkout the runner reads it out of.
 # One repo for both: they feed the same corpus and the elastic case takes its
@@ -134,15 +134,16 @@ def _archive_exec() -> list[str]:
     One replica, because compose runs one archiver; the runner reports the
     archive step as skipped when the profile deploys none.
     """
+    container = _container_name(service=ARCHIVER_SERVICE)
     running = subprocess.run(
-        ["docker", "inspect", "-f", "{{.State.Running}}", ARCHIVER_CONTAINER],
+        ["docker", "inspect", "-f", "{{.State.Running}}", container],
         capture_output=True,
         check=False,
         text=True,
     )
     if running.returncode != 0 or running.stdout.strip() != "true":
         return []
-    return ["--archive-exec", f"docker exec {ARCHIVER_CONTAINER}"]
+    return ["--archive-exec", f"docker exec {container}"]
 
 
 def _ui_host(*, bound: str, host: str) -> str:

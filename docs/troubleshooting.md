@@ -38,6 +38,11 @@ Ports bind `DFE_BIND_HOST` (`127.0.0.1`), so curl them from the box. The full
 port table, which path each HEALTHCHECK uses and why, and dfe-ui's 200-on-unknown
 -paths trap are in [observability.md](observability.md).
 
+If the stack sets `DFE_CONTAINER_PREFIX` (a second stack on the same host), every
+raw `docker exec` / `docker inspect` / `docker logs` below needs that prefix on
+the name -- `docker exec accept-dfe-clickhouse ...`. `docker compose` calls take
+the service key and are unaffected.
+
 ## Where a DFE service's logs are
 
 With self-monitoring on, DFE's own services log through Docker's `fluentd`

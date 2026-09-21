@@ -103,7 +103,10 @@ def declared(*, env_dir: Path | None = None) -> dict[str, list[str]]:
 
 
 def service_name(service: str, instance: str) -> str:
-    """What the instance's container is called, matching the engine's own hint."""
+    """The instance's compose service key, matching the engine's own hint.
+
+    Its container name adds DFE_CONTAINER_PREFIX, as the committed services do.
+    """
     return f"{service}-{instance}"
 
 
@@ -122,7 +125,7 @@ def _service_block(service: str, instance: str, compose_file: str) -> list[str]:
         "    extends:",
         f"      file: {compose_file}",
         f"      service: {service}",
-        f"    container_name: {name}",
+        f"    container_name: ${{DFE_CONTAINER_PREFIX:-}}{name}",
         f'    command: ["--config", "{config}"]',
         "    environment:",
         f"      OTEL_SERVICE_NAME: {name}",

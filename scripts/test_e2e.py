@@ -43,7 +43,7 @@ from shutil import rmtree, which
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
-from _common import FALSY, _load_dotenv
+from _common import FALSY, _container_name, _load_dotenv
 from _pipeline import MARKER_EXPRESSIONS  # noqa: F401 - re-exported for callers
 from _pipeline import ch_marker_count as _ch_marker_count
 from _pipeline import otel_fresh_counts, poll_until
@@ -897,18 +897,20 @@ def dump_logs():
 #   the container is gone by the time anyone reads the failure.
 # ------------------------------------------------------------------------------
 def report_unready(name):
+    # The raw docker CLI resolves the container name, which carries DFE_CONTAINER_PREFIX.
+    container = _container_name(service=name)
     inspect = run_cmd(
         [
             "docker",
             "inspect",
             "-f",
             "status={{.State.Status}} health={{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}} restarts={{.RestartCount}}",
-            name,
+            container,
         ],
         capture=True,
     )
     state = (inspect.stdout or inspect.stderr or "").strip()
-    LOGGER.error(f"    '{name}' container: {state or 'not found'}")
+    LOGGER.error(f"    '{container}' container: {state or 'not found'}")
     if inspect.returncode != 0:
         return
 
@@ -918,17 +920,19 @@ def report_unready(name):
             "inspect",
             "-f",
             "{{range .State.Health.Log}}{{.ExitCode}} {{.Output}}{{end}}",
-            name,
+            container,
         ],
         capture=True,
     )
     if (health.stdout or "").strip():
-        LOGGER.error(f"    '{name}' healthcheck log: {health.stdout.strip()[:400]}")
+        LOGGER.error(
+            f"    '{container}' healthcheck log: {health.stdout.strip()[:400]}"
+        )
 
-    logs = run_cmd(["docker", "logs", "--tail", "20", name], capture=True)
+    logs = run_cmd(["docker", "logs", "--tail", "20", container], capture=True)
     tail = ((logs.stdout or "") + (logs.stderr or "")).strip()
     if tail:
-        LOGGER.error(f"    '{name}' last lines:\n{tail[-2000:]}")
+        LOGGER.error(f"    '{container}' last lines:\n{tail[-2000:]}")
 
 
 # ------------------------------------------------------------------------------
