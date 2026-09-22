@@ -163,6 +163,9 @@ ENGINE_APP_CONFIG_BASE_DIR_VAR = "DFE_ENGINE_APP_CONFIG_BASE_DIR"
 ENGINE_APP_CONFIG_BASE_DIR = "/app/app-config-base"
 APP_CONFIG_MOUNT_VAR = "DFE_APP_CONFIG_MOUNT"
 APP_CONFIG_MOUNT = "/etc/dfe/apps"
+# The volume the engine writes that layout into. Named here so the wiring test
+# can require the mount beside the path, rather than the path alone.
+APP_CONFIG_VOLUME = "dfe-app-config"
 # Where the contract one-shots write each app's container contract, and where the
 # engine reads it back from. It hangs off the content volume's own mount, so an
 # operator who moves that path moves both halves together.
@@ -178,6 +181,7 @@ SERVICE_TO_RENDERED_CONFIG_VAR = {
     "dfe-loader": "DFE_LOADER_CONFIG_FILE",
     "dfe-receiver": "DFE_RECEIVER_CONFIG_FILE",
     "dfe-transform-elastic": "DFE_TRANSFORM_ELASTIC_CONFIG_FILE",
+    "dfe-transform-vector": "DFE_TRANSFORM_VECTOR_CONFIG_FILE",
     "dfe-transform-vrl": "DFE_TRANSFORM_VRL_CONFIG_FILE",
 }
 # A per-source transform instance is a service of its own here, because a

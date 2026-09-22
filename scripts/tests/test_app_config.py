@@ -21,12 +21,51 @@ rather than a restatement of the rule.
 from __future__ import annotations
 
 import os
+import re
 from pathlib import Path
 
 import pytest
 
 import resolve_profile
-from _common import PROJECTED_PROFILES
+from _common import COMPOSE_FILE, PROJECTED_PROFILES
+
+
+def _compose_service_block(service: str) -> str:
+    """Return the lines of one compose service block, its own header excluded.
+
+    A text read rather than a YAML parse: these tests run with no PyYAML, the
+    same as the scripts they cover. Services are indented two spaces and their
+    keys four, so the block ends at the next two-space key.
+    """
+    text = COMPOSE_FILE.read_text(encoding="utf-8")
+    match = re.search(
+        rf"^  {re.escape(service)}:$\n(.*?)(?=^  \S)", text, re.MULTILINE | re.DOTALL
+    )
+    assert match, f"{service} is not a service in {COMPOSE_FILE.name}"
+    return match.group(1)
+
+
+@pytest.mark.parametrize(
+    "service,var", sorted(resolve_profile.SERVICE_TO_RENDERED_CONFIG_VAR.items())
+)
+def test_a_service_given_a_rendered_path_can_reach_and_read_it(
+    service: str, var: str
+) -> None:
+    """The resolver naming a path is half the wiring; the container needs both halves.
+
+    A service missing either one reads its committed config and reports healthy
+    doing it, so the engine writes a config nothing acts on and no check fires.
+    """
+    block = _compose_service_block(service)
+
+    volume = resolve_profile.APP_CONFIG_VOLUME
+    assert f"${{{var}:-" in block, (
+        f"{service} never reads {var}, so the engine-rendered config cannot reach it"
+    )
+    assert f"- {volume}:{resolve_profile.APP_CONFIG_MOUNT}:ro" in block, (
+        f"{service} does not mount {volume}, so the path {var} names does not "
+        "exist inside the container"
+    )
 
 
 def _resolved(
