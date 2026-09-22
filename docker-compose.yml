@@ -817,14 +817,25 @@ services:
       OTEL_SERVICE_NAME: dfe-transform-vector
     depends_on:
       # No dlq-init here: this service does not mount dlq-spool.
-      # The topic authority: dfe-engine creates the declared topic set at its own
-      # startup, so a transform started first subscribes to nothing.
-      # `required: false` for the tiers that run no engine.
+      # The writer of the rendered config below, and the topic authority:
+      # dfe-engine creates the declared topic set at its own startup, so a
+      # transform started first subscribes to nothing. `required: false` for the
+      # tiers that run no engine.
       dfe-engine:
         condition: service_healthy
         required: false
+    # The engine renders this app's config and its transform programs from the
+    # source it is given, on the tiers that run it; everywhere else the committed
+    # file below is what it reads.
+    command: ["--config", "${DFE_TRANSFORM_VECTOR_CONFIG_FILE:-/etc/dfe-transform-vector/config.yaml}"]
     volumes:
       - ./config/${DFE_TRANSFORM_VECTOR_CONFIG:-transform-vector/kafka.yaml}:/etc/dfe-transform-vector/config.yaml:ro
+      # The bundled pipeline names its enrichment table by an absolute path
+      # (dfe-transform-vector pipelines/filebeat/README.md), so the table has to
+      # be mounted there whichever config the app reads. A pipeline that cannot
+      # open it fails `vector validate` with exit 78 and an empty stderr.
+      - ./config/transform-vrl/data:/etc/dfe-transform-vector/data:ro
+      - dfe-app-config:/etc/dfe/apps:ro
     healthcheck:
       test: ["CMD", "curl", "-sf", "http://localhost:9090/livez"]
       interval: 10s
