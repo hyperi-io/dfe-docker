@@ -385,6 +385,27 @@ def _api_container() -> str:
     return ids[0]
 
 
+@functools.cache
+def _container_name(service: str) -> str:
+    """This project's container NAME for one compose service.
+
+    The fluentd log tag is `{{.Name}}`, so ServiceName in `otel_logs` is the
+    container name -- which an override may prefix. It equals the service name
+    only on a stack that did not rename anything.
+    """
+    result = subprocess.run(
+        ["docker", "compose", "ps", "--format", "{{.Name}}", service],
+        capture_output=True,
+        check=False,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        timeout=API_EXEC_MARGIN_SECONDS,
+    )
+    names = result.stdout.split()
+    return names[0] if result.returncode == 0 and names else service
+
+
 def _exec_request(
     *, method: str, url: str, payload: dict | None, timeout: int, token: str
 ) -> tuple[int, str]:
@@ -796,12 +817,13 @@ def _verify_container_logs(*, database: str) -> int:
     def _per_service():
         found: dict[str, int] = {}
         for service in CONTAINER_LOG_SERVICES:
+            stamped = _container_name(service)
             count = ch_int(
                 f"SELECT count() FROM {database}.{OTEL_LOGS_TABLE} "
-                f"WHERE ServiceName = '{escape_literal(service)}' "
+                f"WHERE ServiceName = '{escape_literal(stamped)}' "
                 f"AND Timestamp > now() - INTERVAL {OTEL_FRESH_WINDOW_SECONDS} SECOND"
             )
-            found[service] = 0 if count is None else count
+            found[stamped] = 0 if count is None else count
         return found
 
     def _report(attempt, result):

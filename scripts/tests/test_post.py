@@ -306,3 +306,31 @@ def _stub_claims(monkeypatch: pytest.MonkeyPatch) -> list[str]:
     ):
         monkeypatch.setattr(post, name, _recorder(name))
     return calls
+
+
+def test_the_log_query_matches_the_container_name_not_the_service(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """ServiceName in otel_logs is the fluentd `{{.Name}}` tag, which an override renames."""
+    monkeypatch.setattr(
+        post.subprocess,
+        "run",
+        lambda args, **kwargs: _completed(stdout="accept-dfe-engine\n"),
+    )
+    post._container_name.cache_clear()
+
+    assert post._container_name("dfe-engine") == "accept-dfe-engine"
+
+
+def test_an_unresolvable_service_falls_back_to_its_own_name(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A stack that renames nothing, or a compose that cannot answer, still reads."""
+    monkeypatch.setattr(
+        post.subprocess,
+        "run",
+        lambda args, **kwargs: _completed(code=1, stdout="", stderr="no such service"),
+    )
+    post._container_name.cache_clear()
+
+    assert post._container_name("dfe-engine") == "dfe-engine"
