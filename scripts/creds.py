@@ -203,18 +203,20 @@ def summary_lines(*, values: dict[str, str], reveal: bool = True) -> list[str]:
             f"    login        {admin} / NOT MINTED -- run `make init` to mint "
             f"{_ADMIN_PASSWORD_KEY}"
         )
-    if reveal and default_admin_password(password) and is_dev_posture(environment):
-        lines.append(
-            f"                 DFE_ENV={environment}, so the engine accepts this "
-            "default and asks for a change at first login"
-        )
-    # Not gated on `reveal`: a stack that cannot boot is worth saying in a log too.
-    elif password and default_admin_password(password):
-        lines.append(
-            f"                 DFE_ENV={environment} is not a dev posture, so the "
-            "engine REFUSES this default and will not start -- mint one with "
-            "`make dev AUTH=real`, or set DFE_ENV=dev for a tyre-kick"
-        )
+    # The posture decides which line; `reveal` only suppresses the accepted one,
+    # so a piped run on a dev posture must not fall through to the refusal.
+    if password and default_admin_password(password):
+        if not (is_dev_posture(environment)):
+            lines.append(
+                f"                 DFE_ENV={environment} is not a dev posture, so the "
+                "engine REFUSES this default and will not start -- mint one with "
+                "`make dev AUTH=real`, or set DFE_ENV=dev for a tyre-kick"
+            )
+        elif reveal:
+            lines.append(
+                f"                 DFE_ENV={environment}, so the engine accepts this "
+                "default and asks for a change at first login"
+            )
     if values.get(_BREAKGLASS_PASSWORD_KEY, "").strip():
         lines.append(
             f"    break-glass  {_BREAKGLASS_NAME} / the value of "

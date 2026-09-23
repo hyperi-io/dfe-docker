@@ -11,6 +11,15 @@
 # Non-fatal: init creates .env, so it must not exist on a fresh checkout
 -include .env
 
+# `include` makes these make-variables, not environment ones, so the helper
+# scripts (post, test-flows, test-source, test_e2e) read an empty password and
+# every ClickHouse query 401s. Compose reads .env itself and is unaffected.
+export CLICKHOUSE_HOST
+export CLICKHOUSE_HTTP_PORT
+export CLICKHOUSE_PASSWORD
+export CLICKHOUSE_URL
+export CLICKHOUSE_USERNAME
+
 # Host UID/GID passed to live-mode containers (docker-compose.live.yml) that
 # write to bind-mounted host dirs (dfe-engine config/schemas), so files are owned
 # by the host user rather than the image user and writes don't hit permission
