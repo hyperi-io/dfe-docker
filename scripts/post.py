@@ -125,8 +125,15 @@ TARGET_TABLE = "main"
 # engine retries for DFE_CLICKHOUSE_BOOTSTRAP_WAIT_SECONDS (180) first.
 ENGINE_SERVICE = "dfe-engine"
 SCHEMA_READY_CHECK = "schema"
+# The route that reports the pass. It arrived with schema control in engine
+# v1.21.0, so an engine that 404s it has no schema check to wait on.
+SCHEMA_STATUS_PATH = "/api/v1/system/schema"
 SCHEMA_TIMEOUT_SECONDS = 300.0
 SCHEMA_INTERVAL_SECONDS = 5.0
+# What one read of the engine says. None is the fourth answer: nothing replied.
+SCHEMA_CONVERGED = "converged"
+SCHEMA_PENDING = "pending"
+SCHEMA_UNSERVED = "unserved"
 
 # Self-monitoring assertion. The collector batches on a 5s timeout and the SDKs
 # export on their own interval, so the window is generous and the timeout is the
@@ -515,21 +522,33 @@ def _wait_ready(url: str) -> bool:
             time.sleep(READY_INTERVAL_SECONDS)
 
 
-def _schema_converged() -> bool | None:
-    """Whether the engine's `schema` readiness check is true right now.
-
-    None where the engine has not answered at all, so a stack still starting and
-    one reporting a failed apply do not read the same.
-    """
+def _engine_host_url(path: str) -> str:
+    """One engine path on the host port POST reads the engine's readiness from."""
     bind = os.environ.get("DFE_POST_HOST", "localhost")
     port = os.environ.get("DFE_ENGINE_PORT", "8003")
+    return f"http://{bind}:{port}{path}"
+
+
+def _schema_state() -> str | None:
+    """What the engine says about its schema pass right now.
+
+    The route is asked only when /readyz names no schema check at all, so an
+    engine that names one is judged on it and can never be skipped.
+    """
     try:
-        _, body = http_get_json(f"http://{bind}:{port}/readyz", timeout=5)
+        _, body = http_get_json(_engine_host_url("/readyz"), timeout=5)
     except Exception:  # noqa: BLE001 - unreachable is not-yet-answering here
         return None
     if not isinstance(body, dict):
         return None
-    return bool((body.get("checks") or {}).get(SCHEMA_READY_CHECK))
+    checks = body.get("checks") or {}
+    if SCHEMA_READY_CHECK in checks:
+        return SCHEMA_CONVERGED if checks[SCHEMA_READY_CHECK] else SCHEMA_PENDING
+    try:
+        status, _ = http_get_json(_engine_host_url(SCHEMA_STATUS_PATH), timeout=5)
+    except Exception:  # noqa: BLE001 - unreachable is not-yet-answering here
+        return None
+    return SCHEMA_UNSERVED if status == 404 else SCHEMA_PENDING
 
 
 def _wait_schema_converged() -> int:
@@ -548,17 +567,28 @@ def _wait_schema_converged() -> int:
     def _report(attempt, result):
         _print(msg=f"  attempt {attempt}: engine schema check = {result}")
 
-    converged = poll_until(
-        _schema_converged,
+    state = poll_until(
+        _schema_state,
         timeout=SCHEMA_TIMEOUT_SECONDS,
         interval=SCHEMA_INTERVAL_SECONDS,
-        done=lambda result: result is True,
+        done=lambda result: result in (SCHEMA_CONVERGED, SCHEMA_UNSERVED),
         on_attempt=_report,
     )
-    if converged is not True:
+    if state == SCHEMA_UNSERVED:
+        _print(
+            msg=f"SKIP  schema convergence NOT checked: {ENGINE_SERVICE} names no "
+            f"'{SCHEMA_READY_CHECK}' check on /readyz and answers 404 on "
+            f"{SCHEMA_STATUS_PATH}, so it predates schema control (v1.21.0) and has "
+            "no convergence to report"
+        )
+        _print(
+            msg="      the claims below still fail on a table or topic that is absent"
+        )
+        return 0
+    if state != SCHEMA_CONVERGED:
         _print(
             msg=f"FAIL  {ENGINE_SERVICE} did not report its schema converged within "
-            f"{SCHEMA_TIMEOUT_SECONDS:.0f}s -- GET /api/v1/system/schema on the engine "
+            f"{SCHEMA_TIMEOUT_SECONDS:.0f}s -- GET {SCHEMA_STATUS_PATH} on the engine "
             "carries the cause, object by object"
         )
         return 1

@@ -60,11 +60,9 @@ x-limits-clickhouse: &limits-clickhouse
       cpus: "${DFE_CLICKHOUSE_CPUS:-2.0}"
       memory: ${DFE_CLICKHOUSE_MEMORY:-3G}
 
-# Redpanda subtracts the HOST's vm.min_free_kbytes from the container limit
-# before checking it against --memory, so the usable figure is not the limit.
-# At 1536M a host with min_free_kbytes over ~512MB leaves under the 1G request
-# and the broker refuses to start. Headroom here rather than a smaller --memory,
-# because --memory is what the broker actually gets to work with.
+# Redpanda subtracts the HOST's vm.min_free_kbytes from this limit before it
+# checks --memory. redpanda/start.sh lowers --memory to what fits, and this
+# headroom keeps the full 1G on any host whose reserve is under 1536M.
 x-limits-broker: &limits-broker
   resources:
     limits:
@@ -187,12 +185,16 @@ services:
       default:
         aliases:
           - kafka
+    # redpanda/start.sh appends --memory: REDPANDA_MEMORY, lowered to what the
+    # container limit holds once this host's kernel reserve is taken off.
+    entrypoint: ["/bin/bash", "/usr/local/bin/dfe-redpanda-start.sh"]
+    environment:
+      REDPANDA_MEMORY: ${REDPANDA_MEMORY:-1G}
     command:
       - redpanda
       - start
       - --mode=${REDPANDA_MODE:-dev-container}
       - --smp=${REDPANDA_SMP:-1}
-      - --memory=${REDPANDA_MEMORY:-1G}
       - --kafka-addr=internal://0.0.0.0:9092,external://0.0.0.0:19092
       - --advertise-kafka-addr=internal://kafka:9092,external://${KAFKA_ADVERTISED_HOST:-localhost}:${KAFKA_PLAINTEXT_HOST_PORT:-19092}
     ports:
@@ -200,6 +202,7 @@ services:
       - ${DFE_BIND_HOST:-127.0.0.1}:${KAFKA_PLAINTEXT_HOST_PORT:-19092}:19092
     volumes:
       - kafka-redpanda-data:/var/lib/redpanda/data
+      - ./redpanda/start.sh:/usr/local/bin/dfe-redpanda-start.sh:ro
     healthcheck:
       test: ["CMD-SHELL", "rpk cluster health | grep -q 'Healthy:.*true'"]
       interval: 5s
