@@ -255,6 +255,89 @@ def test_the_hunt_is_created_before_the_slow_claims(
     assert calls.index("_verify_hunt") < calls.index("_verify_hyperdx")
 
 
+def _engine_answers(
+    monkeypatch: pytest.MonkeyPatch, *, readyz: dict, schema_status: int
+) -> list[str]:
+    """Serve /readyz and the schema route from fixed answers; return the paths asked."""
+    asked: list[str] = []
+
+    def _get(url, **kwargs):
+        asked.append(url)
+        if url.endswith("/readyz"):
+            return 200, readyz
+        return schema_status, {}
+
+    monkeypatch.setattr(post, "http_get_json", _get)
+    monkeypatch.setattr(post, "_resolved_services", lambda: [post.ENGINE_SERVICE])
+    monkeypatch.setattr(post, "SCHEMA_TIMEOUT_SECONDS", 0.0)
+    return asked
+
+
+def test_an_engine_that_predates_schema_control_is_skipped_loudly(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """The v1.20 shape: no schema check on /readyz and no route to report one."""
+    _engine_answers(
+        monkeypatch, readyz={"checks": {"clickhouse": True}}, schema_status=404
+    )
+
+    assert post._wait_schema_converged() == 0
+    assert "SKIP  schema convergence NOT checked" in capsys.readouterr().err
+
+
+def test_a_named_schema_check_that_is_false_fails_even_where_the_route_404s(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The skip keys on the check being absent, never on the route alone."""
+    asked = _engine_answers(
+        monkeypatch,
+        readyz={"checks": {"clickhouse": True, "schema": False}},
+        schema_status=404,
+    )
+
+    assert post._wait_schema_converged() == 1
+    assert not any(url.endswith(post.SCHEMA_STATUS_PATH) for url in asked)
+
+
+def test_an_engine_serving_the_route_without_the_check_is_waited_on(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A 401 means the route exists, so the check is still to come."""
+    _engine_answers(
+        monkeypatch, readyz={"checks": {"clickhouse": True}}, schema_status=401
+    )
+
+    assert post._schema_state() == post.SCHEMA_PENDING
+    assert post._wait_schema_converged() == 1
+
+
+def test_a_converged_schema_check_passes_without_asking_the_route(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    asked = _engine_answers(
+        monkeypatch,
+        readyz={"checks": {"clickhouse": True, "schema": True}},
+        schema_status=404,
+    )
+
+    assert post._wait_schema_converged() == 0
+    assert not any(url.endswith(post.SCHEMA_STATUS_PATH) for url in asked)
+
+
+def test_an_engine_that_never_answers_fails_rather_than_skips(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def _refused(url, **kwargs):
+        raise ConnectionRefusedError(url)
+
+    monkeypatch.setattr(post, "http_get_json", _refused)
+    monkeypatch.setattr(post, "_resolved_services", lambda: [post.ENGINE_SERVICE])
+    monkeypatch.setattr(post, "SCHEMA_TIMEOUT_SECONDS", 0.0)
+
+    assert post._schema_state() is None
+    assert post._wait_schema_converged() == 1
+
+
 class _Completed:
     """Stand-in for a finished `docker exec`."""
 

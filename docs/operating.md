@@ -329,12 +329,7 @@ For a small-environment deploy, set `REDPANDA_MODE=production` with real
 container limit that does not exceed it means the broker is OOM-killed rather
 than backpressured.
 
-Exceeding it is not sufficient on every host. Redpanda subtracts the HOST's
-`vm.min_free_kbytes` from the container limit before comparing it to `--memory`,
-so the usable figure is lower than the limit you set. A host with
-`min_free_kbytes` over ~512MB left the old 1536M default under the 1G request
-and the broker refused to start; the default is now 2560M. Check the host value
-with `sysctl vm.min_free_kbytes` and leave that much headroom on top.
+Redpanda subtracts the HOST's `vm.min_free_kbytes` from the container limit before it checks `--memory`, so the usable figure is lower than the limit you set, and it varies by host: a 92 GiB host reserving 1.84 GiB left the 2560M default 675M against a 1G request. `redpanda/start.sh` reads both at start and passes the smaller of `REDPANDA_MEMORY` and what the limit leaves, with a WARN naming the `DFE_BROKER_MEMORY` that restores the full amount. Under 512M it refuses to start and names the value that would fit. Check a host with `sysctl vm.min_free_kbytes`.
 
 ## Kafka backend licensing is a human decision
 
@@ -471,6 +466,8 @@ The other outcomes are as informative as the PASS:
 
 - **FAIL on weak secrets** -- `DFE_UI_NEXTAUTH_SECRET` or
   `HYPERDX_POSTGRES_PASSWORD` is still the committed default. Run `make init`.
+- **FAIL, schema not converged** -- dfe-engine did not report its `schema` readiness check true within 300 seconds. `GET /api/v1/system/schema` on the engine names the object that failed.
+- **SKIP, schema convergence not checked** -- the engine names no `schema` check on `/readyz` and answers 404 on `/api/v1/system/schema`, which is every engine before v1.21.0. The rest of the run still asserts the rows land.
 - **FAIL, not ready** -- the profile declares an ingest component that never
   became ready within 90 seconds. Not the same as a skip, deliberately.
 - **FAIL, marker unreadable** -- rows arrived but the marker could not be read
