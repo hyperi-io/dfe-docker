@@ -329,7 +329,7 @@ Three ways a green run says less than it looks:
 
 - **`make check` starts nothing.** It resolves compose, lints the helpers and unit-tests them. `make dev`, `make ci`, `make post` and `make test-e2e` are the only things that prove the stack moves data, and CI runs none of them.
 - **`check-compose` validates compose STRUCTURE, not digests.** It substitutes placeholders for the mandatory keys so it needs neither the private stack SSoT nor registry credentials, which means no particular pin is proved to resolve.
-- **`check-profiles` is not part of `make check` and has never gated anything.** Locally with `DFE_INFRA_DIR` unset it prints `projection NOT checked (not a pass)` and exits 0. In CI the job is skipped for want of a `DFE_INFRA_TOKEN` secret and the run is still green (issue #119).
+- **`check-profiles` is not part of `make check` and has never gated anything.** Locally with `DFE_INFRA_DIR` unset it prints `projection NOT checked (not a pass)` and exits 0. In CI the job reads dfe-infra with a short-lived, read-only token minted from the org's CI GitHub App; until this repo can use the `GH_APP_PRIVATE_KEY` org secret, the job is skipped with a notice and the run is still green (issue #119).
 
 `check-hardfail` does earn its pass. It resolves compose with a scrubbed environment and an empty `--env-file` so a developer's pinned `.env` cannot mask it, requires the run to fail on a missing pin, then reads every `image:` line and requires each to resolve to an `@sha256:` digest.
 
