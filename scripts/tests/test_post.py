@@ -55,10 +55,13 @@ def test_a_request_over_the_network_carries_the_method_body_and_token(
     recorded: dict[str, object] = {}
 
     def _run(args, **kwargs):
+        if args[:3] == ["docker", "compose", "ps"]:
+            return _completed(stdout="c0ffee\n")
         recorded["args"] = args
         return _completed(stdout='200\n{"access_token": "t"}')
 
     monkeypatch.setattr(post.subprocess, "run", _run)
+    post._api_container.cache_clear()
 
     status, body = post._api_post_json(
         f"{post.ENGINE_NETWORK_BASE}/auth/login", {"username": "admin"}, token="bearer"
@@ -67,11 +70,48 @@ def test_a_request_over_the_network_carries_the_method_body_and_token(
     assert (status, body) == (200, {"access_token": "t"})
     args = recorded["args"]
     assert args[:2] == ["docker", "exec"]
-    assert post.API_EXEC_SERVICE in args
     spec = json.loads(args[3].split("=", 1)[1])
     assert spec["method"] == "POST"
     assert spec["token"] == "bearer"
     assert json.loads(spec["body"]) == {"username": "admin"}
+
+
+def test_the_exec_addresses_the_container_compose_names_not_the_service(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A bare service name is daemon-wide, so it reaches another stack's container."""
+    recorded: dict[str, object] = {}
+
+    def _run(args, **kwargs):
+        if args[:3] == ["docker", "compose", "ps"]:
+            assert post.API_EXEC_SERVICE in args
+            return _completed(stdout="c0ffee\n")
+        recorded["args"] = args
+        return _completed(stdout="200\n{}")
+
+    monkeypatch.setattr(post.subprocess, "run", _run)
+    post._api_container.cache_clear()
+
+    post._api_post_json(f"{post.ENGINE_NETWORK_BASE}/auth/login", {})
+
+    args = recorded["args"]
+    assert "c0ffee" in args
+    assert post.API_EXEC_SERVICE not in args
+
+
+def test_no_container_for_this_project_is_reported_not_guessed(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Testing the wrong stack is the defect; finding no stack is a fine answer."""
+    monkeypatch.setattr(
+        post.subprocess,
+        "run",
+        lambda args, **kwargs: _completed(stdout="", stderr="no such service"),
+    )
+    post._api_container.cache_clear()
+
+    with pytest.raises(post.ApiUnreachable, match="no running"):
+        post._api_post_json(f"{post.ENGINE_NETWORK_BASE}/auth/login", {})
 
 
 def test_a_host_address_never_reaches_for_docker(

@@ -53,6 +53,7 @@ that is a scalo contract change, not a Compose one.
 
 from __future__ import annotations
 
+import functools
 import json
 import os
 import subprocess
@@ -358,6 +359,32 @@ def _over_network(url: str) -> bool:
     return url.startswith((ENGINE_NETWORK_BASE, HYPERDX_NETWORK_BASE))
 
 
+@functools.cache
+def _api_container() -> str:
+    """The container running API_EXEC_SERVICE in THIS compose project.
+
+    Container names are daemon-wide, so exec'ing a bare service name reaches
+    whichever stack on the host happens to own it -- and succeeds, against the
+    wrong deployment's credentials. Compose knows which container is ours.
+    """
+    result = subprocess.run(
+        ["docker", "compose", "ps", "--quiet", API_EXEC_SERVICE],
+        capture_output=True,
+        check=False,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        timeout=API_EXEC_MARGIN_SECONDS,
+    )
+    ids = result.stdout.split()
+    if result.returncode != 0 or not ids:
+        raise ApiUnreachable(
+            f"no running {API_EXEC_SERVICE} in this compose project: "
+            f"{result.stderr.strip() or 'docker compose ps named no container'}"
+        )
+    return ids[0]
+
+
 def _exec_request(
     *, method: str, url: str, payload: dict | None, timeout: int, token: str
 ) -> tuple[int, str]:
@@ -375,7 +402,7 @@ def _exec_request(
             "exec",
             "-e",
             f"{API_REQUEST_KEY}={json.dumps(spec)}",
-            API_EXEC_SERVICE,
+            _api_container(),
             "python",
             "-c",
             _EXEC_REQUEST_SCRIPT,
@@ -383,6 +410,8 @@ def _exec_request(
         capture_output=True,
         check=False,
         text=True,
+        encoding="utf-8",
+        errors="replace",
         timeout=timeout + API_EXEC_MARGIN_SECONDS,
     )
     if result.returncode != 0:
