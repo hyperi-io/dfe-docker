@@ -31,7 +31,10 @@
 x-container-logs: &container-logs
   driver: fluentd
   options:
-    fluentd-address: ${DFE_CONTAINER_LOG_ADDRESS:-tcp://127.0.0.1:24224}
+    # The port the collector actually publishes, not a fixed one: the driver
+    # dials a HOST port, so a second stack that moved DFE_OTEL_FLUENT_PORT would
+    # otherwise ship its containers' logs into the first stack's collector.
+    fluentd-address: ${DFE_CONTAINER_LOG_ADDRESS:-tcp://127.0.0.1:${DFE_OTEL_FLUENT_PORT:-24224}}
     fluentd-async: "true"
     # The container name, which every DFE service sets explicitly.
     tag: "{{.Name}}"
