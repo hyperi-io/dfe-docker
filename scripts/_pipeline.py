@@ -43,13 +43,21 @@ MARKER_EXPRESSIONS = (
 )
 
 
+def env_or(name: str, fallback: str) -> str:
+    """Read an env var, treating empty as absent.
+
+    A `.env` key present with no value exports as an empty string, so a bare
+    ``os.environ.get(name, default)`` returns '' and the default never fires.
+    """
+    return os.environ.get(name, "").strip() or fallback
+
+
 def clickhouse_url() -> str:
     """Return the ClickHouse HTTP endpoint, honouring the same vars compose uses."""
     explicit = os.environ.get("CLICKHOUSE_URL", "").strip()
     if explicit:
         return explicit
-    port = os.environ.get("CLICKHOUSE_HTTP_PORT", "8123")
-    return f"http://localhost:{port}"
+    return f"http://localhost:{env_or('CLICKHOUSE_HTTP_PORT', '8123')}"
 
 
 def http_get(url: str, timeout: int = 5) -> str:
@@ -161,9 +169,7 @@ def ch_query(sql: str, *, debug: typing.Callable[[str], None] | None = None) -> 
     if debug:
         debug(f"Executing ClickHouse query: `{sql}`")
     request = Request(clickhouse_url(), data=sql.encode(), method="POST")
-    request.add_header(
-        "X-ClickHouse-User", os.environ.get("CLICKHOUSE_USERNAME", "default")
-    )
+    request.add_header("X-ClickHouse-User", env_or("CLICKHOUSE_USERNAME", "default"))
     request.add_header("X-ClickHouse-Key", os.environ.get("CLICKHOUSE_PASSWORD", ""))
     try:
         with urlopen(request, timeout=10) as response:

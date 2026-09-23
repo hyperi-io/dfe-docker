@@ -317,3 +317,47 @@ def test_fixture_provider_detection(
     values: dict[str, str], expected: list[str]
 ) -> None:
     assert creds.fixture_providers(values=values) == expected
+
+
+_DEFAULT_ENV = _ENV.replace(_MINTED, "changeme")
+_REFUSAL = "is not a dev posture"
+
+
+@pytest.mark.parametrize("is_tty", [True, False])
+def test_a_dev_posture_never_reports_the_refusal(
+    dotenv: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    is_tty: bool,
+) -> None:
+    """The refusal is about the POSTURE, so a pipe must not conjure one.
+
+    DFE_ENV=dev accepts the default password. Reporting otherwise sends the
+    operator to rotate credentials on a stack that is running.
+    """
+    dotenv.write_text(_DEFAULT_ENV, encoding="utf-8", newline="\n")
+    monkeypatch.setattr("sys.stdout.isatty", lambda: is_tty)
+    monkeypatch.delenv("DFE_CREDS_SHOW", raising=False)
+
+    assert creds.main() == 0
+    assert _REFUSAL not in capsys.readouterr().out
+
+
+@pytest.mark.parametrize("is_tty", [True, False])
+def test_a_non_dev_posture_reports_the_refusal_either_way(
+    dotenv: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    is_tty: bool,
+) -> None:
+    """A stack that cannot boot is worth saying in a build log too."""
+    dotenv.write_text(
+        _DEFAULT_ENV.replace("DFE_ENV=dev", "DFE_ENV=production"),
+        encoding="utf-8",
+        newline="\n",
+    )
+    monkeypatch.setattr("sys.stdout.isatty", lambda: is_tty)
+    monkeypatch.delenv("DFE_CREDS_SHOW", raising=False)
+
+    assert creds.main() == 0
+    assert _REFUSAL in capsys.readouterr().out
