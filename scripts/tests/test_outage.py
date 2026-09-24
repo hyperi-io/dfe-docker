@@ -21,6 +21,8 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import pytest
 
 import _outage
+import resolve_profile
+from _common import CONFIG_DIR, SERVICE_PROFILES_FILE
 
 
 def test_a_record_marker_round_trips_to_its_sequence_number() -> None:
@@ -216,6 +218,124 @@ def test_expected_consumers_count_each_subscriber_of_a_topic(tmp_path) -> None:
     counts = _outage.expected_consumers([archiver, vrl, vector, receiver])
 
     assert counts == {"main_land": 3}
+
+
+def test_a_pattern_subscriber_is_owed_a_commit_on_each_topic_it_reads(
+    tmp_path,
+) -> None:
+    loader = tmp_path / "loader.yaml"
+    loader.write_text(
+        "kafka:\n  group: dfe-loader\n  topic_regex: .*_(land|load)\n", encoding="utf-8"
+    )
+    topics = ["main_land", "main_load", "vector_land", "vector_load", "orphan_land"]
+
+    counts = _outage.expected_consumers([loader], topics)
+
+    assert counts == {"main_load": 1, "vector_load": 1, "orphan_land": 1}
+
+
+def test_a_topic_pattern_is_searched_not_anchored() -> None:
+    assert _outage.pattern_subscriptions("land", ["main_land", "main_load"]) == {
+        "main_land"
+    }
+    assert _outage.pattern_subscriptions(
+        "^strimzi\\.", ["strimzi.a", "x.strimzi.b"]
+    ) == {"strimzi.a"}
+
+
+def test_the_broker_outage_owes_the_loader_a_commit_on_every_load_topic() -> None:
+    profiles = resolve_profile._parse_yaml(
+        text=SERVICE_PROFILES_FILE.read_text(encoding="utf-8")
+    )
+    services = profiles["profiles"]["kafka-resilience"]["services"]
+    configs = [CONFIG_DIR / service["config_path"] for service in services.values()]
+    # kafka-outage's expected_topics in tests/e2e/e2e-tests.yaml.
+    topics = [
+        f"{source}_{end}"
+        for source in ("main", "vector", "cisco-ios")
+        for end in ("land", "load")
+    ]
+
+    counts = _outage.expected_consumers(configs, topics)
+
+    assert counts == {
+        "main_land": 2,
+        "vector_land": 1,
+        "cisco-ios_land": 1,
+        "main_load": 1,
+        "vector_load": 1,
+        "cisco-ios_load": 1,
+    }
+
+
+# What `rpk topic describe <topic> -p` printed for a three-partition topic.
+_RPK_PARTITIONS = """\
+PARTITION  LEADER  EPOCH  REPLICAS  LOG-START-OFFSET  HIGH-WATERMARK
+0          0       3      [0]       0                 372
+1          0       3      [0]       0                 279
+2          0       3      [0]       0                 93
+"""
+
+
+def test_rpk_high_watermarks_are_summed_across_partitions() -> None:
+    assert _outage.high_watermark_text(_RPK_PARTITIONS) == 744
+
+
+def test_a_describe_with_no_partition_row_is_unreadable_not_empty() -> None:
+    assert _outage.high_watermark_text("") is None
+    assert _outage.high_watermark_text("UNKNOWN_TOPIC_OR_PARTITION") is None
+
+
+def test_apache_latest_offsets_are_summed_for_the_named_topic_only() -> None:
+    printed = "main_land:0:5\nmain_land:1:2\nmain_load:0:9\n"
+
+    assert _outage.high_watermark_offsets(printed, "main_land") == 7
+    assert _outage.high_watermark_offsets(printed, "vector_land") is None
+
+
+def test_a_landing_topic_nothing_was_produced_to_never_reached_kafka() -> None:
+    empty = (
+        "PARTITION  LEADER  EPOCH  REPLICAS  LOG-START-OFFSET  HIGH-WATERMARK\n"
+        "0          0       1      [0]       0                 0\n"
+    )
+    watermarks = {"main_land": _outage.high_watermark_text(empty)}
+
+    problems = _outage.kafka_unreached(watermarks, {}, {})
+
+    assert problems == ["'main_land': never reached Kafka (high watermark 0)"]
+
+
+def test_an_unreadable_watermark_is_not_taken_as_a_pass() -> None:
+    assert _outage.kafka_unreached({"main_land": None}, {}, {}) == [
+        "'main_land': high watermark unreadable"
+    ]
+
+
+# What rpk printed for a run whose load bypassed Kafka: the group exists and
+# never committed anything.
+_NEVER_COMMITTED = (
+    '[{"group_name":"dfe-transform-vrl","coordinator_partition":"__consumer_offsets/1",'
+    '"state":"Empty","balancer":"","members":0,"coordinator_node":0,"total_lag":0,'
+    '"partitions":[],"members_details":[]}]'
+)
+
+
+def test_a_group_that_never_committed_is_named_before_the_outage() -> None:
+    lag = _outage.group_lag_json(_NEVER_COMMITTED)
+
+    problems = _outage.kafka_unreached({"main_land": 12}, lag, {"main_land": 1})
+
+    assert problems == ["'main_land': 0 of 1 consumer group(s) have committed (none)"]
+
+
+def test_a_load_through_kafka_leaves_nothing_unreached() -> None:
+    lag = {"dfe-transform-vrl": {"main_land": 3}, "dfe-loader": {"main_load": 0}}
+
+    problems = _outage.kafka_unreached(
+        {"main_land": 12}, lag, {"main_land": 1, "main_load": 1}
+    )
+
+    assert problems == []
 
 
 # What `rpk group describe -r '.*' --format json` printed for a group one record behind.

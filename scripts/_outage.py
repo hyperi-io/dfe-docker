@@ -20,6 +20,7 @@ and stopping containers stays with the suite, which owns the compose project.
 
 import http.client
 import json
+import re
 import threading
 import time
 from collections import Counter
@@ -343,13 +344,71 @@ def failure_lines(log: str, limit: int) -> list[str]:
     return hits[-limit:]
 
 
-def expected_consumers(configs: Iterable[Path]) -> Counter[str]:
-    """Count the services each topic is named as a subscription of, across the configs."""
+def pattern_subscriptions(regex: str, topics: Iterable[str]) -> set[str]:
+    """The topics a `topic_regex` subscriber reads out of `topics`.
+
+    The pattern is searched rather than anchored, as scalo's topic include is,
+    and a `<base>_land` drops out wherever `<base>_load` matched too: scalo reads
+    each source once, at its transform's output.
+    """
+    pattern = re.compile(regex)
+    matched = {topic for topic in topics if pattern.search(topic)}
+    return {
+        topic
+        for topic in matched
+        if not (topic.endswith("_land") and f"{topic[: -len('_land')]}_load" in matched)
+    }
+
+
+def expected_consumers(
+    configs: Iterable[Path], topics: Iterable[str] = ()
+) -> Counter[str]:
+    """Count the services each topic is a subscription of, across the configs.
+
+    A config that names no topics and subscribes by `topic_regex` counts on each
+    of `topics` its pattern reads, so a pattern subscriber is owed a commit too.
+    """
+    known = list(topics)
     counts: Counter[str] = Counter()
     for path in configs:
-        subscribed, _, _ = _config_topics(path=path)
+        subscribed, _, regex = _config_topics(path=path)
+        if not (subscribed) and regex:
+            subscribed = pattern_subscriptions(regex, known)
         counts.update(subscribed)
     return counts
+
+
+def high_watermark_text(described: str) -> int | None:
+    """Sum a topic's high watermarks from `rpk topic describe <topic> -p`, else None.
+
+    None when no partition row can be read, so an error or an unknown topic is
+    never mistaken for an empty one.
+    """
+    column = None
+    total = None
+    for line in described.splitlines():
+        cells = line.split()
+        if "HIGH-WATERMARK" in cells:
+            column = cells.index("HIGH-WATERMARK")
+            continue
+        if column is None or len(cells) <= column or not cells[column].isdigit():
+            continue
+        total = (total or 0) + int(cells[column])
+    return total
+
+
+def high_watermark_offsets(described: str, topic: str) -> int | None:
+    """Sum a topic's latest offsets from Apache Kafka's `kafka-get-offsets.sh`, else None.
+
+    That tool prints one `<topic>:<partition>:<offset>` line per partition.
+    """
+    total = None
+    for line in described.splitlines():
+        cells = line.strip().rsplit(":", 2)
+        if len(cells) != 3 or cells[0] != topic or not cells[2].isdigit():
+            continue
+        total = (total or 0) + int(cells[2])
+    return total
 
 
 def group_lag_json(described: str) -> dict[str, dict[str, int]]:
@@ -397,6 +456,41 @@ def group_lag_table(described: str) -> dict[str, dict[str, int]]:
     return lag
 
 
+def consumers_uncommitted(
+    lag: Mapping[str, Mapping[str, int]], expected: Mapping[str, int]
+) -> list[str]:
+    """Name each expected topic with fewer committing groups than services subscribe to it."""
+    problems = []
+    for topic, wanted in sorted(expected.items()):
+        groups = sorted(group for group, topics in lag.items() if topic in topics)
+        if len(groups) < wanted:
+            problems.append(
+                f"'{topic}': {len(groups)} of {wanted} consumer group(s) have committed "
+                f"({', '.join(groups) or 'none'})"
+            )
+    return problems
+
+
+def kafka_unreached(
+    watermarks: Mapping[str, int | None],
+    lag: Mapping[str, Mapping[str, int]],
+    expected: Mapping[str, int],
+) -> list[str]:
+    """Say why the load has not been shown to travel through Kafka yet.
+
+    Each landing topic in `watermarks` needs a record on it, and each expected
+    topic its committing groups. Empty means the path runs through the broker, so
+    stopping it tests what the outage claims to.
+    """
+    problems = []
+    for topic, mark in sorted(watermarks.items()):
+        if mark is None:
+            problems.append(f"'{topic}': high watermark unreadable")
+        elif mark < 1:
+            problems.append(f"'{topic}': never reached Kafka (high watermark {mark})")
+    return problems + consumers_uncommitted(lag, expected)
+
+
 def consumers_behind(
     lag: Mapping[str, Mapping[str, int]],
     expected: Mapping[str, int],
@@ -409,14 +503,7 @@ def consumers_behind(
     zero lag there, which reaches a consumer that subscribes by pattern. Empty
     means caught up.
     """
-    problems = []
-    for topic, wanted in sorted(expected.items()):
-        groups = sorted(group for group, topics in lag.items() if topic in topics)
-        if len(groups) < wanted:
-            problems.append(
-                f"'{topic}': {len(groups)} of {wanted} consumer group(s) have committed "
-                f"({', '.join(groups) or 'none'})"
-            )
+    problems = consumers_uncommitted(lag, expected)
     for topic in sorted(set(expected) | set(watched)):
         for group in sorted(lag):
             behind = lag[group].get(topic, 0)

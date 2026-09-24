@@ -48,7 +48,7 @@ from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
 import _outage
-from _common import FALSY, _load_dotenv
+from _common import FALSY, _config_argument, _load_dotenv, _use_mounted_configs
 from _pipeline import MARKER_EXPRESSIONS  # noqa: F401 - re-exported for callers
 from _pipeline import ch_marker_count as _ch_marker_count
 from _pipeline import clickhouse_url, env_or, otel_fresh_counts, poll_until
@@ -141,8 +141,12 @@ TARGET_TABLE = "main"
 # - Shared with init/stack/resolve_profile via _common. This file used to carry a
 #   third private copy of the same parser, and three copies of "how do we read
 #   .env" is three chances to disagree with docker compose about it.
+# - Every rendered-config variable is then blanked. `make` exports the engine's
+#   render paths, and compose inherits them unless each service is sent back to
+#   the config this suite mounts for it.
 # ------------------------------------------------------------------------------
 _load_dotenv()
+_use_mounted_configs(environ=os.environ)
 
 # ------------------------------------------------------------------------------
 # Endpoint Related
@@ -1042,6 +1046,43 @@ def wait_for_stack(services):
     return True
 
 
+# ------------------------------------------------------------------------------
+# Verify Config Mounts
+# - Each DFE service's process runs `--config` on the file this test mounts for
+#   it, read off `docker inspect`. The mount alone proves nothing: an inherited
+#   DFE_*_CONFIG_FILE runs the service on another file beside it.
+# ------------------------------------------------------------------------------
+def verify_config_mounts(ctx, test):
+    verified = True
+    for service in sorted(test.services):
+        want = SERVICE_CONFIG_MOUNTS[service]
+        container = container_id(service)
+        result = (
+            run_cmd(["docker", "inspect", container], capture=True)
+            if (container)
+            else None
+        )
+        try:
+            documents = json.loads(result.stdout or "[]") if (result) else []
+        except ValueError:
+            documents = []
+        if not (documents):
+            mark_fail(ctx, f"[{test.name}] '{service}' has no container to inspect")
+            verified = False
+            continue
+        got = _config_argument(args=documents[0].get("Args") or [])
+        if got == want:
+            mark_pass(ctx, f"[{test.name}] '{service}' runs --config {got}")
+        else:
+            mark_fail(
+                ctx,
+                f"[{test.name}] '{service}' runs --config {got or 'nothing'}, not "
+                f"the file this test mounts at {want}",
+            )
+            verified = False
+    return verified
+
+
 # ==============================================================================
 # Data Helpers
 # - Functions for preparing test data, sending events, and verifying results
@@ -1687,6 +1728,70 @@ def consumer_group_lag():
 
 
 # ------------------------------------------------------------------------------
+# Topic High Watermark
+# - The records ever produced to one topic, summed over its partitions, or None
+#   when the broker cannot say
+# ------------------------------------------------------------------------------
+def topic_high_watermark(topic):
+    if KAFKA_BACKEND == "apache":
+        command = _topic_exec_base() + [
+            "/opt/kafka/bin/kafka-get-offsets.sh",
+            "--bootstrap-server",
+            KAFKA_BOOTSTRAP,
+            "--topic",
+            topic,
+        ]
+    else:
+        command = _topic_exec_base() + [
+            "rpk",
+            "topic",
+            "describe",
+            topic,
+            "-p",
+            "-X",
+            f"brokers={KAFKA_BOOTSTRAP}",
+        ]
+    result = run_cmd(command, capture=True)
+    if result.returncode != 0:
+        LOGGER.debug(f"Topic describe failed: {result.stderr or result.stdout}")
+        return None
+    if KAFKA_BACKEND == "apache":
+        return _outage.high_watermark_offsets(result.stdout or "", topic)
+    return _outage.high_watermark_text(result.stdout or "")
+
+
+# ------------------------------------------------------------------------------
+# Kafka Unreached
+# - Why the load is not yet proven to run through the broker: a landing topic
+#   with no record, or a subscriber with no commit. Polled before the broker is
+#   stopped, so a path that bypasses Kafka fails as never having reached it
+#   rather than later as a consumer left behind.
+# ------------------------------------------------------------------------------
+def kafka_unreached(test, services):
+    expected = _outage.expected_consumers(
+        (PROJECT_DIR / path for path in services.values()), test.expected_topics
+    )
+    landing = [topic for topic in test.expected_topics if topic.endswith("_land")]
+
+    def _unreached():
+        lag = consumer_group_lag()
+        if lag is None:
+            return ["the broker did not describe its consumer groups"]
+        watermarks = {topic: topic_high_watermark(topic) for topic in landing}
+        return _outage.kafka_unreached(watermarks, lag, expected)
+
+    return poll_until(
+        _unreached,
+        timeout=OUTAGE_READY_TIMEOUT,
+        interval=OUTAGE_POLL_SECONDS,
+        done=lambda problems: problems == [],
+        on_attempt=report_changes(
+            lambda problems: "; ".join(problems) or "load reached Kafka"
+        ),
+    )
+
+
+# ------------------------------------------------------------------------------
 # Report Changes
 # - A poll_until on_attempt callback that logs the rendered state only when it moves
 # ------------------------------------------------------------------------------
@@ -1838,7 +1943,7 @@ def verify_outage_landing(ctx, test, sent):
 # ------------------------------------------------------------------------------
 def verify_consumers(ctx, test, services):
     expected = _outage.expected_consumers(
-        PROJECT_DIR / path for path in services.values()
+        (PROJECT_DIR / path for path in services.values()), test.expected_topics
     )
     if not (expected):
         mark_fail(ctx, f"[{test.name}] no service in the profile subscribes to a topic")
@@ -1960,10 +2065,11 @@ def verify_survivors(ctx, test, before, exited, since, stopped_at):
 
 # ------------------------------------------------------------------------------
 # Drive Outage
-# - Steady load, a pre-outage landing gate, then the outage itself, returning
-#   every request sent and the stop time, None when no outage ran
+# - Steady load, a pre-outage landing gate (plus, for a broker outage, proof the
+#   load went through the broker), then the outage itself, returning every
+#   request sent and the stop time, None when no outage ran
 # ------------------------------------------------------------------------------
-def drive_outage(ctx, test, backing, ingest_url):
+def drive_outage(ctx, test, services, backing, ingest_url):
     load = _outage.SteadyLoad(
         url=ingest_url,
         prefix=test.marker,
@@ -1986,7 +2092,17 @@ def drive_outage(ctx, test, backing, ingest_url):
         )
         if path_lands:
             time.sleep(max(0.0, OUTAGE_LEAD_SECONDS - (time.time() - started)))
-            stopped_at = break_and_restore(ctx, test, backing, seconds, load)
+            unreached = (
+                kafka_unreached(test, services) if (backing == KAFKA_SERVICE) else []
+            )
+            if unreached:
+                mark_fail(
+                    ctx,
+                    f"[{test.name}] the load never reached Kafka before '{backing}' "
+                    f"was stopped, so no broker outage was run: {'; '.join(unreached)}",
+                )
+            else:
+                stopped_at = break_and_restore(ctx, test, backing, seconds, load)
             if stopped_at is not None:
                 time.sleep(OUTAGE_TAIL_SECONDS)
         else:
@@ -2022,7 +2138,7 @@ def run_outage(ctx, test, services, ingest_url):
     since = time.time() - 1
     watcher = watch_exits(state.container_id for state in before.values())
     try:
-        sent, stopped_at = drive_outage(ctx, test, backing, ingest_url)
+        sent, stopped_at = drive_outage(ctx, test, services, backing, ingest_url)
         print()
         verify_answers(ctx, test, sent)
         if stopped_at is not None:
@@ -2146,6 +2262,13 @@ def run_test(ctx, mode, test, persistent_services):
     # Wait for the stack to be healthy before proceeding
     if not (wait_for_stack(test.services)):
         mark_fail(ctx, f"[{test.name}] Stack failed to reach healthy state")
+        dump_logs()
+        stack_down(keep_services=persistent_services or None)
+        return
+
+    # A service on another config tests another path, so nothing after it counts.
+    print()
+    if not (verify_config_mounts(ctx, test)):
         dump_logs()
         stack_down(keep_services=persistent_services or None)
         return
