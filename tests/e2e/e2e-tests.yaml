@@ -59,11 +59,18 @@ tests:
       - main_land
       - simple_receiver_to_loader_kafka_with_archiver_land
 
+  # The fetcher tests post into dfe-fetcher's ingest endpoint, which it leaves
+  # off unless configured. The configs under tests/e2e/config turn it on for the
+  # suite alone, so no stack config publishes an unauthenticated ingest.
   - name: simple-fetcher-to-loader
     profile: grpc-fetcher
+    config_overrides:
+      dfe-fetcher: tests/e2e/config/fetcher-grpc.yaml
 
   - name: simple-fetcher-to-loader-kafka
     profile: kafka-fetcher
+    config_overrides:
+      dfe-fetcher: tests/e2e/config/fetcher-kafka.yaml
     expected_topics:
       - main_land
       - simple_fetcher_to_loader_kafka_land
