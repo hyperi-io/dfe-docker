@@ -215,6 +215,25 @@ profiles:
       dfe-receiver:
         config_path: receiver/kafka.yaml
 
+  # Every Kafka app with work to do, for the broker-outage e2e test: an idle app
+  # joins no consumer group, so it cannot show a consumer resuming. Each
+  # transform reads its own source's topic and the loader reads all three outputs.
+  kafka-resilience:
+    transport: kafka
+    services:
+      dfe-archiver:
+        config_path: archiver/kafka-archive.yaml
+      dfe-loader:
+        config_path: loader/kafka-resilience.yaml
+      dfe-receiver:
+        config_path: receiver/kafka.yaml
+      dfe-transform-elastic-cisco-ios:
+        config_path: transform-elastic/cisco-ios.yaml
+      dfe-transform-vector:
+        config_path: transform-vector/resilience.yaml
+      dfe-transform-vrl:
+        config_path: transform-vrl/main.yaml
+
   kafka-fetcher:
     transport: kafka
     services:
@@ -246,6 +265,17 @@ profiles:
         config_path: loader/grpc.yaml
       dfe-receiver:
         config_path: receiver/grpc.yaml
+
+  # A two-hop direct chain, receiver -> dfe-transform-vrl -> loader, all gRPC.
+  grpc-receiver-transform-vrl:
+    transport: grpc
+    services:
+      dfe-loader:
+        config_path: loader/grpc.yaml
+      dfe-receiver:
+        config_path: receiver/grpc-transform-vrl.yaml
+      dfe-transform-vrl:
+        config_path: transform-vrl/grpc.yaml
 
   grpc-fetcher:
     transport: grpc

@@ -39,6 +39,7 @@ from _common import (
     PROJECTED_PROFILES,
     SERVICE_CONFIG_FILE,
     SERVICE_PROFILES_FILE,
+    SERVICE_TO_RENDERED_CONFIG_VAR,
     _load_dotenv,
     _print,
     _rel_path,
@@ -173,17 +174,6 @@ ENGINE_CONTENT_DIR_VAR = "DFE_ENGINE_CONTENT_DIR"
 ENGINE_CONTENT_DIR = "/app/content"
 ENGINE_CONTRACT_DIR_VAR = "DFE_ENGINE_CONTRACT_DIR"
 ENGINE_CONTRACT_SUBDIR = "contract"
-# Which variable names the file the resident single-instance service reads. The
-# file NAME is _common.SERVICE_CONFIG_FILE, which scripts/instances.py shares.
-SERVICE_TO_RENDERED_CONFIG_VAR = {
-    "dfe-archiver": "DFE_ARCHIVER_CONFIG_FILE",
-    "dfe-fetcher": "DFE_FETCHER_CONFIG_FILE",
-    "dfe-loader": "DFE_LOADER_CONFIG_FILE",
-    "dfe-receiver": "DFE_RECEIVER_CONFIG_FILE",
-    "dfe-transform-elastic": "DFE_TRANSFORM_ELASTIC_CONFIG_FILE",
-    "dfe-transform-vector": "DFE_TRANSFORM_VECTOR_CONFIG_FILE",
-    "dfe-transform-vrl": "DFE_TRANSFORM_VRL_CONFIG_FILE",
-}
 # A per-source transform instance is a service of its own here, because a
 # profile has to be able to run one without the other.
 SERVICES = [

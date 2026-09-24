@@ -20,6 +20,18 @@
 #
 # Per-service config overrides can be set via `config_overrides`, keyed by
 # service name (e.g. dfe-loader: config/custom.yaml).
+#
+# An `outage` block replaces the one-shot send with steady load, stops the named
+# service (`kafka` is whichever broker KAFKA_BACKEND selects) for `seconds`, and
+# starts it again. It asserts no other DFE service exits or restarts, the
+# receiver answers every request (a refusal is backpressure and passes), every
+# accepted record lands, and on Kafka every consumer group catches up.
+# `sources` maps each `_source` the load sends to its data file, defaulting to
+# the test's table and `data_file`. Outage tests run only under
+# `make test-resilience`, never in the default `make test-e2e`.
+#
+# A test whose archiver subscribes to its landing topic and archives to a
+# file:// destination also asserts the archiver wrote a file during the test.
 
 global:
   data_file: tests/e2e/data/events.jsonl
@@ -59,18 +71,67 @@ tests:
   # The complete single-node stack: receiver, fetcher, transform, loader and
   # archiver over Kafka, with the engine, UI and proxy in front. The HTTP checks
   # assert the single-origin contract dfe-proxy exists for -- UI and engine API
-  # on ONE origin.
+  # on ONE origin. The port follows DFE_UI_PORT, the variable compose publishes
+  # dfe-proxy on, so a stack moved off 3000 is still the one checked.
   - name: complete-single-node-stack
     profile: single
     expected_topics:
       - main_land
       - complete_single_node_stack_land
     expected_http:
-      - url: http://localhost:3000/livez
+      - url: http://localhost:${DFE_UI_PORT:-3000}/livez
         status: 200
         contains: "ok"
-      - url: http://localhost:3000/
+      - url: http://localhost:${DFE_UI_PORT:-3000}/
         status: 200
-      - url: http://localhost:3000/api/v1/auth/setup-status
+      - url: http://localhost:${DFE_UI_PORT:-3000}/api/v1/auth/setup-status
         status: 200
         contains: "initial_setup"
+
+  # ClickHouse down under load on the core data path: dfe-loader has to hold or
+  # refuse what it cannot write, and deliver it once ClickHouse is back.
+  - name: clickhouse-outage
+    profile: grpc-receiver
+    outage:
+      service: clickhouse
+      seconds: 60
+
+  # A direct gRPC destination pulled from under its sender and returned. Every
+  # app upstream of the stopped one has to hold or refuse, never exit.
+  - name: loader-outage-grpc
+    profile: grpc-receiver
+    outage:
+      service: dfe-loader
+      seconds: 60
+
+  - name: loader-outage-grpc-transform-vrl
+    profile: grpc-receiver-transform-vrl
+    outage:
+      service: dfe-loader
+      seconds: 60
+
+  - name: transform-vrl-outage-grpc
+    profile: grpc-receiver-transform-vrl
+    outage:
+      service: dfe-transform-vrl
+      seconds: 60
+
+  # The broker down under load with every Kafka app consuming. The vector and
+  # cisco-ios records keep dfe-transform-vector's and dfe-transform-elastic's
+  # own topics moving, so their groups have to catch up too.
+  - name: kafka-outage
+    profile: kafka-resilience
+    expected_topics:
+      - main_land
+      - main_load
+      - vector_land
+      - vector_load
+      - cisco-ios_land
+      - cisco-ios_load
+    outage:
+      service: kafka
+      seconds: 60
+      sources:
+        main: tests/e2e/data/events.jsonl
+        vector: tests/e2e/data/events.jsonl
+        cisco-ios: tests/e2e/data/cisco-ios.jsonl

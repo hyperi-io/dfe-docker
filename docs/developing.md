@@ -27,7 +27,7 @@ exist, and how a profile decides which of them run.
 |---|---|
 | Docker and Docker Compose v2 | everything |
 | Python 3 | the helper scripts under `scripts/` |
-| PyYAML | `make test-e2e` only (`pip install pyyaml`, or `uv run --with pyyaml`) |
+| PyYAML | `make test-e2e` and `make test-resilience` only (`pip install pyyaml`, or `uv run --with pyyaml`) |
 | ruff | `make check-python` only |
 | pytest | `make check-tests` only (`uvx` fetches the pin if you have it) |
 | git credentials for the hyperi-io repos (or `DFE_SRC_ROOT` checkouts) | `make dev` |
@@ -325,6 +325,11 @@ landing fresh in the `dfe.otel_*` tables -- and `expected_http` adds a fourth, a
 status and optional body check per URL. `single` uses both, which is what makes
 `complete-single-node-stack` a whole-stack test rather than a data-path one.
 
+An archiver that subscribes to the test's landing topic and archives to a
+`file://` destination must also write a file there during the test, new or grown
+since a baseline taken before the send. The archive volume outlives the stack, so
+files from an earlier run never count.
+
 Two things about the runner worth knowing before you debug it:
 
 - **It waits on named services, never on a whole profile.** `docker compose up
@@ -338,6 +343,22 @@ Two things about the runner worth knowing before you debug it:
   [troubleshooting.md](troubleshooting.md#configloaderkafka-loadyaml-consumes-a-topic-nothing-pre-creates).
   Deleting it per run makes a run depend on the test definition, not on broker
   history.
+
+### Outage tests -- a service stopped under load
+
+```bash
+make test-resilience
+make test-resilience E2E_TESTS="clickhouse-outage kafka-outage"
+```
+
+Opt-in: `make test-e2e` never runs these, and refuses one named in `E2E_TESTS`.
+An `outage:` test sends steady load and, once its first records land, stops the
+named service for `seconds`, starts it again in a `finally`, and keeps sending
+for 30 s. It then asserts every other DFE service ran straight through (same
+pid, no restart, no die or OOM event), the receiver answered every request (a
+refusal such as 503 passes, silence fails), every accepted record landed, and on Kafka
+every consumer group is back at zero lag. They stop services, so they never run
+in `make post` either.
 
 ### Post-deploy source test -- what an operator does first
 
@@ -415,6 +436,12 @@ make test-e2e E2E_TESTS="simple-receiver-to-loader-grpc simple-fetcher-to-loader
 
 The same reasoning applies to ClickHouse (`CLICKHOUSE_HTTP_PORT`,
 `CLICKHOUSE_NATIVE_PORT`) and every `*_PROMETHEUS_PORT`.
+
+Beside another stack on the same daemon, ports are not enough, because every
+`container_name` is daemon-wide. Set `COMPOSE_PROJECT_NAME`, the ports above,
+and `DFE_E2E_COMPOSE_FILES` naming an extra compose file (`:`-separated) the
+suite chains onto every `up`, one that re-prefixes each `container_name` and
+moves ClickHouse's host publish.
 
 ## Sharp edges
 

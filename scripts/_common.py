@@ -67,6 +67,19 @@ SERVICE_CONFIG_FILE = {
     "dfe-transform-vrl": "config.yaml",
 }
 
+# The variable naming the engine-rendered config each resident service reads.
+# Compose runs `--config ${VAR:-<committed mount>}`, so an empty value reads the
+# committed file and the file NAME in the rendered path is SERVICE_CONFIG_FILE.
+SERVICE_TO_RENDERED_CONFIG_VAR = {
+    "dfe-archiver": "DFE_ARCHIVER_CONFIG_FILE",
+    "dfe-fetcher": "DFE_FETCHER_CONFIG_FILE",
+    "dfe-loader": "DFE_LOADER_CONFIG_FILE",
+    "dfe-receiver": "DFE_RECEIVER_CONFIG_FILE",
+    "dfe-transform-elastic": "DFE_TRANSFORM_ELASTIC_CONFIG_FILE",
+    "dfe-transform-vector": "DFE_TRANSFORM_VECTOR_CONFIG_FILE",
+    "dfe-transform-vrl": "DFE_TRANSFORM_VRL_CONFIG_FILE",
+}
+
 # Repo constants
 REPO_ROOT = __find_repo_root()
 # Written by `make init` / `make up`: the launcher's copy of the access summary,
@@ -172,6 +185,20 @@ def _config_enrichment_paths(*, path: Path) -> set[str]:
     return paths
 
 
+def _config_argument(*, args: typing.Sequence[str]) -> str | None:
+    """Return the file a service's `--config` argument names, else None.
+
+    Takes the process arguments as `docker inspect` reports them (`.Args`), in
+    either the `--config <path>` or the `--config=<path>` form.
+    """
+    for index, arg in enumerate(args):
+        if arg == "--config" and index + 1 < len(args):
+            return args[index + 1]
+        if arg.startswith("--config="):
+            return arg.split("=", 1)[1]
+    return None
+
+
 def _dotenv_values() -> dict[str, str]:
     """Parse .env into a dict, honouring the same minimal subset docker compose does.
 
@@ -209,6 +236,17 @@ def _load_dotenv() -> None:
     """Merge .env into os.environ. Existing environment variables take precedence."""
     for key, value in _dotenv_values().items():
         os.environ.setdefault(key, value)
+
+
+def _use_mounted_configs(*, environ: typing.MutableMapping[str, str]) -> None:
+    """Blank every rendered-config variable, so each service reads its mounted file.
+
+    `make` exports the engine-rendered paths from `.profile.mk` to every recipe
+    and `.env` can carry them too. Compose falls back to the committed mount on an
+    empty value, and a set-but-empty variable also beats the one in `.env`.
+    """
+    for var in SERVICE_TO_RENDERED_CONFIG_VAR.values():
+        environ[var] = ""
 
 
 def _parse_yaml_subset(*, text: str) -> dict[str, object]:

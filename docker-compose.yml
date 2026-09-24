@@ -284,9 +284,10 @@ services:
 
   # ===========================================================================
   # dlq-init
-  # Makes the shared DLQ spool writable by the services that use it: Docker
-  # creates the `dlq-spool` mountpoint root-owned and all four consumers run as
-  # uid 1000, so without this dfe-archiver crash-loops on its eager DLQ writer.
+  # Makes the shared DLQ spool and the archive volume writable by the services
+  # that use them: Docker creates both mountpoints root-owned and every consumer
+  # runs as uid 1000, so without this dfe-archiver crash-loops on its eager DLQ
+  # writer and fails every archive write.
   #
   # Three sharp edges -- `required: false` means a FAILED dlq-init only warns,
   # uid 1000 is hard-coded, and no profile names this service, so dev mode builds
@@ -304,9 +305,10 @@ services:
     # into argv, so `sh -c` would receive only `chown` and the rest would land in
     # $0/$1/$2 -- which fails with "chown: missing operand".
     command:
-      - chown -R 1000:1000 /var/spool/dfe
+      - chown -R 1000:1000 /var/spool/dfe /var/data/archive
     volumes:
       - dlq-spool:/var/spool/dfe
+      - archiver-data:/var/data/archive
     restart: "no"
 
   # ===========================================================================

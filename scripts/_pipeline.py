@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import time
 import typing
 from urllib.error import URLError
@@ -50,6 +51,20 @@ def env_or(name: str, fallback: str) -> str:
     ``os.environ.get(name, default)`` returns '' and the default never fires.
     """
     return os.environ.get(name, "").strip() or fallback
+
+
+_ENV_REFERENCE = re.compile(r"\$\{([A-Za-z_][A-Za-z0-9_]*)(?::-([^}]*))?\}")
+
+
+def expand_env(text: str) -> str:
+    """Replace each ``${NAME}`` or ``${NAME:-default}`` with its environment value.
+
+    Empty reads as unset, as it does in :func:`env_or`, so a test definition
+    follows the same port variables compose publishes the stack on.
+    """
+    return _ENV_REFERENCE.sub(
+        lambda match: env_or(match.group(1), match.group(2) or ""), text
+    )
 
 
 def clickhouse_url() -> str:
