@@ -12,14 +12,17 @@
 #    ./scripts/test-e2e.py                                       # Run all tests from config
 #    ./scripts/test-e2e.py kafka-full                            # Run specific test by name
 #    ./scripts/test-e2e.py kafka-full grpc-full                  # Run multiple named tests
+#    ./scripts/test-e2e.py --outages                             # Run the outage tests instead
 #    TEST_CONFIG=tests/e2e/e2e-tests.yaml ./scripts/test-e2e.py  # Custom config
 #    LOG_LEVEL=debug ./scripts/test-e2e.py                       # Verbose service logs
 
+import argparse
 import json
 import logging
 import os
 import subprocess
 import sys
+import tempfile
 import time
 
 try:
@@ -123,6 +126,10 @@ OTEL_ENGINE_BACKEND = "opentelemetry"
 OTEL_FRESH_WINDOW_SECONDS = 300
 OTEL_TIMEOUT_SECONDS = 120.0
 OTEL_INTERVAL_SECONDS = 5.0
+# dfe-archiver writes a batch only once it is big or old enough, so the archive
+# check waits this long before it calls the archive missing.
+ARCHIVE_TIMEOUT_SECONDS = 180
+ARCHIVE_INTERVAL_SECONDS = 10
 TARGET_DB = "dfe"
 TARGET_TABLE = "main"
 
@@ -1379,6 +1386,102 @@ def verify_topics(ctx, test_name, expected_topics):
 
 
 # ---------------------------------------------------------------------------
+# Archive Targets
+# - {archiver service: container directory} for every archiver this test's
+#   records reach: it subscribes to the test's landing topic and archives to a
+#   file:// destination
+# ---------------------------------------------------------------------------
+def archive_targets(test, services):
+    landing = f"{test.table}_land"
+    targets = {}
+    for service, config_path in sorted(services.items()):
+        if not (service.startswith("dfe-archiver")):
+            continue
+        with open(PROJECT_DIR / config_path, encoding="utf-8") as config_file:
+            config = yaml.safe_load(config_file) or {}
+        topics = (config.get("kafka") or {}).get("topics") or []
+        destination = str((config.get("archive") or {}).get("destination", ""))
+        if landing in topics and destination.startswith("file://"):
+            targets[service] = destination[len("file://") :]
+    return targets
+
+
+# ---------------------------------------------------------------------------
+# Archive Files
+# - {relative path: size} of every file under an archiver's directory, copied
+#   out through compose so the image needs no tools of its own, or None when
+#   the directory cannot be read
+# ---------------------------------------------------------------------------
+def archive_files(service, directory):
+    with tempfile.TemporaryDirectory() as scratch:
+        target = Path(scratch) / "archive"
+        result = run_cmd(
+            [
+                "docker",
+                "compose",
+                "--profile",
+                "*",
+                "cp",
+                f"{service}:{directory}",
+                str(target),
+            ],
+            capture=True,
+        )
+        if result.returncode != 0:
+            LOGGER.debug(
+                f"Could not copy '{directory}' out of '{service}': "
+                f"{result.stderr or result.stdout}"
+            )
+            return None
+        return {
+            str(path.relative_to(target)): path.stat().st_size
+            for path in target.rglob("*")
+            if path.is_file()
+        }
+
+
+# ---------------------------------------------------------------------------
+# Verify Archive
+# - Each archiver this test's records reach wrote to its archive during the
+#   test: a file that is new since the baseline, or one that grew
+# ---------------------------------------------------------------------------
+def verify_archive(ctx, test_name, baselines):
+    for service, (directory, before) in sorted(baselines.items()):
+        LOGGER.info(f"Verifying '{service}' archives to '{directory}'...")
+
+        def _written(service=service, directory=directory, before=before):
+            after = archive_files(service, directory)
+            if after is None:
+                return None
+            return sorted(
+                path for path, size in after.items() if size > before.get(path, -1)
+            )
+
+        written = poll_until(
+            _written,
+            timeout=ARCHIVE_TIMEOUT_SECONDS,
+            interval=ARCHIVE_INTERVAL_SECONDS,
+            done=bool,
+        )
+        if written:
+            mark_pass(
+                ctx,
+                f"[{test_name}] '{service}' wrote {len(written)} archive file(s) "
+                f"under '{directory}' (first: '{written[0]}')",
+            )
+        elif written is None:
+            mark_fail(
+                ctx, f"[{test_name}] '{directory}' could not be read out of '{service}'"
+            )
+        else:
+            mark_fail(
+                ctx,
+                f"[{test_name}] '{service}' wrote nothing under '{directory}' within "
+                f"{ARCHIVE_TIMEOUT_SECONDS}s -- read its log for the write error",
+            )
+
+
+# ---------------------------------------------------------------------------
 # Verify HTTP
 # - Asserts the user-facing surface answers: the proxy origin, and what it routes
 #   to. A complete-stack profile is only proven when the UI and the engine API
@@ -2061,6 +2164,12 @@ def run_test(ctx, mode, test, persistent_services):
         # Baseline the landing table before send so verification measures the delta
         # this run contributes (the engine-provisioned table is shared, not per-run).
         baseline = ch_count(test.database, test.table)
+        # The archive volume outlives the stack, so an archiver is judged on what
+        # it writes after this baseline, never on files an earlier run left.
+        archive_baselines = {
+            service: (directory, archive_files(service, directory) or {})
+            for service, directory in archive_targets(test, effective_services).items()
+        }
         send_events(
             ctx,
             test.name,
@@ -2082,6 +2191,10 @@ def run_test(ctx, mode, test, persistent_services):
             ctx.total_sent,
             test.marker,
         )
+
+        if archive_baselines:
+            print()
+            verify_archive(ctx, test.name, archive_baselines)
 
     # If the test runs Kafka and expected topics are defined, verify the topics exist
     if KAFKA_BACKEND_PROFILE in test.compose_profiles and test.expected_topics:
@@ -2151,6 +2264,7 @@ def require_command(name):
 # - Configures the logging system with custom levels and formatting
 # ------------------------------------------------------------------------------
 def setup_logging():
+    logging.addLevelName(SKIP_LEVEL, "SKIP")
     logging.addLevelName(PASS_LEVEL, "PASS")
     logging.addLevelName(FAIL_LEVEL, "FAIL")
     handler = logging.StreamHandler(sys.stderr)
@@ -2164,7 +2278,26 @@ def setup_logging():
 # ==============================================================================
 
 
+def parse_args():
+    parser = argparse.ArgumentParser(
+        description="Config-driven e2e test runner for the DFE Docker stack"
+    )
+    parser.add_argument(
+        "tests",
+        nargs="*",
+        help="test names to run; every test of the selected kind when omitted",
+    )
+    parser.add_argument(
+        "--outages",
+        action="store_true",
+        help="run the outage tests, which stop a service under load, instead of the default suite",
+    )
+    return parser.parse_args()
+
+
 def main():
+    args = parse_args()
+
     # Initial setup with logging, test context and start_time
     setup_logging()
     ctx = TestContext()
@@ -2202,31 +2335,31 @@ def main():
 
     mode = get_config("mode", {}, global_config)
 
-    # Resolve which tests to run - CLI args filter, otherwise run all
-    test_count = len(config.get("tests", []))
-    test_names = sys.argv[1:]
+    # Resolve which tests to run - CLI args filter, otherwise every test of the
+    # selected kind. Outage tests stop services, so they run only on --outages.
+    configured = config.get("tests", [])
+    other_target = "make test-e2e" if (args.outages) else "make test-resilience"
 
     tests_to_run = []
-    if test_names:
-        for test_name in test_names:
-            exists = False
-            for index in range(test_count):
-                if config["tests"][index].get("name") == test_name:
-                    tests_to_run.append(
-                        resolve_test_case(config["tests"][index], global_config)
-                    )
-                    exists = True
-                    break
-            if not (exists):
+    if args.tests:
+        by_name = {test_config.get("name"): test_config for test_config in configured}
+        for test_name in args.tests:
+            test_config = by_name.get(test_name)
+            if test_config is None:
                 mark_skip(
                     ctx,
                     f"Test name '{test_name}' could not be found in config '{TEST_CONFIG}'",
                 )
+            elif bool(test_config.get("outage")) != args.outages:
+                mark_skip(
+                    ctx, f"Test '{test_name}' runs under '{other_target}', not this one"
+                )
+            else:
+                tests_to_run.append(resolve_test_case(test_config, global_config))
     else:
-        for index in range(test_count):
-            tests_to_run.append(
-                resolve_test_case(config["tests"][index], global_config)
-            )
+        for test_config in configured:
+            if bool(test_config.get("outage")) == args.outages:
+                tests_to_run.append(resolve_test_case(test_config, global_config))
 
     # Build only the DFE services the selected tests actually need.
     all_services = set()

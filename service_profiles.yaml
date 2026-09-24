@@ -222,7 +222,7 @@ profiles:
     transport: kafka
     services:
       dfe-archiver:
-        config_path: archiver/kafka-resilience.yaml
+        config_path: archiver/kafka-archive.yaml
       dfe-loader:
         config_path: loader/kafka-resilience.yaml
       dfe-receiver:

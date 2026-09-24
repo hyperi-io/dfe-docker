@@ -495,6 +495,12 @@ check-dockerfile: ## Lint the dev builder Dockerfile (hadolint gates on error se
 test-e2e: ## End-to-end test executor (pass test names via E2E_TESTS)
 	@python3 ./scripts/test_e2e.py $(E2E_TESTS)
 
+# Opt-in, never part of test-e2e: each test stops a backing service or a DFE app
+# under load.
+.PHONY: test-resilience
+test-resilience: ## Outage tests: stop a service under load and prove the rest survives (pass test names via E2E_TESTS)
+	@python3 ./scripts/test_e2e.py --outages $(E2E_TESTS)
+
 .PHONY: test-flows
 test-flows: ## Flow shapes against a running stack (needs DFE_ENGINE_REPO; FLOW_ARGS passes flags)
 	@python3 ./scripts/test_flows.py $(FLOW_ARGS)

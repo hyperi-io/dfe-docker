@@ -27,7 +27,11 @@
 # receiver answers every request (a refusal is backpressure and passes), every
 # accepted record lands, and on Kafka every consumer group catches up.
 # `sources` maps each `_source` the load sends to its data file, defaulting to
-# the test's table and `data_file`.
+# the test's table and `data_file`. Outage tests run only under
+# `make test-resilience`, never in the default `make test-e2e`.
+#
+# A test whose archiver subscribes to its landing topic and archives to a
+# file:// destination also asserts the archiver wrote a file during the test.
 
 global:
   data_file: tests/e2e/data/events.jsonl

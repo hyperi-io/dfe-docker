@@ -207,6 +207,7 @@ In `dev` mode, they build from each repo's own Dockerfile (not the shared Rust b
 | Command            | Description                                                       |
 |--------------------|-------------------------------------------------------------------|
 | `make test-e2e`    | End-to-end test executor                                          |
+| `make test-resilience` | Opt-in outage tests: stop a service under load, prove the rest survives |
 | `make check-tests` | Unit tests over the credential helpers (`scripts/tests`)          |
 
 The e2e harness (`scripts/test_e2e.py`, config `tests/e2e/e2e-tests.yaml`) runs
