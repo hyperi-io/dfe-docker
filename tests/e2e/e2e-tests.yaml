@@ -71,19 +71,20 @@ tests:
   # The complete single-node stack: receiver, fetcher, transform, loader and
   # archiver over Kafka, with the engine, UI and proxy in front. The HTTP checks
   # assert the single-origin contract dfe-proxy exists for -- UI and engine API
-  # on ONE origin.
+  # on ONE origin. The port follows DFE_UI_PORT, the variable compose publishes
+  # dfe-proxy on, so a stack moved off 3000 is still the one checked.
   - name: complete-single-node-stack
     profile: single
     expected_topics:
       - main_land
       - complete_single_node_stack_land
     expected_http:
-      - url: http://localhost:3000/livez
+      - url: http://localhost:${DFE_UI_PORT:-3000}/livez
         status: 200
         contains: "ok"
-      - url: http://localhost:3000/
+      - url: http://localhost:${DFE_UI_PORT:-3000}/
         status: 200
-      - url: http://localhost:3000/api/v1/auth/setup-status
+      - url: http://localhost:${DFE_UI_PORT:-3000}/api/v1/auth/setup-status
         status: 200
         contains: "initial_setup"
 

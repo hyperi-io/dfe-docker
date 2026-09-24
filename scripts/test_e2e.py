@@ -51,7 +51,7 @@ import _outage
 from _common import FALSY, _config_argument, _load_dotenv, _use_mounted_configs
 from _pipeline import MARKER_EXPRESSIONS  # noqa: F401 - re-exported for callers
 from _pipeline import ch_marker_count as _ch_marker_count
-from _pipeline import clickhouse_url, env_or, otel_fresh_counts, poll_until
+from _pipeline import clickhouse_url, env_or, expand_env, otel_fresh_counts, poll_until
 
 
 # ==============================================================================
@@ -1531,7 +1531,7 @@ def verify_http(ctx, test_name, checks):
     LOGGER.info("Verifying HTTP surface...")
 
     for check in checks:
-        url = (check or {}).get("url")
+        url = expand_env((check or {}).get("url") or "")
         if not (url):
             continue
         want = int(check.get("status", 200))
