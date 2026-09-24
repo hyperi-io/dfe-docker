@@ -1,0 +1,18 @@
+# Project:   dfe-docker
+# File:      tests/e2e/config/fetcher-grpc.yaml
+# Purpose:   dfe-fetcher e2e config - ingest on, gRPC to dfe-loader
+# Language:  YAML
+#
+# License:   BUSL-1.1
+# Copyright: (c) 2026 HYPERI PTY LIMITED
+#
+# simple-fetcher-to-loader posts its events to the ingest endpoint and nothing
+# polls an upstream, so the only source is the suite's own POSTs.
+
+output:
+  type: grpc
+  grpc:
+    endpoint: http://dfe-loader:50051
+
+ingest:
+  enabled: true
