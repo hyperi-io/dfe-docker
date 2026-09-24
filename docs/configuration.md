@@ -158,7 +158,7 @@ credential fields are `env:`-interpolated. Change it there.
 |--------------------------------------------------|--------------------------------------------------------------------------------------|---------------------------------------------------------------------|
 | `DFE_TRANSFORM_ELASTIC_VERSION`                  | Version of dfe-transform-elastic to use                                              | none -- `make stack` pins it; unset is a hard-fail                                                            |
 | `DFE_TRANSFORM_ELASTIC_PROMETHEUS_PORT`          | Transform Elastic Prometheus port                                                    | `9099`                                                              |
-| `DFE_TRANSFORM_ELASTIC_CISCO_IOS_PROMETHEUS_PORT` | Prometheus port of the cisco-ios instance -- it runs the same image, so it needs its own | `9100`                                                          |
+| `DFE_TRANSFORM_ELASTIC_CISCO_IOS_PROMETHEUS_PORT` | Prometheus port of the cisco-ios instance -- it runs the same image, so it needs its own; 9100 is node_exporter's | `9089`                                                          |
 
 ### DFE Transform Vector
 
@@ -338,6 +338,7 @@ The same toggle points the engine at HyperDX: with it on, the engine receives `D
 | 8686  | dfe-transform-vector | Vector API         |
 | 8687  | dfe-transform-vector-filebeat | Vector API |
 | 9000  | ClickHouse           | Native protocol    |
+| 9089  | dfe-transform-elastic-cisco-ios | Prometheus metrics |
 | 9090  | dfe-receiver         | Prometheus metrics |
 | 9091  | dfe-loader           | Prometheus metrics |
 | 9092  | Kafka (any backend)  | Plaintext          |
@@ -348,7 +349,6 @@ The same toggle points the engine at HyperDX: with it on, the engine receives `D
 | 9097  | dfe-transform-vrl-filebeat | Prometheus metrics |
 | 9098  | dfe-transform-vector-filebeat | Prometheus metrics |
 | 9099  | dfe-transform-elastic | Prometheus metrics |
-| 9100  | dfe-transform-elastic-cisco-ios | Prometheus metrics |
 | 13133 | otel-collector       | health_check       |
 | 19092 | Kafka (any backend)  | Plaintext host     |
 | 50051 | dfe-loader           | gRPC               |

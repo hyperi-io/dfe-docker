@@ -765,7 +765,7 @@ services:
     restart: unless-stopped
     deploy: *limits-service
     ports:
-      - ${DFE_BIND_HOST:-127.0.0.1}:${DFE_TRANSFORM_ELASTIC_CISCO_IOS_PROMETHEUS_PORT:-9100}:9090
+      - ${DFE_BIND_HOST:-127.0.0.1}:${DFE_TRANSFORM_ELASTIC_CISCO_IOS_PROMETHEUS_PORT:-9089}:9090
     env_file:
       - path: env/transform-elastic-cisco-ios.env
         required: false
