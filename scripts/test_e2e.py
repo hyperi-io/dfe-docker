@@ -51,7 +51,7 @@ import _outage
 from _common import FALSY, _load_dotenv
 from _pipeline import MARKER_EXPRESSIONS  # noqa: F401 - re-exported for callers
 from _pipeline import ch_marker_count as _ch_marker_count
-from _pipeline import otel_fresh_counts, poll_until
+from _pipeline import clickhouse_url, env_or, otel_fresh_counts, poll_until
 
 
 # ==============================================================================
@@ -147,44 +147,43 @@ _load_dotenv()
 # ------------------------------------------------------------------------------
 # Endpoint Related
 # - Configurable URLs for services, with appropriate defaults
+# - The Makefile exports these keys even when .env leaves them unset, so an
+#   empty value must fall back like an absent one (env_or / clickhouse_url).
 # ------------------------------------------------------------------------------
-CLICKHOUSE_URL = os.environ.get(
-    "CLICKHOUSE_URL",
-    f"http://localhost:{os.environ.get('CLICKHOUSE_HTTP_PORT', '8123')}",
-)
-CLICKHOUSE_USERNAME = os.environ.get("CLICKHOUSE_USERNAME", "default")
+CLICKHOUSE_URL = clickhouse_url()
+CLICKHOUSE_USERNAME = env_or("CLICKHOUSE_USERNAME", "default")
 CLICKHOUSE_PASSWORD = os.environ.get("CLICKHOUSE_PASSWORD", "")
 # Readiness, not liveness -- the harness needs "usable", not "the process exists".
 # Every service uses /readyz, matching the compose healthchecks. The
 # /health/live|ready|startup aliases are gone from the scalo-py in the pinned
 # dfe-engine and 404, which reads as an engine that never comes ready.
-DFE_LOADER_HEALTH_URL = os.environ.get(
+DFE_LOADER_HEALTH_URL = env_or(
     "DFE_LOADER_HEALTH_URL",
-    f"http://localhost:{os.environ.get('DFE_LOADER_PROMETHEUS_PORT', '9091')}/readyz",
+    f"http://localhost:{env_or('DFE_LOADER_PROMETHEUS_PORT', '9091')}/readyz",
 )
-DFE_RECEIVER_HEALTH_URL = os.environ.get(
+DFE_RECEIVER_HEALTH_URL = env_or(
     "DFE_RECEIVER_HEALTH_URL",
-    f"http://localhost:{os.environ.get('DFE_RECEIVER_PROMETHEUS_PORT', '9090')}/readyz",
+    f"http://localhost:{env_or('DFE_RECEIVER_PROMETHEUS_PORT', '9090')}/readyz",
 )
-DFE_ARCHIVER_HEALTH_URL = os.environ.get(
+DFE_ARCHIVER_HEALTH_URL = env_or(
     "DFE_ARCHIVER_HEALTH_URL",
-    f"http://localhost:{os.environ.get('DFE_ARCHIVER_PROMETHEUS_PORT', '9093')}/readyz",
+    f"http://localhost:{env_or('DFE_ARCHIVER_PROMETHEUS_PORT', '9093')}/readyz",
 )
-DFE_FETCHER_HEALTH_URL = os.environ.get(
+DFE_FETCHER_HEALTH_URL = env_or(
     "DFE_FETCHER_HEALTH_URL",
-    f"http://localhost:{os.environ.get('DFE_FETCHER_PROMETHEUS_PORT', '9094')}/readyz",
+    f"http://localhost:{env_or('DFE_FETCHER_PROMETHEUS_PORT', '9094')}/readyz",
 )
-DFE_ENGINE_HEALTH_URL = os.environ.get(
+DFE_ENGINE_HEALTH_URL = env_or(
     "DFE_ENGINE_HEALTH_URL",
-    f"http://localhost:{os.environ.get('DFE_ENGINE_PORT', '8003')}/readyz",
+    f"http://localhost:{env_or('DFE_ENGINE_PORT', '8003')}/readyz",
 )
-DFE_FETCHER_INGEST_URL = os.environ.get(
+DFE_FETCHER_INGEST_URL = env_or(
     "DFE_FETCHER_INGEST_URL",
-    f"http://localhost:{os.environ.get('DFE_FETCHER_INGEST_PORT', '8082')}/ingest",
+    f"http://localhost:{env_or('DFE_FETCHER_INGEST_PORT', '8082')}/ingest",
 )
-DFE_RECEIVER_INGEST_URL = os.environ.get(
+DFE_RECEIVER_INGEST_URL = env_or(
     "DFE_RECEIVER_INGEST_URL",
-    f"http://localhost:{os.environ.get('DFE_RECEIVER_HTTP_PORT', '8080')}/ingest",
+    f"http://localhost:{env_or('DFE_RECEIVER_HTTP_PORT', '8080')}/ingest",
 )
 TEST_CONFIG = Path(
     os.environ.get("TEST_CONFIG", str(PROJECT_DIR / "tests" / "e2e" / "e2e-tests.yaml"))
