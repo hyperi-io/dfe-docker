@@ -1,0 +1,31 @@
+# Project:   dfe-docker
+# File:      config/loader/kafka-resilience.yaml
+# Purpose:   dfe-loader config - every transform's output into dfe.main, for the broker-outage e2e test
+# Language:  YAML
+#
+# License:   BUSL-1.1
+# Copyright: (c) 2026 HYPERI PTY LIMITED
+
+clickhouse:
+  hosts:
+    - clickhouse:8123
+  database: dfe
+  protocol: http
+  username: env:CLICKHOUSE_USERNAME
+  password: env:CLICKHOUSE_PASSWORD
+
+kafka:
+  brokers:
+    - kafka:9092
+  group: dfe-loader
+  # scalo drops `<base>_land` whenever `<base>_load` exists, so each source is
+  # read once, at its transform's output.
+  topic_regex: .*_(land|load)
+
+routing:
+  # The test's extra sources have no table of their own, so they land in main.
+  source_to_table:
+    vector: main
+    cisco-ios: main
+  dlq:
+    enabled: false

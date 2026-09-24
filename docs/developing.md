@@ -339,6 +339,21 @@ Two things about the runner worth knowing before you debug it:
   Deleting it per run makes a run depend on the test definition, not on broker
   history.
 
+### Outage tests -- a service stopped under load
+
+```bash
+make test-e2e E2E_TESTS="clickhouse-outage kafka-outage"
+make test-e2e E2E_TESTS="loader-outage-grpc loader-outage-grpc-transform-vrl transform-vrl-outage-grpc"
+```
+
+An `outage:` test sends steady load and, once its first records land, stops the
+named service for `seconds`, starts it again in a `finally`, and keeps sending
+for 30 s. It then asserts every other DFE service ran straight through (same
+pid, no restart, no die or OOM event), the receiver answered every request (a
+refusal such as 503 passes, silence fails), every accepted record landed, and on Kafka
+every consumer group is back at zero lag. They stop services, so they live here
+and never in `make post`.
+
 ### Post-deploy source test -- what an operator does first
 
 ```bash
@@ -415,6 +430,12 @@ make test-e2e E2E_TESTS="simple-receiver-to-loader-grpc simple-fetcher-to-loader
 
 The same reasoning applies to ClickHouse (`CLICKHOUSE_HTTP_PORT`,
 `CLICKHOUSE_NATIVE_PORT`) and every `*_PROMETHEUS_PORT`.
+
+Beside another stack on the same daemon, ports are not enough, because every
+`container_name` is daemon-wide. Set `COMPOSE_PROJECT_NAME`, the ports above,
+and `DFE_E2E_COMPOSE_FILES` naming an extra compose file (`:`-separated) the
+suite chains onto every `up`, one that re-prefixes each `container_name` and
+moves ClickHouse's host publish.
 
 ## Sharp edges
 

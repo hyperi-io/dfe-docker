@@ -1,0 +1,20 @@
+# Project:   dfe-docker
+# File:      config/receiver/grpc-transform-vrl.yaml
+# Purpose:   dfe-receiver config - gRPC push to dfe-transform-vrl (direct chain)
+# Language:  YAML
+#
+# License:   BUSL-1.1
+# Copyright: (c) 2026 HYPERI PTY LIMITED
+
+# Direct chain: receiver pushes to dfe-transform-vrl, which pushes to dfe-loader.
+
+routing:
+  source_rules:
+    - field: _source
+      mode: key_value_use
+
+destinations:
+  default: transform_vrl
+  transform_vrl:
+    grpc:
+      endpoint: http://dfe-transform-vrl:6000
