@@ -35,6 +35,8 @@
 #   pause: {service, seconds} freezes a service first. The signal lands at the
 #     end of the pause, and the thaw follows it. With no `service` the test only
 #     pauses.
+#   workers, interval: the load, as that many workers each pausing that many
+#     seconds between requests (default 4 and 0.5).
 #   expect_loss: true records accepted records that never land instead of
 #     failing, for a config that answers before delivery.
 #   expect_refusals: true fails unless a request was refused during the outage.
@@ -174,12 +176,17 @@ tests:
       signal: KILL
       seconds: 20
 
+  # A free-flowing transform holds almost nothing at the instant it dies, so the
+  # loader is frozen first and the transform dies holding what it took meanwhile.
   - name: transform-vrl-kill-grpc
     profile: grpc-receiver-transform-vrl
     outage:
       service: dfe-transform-vrl
       signal: KILL
       seconds: 20
+      pause:
+        service: dfe-loader
+        seconds: 10
 
   # The downstream frozen, so the receiver is holding records when it dies.
   - name: receiver-kill-grpc-loader-paused
@@ -246,6 +253,9 @@ tests:
       service: dfe-transform-vrl
       signal: KILL
       seconds: 20
+      pause:
+        service: dfe-loader
+        seconds: 10
       expect_loss: true
 
   - name: receiver-kill-grpc-loader-paused-acks-off
@@ -293,6 +303,9 @@ tests:
       service: dfe-transform-vrl
       signal: TERM
       seconds: 20
+      pause:
+        service: dfe-loader
+        seconds: 10
 
   - name: receiver-sigterm-grpc-loader-paused
     profile: grpc-receiver

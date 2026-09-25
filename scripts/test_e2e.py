@@ -2242,18 +2242,22 @@ def verify_survivors(ctx, test, before, exited, since, began_at):
 #   and the Disruption, None when no outage ran
 # ------------------------------------------------------------------------------
 def drive_outage(ctx, test, services, ingest_url):
+    plan = test.outage
     load = _outage.SteadyLoad(
         url=ingest_url,
         prefix=test.marker,
         records=outage_records(test),
-        workers=OUTAGE_WORKERS,
-        interval=OUTAGE_INTERVAL_SECONDS,
+        workers=plan.workers,
+        interval=plan.interval,
         timeout=OUTAGE_REQUEST_TIMEOUT,
     )
     on_kafka = KAFKA_BACKEND_PROFILE in test.compose_profiles
     started = time.time()
     disruption = None
-    LOGGER.info(f"Sending steady load to '{ingest_url}' ({OUTAGE_WORKERS} workers)...")
+    LOGGER.info(
+        f"Sending steady load to '{ingest_url}' ({plan.workers} workers, "
+        f"{plan.interval}s between requests)..."
+    )
     load.start()
     try:
         path_lands = poll_until(
@@ -2284,7 +2288,13 @@ def drive_outage(ctx, test, services, ingest_url):
             )
     finally:
         load.stop()
-    return load.sent(), disruption
+    sent = load.sent()
+    elapsed = max(time.time() - started, 1.0)
+    LOGGER.info(
+        f"[{test.name}] load: {len(sent)} requests in {elapsed:.0f}s, "
+        f"{len(sent) / elapsed:.0f} req/s"
+    )
+    return sent, disruption
 
 
 # ------------------------------------------------------------------------------
@@ -2376,7 +2386,12 @@ def resolve_test_case(test_config, global_config):
         if not (isinstance(test_config["outage"], dict)):
             error(f"[{test_name}] 'outage' must be a mapping")
         try:
-            outage = _outage.outage_plan(test_config["outage"], OUTAGE_DEFAULT_SECONDS)
+            outage = _outage.outage_plan(
+                test_config["outage"],
+                OUTAGE_DEFAULT_SECONDS,
+                default_workers=OUTAGE_WORKERS,
+                default_interval=OUTAGE_INTERVAL_SECONDS,
+            )
         except ValueError as problem:
             error(f"[{test_name}] {problem}")
         if outage.spool_service and outage.spool_service not in services:
@@ -2433,6 +2448,7 @@ def run_test(ctx, mode, test, persistent_services):
             print(f"  - Pause: '{plan.pause_service}' frozen for {plan.pause_seconds}s")
         if plan.service:
             print(f"  - Outage: '{plan.service}' {plan.signal} for {plan.seconds}s")
+        print(f"  - Load: {plan.workers} workers, {plan.interval}s between requests")
         if plan.expect_loss:
             print("  - Expects loss: lost records are recorded, not failed")
     for svc_name in sorted(test.services):

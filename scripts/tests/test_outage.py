@@ -66,31 +66,38 @@ def _sent(
     )
 
 
-def test_a_plan_with_only_a_service_is_a_graceful_stop() -> None:
-    plan = _outage.outage_plan({"service": "dfe-loader"}, 60)
+def _plan(outage: dict) -> _outage.OutagePlan:
+    return _outage.outage_plan(outage, 60, default_workers=4, default_interval=0.5)
+
+
+def test_a_plan_with_only_a_service_is_a_graceful_stop_under_the_default_load() -> None:
+    plan = _plan({"service": "dfe-loader"})
 
     assert plan.service == "dfe-loader"
     assert plan.seconds == 60
     assert plan.signal == "TERM"
+    assert (plan.workers, plan.interval) == (4, 0.5)
     assert not (plan.pause_service or plan.expect_loss or plan.spool_service)
 
 
 def test_a_kill_under_a_pause_is_read_whole() -> None:
-    plan = _outage.outage_plan(
+    plan = _plan(
         {
             "service": "dfe-receiver",
             "signal": "kill",
             "seconds": "20",
             "pause": {"service": "kafka", "seconds": 10},
+            "workers": 16,
+            "interval": 0,
             "expect_loss": True,
             "spool": {"service": "dfe-receiver", "path": "/tmp/spool"},
             "sources": {"main": "tests/e2e/data/events.jsonl"},
         },
-        60,
     )
 
     assert plan.signal == "KILL"
     assert plan.seconds == 20
+    assert (plan.workers, plan.interval) == (16, 0.0)
     assert (plan.pause_service, plan.pause_seconds) == ("kafka", 10)
     assert plan.expect_loss
     assert (plan.spool_service, plan.spool_path) == ("dfe-receiver", "/tmp/spool")
@@ -99,9 +106,8 @@ def test_a_kill_under_a_pause_is_read_whole() -> None:
 
 
 def test_a_pause_alone_is_an_outage_that_takes_nothing_down() -> None:
-    plan = _outage.outage_plan(
-        {"pause": {"service": "dfe-loader", "seconds": 40}, "expect_refusals": True},
-        60,
+    plan = _plan(
+        {"pause": {"service": "dfe-loader", "seconds": 40}, "expect_refusals": True}
     )
 
     assert plan.service == ""
@@ -139,11 +145,16 @@ def test_a_pause_alone_is_an_outage_that_takes_nothing_down() -> None:
         ),
         ({"service": "dfe-loader", "expect_loss": "yes"}, "must be true or false"),
         ({"service": "dfe-loader", "sources": ["main"]}, "'sources' must map"),
+        ({"service": "dfe-loader", "workers": 0}, "'workers' must be a whole number"),
+        ({"service": "dfe-loader", "workers": 2.5}, "'workers' must be a whole number"),
+        ({"service": "dfe-loader", "interval": -1}, "'interval' must be a number"),
+        ({"service": "dfe-loader", "interval": "fast"}, "'interval' must be a number"),
+        ({"service": "dfe-loader", "interval": True}, "'interval' must be a number"),
     ],
 )
 def test_a_plan_refuses_what_it_cannot_run(outage: dict, complaint: str) -> None:
     with pytest.raises(ValueError, match=re.escape(complaint)):
-        _outage.outage_plan(outage, 60)
+        _plan(outage)
 
 
 def test_silence_is_excused_only_while_the_ingress_was_down() -> None:

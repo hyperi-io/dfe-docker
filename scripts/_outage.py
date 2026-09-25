@@ -44,6 +44,8 @@ OUTAGE_KEYS = frozenset(
         "seconds",
         "signal",
         "pause",
+        "workers",
+        "interval",
         "expect_loss",
         "expect_refusals",
         "spool",
@@ -61,6 +63,8 @@ class OutagePlan:
     Attributes:
         service: The service stopped or killed, empty when the test only pauses one.
         seconds: How long that service stays down.
+        workers: How many load workers send at once.
+        interval: Seconds each worker waits after an answer before its next request.
         signal: How it is taken down, one of SIGNALS.
         pause_service: A service frozen first, empty for none.
         pause_seconds: How long it stays frozen before the signal.
@@ -74,6 +78,8 @@ class OutagePlan:
 
     service: str
     seconds: int
+    workers: int
+    interval: float
     signal: str = "TERM"
     pause_service: str = ""
     pause_seconds: int = 0
@@ -85,19 +91,28 @@ class OutagePlan:
     sources: Mapping[str, str] = field(default_factory=dict)
 
 
-def _whole_seconds(value: object, what: str) -> int:
+def _whole_number(value: object, what: str) -> int:
     """Return `value` as a whole number above 0, else raise naming `what`."""
     if isinstance(value, bool) or not isinstance(value, (int, str)):
         raise ValueError(f"{what} must be a whole number above 0, got {value!r}")
     try:
-        seconds = int(value)
+        number = int(value)
     except ValueError:
         raise ValueError(
             f"{what} must be a whole number above 0, got {value!r}"
         ) from None
-    if seconds < 1:
+    if number < 1:
         raise ValueError(f"{what} must be a whole number above 0, got {value!r}")
-    return seconds
+    return number
+
+
+def _seconds_from_zero(value: object, what: str) -> float:
+    """Return `value` as seconds, 0 allowed, else raise naming `what`."""
+    if isinstance(value, bool) or not isinstance(value, (int, float)) or value < 0:
+        raise ValueError(
+            f"{what} must be a number of seconds, 0 or more, got {value!r}"
+        )
+    return float(value)
 
 
 def _unknown_keys(block: Mapping, known: frozenset[str], what: str) -> None:
@@ -115,12 +130,21 @@ def _flag(block: Mapping, key: str, what: str) -> bool:
     return value
 
 
-def outage_plan(outage: Mapping, default_seconds: int) -> OutagePlan:
+def outage_plan(
+    outage: Mapping,
+    default_seconds: int,
+    *,
+    default_workers: int,
+    default_interval: float,
+) -> OutagePlan:
     """Validate a test's `outage:` block and return what it asks for.
 
     Args:
         outage: The block as the test definition carries it.
         default_seconds: How long a service stays down when `seconds` is absent.
+        default_workers: How many load workers send when `workers` is absent.
+        default_interval: Each worker's pause between requests when `interval`
+            is absent.
 
     Returns:
         The plan the suite runs.
@@ -146,9 +170,13 @@ def outage_plan(outage: Mapping, default_seconds: int) -> OutagePlan:
             f"outage 'signal' must be one of {', '.join(SIGNALS)}, got {signal!r}"
         )
     seconds = (
-        _whole_seconds(outage.get("seconds", default_seconds), "outage 'seconds'")
+        _whole_number(outage.get("seconds", default_seconds), "outage 'seconds'")
         if service
         else 0
+    )
+    workers = _whole_number(outage.get("workers", default_workers), "outage 'workers'")
+    interval = _seconds_from_zero(
+        outage.get("interval", default_interval), "outage 'interval'"
     )
 
     pause_service = str(pause.get("service") or "")
@@ -158,7 +186,7 @@ def outage_plan(outage: Mapping, default_seconds: int) -> OutagePlan:
             raise ValueError("outage 'pause' names no 'service'")
         if pause_service == service:
             raise ValueError("outage 'pause' cannot freeze the service it takes down")
-        pause_seconds = _whole_seconds(pause.get("seconds"), "outage 'pause' 'seconds'")
+        pause_seconds = _whole_number(pause.get("seconds"), "outage 'pause' 'seconds'")
 
     spool = outage.get("spool") or {}
     if not isinstance(spool, Mapping):
@@ -174,6 +202,8 @@ def outage_plan(outage: Mapping, default_seconds: int) -> OutagePlan:
     return OutagePlan(
         service=service,
         seconds=seconds,
+        workers=workers,
+        interval=interval,
         signal=signal,
         pause_service=pause_service,
         pause_seconds=pause_seconds,
