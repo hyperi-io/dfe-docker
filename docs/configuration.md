@@ -25,6 +25,7 @@ run it before any compose command -- [deploying.md](deploying.md).
 | Variable                                         | Use                                                                                  | Default                                                             |
 |--------------------------------------------------|--------------------------------------------------------------------------------------|---------------------------------------------------------------------|
 | `DFE_PROFILE`                                    | Override active profile from service_profiles.yaml                                   | -                                                                   |
+| `DFE_CONTAINER_PREFIX`                           | Put in front of every container name, per-source instances included, so a second stack can share the daemon; `make` writes `docker-compose.prefix.yml` from it | -                                     |
 
 ### Host exposure
 
@@ -184,8 +185,10 @@ it is a second deployment of the one component, not a component of its own.
 |--------------------------------------------------|--------------------------------------------------------------------------------------|---------------------------------------------------------------------|
 | `CLICKHOUSE_VERSION`                             | Version of ClickHouse to use                                                         | none -- `make stack` pins it from the DFE stack SSoT; unset is a hard-fail                |
 | `CLICKHOUSE_HOST`                                | External ClickHouse host (skips Docker container)                                    | `clickhouse`                                                        |
-| `CLICKHOUSE_HTTP_PORT`                           | ClickHouse HTTP port                                                                 | `8123`                                                              |
-| `CLICKHOUSE_NATIVE_PORT`                         | ClickHouse native protocol port                                                      | `9000`                                                              |
+| `CLICKHOUSE_HTTP_PORT`                           | ClickHouse HTTP port, in-network as well as on the host                              | `8123`                                                              |
+| `CLICKHOUSE_NATIVE_PORT`                         | ClickHouse native protocol port, in-network as well as on the host                   | `9000`                                                              |
+| `CLICKHOUSE_HTTP_HOST_PORT`                      | The host side of the HTTP publish alone, for a second stack on one box               | `CLICKHOUSE_HTTP_PORT`                                              |
+| `CLICKHOUSE_NATIVE_HOST_PORT`                    | The host side of the native publish alone, for a second stack on one box             | `CLICKHOUSE_NATIVE_PORT`                                            |
 | `CLICKHOUSE_DB`                                  | ClickHouse initialisation database                                                   | `default`                                                           |
 | `CLICKHOUSE_USERNAME`                            | ClickHouse username to connect with                                                  | `default`                                                           |
 | `CLICKHOUSE_PASSWORD`                            | ClickHouse password associated to user                                               | -                                                                   |

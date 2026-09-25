@@ -460,7 +460,9 @@ should be there instead of probing ports.
 
 The consequence to know: because `make dev` and `make ci` depend on `down`, a
 `make dev SERVICES="dfe-loader"` no longer restarts just that service on top of a
-running stack -- everything is stopped first.
+running stack -- everything is stopped first. `make apply` is the target that
+works on a running stack: it starts what the profile adds or changes and leaves
+the rest, and `make apply DEV=1` does the same for a `make dev` stack.
 
 **`.env` shadows a command-line environment variable through make.** The Makefile
 does `-include .env`, and GNU make re-exports a variable that came from the

@@ -151,9 +151,11 @@ services:
     profiles: ["clickhouse"]
     restart: unless-stopped
     deploy: *limits-clickhouse
+    # The HOST side only. CLICKHOUSE_HTTP_PORT and CLICKHOUSE_NATIVE_PORT are also
+    # the ports the other services dial in-network, so a second stack moves these.
     ports:
-      - ${DFE_BIND_HOST:-127.0.0.1}:${CLICKHOUSE_HTTP_PORT:-8123}:8123
-      - ${DFE_BIND_HOST:-127.0.0.1}:${CLICKHOUSE_NATIVE_PORT:-9000}:9000
+      - ${DFE_BIND_HOST:-127.0.0.1}:${CLICKHOUSE_HTTP_HOST_PORT:-${CLICKHOUSE_HTTP_PORT:-8123}}:8123
+      - ${DFE_BIND_HOST:-127.0.0.1}:${CLICKHOUSE_NATIVE_HOST_PORT:-${CLICKHOUSE_NATIVE_PORT:-9000}}:9000
     environment:
       CLICKHOUSE_DB: ${CLICKHOUSE_DB:-default}
       CLICKHOUSE_USER: ${CLICKHOUSE_USERNAME:-default}

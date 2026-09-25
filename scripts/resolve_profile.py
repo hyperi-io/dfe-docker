@@ -31,6 +31,7 @@ from __future__ import annotations
 import os
 from pathlib import Path
 
+import container_prefix
 import instances
 from _common import (
     CONFIG_DIR,
@@ -430,6 +431,13 @@ def main() -> int:
         # decides whether its instance index is this deployment's or a leftover.
         renders = (active_profile in PROJECTED_PROFILES) and footprint["core"]
         instance_services = _instance_services(profile=active_profile, renders=renders)
+        try:
+            prefixed = container_prefix.write(
+                os.environ.get(container_prefix.PREFIX_ENV_VAR, "").strip(),
+                instance_services,
+            )
+        except container_prefix.PrefixError as error:
+            raise _ProfileError(header=active_profile, msg=str(error)) from None
 
         # ClickHouse stays out of this list -- it starts via its compose profile
         # and the depends_on of whatever needs it. DFE_SERVICES is also what
@@ -571,6 +579,9 @@ def main() -> int:
         lines.append(
             f"export DFE_INSTANCES_RESOLVED := {'true' if instance_services else 'false'}"
         )
+        # Whether the Makefile chains the container-prefix fragment, for the same
+        # reason and on the same terms.
+        lines.append(f"export DFE_PREFIX_RESOLVED := {'true' if prefixed else 'false'}")
 
         new_content = "\n".join(lines) + "\n"
         if (

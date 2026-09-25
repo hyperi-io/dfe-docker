@@ -40,6 +40,7 @@ import sys
 from pathlib import Path
 
 from _common import _external_origin, _load_dotenv, _print
+from _pipeline import env_or
 
 PROJECT_DIR = Path(__file__).resolve().parent.parent
 # Compose pins the archiver's container name, so the archive assertion reaches it
@@ -134,15 +135,18 @@ def _archive_exec() -> list[str]:
     One replica, because compose runs one archiver; the runner reports the
     archive step as skipped when the profile deploys none.
     """
+    container = (
+        f"{os.environ.get('DFE_CONTAINER_PREFIX', '').strip()}{ARCHIVER_CONTAINER}"
+    )
     running = subprocess.run(
-        ["docker", "inspect", "-f", "{{.State.Running}}", ARCHIVER_CONTAINER],
+        ["docker", "inspect", "-f", "{{.State.Running}}", container],
         capture_output=True,
         check=False,
         text=True,
     )
     if running.returncode != 0 or running.stdout.strip() != "true":
         return []
-    return ["--archive-exec", f"docker exec {ARCHIVER_CONTAINER}"]
+    return ["--archive-exec", f"docker exec {container}"]
 
 
 def _ui_host(*, bound: str, host: str) -> str:
@@ -193,7 +197,9 @@ def _suite_env(*, host: str, engine_url: str) -> dict[str, str]:
                 f"http://{host}:{os.environ.get('DFE_RECEIVER_HTTP_PORT', '8080')}/ingest",
             ),
             "DFE_E2E_CH_HOST": host,
-            "DFE_E2E_CH_PORT": os.environ.get("CLICKHOUSE_HTTP_PORT", "8123"),
+            "DFE_E2E_CH_PORT": env_or(
+                "CLICKHOUSE_HTTP_HOST_PORT", env_or("CLICKHOUSE_HTTP_PORT", "8123")
+            ),
             "DFE_E2E_CH_USER": os.environ.get("CLICKHOUSE_USERNAME", "default"),
             "DFE_E2E_CH_PASSWORD": os.environ.get("CLICKHOUSE_PASSWORD", ""),
             # The data-path database the loader writes to (config/loader/*.yaml

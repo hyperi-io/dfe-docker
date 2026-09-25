@@ -232,6 +232,14 @@ ifeq ($(strip $(DFE_INSTANCES_RESOLVED)),true)
     $(eval $(call chain_fragment,docker-compose.instances.yml))
 endif
 
+# Every container renamed with DFE_CONTAINER_PREFIX, generated with the profile
+# (scripts/container_prefix.py) and chained after the instances so theirs are
+# renamed too. container_name is daemon-wide, so this is what lets a second
+# stack share a daemon.
+ifeq ($(strip $(DFE_PREFIX_RESOLVED)),true)
+    $(eval $(call chain_fragment,docker-compose.prefix.yml))
+endif
+
 # Container stdout to the collector. Off wherever the collector is, because the
 # fluentd driver cannot be read back by `docker compose logs` and would cost an
 # operator that with nothing collecting at the other end. Empty for the bootstrap
@@ -377,6 +385,21 @@ ci: login env-files down storage-dirs  ## Pull and start infra and registry DFE 
 .PHONY: up
 up: ci ## Start the stack from the pinned registry images, then print the access summary (password on a TTY only) and write access-summary.md
 	@python3 scripts/creds.py --write
+
+# The profile is re-resolved first, as for every goal outside BOOTSTRAP_GOALS, so
+# a per-source instance the engine rendered since the stack started is a service
+# by now. No `down` here: compose recreates only a service whose resolved
+# definition changed, and leaves every volume alone. DEV=1 uses the file chain
+# `make dev` starts with rather than the registry one.
+ifneq ($(strip $(DEV)),)
+    APPLY_FLAGS = $(DEV_FLAGS)
+else
+    APPLY_FLAGS = -f docker-compose.yml $(STORAGE_FLAGS) $(UI_FLAGS)
+endif
+
+.PHONY: apply
+apply: storage-dirs ## Start what the re-resolved profile adds or changes on a running stack, a new per-source instance included; unchanged containers and every volume are left alone (DEV=1 for a `make dev` stack)
+	docker compose $(APPLY_FLAGS) $(PROFILE_FLAGS) up -d $(ACTIVE_SERVICES)
 
 .PHONY: ci-pull
 ci-pull: login ## Pull infra and registry DFE images
