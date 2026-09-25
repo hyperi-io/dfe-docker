@@ -6,7 +6,7 @@
 #  License:      BUSL-1.1
 #  Copyright:    (c) 2026 HYPERI PTY LIMITED
 
-"""An `-acks-off` outage test runs acks-off configs and records its loss; no other does.
+"""An `-acks-off` outage test runs acks-off configs and owns its loss, and no other does.
 
 A kill test that proves no answered record is lost only means something with
 acknowledgements held, and its twin only documents the opt-out when every hop it
@@ -99,7 +99,15 @@ def test_no_other_e2e_config_turns_an_acknowledgement_off() -> None:
     assert off == set()
 
 
-def test_every_acks_off_test_expects_loss_and_overrides_only_with_acks_off() -> None:
+def _loss(lines: list[str]) -> str:
+    """Return a test's `loss:` mode, `forbidden` when it declares none."""
+    for line in lines:
+        if line.startswith("      loss: "):
+            return line.split(": ", 1)[1].strip()
+    return "forbidden"
+
+
+def test_every_acks_off_test_owns_its_loss_and_overrides_only_with_acks_off() -> None:
     twins = {
         name: lines
         for name, lines in _test_blocks().items()
@@ -109,7 +117,7 @@ def test_every_acks_off_test_expects_loss_and_overrides_only_with_acks_off() -> 
     wrong = {
         name: sorted(_overrides(lines).values())
         for name, lines in twins.items()
-        if "      expect_loss: true" not in lines
+        if _loss(lines) == "forbidden"
         or not (_overrides(lines))
         or any("acks-off" not in path for path in _overrides(lines).values())
     }
@@ -118,12 +126,27 @@ def test_every_acks_off_test_expects_loss_and_overrides_only_with_acks_off() -> 
     assert wrong == {}
 
 
-def test_only_an_acks_off_test_expects_loss() -> None:
-    expecting = {
+def test_an_acks_off_control_can_fail() -> None:
+    blocks = _test_blocks()
+
+    # Tolerated loss leaves nothing to fail on unless a spool replay is judged.
+    unfailing = {
         name
-        for name, lines in _test_blocks().items()
-        if "      expect_loss: true" in lines
+        for name, lines in blocks.items()
+        if name.endswith("-acks-off")
+        and _loss(lines) == "tolerated"
+        and "        must_replay: true" not in lines
+    }
+    required = {name for name, lines in blocks.items() if _loss(lines) == "required"}
+
+    assert required
+    assert unfailing == set()
+
+
+def test_only_an_acks_off_test_declares_loss() -> None:
+    declaring = {
+        name for name, lines in _test_blocks().items() if _loss(lines) != "forbidden"
     }
 
-    assert expecting
-    assert {name for name in expecting if not (name.endswith("-acks-off"))} == set()
+    assert declaring
+    assert {name for name in declaring if not (name.endswith("-acks-off"))} == set()

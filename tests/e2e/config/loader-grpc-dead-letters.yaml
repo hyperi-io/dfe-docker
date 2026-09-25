@@ -1,0 +1,29 @@
+# Project:   dfe-docker
+# File:      tests/e2e/config/loader-grpc-dead-letters.yaml
+# Purpose:   dfe-loader e2e config - config/loader/grpc.yaml with a file dead-letter queue
+# Language:  YAML
+#
+# License:   BUSL-1.1
+# Copyright: (c) 2026 HYPERI PTY LIMITED
+#
+# A record ClickHouse refuses has to go somewhere a test can read back. The file
+# backend writes it to the shared dlq-spool volume, so it outlives a kill.
+
+transport: grpc
+
+clickhouse:
+  hosts:
+    - clickhouse:8123
+  database: dfe
+  protocol: http
+  username: env:CLICKHOUSE_USERNAME
+  password: env:CLICKHOUSE_PASSWORD
+
+grpc:
+  listen: 0.0.0.0:50051
+
+routing:
+  dlq:
+    enabled: true
+    mode: file_only
+    file_path: /var/spool/dfe/dlq

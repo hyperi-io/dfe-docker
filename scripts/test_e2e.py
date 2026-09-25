@@ -17,6 +17,7 @@
 #    LOG_LEVEL=debug ./scripts/test-e2e.py                       # Verbose service logs
 
 import argparse
+import gzip
 import json
 import logging
 import os
@@ -104,6 +105,17 @@ KNOWN_DFE_SERVICES = set(SERVICE_CONFIG_MOUNTS.keys())
 # Extra compose files chained onto every `up`, e.g. one renaming the containers
 # so this stack can run beside another on the same daemon.
 EXTRA_COMPOSE_FILES_ENV_VAR = "DFE_E2E_COMPOSE_FILES"
+
+# The `-f` arguments of the running test's `up`, which every later compose call
+# repeats so a service only the generated override declares is still found.
+COMPOSE_FILES: list[str] = []
+# Services the running test adds that docker-compose.yml does not declare.
+TEST_SERVICES: list[str] = []
+
+
+def compose_base():
+    return ["docker", "compose", *COMPOSE_FILES]
+
 
 # ------------------------------------------------------------------------------
 # Schema Authority
@@ -265,6 +277,8 @@ class TestContext:
 #   - compose_profiles: resolved compose profiles including infra (clickhouse, kafka backend profile, kafka-ui)
 #   - services: resolved {dfe-service: project-relative config path}
 #   - outage: the plan of a test that stops, kills or pauses a service under load
+#   - replicas: {extra replica: the app service it repeats}
+#   - topic_partitions: partitions each expected topic is created with
 # ------------------------------------------------------------------------------
 @dataclass
 class TestCase:
@@ -281,6 +295,8 @@ class TestCase:
     extra_services: list[str] = field(default_factory=list)
     expected_http: list[dict] = field(default_factory=list)
     outage: _outage.OutagePlan | None = None
+    replicas: dict[str, str] = field(default_factory=dict)
+    topic_partitions: int = 1
 
 
 # ------------------------------------------------------------------------------
@@ -583,16 +599,24 @@ def parse_compose_services():
 # - Creates a temp docker-compose override file to mount test-specific configs
 #   services: dict {dfe-service-name: project-relative config path}
 # ------------------------------------------------------------------------------
-def generate_compose_override(services):
+def generate_compose_override(services, replicas=None):
     TMP_DIR.mkdir(parents=True, exist_ok=True)
     override_file = TMP_DIR / f"docker-compose.{RUN_ID}.e2e.yaml"
+    replicas = replicas or {}
 
     content = "services:\n"
     for svc_name in sorted(services):
-        mount = SERVICE_CONFIG_MOUNTS[svc_name]
-        content += (
-            f"  {svc_name}:\n    volumes:\n      - ./{services[svc_name]}:{mount}:ro\n"
-        )
+        mount = SERVICE_CONFIG_MOUNTS[replicas.get(svc_name, svc_name)]
+        content += f"  {svc_name}:\n"
+        if svc_name in replicas:
+            # A replica is its app's service again, with no fixed name or host port
+            # so two can run side by side.
+            content += (
+                f"    extends:\n      file: {PROJECT_DIR / 'docker-compose.yml'}\n"
+                f"      service: {replicas[svc_name]}\n"
+                "    container_name: !reset null\n    ports: !reset []\n"
+            )
+        content += f"    volumes:\n      - ./{services[svc_name]}:{mount}:ro\n"
 
     override_file.write_text(content, encoding="utf-8", newline="\n")
     LOGGER.debug(f"Generated compose override: '{override_file}'")
@@ -733,7 +757,7 @@ def stack_up(mode, test, services):
     for profile in test.compose_profiles:
         LOGGER.debug(f"  - {profile}")
 
-    override_file = generate_compose_override(services)
+    override_file = generate_compose_override(services, test.replicas)
 
     compose_files = ["-f", "docker-compose.yml"]
     if mode not in MODES:
@@ -745,6 +769,8 @@ def stack_up(mode, test, services):
         if extra.strip():
             compose_files += ["-f", extra.strip()]
     compose_files += ["-f", override_file]
+    COMPOSE_FILES[:] = compose_files
+    TEST_SERVICES[:] = sorted(test.replicas)
 
     # Schema authority: dfe-engine provisions dfe.main and registers the schemas
     # the loader pre-warms on startup. Bring it up with ClickHouse and gate on its
@@ -837,7 +863,7 @@ def stack_up(mode, test, services):
         LOGGER.debug("'Kafka' is healthy")
 
         clean_topics(test.expected_topics)
-        if not (create_topics(test.expected_topics)):
+        if not (create_topics(test.expected_topics, test.topic_partitions)):
             return False
 
     profile_flags = []
@@ -861,7 +887,7 @@ def stack_up(mode, test, services):
 # - Checks if the stack is up
 # ------------------------------------------------------------------------------
 def stack_is_up():
-    base_cmd = ["docker", "compose", "ps"]
+    base_cmd = compose_base() + ["ps"]
     result = run_cmd(base_cmd, capture=not (LOG_LEVEL == "DEBUG"))
     if result.stdout is None:
         return result.returncode == 0
@@ -873,7 +899,7 @@ def stack_is_up():
 # - Stops the Docker stack
 # ------------------------------------------------------------------------------
 def stack_down(keep_services=None):
-    base_cmd = ["docker", "compose"]
+    base_cmd = compose_base()
 
     profiles = parse_compose_profiles()
     profile_flags = []
@@ -881,7 +907,7 @@ def stack_down(keep_services=None):
         profile_flags += ["--profile", profile]
 
     if keep_services:
-        all_services = set(parse_compose_services())
+        all_services = set(parse_compose_services()) | set(TEST_SERVICES)
         stop_services = [
             service for service in all_services if (service not in keep_services)
         ]
@@ -914,7 +940,7 @@ def stack_down(keep_services=None):
 # - Dumps recent logs from all containers in the stack for debugging purposes
 # ------------------------------------------------------------------------------
 def dump_logs():
-    base_cmd = ["docker", "compose"]
+    base_cmd = compose_base()
 
     profiles = parse_compose_profiles()
     profile_flags = []
@@ -936,7 +962,7 @@ def dump_logs():
 # ------------------------------------------------------------------------------
 def container_id(service):
     result = run_cmd(
-        ["docker", "compose", "--profile", "*", "ps", "--all", "--quiet", service],
+        compose_base() + ["--profile", "*", "ps", "--all", "--quiet", service],
         capture=True,
     )
     ids = (result.stdout or "").split()
@@ -1055,7 +1081,7 @@ def wait_for_stack(services):
 def verify_config_mounts(ctx, test):
     verified = True
     for service in sorted(test.services):
-        want = SERVICE_CONFIG_MOUNTS[service]
+        want = SERVICE_CONFIG_MOUNTS[test.replicas.get(service, service)]
         container = container_id(service)
         result = (
             run_cmd(["docker", "inspect", container], capture=True)
@@ -1242,10 +1268,10 @@ def verify_table(
 #   in-network alias 'kafka:9092'. Mirrors scripts/resolve_profile.py.
 # ---------------------------------------------------------------------------
 def _topic_exec_base():
-    return ["docker", "compose", "exec", "-T", KAFKA_SERVICE]
+    return compose_base() + ["exec", "-T", KAFKA_SERVICE]
 
 
-def _topic_create_cmd(topic):
+def _topic_create_cmd(topic, partitions=1):
     if KAFKA_BACKEND == "apache":
         return _topic_exec_base() + [
             "/opt/kafka/bin/kafka-topics.sh",
@@ -1256,7 +1282,7 @@ def _topic_create_cmd(topic):
             "--topic",
             topic,
             "--partitions",
-            "1",
+            str(partitions),
             "--replication-factor",
             "1",
         ]
@@ -1266,7 +1292,7 @@ def _topic_create_cmd(topic):
         "create",
         topic,
         "--partitions",
-        "1",
+        str(partitions),
         "--replicas",
         "1",
         "-X",
@@ -1383,7 +1409,7 @@ def clean_topics(expected_topics):
 # Create Topics
 # - Pre-creates expected Kafka topics before dfe-loader starts consuming
 # ---------------------------------------------------------------------------
-def create_topics(expected_topics):
+def create_topics(expected_topics, partitions=1):
     if not (expected_topics):
         return True
 
@@ -1394,7 +1420,7 @@ def create_topics(expected_topics):
         if not (topic):
             continue
         LOGGER.debug(f"Creating topic: '{topic}'...")
-        result = run_cmd(_topic_create_cmd(topic), capture=True)
+        result = run_cmd(_topic_create_cmd(topic, partitions), capture=True)
         if result.returncode != 0:
             LOGGER.error(
                 f"Failed to create topic '{topic}': {result.stderr or result.stdout}"
@@ -1447,24 +1473,18 @@ def archive_targets(test, services):
 
 
 # ---------------------------------------------------------------------------
-# Container Files
-# - {relative path: size} of every file under a directory in one service's
-#   container, copied out through compose so the image needs no tools of its
-#   own. Empty when the directory does not exist, None when it cannot be read.
+# Container Contents
+# - {relative path: bytes} of every file under a directory in one service's
+#   container, running or stopped, copied out through compose so the image
+#   needs no tools of its own. Empty when the directory does not exist, None
+#   when it cannot be read.
 # ---------------------------------------------------------------------------
-def container_files(service, directory):
+def container_contents(service, directory):
     with tempfile.TemporaryDirectory() as scratch:
         target = Path(scratch) / "copy"
         result = run_cmd(
-            [
-                "docker",
-                "compose",
-                "--profile",
-                "*",
-                "cp",
-                f"{service}:{directory}",
-                str(target),
-            ],
+            compose_base()
+            + ["--profile", "*", "cp", f"{service}:{directory}", str(target)],
             capture=True,
         )
         if result.returncode != 0:
@@ -1472,10 +1492,22 @@ def container_files(service, directory):
             LOGGER.debug(f"Could not copy '{directory}' out of '{service}': {detail}")
             return {} if ("Could not find the file" in detail) else None
         return {
-            str(path.relative_to(target)): path.stat().st_size
+            str(path.relative_to(target)): path.read_bytes()
             for path in target.rglob("*")
             if path.is_file()
         }
+
+
+# ---------------------------------------------------------------------------
+# Container Files
+# - {relative path: size} of every file under a directory in one service's
+#   container, with container_contents' empty and None
+# ---------------------------------------------------------------------------
+def container_files(service, directory):
+    contents = container_contents(service, directory)
+    if contents is None:
+        return None
+    return {path: len(data) for path, data in contents.items()}
 
 
 # ---------------------------------------------------------------------------
@@ -1654,7 +1686,7 @@ def outage_service(name):
 # ------------------------------------------------------------------------------
 def compose_lifecycle(action, service, *flags):
     return run_cmd(
-        ["docker", "compose", "--profile", "*", action, *flags, service],
+        compose_base() + ["--profile", "*", action, *flags, service],
         capture=True,
     )
 
@@ -1774,6 +1806,19 @@ def topic_high_watermark(topic):
 
 
 # ------------------------------------------------------------------------------
+# Consumer Configs
+# - The config of each consumer group the test runs: a replica joins its app's
+#   group rather than adding one
+# ------------------------------------------------------------------------------
+def consumer_configs(test, services):
+    return [
+        PROJECT_DIR / path
+        for name, path in services.items()
+        if name not in test.replicas
+    ]
+
+
+# ------------------------------------------------------------------------------
 # Kafka Unreached
 # - Why the load is not yet proven to run through the broker: a landing topic
 #   with no record, or a subscriber with no commit. Polled before the broker is
@@ -1782,7 +1827,7 @@ def topic_high_watermark(topic):
 # ------------------------------------------------------------------------------
 def kafka_unreached(test, services):
     expected = _outage.expected_consumers(
-        (PROJECT_DIR / path for path in services.values()), test.expected_topics
+        consumer_configs(test, services), test.expected_topics
     )
     landing = [topic for topic in test.expected_topics if topic.endswith("_land")]
 
@@ -1824,8 +1869,8 @@ def report_changes(render):
 # ------------------------------------------------------------------------------
 # Disruption
 # - What one outage did, and when: its start (the pause, else the signal), the
-#   signal, the moment every service it touched was healthy again, and the
-#   spool as it stood just before the signal
+#   signal, the moment every service it touched was healthy again, and, read
+#   just before the signal, the spool's files and the dead-letter drop count
 # ------------------------------------------------------------------------------
 @dataclass(frozen=True, slots=True)
 class Disruption:
@@ -1833,6 +1878,29 @@ class Disruption:
     signalled_at: float | None
     back_at: float
     spool_at_peak: dict | None = None
+    dropped_at_peak: float | None = None
+
+
+# ------------------------------------------------------------------------------
+# Scrape Metric
+# - The total of one metric on a service's /metrics, or None when the service
+#   has no known metrics port, does not answer, or does not export it
+# ------------------------------------------------------------------------------
+def scrape_metric(service, name):
+    health = {
+        "dfe-archiver": DFE_ARCHIVER_HEALTH_URL,
+        "dfe-fetcher": DFE_FETCHER_HEALTH_URL,
+        "dfe-loader": DFE_LOADER_HEALTH_URL,
+        "dfe-receiver": DFE_RECEIVER_HEALTH_URL,
+    }.get(service)
+    if not (health):
+        return None
+    try:
+        exposition = http_get(health.rsplit("/", 1)[0] + "/metrics", timeout=5)
+    except (URLError, OSError) as problem:
+        LOGGER.debug(f"Could not scrape '{service}': {problem}")
+        return None
+    return _outage.metric_total(exposition, name)
 
 
 # ------------------------------------------------------------------------------
@@ -1864,6 +1932,7 @@ def break_and_restore(ctx, test, load):
     started_at = time.time()
     signalled_at = None
     spool_at_peak = None
+    dropped_at_peak = None
     froze = False
     frozen = False
     down = False
@@ -1880,7 +1949,13 @@ def break_and_restore(ctx, test, load):
                     time.sleep(plan.pause_seconds)
             if froze or not (paused):
                 if plan.spool_service:
-                    spool_at_peak = container_files(plan.spool_service, plan.spool_path)
+                    spool_at_peak = container_contents(
+                        plan.spool_service, plan.spool_path
+                    )
+                if plan.dead_letter_service:
+                    dropped_at_peak = scrape_metric(
+                        plan.dead_letter_service, _outage.DEAD_LETTERS_DROPPED
+                    )
                 if backing:
                     signalled_at = time.time()
                     down, frozen = take_down(
@@ -1928,6 +2003,7 @@ def break_and_restore(ctx, test, load):
         signalled_at=signalled_at,
         back_at=back_at,
         spool_at_peak=spool_at_peak,
+        dropped_at_peak=dropped_at_peak,
     )
 
 
@@ -1969,9 +2045,7 @@ def verify_answers(ctx, test, sent, down):
         )
     else:
         answered = len(sent) - len(excused)
-        refused = sum(
-            1 for record in sent if record.status is not None and not (record.accepted)
-        )
+        refused = sum(1 for record in sent if _outage.refused(record))
         mark_pass(
             ctx,
             f"[{test.name}] the receiver answered all {answered} requests it was up "
@@ -1982,9 +2056,7 @@ def verify_answers(ctx, test, sent, down):
         refused_during = Counter(
             record.outcome
             for record in sent
-            if record.phase == "during"
-            and record.status is not None
-            and not (record.accepted)
+            if record.phase == "during" and _outage.refused(record)
         )
         if refused_during:
             answers = ", ".join(f"{o} x{n}" for o, n in refused_during.most_common())
@@ -2002,9 +2074,10 @@ def verify_answers(ctx, test, sent, down):
 
 # ------------------------------------------------------------------------------
 # Verify Outage Landing
-# - Every record for the test's table the receiver accepted, in any phase,
-#   reaches that table. Duplicates are counted and reported, never failed. A
-#   test that expects loss records the lost count instead of failing on it.
+# - Every good record for the test's table the receiver accepted, in any phase,
+#   reaches that table. Duplicates are counted and reported, never failed. What
+#   a lost record means is the plan's `loss`. Returns {record: rows}, or None
+#   when no marker could be read.
 # ------------------------------------------------------------------------------
 def verify_outage_landing(ctx, test, sent):
     accepted = _outage.accepted_by_seq(sent, test.table)
@@ -2012,7 +2085,7 @@ def verify_outage_landing(ctx, test, sent):
         mark_fail(
             ctx, f"[{test.name}] the receiver accepted no record for '{test.table}'"
         )
-        return
+        return None
 
     def _render(counts):
         got = len(set(accepted) & counts.keys()) if counts is not None else "unreadable"
@@ -2031,7 +2104,7 @@ def verify_outage_landing(ctx, test, sent):
             f"[{test.name}] no marker readable in '{test.database}.{test.table}', "
             "so landing could not be checked",
         )
-        return
+        return None
 
     landing = _outage.tally_landing(
         accepted, counts, _outage.phase_by_seq(sent, test.table)
@@ -2041,40 +2114,71 @@ def verify_outage_landing(ctx, test, sent):
         f"{len(landing.missing)} lost, {landing.duplicated} duplicated "
         f"({landing.extra_rows} extra rows, by phase sent: {landing.duplicated_by_phase})"
     )
-    table = f"'{test.database}.{test.table}'"
-    if not (landing.missing):
+    judge_loss(ctx, test, landing, f"'{test.database}.{test.table}'")
+    return counts
+
+
+# ------------------------------------------------------------------------------
+# Judge Loss
+# - The verdict on accepted records that never reached `where`, by the plan's
+#   `loss`: forbidden fails on one, required fails on none, unreliable reports
+#   none as non-discriminating, tolerated only records
+# ------------------------------------------------------------------------------
+def judge_loss(ctx, test, landing, where):
+    lost = len(landing.missing)
+    count = f"{lost}/{landing.accepted} accepted records never reached {where}"
+    mode = test.outage.loss
+    if mode == "forbidden":
+        if lost:
+            mark_fail(
+                ctx,
+                f"[{test.name}] {count} within {OUTAGE_SETTLE_TIMEOUT}s "
+                f"(by phase sent: {landing.lost_by_phase}; first: {landing.missing[:5]})",
+            )
+        else:
+            mark_pass(
+                ctx,
+                f"[{test.name}] all {landing.accepted} accepted records reached {where}",
+            )
+    elif mode == "tolerated":
+        LOGGER.info(f"[{test.name}] LOSS RECORDED, tolerated here: {count}")
+    elif lost:
         mark_pass(
             ctx,
-            f"[{test.name}] all {landing.accepted} accepted records landed in {table} "
-            f"(by phase sent: {dict(Counter(accepted.values()))})",
-        )
-    elif test.outage.expect_loss:
-        mark_pass(
-            ctx,
-            f"[{test.name}] LOSS RECORDED, as this test expects: "
-            f"{len(landing.missing)}/{landing.accepted} accepted records never landed "
-            f"in {table} within {OUTAGE_SETTLE_TIMEOUT}s "
+            f"[{test.name}] LOSS SHOWN, as this control requires: {count} "
             f"(by phase sent: {landing.lost_by_phase})",
         )
-    else:
+    elif mode == "required":
         mark_fail(
             ctx,
-            f"[{test.name}] {len(landing.missing)}/{landing.accepted} accepted records "
-            f"never landed in {table} within {OUTAGE_SETTLE_TIMEOUT}s "
-            f"(by phase sent: {landing.lost_by_phase}; first: {landing.missing[:5]})",
+            f"[{test.name}] NON-DISCRIMINATING: the control lost nothing, so it cannot "
+            "show that this outage loses records when acknowledgements are off",
+        )
+    else:
+        mark_skip(
+            ctx,
+            f"[{test.name}] NON-DISCRIMINATING this run: the control lost nothing, "
+            "and it does not lose reliably",
         )
 
 
 # ------------------------------------------------------------------------------
 # Verify Spool
 # - What the named service wrote under its disk spool, read before the load,
-#   mid-outage and at the end: reported, and a failure when the test requires
-#   the spool to stay empty
+#   mid-outage and at the end: reported, a failure when the test requires the
+#   spool to stay empty, and, when it requires a replay, a failure for every
+#   record the spool held at the signal that never landed. `landed` is
+#   {record: rows}, None when landing could not be read.
 # ------------------------------------------------------------------------------
-def verify_spool(ctx, test, before, at_peak):
+def verify_spool(ctx, test, before, peak_contents, landed):
     plan = test.outage
     after = container_files(plan.spool_service, plan.spool_path)
     where = f"'{plan.spool_path}' in '{plan.spool_service}'"
+    at_peak = (
+        None
+        if peak_contents is None
+        else {path: len(data) for path, data in peak_contents.items()}
+    )
     readings = {"before the load": before, "mid-outage": at_peak, "at the end": after}
     unread = [label for label, files in readings.items() if files is None]
     if unread:
@@ -2090,6 +2194,8 @@ def verify_spool(ctx, test, before, at_peak):
             for label, files in readings.items()
         )
     )
+    if plan.spool_must_replay:
+        verify_replay(ctx, test, peak_contents, landed, where)
     if not (plan.spool_must_stay_empty):
         return
     written = sorted(
@@ -2106,6 +2212,202 @@ def verify_spool(ctx, test, before, at_peak):
 
 
 # ------------------------------------------------------------------------------
+# Verify Replay
+# - Every record the spool held at the signal lands after the restart: a spool
+#   that survives the kill and is never read back loses its records as surely
+#   as memory does
+# ------------------------------------------------------------------------------
+def verify_replay(ctx, test, peak_contents, landed, where):
+    spooled = set()
+    for data in (peak_contents or {}).values():
+        spooled |= _outage.markers_in(data, test.marker)
+        spooled |= _outage.markers_in(_outage.zstd_frames(data), test.marker)
+    if landed is None:
+        mark_fail(ctx, f"[{test.name}] landing unreadable, so the replay is unchecked")
+        return
+    if not (spooled):
+        mark_fail(
+            ctx,
+            f"[{test.name}] the spool {where} held none of this load's records at the "
+            "signal, so nothing tested the replay",
+        )
+        return
+    unreplayed = sorted(spooled - landed.keys())
+    if unreplayed:
+        mark_fail(
+            ctx,
+            f"[{test.name}] {len(unreplayed)}/{len(spooled)} records the spool held at "
+            f"the signal never landed after the restart (first: {unreplayed[:5]})",
+        )
+    else:
+        mark_pass(
+            ctx,
+            f"[{test.name}] all {len(spooled)} records the spool held at the signal "
+            "were replayed and landed",
+        )
+
+
+# ------------------------------------------------------------------------------
+# Readable Bytes
+# - A file's bytes with any compression it carries undone, for a marker search
+# ------------------------------------------------------------------------------
+def readable_bytes(path, data):
+    if path.endswith(".gz"):
+        try:
+            return gzip.decompress(data)
+        except (OSError, EOFError):
+            return data
+    if path.endswith(".zst"):
+        return _outage.zstd_frames(data) or data
+    return data
+
+
+# ------------------------------------------------------------------------------
+# Verify Dead Letters
+# - Every poison record the receiver accepted, one the sink refuses, is either
+#   in the dead-letter files or counted as a dropped dead letter, never gone
+#   without a trace. `dropped` is the drop count (before the load, at the
+#   signal) and the count now is read here. Good records behind a poison one
+#   are judged by landing, so one that blocks them fails there.
+# ------------------------------------------------------------------------------
+def verify_dead_letters(ctx, test, sent, landed, dropped):
+    plan = test.outage
+    poison = _outage.poison_by_seq(sent)
+    if not (poison):
+        mark_fail(
+            ctx,
+            f"[{test.name}] the receiver accepted no poison record, so nothing tested "
+            "the dead-letter path",
+        )
+        return
+    took = sorted(set(poison) & (landed or {}).keys())
+    if took:
+        mark_fail(
+            ctx,
+            f"[{test.name}] the sink took {len(took)} poison record(s), so the poison "
+            f"data file is not refused by it (first: {took[:5]})",
+        )
+
+    def _missing():
+        contents = container_contents(plan.dead_letter_service, plan.dead_letter_path)
+        if contents is None:
+            return None
+        letters = set()
+        for path, data in contents.items():
+            text = readable_bytes(path, data).decode("utf-8", errors="replace")
+            letters |= _outage.dead_letter_markers(text, test.marker)
+        return set(poison) - letters - set(took)
+
+    missing = poll_until(
+        _missing,
+        timeout=OUTAGE_POLL_SECONDS * 12,
+        interval=OUTAGE_POLL_SECONDS,
+        done=lambda got: got == set(),
+    )
+    where = f"'{plan.dead_letter_path}' in '{plan.dead_letter_service}'"
+    if missing is None:
+        mark_fail(
+            ctx, f"[{test.name}] the dead letters under {where} could not be read"
+        )
+        return
+    before, at_signal = dropped
+    now = scrape_metric(plan.dead_letter_service, _outage.DEAD_LETTERS_DROPPED)
+    restarted = outage_service(plan.service) == plan.dead_letter_service
+    counted = (
+        ((at_signal or 0.0) - (before or 0.0) + (now or 0.0))
+        if restarted
+        else ((now or 0.0) - (before or 0.0))
+    )
+    metric = (
+        "not exported" if (before, at_signal, now) == (None, None, None) else counted
+    )
+    LOGGER.info(
+        f"[{test.name}] poison: {len(poison)} accepted, "
+        f"{len(poison) - len(missing) - len(took)} dead-lettered under {where}, "
+        f"{_outage.DEAD_LETTERS_DROPPED} {metric}"
+    )
+    if not (missing):
+        mark_pass(
+            ctx,
+            f"[{test.name}] every accepted poison record was dead-lettered, none gone",
+        )
+    elif counted >= len(missing):
+        mark_pass(
+            ctx,
+            f"[{test.name}] {len(missing)} poison record(s) not in the dead-letter "
+            f"files are counted in {_outage.DEAD_LETTERS_DROPPED} ({counted:.0f})",
+        )
+    else:
+        mark_fail(
+            ctx,
+            f"[{test.name}] {len(missing)}/{len(poison)} accepted poison records are "
+            f"neither dead-lettered under {where} nor counted in "
+            f"{_outage.DEAD_LETTERS_DROPPED} ({metric}) (first: {sorted(missing)[:5]})",
+        )
+
+
+# ------------------------------------------------------------------------------
+# Archived Records
+# - {record: lines naming it} of this load in every file under the archive
+#   directory, or None when it cannot be read. The archivers share one volume,
+#   so the first one's copy holds what every one of them wrote.
+# ------------------------------------------------------------------------------
+def archived_records(test):
+    plan = test.outage
+    contents = container_contents(plan.archive_services[0], plan.archive_path)
+    if contents is None:
+        return None
+    found = Counter()
+    for path, data in contents.items():
+        found += _outage.count_markers(readable_bytes(path, data), test.marker)
+    return dict(found)
+
+
+# ------------------------------------------------------------------------------
+# Verify Archived
+# - Every good record the receiver accepted ends up in an archived object,
+#   duplicates allowed. The archivers write on their own clock, so after the
+#   settle wait they are stopped gracefully, which closes every open file, and
+#   the archive is read once more. Runs last: it stops services.
+# ------------------------------------------------------------------------------
+def verify_archived(ctx, test, sent):
+    plan = test.outage
+    accepted = _outage.accepted_by_seq(sent, test.table)
+    if not (accepted):
+        return
+    counts = poll_until(
+        lambda: archived_records(test),
+        timeout=OUTAGE_SETTLE_TIMEOUT,
+        interval=OUTAGE_POLL_SECONDS * 2,
+        done=lambda got: got is not None and set(accepted) <= got.keys(),
+        on_attempt=report_changes(
+            lambda got: (
+                "archive unreadable"
+                if got is None
+                else f"{len(set(accepted) & got.keys())}/{len(accepted)} accepted records archived"
+            )
+        ),
+    )
+    if counts is None or not (set(accepted) <= counts.keys()):
+        for service in plan.archive_services:
+            lifecycle_step(ctx, test, "stop", service)
+        counts = archived_records(test)
+    where = f"the archive under '{plan.archive_path}'"
+    if counts is None:
+        mark_fail(ctx, f"[{test.name}] {where} could not be read")
+        return
+    landing = _outage.tally_landing(
+        accepted, counts, _outage.phase_by_seq(sent, test.table)
+    )
+    LOGGER.info(
+        f"[{test.name}] archive: {landing.accepted} accepted, {landing.landed} archived, "
+        f"{len(landing.missing)} lost, {landing.duplicated} duplicated "
+        f"({landing.extra_rows} extra copies)"
+    )
+    judge_loss(ctx, test, landing, where)
+
+
+# ------------------------------------------------------------------------------
 # Verify Consumers
 # - Every Kafka consumer caught up after the broker came back: each subscribed
 #   topic has a committing group per subscriber, and no group on any of the
@@ -2113,7 +2415,7 @@ def verify_spool(ctx, test, before, at_peak):
 # ------------------------------------------------------------------------------
 def verify_consumers(ctx, test, services):
     expected = _outage.expected_consumers(
-        (PROJECT_DIR / path for path in services.values()), test.expected_topics
+        consumer_configs(test, services), test.expected_topics
     )
     if not (expected):
         mark_fail(ctx, f"[{test.name}] no service in the profile subscribes to a topic")
@@ -2243,6 +2545,12 @@ def verify_survivors(ctx, test, before, exited, since, began_at):
 # ------------------------------------------------------------------------------
 def drive_outage(ctx, test, services, ingest_url):
     plan = test.outage
+    poison = []
+    if plan.poison_file:
+        lines = (
+            (PROJECT_DIR / plan.poison_file).read_text(encoding="utf-8").splitlines()
+        )
+        poison = [json.loads(line) for line in lines if line.strip()]
     load = _outage.SteadyLoad(
         url=ingest_url,
         prefix=test.marker,
@@ -2250,6 +2558,8 @@ def drive_outage(ctx, test, services, ingest_url):
         workers=plan.workers,
         interval=plan.interval,
         timeout=OUTAGE_REQUEST_TIMEOUT,
+        poison=poison,
+        poison_every=plan.poison_every,
     )
     on_kafka = KAFKA_BACKEND_PROFILE in test.compose_profiles
     started = time.time()
@@ -2321,9 +2631,15 @@ def run_outage(ctx, test, services, ingest_url, ingress):
         if (plan.spool_service)
         else None
     )
+    dropped_before = (
+        scrape_metric(plan.dead_letter_service, _outage.DEAD_LETTERS_DROPPED)
+        if (plan.dead_letter_service)
+        else None
+    )
 
     since = time.time() - 1
     disruption = None
+    sent = []
     watcher = watch_exits(state.container_id for state in before.values())
     try:
         sent, disruption = drive_outage(ctx, test, services, ingest_url)
@@ -2336,10 +2652,19 @@ def run_outage(ctx, test, services, ingest_url, ingress):
         verify_answers(ctx, test, sent, ingress_down)
         if disruption is not None:
             print()
-            verify_outage_landing(ctx, test, sent)
+            landed = verify_outage_landing(ctx, test, sent)
             if plan.spool_service:
                 print()
-                verify_spool(ctx, test, spool_before, disruption.spool_at_peak)
+                verify_spool(ctx, test, spool_before, disruption.spool_at_peak, landed)
+            if plan.dead_letter_service:
+                print()
+                verify_dead_letters(
+                    ctx,
+                    test,
+                    sent,
+                    landed,
+                    (dropped_before, disruption.dropped_at_peak),
+                )
             if KAFKA_BACKEND_PROFILE in test.compose_profiles:
                 print()
                 verify_consumers(ctx, test, services)
@@ -2354,6 +2679,9 @@ def run_outage(ctx, test, services, ingest_url, ingress):
         since,
         disruption.started_at if (disruption) else None,
     )
+    if plan.archive_services and disruption is not None:
+        print()
+        verify_archived(ctx, test, sent)
 
 
 # ==============================================================================
@@ -2381,6 +2709,28 @@ def resolve_test_case(test_config, global_config):
             )
         services[svc_name] = override_path
 
+    # Each extra replica runs its app's service again on the same config, as
+    # `<service>-<n>` from 2.
+    replicas = {}
+    for svc_name, count in (test_config.get("replicas") or {}).items():
+        if svc_name not in services:
+            error(
+                f"[{test_name}] replicas of '{svc_name}', which the profile does not run"
+            )
+        if isinstance(count, bool) or not (isinstance(count, int)) or count < 2:
+            error(f"[{test_name}] replicas of '{svc_name}' must be 2 or more")
+        for index in range(2, count + 1):
+            replicas[f"{svc_name}-{index}"] = svc_name
+            services[f"{svc_name}-{index}"] = services[svc_name]
+
+    partitions = test_config.get("topic_partitions", 1)
+    if (
+        isinstance(partitions, bool)
+        or not (isinstance(partitions, int))
+        or partitions < 1
+    ):
+        error(f"[{test_name}] 'topic_partitions' must be a whole number above 0")
+
     outage = None
     if test_config.get("outage"):
         if not (isinstance(test_config["outage"], dict)):
@@ -2394,11 +2744,20 @@ def resolve_test_case(test_config, global_config):
             )
         except ValueError as problem:
             error(f"[{test_name}] {problem}")
-        if outage.spool_service and outage.spool_service not in services:
-            error(
-                f"[{test_name}] outage 'spool' reads '{outage.spool_service}', which "
-                f"profile '{profile_name}' does not run"
-            )
+        named = {
+            "spool": [outage.spool_service],
+            "dead_letters": [outage.dead_letter_service],
+            "archive": list(outage.archive_services),
+        }
+        for key, names in named.items():
+            for name in names:
+                if name and name not in services:
+                    error(
+                        f"[{test_name}] outage '{key}' reads '{name}', which "
+                        f"profile '{profile_name}' does not run"
+                    )
+        if outage.poison_file and not ((PROJECT_DIR / outage.poison_file).is_file()):
+            error(f"[{test_name}] poison data file '{outage.poison_file}' not found")
 
     return TestCase(
         name=test_name,
@@ -2421,6 +2780,8 @@ def resolve_test_case(test_config, global_config):
         ),
         marker=f"{RUN_ID}-{test_name}",
         outage=outage,
+        replicas=replicas,
+        topic_partitions=partitions,
     )
 
 
@@ -2449,8 +2810,12 @@ def run_test(ctx, mode, test, persistent_services):
         if plan.service:
             print(f"  - Outage: '{plan.service}' {plan.signal} for {plan.seconds}s")
         print(f"  - Load: {plan.workers} workers, {plan.interval}s between requests")
-        if plan.expect_loss:
-            print("  - Expects loss: lost records are recorded, not failed")
+        if plan.loss != "forbidden":
+            print(f"  - Loss: {plan.loss}")
+        if plan.poison_file:
+            print(f"  - Poison: one in {plan.poison_every} from {plan.poison_file}")
+        if test.replicas:
+            print(f"  - Replicas: {', '.join(sorted(test.replicas))}")
     for svc_name in sorted(test.services):
         print(f"  - {svc_name} Config: {test.services[svc_name]}")
     if test.database != RUN_ID.replace("-", "_"):

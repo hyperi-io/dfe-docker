@@ -1,0 +1,20 @@
+# Project:   dfe-docker
+# File:      config/receiver/grpc-transform-vector.yaml
+# Purpose:   dfe-receiver config - gRPC push to dfe-transform-vector (direct chain)
+# Language:  YAML
+#
+# License:   BUSL-1.1
+# Copyright: (c) 2026 HYPERI PTY LIMITED
+
+# Direct chain: receiver pushes to dfe-transform-vector, which pushes to dfe-loader.
+
+routing:
+  source_rules:
+    - field: _source
+      mode: key_value_use
+
+destinations:
+  default: transform_vector
+  transform_vector:
+    grpc:
+      endpoint: http://dfe-transform-vector:6000

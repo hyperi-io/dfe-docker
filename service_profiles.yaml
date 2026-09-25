@@ -277,6 +277,18 @@ profiles:
       dfe-transform-vrl:
         config_path: transform-vrl/grpc.yaml
 
+  # The same direct chain with dfe-transform-vector in the middle, whose Vector
+  # child sends every record on through the supervisor's bridge.
+  grpc-receiver-transform-vector:
+    transport: grpc
+    services:
+      dfe-loader:
+        config_path: loader/grpc.yaml
+      dfe-receiver:
+        config_path: receiver/grpc-transform-vector.yaml
+      dfe-transform-vector:
+        config_path: transform-vector/grpc.yaml
+
   grpc-fetcher:
     transport: grpc
     services:
