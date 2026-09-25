@@ -577,3 +577,17 @@ tests:
         service: dfe-loader
         seconds: 20
       sources: *cisco-ios-as-main
+
+  # The loader frozen for five minutes and nothing killed. Every push the
+  # transform makes fails for the whole freeze, so a transform that exits after
+  # repeated send failures, or gives up on what it read, fails here.
+  - name: transform-elastic-loader-frozen
+    profile: kafka-elastic-cisco-ios
+    config_overrides: *elastic-hold
+    expected_topics:
+      - main_land
+    outage:
+      pause:
+        service: dfe-loader
+        seconds: 300
+      sources: *cisco-ios-as-main
