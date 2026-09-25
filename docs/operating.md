@@ -488,13 +488,13 @@ The stack's own telemetry goes out over OTLP to a collector, which writes the
 `dfe.otel_*` tables that HyperDX reads. Turn it on with `otel: true` on a
 profile (`single` has it) or `DFE_OTEL_ENABLED=true`.
 
-Every DFE app the profile runs pushes over OTLP, dfe-ui aside. Two things do
-scrape: the collector scrapes its own metrics on
-127.0.0.1:8888, and `sqlquery` reads ClickHouse. Nothing on this path sends
-logs -- there is no container-log collector, and the apps export metrics and
-traces only -- so `dfe.otel_logs` stays empty even though the collector has a
-logs pipeline wired. See [observability.md](observability.md), which also has
-the dials, what each component does, and why `/metrics` still exists.
+Every DFE app the profile runs pushes metrics and traces over OTLP, dfe-ui aside.
+Two things do scrape: the collector scrapes its own metrics on 127.0.0.1:8888,
+and `sqlquery` reads ClickHouse. Container stdout reaches `dfe.otel_logs` over
+Docker's fluentd log driver (`docker-compose.container-logs.yml`), tagged with
+the container name, unless `DFE_CONTAINER_LOGS_ENABLED=false`. See
+[observability.md](observability.md), which also has the dials, what each
+component does, and why `/metrics` still exists.
 
 ## Related
 

@@ -413,6 +413,21 @@ def _container_name(service: str) -> str:
     return names[0] if result.returncode == 0 and names else service
 
 
+def _container_started_at(name: str) -> str | None:
+    """When one container's current process started, as Docker reports it, or None."""
+    result = subprocess.run(
+        ["docker", "inspect", "--format", "{{.State.StartedAt}}", name],
+        capture_output=True,
+        check=False,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        timeout=API_EXEC_MARGIN_SECONDS,
+    )
+    started = result.stdout.strip()
+    return started if result.returncode == 0 and started[:1].isdigit() else None
+
+
 def _exec_request(
     *, method: str, url: str, payload: dict | None, timeout: int, token: str
 ) -> tuple[int, str]:
@@ -832,12 +847,30 @@ def _container_logs_expected() -> bool:
     return os.environ.get(CONTAINER_LOGS_KEY, "true").strip().lower() not in FALSY
 
 
+def _since_start(name: str) -> str:
+    """The otel_logs condition for rows one container wrote since its process started.
+
+    A quiet service logs at startup and then nothing, so a fixed freshness window
+    reads it as silent once the self test has run longer than the window. The log
+    driver stamps whole seconds, so the start is rounded down to one. With no
+    start to read, the freshness window is the fallback.
+    """
+    started = _container_started_at(name)
+    if started is None:
+        return f"Timestamp > now() - INTERVAL {OTEL_FRESH_WINDOW_SECONDS} SECOND"
+    return (
+        "Timestamp >= toStartOfSecond(parseDateTime64BestEffort("
+        f"'{escape_literal(started)}', 9))"
+    )
+
+
 def _verify_container_logs(*, database: str) -> int:
     """Prove each named service's stdout is reaching the otel log table.
 
     Freshness alone would pass on one container talking, so this asks per service:
     the log driver tags every stream with its container name, and the collector
-    turns that tag into ServiceName.
+    turns that tag into ServiceName. It counts what the RUNNING container wrote,
+    since its process started.
     """
     names = ", ".join(CONTAINER_LOG_SERVICES)
     _print(
@@ -851,7 +884,7 @@ def _verify_container_logs(*, database: str) -> int:
             count = ch_int(
                 f"SELECT count() FROM {database}.{OTEL_LOGS_TABLE} "
                 f"WHERE ServiceName = '{escape_literal(stamped)}' "
-                f"AND Timestamp > now() - INTERVAL {OTEL_FRESH_WINDOW_SECONDS} SECOND"
+                f"AND {_since_start(stamped)}"
             )
             found[stamped] = 0 if count is None else count
         return found
@@ -872,12 +905,15 @@ def _verify_container_logs(*, database: str) -> int:
     if silent:
         _print(
             msg=f"FAIL  no rows in {database}.{OTEL_LOGS_TABLE} for {', '.join(silent)} "
-            f"within {OTEL_TIMEOUT_SECONDS:.0f}s -- container stdout is not reaching "
-            "the collector"
+            f"since each container started, after {OTEL_TIMEOUT_SECONDS:.0f}s -- "
+            "container stdout is not reaching the collector"
         )
         return 1
     summary = ", ".join(f"{name}={count}" for name, count in sorted(counts.items()))
-    _print(msg=f"PASS  container stdout is landing per service ({summary})")
+    _print(
+        msg=f"PASS  container stdout is landing per service, rows since each "
+        f"container started ({summary})"
+    )
     return 0
 
 

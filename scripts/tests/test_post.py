@@ -417,3 +417,41 @@ def test_an_unresolvable_service_falls_back_to_its_own_name(
     post._container_name.cache_clear()
 
     assert post._container_name("dfe-engine") == "dfe-engine"
+
+
+def test_container_logs_are_counted_since_the_container_started(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A quiet service logs at startup only, which a fixed window loses sight of."""
+    asked: list[list[str]] = []
+
+    def _inspect(args, **kwargs):
+        asked.append(args)
+        return _completed(stdout="2026-09-25T21:35:57.332877557Z\n")
+
+    monkeypatch.setattr(post.subprocess, "run", _inspect)
+
+    condition = post._since_start("kt-dfe-receiver")
+
+    assert asked[0][:2] == ["docker", "inspect"]
+    assert asked[0][-1] == "kt-dfe-receiver"
+    assert condition == (
+        "Timestamp >= toStartOfSecond(parseDateTime64BestEffort("
+        "'2026-09-25T21:35:57.332877557Z', 9))"
+    )
+
+
+def test_a_container_docker_cannot_inspect_falls_back_to_the_window(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        post.subprocess,
+        "run",
+        lambda args, **kwargs: _completed(code=1, stderr="No such object"),
+    )
+
+    condition = post._since_start("dfe-receiver")
+
+    assert condition == (
+        f"Timestamp > now() - INTERVAL {post.OTEL_FRESH_WINDOW_SECONDS} SECOND"
+    )
