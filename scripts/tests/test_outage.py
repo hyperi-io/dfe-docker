@@ -413,11 +413,13 @@ def test_a_taken_poison_record_is_owed_a_dead_letter_not_a_row() -> None:
     assert not poison.accepted
     assert _outage.accepted_by_seq(sent, "main") == {8: "during"}
     assert _outage.poison_by_seq(sent) == {9: "during"}
-    assert _outage.phase_by_seq(sent, "main") == {
-        8: "during",
-        9: "during",
-        10: "during",
-    }
+    assert _outage.phase_by_seq(sent) == {8: "during", 9: "during", 10: "during"}
+
+
+def test_every_source_is_placed_by_phase() -> None:
+    sent = [_sent(0, 200, phase="before"), _sent(1, 200, source="vector")]
+
+    assert _outage.phase_by_seq(sent) == {0: "before", 1: "during"}
 
 
 def test_a_refusal_is_an_answer_that_is_not_a_2xx() -> None:

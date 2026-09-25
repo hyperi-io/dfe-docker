@@ -2106,9 +2106,7 @@ def verify_outage_landing(ctx, test, sent):
         )
         return None
 
-    landing = _outage.tally_landing(
-        accepted, counts, _outage.phase_by_seq(sent, test.table)
-    )
+    landing = _outage.tally_landing(accepted, counts, _outage.phase_by_seq(sent))
     LOGGER.info(
         f"[{test.name}] landing: {landing.accepted} accepted, {landing.landed} landed, "
         f"{len(landing.missing)} lost, {landing.duplicated} duplicated "
@@ -2396,9 +2394,7 @@ def verify_archived(ctx, test, sent):
     if counts is None:
         mark_fail(ctx, f"[{test.name}] {where} could not be read")
         return
-    landing = _outage.tally_landing(
-        accepted, counts, _outage.phase_by_seq(sent, test.table)
-    )
+    landing = _outage.tally_landing(accepted, counts, _outage.phase_by_seq(sent))
     LOGGER.info(
         f"[{test.name}] archive: {landing.accepted} accepted, {landing.landed} archived, "
         f"{len(landing.missing)} lost, {landing.duplicated} duplicated "

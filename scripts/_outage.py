@@ -503,9 +503,13 @@ def poison_by_seq(sent: Iterable[Sent]) -> dict[int, str]:
     return {r.seq: r.phase for r in sent if r.poison and r.answered_2xx}
 
 
-def phase_by_seq(sent: Iterable[Sent], source: str) -> dict[int, str]:
-    """Map every record of `source` the load sent, answered or not, to its phase."""
-    return {r.seq: r.phase for r in sent if r.source == source}
+def phase_by_seq(sent: Iterable[Sent]) -> dict[int, str]:
+    """Map every record the load sent, answered or not and of any source, to its phase.
+
+    Sources can share a table, so a duplicate row of another source's record is
+    placed by the phase it was sent in too.
+    """
+    return {r.seq: r.phase for r in sent}
 
 
 def overlaps(record: Sent, start: float, end: float) -> bool:
