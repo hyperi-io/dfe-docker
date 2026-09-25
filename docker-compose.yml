@@ -92,11 +92,12 @@ x-limits-sidecar: &limits-sidecar
 # A stage holding its source acknowledgements drains on SIGTERM: scalo's 5 s
 # pre-stop, then up to 20 s to deliver what it holds. Docker's 10 s default
 # SIGKILLs it mid-drain, so its sources send those records again. The Kubernetes
-# tier gives the same apps the same figures. dfe-transform-vector waits up to
-# 55 s for its Vector child to exit. `make check-compose` asserts both.
+# tier gives the same apps the same figures. dfe-transform-vector gives its
+# Vector child 55 s to exit, then drains its bridge for up to 15 s, and the rest
+# covers the telemetry flush and exit. `make check-compose` asserts both.
 # =============================================================================
 x-stop-grace-app: &stop-grace-app 45s
-x-stop-grace-vector: &stop-grace-vector 70s
+x-stop-grace-vector: &stop-grace-vector 90s
 
 # =============================================================================
 # oauth2-proxy shared settings (the opt-in `auth` profile)

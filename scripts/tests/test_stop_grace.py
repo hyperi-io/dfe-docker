@@ -51,7 +51,7 @@ def test_every_app_is_held_to_its_own_figure() -> None:
     config = {
         "services": {
             "dfe-receiver": {"stop_grace_period": "45s"},
-            "dfe-transform-vector": {"stop_grace_period": "1m10s"},
+            "dfe-transform-vector": {"stop_grace_period": "1m30s"},
             "dfe-transform-vector-filebeat": {"stop_grace_period": "45s"},
             "dfe-loader": {},
             "contract-dfe-loader": {},
@@ -66,4 +66,15 @@ def test_every_app_is_held_to_its_own_figure() -> None:
     assert failures[1].startswith(
         "dfe-transform-vector-filebeat: stop_grace_period is 45s"
     )
-    assert "70s" in failures[1]
+    assert "90s" in failures[1]
+
+
+def test_transform_vector_under_ninety_seconds_is_caught() -> None:
+    config = {"services": {"dfe-transform-vector": {"stop_grace_period": "70s"}}}
+
+    failures = check_compose._stop_grace_failures(config=config)
+
+    assert failures == [
+        "dfe-transform-vector: stop_grace_period is 70s, under the 90s its drain "
+        "of held acknowledgements needs"
+    ]

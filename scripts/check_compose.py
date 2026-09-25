@@ -156,7 +156,7 @@ _HEALTH_PATHS = ("/livez", "/readyz")
 # source acknowledgements it holds, the Kubernetes tier's figures. Keyed by app, so
 # a per-source service or a generated instance of it is held to the same floor.
 _STOP_GRACE_SECONDS = {app: 45 for app in SERVICE_CONFIG_FILE} | {
-    "dfe-transform-vector": 70
+    "dfe-transform-vector": 90
 }
 _DURATION_PART = re.compile(r"(\d+(?:\.\d+)?)(h|ms|m|s|us|ns)")
 _DURATION_SCALE = {"h": 3600.0, "m": 60.0, "s": 1.0, "ms": 1e-3, "us": 1e-6, "ns": 1e-9}
