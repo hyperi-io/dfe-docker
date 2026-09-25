@@ -199,6 +199,7 @@ In `dev` mode, they build from each repo's own Dockerfile (not the shared Rust b
 |--------------------|--------------------------------------------------------------------|
 | `make init`        | Create .env and per-service .env files from templates, minting the admin and break-glass passwords |
 | `make env-files`   | Assert every `env/<service>.env` exists, creating any the templates have gained |
+| `make e2e-posture` | Put `.env` into the stack the dfe-ui Playwright suite drives: `DFE_ENV=test`, the engine's e2e routes on, `e2e-` container names and 2xxxx ports -- [docs/developing.md](docs/developing.md#the-dfe-ui-playwright-suite----make-e2e-posture) |
 | `make creds`       | Print the access summary -- console URL, admin login, where the break-glass password lives. The password prints on a TTY only; a pipe, a file or `DFE_CREDS_SHOW=0` gets the `.env` key instead |
 | `make up`          | Start the pinned stack and print the access summary                |
 | `make apply`       | Start what the re-resolved profile adds or changes on a running stack, a new per-source instance included, recreating nothing unchanged and touching no volume (`DEV=1` for a `make dev` stack) |

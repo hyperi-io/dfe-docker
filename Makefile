@@ -50,7 +50,7 @@ endif
 # any more (both sweep every profile), and requiring a resolvable profile to STOP
 # a stack is the same lockout the compose secret comments argue against -- set
 # DFE_PROFILE to something that does not exist and you could not tear down.
-BOOTSTRAP_GOALS := init env-files creds dev-posture help login stack dial modes down clean limits check check-compose check-hardfail check-dockerfile check-docs check-python check-tests
+BOOTSTRAP_GOALS := init env-files creds dev-posture e2e-posture help login stack dial modes down clean limits check check-compose check-hardfail check-dockerfile check-docs check-python check-tests
 
 # Resolve the active profile only when a goal actually needs the compose stack
 ifneq (,$(filter-out $(BOOTSTRAP_GOALS),$(or $(MAKECMDGOALS),help)))
@@ -307,6 +307,10 @@ endif
 .PHONY: dev-posture
 dev-posture: .env ## Put .env into the dev posture (known admin password, DFE_ENV=dev); AUTH=real mints one and writes a non-dev posture instead
 	@python3 scripts/dev_posture.py $(DEV_POSTURE_ARG)
+
+.PHONY: e2e-posture
+e2e-posture: .env ## Put .env into the stack the dfe-ui Playwright suite drives: DFE_ENV=test, the engine's e2e routes on, e2e- container names and 2xxxx ports
+	@python3 scripts/e2e_posture.py
 
 # GHCR auth for the private dfe-* images and the signed stack-manifest. A no-op
 # when DFE_GHCR_* are unset (a daemon authed out of band), so it is safe as an

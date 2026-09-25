@@ -1049,6 +1049,10 @@ services:
       # `make dev` writes DFE_ENV=dev for a tyre-kick that logs in on the shipped
       # default. docs/operating.md#there-is-no-authentication
       DFE_ENV: ${DFE_ENV:-production}
+      # The unauthenticated /api/e2e seeding routes the dfe-ui Playwright suite
+      # drives. The engine refuses them in a production posture; `make e2e-posture`
+      # turns them on beside DFE_ENV=test.
+      DFE_E2E_SERVER: ${DFE_E2E_SERVER:-false}
       # A Compose stack is one operator with no forge: a hunt or rule written at
       # production+team lands on a review branch nothing can merge, and the
       # engine then 404s on the object it just accepted. solo commits to main.

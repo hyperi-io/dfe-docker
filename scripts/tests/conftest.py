@@ -31,6 +31,7 @@ if str(SCRIPTS_DIR) not in sys.path:
 import _common  # noqa: E402
 import creds  # noqa: E402
 import dev_posture  # noqa: E402
+import e2e_posture  # noqa: E402
 import init  # noqa: E402
 
 
@@ -38,7 +39,7 @@ import init  # noqa: E402
 def dotenv(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     """Return the path of a throwaway .env every module under test points at."""
     path = tmp_path / ".env"
-    for module in (_common, creds, dev_posture, init):
+    for module in (_common, creds, dev_posture, e2e_posture, init):
         monkeypatch.setattr(module, "DOTENV_FILE", path)
     # The access summary carries plaintext passwords, so it goes to tmp_path too.
     monkeypatch.setattr(creds, "ACCESS_SUMMARY_FILE", tmp_path / "access-summary.md")

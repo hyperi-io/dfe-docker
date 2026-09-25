@@ -394,6 +394,33 @@ Every step is a report row and a screenshot under `--shots-dir` (`.tmp/source`).
 A step the console cannot do falls back to the engine API and says so, because
 that is a finding about the console rather than about the pipeline.
 
+### The dfe-ui Playwright suite -- `make e2e-posture`
+
+```bash
+make e2e-posture                  # DFE_ENV=test, the engine's /api/e2e routes on, e2e- names, 2xxxx ports
+DFE_PROFILE=single make up        # the pinned registry images
+```
+
+The suite seeds its fixtures through the engine's `/api/e2e` routes, which the
+engine mounts only with `DFE_E2E_SERVER=true` in a non-production posture, and
+whose seeders refuse anything but `DFE_ENV=test`. `make dev-posture` writes
+`DFE_ENV=dev`, so a dev stack cannot run it. The posture also sets the admin
+password to the shipped default the suite's reset returns it to, so it refuses
+a `.env` whose `DFE_ENV` names a deployment, and backs up the file it rewrites.
+
+It prefixes every container `e2e-` (`DFE_CONTAINER_PREFIX`) and moves every host
+port into the 2xxxx family, which is where the suite looks for the receiver
+(`:28080`) and the loader's metrics (`:29091`). It names no compose project, so
+the checkout's directory does. Then, from `apps/dfe-core-ui` in dfe-ui:
+
+```bash
+BASE_URL=http://localhost:23000 NEXT_PUBLIC_API_URL=http://localhost:28003 \
+E2E_ADMIN_PASSWORD=<the shipped default> yarn test:e2e
+```
+
+A spec that adds a per-source transform needs its container: run `make apply`
+after the write, which is what the engine's restart hint names.
+
 ## Static checks
 
 `make check` runs what CI runs, so a green local run means a green pipeline.
