@@ -88,6 +88,17 @@ x-limits-sidecar: &limits-sidecar
       memory: ${DFE_SIDECAR_MEMORY:-512M}
 
 # =============================================================================
+# Stop grace for the data-plane apps
+# A stage holding its source acknowledgements drains on SIGTERM: scalo's 5 s
+# pre-stop, then up to 20 s to deliver what it holds. Docker's 10 s default
+# SIGKILLs it mid-drain, so its sources send those records again. The Kubernetes
+# tier gives the same apps the same figures. dfe-transform-vector waits up to
+# 55 s for its Vector child to exit. `make check-compose` asserts both.
+# =============================================================================
+x-stop-grace-app: &stop-grace-app 45s
+x-stop-grace-vector: &stop-grace-vector 70s
+
+# =============================================================================
 # oauth2-proxy shared settings (the opt-in `auth` profile)
 #
 # One OIDC identity and one cookie secret across every infra-UI proxy, so a
@@ -488,6 +499,7 @@ services:
     container_name: dfe-archiver
     profiles: ["dfe"]
     restart: unless-stopped
+    stop_grace_period: *stop-grace-app
     deploy: *limits-service
     ports:
       - ${DFE_BIND_HOST:-127.0.0.1}:${DFE_ARCHIVER_PROMETHEUS_PORT:-9093}:9090
@@ -538,6 +550,7 @@ services:
     container_name: dfe-fetcher
     profiles: ["dfe"]
     restart: unless-stopped
+    stop_grace_period: *stop-grace-app
     deploy: *limits-service
     ports:
       - ${DFE_INGRESS_BIND_HOST:-0.0.0.0}:${DFE_FETCHER_INGEST_PORT:-8082}:8080
@@ -589,6 +602,7 @@ services:
     container_name: dfe-loader
     profiles: ["dfe"]
     restart: unless-stopped
+    stop_grace_period: *stop-grace-app
     deploy: *limits-service
     ports:
       # 50051 is the INTERNAL DfeTransport/Push surface (receiver -> loader), not
@@ -646,6 +660,7 @@ services:
     container_name: dfe-receiver
     profiles: ["dfe"]
     restart: unless-stopped
+    stop_grace_period: *stop-grace-app
     deploy: *limits-service
     ports:
       # 6000 (Vector protocol) and 8080 (HTTP) are the INGEST surfaces external
@@ -716,6 +731,7 @@ services:
     container_name: dfe-transform-elastic
     profiles: ["dfe"]
     restart: unless-stopped
+    stop_grace_period: *stop-grace-app
     deploy: *limits-service
     ports:
       - ${DFE_BIND_HOST:-127.0.0.1}:${DFE_TRANSFORM_ELASTIC_PROMETHEUS_PORT:-9099}:9090
@@ -765,6 +781,7 @@ services:
     container_name: dfe-transform-elastic-cisco-ios
     profiles: ["dfe"]
     restart: unless-stopped
+    stop_grace_period: *stop-grace-app
     deploy: *limits-service
     ports:
       - ${DFE_BIND_HOST:-127.0.0.1}:${DFE_TRANSFORM_ELASTIC_CISCO_IOS_PROMETHEUS_PORT:-9089}:9090
@@ -804,10 +821,11 @@ services:
     container_name: dfe-transform-vector
     profiles: ["dfe"]
     restart: unless-stopped
+    stop_grace_period: *stop-grace-vector
     deploy: *limits-service
+    # Vector's API binds loopback inside the container, so it has no host port.
     ports:
       - ${DFE_BIND_HOST:-127.0.0.1}:${DFE_TRANSFORM_VECTOR_PROMETHEUS_PORT:-9095}:9090
-      - ${DFE_BIND_HOST:-127.0.0.1}:${DFE_TRANSFORM_VECTOR_API_PORT:-8686}:8686
     env_file:
       - path: env/transform-vector.env
         required: false
@@ -867,10 +885,10 @@ services:
     container_name: dfe-transform-vector-filebeat
     profiles: ["dfe"]
     restart: unless-stopped
+    stop_grace_period: *stop-grace-vector
     deploy: *limits-service
     ports:
       - ${DFE_BIND_HOST:-127.0.0.1}:${DFE_TRANSFORM_VECTOR_FILEBEAT_PROMETHEUS_PORT:-9098}:9090
-      - ${DFE_BIND_HOST:-127.0.0.1}:${DFE_TRANSFORM_VECTOR_FILEBEAT_API_PORT:-8687}:8686
     env_file:
       - path: env/transform-vector-filebeat.env
         required: false
@@ -910,6 +928,7 @@ services:
     container_name: dfe-transform-vrl
     profiles: ["dfe"]
     restart: unless-stopped
+    stop_grace_period: *stop-grace-app
     deploy: *limits-service
     ports:
       - ${DFE_BIND_HOST:-127.0.0.1}:${DFE_TRANSFORM_VRL_PROMETHEUS_PORT:-9096}:9090
@@ -962,6 +981,7 @@ services:
     container_name: dfe-transform-vrl-filebeat
     profiles: ["dfe"]
     restart: unless-stopped
+    stop_grace_period: *stop-grace-app
     deploy: *limits-service
     ports:
       - ${DFE_BIND_HOST:-127.0.0.1}:${DFE_TRANSFORM_VRL_FILEBEAT_PROMETHEUS_PORT:-9097}:9090

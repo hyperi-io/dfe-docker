@@ -135,7 +135,6 @@ Per-port, as published in `docker-compose.yml`:
 | 8081 | kafka-ui | ui | Kafbat UI (container `:8080`) |
 | 8123 / 9000 | clickhouse | operator | HTTP and native protocol |
 | 9092 / 19092 | kafka (either backend) | operator | Plaintext listeners |
-| 8686 | dfe-transform-vector | operator | Vector API |
 | 9090 | dfe-receiver | operator | Metrics and health |
 | 9091 | dfe-loader | operator | Metrics and health |
 | 9093 | dfe-archiver | operator | Metrics and health |
@@ -148,7 +147,8 @@ Per-port, as published in `docker-compose.yml`:
 
 `dfe-ui`, `hyperdx`, `hyperdx-postgres` and `hyperdx-ferretdb` publish no host
 ports at all -- they are reached over the Docker network, HyperDX through the
-proxy that holds both its origins. The collector publishes only `24224`, which the
+proxy that holds both its origins. Vector's API inside dfe-transform-vector binds
+loopback and is published nowhere: reach it with `docker exec`. The collector publishes only `24224`, which the
 DOCKER DAEMON sends container stdout to; its OTLP ports stay on the Compose
 network. The receiver's OTLP
 (`4317`, `4318`), Beats (`5044`) and HEC (`8088`) mappings are present but

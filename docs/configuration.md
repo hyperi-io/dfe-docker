@@ -166,7 +166,6 @@ credential fields are `env:`-interpolated. Change it there.
 |--------------------------------------------------|--------------------------------------------------------------------------------------|---------------------------------------------------------------------|
 | `DFE_TRANSFORM_VECTOR_VERSION`                   | Version of dfe-transform-vector to use                                               | none -- `make stack` pins it; unset is a hard-fail                                                            |
 | `DFE_TRANSFORM_VECTOR_PROMETHEUS_PORT`           | Transform Vector Prometheus port                                                     | `9095`                                                              |
-| `DFE_TRANSFORM_VECTOR_API_PORT`                  | Transform Vector API port                                                            | `8686`                                                              |
 
 ### DFE Transform VRL
 
@@ -335,8 +334,6 @@ The same toggle points the engine at HyperDX: with it on, the engine receives `D
 | 8082  | dfe-fetcher          | HTTP ingest        |
 | 8090  | hyperdx              | App UI             |
 | 8123  | ClickHouse           | HTTP API           |
-| 8686  | dfe-transform-vector | Vector API         |
-| 8687  | dfe-transform-vector-filebeat | Vector API |
 | 9000  | ClickHouse           | Native protocol    |
 | 9089  | dfe-transform-elastic-cisco-ios | Prometheus metrics |
 | 9090  | dfe-receiver         | Prometheus metrics |
