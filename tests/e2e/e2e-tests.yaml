@@ -78,7 +78,8 @@ global:
   # Only ClickHouse persists between tests (schema + accumulated rows; the
   # count-delta verify baselines per test). Kafka, kafbat and the DFE services
   # recreate fresh each test so a test always runs its own config and a stale
-  # broker cannot fail the next test's health gate.
+  # broker cannot fail the next test's health gate. The run takes them down at
+  # its end unless they were running before it started.
   persistent_services:
     - clickhouse
 

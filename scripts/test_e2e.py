@@ -895,6 +895,19 @@ def stack_is_up():
 
 
 # ------------------------------------------------------------------------------
+# Running Services
+# - The services of those named whose container is running now
+# ------------------------------------------------------------------------------
+def running_services(services):
+    running = []
+    for service in services:
+        state = container_state(service)
+        if state and state.status == "running":
+            running.append(service)
+    return running
+
+
+# ------------------------------------------------------------------------------
 # Stack Down
 # - Stops the Docker stack
 # ------------------------------------------------------------------------------
@@ -2824,7 +2837,7 @@ def resolve_test_case(test_config, global_config):
 # Run Test
 # - Executes the test flow for a given TestCase
 # ------------------------------------------------------------------------------
-def run_test(ctx, mode, test, persistent_services):
+def run_test(ctx, mode, test, persistent_services, preexisting=None):
     # Ensure configuration files exist for services used by this test
     for svc_name, config_path in test.services.items():
         if not ((PROJECT_DIR / config_path).exists()):
@@ -2874,8 +2887,9 @@ def run_test(ctx, mode, test, persistent_services):
         exercise_stack(ctx, mode, test, effective_services)
         completed = True
     finally:
-        # An exception ends the run, so it keeps nothing for a next test.
-        stack_down(keep_services=(persistent_services or None) if completed else None)
+        # An exception ends the run, so it keeps only what was running before it.
+        keep = persistent_services if completed else preexisting
+        stack_down(keep_services=keep or None)
 
     # Print footer for test separation in logs
     print("------------------------------------------------------------")
@@ -3076,8 +3090,10 @@ def main():
     global_config = config.get("global", {}).copy()
     global_config["clickhouse"] = config.get("clickhouse", {})
 
-    # Tear down any existing stack before starting
+    # Tear down any existing stack before starting. A persistent service already
+    # running was started by someone else, so the run leaves it running.
     persistent_services = get_config("persistent_services", {}, global_config)
+    preexisting = running_services(persistent_services)
     if stack_is_up():
         print()
         stack_down(persistent_services)
@@ -3119,10 +3135,11 @@ def main():
 
     # Run resolved tests
     for test in tests_to_run:
-        run_test(ctx, mode, test, persistent_services)
+        run_test(ctx, mode, test, persistent_services, preexisting)
 
-    # Post test execution cleanup
+    # Post test execution cleanup, then down with what the run started
     cleanup(global_config.get("clickhouse", {}))
+    stack_down(keep_services=preexisting or None)
 
     # Capture end time for test suite completion and calculate duration
     end_time = datetime.now().astimezone()

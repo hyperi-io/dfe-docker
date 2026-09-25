@@ -308,6 +308,8 @@ make test-e2e E2E_TESTS="simple-receiver-to-loader-grpc simple-fetcher-to-loader
 (`tests/e2e/data/events.jsonl`), the mode (`ci` builds `--no-cache --pull`; `dev`
 also loads the override file) and `persistent_services` -- only ClickHouse
 survives between tests, so each test runs its own config against a fresh broker.
+The run takes ClickHouse down at the end too, unless it was already running when
+the run started.
 Each entry under `tests:` names a `service_profiles.yaml` profile, optionally
 `expected_topics` (created and cleaned per run, then verified) and
 `config_overrides` keyed by service name.
