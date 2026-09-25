@@ -149,7 +149,10 @@ sibling of every expected `_land` topic, so a run depends on the test definition
 rather than on the broker's history.
 
 `make post` asserts the loader is fetching a topic before it injects anything, so
-an empty subscription is reported as one.
+an empty subscription is reported as one. The loader names a topic in its lag
+metric only once it has fetched from it, so on a stack with no traffic yet the
+self test sends one probe record per attempt, tagged `post-<pid>-<hex>-probe`,
+and those rows stay in `dfe.main`.
 
 ## Events are accepted but nothing lands
 
