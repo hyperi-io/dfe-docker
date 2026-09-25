@@ -78,8 +78,9 @@ and consumes `main_load`.
 ## What each tier runs, and what starts with nothing to do
 
 `slim` is the core data path alone: receiver, loader, engine, UI and HyperDX.
-`single` adds the broker and three more apps -- one archiver, one fetcher, one
-transform-vrl -- each started from a config that gives it no work.
+`single` adds the broker and four more apps -- one archiver, one fetcher, one
+transform-vrl, one transform-elastic -- each started from a config that gives it
+no work.
 
 An idle app is Ready, serves health and metrics, opens no broker connection and
 holds `pipeline_idle` at 1, so being deployed unconfigured costs a container and
