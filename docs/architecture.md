@@ -67,7 +67,7 @@ flowchart LR
 Transport is a per-profile choice, not a global one. On a `kafka-*` profile the
 ingest components produce to a `*_land` topic derived from the event's `_source`,
 and the loader consumes `topic_regex: .*_land`. On a `grpc-*` profile there is no
-broker -- the ingest components dial `dfe-loader:50051` directly.
+broker -- the ingest components dial `dfe-loader:6000` directly.
 
 The three transforms are bus-only today: each reads a topic and writes a topic.
 `dfe-archiver` runs on either -- it consumes the landing topics on Kafka and
@@ -192,7 +192,7 @@ flowchart LR
 `dfe-proxy` exists to give the UI and the engine API one origin, because the UI
 client calls the engine with a relative `/api/v1/...` base URL.
 
-## Two ports speak gRPC and they are not the same thing
+## Two gRPC listeners speak different protocols
 
 ```mermaid
 flowchart LR
@@ -204,15 +204,17 @@ flowchart LR
     loader["dfe-loader"]:::dfe
 
     client -->|external - Vector protocol :6000| receiver
-    receiver -->|internal - DfeTransport Push :50051| loader
+    receiver -->|internal - DfeTransport Push dfe-loader:6000| loader
 ```
 
-| Port | Owner | Protocol | Audience | Binds |
-|---|---|---|---|---|
-| 6000 | dfe-receiver | Vector protocol, an ingest source | external clients | `DFE_INGRESS_BIND_HOST` (`0.0.0.0`) |
-| 50051 | dfe-loader | `DfeTransport/Push`, internal transport | receiver, fetcher | `DFE_BIND_HOST` (`127.0.0.1`) |
+Both listen on 6000 inside their own container. The host ports differ because both are published.
 
-The binding split is the tell: 6000 is meant to be reachable, 50051 is not.
+| Container port | Host port | Owner | Protocol | Audience | Binds |
+|---|---|---|---|---|---|
+| 6000 | 6000 | dfe-receiver | Vector protocol, an ingest source | external clients | `DFE_INGRESS_BIND_HOST` (`0.0.0.0`) |
+| 6000 | 50051 | dfe-loader | `DfeTransport/Push`, internal transport | receiver, fetcher, transforms | `DFE_BIND_HOST` (`127.0.0.1`) |
+
+The binding split is the tell: the receiver's 6000 is meant to be reachable, the loader's is not. The loader's 6000 is the `push` port dfe-infra's `apps.yaml` declares, and dfe-engine refuses a loader `grpc.listen` on any other.
 
 ## Two independent selectors decide what runs
 

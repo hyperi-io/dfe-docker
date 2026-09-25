@@ -21,7 +21,7 @@ clickhouse:
   password: env:CLICKHOUSE_PASSWORD
 
 grpc:
-  listen: 0.0.0.0:50051
+  listen: 0.0.0.0:6000
   acknowledgements:
     enabled: false
 

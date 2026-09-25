@@ -25,7 +25,7 @@ source:
 # dfe-transform-elastic v1.1.6 refuses a sink with no `topic`, on direct too.
 sink:
   transport: direct
-  endpoint: http://dfe-loader:50051
+  endpoint: http://dfe-loader:6000
   topic: main_load
 
 geoip:

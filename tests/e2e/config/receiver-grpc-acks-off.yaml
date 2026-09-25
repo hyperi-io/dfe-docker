@@ -27,4 +27,4 @@ destinations:
 
 loader:
   transport: grpc
-  grpc_endpoint: http://dfe-loader:50051
+  grpc_endpoint: http://dfe-loader:6000

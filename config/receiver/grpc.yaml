@@ -6,7 +6,7 @@
 # License:   BUSL-1.1
 # Copyright: (c) 2026 HYPERI PTY LIMITED
 
-# gRPC transport: receiver forwards events to dfe-loader via DFETransport/Push (:50051).
+# gRPC transport: receiver forwards events to dfe-loader via DFETransport/Push (:6000).
 
 grpc:
   enabled: true
@@ -21,4 +21,4 @@ destinations:
 
 loader:
   transport: grpc
-  grpc_endpoint: http://dfe-loader:50051
+  grpc_endpoint: http://dfe-loader:6000

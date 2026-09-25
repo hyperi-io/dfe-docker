@@ -668,7 +668,7 @@ def test_a_direct_hop_reads_and_writes_no_topic(tmp_path) -> None:
     both = tmp_path / "vector-direct.yaml"
     both.write_text(
         "dfe_source: main\nsource:\n  transport: direct\n  listen: 0.0.0.0:6000\n"
-        "sink:\n  transport: direct\n  endpoint: http://dfe-loader:50051\n",
+        "sink:\n  transport: direct\n  endpoint: http://dfe-loader:6000\n",
         encoding="utf-8",
     )
     sink_only = tmp_path / "vector-sink-direct.yaml"

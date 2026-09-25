@@ -608,10 +608,11 @@ services:
     stop_grace_period: *stop-grace-app
     deploy: *limits-service
     ports:
-      # 50051 is the INTERNAL DfeTransport/Push surface (receiver -> loader), not
-      # a client-facing one -- operators only, so it binds DFE_BIND_HOST.
+      # 6000 in the container is the INTERNAL DfeTransport/Push surface (receiver
+      # -> loader), not a client-facing one -- operators only, so it binds
+      # DFE_BIND_HOST, on host port 50051 because the receiver's ingest owns 6000.
       - ${DFE_BIND_HOST:-127.0.0.1}:${DFE_LOADER_PROMETHEUS_PORT:-9091}:9090
-      - ${DFE_BIND_HOST:-127.0.0.1}:${DFE_LOADER_GRPC_PORT:-50051}:50051
+      - ${DFE_BIND_HOST:-127.0.0.1}:${DFE_LOADER_GRPC_PORT:-50051}:6000
     env_file:
       - path: env/loader.env
         required: false
@@ -668,7 +669,8 @@ services:
     ports:
       # 6000 (Vector protocol) and 8080 (HTTP) are the INGEST surfaces external
       # clients push to, so they bind DFE_INGRESS_BIND_HOST. 9090 is operators.
-      # Do not confuse 6000 with the loader's 50051 -- different protocols.
+      # The loader also listens on 6000 in its own container, published on 50051,
+      # but speaks DfeTransport/Push, a different protocol.
       - ${DFE_INGRESS_BIND_HOST:-0.0.0.0}:${DFE_RECEIVER_GRPC_PORT:-6000}:6000
       - ${DFE_INGRESS_BIND_HOST:-0.0.0.0}:${DFE_RECEIVER_HTTP_PORT:-8080}:8080
       - ${DFE_BIND_HOST:-127.0.0.1}:${DFE_RECEIVER_PROMETHEUS_PORT:-9090}:9090

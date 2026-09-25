@@ -143,7 +143,7 @@ Per-port, as published in `docker-compose.yml`:
 | 9096 | dfe-transform-vrl | operator | Metrics and health |
 | 9099 | dfe-transform-elastic | operator | Metrics and health |
 | 13133 | otel-collector | operator | `health_check` extension |
-| 50051 | dfe-loader | operator | Internal `DfeTransport/Push` gRPC |
+| 50051 | dfe-loader | operator | Internal `DfeTransport/Push` gRPC (container `:6000`) |
 
 `dfe-ui`, `hyperdx`, `hyperdx-postgres` and `hyperdx-ferretdb` publish no host
 ports at all -- they are reached over the Docker network, HyperDX through the
