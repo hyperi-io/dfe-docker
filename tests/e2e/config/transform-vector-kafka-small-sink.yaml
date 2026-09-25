@@ -1,0 +1,18 @@
+# Project:   dfe-docker
+# File:      tests/e2e/config/transform-vector-kafka-small-sink.yaml
+# Purpose:   dfe-transform-vector e2e config - config/transform-vector/kafka.yaml with a 4 KiB producer ceiling
+# Language:  YAML
+#
+# License:   BUSL-1.1
+# Copyright: (c) 2026 HYPERI PTY LIMITED
+#
+# The receiver and the broker take a record this producer refuses, so the
+# oversized record reaches the transform and dies at its sink.
+
+dfe_source: main
+source:
+  brokers: [kafka:9092]
+sink:
+  brokers: [kafka:9092]
+  librdkafka_options:
+    message.max.bytes: "4096"

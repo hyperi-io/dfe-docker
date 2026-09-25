@@ -1882,25 +1882,45 @@ class Disruption:
 
 
 # ------------------------------------------------------------------------------
-# Scrape Metric
-# - The total of one metric on a service's /metrics, or None when the service
-#   has no known metrics port, does not answer, or does not export it
+# Scrape Metrics
+# - A service's /metrics exposition on its published port, or None when the
+#   service has no known port or does not answer. The ports are compose's
+#   variables and defaults.
 # ------------------------------------------------------------------------------
-def scrape_metric(service, name):
-    health = {
-        "dfe-archiver": DFE_ARCHIVER_HEALTH_URL,
-        "dfe-fetcher": DFE_FETCHER_HEALTH_URL,
-        "dfe-loader": DFE_LOADER_HEALTH_URL,
-        "dfe-receiver": DFE_RECEIVER_HEALTH_URL,
-    }.get(service)
-    if not (health):
+METRICS_PORTS = {
+    "dfe-archiver": ("DFE_ARCHIVER_PROMETHEUS_PORT", "9093"),
+    "dfe-fetcher": ("DFE_FETCHER_PROMETHEUS_PORT", "9094"),
+    "dfe-loader": ("DFE_LOADER_PROMETHEUS_PORT", "9091"),
+    "dfe-receiver": ("DFE_RECEIVER_PROMETHEUS_PORT", "9090"),
+    "dfe-transform-elastic": ("DFE_TRANSFORM_ELASTIC_PROMETHEUS_PORT", "9099"),
+    "dfe-transform-elastic-cisco-ios": (
+        "DFE_TRANSFORM_ELASTIC_CISCO_IOS_PROMETHEUS_PORT",
+        "9089",
+    ),
+    "dfe-transform-vector": ("DFE_TRANSFORM_VECTOR_PROMETHEUS_PORT", "9095"),
+    "dfe-transform-vrl": ("DFE_TRANSFORM_VRL_PROMETHEUS_PORT", "9096"),
+}
+
+
+def scrape_metrics(service):
+    port = METRICS_PORTS.get(service)
+    if port is None:
         return None
     try:
-        exposition = http_get(health.rsplit("/", 1)[0] + "/metrics", timeout=5)
+        return http_get(f"http://localhost:{env_or(*port)}/metrics", timeout=5)
     except (URLError, OSError) as problem:
         LOGGER.debug(f"Could not scrape '{service}': {problem}")
         return None
-    return _outage.metric_total(exposition, name)
+
+
+# ------------------------------------------------------------------------------
+# Scrape Metric
+# - The total of one metric on a service's /metrics, or None when it cannot be
+#   scraped or does not export it
+# ------------------------------------------------------------------------------
+def scrape_metric(service, name):
+    exposition = scrape_metrics(service)
+    return None if exposition is None else _outage.metric_total(exposition, name)
 
 
 # ------------------------------------------------------------------------------
@@ -2262,15 +2282,17 @@ def readable_bytes(path, data):
 
 # ------------------------------------------------------------------------------
 # Verify Dead Letters
-# - Every poison record the receiver accepted, one the sink refuses, is either
-#   in the dead-letter files or counted as a dropped dead letter, never gone
-#   without a trace. `dropped` is the drop count (before the load, at the
-#   signal) and the count now is read here. Good records behind a poison one
-#   are judged by landing, so one that blocks them fails there.
+# - Every poison record the receiver accepted, one the sink refuses, is named
+#   in the dead-letter files, or is the only poison record the load sent and the
+#   drop count rose. Never gone without a trace. `dropped` is the drop count
+#   (before the load, at the signal) and the count now is read here. Good
+#   records behind a poison one are judged by landing, so one that blocks them
+#   fails there.
 # ------------------------------------------------------------------------------
 def verify_dead_letters(ctx, test, sent, landed, dropped):
     plan = test.outage
     poison = _outage.poison_by_seq(sent)
+    poison_sent = sum(1 for record in sent if record.poison)
     if not (poison):
         mark_fail(
             ctx,
@@ -2285,62 +2307,78 @@ def verify_dead_letters(ctx, test, sent, landed, dropped):
             f"[{test.name}] the sink took {len(took)} poison record(s), so the poison "
             f"data file is not refused by it (first: {took[:5]})",
         )
+    owed = set(poison) - set(took)
+    before, at_signal = dropped
+    restarted = outage_service(plan.service) == plan.dead_letter_service
 
-    def _missing():
-        contents = container_contents(plan.dead_letter_service, plan.dead_letter_path)
-        if contents is None:
-            return None
-        letters = set()
-        for path, data in contents.items():
-            text = readable_bytes(path, data).decode("utf-8", errors="replace")
-            letters |= _outage.dead_letter_markers(text, test.marker)
-        return set(poison) - letters - set(took)
+    def _account():
+        lettered = set()
+        if plan.dead_letter_path:
+            contents = container_contents(
+                plan.dead_letter_service, plan.dead_letter_path
+            )
+            if contents is None:
+                return None
+            for path, data in contents.items():
+                text = readable_bytes(path, data).decode("utf-8", errors="replace")
+                lettered |= _outage.dead_letter_markers(text, test.marker)
+        exposition = scrape_metrics(plan.dead_letter_service) or ""
+        now = _outage.metric_total(exposition, _outage.DEAD_LETTERS_DROPPED)
+        rose = None
+        if (before, at_signal, now) != (None, None, None):
+            rose = (
+                (at_signal or 0.0) - (before or 0.0) + (now or 0.0)
+                if restarted
+                else (now or 0.0) - (before or 0.0)
+            )
+        reasons = _outage.metric_by_label(
+            exposition, _outage.DEAD_LETTERS_DROPPED, "reason"
+        )
+        counted, gone = _outage.account_poison(owed, lettered, poison_sent, rose)
+        return lettered & owed, counted, gone, rose, reasons
 
-    missing = poll_until(
-        _missing,
+    result = poll_until(
+        _account,
         timeout=OUTAGE_POLL_SECONDS * 12,
         interval=OUTAGE_POLL_SECONDS,
-        done=lambda got: got == set(),
+        done=lambda got: got is not None and not (got[2]),
     )
     where = f"'{plan.dead_letter_path}' in '{plan.dead_letter_service}'"
-    if missing is None:
+    if result is None:
         mark_fail(
             ctx, f"[{test.name}] the dead letters under {where} could not be read"
         )
         return
-    before, at_signal = dropped
-    now = scrape_metric(plan.dead_letter_service, _outage.DEAD_LETTERS_DROPPED)
-    restarted = outage_service(plan.service) == plan.dead_letter_service
-    counted = (
-        ((at_signal or 0.0) - (before or 0.0) + (now or 0.0))
-        if restarted
-        else ((now or 0.0) - (before or 0.0))
-    )
-    metric = (
-        "not exported" if (before, at_signal, now) == (None, None, None) else counted
-    )
+    lettered, counted, gone, rose, reasons = result
+    metric = "not exported" if rose is None else f"rose {rose:.0f}"
     LOGGER.info(
-        f"[{test.name}] poison: {len(poison)} accepted, "
-        f"{len(poison) - len(missing) - len(took)} dead-lettered under {where}, "
-        f"{_outage.DEAD_LETTERS_DROPPED} {metric}"
+        f"[{test.name}] poison: {poison_sent} sent, {len(poison)} accepted, "
+        f"{len(lettered)} in the dead-letter files"
+        f"{f' under {where}' if plan.dead_letter_path else ' (none configured)'}, "
+        f"{len(counted)} accounted for by {_outage.DEAD_LETTERS_DROPPED} ({metric}, "
+        f"by reason since the last start: {reasons or 'none'})"
     )
-    if not (missing):
+    if not (gone):
         mark_pass(
             ctx,
-            f"[{test.name}] every accepted poison record was dead-lettered, none gone",
+            f"[{test.name}] every accepted poison record is accounted for, "
+            f"{len(lettered)} by name in the dead-letter files and {len(counted)} as "
+            "the only poison record sent, counted as dropped",
         )
-    elif counted >= len(missing):
-        mark_pass(
+    elif poison_sent == 1:
+        mark_fail(
             ctx,
-            f"[{test.name}] {len(missing)} poison record(s) not in the dead-letter "
-            f"files are counted in {_outage.DEAD_LETTERS_DROPPED} ({counted:.0f})",
+            f"[{test.name}] the only poison record sent ({sorted(gone)[0]}) is gone "
+            "without a trace: not named in the dead-letter files, and "
+            f"{_outage.DEAD_LETTERS_DROPPED} did not rise ({metric})",
         )
     else:
         mark_fail(
             ctx,
-            f"[{test.name}] {len(missing)}/{len(poison)} accepted poison records are "
-            f"neither dead-lettered under {where} nor counted in "
-            f"{_outage.DEAD_LETTERS_DROPPED} ({metric}) (first: {sorted(missing)[:5]})",
+            f"[{test.name}] {len(gone)}/{len(poison)} accepted poison records are "
+            "gone without a trace: not named in the dead-letter files, and the drop "
+            f"count ({metric}) names no record, so it stands for one only when the "
+            f"load sent one poison record alone (first: {sorted(gone)[:5]})",
         )
 
 
@@ -2556,6 +2594,7 @@ def drive_outage(ctx, test, services, ingest_url):
         timeout=OUTAGE_REQUEST_TIMEOUT,
         poison=poison,
         poison_every=plan.poison_every,
+        poison_limit=plan.poison_limit,
     )
     on_kafka = KAFKA_BACKEND_PROFILE in test.compose_profiles
     started = time.time()
@@ -2809,7 +2848,10 @@ def run_test(ctx, mode, test, persistent_services):
         if plan.loss != "forbidden":
             print(f"  - Loss: {plan.loss}")
         if plan.poison_file:
-            print(f"  - Poison: one in {plan.poison_every} from {plan.poison_file}")
+            limit = f", {plan.poison_limit} at most" if plan.poison_limit else ""
+            print(
+                f"  - Poison: one in {plan.poison_every}{limit} from {plan.poison_file}"
+            )
         if test.replicas:
             print(f"  - Replicas: {', '.join(sorted(test.replicas))}")
     for svc_name in sorted(test.services):
@@ -2827,24 +2869,39 @@ def run_test(ctx, mode, test, persistent_services):
             effective_services["dfe-loader"], test.database, test.table
         )
 
+    completed = False
+    try:
+        exercise_stack(ctx, mode, test, effective_services)
+        completed = True
+    finally:
+        # An exception ends the run, so it keeps nothing for a next test.
+        stack_down(keep_services=(persistent_services or None) if completed else None)
+
+    # Print footer for test separation in logs
+    print("------------------------------------------------------------")
+
+
+# ------------------------------------------------------------------------------
+# Exercise Stack
+# - Starts the test's stack, runs its send or its outage and every check, and
+#   returns with the stack still up for run_test to take down
+# ------------------------------------------------------------------------------
+def exercise_stack(ctx, mode, test, effective_services):
     # Start the stack (Kafka profiles: infra first, create topics, then full stack)
     if not (stack_up(mode, test, effective_services)):
         mark_fail(ctx, f"[{test.name}] Stack failed to start")
-        stack_down(keep_services=persistent_services or None)
         return
 
     # Wait for the stack to be healthy before proceeding
     if not (wait_for_stack(test.services)):
         mark_fail(ctx, f"[{test.name}] Stack failed to reach healthy state")
         dump_logs()
-        stack_down(keep_services=persistent_services or None)
         return
 
     # A service on another config tests another path, so nothing after it counts.
     print()
     if not (verify_config_mounts(ctx, test)):
         dump_logs()
-        stack_down(keep_services=persistent_services or None)
         return
 
     has_fetcher = "dfe-fetcher" in test.services
@@ -2906,14 +2963,9 @@ def run_test(ctx, mode, test, persistent_services):
         print()
         verify_self_monitoring(ctx, test.name)
 
-    # Dump container logs for debugging purposes, then tear down the stack if configured to do so
+    # Dump container logs for debugging purposes
     dump_logs()
     print()
-    if stack_is_up():
-        stack_down(keep_services=persistent_services or None)
-
-    # Print footer for test separation in logs
-    print("------------------------------------------------------------")
 
 
 # ==============================================================================

@@ -45,10 +45,12 @@
 #     before the load, mid-outage and at the end. must_stay_empty fails on
 #     anything written, must_replay on any record spooled at the signal that
 #     never lands.
-#   poison: {data_file, every} sends one of these records, which the sink
-#     refuses, in every `every` once the outage begins, and dead_letters:
-#     {service, path} is where each must end up: in that file dead-letter queue,
-#     or counted in pipeline_dead_letters_dropped_total. Never gone.
+#   poison: {data_file, every, limit} sends one of these records, which the sink
+#     refuses, in every `every` once the outage begins, `limit` of them at most.
+#     dead_letters: {service, path} is where each must end up: named in that
+#     file dead-letter queue, or, as the only poison record sent, counted in
+#     pipeline_dead_letters_dropped_total, which names no record. Never gone.
+#     With no `path` the count is all there is, so `limit` must be 1.
 #   archive: {services, path} requires every accepted record in an archived
 #     file too, reading the archive after a graceful stop of every archiver.
 # Silence from the ingress is excused for a request sent while the ingress
@@ -495,3 +497,82 @@ tests:
       pause:
         service: dfe-loader
         seconds: 10
+
+  - name: transform-vector-kill-grpc-acks-off
+    profile: grpc-receiver-transform-vector
+    config_overrides:
+      dfe-loader: tests/e2e/config/loader-grpc-acks-off.yaml
+      dfe-receiver: tests/e2e/config/receiver-grpc-transform-vector-acks-off.yaml
+      dfe-transform-vector: tests/e2e/config/transform-vector-grpc-acks-off.yaml
+    outage:
+      service: dfe-transform-vector
+      signal: KILL
+      seconds: 20
+      pause:
+        service: dfe-loader
+        seconds: 10
+      loss: required
+
+  # One record over dfe-transform-vector's 4 KiB producer ceiling, then good
+  # records, and the transform killed. The receiver and the broker take the big
+  # one, so it dies at the transform's sink: it has to be counted as a dropped
+  # dead letter, and every good record has to land with the consumer group
+  # caught up, which no commit past an unreleased offset allows. The loader
+  # freeze starts the outage early, so the transform meets the big record
+  # before the kill and may meet it again on replay.
+  - name: transform-vector-kill-kafka-poison
+    profile: kafka-receiver-transform-vector
+    config_overrides:
+      dfe-transform-vector: tests/e2e/config/transform-vector-kafka-small-sink.yaml
+    expected_topics:
+      - main_land
+      - main_load
+    outage:
+      service: dfe-transform-vector
+      signal: KILL
+      seconds: 20
+      pause:
+        service: dfe-loader
+        seconds: 10
+      poison:
+        data_file: tests/e2e/data/poison-oversize.jsonl
+        every: 10
+        limit: 1
+      dead_letters:
+        service: dfe-transform-vector
+
+  # dfe-transform-elastic reading the bus and pushing to a loader frozen for
+  # 20 s, so it holds what it read with the offsets unreleased, then killed or
+  # stopped at the end of the freeze. Every accepted record has to land and the
+  # group catch up: a commit past an offset the transform had not released
+  # loses the records behind it.
+  - name: transform-elastic-kill-mid-hold
+    profile: kafka-elastic-cisco-ios
+    config_overrides: &elastic-hold
+      dfe-loader: config/loader/grpc.yaml
+      dfe-transform-elastic-cisco-ios: tests/e2e/config/transform-elastic-cisco-ios-direct-sink.yaml
+    expected_topics:
+      - main_land
+    outage:
+      service: dfe-transform-elastic-cisco-ios
+      signal: KILL
+      seconds: 20
+      pause:
+        service: dfe-loader
+        seconds: 20
+      sources: &cisco-ios-as-main
+        main: tests/e2e/data/cisco-ios.jsonl
+
+  - name: transform-elastic-sigterm-mid-hold
+    profile: kafka-elastic-cisco-ios
+    config_overrides: *elastic-hold
+    expected_topics:
+      - main_land
+    outage:
+      service: dfe-transform-elastic-cisco-ios
+      signal: TERM
+      seconds: 20
+      pause:
+        service: dfe-loader
+        seconds: 20
+      sources: *cisco-ios-as-main

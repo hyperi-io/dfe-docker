@@ -64,7 +64,7 @@ OUTAGE_KEYS = frozenset(
 )
 PAUSE_KEYS = frozenset({"service", "seconds"})
 SPOOL_KEYS = frozenset({"service", "path", "must_stay_empty", "must_replay"})
-POISON_KEYS = frozenset({"data_file", "every"})
+POISON_KEYS = frozenset({"data_file", "every", "limit"})
 DEAD_LETTER_KEYS = frozenset({"service", "path"})
 ARCHIVE_KEYS = frozenset({"services", "path"})
 # The metric a pipeline counts a dead letter in when it has nowhere to put it.
@@ -91,8 +91,9 @@ class OutagePlan:
         spool_must_replay: Fail unless every record spooled at the signal lands.
         poison_file: Records the sink refuses, sent among the good ones.
         poison_every: One record in this many is a poison record.
+        poison_limit: How many poison records to send at most, 0 for no limit.
         dead_letter_service: The service that dead-letters what the sink refuses.
-        dead_letter_path: Its file dead-letter directory.
+        dead_letter_path: Its file dead-letter directory, empty when it has none.
         archive_services: The archivers whose output must hold every accepted record.
         archive_path: Their shared archive directory.
         sources: The data file the load sends per `_source`, empty for the test's own.
@@ -113,6 +114,7 @@ class OutagePlan:
     spool_must_replay: bool = False
     poison_file: str = ""
     poison_every: int = 0
+    poison_limit: int = 0
     dead_letter_service: str = ""
     dead_letter_path: str = ""
     archive_services: tuple[str, ...] = ()
@@ -241,7 +243,7 @@ def outage_plan(
 
     spool = _block(outage, "spool", SPOOL_KEYS, ("service", "path"))
     poison = _block(outage, "poison", POISON_KEYS, ("data_file", "every"))
-    dead_letters = _block(outage, "dead_letters", DEAD_LETTER_KEYS, ("service", "path"))
+    dead_letters = _block(outage, "dead_letters", DEAD_LETTER_KEYS, ("service",))
     if bool(poison) != bool(dead_letters):
         raise ValueError(
             "outage 'poison' and 'dead_letters' go together: a record the sink "
@@ -252,6 +254,16 @@ def outage_plan(
     )
     if poison and poison_every < 2:
         raise ValueError("outage 'poison' 'every' must leave good records between")
+    poison_limit = (
+        _whole_number(poison["limit"], "outage 'poison' 'limit'")
+        if "limit" in poison
+        else 0
+    )
+    if dead_letters and not dead_letters.get("path") and poison_limit != 1:
+        raise ValueError(
+            "outage 'dead_letters' with no 'path' has only the drop count, which "
+            "names no record, so it can stand for one: set poison 'limit: 1'"
+        )
     archive = _block(outage, "archive", ARCHIVE_KEYS, ("services", "path"))
     archive_services = archive.get("services") or []
     if not isinstance(archive_services, list):
@@ -277,6 +289,7 @@ def outage_plan(
         spool_must_replay=_flag(spool, "must_replay", "outage 'spool'"),
         poison_file=str(poison.get("data_file") or ""),
         poison_every=poison_every,
+        poison_limit=poison_limit,
         dead_letter_service=str(dead_letters.get("service") or ""),
         dead_letter_path=str(dead_letters.get("path") or ""),
         archive_services=tuple(str(name) for name in archive_services),
@@ -383,6 +396,7 @@ class SteadyLoad:
     from one part of the outage to the next by assigning it. With `poison`, once
     the outage begins every `poison_every`-th record is one of those instead,
     routed to the first source, so the path is proven before the first one.
+    `poison_limit` stops the poison after that many, 0 for no limit.
     """
 
     def __init__(
@@ -396,6 +410,7 @@ class SteadyLoad:
         timeout: float,
         poison: Sequence[dict] = (),
         poison_every: int = 0,
+        poison_limit: int = 0,
     ) -> None:
         """Prepare the workers without sending anything.
 
@@ -414,6 +429,8 @@ class SteadyLoad:
         self._records = list(records)
         self._poison = list(poison)
         self._poison_every = poison_every if poison else 0
+        self._poison_limit = poison_limit
+        self._poisoned = 0
         self._interval = interval
         self._timeout = timeout
         self._lock = threading.Lock()
@@ -442,11 +459,18 @@ class SteadyLoad:
             return list(self._sent)
 
     def _claim(self) -> tuple[int, str, dict, bool]:
+        every = self._poison_every
         with self._lock:
             seq = self._next
             self._next += 1
-        every = self._poison_every
-        if every and self.phase != PHASES[0] and seq % every == every - 1:
+            poison = (
+                bool(every)
+                and self.phase != PHASES[0]
+                and seq % every == every - 1
+                and not (self._poison_limit and self._poisoned >= self._poison_limit)
+            )
+            self._poisoned += poison
+        if poison:
             event = self._poison[(seq // every) % len(self._poison)]
             return seq, self._records[0][0], event, True
         source, event = self._records[seq % len(self._records)]
@@ -720,28 +744,73 @@ def dead_letter_markers(ndjson: str, prefix: str) -> set[int]:
     return found
 
 
-def metric_total(exposition: str, name: str) -> float | None:
-    """Sum every sample of a Prometheus metric whose name ends in `name`, else None.
+_LABEL = re.compile(r'(\w+)="((?:[^"\\]|\\.)*)"')
+
+
+def metric_samples(exposition: str, name: str) -> list[tuple[dict[str, str], float]]:
+    """Every sample of a Prometheus metric whose name ends in `name`, with its labels.
 
     A service prefixes the metrics its library registers with its own namespace,
-    so `dfe_loader_pipeline_dead_letters_dropped_total` counts as one of `name`.
+    so `dfe_loader_pipeline_dead_letters_dropped_total` is a sample of `name`.
     """
-    total = None
+    samples = []
     for line in exposition.splitlines():
         if not line or line.startswith("#"):
             continue
+        labels: dict[str, str] = {}
         if "{" in line:
             series, rest = line[: line.index("{")], line[line.rindex("}") + 1 :]
+            labels = dict(_LABEL.findall(line[line.index("{") : line.rindex("}")]))
         else:
             series, _, rest = line.partition(" ")
         if series != name and not series.endswith(f"_{name}"):
             continue
         try:
-            value = float(rest.split()[0])
+            samples.append((labels, float(rest.split()[0])))
         except (IndexError, ValueError):
             continue
-        total = (total or 0.0) + value
-    return total
+    return samples
+
+
+def metric_total(exposition: str, name: str) -> float | None:
+    """Sum every sample of the metric `metric_samples` reads, else None."""
+    samples = metric_samples(exposition, name)
+    return sum(value for _, value in samples) if samples else None
+
+
+def metric_by_label(exposition: str, name: str, label: str) -> dict[str, float]:
+    """Sum the metric's samples per value of `label`, empty for a sample without it."""
+    totals: dict[str, float] = {}
+    for labels, value in metric_samples(exposition, name):
+        key = labels.get(label, "")
+        totals[key] = totals.get(key, 0.0) + value
+    return totals
+
+
+def account_poison(
+    accepted: Iterable[int],
+    lettered: Iterable[int],
+    sent: int,
+    dropped: float | None,
+) -> tuple[set[int], set[int]]:
+    """Split the accepted poison records the dead-letter files lack into (counted, gone).
+
+    A file entry names its record, so each counts once however often a replay
+    wrote it. The drop count names none and counts every attempt: a record
+    dropped before a kill and again on replay counts twice, and would cover one
+    lost without a trace. So the count stands for a record only when the load
+    sent that one poison record alone.
+
+    Args:
+        accepted: The poison records the receiver answered 2xx, by sequence number.
+        lettered: The records found in the dead-letter files.
+        sent: How many poison records the load sent, answered or not.
+        dropped: How far the drop count rose over the test, None when unread.
+    """
+    missing = set(accepted) - set(lettered)
+    if sent == 1 and len(missing) == 1 and (dropped or 0.0) >= 1:
+        return missing, set()
+    return set(), missing
 
 
 @dataclass(frozen=True, slots=True)

@@ -128,10 +128,23 @@ def test_poison_and_its_dead_letters_are_read_together() -> None:
     )
 
     assert (plan.poison_file, plan.poison_every) == ("tests/e2e/data/poison.jsonl", 10)
+    assert plan.poison_limit == 0
     assert (plan.dead_letter_service, plan.dead_letter_path) == (
         "dfe-loader",
         "/var/spool/dfe/dlq",
     )
+
+
+def test_a_dead_letter_count_alone_needs_a_single_poison_record() -> None:
+    plan = _plan(
+        {
+            "service": "dfe-transform-vector",
+            "poison": {"data_file": "p.jsonl", "every": 10, "limit": 1},
+            "dead_letters": {"service": "dfe-transform-vector"},
+        }
+    )
+
+    assert (plan.poison_limit, plan.dead_letter_path) == (1, "")
 
 
 def test_an_archive_names_every_archiver_it_reads() -> None:
@@ -220,6 +233,30 @@ def test_a_pause_alone_is_an_outage_that_takes_nothing_down() -> None:
         (
             {"service": "dfe-loader", "poison": {"data_file": "p.jsonl"}},
             "needs 'data_file' and 'every'",
+        ),
+        (
+            {
+                "service": "dfe-loader",
+                "poison": {"data_file": "p.jsonl", "every": 10},
+                "dead_letters": {"service": "a"},
+            },
+            "set poison 'limit: 1'",
+        ),
+        (
+            {
+                "service": "dfe-loader",
+                "poison": {"data_file": "p.jsonl", "every": 10, "limit": 0},
+                "dead_letters": {"service": "a", "path": "/d"},
+            },
+            "'limit' must be a whole number above 0",
+        ),
+        (
+            {
+                "service": "dfe-loader",
+                "poison": {"data_file": "p.jsonl", "every": 10},
+                "dead_letters": {"path": "/d"},
+            },
+            "needs 'service'",
         ),
         (
             {"service": "dfe-loader", "archive": {"services": "a", "path": "/a"}},
@@ -384,9 +421,43 @@ def test_a_metric_is_summed_across_labels_and_namespaces() -> None:
     )
 
     total = _outage.metric_total(exposition, _outage.DEAD_LETTERS_DROPPED)
+    reasons = _outage.metric_by_label(
+        exposition, _outage.DEAD_LETTERS_DROPPED, "reason"
+    )
 
     assert total == 6.0
+    assert reasons == {"full": 2.0, "no_dlq": 3.0, "": 1.0}
     assert _outage.metric_total("dfe_loader_up 1\n", "pipeline_records_total") is None
+    assert _outage.metric_by_label("", "pipeline_records_total", "stage") == {}
+
+
+def test_a_label_value_may_carry_a_comma_or_a_quote() -> None:
+    exposition = 'x_dropped_total{reason="a,b",note="say \\"hi\\""} 4\n'
+
+    assert _outage.metric_samples(exposition, "dropped_total") == [
+        ({"reason": "a,b", "note": 'say \\"hi\\"'}, 4.0)
+    ]
+
+
+def test_a_drop_count_that_names_no_record_cannot_cover_a_lost_one() -> None:
+    # Poison 1 and 2 are in the files, 3 was dropped before the kill and again on
+    # replay, and 4 is gone: the count rose by 2 for two missing records.
+    accepted, lettered, rose = {1, 2, 3, 4}, {1, 2}, 2.0
+    missing = accepted - lettered
+
+    assert rose >= len(missing)
+    assert _outage.account_poison(accepted, lettered, 4, rose) == (set(), {3, 4})
+
+
+def test_the_drop_count_stands_for_the_only_poison_record_sent() -> None:
+    assert _outage.account_poison({7}, set(), 1, 2.0) == ({7}, set())
+    assert _outage.account_poison({7}, set(), 1, 0.0) == (set(), {7})
+    assert _outage.account_poison({7}, set(), 1, None) == (set(), {7})
+    assert _outage.account_poison({7}, set(), 2, 2.0) == (set(), {7})
+
+
+def test_a_record_in_the_files_needs_no_count() -> None:
+    assert _outage.account_poison({1, 2}, {1, 2, 9}, 2, None) == (set(), set())
 
 
 def test_only_a_2xx_obliges_the_record_to_land() -> None:
@@ -875,7 +946,9 @@ class _Taking(BaseHTTPRequestHandler):
         return
 
 
-def test_poison_goes_out_one_in_every_n_once_the_outage_begins() -> None:
+def _poisoned_load(**poison: object) -> tuple[list[_outage.Sent], list[dict]]:
+    """Run a two-worker load through `before` and `during`, returning what went out."""
+    _Taking.bodies.clear()
     server = ThreadingHTTPServer(("127.0.0.1", 0), _Taking)
     threading.Thread(target=server.serve_forever, daemon=True).start()
     load = _outage.SteadyLoad(
@@ -886,7 +959,7 @@ def test_poison_goes_out_one_in_every_n_once_the_outage_begins() -> None:
         interval=0.01,
         timeout=5,
         poison=[{"big": 10**30}],
-        poison_every=4,
+        **poison,
     )
     try:
         load.start()
@@ -897,8 +970,12 @@ def test_poison_goes_out_one_in_every_n_once_the_outage_begins() -> None:
         load.stop()
         server.shutdown()
         server.server_close()
+    return load.sent(), list(_Taking.bodies)
 
-    sent = load.sent()
+
+def test_poison_goes_out_one_in_every_n_once_the_outage_begins() -> None:
+    sent, bodies = _poisoned_load(poison_every=4)
+
     poison = [record for record in sent if record.poison]
     assert poison
     assert all(record.phase != "before" for record in poison)
@@ -906,7 +983,16 @@ def test_poison_goes_out_one_in_every_n_once_the_outage_begins() -> None:
     assert {record.seq for record in sent if record.phase == "during"} - {
         record.seq for record in poison
     }
-    assert sum("big" in body for body in _Taking.bodies) == len(poison)
+    assert sum("big" in body for body in bodies) == len(poison)
+
+
+def test_a_poison_limit_stops_the_poison_and_not_the_load() -> None:
+    sent, bodies = _poisoned_load(poison_every=4, poison_limit=1)
+
+    during = [record for record in sent if record.phase == "during"]
+    assert sum(record.poison for record in sent) == 1
+    assert sum("big" in body for body in bodies) == 1
+    assert len(during) > 8
 
 
 def test_a_port_nothing_listens_on_is_no_answer() -> None:

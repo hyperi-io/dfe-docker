@@ -1,0 +1,23 @@
+# Project:   dfe-docker
+# File:      tests/e2e/config/transform-vector-grpc-acks-off.yaml
+# Purpose:   dfe-transform-vector e2e config - config/transform-vector/grpc.yaml with acknowledgements off
+# Language:  YAML
+#
+# License:   BUSL-1.1
+# Copyright: (c) 2026 HYPERI PTY LIMITED
+#
+# Each Push is answered once received rather than once its records reached the
+# loader, so a kill loses what was answered. The `*-acks-off` outage tests run
+# this to show that loss.
+
+dfe_source: main
+
+source:
+  transport: direct
+  listen: 0.0.0.0:6000
+  acknowledgements:
+    enabled: false
+
+sink:
+  transport: direct
+  endpoint: http://dfe-loader:50051
