@@ -1,0 +1,26 @@
+# Project:   dfe-docker
+# File:      tests/e2e/config/receiver-grpc-transform-vrl-acks-off.yaml
+# Purpose:   dfe-receiver e2e config - config/receiver/grpc-transform-vrl.yaml with acknowledgements off
+# Language:  YAML
+#
+# License:   BUSL-1.1
+# Copyright: (c) 2026 HYPERI PTY LIMITED
+#
+# The HTTP ingest answers once a record is queued rather than once
+# dfe-transform-vrl confirmed it. The `*-acks-off` outage tests run this to
+# record the loss that allows.
+
+server:
+  acknowledgements:
+    enabled: false
+
+routing:
+  source_rules:
+    - field: _source
+      mode: key_value_use
+
+destinations:
+  default: transform_vrl
+  transform_vrl:
+    grpc:
+      endpoint: http://dfe-transform-vrl:6000

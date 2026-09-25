@@ -13,6 +13,7 @@ fed the documents docker and rpk actually print.
 """
 
 import json
+import re
 import socket
 import threading
 import time
@@ -45,15 +46,187 @@ def test_a_marker_from_another_run_or_test_is_not_this_loads(marker: str) -> Non
     assert _outage.seq_of(marker, "e2e-1-kafka-outage") is None
 
 
-def _sent(seq: int, status: int | None, *, phase: str = "during", source: str = "main"):
+def _sent(
+    seq: int,
+    status: int | None,
+    *,
+    phase: str = "during",
+    source: str = "main",
+    started: float = 0.0,
+    seconds: float = 0.1,
+):
     return _outage.Sent(
         seq=seq,
         source=source,
         phase=phase,
         status=status,
         error="" if status is not None else "ConnectionRefusedError",
-        seconds=0.1,
+        seconds=seconds,
+        started=started,
     )
+
+
+def test_a_plan_with_only_a_service_is_a_graceful_stop() -> None:
+    plan = _outage.outage_plan({"service": "dfe-loader"}, 60)
+
+    assert plan.service == "dfe-loader"
+    assert plan.seconds == 60
+    assert plan.signal == "TERM"
+    assert not (plan.pause_service or plan.expect_loss or plan.spool_service)
+
+
+def test_a_kill_under_a_pause_is_read_whole() -> None:
+    plan = _outage.outage_plan(
+        {
+            "service": "dfe-receiver",
+            "signal": "kill",
+            "seconds": "20",
+            "pause": {"service": "kafka", "seconds": 10},
+            "expect_loss": True,
+            "spool": {"service": "dfe-receiver", "path": "/tmp/spool"},
+            "sources": {"main": "tests/e2e/data/events.jsonl"},
+        },
+        60,
+    )
+
+    assert plan.signal == "KILL"
+    assert plan.seconds == 20
+    assert (plan.pause_service, plan.pause_seconds) == ("kafka", 10)
+    assert plan.expect_loss
+    assert (plan.spool_service, plan.spool_path) == ("dfe-receiver", "/tmp/spool")
+    assert not plan.spool_must_stay_empty
+    assert plan.sources == {"main": "tests/e2e/data/events.jsonl"}
+
+
+def test_a_pause_alone_is_an_outage_that_takes_nothing_down() -> None:
+    plan = _outage.outage_plan(
+        {"pause": {"service": "dfe-loader", "seconds": 40}, "expect_refusals": True},
+        60,
+    )
+
+    assert plan.service == ""
+    assert plan.seconds == 0
+    assert plan.pause_seconds == 40
+    assert plan.expect_refusals
+
+
+@pytest.mark.parametrize(
+    "outage,complaint",
+    [
+        ({}, "no 'service'"),
+        ({"service": "dfe-loader", "expect_los": True}, "unknown key(s): expect_los"),
+        ({"service": "dfe-loader", "signal": "HUP"}, "'signal' must be one of"),
+        ({"service": "dfe-loader", "seconds": 0}, "whole number above 0"),
+        ({"service": "dfe-loader", "seconds": True}, "whole number above 0"),
+        ({"service": "dfe-loader", "seconds": "soon"}, "whole number above 0"),
+        ({"pause": {"seconds": 10}}, "'pause' names no 'service'"),
+        ({"pause": {"service": "dfe-loader"}}, "'pause' 'seconds'"),
+        (
+            {"service": "dfe-loader", "pause": {"service": "dfe-loader", "seconds": 5}},
+            "cannot freeze the service it takes down",
+        ),
+        (
+            {"pause": {"service": "dfe-loader", "seconds": 5}, "seconds": 20},
+            "need a 'service'",
+        ),
+        (
+            {"service": "dfe-loader", "pause": {"service": "kafka", "secs": 5}},
+            "unknown key(s): secs",
+        ),
+        (
+            {"service": "dfe-loader", "spool": {"service": "dfe-receiver"}},
+            "both 'service' and 'path'",
+        ),
+        ({"service": "dfe-loader", "expect_loss": "yes"}, "must be true or false"),
+        ({"service": "dfe-loader", "sources": ["main"]}, "'sources' must map"),
+    ],
+)
+def test_a_plan_refuses_what_it_cannot_run(outage: dict, complaint: str) -> None:
+    with pytest.raises(ValueError, match=re.escape(complaint)):
+        _outage.outage_plan(outage, 60)
+
+
+def test_silence_is_excused_only_while_the_ingress_was_down() -> None:
+    sent = [
+        _sent(0, 202, started=100.0),
+        _sent(1, None, started=99.0, seconds=2.0),
+        _sent(2, None, started=110.0),
+        _sent(3, None, started=125.0),
+        _sent(4, None, started=90.0, seconds=1.0),
+    ]
+
+    excused, unexcused = _outage.unanswered(sent, (100.5, 120.0))
+
+    assert [record.seq for record in excused] == [1, 2]
+    assert [record.seq for record in unexcused] == [3, 4]
+
+
+def test_a_graceful_stop_owes_an_answer_to_what_was_in_flight() -> None:
+    sent = [
+        _sent(1, None, started=99.0, seconds=2.0),
+        _sent(2, None, started=110.0),
+    ]
+
+    excused, unexcused = _outage.unanswered(sent, (100.5, 120.0), in_flight=False)
+
+    assert [record.seq for record in excused] == [2]
+    assert [record.seq for record in unexcused] == [1]
+
+
+def test_no_silence_is_excused_when_the_ingress_stayed_up() -> None:
+    sent = [_sent(0, None, started=110.0), _sent(1, 503, started=111.0)]
+
+    excused, unexcused = _outage.unanswered(sent, None)
+
+    assert excused == []
+    assert [record.seq for record in unexcused] == [0]
+
+
+def test_row_counts_are_read_for_this_loads_markers_only() -> None:
+    printed = (
+        "e2e-1-loader-kill-grpc-000001\t1\n"
+        "e2e-1-loader-kill-grpc-000002\t3\n"
+        "e2e-2-loader-kill-grpc-000003\t1\n"
+        "e2e-1-loader-kill-grpc-000004\tnot-a-count\n"
+        "\n"
+    )
+
+    assert _outage.marker_counts(printed, "e2e-1-loader-kill-grpc") == {1: 1, 2: 3}
+
+
+def test_the_landing_tally_counts_loss_and_duplicates_by_phase() -> None:
+    accepted = {0: "before", 1: "during", 2: "during", 3: "after"}
+    counts = {0: 1, 1: 2, 3: 3, 9: 2}
+    phases = {**accepted, 9: "during"}
+
+    landing = _outage.tally_landing(accepted, counts, phases)
+
+    assert (landing.accepted, landing.landed) == (4, 3)
+    assert landing.missing == [2]
+    assert landing.lost_by_phase == {"during": 1}
+    assert landing.duplicated_by_phase == {"during": 2, "after": 1}
+    assert landing.duplicated == 3
+    assert landing.extra_rows == 4
+
+
+def test_nothing_accepted_and_nothing_landed_is_no_loss() -> None:
+    landing = _outage.tally_landing({}, {}, {})
+
+    assert (landing.accepted, landing.landed, landing.missing) == (0, 0, [])
+    assert landing.duplicated == 0
+
+
+def test_a_file_counts_as_written_when_new_or_grown() -> None:
+    before = {"grpc/loader/0": 10, "grpc/loader/lock": 0}
+    after = {"grpc/loader/0": 10, "grpc/loader/lock": 0, "grpc/loader/1": 0}
+
+    assert _outage.grown(before, after) == ["grpc/loader/1"]
+    assert _outage.grown(before, {**after, "grpc/loader/0": 11}) == [
+        "grpc/loader/0",
+        "grpc/loader/1",
+    ]
+    assert _outage.grown(before, before) == []
+    assert _outage.grown({}, {}) == []
 
 
 def test_only_a_2xx_obliges_the_record_to_land() -> None:
@@ -152,6 +325,14 @@ def test_an_exited_container_is_not_running() -> None:
     )
 
     assert "status is exited" in changes
+
+
+def test_a_container_reports_how_its_last_process_exited() -> None:
+    killed = json.loads(json.dumps(_RUNNING))
+    killed["State"].update(Status="exited", Pid=0, ExitCode=137)
+
+    assert _outage.container_state(killed).exit_code == 137
+    assert _outage.container_state(_RUNNING).exit_code == 0
 
 
 def test_die_and_oom_events_carry_their_exit_code() -> None:
@@ -447,6 +628,7 @@ def test_the_load_records_every_answer_in_the_phase_it_was_sent() -> None:
         interval=0.01,
         timeout=5,
     )
+    began = time.time()
     try:
         load.start()
         time.sleep(0.2)
@@ -463,6 +645,7 @@ def test_the_load_records_every_answer_in_the_phase_it_was_sent() -> None:
     assert phases == {"before", "during"}
     assert outcomes == {"200", "503"}
     assert sorted(record.seq for record in sent) == list(range(len(sent)))
+    assert all(began <= record.started <= time.time() for record in sent)
 
 
 def test_a_port_nothing_listens_on_is_no_answer() -> None:

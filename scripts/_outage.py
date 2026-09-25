@@ -6,7 +6,7 @@
 #  License:      BUSL-1.1
 #  Copyright:    (c) 2026 HYPERI PTY LIMITED
 
-"""Primitives for the e2e tests that stop a backing service under load.
+"""Primitives for the e2e tests that stop, kill or pause a service under load.
 
 Internal support module - imported by the e2e suite, not executed directly. Stdlib
 only, so the unit tests import it without PyYAML.
@@ -25,7 +25,7 @@ import threading
 import time
 from collections import Counter
 from collections.abc import Callable, Iterable, Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
@@ -34,6 +34,156 @@ from _common import _config_topics
 from _pipeline import MARKER_EXPRESSIONS, ch_int, ch_query, escape_literal, marked_event
 
 PHASES = ("before", "during", "after")
+
+# `TERM` is `docker compose stop`, SIGTERM with the SIGKILL fallback, and `KILL`
+# is SIGKILL at once.
+SIGNALS = ("TERM", "KILL")
+OUTAGE_KEYS = frozenset(
+    {
+        "service",
+        "seconds",
+        "signal",
+        "pause",
+        "expect_loss",
+        "expect_refusals",
+        "spool",
+        "sources",
+    }
+)
+PAUSE_KEYS = frozenset({"service", "seconds"})
+SPOOL_KEYS = frozenset({"service", "path", "must_stay_empty"})
+
+
+@dataclass(frozen=True, slots=True)
+class OutagePlan:
+    """What one outage test does to the stack, and what it expects of the result.
+
+    Attributes:
+        service: The service stopped or killed, empty when the test only pauses one.
+        seconds: How long that service stays down.
+        signal: How it is taken down, one of SIGNALS.
+        pause_service: A service frozen first, empty for none.
+        pause_seconds: How long it stays frozen before the signal.
+        expect_loss: Record accepted records that never land instead of failing.
+        expect_refusals: Fail unless some request was refused while the outage ran.
+        spool_service: The service whose disk spool is read, empty for none.
+        spool_path: The spool directory inside that service's container.
+        spool_must_stay_empty: Fail when anything is written under the spool.
+        sources: The data file the load sends per `_source`, empty for the test's own.
+    """
+
+    service: str
+    seconds: int
+    signal: str = "TERM"
+    pause_service: str = ""
+    pause_seconds: int = 0
+    expect_loss: bool = False
+    expect_refusals: bool = False
+    spool_service: str = ""
+    spool_path: str = ""
+    spool_must_stay_empty: bool = False
+    sources: Mapping[str, str] = field(default_factory=dict)
+
+
+def _whole_seconds(value: object, what: str) -> int:
+    """Return `value` as a whole number above 0, else raise naming `what`."""
+    if isinstance(value, bool) or not isinstance(value, (int, str)):
+        raise ValueError(f"{what} must be a whole number above 0, got {value!r}")
+    try:
+        seconds = int(value)
+    except ValueError:
+        raise ValueError(
+            f"{what} must be a whole number above 0, got {value!r}"
+        ) from None
+    if seconds < 1:
+        raise ValueError(f"{what} must be a whole number above 0, got {value!r}")
+    return seconds
+
+
+def _unknown_keys(block: Mapping, known: frozenset[str], what: str) -> None:
+    """Raise when `block` carries a key outside `known`, so a typo is not a silent default."""
+    unknown = sorted(str(key) for key in block if key not in known)
+    if unknown:
+        raise ValueError(f"{what} has unknown key(s): {', '.join(unknown)}")
+
+
+def _flag(block: Mapping, key: str, what: str) -> bool:
+    """Return a YAML boolean, refusing a string that only looks like one."""
+    value = block.get(key, False)
+    if not isinstance(value, bool):
+        raise ValueError(f"{what} '{key}' must be true or false, got {value!r}")
+    return value
+
+
+def outage_plan(outage: Mapping, default_seconds: int) -> OutagePlan:
+    """Validate a test's `outage:` block and return what it asks for.
+
+    Args:
+        outage: The block as the test definition carries it.
+        default_seconds: How long a service stays down when `seconds` is absent.
+
+    Returns:
+        The plan the suite runs.
+
+    Raises:
+        ValueError: If a key is unknown, a value is out of range, or the block
+            neither takes a service down nor pauses one.
+    """
+    _unknown_keys(outage, OUTAGE_KEYS, "outage")
+    service = str(outage.get("service") or "")
+    pause = outage.get("pause") or {}
+    if not isinstance(pause, Mapping):
+        raise ValueError("outage 'pause' must map 'service' and 'seconds'")
+    _unknown_keys(pause, PAUSE_KEYS, "outage 'pause'")
+    if not (service) and not (pause):
+        raise ValueError("outage names no 'service' to stop and no 'pause'")
+    if not (service) and ("seconds" in outage or "signal" in outage):
+        raise ValueError("outage 'seconds' and 'signal' need a 'service' to take down")
+
+    signal = str(outage.get("signal", "TERM")).upper()
+    if signal not in SIGNALS:
+        raise ValueError(
+            f"outage 'signal' must be one of {', '.join(SIGNALS)}, got {signal!r}"
+        )
+    seconds = (
+        _whole_seconds(outage.get("seconds", default_seconds), "outage 'seconds'")
+        if service
+        else 0
+    )
+
+    pause_service = str(pause.get("service") or "")
+    pause_seconds = 0
+    if pause:
+        if not (pause_service):
+            raise ValueError("outage 'pause' names no 'service'")
+        if pause_service == service:
+            raise ValueError("outage 'pause' cannot freeze the service it takes down")
+        pause_seconds = _whole_seconds(pause.get("seconds"), "outage 'pause' 'seconds'")
+
+    spool = outage.get("spool") or {}
+    if not isinstance(spool, Mapping):
+        raise ValueError("outage 'spool' must map 'service' and 'path'")
+    _unknown_keys(spool, SPOOL_KEYS, "outage 'spool'")
+    if spool and not (spool.get("service") and spool.get("path")):
+        raise ValueError("outage 'spool' needs both 'service' and 'path'")
+
+    sources = outage.get("sources") or {}
+    if not isinstance(sources, Mapping):
+        raise ValueError("outage 'sources' must map each _source to a data file")
+
+    return OutagePlan(
+        service=service,
+        seconds=seconds,
+        signal=signal,
+        pause_service=pause_service,
+        pause_seconds=pause_seconds,
+        expect_loss=_flag(outage, "expect_loss", "outage"),
+        expect_refusals=_flag(outage, "expect_refusals", "outage"),
+        spool_service=str(spool.get("service") or ""),
+        spool_path=str(spool.get("path") or ""),
+        spool_must_stay_empty=_flag(spool, "must_stay_empty", "outage 'spool'"),
+        sources={str(source): str(path) for source, path in sources.items()},
+    )
 
 
 def record_marker(prefix: str, seq: int) -> str:
@@ -61,6 +211,7 @@ class Sent:
         status: The HTTP status, or None when no answer arrived.
         error: Why no answer arrived, empty when one did.
         seconds: How long the request took.
+        started: When the request went out, in seconds since the epoch.
     """
 
     seq: int
@@ -69,6 +220,7 @@ class Sent:
     status: int | None
     error: str
     seconds: float
+    started: float = 0.0
 
     @property
     def accepted(self) -> bool:
@@ -189,6 +341,7 @@ class SteadyLoad:
             body = marked_event(
                 marker=record_marker(self._prefix, seq), source=source, extra=event
             )
+            sent_at = time.time()
             started = time.monotonic()
             status, error = post_record(self._url, body, self._timeout)
             record = Sent(
@@ -198,6 +351,7 @@ class SteadyLoad:
                 status=status,
                 error=error,
                 seconds=time.monotonic() - started,
+                started=sent_at,
             )
             with self._lock:
                 self._sent.append(record)
@@ -225,14 +379,62 @@ def accepted_by_seq(sent: Iterable[Sent], source: str) -> dict[int, str]:
     return {r.seq: r.phase for r in sent if r.accepted and r.source == source}
 
 
-def landed_seqs(
+def phase_by_seq(sent: Iterable[Sent], source: str) -> dict[int, str]:
+    """Map every record of `source` the load sent, answered or not, to its phase."""
+    return {r.seq: r.phase for r in sent if r.source == source}
+
+
+def overlaps(record: Sent, start: float, end: float) -> bool:
+    """Whether a request was still open at any moment between `start` and `end`."""
+    return record.started <= end and record.started + record.seconds >= start
+
+
+def unanswered(
+    sent: Iterable[Sent],
+    window: tuple[float, float] | None,
+    *,
+    in_flight: bool = True,
+) -> tuple[list[Sent], list[Sent]]:
+    """Split the requests nothing answered into (excused, unexcused).
+
+    `window` runs from the signal to the ingress it went to being healthy again,
+    and is None when the ingress stayed up, which excuses nothing. Inside it, a
+    request sent after the signal is excused, since nothing was there to answer
+    it. One already in flight at the signal is excused only when `in_flight`: a
+    kill cannot answer it, a graceful stop has to.
+    """
+    excused: list[Sent] = []
+    unexcused: list[Sent] = []
+    for record in sent:
+        if record.status is not None:
+            continue
+        inside = window is not None and overlaps(record, *window)
+        if inside and (in_flight or record.started >= window[0]):
+            excused.append(record)
+        else:
+            unexcused.append(record)
+    return excused, unexcused
+
+
+def marker_counts(text: str, prefix: str) -> dict[int, int]:
+    """Map each record of this load to its row count, from `marker<TAB>count` lines."""
+    counts: dict[int, int] = {}
+    for line in text.splitlines():
+        marker, _, count = line.strip().partition("\t")
+        seq = seq_of(marker, prefix)
+        if seq is not None and count.isdigit():
+            counts[seq] = counts.get(seq, 0) + int(count)
+    return counts
+
+
+def landed_counts(
     database: str,
     table: str,
     prefix: str,
     *,
     debug: Callable[[str], None] | None = None,
-) -> set[int] | None:
-    """Every record of this load that has landed, or None when no marker can be read.
+) -> dict[int, int] | None:
+    """How many rows each landed record of this load has, or None when no marker can be read.
 
     An expression that runs and matches nothing is only trusted once it reads some
     row's marker, because a fallback that does not fit the schema returns '' for
@@ -249,21 +451,78 @@ def landed_seqs(
             continue
         if count:
             raw = ch_query(
-                f"SELECT DISTINCT {expression} FROM {database}.{table} "
-                f"WHERE {where} FORMAT TabSeparated",
+                f"SELECT {expression}, count() FROM {database}.{table} "
+                f"WHERE {where} GROUP BY {expression} FORMAT TabSeparated",
                 debug=debug,
             )
-            return {
-                seq
-                for line in raw.splitlines()
-                if (seq := seq_of(line.strip(), prefix)) is not None
-            }
+            return marker_counts(raw, prefix)
         probe = ch_int(
             f"SELECT count() FROM {database}.{table} WHERE {expression} != ''",
             debug=debug,
         )
         readable = readable or bool(probe)
-    return set() if readable else None
+    return {} if readable else None
+
+
+@dataclass(frozen=True, slots=True)
+class Landing:
+    """How the records one load sent fared in the table.
+
+    Attributes:
+        accepted: How many records the receiver answered 2xx.
+        landed: How many of those have at least one row.
+        missing: The accepted records with no row, by sequence number.
+        lost_by_phase: The missing records, counted by the phase each was sent in.
+        duplicated_by_phase: Records with more than one row, counted by phase sent.
+        extra_rows: Rows beyond the first, summed over every duplicated record.
+    """
+
+    accepted: int
+    landed: int
+    missing: list[int]
+    lost_by_phase: dict[str, int]
+    duplicated_by_phase: dict[str, int]
+    extra_rows: int
+
+    @property
+    def duplicated(self) -> int:
+        """How many records landed more than once."""
+        return sum(self.duplicated_by_phase.values())
+
+
+def tally_landing(
+    accepted: Mapping[int, str],
+    counts: Mapping[int, int],
+    phases: Mapping[int, str],
+) -> Landing:
+    """Judge what landed against what was accepted.
+
+    Args:
+        accepted: The accepted records, by sequence number, to the phase sent in.
+        counts: Rows per landed record, as `landed_counts` reads them.
+        phases: Every record the load sent, to its phase, so a duplicate of a
+            refused record is placed too.
+
+    Returns:
+        The tally. A duplicate is reported, never judged: at-least-once allows it.
+    """
+    missing = sorted(set(accepted) - set(counts))
+    doubled = {seq: rows for seq, rows in counts.items() if rows > 1}
+    return Landing(
+        accepted=len(accepted),
+        landed=len(accepted) - len(missing),
+        missing=missing,
+        lost_by_phase=dict(Counter(accepted[seq] for seq in missing)),
+        duplicated_by_phase=dict(
+            Counter(phases.get(seq, "unknown") for seq in doubled)
+        ),
+        extra_rows=sum(rows - 1 for rows in doubled.values()),
+    )
+
+
+def grown(before: Mapping[str, int], after: Mapping[str, int]) -> list[str]:
+    """The files in `after` that are new since `before`, or larger than they were there."""
+    return sorted(path for path, size in after.items() if size > before.get(path, -1))
 
 
 @dataclass(frozen=True, slots=True)
@@ -277,6 +536,7 @@ class ContainerState:
         restarts: How many times the engine has restarted it.
         started_at: When its current process started.
         pid: Its current process id.
+        exit_code: How its last process exited, 0 while none has.
     """
 
     container_id: str
@@ -285,6 +545,7 @@ class ContainerState:
     restarts: int
     started_at: str
     pid: int
+    exit_code: int = 0
 
 
 def container_state(inspected: Mapping) -> ContainerState:
@@ -298,6 +559,7 @@ def container_state(inspected: Mapping) -> ContainerState:
         restarts=int(inspected.get("RestartCount", 0) or 0),
         started_at=str(state.get("StartedAt", "")),
         pid=int(state.get("Pid", 0) or 0),
+        exit_code=int(state.get("ExitCode", 0) or 0),
     )
 
 

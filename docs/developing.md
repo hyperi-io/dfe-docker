@@ -360,6 +360,10 @@ refusal such as 503 passes, silence fails), every accepted record landed, and on
 every consumer group is back at zero lag. They stop services, so they never run
 in `make post` either.
 
+`signal: KILL` takes the service down with SIGKILL instead of a graceful stop, and `pause: {service, seconds}` freezes another service first, so the killed one dies holding records. Silence from the ingress is excused for a request sent while the ingress itself is down, and for one already in flight only when the ingress was killed: a graceful stop has to answer it. Duplicates are counted per phase and reported, never failed: at-least-once allows them.
+
+The kill tests prove nothing the stack answered 2xx is lost when every hop holds its acknowledgement until delivery (`acknowledgements.enabled`, the default). Each `-acks-off` twin runs the same kill with every hop to ClickHouse answering at receipt, and `expect_loss: true` makes it record the lost count rather than fail. Each `-sigterm-` twin runs the kill as a graceful stop, which is what proves the shutdown drains in order. `spool:` reads a service's disk spool before, during and after, and `must_stay_empty` fails on anything written.
+
 ### Post-deploy source test -- what an operator does first
 
 ```bash

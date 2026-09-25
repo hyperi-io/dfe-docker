@@ -1,0 +1,32 @@
+# Project:   dfe-docker
+# File:      tests/e2e/config/receiver-grpc-spillover-acks-off.yaml
+# Purpose:   dfe-receiver e2e config - gRPC to the loader, disk spillover on, acknowledgements off
+# Language:  YAML
+#
+# License:   BUSL-1.1
+# Copyright: (c) 2026 HYPERI PTY LIMITED
+#
+# Answers at enqueue are the only ones a spool serves, so this is the config that
+# fills it. The spool sits in the container's own filesystem: it survives a kill
+# and a start of the same container, and each test starts a fresh one.
+
+server:
+  acknowledgements:
+    enabled: false
+
+buffer:
+  spillover:
+    enabled: true
+    path: /tmp/dfe-receiver-spillover
+
+routing:
+  source_rules:
+    - field: _source
+      mode: key_value_use
+
+destinations:
+  default: loader
+
+loader:
+  transport: grpc
+  grpc_endpoint: http://dfe-loader:50051

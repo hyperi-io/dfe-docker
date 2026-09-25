@@ -1,0 +1,32 @@
+# Project:   dfe-docker
+# File:      tests/e2e/config/loader-kafka-acks-off.yaml
+# Purpose:   dfe-loader e2e config - config/loader/kafka.yaml with acknowledgements off
+# Language:  YAML
+#
+# License:   BUSL-1.1
+# Copyright: (c) 2026 HYPERI PTY LIMITED
+#
+# Offsets commit as each batch is received rather than once its rows are in
+# ClickHouse, so a kill loses what was committed. The `*-acks-off` outage tests
+# run this to record that loss.
+
+clickhouse:
+  hosts:
+    - clickhouse:8123
+  database: dfe
+  protocol: http
+  username: env:CLICKHOUSE_USERNAME
+  password: env:CLICKHOUSE_PASSWORD
+
+kafka:
+  brokers:
+    - kafka:9092
+  group: dfe-loader
+  # Both suffixes, because a source with a transform is read at its `_load` end.
+  topic_regex: .*_(land|load)
+  acknowledgements:
+    enabled: false
+
+routing:
+  dlq:
+    enabled: false

@@ -1,0 +1,30 @@
+# Project:   dfe-docker
+# File:      tests/e2e/config/loader-grpc-acks-off.yaml
+# Purpose:   dfe-loader e2e config - config/loader/grpc.yaml with acknowledgements off
+# Language:  YAML
+#
+# License:   BUSL-1.1
+# Copyright: (c) 2026 HYPERI PTY LIMITED
+#
+# Each Push is answered once queued rather than once its rows are in ClickHouse,
+# so a kill loses what was answered. The `*-acks-off` outage tests run this to
+# record that loss.
+
+transport: grpc
+
+clickhouse:
+  hosts:
+    - clickhouse:8123
+  database: dfe
+  protocol: http
+  username: env:CLICKHOUSE_USERNAME
+  password: env:CLICKHOUSE_PASSWORD
+
+grpc:
+  listen: 0.0.0.0:50051
+  acknowledgements:
+    enabled: false
+
+routing:
+  dlq:
+    enabled: false
