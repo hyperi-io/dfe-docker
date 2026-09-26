@@ -750,7 +750,7 @@ services:
       retries: 5
 
   # ===========================================================================
-  # dfe-transform-elastic-cisco-ios
+  # dfe-transform-e2e-elastic-cisco-ios
   # A SECOND instance of the same image, for the cisco-ios source alone -- the
   # per-source shape dfe-transform-vrl-filebeat carries on the VRL side. The
   # receiver routes _source=cisco-ios to cisco-ios_land, this instance is the
@@ -759,24 +759,27 @@ services:
   # `source.name` in the config is the whole difference between two instances of
   # this app: the transform is compiled in, so a second source adds a block like
   # this one and nothing else.
+  #
+  # Named off the `<app>-<source>` shape because dfe-engine names a real
+  # per-source instance that way, and Compose merges two services sharing a name.
   # ===========================================================================
 
-  dfe-transform-elastic-cisco-ios:
+  dfe-transform-e2e-elastic-cisco-ios:
     image: ${IMAGE_REGISTRY:-ghcr.io/hyperi-io}/dfe-transform-elastic:${DFE_TRANSFORM_ELASTIC_VERSION:?run 'make stack VERSION=X.Y.Z' to pin DFE_TRANSFORM_ELASTIC_VERSION}
-    container_name: dfe-transform-elastic-cisco-ios
+    container_name: dfe-transform-e2e-elastic-cisco-ios
     profiles: ["dfe"]
     restart: unless-stopped
     deploy: *limits-service
     ports:
       - ${DFE_BIND_HOST:-127.0.0.1}:${DFE_TRANSFORM_ELASTIC_CISCO_IOS_PROMETHEUS_PORT:-9089}:9090
     env_file:
-      - path: env/transform-elastic-cisco-ios.env
+      - path: env/transform-e2e-elastic-cisco-ios.env
         required: false
     environment:
       LOG_LEVEL: ${LOG_LEVEL:-info}
       LOG_FORMAT: ${LOG_FORMAT:-text}
       OTEL_EXPORTER_OTLP_ENDPOINT: ${DFE_OTEL_EXPORTER_ENDPOINT:-}
-      OTEL_SERVICE_NAME: dfe-transform-elastic-cisco-ios
+      OTEL_SERVICE_NAME: dfe-transform-e2e-elastic-cisco-ios
     depends_on:
       # No dlq-init here: this service does not mount dlq-spool. dfe-engine
       # creates the topics it reads and writes, so it waits on that instead.
@@ -849,7 +852,7 @@ services:
       retries: 5
 
   # ===========================================================================
-  # dfe-transform-vector-filebeat
+  # dfe-transform-e2e-vector-filebeat
   # A SECOND instance of the same image, for the filebeat source alone -- the
   # dfe-transform-vector half of the shape dfe-transform-vrl-filebeat carries
   # below. The receiver routes _source=filebeat-vector to filebeat-vector_land,
@@ -861,11 +864,14 @@ services:
   # filebeat program and the timezone table it looks up is mounted from the
   # filebeat pipeline's own data directory, shared with the VRL instance rather
   # than copied.
+  #
+  # Named off the `<app>-<source>` shape because dfe-engine names a real
+  # per-source instance that way, and Compose merges two services sharing a name.
   # ===========================================================================
 
-  dfe-transform-vector-filebeat:
+  dfe-transform-e2e-vector-filebeat:
     image: ${IMAGE_REGISTRY:-ghcr.io/hyperi-io}/dfe-transform-vector:${DFE_TRANSFORM_VECTOR_VERSION:?run 'make stack VERSION=X.Y.Z' to pin DFE_TRANSFORM_VECTOR_VERSION}
-    container_name: dfe-transform-vector-filebeat
+    container_name: dfe-transform-e2e-vector-filebeat
     profiles: ["dfe"]
     restart: unless-stopped
     deploy: *limits-service
@@ -873,17 +879,17 @@ services:
       - ${DFE_BIND_HOST:-127.0.0.1}:${DFE_TRANSFORM_VECTOR_FILEBEAT_PROMETHEUS_PORT:-9098}:9090
       - ${DFE_BIND_HOST:-127.0.0.1}:${DFE_TRANSFORM_VECTOR_FILEBEAT_API_PORT:-8687}:8686
     env_file:
-      - path: env/transform-vector-filebeat.env
+      - path: env/transform-e2e-vector-filebeat.env
         required: false
       # The custom keys the engine writes for this app; an up -d applies them,
       # a restart keeps the environment the container already has.
-      - path: env/transform-vector-filebeat.custom.env
+      - path: env/transform-e2e-vector-filebeat.custom.env
         required: false
     environment:
       LOG_LEVEL: ${LOG_LEVEL:-info}
       LOG_FORMAT: ${LOG_FORMAT:-text}
       OTEL_EXPORTER_OTLP_ENDPOINT: ${DFE_OTEL_EXPORTER_ENDPOINT:-}
-      OTEL_SERVICE_NAME: dfe-transform-vector-filebeat
+      OTEL_SERVICE_NAME: dfe-transform-e2e-vector-filebeat
     depends_on:
       # No dlq-init here: this service does not mount dlq-spool.
       # The topic authority: dfe-engine creates the declared topic set at its own
@@ -1011,6 +1017,10 @@ services:
     profiles: ["core"]
     restart: unless-stopped
     deploy: *limits-service
+    # The engine runs as UID 1000 and ./env belongs to the operator, so it writes
+    # there through the operator's group; `make` exports DFE_DEV_GID.
+    group_add:
+      - "${DFE_DEV_GID:-1000}"
     ports:
       # dfe-proxy reaches the engine over the docker network; this host mapping
       # is for direct API work. PRODUCT class -- it is the API the UI consumes --

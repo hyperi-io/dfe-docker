@@ -281,6 +281,8 @@ container, the sibling of `DFE_DEPLOYMENT_APP_CONFIG_DIR`) and it is a read-writ
 bind mount of `./env`, so the deployment's own working tree is what changes when
 an operator saves a setting.
 
+The engine runs as its image's user, not yours, so the two meet on a group. `make init` (and every start target) makes `env/` group-writable and setgid, the engine container gets the checkout's group through `group_add` (`DFE_DEV_GID`, which the Makefile sets to `id -g`), and each custom file is written `0640` in that group. Compose run by anyone in that group reads it, and nobody else on the host does. A bare `docker compose` without make adds group `1000`. When the engine cannot give a file the directory's group, its log says so and names the fix.
+
 ## Self-monitoring (opt-in)
 
 Off by default. `DFE_OTEL_ENABLED=true` (or a profile declaring `otel: true`, as `single` does) starts a collector that takes the stack's own telemetry over OTLP and writes the `dfe.otel_*` tables, which HyperDX reads. Nothing is scraped, and the collector's OTLP ports stay on the Compose network. Full picture, including which services report today: [observability.md](observability.md).
@@ -336,9 +338,9 @@ The same toggle points the engine at HyperDX: with it on, the engine receives `D
 | 8090  | hyperdx              | App UI             |
 | 8123  | ClickHouse           | HTTP API           |
 | 8686  | dfe-transform-vector | Vector API         |
-| 8687  | dfe-transform-vector-filebeat | Vector API |
+| 8687  | dfe-transform-e2e-vector-filebeat | Vector API |
 | 9000  | ClickHouse           | Native protocol    |
-| 9089  | dfe-transform-elastic-cisco-ios | Prometheus metrics |
+| 9089  | dfe-transform-e2e-elastic-cisco-ios | Prometheus metrics |
 | 9090  | dfe-receiver         | Prometheus metrics |
 | 9091  | dfe-loader           | Prometheus metrics |
 | 9092  | Kafka (any backend)  | Plaintext          |
@@ -347,7 +349,7 @@ The same toggle points the engine at HyperDX: with it on, the engine receives `D
 | 9095  | dfe-transform-vector | Prometheus metrics |
 | 9096  | dfe-transform-vrl    | Prometheus metrics |
 | 9097  | dfe-transform-vrl-filebeat | Prometheus metrics |
-| 9098  | dfe-transform-vector-filebeat | Prometheus metrics |
+| 9098  | dfe-transform-e2e-vector-filebeat | Prometheus metrics |
 | 9099  | dfe-transform-elastic | Prometheus metrics |
 | 13133 | otel-collector       | health_check       |
 | 19092 | Kafka (any backend)  | Plaintext host     |
