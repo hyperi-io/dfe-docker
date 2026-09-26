@@ -151,16 +151,19 @@ CONTAINER_LOGS_KEY = "DFE_CONTAINER_LOGS_ENABLED"
 # them; these three are the data path plus the control plane.
 CONTAINER_LOG_SERVICES = ("dfe-engine", "dfe-loader", "dfe-receiver")
 
-# The services whose OWN metrics have to reach the otel database, as name prefixes
-# so a per-source instance (dfe-transform-vrl-filebeat) is covered by its app.
-# dfe-ui carries the OTel API and no SDK, and dfe-hunt-runner keeps scalo-py's
-# prometheus backend, so neither pushes.
+# The services whose OWN metrics have to reach the otel database, as name
+# prefixes so a per-source instance (dfe-transform-vrl-<source>) is covered by
+# its app. dfe-transform-e2e-vrl-filebeat is a static extra instance renamed off
+# that shape (check_compose.py _APP_ALIASES carries why), so it is named here in
+# full rather than covered by a prefix. dfe-ui carries the OTel API and no SDK,
+# and dfe-hunt-runner keeps scalo-py's prometheus backend, so neither pushes.
 OTEL_PUSHER_PREFIXES = (
     "dfe-archiver",
     "dfe-engine",
     "dfe-fetcher",
     "dfe-loader",
     "dfe-receiver",
+    "dfe-transform-e2e-vrl-filebeat",
     "dfe-transform-vector",
     "dfe-transform-vrl",
 )

@@ -144,12 +144,12 @@ SERVICE_TO_CONFIG_VAR = {
     "dfe-fetcher": "DFE_FETCHER_CONFIG",
     "dfe-loader": "DFE_LOADER_CONFIG",
     "dfe-receiver": "DFE_RECEIVER_CONFIG",
+    "dfe-transform-e2e-vrl-filebeat": "DFE_TRANSFORM_VRL_FILEBEAT_CONFIG",
     "dfe-transform-elastic": "DFE_TRANSFORM_ELASTIC_CONFIG",
     "dfe-transform-elastic-cisco-ios": "DFE_TRANSFORM_ELASTIC_CISCO_IOS_CONFIG",
     "dfe-transform-vector": "DFE_TRANSFORM_VECTOR_CONFIG",
     "dfe-transform-vector-filebeat": "DFE_TRANSFORM_VECTOR_FILEBEAT_CONFIG",
     "dfe-transform-vrl": "DFE_TRANSFORM_VRL_CONFIG",
-    "dfe-transform-vrl-filebeat": "DFE_TRANSFORM_VRL_FILEBEAT_CONFIG",
 }
 
 # The engine is the Compose stand-in for the ConfigMap an app's chart renders on
@@ -182,12 +182,12 @@ SERVICES = [
     "dfe-fetcher",
     "dfe-loader",
     "dfe-receiver",
+    "dfe-transform-e2e-vrl-filebeat",
     "dfe-transform-elastic",
     "dfe-transform-elastic-cisco-ios",
     "dfe-transform-vector",
     "dfe-transform-vector-filebeat",
     "dfe-transform-vrl",
-    "dfe-transform-vrl-filebeat",
 ]
 
 TRANSPORT_TYPES = ["grpc", "kafka"]
@@ -258,6 +258,15 @@ def _instance_services(*, profile: str, renders: bool) -> list[str]:
             msg=f"dfe-engine named instances of {', '.join(unknown)}, which this repo "
             "declares no compose service for. Add one, or every source bound to it is "
             "stored and never run",
+        )
+    clashing = instances.colliding(found)
+    if clashing:
+        raise _ProfileError(
+            header=profile,
+            msg=f"{', '.join(clashing)} would be a per-instance service Compose has to "
+            "merge into a static service of the same name. Rename the static service, "
+            "or the source, so this deployment does not silently take the other's "
+            "command and lose its ports",
         )
     instances.write(found)
     return instances.services(found)

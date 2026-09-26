@@ -92,12 +92,12 @@ SERVICE_CONFIG_MOUNTS = {
     "dfe-fetcher": "/etc/dfe/fetcher.yaml",
     "dfe-loader": "/etc/dfe/loader.yaml",
     "dfe-receiver": "/etc/dfe-receiver/config.yaml",
+    "dfe-transform-e2e-vrl-filebeat": "/etc/dfe-transform-vrl/config.yaml",
     "dfe-transform-elastic": "/etc/dfe-transform-elastic/config.yaml",
     "dfe-transform-elastic-cisco-ios": "/etc/dfe-transform-elastic/config.yaml",
     "dfe-transform-vector": "/etc/dfe-transform-vector/config.yaml",
     "dfe-transform-vector-filebeat": "/etc/dfe-transform-vector/config.yaml",
     "dfe-transform-vrl": "/etc/dfe-transform-vrl/config.yaml",
-    "dfe-transform-vrl-filebeat": "/etc/dfe-transform-vrl/config.yaml",
 }
 
 KNOWN_DFE_SERVICES = set(SERVICE_CONFIG_MOUNTS.keys())

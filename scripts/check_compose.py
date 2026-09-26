@@ -277,12 +277,12 @@ _DFE_OWNED_SERVICES = {
     "dfe-fetcher",
     "dfe-loader",
     "dfe-receiver",
+    "dfe-transform-e2e-vrl-filebeat",
     "dfe-transform-elastic",
     "dfe-transform-elastic-cisco-ios",
     "dfe-transform-vector",
     "dfe-transform-vector-filebeat",
     "dfe-transform-vrl",
-    "dfe-transform-vrl-filebeat",
     "dfe-ui",
 }
 
@@ -621,13 +621,23 @@ def _duration_seconds(text: str) -> float | None:
     return sum(float(number) * _DURATION_SCALE[unit] for number, unit in parts)
 
 
+# A static extra-instance service named off the `<app>-<name>` shape on purpose
+# (dfe-engine names a real per-source instance the same way, and Compose merges
+# two services sharing a name rather than refusing), so its app has to be named
+# here instead of read off its own prefix.
+_APP_ALIASES = {"dfe-transform-e2e-vrl-filebeat": "dfe-transform-vrl"}
+
+
 def _app_of(service: str) -> str | None:
     """Return the data-plane app a compose service runs, or None for any other service.
 
-    Matched on the service name, so `dfe-transform-vrl-filebeat` and a generated
-    `dfe-loader-<instance>` count, while the `contract-*` one-shots running the
-    same images do not.
+    Matched on the service name, so `dfe-transform-vector-filebeat` and a
+    generated `dfe-loader-<instance>` count, while the `contract-*` one-shots
+    running the same images do not. `_APP_ALIASES` covers a service whose name
+    does not start with its app's, for the reason given there.
     """
+    if service in _APP_ALIASES:
+        return _APP_ALIASES[service]
     for app in sorted(_STOP_GRACE_SECONDS, key=len, reverse=True):
         if service == app or service.startswith(f"{app}-"):
             return app

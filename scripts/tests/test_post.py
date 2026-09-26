@@ -151,7 +151,7 @@ def test_only_the_services_that_push_their_own_metrics_are_expected(
             "dfe-engine",
             "dfe-hunt-runner",
             "dfe-loader",
-            "dfe-transform-vrl-filebeat",
+            "dfe-transform-e2e-vrl-filebeat",
             "dfe-ui",
             "hyperdx",
             "otel-collector",
@@ -161,7 +161,7 @@ def test_only_the_services_that_push_their_own_metrics_are_expected(
     assert post._otel_expected_services() == [
         "dfe-engine",
         "dfe-loader",
-        "dfe-transform-vrl-filebeat",
+        "dfe-transform-e2e-vrl-filebeat",
     ]
 
 

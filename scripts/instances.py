@@ -197,6 +197,19 @@ def unknown_apps(
     return sorted(s for s in instances if not extendable(s, compose_file=compose_file))
 
 
+def colliding(
+    instances: dict[str, list[str]], *, compose_file: Path | None = None
+) -> list[str]:
+    """Generated names this repo already declares a static compose service under.
+
+    Compose merges two services that share a name rather than refusing, so a
+    static service sitting on the name a real instance would take silently
+    inherits that instance's command and loses its own ports.
+    """
+    text = (compose_file or COMPOSE_FILE).read_text(encoding="utf-8")
+    return sorted(name for name in services(instances) if f"\n  {name}:\n" in text)
+
+
 def write(instances: dict[str, list[str]], *, path: Path | None = None) -> bool:
     """Write the fragment, or remove it when the deployment has no instance.
 
@@ -232,6 +245,15 @@ def main() -> int:
             msg=f"dfe-engine named instances of {', '.join(unknown)}, which this repo "
             "declares no compose service for -- add one, or the sources bound to it "
             "are stored and never run"
+        )
+        return 1
+    clashing = colliding(found)
+    if clashing:
+        _print(
+            msg=f"{', '.join(clashing)} would be a per-instance service Compose has to "
+            "merge into a static service of the same name -- rename the static "
+            "service, or the source, so a real deployment does not silently take the "
+            "other's command and lose its ports"
         )
         return 1
     if args.list:

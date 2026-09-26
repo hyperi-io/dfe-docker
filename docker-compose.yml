@@ -776,7 +776,7 @@ services:
   # ===========================================================================
   # dfe-transform-elastic-cisco-ios
   # A SECOND instance of the same image, for the cisco-ios source alone -- the
-  # per-source shape dfe-transform-vrl-filebeat carries on the VRL side. The
+  # per-source shape dfe-transform-e2e-vrl-filebeat carries on the VRL side. The
   # receiver routes _source=cisco-ios to cisco-ios_land, this instance is the
   # only consumer of it, and its output topic names the table dfe-loader writes.
   #
@@ -881,7 +881,7 @@ services:
   # ===========================================================================
   # dfe-transform-vector-filebeat
   # A SECOND instance of the same image, for the filebeat source alone -- the
-  # dfe-transform-vector half of the shape dfe-transform-vrl-filebeat carries
+  # dfe-transform-vector half of the shape dfe-transform-e2e-vrl-filebeat carries
   # below. The receiver routes _source=filebeat-vector to filebeat-vector_land,
   # this instance is the only consumer of it, and its output topic names the
   # table dfe-loader writes. The two transform apps stay on separate topics and
@@ -979,7 +979,7 @@ services:
       retries: 5
 
   # ===========================================================================
-  # dfe-transform-vrl-filebeat
+  # dfe-transform-e2e-vrl-filebeat
   # A SECOND instance of the same image, for the filebeat source alone. The
   # Kubernetes tier deploys one transform per source and this is that shape on
   # one box: the receiver routes _source=filebeat to filebeat_land, this
@@ -987,11 +987,17 @@ services:
   # dfe-loader writes. Adding another source means another block like this
   # one, its own config and its own program directory -- nothing here is shared
   # with the passthrough instance except the image.
+  #
+  # Named off the `<app>-<name>` shape on purpose: dfe-engine names a real
+  # per-source instance the same way (dfe-transform-vrl-filebeat for a source
+  # literally called "filebeat"), and Compose merges two services sharing a
+  # name rather than refusing, so that name silently took this one's command
+  # and dropped its ports.
   # ===========================================================================
 
-  dfe-transform-vrl-filebeat:
+  dfe-transform-e2e-vrl-filebeat:
     image: ${IMAGE_REGISTRY:-ghcr.io/hyperi-io}/dfe-transform-vrl:${DFE_TRANSFORM_VRL_VERSION:?run 'make stack VERSION=X.Y.Z' to pin DFE_TRANSFORM_VRL_VERSION}
-    container_name: dfe-transform-vrl-filebeat
+    container_name: dfe-transform-e2e-vrl-filebeat
     profiles: ["dfe"]
     restart: unless-stopped
     stop_grace_period: *stop-grace-app
@@ -999,17 +1005,17 @@ services:
     ports:
       - ${DFE_BIND_HOST:-127.0.0.1}:${DFE_TRANSFORM_VRL_FILEBEAT_PROMETHEUS_PORT:-9097}:9090
     env_file:
-      - path: env/transform-vrl-filebeat.env
+      - path: env/transform-e2e-vrl-filebeat.env
         required: false
       # The custom keys the engine writes for this app; an up -d applies them,
       # a restart keeps the environment the container already has.
-      - path: env/dfe-transform-vrl-filebeat.custom.env
+      - path: env/dfe-transform-e2e-vrl-filebeat.custom.env
         required: false
     environment:
       LOG_LEVEL: ${LOG_LEVEL:-info}
       LOG_FORMAT: ${LOG_FORMAT:-text}
       OTEL_EXPORTER_OTLP_ENDPOINT: ${DFE_OTEL_EXPORTER_ENDPOINT:-}
-      OTEL_SERVICE_NAME: dfe-transform-vrl-filebeat
+      OTEL_SERVICE_NAME: dfe-transform-e2e-vrl-filebeat
     depends_on:
       # No dlq-init here: this service does not mount dlq-spool.
       # The topic authority: dfe-engine creates the declared topic set at its own

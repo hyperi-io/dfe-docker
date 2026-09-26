@@ -135,3 +135,42 @@ def test_every_app_the_generator_knows_is_a_committed_compose_service(
     service: str,
 ) -> None:
     assert instances.extendable(service)
+
+
+def test_a_generated_name_matching_a_static_service_is_flagged(tmp_path: Path) -> None:
+    # Compose merges two services sharing a name rather than refusing, so the
+    # static one would silently take the instance's command and lose its ports.
+    compose = tmp_path / "docker-compose.yml"
+    compose.write_text(
+        "services:\n"
+        "  dfe-transform-vrl:\n"
+        "    image: x\n"
+        "  dfe-transform-vrl-filebeat:\n"
+        "    image: x\n",
+        encoding="utf-8",
+    )
+    _index(tmp_path, VRL, "filebeat")
+
+    found = instances.declared(env_dir=tmp_path)
+
+    assert instances.colliding(found, compose_file=compose) == [
+        "dfe-transform-vrl-filebeat"
+    ]
+
+
+def test_a_generated_name_with_no_static_twin_does_not_collide(tmp_path: Path) -> None:
+    compose = tmp_path / "docker-compose.yml"
+    compose.write_text(
+        "services:\n  dfe-transform-vrl:\n    image: x\n", encoding="utf-8"
+    )
+    _index(tmp_path, VRL, "filebeat")
+
+    found = instances.declared(env_dir=tmp_path)
+
+    assert instances.colliding(found, compose_file=compose) == []
+
+
+def test_the_committed_compose_file_has_no_twin_for_a_real_instance() -> None:
+    # The regression this guards: a static service once sat on the exact name
+    # dfe-engine gives a real "filebeat" instance of dfe-transform-vrl.
+    assert instances.colliding({VRL: ["filebeat"]}) == []

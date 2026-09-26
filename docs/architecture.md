@@ -124,17 +124,19 @@ mode, profile resolution and the checks working.
 
 | Piece | `kafka-filebeat`, on dfe-transform-vrl | `kafka-filebeat-vector`, on dfe-transform-vector |
 |---|---|---|
-| Compose service | `dfe-transform-vrl-filebeat`, the same image, its own metrics port | `dfe-transform-vector-filebeat`, likewise |
+| Compose service | `dfe-transform-e2e-vrl-filebeat`, the same image, its own metrics port | `dfe-transform-vector-filebeat`, likewise |
 | Config | `config/transform-vrl/filebeat.yaml` -- `filebeat_land` in, `filebeat_load` out | `config/transform-vector/filebeat.yaml` -- `dfe_source: filebeat-vector` derives both topics |
 | Program | `config/transform-vrl/transforms-filebeat/`, vendored from dfe-transform-vrl | `config/transform-vector/transforms-filebeat/`, the same VRL inside a Vector `remap`, vendored from dfe-transform-vector |
 | Loader | `config/loader/kafka-load-filebeat.yaml` lists `filebeat_load` alongside `main_load` | `config/loader/kafka-load-filebeat-vector.yaml` lists `filebeat-vector_load` |
 | Table | `dfe.filebeat`, from the `_load` topic name -- the loader strips the suffix and routes on it | ``dfe.`filebeat-vector` ``, the same way |
 | Enrichment data | `config/transform-vrl/data/`, mounted beside the program dir -- the transform scans that dir for programs | the same directory, mounted at `/etc/dfe-transform-vector/data` -- one table, not a copy per app |
 | Dev images | an override block plus `IMAGE_CONSUMERS` in `scripts/build_dev_images.py`, or `make dev` leaves it on the registry pin | the same |
-| Env file | `env.example/transform-vrl-filebeat.env` for its own overrides; `make init` copies it into `env/` | `env.example/transform-vector-filebeat.env` |
+| Env file | `env.example/transform-e2e-vrl-filebeat.env` for its own overrides; `make init` copies it into `env/` | `env.example/transform-vector-filebeat.env` |
 | Profile resolution | `SERVICES` and `SERVICE_TO_CONFIG_VAR` in `scripts/resolve_profile.py`, so a profile can run it without the passthrough instance | the same |
 | Check coverage | `_DFE_OWNED_SERVICES` in `scripts/check_compose.py`, which holds it to the `/livez` health surface | the same |
 | Metrics ports | a free host port (`DFE_TRANSFORM_VRL_FILEBEAT_PROMETHEUS_PORT`, 9097): every instance serves 9090 and two cannot publish one | the same (`DFE_TRANSFORM_VECTOR_FILEBEAT_PROMETHEUS_PORT`, 9098) |
+
+The VRL column's compose service breaks the `<app>-<name>` shape the Vector one still uses: dfe-engine names a real per-source instance of `dfe-transform-vrl` `dfe-transform-vrl-<source>`, and Compose merges two services sharing a name rather than refusing, so a static service literally called `dfe-transform-vrl-filebeat` took a real "filebeat" instance's command and lost its ports. A new static piece copying this shape keeps the app's name out of its own leading segment for the same reason.
 
 One port carries everything. The wrapper scrapes Vector's `internal_metrics` off
 its `prometheus_exporter` on loopback and registers the samples on scalo's own
