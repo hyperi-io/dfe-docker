@@ -21,16 +21,11 @@ work, choose Kubernetes.
 
 ## Only the console authenticates -- everything else is bounded by that
 
-The engine's API requires a login. `make init` mints two passwords into `.env` and
-`make creds` hands them over: `admin` from `DFE_AUTH_LOCAL_ADMIN_PASSWORD`,
-reasserted on every engine boot, and the `breakglass` recovery admin, whose hash
-the engine commits to its deploy repo on the first boot and which therefore
-outlives the engine, the UI and `.env`. Rotate `admin` by changing the value in
-`.env` and running `make up` -- the store is not the source, so a rotation the
-engine alone performed would be undone on the next boot. The engine refuses to
-start when `DFE_AUTH_LOCAL_ADMIN_PASSWORD` is empty or `changeme` and `DFE_ENV` is
-not a dev posture. An unset `DFE_ENV` counts as `production`, so only a `.env` that
-says `dev` gets to run on the shipped password.
+The engine's API requires a login. `make init` mints two passwords into `.env` and `make creds` hands them over: `admin` from `DFE_AUTH_LOCAL_ADMIN_PASSWORD`, and the `breakglass` recovery admin, whose hash the engine commits to its deploy repo on the first boot and which therefore outlives the engine, the UI and `.env`.
+
+The engine issues `admin` with a forced change at first login, which `make post` makes and records back in `.env`. Rotate it by changing the value in `.env` and running `make up`. A value the engine last issued, or the account's current password, re-issues nothing, so a restart never undoes a change.
+
+The engine refuses to start when `DFE_AUTH_LOCAL_ADMIN_PASSWORD` is empty or the shipped default and `DFE_ENV` is not a dev posture. An unset `DFE_ENV` counts as `production`, so only a `.env` that says `dev` gets to run on the shipped password.
 
 `make init` and `make up` also write `access-summary.md` (0600, gitignored) with
 both minted passwords in plaintext. Retire the bootstrap admin from the console

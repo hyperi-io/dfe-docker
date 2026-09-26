@@ -16,6 +16,11 @@ default in. `--real` is the other: local images running the authentication flow 
 deployment gets, so it mints a password and writes a non-dev posture, leaving both
 alone where they already hold real values.
 
+The tyre-kick writes the default only where the posture is not already dev. On a
+dev stack the engine makes the admin replace the default at first login and `make
+post` records the replacement here, so writing the default back would lock the
+next run out of an engine that no longer accepts it.
+
 The tyre-kick refuses on any other DFE_ENV rather than rewriting it, exit 2. A .env
 that says `production` belongs to a deployment, and quietly downgrading its posture
 and overwriting its admin password is not something a build target gets to do.
@@ -95,6 +100,16 @@ def _wanted_real(*, values: dict[str, str]) -> dict[str, str]:
     return wanted
 
 
+def _wanted_tyre_kick(*, values: dict[str, str]) -> dict[str, str]:
+    """The keys the tyre-kick assigns, keeping a password a dev stack already replaced."""
+    wanted = {_POSTURE_KEY: _DEV_ENV}
+    already_dev = is_dev_posture(values.get(_POSTURE_KEY, ""))
+    replaced = not (default_admin_password(values.get(_ADMIN_PASSWORD_KEY, "")))
+    if not (already_dev and replaced):
+        wanted[_ADMIN_PASSWORD_KEY] = _DEFAULT_PASSWORD
+    return wanted
+
+
 def main(*, argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
@@ -126,19 +141,22 @@ def main(*, argv: list[str] | None = None) -> int:
         return _REFUSED
 
     wanted = (
-        _wanted_real(values=values)
-        if args.real
-        else {_POSTURE_KEY: _DEV_ENV, _ADMIN_PASSWORD_KEY: _DEFAULT_PASSWORD}
+        _wanted_real(values=values) if args.real else _wanted_tyre_kick(values=values)
     )
     banner = (
         "## Written by `make dev AUTH=real` - local images, deployment credentials."
         if args.real
         else "## Written by `make dev` - a dev tyre-kick, not a deployment."
     )
+    password_state = (
+        "admin password set to the known default"
+        if _ADMIN_PASSWORD_KEY in wanted
+        else "admin password kept as recorded -- `make creds` prints it"
+    )
     settled = (
         f"Real posture already set: DFE_ENV={environment}, admin password is minted"
         if args.real
-        else f"Dev posture already set: DFE_ENV={_DEV_ENV}, admin password is the known default"
+        else f"Dev posture already set: DFE_ENV={_DEV_ENV}, {password_state}"
     )
 
     text = DOTENV_FILE.read_text(encoding="utf-8")
@@ -154,7 +172,7 @@ def main(*, argv: list[str] | None = None) -> int:
         f"Real posture: DFE_ENV={wanted.get(_POSTURE_KEY, environment)}, admin password "
         f"minted. Read it with `make creds`."
         if args.real
-        else f"Dev posture: DFE_ENV={_DEV_ENV}, admin password set to the known default."
+        else f"Dev posture: DFE_ENV={_DEV_ENV}, {password_state}."
     )
     _print(
         header=_rel_path(path=DOTENV_FILE),

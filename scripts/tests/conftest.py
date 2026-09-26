@@ -13,8 +13,8 @@ directory holding them goes on sys.path before anything imports them.
 
 Each module binds the repo's real `.env` into its own global at import time, so
 the `dotenv` fixture repoints every one of those globals at a temporary file. A
-module missed here would read, and in dev_posture's case rewrite, the developer's
-own credentials.
+module missed here would read, and in dev_posture's and post's case rewrite, the
+developer's own credentials.
 """
 
 from __future__ import annotations
@@ -32,16 +32,20 @@ import _common  # noqa: E402
 import creds  # noqa: E402
 import dev_posture  # noqa: E402
 import init  # noqa: E402
+import post  # noqa: E402
 
 
 @pytest.fixture
 def dotenv(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     """Return the path of a throwaway .env every module under test points at."""
     path = tmp_path / ".env"
-    for module in (_common, creds, dev_posture, init):
+    for module in (_common, creds, dev_posture, init, post):
         monkeypatch.setattr(module, "DOTENV_FILE", path)
     # The access summary carries plaintext passwords, so it goes to tmp_path too.
-    monkeypatch.setattr(creds, "ACCESS_SUMMARY_FILE", tmp_path / "access-summary.md")
+    for module in (creds, post):
+        monkeypatch.setattr(
+            module, "ACCESS_SUMMARY_FILE", tmp_path / "access-summary.md"
+        )
     # _rel_path resolves REPO_ROOT at call time, so display paths stay renderable.
     monkeypatch.setattr(_common, "REPO_ROOT", tmp_path)
     return path

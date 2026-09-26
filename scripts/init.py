@@ -48,9 +48,10 @@ from _common import (
 # check (its default is empty, not a sentinel string), and
 # DFE_AUTH_LOCAL_ADMIN_PASSWORD by logging in with it. Keep them in step.
 #
-# The deploy mints two logins: DFE_AUTH_LOCAL_ADMIN_PASSWORD is `admin`, reasserted
-# from .env on every engine boot. DFE_AUTH_BREAKGLASS_PASSWORD is the recovery admin
-# the engine hashes into the deploy repo on first boot and ignores thereafter.
+# The deploy mints two logins: DFE_AUTH_LOCAL_ADMIN_PASSWORD is `admin`, issued with
+# a forced change at first login, which `make post` makes and records back in .env.
+# DFE_AUTH_BREAKGLASS_PASSWORD is the recovery admin the engine hashes into the
+# deploy repo on first boot and ignores thereafter.
 # Neither is printed here; `make creds` is the hand-over.
 #
 # CLICKHOUSE_PASSWORD is a BREAKING change on upgrade: a ClickHouse data volume
