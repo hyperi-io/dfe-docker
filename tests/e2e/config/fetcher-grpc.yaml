@@ -12,7 +12,7 @@
 output:
   type: grpc
   grpc:
-    endpoint: http://dfe-loader:50051
+    endpoint: http://dfe-loader:6000
 
 ingest:
   enabled: true

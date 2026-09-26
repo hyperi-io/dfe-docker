@@ -6,7 +6,7 @@
 # License:   BUSL-1.1
 # Copyright: (c) 2026 HYPERI PTY LIMITED
 
-# gRPC transport: loader listens on :50051 for DFETransport/Push from dfe-receiver.
+# gRPC transport: loader listens on :6000 for DFETransport/Push, the port dfe-engine compiles every sender's endpoint against.
 
 transport: grpc
 
@@ -19,7 +19,7 @@ clickhouse:
   password: env:CLICKHOUSE_PASSWORD
 
 grpc:
-  listen: 0.0.0.0:50051
+  listen: 0.0.0.0:6000
 
 routing:
   dlq:
