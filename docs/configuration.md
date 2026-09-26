@@ -266,12 +266,7 @@ contract absent and the engine starts anyway, so a settings page with nothing on
 it for one app means that app's one-shot logged a failure -- `docker compose logs
 contract-<app>`.
 
-A setting the app's own schema does not declare is written as an environment
-variable instead, into `env/<app>.custom.env` beside the file `make init` creates.
-Each app reads both, the custom file second, so a custom key beats the same key in
-`env/<app>.env`; the `environment:` block in `docker-compose.yml` beats both, which
-is what keeps a custom key from taking over the broker address or the warehouse
-credentials. Neither file has to exist.
+A setting the app's own schema does not declare is written as an environment variable instead, into `env/<compose-service>.custom.env` -- named by the COMPOSE SERVICE rather than the app, so a per-config app's instances each get their own (`env/dfe-transform-vrl-<instance>.custom.env`) instead of sharing one. Each service reads both, its custom file second, so a custom key beats the same key in the static `env/<app>.env` file `make init` creates, which every instance of that app shares via `extends`; the `environment:` block in `docker-compose.yml` beats both, which is what keeps a custom key from taking over the broker address or the warehouse credentials. Neither file has to exist.
 
 **A custom env write needs `docker compose up -d <service>`, not a restart.**
 Compose reads `env_file` when it creates a container, so `docker compose restart`
@@ -347,7 +342,7 @@ The same toggle points the engine at HyperDX: with it on, the engine receives `D
 | 9094  | dfe-fetcher          | Prometheus metrics |
 | 9095  | dfe-transform-vector | Prometheus metrics |
 | 9096  | dfe-transform-vrl    | Prometheus metrics |
-| 9097  | dfe-transform-vrl-filebeat | Prometheus metrics |
+| 9097  | dfe-transform-e2e-vrl-filebeat | Prometheus metrics |
 | 9098  | dfe-transform-vector-filebeat | Prometheus metrics |
 | 9099  | dfe-transform-elastic | Prometheus metrics |
 | 13133 | otel-collector       | health_check       |
