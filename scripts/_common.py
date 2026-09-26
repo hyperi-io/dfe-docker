@@ -252,11 +252,11 @@ def _use_mounted_configs(*, environ: typing.MutableMapping[str, str]) -> None:
 def _parse_yaml_subset(*, text: str) -> dict[str, object]:
     """Parse a minimal YAML subset - nested maps, scalar string values - into dicts.
 
-    Dependency-free (no PyYAML): the scripts run under a plain ``python3`` on the
-    devex VMs. Handles ``key: value`` scalars and ``key:`` nesting by indentation,
-    skipping ``#`` comments and blank lines. It does NOT handle lists or inline
-    collections - a line it cannot place raises ValueError. Values come back as
-    strings (quotes stripped), which is all a dotenv render needs.
+    Dependency-free (no PyYAML): the scripts run under a plain ``python3`` on a
+    bare deployment VM. Handles ``key: value`` scalars and ``key:`` nesting by
+    indentation, skipping ``#`` comments and blank lines. It does NOT handle lists
+    or inline collections - a line it cannot place raises ValueError. Values come
+    back as strings (quotes stripped), which is all a dotenv render needs.
 
     resolve_profile.py keeps a local twin of this for service_profiles.yaml; fold
     that onto this shared one when convenient.

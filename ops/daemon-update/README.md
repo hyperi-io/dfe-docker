@@ -66,7 +66,7 @@ this flag.
 - `dfe-docker-update.timer` - runs it 10 min after boot, then every 6h (jittered).
 - `install.sh` - renders + installs the units and enables the timer.
 
-## Install (parked - run on the devex dfe-docker VM as root)
+## Install (parked - run on the dfe-docker VM as root)
 
 Prerequisites on the VM: docker, `oras`, python3; the service user in the
 `docker` group; a working `.env` (`make init` once); GHCR pull access for the
@@ -86,6 +86,6 @@ ticks are no-ops until a newer certified stack ships.
 
 ## Why staged
 
-Installing systemd units and restarting the live stack on the devex VM is a
+Installing systemd units and restarting the live stack on the deployment's VM is a
 VM-side mutation - parked for a human to run on the box. Everything needed is
 here; `install.sh` is the one command.
