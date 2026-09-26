@@ -174,6 +174,10 @@ ENGINE_CONTENT_DIR_VAR = "DFE_ENGINE_CONTENT_DIR"
 ENGINE_CONTENT_DIR = "/app/content"
 ENGINE_CONTRACT_DIR_VAR = "DFE_ENGINE_CONTRACT_DIR"
 ENGINE_CONTRACT_SUBDIR = "contract"
+# The source catalogue catalogue-dfe-transform-elastic writes into the same
+# volume, handed to the engine on the same tiers as the contract directory.
+ENGINE_CATALOGUE_FILE_VAR = "DFE_ENGINE_CATALOGUE_FILE"
+ENGINE_CATALOGUE_FILE = "catalogue/sources.yaml"
 # A per-source transform instance is a service of its own here, because a
 # profile has to be able to run one without the other.
 SERVICES = [
@@ -557,6 +561,10 @@ def main() -> int:
         lines.append(
             f"export {ENGINE_CONTRACT_DIR_VAR} := "
             f"{f'{content_dir}/{ENGINE_CONTRACT_SUBDIR}' if renders else ''}"
+        )
+        lines.append(
+            f"export {ENGINE_CATALOGUE_FILE_VAR} := "
+            f"{f'{content_dir}/{ENGINE_CATALOGUE_FILE}' if renders else ''}"
         )
         for service_name, var_name in SERVICE_TO_RENDERED_CONFIG_VAR.items():
             rendered = (
