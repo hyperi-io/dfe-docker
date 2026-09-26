@@ -85,8 +85,20 @@ anywhere that is not a laptop.
 make init   # Edit .env files as needed (versions, ports)
 make stack VERSION=X.Y.Z   # Pin image versions from the DFE stack SSoT
 make ci     # Uses active_profile from service_profiles.yaml
+make apply  # On the running stack: start what the profile now adds or changes
 make down   # Stop everything
 ```
+
+`make apply` is how a per-source instance gets its container on a running
+stack. The engine records each instance it renders in `env/<app>.instances`,
+and `make` turns each line into a compose service when it resolves the profile,
+so after a source is deployed through the console `make apply` creates that
+container. It runs no `down`: compose recreates only a service whose resolved
+definition changed and touches no volume. `make apply SERVICES="..."` narrows
+it to those services and restarts them as well, because a config file the
+engine rewrote under a running container changes no service definition and `up`
+alone would leave that container reading the old one. That form is the command
+the engine's restart hint names. `DEV=1` applies to a stack `make dev` started.
 
 `VERSION=latest` instead pins the newest certified stack and then repins every
 DFE image at its own newest published tag - development currency, not a
@@ -190,8 +202,10 @@ In `dev` mode, they build from each repo's own Dockerfile (not the shared Rust b
 |--------------------|--------------------------------------------------------------------|
 | `make init`        | Create .env and per-service .env files from templates, minting the admin and break-glass passwords |
 | `make env-files`   | Assert every `env/<service>.env` exists, creating any the templates have gained |
+| `make e2e-posture` | Put `.env` into the stack the dfe-ui Playwright suite drives: `DFE_ENV=test`, the engine's e2e routes on, `e2e-` container names and 2xxxx ports -- [docs/developing.md](docs/developing.md#the-dfe-ui-playwright-suite----make-e2e-posture) |
 | `make creds`       | Print the access summary -- console URL, admin login, where the break-glass password lives. The password prints on a TTY only; a pipe, a file or `DFE_CREDS_SHOW=0` gets the `.env` key instead |
 | `make up`          | Start the pinned stack and print the access summary                |
+| `make apply`       | Start what the re-resolved profile adds or changes on a running stack, a new per-source instance included, recreating nothing unchanged and touching no volume. `SERVICES="..."` also restarts those services, so a mounted config the engine rewrote is read (`DEV=1` for a `make dev` stack) |
 | `make dev`         | Build local DFE images from source and start the stack (`LOCAL="..."` builds only those, rest pinned) |
 | `make dev-build`   | Build local DFE images from source (no start)                      |
 | `make ci`          | Pull and start infra and registry DFE images. Prints no credentials -- `make up` is the same start plus `make creds` |
@@ -340,11 +354,11 @@ Three ways a green run says less than it looks:
 |---|---|---|
 | Leave containers running when you are finished | `make down`, on every host you touched, the same session | `down` sweeps every profile rather than the active one, because passing only the active profile's services left the previous profile's containers up - still holding host ports and still answering health probes for a pipeline that was no longer wired (`Makefile`, the `down` target) |
 | Assume the deployment target is idle | Check what is already running before you start anything | The docker definition-of-done target carries a long-lived stack refreshed on a 6-hourly systemd timer (`ops/daemon-update/`), not a box you get to yourself |
-| Assume events go through Kafka | Read the profile's `transport` first | `slim`, the shipped `active_profile`, is `transport: grpc`: the receiver dials `dfe-loader:50051` directly and no broker starts. `single` is the Kafka one. The core data path is otherwise identical, and `post` and `test-e2e` assert the same landing row either way |
+| Assume events go through Kafka | Read the profile's `transport` first | `slim`, the shipped `active_profile`, is `transport: grpc`: the receiver dials `dfe-loader:6000` directly and no broker starts. `single` is the Kafka one. The core data path is otherwise identical, and `post` and `test-e2e` assert the same landing row either way |
 | Add a DDL file or a topic-creating step here | Change the schema in dfe-engine | dfe-engine ships the schemas in its own image and reports healthy only once it has applied them. `scripts/tests/test_engine_only_schema_control.py` fails the build on one (#118) |
 | Point the stack at an external ClickHouse with `CLICKHOUSE_HOST` alone | Edit `config/loader/*.yaml` as well | That variable moves dfe-engine only. The loader's host is a literal - `config/loader/grpc.yaml:15` is `- clickhouse:8123` - so the loader keeps talking to a container that is not running |
-| Remap the published ClickHouse port | Leave it, or fix the engine's reference first | One variable is both the published port and the in-network one, so moving the publish breaks dfe-engine (#75) |
-| Confuse the two gRPC ports | 6000 is dfe-receiver's external Vector protocol, 50051 is dfe-loader's internal `DfeTransport/Push` | Different protocols for different audiences, and the binding split is the tell: 6000 binds `DFE_INGRESS_BIND_HOST` (`0.0.0.0`), 50051 binds `DFE_BIND_HOST` (`127.0.0.1`) |
+| Remap the published ClickHouse port with `CLICKHOUSE_HTTP_PORT` | Set `CLICKHOUSE_HTTP_HOST_PORT` and `CLICKHOUSE_NATIVE_HOST_PORT` | `CLICKHOUSE_HTTP_PORT` and `CLICKHOUSE_NATIVE_PORT` are also the ports dfe-engine dials inside the network, so moving them breaks the engine. The `*_HOST_PORT` pair moves the publish alone (#75) |
+| Confuse the two gRPC listeners | Host 6000 is dfe-receiver's external Vector protocol, host 50051 is dfe-loader's internal `DfeTransport/Push` on its container port 6000 | Different protocols for different audiences, and the binding split is the tell: the receiver binds `DFE_INGRESS_BIND_HOST` (`0.0.0.0`), the loader binds `DFE_BIND_HOST` (`127.0.0.1`). Inside the network both are `:6000` |
 | Publish the UIs beyond loopback and leave `DFE_EXTERNAL_ORIGIN` alone | Set it to the address browsers actually use | `DFE_BIND_SCOPE=all` with a loopback origin builds HyperDX's frame-ancestors policy and every next-auth redirect from the wrong host, so the console comes up with its observability views blocked and sends logins to the wrong machine. The Makefile now refuses the combination (#108) |
 | Raise `REDPANDA_MEMORY` on its own | Raise `DFE_BROKER_MEMORY` above it | The broker gets at most the container limit less the host's `vm.min_free_kbytes`: `redpanda/start.sh` lowers `--memory` to that and logs a WARN naming the `DFE_BROKER_MEMORY` that restores it (`.env.example:229`, `.env.example:519`) |
 | Run Kafka-transport tests on a host that already has a broker on 9092 | `make test-e2e KAFKA_PLAINTEXT_PORT=29092 KAFKA_PLAINTEXT_HOST_PORT=29192`, or run the gRPC-only tests | The broker publishes 9092 and 19092 and collides with an always-on dev daemon (#36) |

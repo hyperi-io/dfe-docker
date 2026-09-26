@@ -52,6 +52,8 @@ Beyond resolution, these semantic assertions ride along.
 - No service that gates on a health endpoint may carry a CPU ceiling under
   `_MIN_HEALTH_CPUS` -- see that constant for why a lower ceiling takes the
   endpoint dark while the data path keeps working.
+- Every data-plane app service, generated instances included, must give its
+  drain the stop grace `_STOP_GRACE_SECONDS` names before Docker's SIGKILL.
 - The web-UI exposure dials must do what they claim: the bind scope moves every
   UI port and nothing else, and each unpublish fragment drops that UI's ports and
   no other service's. See `_UI_EXPOSURE`.
@@ -96,6 +98,7 @@ from _common import (
     COMPOSE_OVERRIDE_FILE,
     CONFIG_DIR,
     REPO_ROOT,
+    SERVICE_CONFIG_FILE,
     SERVICE_PROFILES_FILE,
     _config_enrichment_paths,
     _config_topics,
@@ -148,6 +151,15 @@ _KAFKA_BACKENDS = ("kafka-redpanda", "kafka-apache")
 # healthcheck at all still gets nothing, which is the honest limit here.
 _MIN_HEALTH_CPUS = 2.0
 _HEALTH_PATHS = ("/livez", "/readyz")
+
+# Seconds each data-plane app needs between SIGTERM and SIGKILL to drain the
+# source acknowledgements it holds, the Kubernetes tier's figures. Keyed by app, so
+# a per-source service or a generated instance of it is held to the same floor.
+_STOP_GRACE_SECONDS = {app: 45 for app in SERVICE_CONFIG_FILE} | {
+    "dfe-transform-vector": 90
+}
+_DURATION_PART = re.compile(r"(\d+(?:\.\d+)?)(h|ms|m|s|us|ns)")
+_DURATION_SCALE = {"h": 3600.0, "m": 60.0, "s": 1.0, "ms": 1e-3, "us": 1e-6, "ns": 1e-9}
 
 # Retired health paths. The whole surface is /livez, /readyz and /metrics, and
 # these 404 on every image the stack pins.
@@ -219,6 +231,7 @@ _COMPOSE_FILE_PREFIX = "COMPOSE_FILE="
 _FRAGMENT_DIALS = {
     "DFE_AUTH_RESOLVED": "true",
     "DFE_INSTANCES_RESOLVED": "true",
+    "DFE_PREFIX_RESOLVED": "true",
     "DFE_OTEL_RESOLVED": "true",
     "DFE_CONTAINER_LOGS_ENABLED": "true",
     "DFE_INFRA_UIS_EXTERNAL": "false",
@@ -264,12 +277,12 @@ _DFE_OWNED_SERVICES = {
     "dfe-fetcher",
     "dfe-loader",
     "dfe-receiver",
+    "dfe-transform-e2e-vrl-filebeat",
     "dfe-transform-elastic",
     "dfe-transform-elastic-cisco-ios",
     "dfe-transform-vector",
     "dfe-transform-vector-filebeat",
     "dfe-transform-vrl",
-    "dfe-transform-vrl-filebeat",
     "dfe-ui",
 }
 
@@ -598,6 +611,61 @@ def _health_cpu_failures(*, env: dict[str, str], files: list[str]) -> list[str]:
                 "worker thread and takes the health port dark while the data path keeps working"
             )
     return failures
+
+
+def _duration_seconds(text: str) -> float | None:
+    """Return a compose duration such as `45s` or `1m10s` in seconds, else None."""
+    parts = _DURATION_PART.findall(text)
+    if not (parts) or "".join(number + unit for number, unit in parts) != text:
+        return None
+    return sum(float(number) * _DURATION_SCALE[unit] for number, unit in parts)
+
+
+# A static extra-instance service named off the `<app>-<name>` shape on purpose
+# (dfe-engine names a real per-source instance the same way, and Compose merges
+# two services sharing a name rather than refusing), so its app has to be named
+# here instead of read off its own prefix.
+_APP_ALIASES = {"dfe-transform-e2e-vrl-filebeat": "dfe-transform-vrl"}
+
+
+def _app_of(service: str) -> str | None:
+    """Return the data-plane app a compose service runs, or None for any other service.
+
+    Matched on the service name, so `dfe-transform-vector-filebeat` and a
+    generated `dfe-loader-<instance>` count, while the `contract-*` one-shots
+    running the same images do not. `_APP_ALIASES` covers a service whose name
+    does not start with its app's, for the reason given there.
+    """
+    if service in _APP_ALIASES:
+        return _APP_ALIASES[service]
+    for app in sorted(_STOP_GRACE_SECONDS, key=len, reverse=True):
+        if service == app or service.startswith(f"{app}-"):
+            return app
+    return None
+
+
+def _stop_grace_failures(*, config: dict) -> list[str]:
+    """Return one message per data-plane app service Docker would SIGKILL mid-drain."""
+    failures = []
+    for name, service in sorted(config.get("services", {}).items()):
+        app = _app_of(name)
+        if app is None:
+            continue
+        want = _STOP_GRACE_SECONDS[app]
+        raw = str(service.get("stop_grace_period") or "")
+        got = _duration_seconds(raw) if (raw) else None
+        if got is None or got < want:
+            failures.append(
+                f"{name}: stop_grace_period is {raw or 'unset, so Docker gives 10s'}, "
+                f"under the {want}s its drain of held acknowledgements needs"
+            )
+    return failures
+
+
+def _stop_grace_path_failures(*, env: dict[str, str], files: list[str]) -> list[str]:
+    """Return the stop-grace failures of one compose file set, as it resolves."""
+    config = _config_json(env=env, files=files)
+    return [] if config is None else _stop_grace_failures(config=config)
 
 
 def _render_local_overlay() -> None:
@@ -1147,6 +1215,20 @@ def main() -> int:
         f"on all {len(paths)} path(s)"
     )
     _print(msg="No healthcheck targets a retired health path")
+
+    grace_failures = [
+        f"{label}: {message}"
+        for label, files in paths
+        for message in _stop_grace_path_failures(env=env, files=files)
+    ]
+    for message in grace_failures:
+        _print(msg=f"FAIL {message}")
+    if grace_failures:
+        return 1
+    _print(
+        msg="Every data-plane app service waits out its drain before SIGKILL "
+        f"on all {len(paths)} path(s)"
+    )
 
     wiring_failures, wiring_made = _transform_wiring_failures()
     for message in wiring_failures:

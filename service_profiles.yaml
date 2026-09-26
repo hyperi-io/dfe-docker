@@ -55,8 +55,6 @@ profiles:
     hyperdx: true
     otel: true
     services:
-      dfe-archiver:
-        config_path: archiver/grpc.yaml
       dfe-loader:
         config_path: loader/grpc.yaml
       dfe-receiver:
@@ -73,6 +71,8 @@ profiles:
     services:
       dfe-archiver:
         config_path: archiver/kafka.yaml
+      dfe-fetcher:
+        config_path: fetcher/kafka.yaml
       dfe-loader:
         config_path: loader/kafka.yaml
       dfe-receiver:
@@ -169,7 +169,7 @@ profiles:
         config_path: receiver/kafka.yaml
       dfe-transform-vrl:
         config_path: transform-vrl/main.yaml
-      dfe-transform-vrl-filebeat:
+      dfe-transform-e2e-vrl-filebeat:
         config_path: transform-vrl/filebeat.yaml
 
   # The same per-source shape as kafka-filebeat, with dfe-transform-vector doing
@@ -276,6 +276,18 @@ profiles:
         config_path: receiver/grpc-transform-vrl.yaml
       dfe-transform-vrl:
         config_path: transform-vrl/grpc.yaml
+
+  # The same direct chain with dfe-transform-vector in the middle, whose Vector
+  # child sends every record on through the supervisor's bridge.
+  grpc-receiver-transform-vector:
+    transport: grpc
+    services:
+      dfe-loader:
+        config_path: loader/grpc.yaml
+      dfe-receiver:
+        config_path: receiver/grpc-transform-vector.yaml
+      dfe-transform-vector:
+        config_path: transform-vector/grpc.yaml
 
   grpc-fetcher:
     transport: grpc

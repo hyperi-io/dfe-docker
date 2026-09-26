@@ -31,6 +31,7 @@ from __future__ import annotations
 import os
 from pathlib import Path
 
+import container_prefix
 import instances
 from _common import (
     CONFIG_DIR,
@@ -143,12 +144,12 @@ SERVICE_TO_CONFIG_VAR = {
     "dfe-fetcher": "DFE_FETCHER_CONFIG",
     "dfe-loader": "DFE_LOADER_CONFIG",
     "dfe-receiver": "DFE_RECEIVER_CONFIG",
+    "dfe-transform-e2e-vrl-filebeat": "DFE_TRANSFORM_VRL_FILEBEAT_CONFIG",
     "dfe-transform-elastic": "DFE_TRANSFORM_ELASTIC_CONFIG",
     "dfe-transform-elastic-cisco-ios": "DFE_TRANSFORM_ELASTIC_CISCO_IOS_CONFIG",
     "dfe-transform-vector": "DFE_TRANSFORM_VECTOR_CONFIG",
     "dfe-transform-vector-filebeat": "DFE_TRANSFORM_VECTOR_FILEBEAT_CONFIG",
     "dfe-transform-vrl": "DFE_TRANSFORM_VRL_CONFIG",
-    "dfe-transform-vrl-filebeat": "DFE_TRANSFORM_VRL_FILEBEAT_CONFIG",
 }
 
 # The engine is the Compose stand-in for the ConfigMap an app's chart renders on
@@ -181,12 +182,12 @@ SERVICES = [
     "dfe-fetcher",
     "dfe-loader",
     "dfe-receiver",
+    "dfe-transform-e2e-vrl-filebeat",
     "dfe-transform-elastic",
     "dfe-transform-elastic-cisco-ios",
     "dfe-transform-vector",
     "dfe-transform-vector-filebeat",
     "dfe-transform-vrl",
-    "dfe-transform-vrl-filebeat",
 ]
 
 TRANSPORT_TYPES = ["grpc", "kafka"]
@@ -257,6 +258,15 @@ def _instance_services(*, profile: str, renders: bool) -> list[str]:
             msg=f"dfe-engine named instances of {', '.join(unknown)}, which this repo "
             "declares no compose service for. Add one, or every source bound to it is "
             "stored and never run",
+        )
+    clashing = instances.colliding(found)
+    if clashing:
+        raise _ProfileError(
+            header=profile,
+            msg=f"{', '.join(clashing)} would be a per-instance service Compose has to "
+            "merge into a static service of the same name. Rename the static service, "
+            "or the source, so this deployment does not silently take the other's "
+            "command and lose its ports",
         )
     instances.write(found)
     return instances.services(found)
@@ -430,6 +440,13 @@ def main() -> int:
         # decides whether its instance index is this deployment's or a leftover.
         renders = (active_profile in PROJECTED_PROFILES) and footprint["core"]
         instance_services = _instance_services(profile=active_profile, renders=renders)
+        try:
+            prefixed = container_prefix.write(
+                os.environ.get(container_prefix.PREFIX_ENV_VAR, "").strip(),
+                instance_services,
+            )
+        except container_prefix.PrefixError as error:
+            raise _ProfileError(header=active_profile, msg=str(error)) from None
 
         # ClickHouse stays out of this list -- it starts via its compose profile
         # and the depends_on of whatever needs it. DFE_SERVICES is also what
@@ -571,6 +588,9 @@ def main() -> int:
         lines.append(
             f"export DFE_INSTANCES_RESOLVED := {'true' if instance_services else 'false'}"
         )
+        # Whether the Makefile chains the container-prefix fragment, for the same
+        # reason and on the same terms.
+        lines.append(f"export DFE_PREFIX_RESOLVED := {'true' if prefixed else 'false'}")
 
         new_content = "\n".join(lines) + "\n"
         if (

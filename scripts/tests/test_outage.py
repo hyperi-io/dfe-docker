@@ -12,7 +12,9 @@ The load is driven against a real HTTP server on loopback, and the readers are
 fed the documents docker and rpk actually print.
 """
 
+import base64
 import json
+import re
 import socket
 import threading
 import time
@@ -22,7 +24,7 @@ import pytest
 
 import _outage
 import resolve_profile
-from _common import CONFIG_DIR, SERVICE_PROFILES_FILE
+from _common import CONFIG_DIR, SERVICE_PROFILES_FILE, _config_topics
 
 
 def test_a_record_marker_round_trips_to_its_sequence_number() -> None:
@@ -45,15 +47,417 @@ def test_a_marker_from_another_run_or_test_is_not_this_loads(marker: str) -> Non
     assert _outage.seq_of(marker, "e2e-1-kafka-outage") is None
 
 
-def _sent(seq: int, status: int | None, *, phase: str = "during", source: str = "main"):
+def _sent(
+    seq: int,
+    status: int | None,
+    *,
+    phase: str = "during",
+    source: str = "main",
+    started: float = 0.0,
+    seconds: float = 0.1,
+):
     return _outage.Sent(
         seq=seq,
         source=source,
         phase=phase,
         status=status,
         error="" if status is not None else "ConnectionRefusedError",
-        seconds=0.1,
+        seconds=seconds,
+        started=started,
     )
+
+
+def _plan(outage: dict) -> _outage.OutagePlan:
+    return _outage.outage_plan(outage, 60, default_workers=4, default_interval=0.5)
+
+
+def test_a_plan_with_only_a_service_is_a_graceful_stop_under_the_default_load() -> None:
+    plan = _plan({"service": "dfe-loader"})
+
+    assert plan.service == "dfe-loader"
+    assert plan.seconds == 60
+    assert plan.signal == "TERM"
+    assert (plan.workers, plan.interval) == (4, 0.5)
+    assert plan.loss == "forbidden"
+    assert not (plan.pause_service or plan.spool_service or plan.poison_file)
+    assert not (plan.dead_letter_service or plan.archive_services)
+
+
+def test_a_kill_under_a_pause_is_read_whole() -> None:
+    plan = _plan(
+        {
+            "service": "dfe-receiver",
+            "signal": "kill",
+            "seconds": "20",
+            "pause": {"service": "kafka", "seconds": 10},
+            "workers": 16,
+            "interval": 0,
+            "loss": "tolerated",
+            "spool": {
+                "service": "dfe-receiver",
+                "path": "/tmp/spool",
+                "must_replay": True,
+            },
+            "sources": {"main": "tests/e2e/data/events.jsonl"},
+        },
+    )
+
+    assert plan.signal == "KILL"
+    assert plan.seconds == 20
+    assert (plan.workers, plan.interval) == (16, 0.0)
+    assert (plan.pause_service, plan.pause_seconds) == ("kafka", 10)
+    assert plan.loss == "tolerated"
+    assert (plan.spool_service, plan.spool_path) == ("dfe-receiver", "/tmp/spool")
+    assert plan.spool_must_replay
+    assert not plan.spool_must_stay_empty
+    assert plan.sources == {"main": "tests/e2e/data/events.jsonl"}
+
+
+@pytest.mark.parametrize("loss", _outage.LOSS_MODES)
+def test_every_loss_mode_is_read(loss: str) -> None:
+    assert _plan({"service": "dfe-loader", "loss": loss}).loss == loss
+
+
+def test_poison_and_its_dead_letters_are_read_together() -> None:
+    plan = _plan(
+        {
+            "service": "dfe-loader",
+            "poison": {"data_file": "tests/e2e/data/poison.jsonl", "every": 10},
+            "dead_letters": {"service": "dfe-loader", "path": "/var/spool/dfe/dlq"},
+        }
+    )
+
+    assert (plan.poison_file, plan.poison_every) == ("tests/e2e/data/poison.jsonl", 10)
+    assert plan.poison_limit == 0
+    assert (plan.dead_letter_service, plan.dead_letter_path) == (
+        "dfe-loader",
+        "/var/spool/dfe/dlq",
+    )
+
+
+def test_a_dead_letter_count_alone_needs_a_single_poison_record() -> None:
+    plan = _plan(
+        {
+            "service": "dfe-transform-vector",
+            "poison": {"data_file": "p.jsonl", "every": 10, "limit": 1},
+            "dead_letters": {"service": "dfe-transform-vector"},
+        }
+    )
+
+    assert (plan.poison_limit, plan.dead_letter_path) == (1, "")
+
+
+def test_an_archive_names_every_archiver_it_reads() -> None:
+    plan = _plan(
+        {
+            "service": "dfe-archiver-2",
+            "archive": {
+                "services": ["dfe-archiver", "dfe-archiver-2"],
+                "path": "/var/data/archive",
+            },
+        }
+    )
+
+    assert plan.archive_services == ("dfe-archiver", "dfe-archiver-2")
+    assert plan.archive_path == "/var/data/archive"
+
+
+def test_a_pause_alone_is_an_outage_that_takes_nothing_down() -> None:
+    plan = _plan(
+        {"pause": {"service": "dfe-loader", "seconds": 40}, "expect_refusals": True}
+    )
+
+    assert plan.service == ""
+    assert plan.seconds == 0
+    assert plan.pause_seconds == 40
+    assert plan.expect_refusals
+
+
+@pytest.mark.parametrize(
+    "outage,complaint",
+    [
+        ({}, "no 'service'"),
+        ({"service": "dfe-loader", "expect_los": True}, "unknown key(s): expect_los"),
+        ({"service": "dfe-loader", "signal": "HUP"}, "'signal' must be one of"),
+        ({"service": "dfe-loader", "seconds": 0}, "whole number above 0"),
+        ({"service": "dfe-loader", "seconds": True}, "whole number above 0"),
+        ({"service": "dfe-loader", "seconds": "soon"}, "whole number above 0"),
+        ({"pause": {"seconds": 10}}, "'pause' names no 'service'"),
+        ({"pause": {"service": "dfe-loader"}}, "'pause' 'seconds'"),
+        (
+            {"service": "dfe-loader", "pause": {"service": "dfe-loader", "seconds": 5}},
+            "cannot freeze the service it takes down",
+        ),
+        (
+            {"pause": {"service": "dfe-loader", "seconds": 5}, "seconds": 20},
+            "need a 'service'",
+        ),
+        (
+            {"service": "dfe-loader", "pause": {"service": "kafka", "secs": 5}},
+            "unknown key(s): secs",
+        ),
+        (
+            {"service": "dfe-loader", "spool": {"service": "dfe-receiver"}},
+            "needs 'service' and 'path'",
+        ),
+        (
+            {"service": "dfe-loader", "spool": "dfe-receiver"},
+            "'spool' must map",
+        ),
+        (
+            {
+                "service": "dfe-loader",
+                "spool": {"service": "a", "path": "/p", "must_replay": "yes"},
+            },
+            "'must_replay' must be true or false",
+        ),
+        ({"service": "dfe-loader", "expect_refusals": "yes"}, "must be true or false"),
+        ({"service": "dfe-loader", "expect_loss": True}, "unknown key(s): expect_loss"),
+        ({"service": "dfe-loader", "loss": "some"}, "'loss' must be one of"),
+        (
+            {"service": "dfe-loader", "poison": {"data_file": "p.jsonl", "every": 10}},
+            "go together",
+        ),
+        (
+            {"service": "dfe-loader", "dead_letters": {"service": "a", "path": "/d"}},
+            "go together",
+        ),
+        (
+            {
+                "service": "dfe-loader",
+                "poison": {"data_file": "p.jsonl", "every": 1},
+                "dead_letters": {"service": "a", "path": "/d"},
+            },
+            "must leave good records between",
+        ),
+        (
+            {"service": "dfe-loader", "poison": {"data_file": "p.jsonl"}},
+            "needs 'data_file' and 'every'",
+        ),
+        (
+            {
+                "service": "dfe-loader",
+                "poison": {"data_file": "p.jsonl", "every": 10},
+                "dead_letters": {"service": "a"},
+            },
+            "set poison 'limit: 1'",
+        ),
+        (
+            {
+                "service": "dfe-loader",
+                "poison": {"data_file": "p.jsonl", "every": 10, "limit": 0},
+                "dead_letters": {"service": "a", "path": "/d"},
+            },
+            "'limit' must be a whole number above 0",
+        ),
+        (
+            {
+                "service": "dfe-loader",
+                "poison": {"data_file": "p.jsonl", "every": 10},
+                "dead_letters": {"path": "/d"},
+            },
+            "needs 'service'",
+        ),
+        (
+            {"service": "dfe-loader", "archive": {"services": "a", "path": "/a"}},
+            "must list the archivers",
+        ),
+        (
+            {"service": "dfe-loader", "archive": {"services": ["a"]}},
+            "needs 'services' and 'path'",
+        ),
+        ({"service": "dfe-loader", "sources": ["main"]}, "'sources' must map"),
+        ({"service": "dfe-loader", "workers": 0}, "'workers' must be a whole number"),
+        ({"service": "dfe-loader", "workers": 2.5}, "'workers' must be a whole number"),
+        ({"service": "dfe-loader", "interval": -1}, "'interval' must be a number"),
+        ({"service": "dfe-loader", "interval": "fast"}, "'interval' must be a number"),
+        ({"service": "dfe-loader", "interval": True}, "'interval' must be a number"),
+    ],
+)
+def test_a_plan_refuses_what_it_cannot_run(outage: dict, complaint: str) -> None:
+    with pytest.raises(ValueError, match=re.escape(complaint)):
+        _plan(outage)
+
+
+def test_silence_is_excused_only_while_the_ingress_was_down() -> None:
+    sent = [
+        _sent(0, 202, started=100.0),
+        _sent(1, None, started=99.0, seconds=2.0),
+        _sent(2, None, started=110.0),
+        _sent(3, None, started=125.0),
+        _sent(4, None, started=90.0, seconds=1.0),
+    ]
+
+    excused, unexcused = _outage.unanswered(sent, (100.5, 120.0))
+
+    assert [record.seq for record in excused] == [1, 2]
+    assert [record.seq for record in unexcused] == [3, 4]
+
+
+def test_a_graceful_stop_owes_an_answer_to_what_was_in_flight() -> None:
+    sent = [
+        _sent(1, None, started=99.0, seconds=2.0),
+        _sent(2, None, started=110.0),
+    ]
+
+    excused, unexcused = _outage.unanswered(sent, (100.5, 120.0), in_flight=False)
+
+    assert [record.seq for record in excused] == [2]
+    assert [record.seq for record in unexcused] == [1]
+
+
+def test_no_silence_is_excused_when_the_ingress_stayed_up() -> None:
+    sent = [_sent(0, None, started=110.0), _sent(1, 503, started=111.0)]
+
+    excused, unexcused = _outage.unanswered(sent, None)
+
+    assert excused == []
+    assert [record.seq for record in unexcused] == [0]
+
+
+def test_row_counts_are_read_for_this_loads_markers_only() -> None:
+    printed = (
+        "e2e-1-loader-kill-grpc-000001\t1\n"
+        "e2e-1-loader-kill-grpc-000002\t3\n"
+        "e2e-2-loader-kill-grpc-000003\t1\n"
+        "e2e-1-loader-kill-grpc-000004\tnot-a-count\n"
+        "\n"
+    )
+
+    assert _outage.marker_counts(printed, "e2e-1-loader-kill-grpc") == {1: 1, 2: 3}
+
+
+def test_the_landing_tally_counts_loss_and_duplicates_by_phase() -> None:
+    accepted = {0: "before", 1: "during", 2: "during", 3: "after"}
+    counts = {0: 1, 1: 2, 3: 3, 9: 2}
+    phases = {**accepted, 9: "during"}
+
+    landing = _outage.tally_landing(accepted, counts, phases)
+
+    assert (landing.accepted, landing.landed) == (4, 3)
+    assert landing.missing == [2]
+    assert landing.lost_by_phase == {"during": 1}
+    assert landing.duplicated_by_phase == {"during": 2, "after": 1}
+    assert landing.duplicated == 3
+    assert landing.extra_rows == 4
+
+
+def test_nothing_accepted_and_nothing_landed_is_no_loss() -> None:
+    landing = _outage.tally_landing({}, {}, {})
+
+    assert (landing.accepted, landing.landed, landing.missing) == (0, 0, [])
+    assert landing.duplicated == 0
+
+
+def test_a_file_counts_as_written_when_new_or_grown() -> None:
+    before = {"grpc/loader/0": 10, "grpc/loader/lock": 0}
+    after = {"grpc/loader/0": 10, "grpc/loader/lock": 0, "grpc/loader/1": 0}
+
+    assert _outage.grown(before, after) == ["grpc/loader/1"]
+    assert _outage.grown(before, {**after, "grpc/loader/0": 11}) == [
+        "grpc/loader/0",
+        "grpc/loader/1",
+    ]
+    assert _outage.grown(before, before) == []
+    assert _outage.grown({}, {}) == []
+
+
+def test_markers_are_counted_once_a_line_for_this_load_only() -> None:
+    data = (
+        b'{"message":"dfe pipeline check e2e-1-spill-000003",'
+        b'"_tags":{"marker":"e2e-1-spill-000003"}}\n'
+        b"\x00\x01e2e-1-spill-000003\xffe2e-1-spill-0000041"
+        b"e2e-2-spill-000005e2e-1-spill-000007"
+    )
+
+    assert _outage.count_markers(data, "e2e-1-spill") == {3: 2, 7: 1}
+    assert _outage.markers_in(data, "e2e-1-spill") == {3, 7}
+    assert _outage.markers_in(b"", "e2e-1-spill") == set()
+
+
+def test_zstd_frames_between_spool_headers_are_read() -> None:
+    zstd = pytest.importorskip("compression.zstd")
+    first = zstd.compress(b'{"_marker":"e2e-1-spill-000001"}')
+    second = zstd.compress(b'{"_marker":"e2e-1-spill-000002"}')
+    spooled = b"HDR1" + first + b"\x00\x00HDR2" + second + b"\x00"
+
+    records = _outage.zstd_frames(spooled)
+
+    assert _outage.markers_in(records, "e2e-1-spill") == {1, 2}
+    assert _outage.zstd_frames(b"no frame here") == b""
+
+
+def test_a_dead_letter_is_found_in_its_base64_payload() -> None:
+    def entry(payload: bytes) -> str:
+        return json.dumps(
+            {"reason": "sink_rejected", "payload": base64.b64encode(payload).decode()}
+        )
+
+    ndjson = "\n".join(
+        [
+            entry(b'{"_marker":"e2e-1-poison-000009","big":1}'),
+            entry(b'{"_marker":"e2e-2-poison-000019"}'),
+            json.dumps({"reason": "sink_rejected", "payload": "not base64!"}),
+            json.dumps({"reason": "no payload"}),
+            "not json",
+            entry(b'{"_marker":"e2e-1-poison-000029"}'),
+        ]
+    )
+
+    assert _outage.dead_letter_markers(ndjson, "e2e-1-poison") == {9, 29}
+
+
+def test_a_metric_is_summed_across_labels_and_namespaces() -> None:
+    exposition = "\n".join(
+        [
+            "# HELP dfe_loader_pipeline_dead_letters_dropped_total Dead letters dropped.",
+            "# TYPE dfe_loader_pipeline_dead_letters_dropped_total counter",
+            'dfe_loader_pipeline_dead_letters_dropped_total{reason="full"} 2',
+            'dfe_loader_pipeline_dead_letters_dropped_total{reason="no_dlq"} 3',
+            "other_pipeline_dead_letters_dropped_total_created 1790231400",
+            "pipeline_dead_letters_dropped_total 1",
+            'dfe_loader_pipeline_records_total{stage="sink"} 50',
+        ]
+    )
+
+    total = _outage.metric_total(exposition, _outage.DEAD_LETTERS_DROPPED)
+    reasons = _outage.metric_by_label(
+        exposition, _outage.DEAD_LETTERS_DROPPED, "reason"
+    )
+
+    assert total == 6.0
+    assert reasons == {"full": 2.0, "no_dlq": 3.0, "": 1.0}
+    assert _outage.metric_total("dfe_loader_up 1\n", "pipeline_records_total") is None
+    assert _outage.metric_by_label("", "pipeline_records_total", "stage") == {}
+
+
+def test_a_label_value_may_carry_a_comma_or_a_quote() -> None:
+    exposition = 'x_dropped_total{reason="a,b",note="say \\"hi\\""} 4\n'
+
+    assert _outage.metric_samples(exposition, "dropped_total") == [
+        ({"reason": "a,b", "note": 'say \\"hi\\"'}, 4.0)
+    ]
+
+
+def test_a_drop_count_that_names_no_record_cannot_cover_a_lost_one() -> None:
+    # Poison 1 and 2 are in the files, 3 was dropped before the kill and again on
+    # replay, and 4 is gone: the count rose by 2 for two missing records.
+    accepted, lettered, rose = {1, 2, 3, 4}, {1, 2}, 2.0
+    missing = accepted - lettered
+
+    assert rose >= len(missing)
+    assert _outage.account_poison(accepted, lettered, 4, rose) == (set(), {3, 4})
+
+
+def test_the_drop_count_stands_for_the_only_poison_record_sent() -> None:
+    assert _outage.account_poison({7}, set(), 1, 2.0) == ({7}, set())
+    assert _outage.account_poison({7}, set(), 1, 0.0) == (set(), {7})
+    assert _outage.account_poison({7}, set(), 1, None) == (set(), {7})
+    assert _outage.account_poison({7}, set(), 2, 2.0) == (set(), {7})
+
+
+def test_a_record_in_the_files_needs_no_count() -> None:
+    assert _outage.account_poison({1, 2}, {1, 2, 9}, 2, None) == (set(), set())
 
 
 def test_only_a_2xx_obliges_the_record_to_land() -> None:
@@ -62,6 +466,38 @@ def test_only_a_2xx_obliges_the_record_to_land() -> None:
     assert not _sent(3, 503).accepted
     assert not _sent(4, 429).accepted
     assert not _sent(5, None).accepted
+
+
+def test_a_taken_poison_record_is_owed_a_dead_letter_not_a_row() -> None:
+    poison = _outage.Sent(
+        seq=9,
+        source="main",
+        phase="during",
+        status=200,
+        error="",
+        seconds=0.1,
+        poison=True,
+    )
+    sent = [_sent(8, 200), poison, _sent(10, 503)]
+
+    assert poison.answered_2xx
+    assert not poison.accepted
+    assert _outage.accepted_by_seq(sent, "main") == {8: "during"}
+    assert _outage.poison_by_seq(sent) == {9: "during"}
+    assert _outage.phase_by_seq(sent) == {8: "during", 9: "during", 10: "during"}
+
+
+def test_every_source_is_placed_by_phase() -> None:
+    sent = [_sent(0, 200, phase="before"), _sent(1, 200, source="vector")]
+
+    assert _outage.phase_by_seq(sent) == {0: "before", 1: "during"}
+
+
+def test_a_refusal_is_an_answer_that_is_not_a_2xx() -> None:
+    assert _outage.refused(_sent(1, 503))
+    assert _outage.refused(_sent(2, 429))
+    assert not _outage.refused(_sent(3, 200))
+    assert not _outage.refused(_sent(4, None))
 
 
 def test_a_request_nothing_answered_says_why() -> None:
@@ -154,6 +590,14 @@ def test_an_exited_container_is_not_running() -> None:
     assert "status is exited" in changes
 
 
+def test_a_container_reports_how_its_last_process_exited() -> None:
+    killed = json.loads(json.dumps(_RUNNING))
+    killed["State"].update(Status="exited", Pid=0, ExitCode=137)
+
+    assert _outage.container_state(killed).exit_code == 137
+    assert _outage.container_state(_RUNNING).exit_code == 0
+
+
 def test_die_and_oom_events_carry_their_exit_code() -> None:
     lines = "\n".join(
         [
@@ -218,6 +662,23 @@ def test_expected_consumers_count_each_subscriber_of_a_topic(tmp_path) -> None:
     counts = _outage.expected_consumers([archiver, vrl, vector, receiver])
 
     assert counts == {"main_land": 3}
+
+
+def test_a_direct_hop_reads_and_writes_no_topic(tmp_path) -> None:
+    both = tmp_path / "vector-direct.yaml"
+    both.write_text(
+        "dfe_source: main\nsource:\n  transport: direct\n  listen: 0.0.0.0:6000\n"
+        "sink:\n  transport: direct\n  endpoint: http://dfe-loader:6000\n",
+        encoding="utf-8",
+    )
+    sink_only = tmp_path / "vector-sink-direct.yaml"
+    sink_only.write_text(
+        "dfe_source: main\nsink:\n  transport: direct\n", encoding="utf-8"
+    )
+
+    assert _config_topics(path=both) == (set(), set(), "")
+    assert _config_topics(path=sink_only) == ({"main_land"}, set(), "")
+    assert _outage.expected_consumers([both, sink_only]) == {"main_land": 1}
 
 
 def test_a_pattern_subscriber_is_owed_a_commit_on_each_topic_it_reads(
@@ -447,6 +908,7 @@ def test_the_load_records_every_answer_in_the_phase_it_was_sent() -> None:
         interval=0.01,
         timeout=5,
     )
+    began = time.time()
     try:
         load.start()
         time.sleep(0.2)
@@ -463,6 +925,74 @@ def test_the_load_records_every_answer_in_the_phase_it_was_sent() -> None:
     assert phases == {"before", "during"}
     assert outcomes == {"200", "503"}
     assert sorted(record.seq for record in sent) == list(range(len(sent)))
+    assert all(began <= record.started <= time.time() for record in sent)
+
+
+class _Taking(BaseHTTPRequestHandler):
+    """Answer every request 200 and keep its body."""
+
+    bodies: list[dict] = []
+    lock = threading.Lock()
+
+    def do_POST(self) -> None:
+        body = json.loads(self.rfile.read(int(self.headers.get("Content-Length", 0))))
+        with self.lock:
+            self.bodies.append(body)
+        self.send_response(200)
+        self.send_header("Content-Length", "0")
+        self.end_headers()
+
+    def log_message(self, format: str, *args: object) -> None:
+        return
+
+
+def _poisoned_load(**poison: object) -> tuple[list[_outage.Sent], list[dict]]:
+    """Run a two-worker load through `before` and `during`, returning what went out."""
+    _Taking.bodies.clear()
+    server = ThreadingHTTPServer(("127.0.0.1", 0), _Taking)
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    load = _outage.SteadyLoad(
+        url=f"http://127.0.0.1:{server.server_address[1]}/ingest",
+        prefix="unit",
+        records=_outage.interleave({"main": [{"message": "x"}], "ios": [{"b": 1}]}),
+        workers=2,
+        interval=0.01,
+        timeout=5,
+        poison=[{"big": 10**30}],
+        **poison,
+    )
+    try:
+        load.start()
+        time.sleep(0.2)
+        load.phase = "during"
+        time.sleep(0.2)
+    finally:
+        load.stop()
+        server.shutdown()
+        server.server_close()
+    return load.sent(), list(_Taking.bodies)
+
+
+def test_poison_goes_out_one_in_every_n_once_the_outage_begins() -> None:
+    sent, bodies = _poisoned_load(poison_every=4)
+
+    poison = [record for record in sent if record.poison]
+    assert poison
+    assert all(record.phase != "before" for record in poison)
+    assert all(record.seq % 4 == 3 and record.source == "main" for record in poison)
+    assert {record.seq for record in sent if record.phase == "during"} - {
+        record.seq for record in poison
+    }
+    assert sum("big" in body for body in bodies) == len(poison)
+
+
+def test_a_poison_limit_stops_the_poison_and_not_the_load() -> None:
+    sent, bodies = _poisoned_load(poison_every=4, poison_limit=1)
+
+    during = [record for record in sent if record.phase == "during"]
+    assert sum(record.poison for record in sent) == 1
+    assert sum("big" in body for body in bodies) == 1
+    assert len(during) > 8
 
 
 def test_a_port_nothing_listens_on_is_no_answer() -> None:

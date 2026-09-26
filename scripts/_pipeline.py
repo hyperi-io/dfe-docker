@@ -72,7 +72,8 @@ def clickhouse_url() -> str:
     explicit = os.environ.get("CLICKHOUSE_URL", "").strip()
     if explicit:
         return explicit
-    return f"http://localhost:{env_or('CLICKHOUSE_HTTP_PORT', '8123')}"
+    port = env_or("CLICKHOUSE_HTTP_HOST_PORT", env_or("CLICKHOUSE_HTTP_PORT", "8123"))
+    return f"http://localhost:{port}"
 
 
 def http_get(url: str, timeout: int = 5) -> str:

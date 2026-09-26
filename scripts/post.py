@@ -151,16 +151,19 @@ CONTAINER_LOGS_KEY = "DFE_CONTAINER_LOGS_ENABLED"
 # them; these three are the data path plus the control plane.
 CONTAINER_LOG_SERVICES = ("dfe-engine", "dfe-loader", "dfe-receiver")
 
-# The services whose OWN metrics have to reach the otel database, as name prefixes
-# so a per-source instance (dfe-transform-vrl-filebeat) is covered by its app.
-# dfe-ui carries the OTel API and no SDK, and dfe-hunt-runner keeps scalo-py's
-# prometheus backend, so neither pushes.
+# The services whose OWN metrics have to reach the otel database, as name
+# prefixes so a per-source instance (dfe-transform-vrl-<source>) is covered by
+# its app. dfe-transform-e2e-vrl-filebeat is a static extra instance renamed off
+# that shape (check_compose.py _APP_ALIASES carries why), so it is named here in
+# full rather than covered by a prefix. dfe-ui carries the OTel API and no SDK,
+# and dfe-hunt-runner keeps scalo-py's prometheus backend, so neither pushes.
 OTEL_PUSHER_PREFIXES = (
     "dfe-archiver",
     "dfe-engine",
     "dfe-fetcher",
     "dfe-loader",
     "dfe-receiver",
+    "dfe-transform-e2e-vrl-filebeat",
     "dfe-transform-vector",
     "dfe-transform-vrl",
 )
@@ -411,6 +414,21 @@ def _container_name(service: str) -> str:
     )
     names = result.stdout.split()
     return names[0] if result.returncode == 0 and names else service
+
+
+def _container_started_at(name: str) -> str | None:
+    """When one container's current process started, as Docker reports it, or None."""
+    result = subprocess.run(
+        ["docker", "inspect", "--format", "{{.State.StartedAt}}", name],
+        capture_output=True,
+        check=False,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        timeout=API_EXEC_MARGIN_SECONDS,
+    )
+    started = result.stdout.strip()
+    return started if result.returncode == 0 and started[:1].isdigit() else None
 
 
 def _exec_request(
@@ -832,12 +850,30 @@ def _container_logs_expected() -> bool:
     return os.environ.get(CONTAINER_LOGS_KEY, "true").strip().lower() not in FALSY
 
 
+def _since_start(name: str) -> str:
+    """The otel_logs condition for rows one container wrote since its process started.
+
+    A quiet service logs at startup and then nothing, so a fixed freshness window
+    reads it as silent once the self test has run longer than the window. The log
+    driver stamps whole seconds, so the start is rounded down to one. With no
+    start to read, the freshness window is the fallback.
+    """
+    started = _container_started_at(name)
+    if started is None:
+        return f"Timestamp > now() - INTERVAL {OTEL_FRESH_WINDOW_SECONDS} SECOND"
+    return (
+        "Timestamp >= toStartOfSecond(parseDateTime64BestEffort("
+        f"'{escape_literal(started)}', 9))"
+    )
+
+
 def _verify_container_logs(*, database: str) -> int:
     """Prove each named service's stdout is reaching the otel log table.
 
     Freshness alone would pass on one container talking, so this asks per service:
     the log driver tags every stream with its container name, and the collector
-    turns that tag into ServiceName.
+    turns that tag into ServiceName. It counts what the RUNNING container wrote,
+    since its process started.
     """
     names = ", ".join(CONTAINER_LOG_SERVICES)
     _print(
@@ -851,7 +887,7 @@ def _verify_container_logs(*, database: str) -> int:
             count = ch_int(
                 f"SELECT count() FROM {database}.{OTEL_LOGS_TABLE} "
                 f"WHERE ServiceName = '{escape_literal(stamped)}' "
-                f"AND Timestamp > now() - INTERVAL {OTEL_FRESH_WINDOW_SECONDS} SECOND"
+                f"AND {_since_start(stamped)}"
             )
             found[stamped] = 0 if count is None else count
         return found
@@ -872,12 +908,15 @@ def _verify_container_logs(*, database: str) -> int:
     if silent:
         _print(
             msg=f"FAIL  no rows in {database}.{OTEL_LOGS_TABLE} for {', '.join(silent)} "
-            f"within {OTEL_TIMEOUT_SECONDS:.0f}s -- container stdout is not reaching "
-            "the collector"
+            f"since each container started, after {OTEL_TIMEOUT_SECONDS:.0f}s -- "
+            "container stdout is not reaching the collector"
         )
         return 1
     summary = ", ".join(f"{name}={count}" for name, count in sorted(counts.items()))
-    _print(msg=f"PASS  container stdout is landing per service ({summary})")
+    _print(
+        msg=f"PASS  container stdout is landing per service, rows since each "
+        f"container started ({summary})"
+    )
     return 0
 
 
@@ -922,13 +961,20 @@ def _metric_label_values(body: str, name: str, label: str) -> set[str]:
     return found
 
 
-def _verify_loader_subscription() -> Claim:
+def _verify_loader_subscription(*, ingest_url: str, table: str) -> Claim:
     """Prove the loader is fetching a topic, on a tier that has a bus.
 
     The loader discovers its topics from the broker, so a topic that never appears
     -- or one scalo suppresses in favour of a `_load` sibling -- leaves it ready
     and healthy with nothing to read. Asserted before the injection, because after
     it the same fault is indistinguishable from a broken loader or a missing table.
+
+    rdkafka reports a partition's lag only once it has fetched from it, and the
+    loader's own assigned-partitions gauge reads 0 on a group the broker shows
+    fully assigned, so a stack with no traffic yet shows nothing either way. Each
+    attempt sends one probe record through the ingest edge first: a subscribed
+    loader fetches it and names its topic, and one subscribed to nothing never
+    does.
     """
     if _profile_mk_value(key=TRANSPORT_BUS_KEY)[:1] != ["true"]:
         _print(msg="SKIP  this tier has no bus -- the loader is handed its events")
@@ -945,14 +991,24 @@ def _verify_loader_subscription() -> Claim:
         or LOADER_PROMETHEUS_PORT
     )
     base = f"http://{bind}:{port}"
-    _print(msg=f"Waiting for {LOADER_SERVICE} to be fetching a topic at {base}")
+    probe = f"{_run_id()}-probe"
+    _print(
+        msg=f"Waiting for {LOADER_SERVICE} to be fetching a topic at {base}, "
+        f"sending probe records tagged {probe}"
+    )
 
     def _fetching():
         try:
             body = http_get(f"{base}/metrics", timeout=5)
         except Exception:  # noqa: BLE001 - unreachable and not-yet-serving are one answer
             return set()
-        return _metric_label_values(body, LOADER_TOPIC_METRIC, LOADER_TOPIC_LABEL)
+        topics = _metric_label_values(body, LOADER_TOPIC_METRIC, LOADER_TOPIC_LABEL)
+        if not (topics):
+            try:
+                http_post(ingest_url, marked_event(marker=probe, source=table))
+            except Exception:  # noqa: BLE001 - a refused probe is another attempt
+                pass
+        return topics
 
     def _report(attempt, result):
         _print(
@@ -975,6 +1031,7 @@ def _verify_loader_subscription() -> Claim:
         )
         return Claim(asserted=True, failed=1)
     _print(msg=f"PASS  {LOADER_SERVICE} is fetching {', '.join(sorted(topics))}")
+    _print(msg=f"      note: the probe row(s) stay in {table} tagged {probe}")
     return HELD
 
 
@@ -1767,7 +1824,7 @@ def main() -> int:
 
     # Fails fast rather than joining the tally below: injecting into a pipeline
     # whose consumer is not attached proves nothing about the pipeline.
-    subscription = _verify_loader_subscription()
+    subscription = _verify_loader_subscription(ingest_url=ingest_url, table=table)
     if subscription.failed:
         return 1
 

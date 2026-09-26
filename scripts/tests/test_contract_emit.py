@@ -29,8 +29,9 @@ from pathlib import Path
 import pytest
 
 import check_compose
+import instances
 import resolve_profile
-from _common import ENV_DIR, PROJECTED_PROFILES
+from _common import ENV_DIR, PROJECTED_PROFILES, REPO_ROOT
 
 # Every app with a contract to emit. The two -filebeat services run one of these
 # images a second time, so they are deployments rather than apps and emit nothing.
@@ -49,19 +50,24 @@ _ENGINE_SERVICE = "dfe-engine"
 # The host `env/` tree inside the engine, where it writes each app's custom keys.
 _APP_ENV_MOUNT = "/app/app-env"
 # Written by this module and removed again: nothing in a checkout carries one,
-# because the engine writes them at run time.
-_CUSTOM_ENV = ENV_DIR / "loader.custom.env"
+# because the engine writes them at run time. Named for the compose service, the
+# name the engine writes (appmgmt/appconfig.py CUSTOM_ENV_SUFFIX).
+_CUSTOM_ENV = ENV_DIR / "dfe-loader.custom.env"
 _CUSTOM_KEY = "DFE_LOADER_CONTRACT_EMIT_TEST"
+# A per-source instance of a per-config app, declared by a fragment of its own.
+_INSTANCE_APP = "dfe-transform-vrl"
+_INSTANCE = "contract-emit-test"
+_INSTANCE_FRAGMENT = REPO_ROOT / "docker-compose.contract-emit-test.yml"
 
 
-def _model(**overrides: str) -> dict[str, dict]:
+def _model(*, files: list[str] | None = None, **overrides: str) -> dict[str, dict]:
     """Return the interpolated registry-path services, placeholders for the pins."""
     if shutil.which("docker") is None:
         pytest.skip("`docker compose config` renders the model these assert on")
     env, _ = check_compose._check_env()
     env.update(overrides)
     config = check_compose._config_json(
-        env=env, files=[check_compose.COMPOSE_FILE.name]
+        env=env, files=files or [check_compose.COMPOSE_FILE.name]
     )
     assert config is not None, "the registry compose path did not resolve"
     return config["services"]
@@ -198,6 +204,30 @@ def test_a_custom_key_reaches_the_app_it_is_written_for() -> None:
 
     assert services["dfe-loader"]["environment"][_CUSTOM_KEY] == "reached"
     assert _CUSTOM_KEY not in services["dfe-receiver"]["environment"]
+
+
+def test_an_instance_reads_the_custom_env_named_for_it() -> None:
+    """Keyed on the compose service, so two sources of one app never share a file."""
+    name = instances.service_name(_INSTANCE_APP, _INSTANCE)
+    custom = ENV_DIR / f"{name}.custom.env"
+    for path in (_INSTANCE_FRAGMENT, custom):
+        if path.exists():
+            pytest.skip(f"{path} already exists in this checkout")
+    _INSTANCE_FRAGMENT.write_text(
+        instances.fragment({_INSTANCE_APP: [_INSTANCE]}), encoding="utf-8"
+    )
+    custom.parent.mkdir(parents=True, exist_ok=True)
+    custom.write_text(f"{_CUSTOM_KEY}=instance\n", encoding="utf-8")
+    try:
+        services = _model(
+            files=[check_compose.COMPOSE_FILE.name, _INSTANCE_FRAGMENT.name]
+        )
+    finally:
+        _INSTANCE_FRAGMENT.unlink()
+        custom.unlink()
+
+    assert services[name]["environment"][_CUSTOM_KEY] == "instance"
+    assert _CUSTOM_KEY not in services[_INSTANCE_APP]["environment"]
 
 
 @pytest.mark.parametrize("profile", PROJECTED_PROFILES)

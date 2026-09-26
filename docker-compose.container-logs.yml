@@ -52,6 +52,8 @@ services:
     logging: *container-logs
   dfe-receiver:
     logging: *container-logs
+  dfe-transform-e2e-vrl-filebeat:
+    logging: *container-logs
   dfe-transform-elastic:
     logging: *container-logs
   dfe-transform-elastic-cisco-ios:
@@ -61,8 +63,6 @@ services:
   dfe-transform-vector-filebeat:
     logging: *container-logs
   dfe-transform-vrl:
-    logging: *container-logs
-  dfe-transform-vrl-filebeat:
     logging: *container-logs
   dfe-ui:
     logging: *container-logs

@@ -30,6 +30,45 @@
 # the test's table and `data_file`. Outage tests run only under
 # `make test-resilience`, never in the default `make test-e2e`.
 #
+# The rest of the block, each key optional:
+#   signal: TERM (default, `docker compose stop`) or KILL (SIGKILL, no drain).
+#   pause: {service, seconds} freezes a service first. The signal lands at the
+#     end of the pause, and the thaw follows it. With no `service` the test only
+#     pauses.
+#   workers, interval: the load, as that many workers each pausing that many
+#     seconds between requests (default 4 and 0.5).
+#   loss: what an accepted record that never lands means. `forbidden` (the
+#     default) fails on one, `required` fails when there is none, `unreliable`
+#     reports none as non-discriminating, `tolerated` only records the count.
+#   expect_refusals: true fails unless a request was refused during the outage.
+#   spool: {service, path, must_stay_empty, must_replay} reads a disk spool
+#     before the load, mid-outage and at the end. must_stay_empty fails on
+#     anything written, must_replay on any record spooled at the signal that
+#     never lands.
+#   poison: {data_file, every, limit} sends one of these records, which the sink
+#     refuses, in every `every` once the outage begins, `limit` of them at most.
+#     dead_letters: {service, path} is where each must end up: named in that
+#     file dead-letter queue, or, as the only poison record sent, counted in
+#     pipeline_dead_letters_dropped_total, which names no record. Never gone.
+#     With no `path` the count is all there is, so `limit` must be 1.
+#   archive: {services, path} requires every accepted record in an archived
+#     file too, reading the archive after a graceful stop of every archiver.
+# Silence from the ingress is excused for a request sent while the ingress
+# itself is down, and for one in flight at the signal only after a KILL.
+# Duplicates are counted and reported by phase, never failed.
+#
+# Two test-level keys shape the stack: `replicas: {service: count}` runs extra
+# copies of an app in its consumer group, and `topic_partitions` creates each
+# expected topic with that many partitions.
+#
+# Acknowledgements. The tests below that kill a hop prove no record the stack
+# answered 2xx is lost when every hop holds its acknowledgement until delivery
+# (`acknowledgements.enabled`, the default). Their `-acks-off` twins run the
+# same outage with every hop between the load and ClickHouse answering at
+# receipt, and must lose records, which shows the outage can lose what the
+# acknowledgements protect. The `-sigterm-` twins run a graceful stop instead
+# of a kill.
+#
 # A test whose archiver subscribes to its landing topic and archives to a
 # file:// destination also asserts the archiver wrote a file during the test.
 
@@ -39,7 +78,8 @@ global:
   # Only ClickHouse persists between tests (schema + accumulated rows; the
   # count-delta verify baselines per test). Kafka, kafbat and the DFE services
   # recreate fresh each test so a test always runs its own config and a stale
-  # broker cannot fail the next test's health gate.
+  # broker cannot fail the next test's health gate. The run takes them down at
+  # its end unless they were running before it started.
   persistent_services:
     - clickhouse
 
@@ -128,7 +168,7 @@ tests:
   # own topics moving, so their groups have to catch up too.
   - name: kafka-outage
     profile: kafka-resilience
-    expected_topics:
+    expected_topics: &resilience-topics
       - main_land
       - main_load
       - vector_land
@@ -138,7 +178,416 @@ tests:
     outage:
       service: kafka
       seconds: 60
-      sources:
+      sources: &resilience-sources
         main: tests/e2e/data/events.jsonl
         vector: tests/e2e/data/events.jsonl
         cisco-ios: tests/e2e/data/cisco-ios.jsonl
+
+  # A hop hard-killed 20 s into steady load and started again 20 s later. Every
+  # record answered 2xx has to land: with acknowledgements held, nothing was
+  # answered before the next hop confirmed it. Each killed hop's own next hop is
+  # frozen first, so it dies holding what it took meanwhile.
+  - name: loader-kill-grpc
+    profile: grpc-receiver
+    outage:
+      service: dfe-loader
+      signal: KILL
+      seconds: 20
+      pause:
+        service: clickhouse
+        seconds: 10
+
+  - name: transform-vrl-kill-grpc
+    profile: grpc-receiver-transform-vrl
+    outage:
+      service: dfe-transform-vrl
+      signal: KILL
+      seconds: 20
+      pause:
+        service: dfe-loader
+        seconds: 10
+
+  # At the default load the receiver holds a handful of records when it dies,
+  # too few for its acks-off twin to lose every run.
+  - name: receiver-kill-grpc-loader-paused
+    profile: grpc-receiver
+    outage:
+      service: dfe-receiver
+      signal: KILL
+      seconds: 20
+      pause:
+        service: dfe-loader
+        seconds: 10
+      workers: 16
+      interval: 0.01
+
+  - name: receiver-kill-kafka-broker-paused
+    profile: kafka-full
+    expected_topics:
+      - main_land
+    outage:
+      service: dfe-receiver
+      signal: KILL
+      seconds: 20
+      pause:
+        service: kafka
+        seconds: 10
+
+  # Kafka consumers commit only after delivery, so a killed one re-reads from
+  # its last commit: the controls for the four above.
+  - name: loader-kill-kafka
+    profile: kafka-resilience
+    expected_topics: *resilience-topics
+    outage:
+      service: dfe-loader
+      signal: KILL
+      seconds: 20
+      sources: *resilience-sources
+
+  - name: transform-vrl-kill-kafka
+    profile: kafka-resilience
+    expected_topics: *resilience-topics
+    outage:
+      service: dfe-transform-vrl
+      signal: KILL
+      seconds: 20
+      sources: *resilience-sources
+
+  # The same four kills with acknowledgements off on every hop to ClickHouse.
+  # Each must lose records: a control that cannot fail proves nothing.
+  - name: loader-kill-grpc-acks-off
+    profile: grpc-receiver
+    config_overrides:
+      dfe-loader: tests/e2e/config/loader-grpc-acks-off.yaml
+      dfe-receiver: tests/e2e/config/receiver-grpc-acks-off.yaml
+    outage:
+      service: dfe-loader
+      signal: KILL
+      seconds: 20
+      pause:
+        service: clickhouse
+        seconds: 10
+      loss: required
+
+  - name: transform-vrl-kill-grpc-acks-off
+    profile: grpc-receiver-transform-vrl
+    config_overrides:
+      dfe-loader: tests/e2e/config/loader-grpc-acks-off.yaml
+      dfe-receiver: tests/e2e/config/receiver-grpc-transform-vrl-acks-off.yaml
+      dfe-transform-vrl: tests/e2e/config/transform-vrl-grpc-acks-off.yaml
+    outage:
+      service: dfe-transform-vrl
+      signal: KILL
+      seconds: 20
+      pause:
+        service: dfe-loader
+        seconds: 10
+      loss: required
+
+  - name: receiver-kill-grpc-loader-paused-acks-off
+    profile: grpc-receiver
+    config_overrides:
+      dfe-loader: tests/e2e/config/loader-grpc-acks-off.yaml
+      dfe-receiver: tests/e2e/config/receiver-grpc-acks-off.yaml
+    outage:
+      service: dfe-receiver
+      signal: KILL
+      seconds: 20
+      pause:
+        service: dfe-loader
+        seconds: 10
+      workers: 16
+      interval: 0.01
+      loss: required
+
+  - name: receiver-kill-kafka-broker-paused-acks-off
+    profile: kafka-full
+    expected_topics:
+      - main_land
+    config_overrides:
+      dfe-loader: tests/e2e/config/loader-kafka-acks-off.yaml
+      dfe-receiver: tests/e2e/config/receiver-kafka-acks-off.yaml
+    outage:
+      service: dfe-receiver
+      signal: KILL
+      seconds: 20
+      pause:
+        service: kafka
+        seconds: 10
+      loss: required
+
+  # The six kills as graceful stops: SIGTERM, a drain, then SIGKILL only if the
+  # stop timeout runs out.
+  - name: loader-sigterm-grpc
+    profile: grpc-receiver
+    outage:
+      service: dfe-loader
+      signal: TERM
+      seconds: 20
+      pause:
+        service: clickhouse
+        seconds: 10
+
+  - name: transform-vrl-sigterm-grpc
+    profile: grpc-receiver-transform-vrl
+    outage:
+      service: dfe-transform-vrl
+      signal: TERM
+      seconds: 20
+      pause:
+        service: dfe-loader
+        seconds: 10
+
+  - name: receiver-sigterm-grpc-loader-paused
+    profile: grpc-receiver
+    outage:
+      service: dfe-receiver
+      signal: TERM
+      seconds: 20
+      pause:
+        service: dfe-loader
+        seconds: 10
+
+  - name: receiver-sigterm-kafka-broker-paused
+    profile: kafka-full
+    expected_topics:
+      - main_land
+    outage:
+      service: dfe-receiver
+      signal: TERM
+      seconds: 20
+      pause:
+        service: kafka
+        seconds: 10
+
+  - name: loader-sigterm-kafka
+    profile: kafka-resilience
+    expected_topics: *resilience-topics
+    outage:
+      service: dfe-loader
+      signal: TERM
+      seconds: 20
+      sources: *resilience-sources
+
+  - name: transform-vrl-sigterm-kafka
+    profile: kafka-resilience
+    expected_topics: *resilience-topics
+    outage:
+      service: dfe-transform-vrl
+      signal: TERM
+      seconds: 20
+      sources: *resilience-sources
+
+  # Disk spillover serves answers given at enqueue only. With acknowledgements
+  # off the spool fills while the loader is frozen. The kill loses what was in
+  # memory, and every record on the spool at the signal must replay after the
+  # restart and land.
+  - name: receiver-kill-spillover-acks-off
+    profile: grpc-receiver
+    config_overrides:
+      dfe-loader: tests/e2e/config/loader-grpc-acks-off.yaml
+      dfe-receiver: tests/e2e/config/receiver-grpc-spillover-acks-off.yaml
+    outage:
+      service: dfe-receiver
+      signal: KILL
+      seconds: 20
+      pause:
+        service: dfe-loader
+        seconds: 10
+      loss: tolerated
+      spool:
+        service: dfe-receiver
+        path: /tmp/dfe-receiver-spillover
+        must_replay: true
+
+  # With acknowledgements held, spillover opens no spool: the loader frozen
+  # past the receiver's hold is answered 503 and nothing reaches the disk.
+  - name: receiver-spillover-acks-on-builds-no-spool
+    profile: grpc-receiver
+    config_overrides:
+      dfe-receiver: tests/e2e/config/receiver-grpc-spillover.yaml
+    outage:
+      pause:
+        service: dfe-loader
+        seconds: 40
+      expect_refusals: true
+      spool:
+        service: dfe-receiver
+        path: /tmp/dfe-receiver-spillover
+        must_stay_empty: true
+
+  # A record ClickHouse refuses, one in every ten from the outage on, with good
+  # records behind it and the loader killed while holding both. The good ones
+  # land, and each refused one reaches the loader's file dead-letter queue or its
+  # dropped count without holding up the records behind it.
+  - name: loader-kill-grpc-poison
+    profile: grpc-receiver
+    config_overrides:
+      dfe-loader: tests/e2e/config/loader-grpc-dead-letters.yaml
+    outage:
+      service: dfe-loader
+      signal: KILL
+      seconds: 20
+      pause:
+        service: clickhouse
+        seconds: 10
+      poison:
+        data_file: tests/e2e/data/poison-integer-overflow.jsonl
+        every: 10
+      dead_letters:
+        service: dfe-loader
+        path: /var/spool/dfe/dlq
+
+  # The archiver stopped partway through a 30 s roll. Every accepted record has
+  # to be in an archived file once the archivers are back and stopped cleanly:
+  # duplicates pass, gaps fail.
+  - name: archiver-kill-mid-roll
+    profile: kafka-receiver-archiver
+    config_overrides: &archive-roll
+      dfe-archiver: tests/e2e/config/archiver-kafka-archive-roll.yaml
+    expected_topics:
+      - main_land
+    outage:
+      service: dfe-archiver
+      signal: KILL
+      seconds: 20
+      archive:
+        services: [dfe-archiver]
+        path: /var/data/archive
+
+  - name: archiver-sigterm-mid-roll
+    profile: kafka-receiver-archiver
+    config_overrides: *archive-roll
+    expected_topics:
+      - main_land
+    outage:
+      service: dfe-archiver
+      signal: TERM
+      seconds: 20
+      archive:
+        services: [dfe-archiver]
+        path: /var/data/archive
+
+  # Two archivers splitting a two-partition topic, one of them killed. Its
+  # partitions move to the other and back, and the pair's archive has no gap.
+  - name: archiver-pair-kill
+    profile: kafka-receiver-archiver
+    config_overrides: *archive-roll
+    replicas:
+      dfe-archiver: 2
+    topic_partitions: 2
+    expected_topics:
+      - main_land
+    outage:
+      service: dfe-archiver-2
+      signal: KILL
+      seconds: 20
+      archive:
+        services: [dfe-archiver, dfe-archiver-2]
+        path: /var/data/archive
+
+  # dfe-transform-vector killed while its Vector child is sending into a frozen
+  # loader. The receiver answers 2xx only for what the transform confirmed, so
+  # every record answered 2xx has to land.
+  - name: transform-vector-kill-grpc
+    profile: grpc-receiver-transform-vector
+    outage:
+      service: dfe-transform-vector
+      signal: KILL
+      seconds: 20
+      pause:
+        service: dfe-loader
+        seconds: 10
+
+  - name: transform-vector-kill-grpc-acks-off
+    profile: grpc-receiver-transform-vector
+    config_overrides:
+      dfe-loader: tests/e2e/config/loader-grpc-acks-off.yaml
+      dfe-receiver: tests/e2e/config/receiver-grpc-transform-vector-acks-off.yaml
+      dfe-transform-vector: tests/e2e/config/transform-vector-grpc-acks-off.yaml
+    outage:
+      service: dfe-transform-vector
+      signal: KILL
+      seconds: 20
+      pause:
+        service: dfe-loader
+        seconds: 10
+      loss: required
+
+  # One record over dfe-transform-vector's 4 KiB producer ceiling, then good
+  # records, and the transform killed. The receiver and the broker take the big
+  # one, so it dies at the transform's sink: it has to be counted as a dropped
+  # dead letter, and every good record has to land with the consumer group
+  # caught up, which no commit past an unreleased offset allows. The loader
+  # freeze starts the outage early, so the transform meets the big record
+  # before the kill and may meet it again on replay.
+  - name: transform-vector-kill-kafka-poison
+    profile: kafka-receiver-transform-vector
+    config_overrides:
+      dfe-transform-vector: tests/e2e/config/transform-vector-kafka-small-sink.yaml
+    expected_topics:
+      - main_land
+      - main_load
+    outage:
+      service: dfe-transform-vector
+      signal: KILL
+      seconds: 20
+      pause:
+        service: dfe-loader
+        seconds: 10
+      poison:
+        data_file: tests/e2e/data/poison-oversize.jsonl
+        every: 10
+        limit: 1
+      dead_letters:
+        service: dfe-transform-vector
+
+  # dfe-transform-elastic reading the bus and pushing to a loader frozen for
+  # 20 s, so it holds what it read with the offsets unreleased, then killed or
+  # stopped at the end of the freeze. Every accepted record has to land and the
+  # group catch up: a commit past an offset the transform had not released
+  # loses the records behind it.
+  - name: transform-elastic-kill-mid-hold
+    profile: kafka-elastic-cisco-ios
+    config_overrides: &elastic-hold
+      dfe-loader: config/loader/grpc.yaml
+      dfe-transform-elastic-cisco-ios: tests/e2e/config/transform-elastic-cisco-ios-direct-sink.yaml
+    expected_topics:
+      - main_land
+    outage:
+      service: dfe-transform-elastic-cisco-ios
+      signal: KILL
+      seconds: 20
+      pause:
+        service: dfe-loader
+        seconds: 20
+      sources: &cisco-ios-as-main
+        main: tests/e2e/data/cisco-ios.jsonl
+
+  - name: transform-elastic-sigterm-mid-hold
+    profile: kafka-elastic-cisco-ios
+    config_overrides: *elastic-hold
+    expected_topics:
+      - main_land
+    outage:
+      service: dfe-transform-elastic-cisco-ios
+      signal: TERM
+      seconds: 20
+      pause:
+        service: dfe-loader
+        seconds: 20
+      sources: *cisco-ios-as-main
+
+  # The loader frozen for five minutes and nothing killed. Every push the
+  # transform makes fails for the whole freeze, so a transform that exits after
+  # repeated send failures, or gives up on what it read, fails here.
+  - name: transform-elastic-loader-frozen
+    profile: kafka-elastic-cisco-ios
+    config_overrides: *elastic-hold
+    expected_topics:
+      - main_land
+    outage:
+      pause:
+        service: dfe-loader
+        seconds: 300
+      sources: *cisco-ios-as-main

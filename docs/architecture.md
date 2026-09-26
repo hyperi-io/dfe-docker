@@ -67,7 +67,7 @@ flowchart LR
 Transport is a per-profile choice, not a global one. On a `kafka-*` profile the
 ingest components produce to a `*_land` topic derived from the event's `_source`,
 and the loader consumes `topic_regex: .*_land`. On a `grpc-*` profile there is no
-broker -- the ingest components dial `dfe-loader:50051` directly.
+broker -- the ingest components dial `dfe-loader:6000` directly.
 
 The three transforms are bus-only today: each reads a topic and writes a topic.
 `dfe-archiver` runs on either -- it consumes the landing topics on Kafka and
@@ -78,8 +78,9 @@ and consumes `main_load`.
 ## What each tier runs, and what starts with nothing to do
 
 `slim` is the core data path alone: receiver, loader, engine, UI and HyperDX.
-`single` adds the broker and three more apps -- one archiver, one fetcher, one
-transform-vrl -- each started from a config that gives it no work.
+`single` adds the broker and four more apps -- one archiver, one fetcher, one
+transform-vrl, one transform-elastic -- each started from a config that gives it
+no work.
 
 An idle app is Ready, serves health and metrics, opens no broker connection and
 holds `pipeline_idle` at 1, so being deployed unconfigured costs a container and
@@ -123,17 +124,19 @@ mode, profile resolution and the checks working.
 
 | Piece | `kafka-filebeat`, on dfe-transform-vrl | `kafka-filebeat-vector`, on dfe-transform-vector |
 |---|---|---|
-| Compose service | `dfe-transform-vrl-filebeat`, the same image, its own metrics port | `dfe-transform-vector-filebeat`, likewise |
+| Compose service | `dfe-transform-e2e-vrl-filebeat`, the same image, its own metrics port | `dfe-transform-vector-filebeat`, likewise |
 | Config | `config/transform-vrl/filebeat.yaml` -- `filebeat_land` in, `filebeat_load` out | `config/transform-vector/filebeat.yaml` -- `dfe_source: filebeat-vector` derives both topics |
 | Program | `config/transform-vrl/transforms-filebeat/`, vendored from dfe-transform-vrl | `config/transform-vector/transforms-filebeat/`, the same VRL inside a Vector `remap`, vendored from dfe-transform-vector |
 | Loader | `config/loader/kafka-load-filebeat.yaml` lists `filebeat_load` alongside `main_load` | `config/loader/kafka-load-filebeat-vector.yaml` lists `filebeat-vector_load` |
 | Table | `dfe.filebeat`, from the `_load` topic name -- the loader strips the suffix and routes on it | ``dfe.`filebeat-vector` ``, the same way |
 | Enrichment data | `config/transform-vrl/data/`, mounted beside the program dir -- the transform scans that dir for programs | the same directory, mounted at `/etc/dfe-transform-vector/data` -- one table, not a copy per app |
 | Dev images | an override block plus `IMAGE_CONSUMERS` in `scripts/build_dev_images.py`, or `make dev` leaves it on the registry pin | the same |
-| Env file | `env.example/transform-vrl-filebeat.env` for its own overrides; `make init` copies it into `env/` | `env.example/transform-vector-filebeat.env` |
+| Env file | `env.example/transform-e2e-vrl-filebeat.env` for its own overrides; `make init` copies it into `env/` | `env.example/transform-vector-filebeat.env` |
 | Profile resolution | `SERVICES` and `SERVICE_TO_CONFIG_VAR` in `scripts/resolve_profile.py`, so a profile can run it without the passthrough instance | the same |
 | Check coverage | `_DFE_OWNED_SERVICES` in `scripts/check_compose.py`, which holds it to the `/livez` health surface | the same |
 | Metrics ports | a free host port (`DFE_TRANSFORM_VRL_FILEBEAT_PROMETHEUS_PORT`, 9097): every instance serves 9090 and two cannot publish one | the same (`DFE_TRANSFORM_VECTOR_FILEBEAT_PROMETHEUS_PORT`, 9098) |
+
+The VRL column's compose service breaks the `<app>-<name>` shape the Vector one still uses: dfe-engine names a real per-source instance of `dfe-transform-vrl` `dfe-transform-vrl-<source>`, and Compose merges two services sharing a name rather than refusing, so a static service literally called `dfe-transform-vrl-filebeat` took a real "filebeat" instance's command and lost its ports. A new static piece copying this shape keeps the app's name out of its own leading segment for the same reason.
 
 One port carries everything. The wrapper scrapes Vector's `internal_metrics` off
 its `prometheus_exporter` on loopback and registers the samples on scalo's own
@@ -192,7 +195,7 @@ flowchart LR
 `dfe-proxy` exists to give the UI and the engine API one origin, because the UI
 client calls the engine with a relative `/api/v1/...` base URL.
 
-## Two ports speak gRPC and they are not the same thing
+## Two gRPC listeners speak different protocols
 
 ```mermaid
 flowchart LR
@@ -204,15 +207,17 @@ flowchart LR
     loader["dfe-loader"]:::dfe
 
     client -->|external - Vector protocol :6000| receiver
-    receiver -->|internal - DfeTransport Push :50051| loader
+    receiver -->|internal - DfeTransport Push dfe-loader:6000| loader
 ```
 
-| Port | Owner | Protocol | Audience | Binds |
-|---|---|---|---|---|
-| 6000 | dfe-receiver | Vector protocol, an ingest source | external clients | `DFE_INGRESS_BIND_HOST` (`0.0.0.0`) |
-| 50051 | dfe-loader | `DfeTransport/Push`, internal transport | receiver, fetcher | `DFE_BIND_HOST` (`127.0.0.1`) |
+Both listen on 6000 inside their own container. The host ports differ because both are published.
 
-The binding split is the tell: 6000 is meant to be reachable, 50051 is not.
+| Container port | Host port | Owner | Protocol | Audience | Binds |
+|---|---|---|---|---|---|
+| 6000 | 6000 | dfe-receiver | Vector protocol, an ingest source | external clients | `DFE_INGRESS_BIND_HOST` (`0.0.0.0`) |
+| 6000 | 50051 | dfe-loader | `DfeTransport/Push`, internal transport | receiver, fetcher, transforms | `DFE_BIND_HOST` (`127.0.0.1`) |
+
+The binding split is the tell: the receiver's 6000 is meant to be reachable, the loader's is not. The loader's 6000 is the `push` port dfe-infra's `apps.yaml` declares, and dfe-engine refuses a loader `grpc.listen` on any other.
 
 ## Two independent selectors decide what runs
 

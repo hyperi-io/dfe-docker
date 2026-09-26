@@ -136,16 +136,23 @@ def _config_topics(*, path: Path) -> tuple[set[str], set[str], str]:
     them here too is what keeps such a config inside the wiring and topic-init
     checks rather than silently outside them. Named topics still win, exactly as
     they do in the app.
+
+    A `source` or `sink` on `transport: direct` is a gRPC hop, not the bus, so it
+    subscribes to or produces no topic whatever else it names.
     """
     subscribed: set[str] = set()
     produced: set[str] = set()
     regex = ""
     dfe_source = ""
     in_list = False
+    section = ""
+    direct: set[str] = set()
     for raw in path.read_text(encoding="utf-8", errors="replace").splitlines():
         line = raw.strip()
         if not (line) or line.startswith("#"):
             continue
+        if not (raw.startswith((" ", "\t"))):
+            section = line.split(":", 1)[0]
         if in_list and line.startswith("- "):
             subscribed.add(line[2:].strip().strip("\"'"))
             continue
@@ -156,9 +163,15 @@ def _config_topics(*, path: Path) -> tuple[set[str], set[str], str]:
             regex = line.split(": ", 1)[1].strip().strip("\"'")
         elif line.startswith("dfe_source: "):
             dfe_source = line.split(": ", 1)[1].strip().strip("\"'")
+        elif line == "transport: direct":
+            direct.add(section)
     if dfe_source:
         subscribed = subscribed or {f"{dfe_source}_land"}
         produced = produced or {f"{dfe_source}_load"}
+    if "source" in direct:
+        subscribed = set()
+    if "sink" in direct:
+        produced = set()
     return subscribed, produced, regex
 
 

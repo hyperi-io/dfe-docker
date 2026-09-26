@@ -1,0 +1,32 @@
+# Project:   dfe-docker
+# File:      tests/e2e/config/transform-elastic-cisco-ios-direct-sink.yaml
+# Purpose:   dfe-transform-elastic e2e config - the cisco_ios transform off main_land, pushing to the loader
+# Language:  YAML
+#
+# License:   BUSL-1.1
+# Copyright: (c) 2026 HYPERI PTY LIMITED
+#
+# The bus in, a direct push out. A frozen loader makes this instance hold what
+# it read, with its consumer offsets unreleased, which is the hold the elastic
+# kill tests signal into. It reads main_land, so the
+# load's own `_source` names the table every record lands in.
+
+pipeline_name: dfe-transform-elastic
+
+source:
+  name: filebeat.cisco_ios.default
+  transport: bus
+  brokers:
+    - kafka:9092
+  topics:
+    - main_land
+  group_id: dfe-transform-elastic-cisco-ios
+
+# dfe-transform-elastic v1.1.6 refuses a sink with no `topic`, on direct too.
+sink:
+  transport: direct
+  endpoint: http://dfe-loader:6000
+  topic: main_load
+
+geoip:
+  enabled: false

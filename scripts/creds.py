@@ -40,7 +40,10 @@ set one, so the operator is handed the address browsers use rather than one that
 resolves only on the box the stack runs on.
 
 Values are read out of .env with the same minimal parser compose uses. A key with
-no value reads as missing and is reported as such rather than printed blank.
+no value reads as missing and is reported as such rather than printed blank. The
+four keys that shape the URLs are taken from the environment first, the way the
+stack itself resolves them, so a port overridden at launch is the port printed. A
+password is only ever read from .env.
 """
 
 from __future__ import annotations
@@ -48,6 +51,7 @@ from __future__ import annotations
 import os
 import re
 import sys
+from collections.abc import Mapping
 from pathlib import Path
 
 from _common import (
@@ -99,6 +103,30 @@ _NEXT_STEPS = (
     "Retire the bootstrap admin from the wizard's last step once your own admin exists.",
     "Keep the break-glass password somewhere safe, then delete this file.",
 )
+
+# The launch environment beats .env for these in compose and the Makefile alike,
+# so the URLs must take it too.
+_ENVIRONMENT_FIRST_KEYS = (
+    "DFE_UI_PORT",
+    "DFE_ENGINE_PORT",
+    "DFE_EXTERNAL_ORIGIN",
+    "DFE_BIND_SCOPE",
+)
+
+
+def resolved_values(
+    *, dotenv: Mapping[str, str], environ: Mapping[str, str]
+) -> dict[str, str]:
+    """The .env values, with the URL keys the environment sets taking precedence.
+
+    Only the keys in _ENVIRONMENT_FIRST_KEYS: every other value, the passwords
+    included, comes from .env alone.
+    """
+    values = dict(dotenv)
+    for key in _ENVIRONMENT_FIRST_KEYS:
+        if key in environ:
+            values[key] = environ[key]
+    return values
 
 
 def _url(*, values: dict[str, str], port_key: str, default_port: str) -> str:
@@ -314,7 +342,7 @@ def main(argv: list[str] | None = None) -> int:
             msg="Missing -- run `make init` to mint this deployment's credentials",
         )
         return 1
-    values = _dotenv_values()
+    values = resolved_values(dotenv=_dotenv_values(), environ=os.environ)
     reveal = show_password(
         is_tty=sys.stdout.isatty(), setting=os.environ.get(_SHOW_KEY, "")
     )

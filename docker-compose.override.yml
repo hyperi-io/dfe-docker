@@ -57,7 +57,7 @@ services:
   dfe-transform-vrl:
     image: dfe-transform-vrl:local
 
-  dfe-transform-vrl-filebeat:
+  dfe-transform-e2e-vrl-filebeat:
     image: dfe-transform-vrl:local
 
   dfe-engine:

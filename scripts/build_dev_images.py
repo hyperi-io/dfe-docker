@@ -44,7 +44,7 @@ IMAGE_CONSUMERS: dict[str, tuple[str, ...]] = {
     "dfe-engine": ("dfe-hunt-runner",),
     "dfe-transform-elastic": ("dfe-transform-elastic-cisco-ios",),
     "dfe-transform-vector": ("dfe-transform-vector-filebeat",),
-    "dfe-transform-vrl": ("dfe-transform-vrl-filebeat",),
+    "dfe-transform-vrl": ("dfe-transform-e2e-vrl-filebeat",),
 }
 # The IMAGE_CONSUMERS no profile names, mapped to the services whose
 # `depends_on` starts them. The committed override repoints them at `:local`

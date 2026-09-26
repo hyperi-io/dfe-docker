@@ -135,7 +135,6 @@ Per-port, as published in `docker-compose.yml`:
 | 8081 | kafka-ui | ui | Kafbat UI (container `:8080`) |
 | 8123 / 9000 | clickhouse | operator | HTTP and native protocol |
 | 9092 / 19092 | kafka (either backend) | operator | Plaintext listeners |
-| 8686 | dfe-transform-vector | operator | Vector API |
 | 9090 | dfe-receiver | operator | Metrics and health |
 | 9091 | dfe-loader | operator | Metrics and health |
 | 9093 | dfe-archiver | operator | Metrics and health |
@@ -144,11 +143,12 @@ Per-port, as published in `docker-compose.yml`:
 | 9096 | dfe-transform-vrl | operator | Metrics and health |
 | 9099 | dfe-transform-elastic | operator | Metrics and health |
 | 13133 | otel-collector | operator | `health_check` extension |
-| 50051 | dfe-loader | operator | Internal `DfeTransport/Push` gRPC |
+| 50051 | dfe-loader | operator | Internal `DfeTransport/Push` gRPC (container `:6000`) |
 
 `dfe-ui`, `hyperdx`, `hyperdx-postgres` and `hyperdx-ferretdb` publish no host
 ports at all -- they are reached over the Docker network, HyperDX through the
-proxy that holds both its origins. The collector publishes only `24224`, which the
+proxy that holds both its origins. Vector's API inside dfe-transform-vector binds
+loopback and is published nowhere: reach it with `docker exec`. The collector publishes only `24224`, which the
 DOCKER DAEMON sends container stdout to; its OTLP ports stay on the Compose
 network. The receiver's OTLP
 (`4317`, `4318`), Beats (`5044`) and HEC (`8088`) mappings are present but
@@ -488,13 +488,13 @@ The stack's own telemetry goes out over OTLP to a collector, which writes the
 `dfe.otel_*` tables that HyperDX reads. Turn it on with `otel: true` on a
 profile (`single` has it) or `DFE_OTEL_ENABLED=true`.
 
-Every DFE app the profile runs pushes over OTLP, dfe-ui aside. Two things do
-scrape: the collector scrapes its own metrics on
-127.0.0.1:8888, and `sqlquery` reads ClickHouse. Nothing on this path sends
-logs -- there is no container-log collector, and the apps export metrics and
-traces only -- so `dfe.otel_logs` stays empty even though the collector has a
-logs pipeline wired. See [observability.md](observability.md), which also has
-the dials, what each component does, and why `/metrics` still exists.
+Every DFE app the profile runs pushes metrics and traces over OTLP, dfe-ui aside.
+Two things do scrape: the collector scrapes its own metrics on 127.0.0.1:8888,
+and `sqlquery` reads ClickHouse. Container stdout reaches `dfe.otel_logs` over
+Docker's fluentd log driver (`docker-compose.container-logs.yml`), tagged with
+the container name, unless `DFE_CONTAINER_LOGS_ENABLED=false`. See
+[observability.md](observability.md), which also has the dials, what each
+component does, and why `/metrics` still exists.
 
 ## Related
 

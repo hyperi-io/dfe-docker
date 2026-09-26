@@ -185,7 +185,9 @@ Node metrics are still not collected.
   as those exact rows in `dfe.main` inside 60s.
 - **Self-monitoring**, when a collector is running. Rows in the `dfe.otel_*` tables
   NEWER than five minutes, and a row in `dfe.otel_logs` under each of
-  `dfe-engine`, `dfe-loader` and `dfe-receiver`.
+  `dfe-engine`, `dfe-loader` and `dfe-receiver` written since that container's
+  current process started. An idle receiver logs at startup and then nothing, so
+  a five-minute window would read it as silent on any run longer than that.
 - **Observability**, when HyperDX is running. Its API returns the six seeded
   sources and at least one provisioned dashboard, read through the proxy that
   gives it an identity.

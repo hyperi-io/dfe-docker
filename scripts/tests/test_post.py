@@ -151,7 +151,7 @@ def test_only_the_services_that_push_their_own_metrics_are_expected(
             "dfe-engine",
             "dfe-hunt-runner",
             "dfe-loader",
-            "dfe-transform-vrl-filebeat",
+            "dfe-transform-e2e-vrl-filebeat",
             "dfe-ui",
             "hyperdx",
             "otel-collector",
@@ -161,7 +161,7 @@ def test_only_the_services_that_push_their_own_metrics_are_expected(
     assert post._otel_expected_services() == [
         "dfe-engine",
         "dfe-loader",
-        "dfe-transform-vrl-filebeat",
+        "dfe-transform-e2e-vrl-filebeat",
     ]
 
 
@@ -417,3 +417,101 @@ def test_an_unresolvable_service_falls_back_to_its_own_name(
     post._container_name.cache_clear()
 
     assert post._container_name("dfe-engine") == "dfe-engine"
+
+
+_LAG_SAMPLE = (
+    'rdkafka_topic_partition_consumer_lag{topic="main_land",partition="3"} 0\n'
+)
+
+
+def _stub_subscription(
+    monkeypatch: pytest.MonkeyPatch, scrapes: list[str]
+) -> list[str]:
+    """A bus tier running the loader, whose /metrics answers each scrape in turn."""
+    posted: list[str] = []
+    monkeypatch.setattr(post, "_profile_mk_value", lambda key: ["true"])
+    monkeypatch.setattr(post, "_resolved_services", lambda: [post.LOADER_SERVICE])
+    monkeypatch.setattr(post, "LOADER_TOPIC_INTERVAL_SECONDS", 0.0)
+    monkeypatch.setattr(post, "http_get", lambda url, timeout=5: scrapes.pop(0))
+    monkeypatch.setattr(post, "http_post", lambda url, body: posted.append(body) or 202)
+    return posted
+
+
+def test_a_fresh_loader_is_sent_a_probe_until_it_names_a_topic(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """No lag metric exists before the first fetch, so a quiet stack needs a record."""
+    posted = _stub_subscription(monkeypatch, ["", "", _LAG_SAMPLE])
+
+    claim = post._verify_loader_subscription(
+        ingest_url="http://localhost:8080/ingest", table="main"
+    )
+
+    assert claim == post.HELD
+    assert len(posted) == 2
+    assert all('"marker":"post-' in body and "-probe" in body for body in posted)
+
+
+def test_a_loader_already_fetching_is_sent_no_probe(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    posted = _stub_subscription(monkeypatch, [_LAG_SAMPLE])
+
+    claim = post._verify_loader_subscription(
+        ingest_url="http://localhost:8080/ingest", table="main"
+    )
+
+    assert claim == post.HELD
+    assert posted == []
+
+
+def test_a_loader_that_never_fetches_the_probe_fails(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    posted = _stub_subscription(monkeypatch, [""] * 50)
+    monkeypatch.setattr(post, "LOADER_TOPIC_TIMEOUT_SECONDS", 0.0)
+
+    claim = post._verify_loader_subscription(
+        ingest_url="http://localhost:8080/ingest", table="main"
+    )
+
+    assert claim.failed == 1
+    assert posted
+
+
+def test_container_logs_are_counted_since_the_container_started(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A quiet service logs at startup only, which a fixed window loses sight of."""
+    asked: list[list[str]] = []
+
+    def _inspect(args, **kwargs):
+        asked.append(args)
+        return _completed(stdout="2026-09-25T21:35:57.332877557Z\n")
+
+    monkeypatch.setattr(post.subprocess, "run", _inspect)
+
+    condition = post._since_start("kt-dfe-receiver")
+
+    assert asked[0][:2] == ["docker", "inspect"]
+    assert asked[0][-1] == "kt-dfe-receiver"
+    assert condition == (
+        "Timestamp >= toStartOfSecond(parseDateTime64BestEffort("
+        "'2026-09-25T21:35:57.332877557Z', 9))"
+    )
+
+
+def test_a_container_docker_cannot_inspect_falls_back_to_the_window(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        post.subprocess,
+        "run",
+        lambda args, **kwargs: _completed(code=1, stderr="No such object"),
+    )
+
+    condition = post._since_start("dfe-receiver")
+
+    assert condition == (
+        f"Timestamp > now() - INTERVAL {post.OTEL_FRESH_WINDOW_SECONDS} SECOND"
+    )

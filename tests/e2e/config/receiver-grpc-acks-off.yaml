@@ -1,0 +1,30 @@
+# Project:   dfe-docker
+# File:      tests/e2e/config/receiver-grpc-acks-off.yaml
+# Purpose:   dfe-receiver e2e config - config/receiver/grpc.yaml with acknowledgements off
+# Language:  YAML
+#
+# License:   BUSL-1.1
+# Copyright: (c) 2026 HYPERI PTY LIMITED
+#
+# The HTTP ingest answers once a record is queued rather than once the loader
+# confirmed it, so a kill loses what was answered. The `*-acks-off` outage tests
+# run this to record that loss.
+
+server:
+  acknowledgements:
+    enabled: false
+
+grpc:
+  enabled: true
+
+routing:
+  source_rules:
+    - field: _source
+      mode: key_value_use
+
+destinations:
+  default: loader
+
+loader:
+  transport: grpc
+  grpc_endpoint: http://dfe-loader:6000

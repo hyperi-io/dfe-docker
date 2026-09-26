@@ -88,6 +88,18 @@ x-limits-sidecar: &limits-sidecar
       memory: ${DFE_SIDECAR_MEMORY:-512M}
 
 # =============================================================================
+# Stop grace for the data-plane apps
+# A stage holding its source acknowledgements drains on SIGTERM: scalo's 5 s
+# pre-stop, then up to 20 s to deliver what it holds. Docker's 10 s default
+# SIGKILLs it mid-drain, so its sources send those records again. The Kubernetes
+# tier gives the same apps the same figures. dfe-transform-vector gives its
+# Vector child 55 s to exit, then drains its bridge for up to 15 s, and the rest
+# covers the telemetry flush and exit. `make check-compose` asserts both.
+# =============================================================================
+x-stop-grace-app: &stop-grace-app 45s
+x-stop-grace-vector: &stop-grace-vector 90s
+
+# =============================================================================
 # oauth2-proxy shared settings (the opt-in `auth` profile)
 #
 # One OIDC identity and one cookie secret across every infra-UI proxy, so a
@@ -139,9 +151,11 @@ services:
     profiles: ["clickhouse"]
     restart: unless-stopped
     deploy: *limits-clickhouse
+    # The HOST side only. CLICKHOUSE_HTTP_PORT and CLICKHOUSE_NATIVE_PORT are also
+    # the ports the other services dial in-network, so a second stack moves these.
     ports:
-      - ${DFE_BIND_HOST:-127.0.0.1}:${CLICKHOUSE_HTTP_PORT:-8123}:8123
-      - ${DFE_BIND_HOST:-127.0.0.1}:${CLICKHOUSE_NATIVE_PORT:-9000}:9000
+      - ${DFE_BIND_HOST:-127.0.0.1}:${CLICKHOUSE_HTTP_HOST_PORT:-${CLICKHOUSE_HTTP_PORT:-8123}}:8123
+      - ${DFE_BIND_HOST:-127.0.0.1}:${CLICKHOUSE_NATIVE_HOST_PORT:-${CLICKHOUSE_NATIVE_PORT:-9000}}:9000
     environment:
       CLICKHOUSE_DB: ${CLICKHOUSE_DB:-default}
       CLICKHOUSE_USER: ${CLICKHOUSE_USERNAME:-default}
@@ -488,6 +502,7 @@ services:
     container_name: dfe-archiver
     profiles: ["dfe"]
     restart: unless-stopped
+    stop_grace_period: *stop-grace-app
     deploy: *limits-service
     ports:
       - ${DFE_BIND_HOST:-127.0.0.1}:${DFE_ARCHIVER_PROMETHEUS_PORT:-9093}:9090
@@ -497,7 +512,7 @@ services:
       # The custom keys the engine writes for this app, AFTER the file above so
       # a custom key wins. Compose reads env_file at up-time, so a write needs
       # `docker compose up -d dfe-archiver` and a restart keeps the old values.
-      - path: env/archiver.custom.env
+      - path: env/dfe-archiver.custom.env
         required: false
     environment:
       LOG_LEVEL: ${LOG_LEVEL:-info}
@@ -538,6 +553,7 @@ services:
     container_name: dfe-fetcher
     profiles: ["dfe"]
     restart: unless-stopped
+    stop_grace_period: *stop-grace-app
     deploy: *limits-service
     ports:
       - ${DFE_INGRESS_BIND_HOST:-0.0.0.0}:${DFE_FETCHER_INGEST_PORT:-8082}:8080
@@ -547,7 +563,7 @@ services:
         required: false
       # The custom keys the engine writes for this app; an up -d applies them,
       # a restart keeps the environment the container already has.
-      - path: env/fetcher.custom.env
+      - path: env/dfe-fetcher.custom.env
         required: false
     environment:
       LOG_LEVEL: ${LOG_LEVEL:-info}
@@ -589,18 +605,20 @@ services:
     container_name: dfe-loader
     profiles: ["dfe"]
     restart: unless-stopped
+    stop_grace_period: *stop-grace-app
     deploy: *limits-service
     ports:
-      # 50051 is the INTERNAL DfeTransport/Push surface (receiver -> loader), not
-      # a client-facing one -- operators only, so it binds DFE_BIND_HOST.
+      # 6000 in the container is the INTERNAL DfeTransport/Push surface (receiver
+      # -> loader), not a client-facing one -- operators only, so it binds
+      # DFE_BIND_HOST, on host port 50051 because the receiver's ingest owns 6000.
       - ${DFE_BIND_HOST:-127.0.0.1}:${DFE_LOADER_PROMETHEUS_PORT:-9091}:9090
-      - ${DFE_BIND_HOST:-127.0.0.1}:${DFE_LOADER_GRPC_PORT:-50051}:50051
+      - ${DFE_BIND_HOST:-127.0.0.1}:${DFE_LOADER_GRPC_PORT:-50051}:6000
     env_file:
       - path: env/loader.env
         required: false
       # The custom keys the engine writes for this app; an up -d applies them,
       # a restart keeps the environment the container already has.
-      - path: env/loader.custom.env
+      - path: env/dfe-loader.custom.env
         required: false
     environment:
       CLICKHOUSE_USERNAME: ${CLICKHOUSE_USERNAME:-default}
@@ -646,11 +664,13 @@ services:
     container_name: dfe-receiver
     profiles: ["dfe"]
     restart: unless-stopped
+    stop_grace_period: *stop-grace-app
     deploy: *limits-service
     ports:
       # 6000 (Vector protocol) and 8080 (HTTP) are the INGEST surfaces external
       # clients push to, so they bind DFE_INGRESS_BIND_HOST. 9090 is operators.
-      # Do not confuse 6000 with the loader's 50051 -- different protocols.
+      # The loader also listens on 6000 in its own container, published on 50051,
+      # but speaks DfeTransport/Push, a different protocol.
       - ${DFE_INGRESS_BIND_HOST:-0.0.0.0}:${DFE_RECEIVER_GRPC_PORT:-6000}:6000
       - ${DFE_INGRESS_BIND_HOST:-0.0.0.0}:${DFE_RECEIVER_HTTP_PORT:-8080}:8080
       - ${DFE_BIND_HOST:-127.0.0.1}:${DFE_RECEIVER_PROMETHEUS_PORT:-9090}:9090
@@ -664,7 +684,7 @@ services:
         required: false
       # The custom keys the engine writes for this app; an up -d applies them,
       # a restart keeps the environment the container already has.
-      - path: env/receiver.custom.env
+      - path: env/dfe-receiver.custom.env
         required: false
     environment:
       LOG_LEVEL: ${LOG_LEVEL:-info}
@@ -716,11 +736,16 @@ services:
     container_name: dfe-transform-elastic
     profiles: ["dfe"]
     restart: unless-stopped
+    stop_grace_period: *stop-grace-app
     deploy: *limits-service
     ports:
       - ${DFE_BIND_HOST:-127.0.0.1}:${DFE_TRANSFORM_ELASTIC_PROMETHEUS_PORT:-9099}:9090
     env_file:
       - path: env/transform-elastic.env
+        required: false
+      # The custom keys the engine writes for this app; an up -d applies them,
+      # a restart keeps the environment the container already has.
+      - path: env/dfe-transform-elastic.custom.env
         required: false
     environment:
       LOG_LEVEL: ${LOG_LEVEL:-info}
@@ -751,7 +776,7 @@ services:
   # ===========================================================================
   # dfe-transform-elastic-cisco-ios
   # A SECOND instance of the same image, for the cisco-ios source alone -- the
-  # per-source shape dfe-transform-vrl-filebeat carries on the VRL side. The
+  # per-source shape dfe-transform-e2e-vrl-filebeat carries on the VRL side. The
   # receiver routes _source=cisco-ios to cisco-ios_land, this instance is the
   # only consumer of it, and its output topic names the table dfe-loader writes.
   #
@@ -765,11 +790,16 @@ services:
     container_name: dfe-transform-elastic-cisco-ios
     profiles: ["dfe"]
     restart: unless-stopped
+    stop_grace_period: *stop-grace-app
     deploy: *limits-service
     ports:
       - ${DFE_BIND_HOST:-127.0.0.1}:${DFE_TRANSFORM_ELASTIC_CISCO_IOS_PROMETHEUS_PORT:-9089}:9090
     env_file:
       - path: env/transform-elastic-cisco-ios.env
+        required: false
+      # The custom keys the engine writes for this app; an up -d applies them,
+      # a restart keeps the environment the container already has.
+      - path: env/dfe-transform-elastic-cisco-ios.custom.env
         required: false
     environment:
       LOG_LEVEL: ${LOG_LEVEL:-info}
@@ -804,16 +834,17 @@ services:
     container_name: dfe-transform-vector
     profiles: ["dfe"]
     restart: unless-stopped
+    stop_grace_period: *stop-grace-vector
     deploy: *limits-service
+    # Vector's API binds loopback inside the container, so it has no host port.
     ports:
       - ${DFE_BIND_HOST:-127.0.0.1}:${DFE_TRANSFORM_VECTOR_PROMETHEUS_PORT:-9095}:9090
-      - ${DFE_BIND_HOST:-127.0.0.1}:${DFE_TRANSFORM_VECTOR_API_PORT:-8686}:8686
     env_file:
       - path: env/transform-vector.env
         required: false
       # The custom keys the engine writes for this app; an up -d applies them,
       # a restart keeps the environment the container already has.
-      - path: env/transform-vector.custom.env
+      - path: env/dfe-transform-vector.custom.env
         required: false
     environment:
       LOG_LEVEL: ${LOG_LEVEL:-info}
@@ -850,7 +881,7 @@ services:
   # ===========================================================================
   # dfe-transform-vector-filebeat
   # A SECOND instance of the same image, for the filebeat source alone -- the
-  # dfe-transform-vector half of the shape dfe-transform-vrl-filebeat carries
+  # dfe-transform-vector half of the shape dfe-transform-e2e-vrl-filebeat carries
   # below. The receiver routes _source=filebeat-vector to filebeat-vector_land,
   # this instance is the only consumer of it, and its output topic names the
   # table dfe-loader writes. The two transform apps stay on separate topics and
@@ -867,16 +898,16 @@ services:
     container_name: dfe-transform-vector-filebeat
     profiles: ["dfe"]
     restart: unless-stopped
+    stop_grace_period: *stop-grace-vector
     deploy: *limits-service
     ports:
       - ${DFE_BIND_HOST:-127.0.0.1}:${DFE_TRANSFORM_VECTOR_FILEBEAT_PROMETHEUS_PORT:-9098}:9090
-      - ${DFE_BIND_HOST:-127.0.0.1}:${DFE_TRANSFORM_VECTOR_FILEBEAT_API_PORT:-8687}:8686
     env_file:
       - path: env/transform-vector-filebeat.env
         required: false
       # The custom keys the engine writes for this app; an up -d applies them,
       # a restart keeps the environment the container already has.
-      - path: env/transform-vector-filebeat.custom.env
+      - path: env/dfe-transform-vector-filebeat.custom.env
         required: false
     environment:
       LOG_LEVEL: ${LOG_LEVEL:-info}
@@ -910,6 +941,7 @@ services:
     container_name: dfe-transform-vrl
     profiles: ["dfe"]
     restart: unless-stopped
+    stop_grace_period: *stop-grace-app
     deploy: *limits-service
     ports:
       - ${DFE_BIND_HOST:-127.0.0.1}:${DFE_TRANSFORM_VRL_PROMETHEUS_PORT:-9096}:9090
@@ -918,7 +950,7 @@ services:
         required: false
       # The custom keys the engine writes for this app; an up -d applies them,
       # a restart keeps the environment the container already has.
-      - path: env/transform-vrl.custom.env
+      - path: env/dfe-transform-vrl.custom.env
         required: false
     environment:
       LOG_LEVEL: ${LOG_LEVEL:-info}
@@ -947,7 +979,7 @@ services:
       retries: 5
 
   # ===========================================================================
-  # dfe-transform-vrl-filebeat
+  # dfe-transform-e2e-vrl-filebeat
   # A SECOND instance of the same image, for the filebeat source alone. The
   # Kubernetes tier deploys one transform per source and this is that shape on
   # one box: the receiver routes _source=filebeat to filebeat_land, this
@@ -955,28 +987,35 @@ services:
   # dfe-loader writes. Adding another source means another block like this
   # one, its own config and its own program directory -- nothing here is shared
   # with the passthrough instance except the image.
+  #
+  # Named off the `<app>-<name>` shape on purpose: dfe-engine names a real
+  # per-source instance the same way (dfe-transform-vrl-filebeat for a source
+  # literally called "filebeat"), and Compose merges two services sharing a
+  # name rather than refusing, so that name silently took this one's command
+  # and dropped its ports.
   # ===========================================================================
 
-  dfe-transform-vrl-filebeat:
+  dfe-transform-e2e-vrl-filebeat:
     image: ${IMAGE_REGISTRY:-ghcr.io/hyperi-io}/dfe-transform-vrl:${DFE_TRANSFORM_VRL_VERSION:?run 'make stack VERSION=X.Y.Z' to pin DFE_TRANSFORM_VRL_VERSION}
-    container_name: dfe-transform-vrl-filebeat
+    container_name: dfe-transform-e2e-vrl-filebeat
     profiles: ["dfe"]
     restart: unless-stopped
+    stop_grace_period: *stop-grace-app
     deploy: *limits-service
     ports:
       - ${DFE_BIND_HOST:-127.0.0.1}:${DFE_TRANSFORM_VRL_FILEBEAT_PROMETHEUS_PORT:-9097}:9090
     env_file:
-      - path: env/transform-vrl-filebeat.env
+      - path: env/transform-e2e-vrl-filebeat.env
         required: false
       # The custom keys the engine writes for this app; an up -d applies them,
       # a restart keeps the environment the container already has.
-      - path: env/transform-vrl-filebeat.custom.env
+      - path: env/dfe-transform-e2e-vrl-filebeat.custom.env
         required: false
     environment:
       LOG_LEVEL: ${LOG_LEVEL:-info}
       LOG_FORMAT: ${LOG_FORMAT:-text}
       OTEL_EXPORTER_OTLP_ENDPOINT: ${DFE_OTEL_EXPORTER_ENDPOINT:-}
-      OTEL_SERVICE_NAME: dfe-transform-vrl-filebeat
+      OTEL_SERVICE_NAME: dfe-transform-e2e-vrl-filebeat
     depends_on:
       # No dlq-init here: this service does not mount dlq-spool.
       # The topic authority: dfe-engine creates the declared topic set at its own
@@ -1010,6 +1049,10 @@ services:
     profiles: ["core"]
     restart: unless-stopped
     deploy: *limits-service
+    # The engine runs as UID 1000 and ./env belongs to the operator, so it writes
+    # there through the operator's group; `make` exports DFE_DEV_GID.
+    group_add:
+      - "${DFE_DEV_GID:-1000}"
     ports:
       # dfe-proxy reaches the engine over the docker network; this host mapping
       # is for direct API work. PRODUCT class -- it is the API the UI consumes --
@@ -1026,6 +1069,10 @@ services:
       # `make dev` writes DFE_ENV=dev for a tyre-kick that logs in on the shipped
       # default. docs/operating.md#there-is-no-authentication
       DFE_ENV: ${DFE_ENV:-production}
+      # The unauthenticated /api/e2e seeding routes the dfe-ui Playwright suite
+      # drives. The engine refuses them in a production posture; `make e2e-posture`
+      # turns them on beside DFE_ENV=test.
+      DFE_E2E_SERVER: ${DFE_E2E_SERVER:-false}
       # A Compose stack is one operator with no forge: a hunt or rule written at
       # production+team lands on a review branch nothing can merge, and the
       # engine then 404s on the object it just accepted. solo commits to main.
@@ -1105,8 +1152,9 @@ services:
       # volume. resolve_profile.py sets it EMPTY on a tier the engine renders no
       # app config for; unset (compose run without make) keeps the volume's path.
       DFE_APP_CONTRACT_DIR: ${DFE_ENGINE_CONTRACT_DIR-${DFE_ENGINE_CONTENT_DIR:-/app/content}/contract}
-      # Where the engine writes env/<app>.custom.env, the sibling of the app
-      # config directory above. A literal, because it names the bind mount below
+      # Where the engine writes env/<service>.custom.env, one per compose service
+      # (a per-source instance included), the sibling of the app config
+      # directory above. A literal, because it names the bind mount below
       # and the two have to stay the same path -- and that path is the host tree,
       # so a write here changes the operator's checkout.
       DFE_DEPLOYMENT_APP_ENV_DIR: /app/app-env
@@ -1121,8 +1169,8 @@ services:
       - dfe-engine-content:${DFE_ENGINE_CONTENT_DIR:-/app/content}
       # The only writer of this volume; every app mounts it read-only.
       - dfe-app-config:/app/app-config
-      # The per-service env files, READ-WRITE: the engine writes an app's custom
-      # keys to env/<app>.custom.env, and compose reads env_file off the host
+      # The per-service env files, READ-WRITE: the engine writes a service's custom
+      # keys to env/<service>.custom.env, and compose reads env_file off the host
       # tree rather than a volume. It is the operator's checkout being written.
       - ./env:/app/app-env
       # Each app's base config, as THIS tier committed it. The instance overlay

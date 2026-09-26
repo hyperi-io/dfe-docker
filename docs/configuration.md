@@ -25,6 +25,7 @@ run it before any compose command -- [deploying.md](deploying.md).
 | Variable                                         | Use                                                                                  | Default                                                             |
 |--------------------------------------------------|--------------------------------------------------------------------------------------|---------------------------------------------------------------------|
 | `DFE_PROFILE`                                    | Override active profile from service_profiles.yaml                                   | -                                                                   |
+| `DFE_CONTAINER_PREFIX`                           | Put in front of every container name, per-source instances included, so a second stack can share the daemon; `make` writes `docker-compose.prefix.yml` from it | -                                     |
 
 ### Host exposure
 
@@ -137,7 +138,7 @@ credential fields are `env:`-interpolated. Change it there.
 |--------------------------------------------------|--------------------------------------------------------------------------------------|---------------------------------------------------------------------|
 | `DFE_LOADER_VERSION`                             | Version of dfe-loader to use                                                         | none -- `make stack` pins it; unset is a hard-fail                                                            |
 | `DFE_LOADER_PROMETHEUS_PORT`                     | Loader Prometheus port                                                               | `9091`                                                              |
-| `DFE_LOADER_GRPC_PORT`                           | Loader gRPC port                                                                     | `50051`                                                             |
+| `DFE_LOADER_GRPC_PORT`                           | Host port the loader's gRPC listener (container `:6000`) is published on             | `50051`                                                             |
 
 ### DFE Receiver
 
@@ -166,7 +167,6 @@ credential fields are `env:`-interpolated. Change it there.
 |--------------------------------------------------|--------------------------------------------------------------------------------------|---------------------------------------------------------------------|
 | `DFE_TRANSFORM_VECTOR_VERSION`                   | Version of dfe-transform-vector to use                                               | none -- `make stack` pins it; unset is a hard-fail                                                            |
 | `DFE_TRANSFORM_VECTOR_PROMETHEUS_PORT`           | Transform Vector Prometheus port                                                     | `9095`                                                              |
-| `DFE_TRANSFORM_VECTOR_API_PORT`                  | Transform Vector API port                                                            | `8686`                                                              |
 
 ### DFE Transform VRL
 
@@ -185,8 +185,10 @@ it is a second deployment of the one component, not a component of its own.
 |--------------------------------------------------|--------------------------------------------------------------------------------------|---------------------------------------------------------------------|
 | `CLICKHOUSE_VERSION`                             | Version of ClickHouse to use                                                         | none -- `make stack` pins it from the DFE stack SSoT; unset is a hard-fail                |
 | `CLICKHOUSE_HOST`                                | External ClickHouse host (skips Docker container)                                    | `clickhouse`                                                        |
-| `CLICKHOUSE_HTTP_PORT`                           | ClickHouse HTTP port                                                                 | `8123`                                                              |
-| `CLICKHOUSE_NATIVE_PORT`                         | ClickHouse native protocol port                                                      | `9000`                                                              |
+| `CLICKHOUSE_HTTP_PORT`                           | ClickHouse HTTP port, in-network as well as on the host                              | `8123`                                                              |
+| `CLICKHOUSE_NATIVE_PORT`                         | ClickHouse native protocol port, in-network as well as on the host                   | `9000`                                                              |
+| `CLICKHOUSE_HTTP_HOST_PORT`                      | The host side of the HTTP publish alone, for a second stack on one box               | `CLICKHOUSE_HTTP_PORT`                                              |
+| `CLICKHOUSE_NATIVE_HOST_PORT`                    | The host side of the native publish alone, for a second stack on one box             | `CLICKHOUSE_NATIVE_PORT`                                            |
 | `CLICKHOUSE_DB`                                  | ClickHouse initialisation database                                                   | `default`                                                           |
 | `CLICKHOUSE_USERNAME`                            | ClickHouse username to connect with                                                  | `default`                                                           |
 | `CLICKHOUSE_PASSWORD`                            | ClickHouse password associated to user                                               | -                                                                   |
@@ -248,6 +250,7 @@ it is a second deployment of the one component, not a component of its own.
 | `DFE_ENGINE_CONFIG_DIR`                          | Path to config directory                                                             | `/app/config`                                                       |
 | `DFE_ENGINE_SCHEMAS_DIR`                         | Path to schemas directory                                                            | `/app/schemas`                                                      |
 | `DFE_ENGINE_CONTENT_DIR`                         | Path the content volume mounts on, holding the emitted contracts and the seed library | `/app/content`                                                      |
+| `DFE_E2E_SERVER`                                 | Mount the engine's unauthenticated `/api/e2e` seeding routes; refused in a production posture, and `make e2e-posture` sets it beside `DFE_ENV=test` | `false`                                  |
 | `DFE_UI_VERSION`                                 | Version of dfe-ui to use                                                             | none -- `make stack` pins it; unset is a hard-fail                                                            |
 | `DFE_UI_PORT`                                    | Port used by dfe-ui                                                                  | `3000`                                                              |
 | `DFE_UI_NODE_ENV`                                | Node environment of dfe-ui                                                           | `production`                                                        |
@@ -263,12 +266,7 @@ contract absent and the engine starts anyway, so a settings page with nothing on
 it for one app means that app's one-shot logged a failure -- `docker compose logs
 contract-<app>`.
 
-A setting the app's own schema does not declare is written as an environment
-variable instead, into `env/<app>.custom.env` beside the file `make init` creates.
-Each app reads both, the custom file second, so a custom key beats the same key in
-`env/<app>.env`; the `environment:` block in `docker-compose.yml` beats both, which
-is what keeps a custom key from taking over the broker address or the warehouse
-credentials. Neither file has to exist.
+A setting the app's own schema does not declare is written as an environment variable instead, into `env/<compose-service>.custom.env` -- named by the COMPOSE SERVICE rather than the app, so a per-config app's instances each get their own (`env/dfe-transform-vrl-<instance>.custom.env`) instead of sharing one. Each service reads both, its custom file second, so a custom key beats the same key in the static `env/<app>.env` file `make init` creates, which every instance of that app shares via `extends`; the `environment:` block in `docker-compose.yml` beats both, which is what keeps a custom key from taking over the broker address or the warehouse credentials. Neither file has to exist.
 
 **A custom env write needs `docker compose up -d <service>`, not a restart.**
 Compose reads `env_file` when it creates a container, so `docker compose restart`
@@ -335,8 +333,6 @@ The same toggle points the engine at HyperDX: with it on, the engine receives `D
 | 8082  | dfe-fetcher          | HTTP ingest        |
 | 8090  | hyperdx              | App UI             |
 | 8123  | ClickHouse           | HTTP API           |
-| 8686  | dfe-transform-vector | Vector API         |
-| 8687  | dfe-transform-vector-filebeat | Vector API |
 | 9000  | ClickHouse           | Native protocol    |
 | 9089  | dfe-transform-elastic-cisco-ios | Prometheus metrics |
 | 9090  | dfe-receiver         | Prometheus metrics |
@@ -346,12 +342,12 @@ The same toggle points the engine at HyperDX: with it on, the engine receives `D
 | 9094  | dfe-fetcher          | Prometheus metrics |
 | 9095  | dfe-transform-vector | Prometheus metrics |
 | 9096  | dfe-transform-vrl    | Prometheus metrics |
-| 9097  | dfe-transform-vrl-filebeat | Prometheus metrics |
+| 9097  | dfe-transform-e2e-vrl-filebeat | Prometheus metrics |
 | 9098  | dfe-transform-vector-filebeat | Prometheus metrics |
 | 9099  | dfe-transform-elastic | Prometheus metrics |
 | 13133 | otel-collector       | health_check       |
 | 19092 | Kafka (any backend)  | Plaintext host     |
-| 50051 | dfe-loader           | gRPC               |
+| 50051 | dfe-loader           | gRPC, container `:6000` |
 
 Additional receiver ports (commented out by default in docker-compose.yml):
 4317 (OTLP gRPC), 4318 (OTLP HTTP), 5044 (Beats), 8088 (HEC).

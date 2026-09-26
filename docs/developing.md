@@ -308,6 +308,8 @@ make test-e2e E2E_TESTS="simple-receiver-to-loader-grpc simple-fetcher-to-loader
 (`tests/e2e/data/events.jsonl`), the mode (`ci` builds `--no-cache --pull`; `dev`
 also loads the override file) and `persistent_services` -- only ClickHouse
 survives between tests, so each test runs its own config against a fresh broker.
+The run takes ClickHouse down at the end too, unless it was already running when
+the run started.
 Each entry under `tests:` names a `service_profiles.yaml` profile, optionally
 `expected_topics` (created and cleaned per run, then verified) and
 `config_overrides` keyed by service name.
@@ -360,6 +362,12 @@ refusal such as 503 passes, silence fails), every accepted record landed, and on
 every consumer group is back at zero lag. They stop services, so they never run
 in `make post` either.
 
+`signal: KILL` takes the service down with SIGKILL instead of a graceful stop, and `pause: {service, seconds}` freezes another service first, so the killed one dies holding records. `workers` and `interval` set the load, 4 workers each pausing 0.5 s by default. One Python process sends it, so past about 1,000 requests a second more workers add nothing. Silence from the ingress is excused for a request sent while the ingress itself is down, and for one already in flight only when the ingress was killed: a graceful stop has to answer it. Duplicates are counted per phase and reported, never failed: at-least-once allows them.
+
+The kill tests prove nothing the stack answered 2xx is lost when every hop holds its acknowledgement until delivery (`acknowledgements.enabled`, the default). Each `-acks-off` twin runs the same kill with every hop to ClickHouse answering at receipt, and `loss: required` fails it when nothing was lost, because a control that cannot fail shows nothing about the kill. `loss: unreliable` reports a lossless run as non-discriminating instead of failing, and `tolerated` only records the count. Each `-sigterm-` twin runs the kill as a graceful stop, which is what proves the shutdown drains in order.
+
+`spool:` reads a service's disk spool before, at the signal and after. `must_stay_empty` fails on anything written, and `must_replay` fails unless every record on the spool at the signal lands after the restart. `poison: {data_file, every, limit}` sends a record the sink refuses among the good ones, `limit` of them at most, and `dead_letters: {service, path}` requires each accepted one named in that file dead-letter queue. `pipeline_dead_letters_dropped_total` names no record and counts every attempt, so a record dropped before a kill and again on replay counts twice. The count therefore stands for a record only when the load sent one poison record alone, and a `dead_letters` with no `path` needs `limit: 1`. `archive: {services, path}` requires every accepted record in an archived file after a graceful stop of each archiver, duplicates allowed. `replicas: {service: count}` runs extra copies of an app in its consumer group, and `topic_partitions` sets the partitions of each expected topic.
+
 ### Post-deploy source test -- what an operator does first
 
 ```bash
@@ -387,6 +395,33 @@ nothing to it: put the two `AWS_*` credentials in `env/fetcher.env` and
 Every step is a report row and a screenshot under `--shots-dir` (`.tmp/source`).
 A step the console cannot do falls back to the engine API and says so, because
 that is a finding about the console rather than about the pipeline.
+
+### The dfe-ui Playwright suite -- `make e2e-posture`
+
+```bash
+make e2e-posture                  # DFE_ENV=test, the engine's /api/e2e routes on, e2e- names, 2xxxx ports
+DFE_PROFILE=single make up        # the pinned registry images
+```
+
+The suite seeds its fixtures through the engine's `/api/e2e` routes, which the
+engine mounts only with `DFE_E2E_SERVER=true` in a non-production posture, and
+whose seeders refuse anything but `DFE_ENV=test`. `make dev-posture` writes
+`DFE_ENV=dev`, so a dev stack cannot run it. The posture also sets the admin
+password to the shipped default the suite's reset returns it to, so it refuses
+a `.env` whose `DFE_ENV` names a deployment, and backs up the file it rewrites.
+
+It prefixes every container `e2e-` (`DFE_CONTAINER_PREFIX`) and moves every host
+port into the 2xxxx family, which is where the suite looks for the receiver
+(`:28080`) and the loader's metrics (`:29091`). It names no compose project, so
+the checkout's directory does. Then, from `apps/dfe-core-ui` in dfe-ui:
+
+```bash
+BASE_URL=http://localhost:23000 NEXT_PUBLIC_API_URL=http://localhost:28003 \
+E2E_ADMIN_PASSWORD=<the shipped default> yarn test:e2e
+```
+
+A spec that adds a per-source transform needs its container: run `make apply`
+after the write, which is what the engine's restart hint names.
 
 ## Static checks
 
@@ -454,7 +489,9 @@ should be there instead of probing ports.
 
 The consequence to know: because `make dev` and `make ci` depend on `down`, a
 `make dev SERVICES="dfe-loader"` no longer restarts just that service on top of a
-running stack -- everything is stopped first.
+running stack -- everything is stopped first. `make apply` is the target that
+works on a running stack: it starts what the profile adds or changes and leaves
+the rest, and `make apply DEV=1` does the same for a `make dev` stack.
 
 **`.env` shadows a command-line environment variable through make.** The Makefile
 does `-include .env`, and GNU make re-exports a variable that came from the
