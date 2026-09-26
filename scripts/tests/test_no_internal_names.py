@@ -44,10 +44,9 @@ INTERNAL = re.compile(
     re.IGNORECASE,
 )
 
-# This file carries the pattern itself. env.example/ is excluded until its
-# estate lines are reworded; remove the prefix once the directory sweeps clean.
+# This file carries the pattern itself.
 EXCLUDED = {"scripts/tests/test_no_internal_names.py"}
-EXCLUDED_PREFIXES = ("env.example/",)
+EXCLUDED_PREFIXES: tuple[str, ...] = ()
 
 
 def _tracked_files() -> list[str]:
