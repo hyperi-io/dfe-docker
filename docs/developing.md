@@ -90,24 +90,14 @@ exists as the operator-facing name for the same start.
 first-run setup is incomplete, so an operator who lands there with no password is
 one command from having one.
 
-The two accounts are durable in different ways, deliberately. `admin` is
-reasserted from `.env` on every engine boot, so a teardown and rebuild restores
-exactly the password `make init` minted. `breakglass` is hashed into the engine's
-deploy repo on its first boot and the variable is ignored from then on, so it
-still works when the engine, the UI and `.env` are all gone. `make creds` says
-where its password lives rather than printing it.
+The two accounts are durable in different ways, deliberately. The engine issues `admin` from `.env` with a forced change at first login, which `make post` makes and records back in `.env`. A new value there is a rotation. The last issued value, or the account's current password, re-issues nothing. `breakglass` is hashed into the engine's deploy repo on its first boot and the variable is ignored from then on, so it still works when the engine, the UI and `.env` are all gone. `make creds` says where its password lives rather than printing it.
 
 The engine **refuses to start** on an empty or `changeme`
 `DFE_AUTH_LOCAL_ADMIN_PASSWORD` unless `DFE_ENV` names a dev posture. `make
 check-compose` asserts the compose file never hands it one, so that is caught
 before a container crash-loops.
 
-`make dev` is the exception and says so: it writes the known default password and
-`DFE_ENV=dev` into `.env`, because a dev loop should not need a lookup to log in.
-The engine accepts the default in that posture and asks for a change at first
-login. It **refuses** (exit 2) to run when `.env` already declares a non-dev
-`DFE_ENV` -- downgrading a deployment's posture and overwriting its admin password
-is not a build target's call. Start that stack with `make up`.
+`make dev` is the exception and says so: it writes the known default password and `DFE_ENV=dev` into `.env`, because a dev loop should not need a lookup to log in. The engine accepts the default in that posture and makes the admin replace it at first login, and a `.env` already on a dev posture keeps the replacement `make post` recorded. It **refuses** (exit 2) to run when `.env` already declares a non-dev `DFE_ENV` -- downgrading a deployment's posture and overwriting its admin password is not a build target's call. Start that stack with `make up`.
 
 When it does rewrite, it copies the file it replaced to `.env.bak-<utc>` first,
 mode 0600, and prints the path: a minted password is gone once overwritten. A run
@@ -119,7 +109,7 @@ for when the login is the thing under test. It mints a password and writes
 refuses. `make creds` reads the password back.
 
 ```bash
-make dev              # local images, known default password, DFE_ENV=dev
+make dev              # local images, DFE_ENV=dev, known default password until replaced
 make dev AUTH=real    # local images, minted password, DFE_ENV=production
 ```
 

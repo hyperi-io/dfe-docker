@@ -285,6 +285,8 @@ creds: ## Print the access summary. The admin password prints on a TTY only -- a
 
 # A dev tyre-kick logs in without looking anything up, so `make dev` writes the
 # KNOWN default password and DFE_ENV=dev, the one posture the engine accepts it in.
+# A .env already on a dev posture keeps a non-default password, the replacement
+# `make post` recorded after the engine made the admin change the default.
 # It refuses with exit 2 on any other DFE_ENV, and copies .env to .env.bak-<utc>
 # before overwriting a minted password.
 #
@@ -298,7 +300,7 @@ else
 endif
 
 .PHONY: dev-posture
-dev-posture: .env ## Put .env into the dev posture (known admin password, DFE_ENV=dev); AUTH=real mints one and writes a non-dev posture instead
+dev-posture: .env ## Put .env into the dev posture (DFE_ENV=dev, known admin password until the stack replaces it); AUTH=real mints one and writes a non-dev posture instead
 	@python3 scripts/dev_posture.py $(DEV_POSTURE_ARG)
 
 # GHCR auth for the private dfe-* images and the signed stack-manifest. A no-op
