@@ -13,7 +13,7 @@
 the private `ghcr.io/hyperi-io/dfe-*` images and the signed stack-manifest. Both
 assume the daemon is already logged in to the registry. On an operator laptop
 that is a one-off `docker login`; on an unattended VM (the daemon-update timer,
-the hyperi-infra ansible roll) there is no human to run it. This target closes
+a config-management run) there is no human to run it. This target closes
 that gap: it reads the registry credentials and logs both docker and oras in, so
 the pull just works with nothing typed.
 

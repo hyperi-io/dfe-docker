@@ -21,10 +21,10 @@ standalone. ``make init`` still mints the generated secrets; this MERGES the
 dial-controlled keys over that .env, leaving the minted secrets and every other
 setting untouched.
 
-Dependency-free (no PyYAML) - the scripts run under a plain ``python3`` on the
-devex VMs, and the dial's docker-vm slice is scalar/nested-map only. Secrets are
-never touched here: GHCR credentials come from OpenBao via hyperi-infra's thin
-caller, not from this renderer.
+Dependency-free (no PyYAML) - the scripts run under a plain ``python3`` on a bare
+deployment VM, and the dial's docker-vm slice is scalar/nested-map only. Secrets
+are never touched here: GHCR credentials come from the deployment's secrets
+backend via the operator's own tooling, not from this renderer.
 """
 
 from __future__ import annotations
