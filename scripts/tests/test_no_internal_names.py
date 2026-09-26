@@ -44,12 +44,9 @@ INTERNAL = re.compile(
     re.IGNORECASE,
 )
 
-# This file carries the pattern itself. The env templates are excluded until
-# their estate lines are reworded; remove an entry once its file sweeps clean.
-EXCLUDED = {
-    "scripts/tests/test_no_internal_names.py",
-    ".env.example",
-}
+# This file carries the pattern itself. env.example/ is excluded until its
+# estate lines are reworded; remove the prefix once the directory sweeps clean.
+EXCLUDED = {"scripts/tests/test_no_internal_names.py"}
 EXCLUDED_PREFIXES = ("env.example/",)
 
 
