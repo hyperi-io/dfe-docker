@@ -1,16 +1,18 @@
 #  Project:      dfe-docker
 #  File:         scripts/_registry.py
-#  Purpose:      Discover the newest published tag on an OCI repo and resolve its digest
+#  Purpose:      Discover the newest published version of a stack or image and resolve its digest
 #  Language:     Python
 #
 #  License:      BUSL-1.1
 #  Copyright:    (c) 2026 HYPERI PTY LIMITED
 
-"""Registry tag discovery for the pin tooling.
+"""Version discovery for the pin tooling.
 
-Internal support module - imported by the runnable scripts, not executed directly. Two callers ask a registry "what is the newest thing published here": `make stack VERSION=latest` asks it of each DFE image repo, and the track-latest daemon asks it of the signed stack-manifest repo. Both answers come from `oras`, which the stack already requires.
+Internal support module - imported by the runnable scripts, not executed directly. Two callers ask "what is the newest thing published here", and they ask two different sources.
 
-Only semver tags are ranked, so the `sha-<commit>` build tags and the floating `latest` are ignored rather than compared. An optional leading `v` is carried through verbatim, because the tag itself is what goes into the pin. A release ranks above its own pre-releases; what happens when a repo has published only pre-releases is the caller's `prereleases` choice.
+The track-latest daemon and `make stack VERSION=latest` ask the signed stack-manifest repo for its newest TAG, through `oras`. Only semver tags are ranked, so the `sha-<commit>` build tags and the floating `latest` are ignored rather than compared. An optional leading `v` is carried through verbatim, because the tag itself is what goes into the pin. A release ranks above its own pre-releases; what happens when a repo has published only pre-releases is the caller's `prereleases` choice.
+
+`make stack VERSION=latest` then asks each DFE component for its newest GitHub RELEASE, through `gh`, and pins that release's image. Version order is not release order: a fork can carry a release tagged above its own line, and a version ranking pins that one ahead of every later release. GitHub's own `releases/latest` answer is the authority -- the one the repo page labels Latest, ranked by creation date.
 """
 
 from __future__ import annotations
@@ -40,9 +42,17 @@ _SEMVER = re.compile(
     r"^v?(?P<major>\d+)\.(?P<minor>\d+)\.(?P<patch>\d+)(?:-(?P<pre>[0-9A-Za-z.-]+))?$"
 )
 
+# How `gh api` reports a resource that is not there.
+_GH_NOT_FOUND = "(HTTP 404)"
+
 
 class RegistryError(Exception):
     """Raised when a registry cannot be listed or a reference cannot be resolved."""
+
+
+def _created_order(release: dict) -> str:
+    """Key function for ``max`` over releases: ISO 8601 UTC stamps sort as text."""
+    return str(release.get("created_at", ""))
 
 
 def _is_stable(*, version: str) -> bool:
@@ -57,6 +67,15 @@ def _pre_key(*, pre: str) -> tuple:
         (0, int(ident), "") if ident.isdigit() else (1, 0, ident)
         for ident in pre.split(".")
     )
+
+
+def _require_gh() -> None:
+    """Fail loudly when `gh` is absent rather than falling back to a registry tag."""
+    if shutil.which("gh") is None:
+        raise RegistryError(
+            "`gh` is not installed -- cannot read a component's GitHub releases "
+            "(see the README prerequisites)"
+        )
 
 
 def _require_oras() -> None:
@@ -122,6 +141,58 @@ def latest_tag(*, prereleases: str = "exclude", repo: str) -> str:
     return max(tags, key=_tag_order)
 
 
+def latest_release(*, prereleases: str = "exclude", repo: str) -> str:
+    """Return the tag of the newest GitHub release of ``repo`` (``owner/name``), verbatim.
+
+    ``prereleases`` is one of ``PRERELEASES``. ``exclude`` takes the release GitHub
+    marks Latest, ``fallback`` does the same and takes the newest pre-release when
+    nothing is marked, and ``include`` takes the newest release of either kind.
+    Newest is by ``created_at``, the order GitHub ranks Latest by, never by version
+    number. Drafts never count.
+    """
+    if prereleases not in PRERELEASES:
+        raise RegistryError(f"prereleases={prereleases!r} is not one of {PRERELEASES}")
+    if prereleases != "include":
+        marked = marked_latest_release(repo=repo)
+        if marked:
+            return marked
+        if prereleases == "exclude":
+            raise RegistryError(
+                f"{repo} has no release marked Latest -- GitHub also answers that "
+                "way for a repo this `gh` login cannot read"
+            )
+    published = [
+        release for release in list_releases(repo=repo) if not release.get("draft")
+    ]
+    if not (published):
+        raise RegistryError(f"{repo} has published no release")
+    return str(max(published, key=_created_order)["tag_name"])
+
+
+def list_releases(*, repo: str) -> list[dict]:
+    """Return every release on ``repo`` as ``{tag_name, draft, created_at}``."""
+    _require_gh()
+    out = _run(
+        cmd=[
+            "gh",
+            "api",
+            "--paginate",
+            f"repos/{repo}/releases?per_page=100",
+            "--jq",
+            ".[] | {tag_name, draft, created_at}",
+        ]
+    )
+    if out.returncode != 0:
+        detail = out.stderr.strip() or out.stdout.strip()
+        raise RegistryError(f"`gh api repos/{repo}/releases` failed: {detail}")
+    try:
+        return [json.loads(line) for line in out.stdout.splitlines() if line.strip()]
+    except json.JSONDecodeError as error:
+        raise RegistryError(
+            f"`gh api repos/{repo}/releases` returned unreadable JSON: {error}"
+        ) from error
+
+
 def list_tags(*, repo: str) -> list[str]:
     """Return every tag on an OCI repo via `oras repo tags`."""
     _require_oras()
@@ -130,6 +201,22 @@ def list_tags(*, repo: str) -> list[str]:
         detail = out.stderr.strip() or out.stdout.strip()
         raise RegistryError(f"`oras repo tags {repo}` failed: {detail}")
     return [line.strip() for line in out.stdout.splitlines() if line.strip()]
+
+
+def marked_latest_release(*, repo: str) -> str | None:
+    """Return the tag GitHub marks Latest on ``repo``, or None when it marks none.
+
+    GitHub answers 404 when every release is a draft or a pre-release, which is an
+    answer here rather than a failure.
+    """
+    _require_gh()
+    out = _run(cmd=["gh", "api", f"repos/{repo}/releases/latest", "--jq", ".tag_name"])
+    if out.returncode == 0:
+        return out.stdout.strip() or None
+    if _GH_NOT_FOUND in out.stderr + out.stdout:
+        return None
+    detail = out.stderr.strip() or out.stdout.strip()
+    raise RegistryError(f"`gh api repos/{repo}/releases/latest` failed: {detail}")
 
 
 def manifest_repo() -> str:

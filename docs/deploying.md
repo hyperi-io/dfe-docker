@@ -87,9 +87,9 @@ in the service unit) also takes `-rc` builds. See
 [ops/daemon-update/README.md](../ops/daemon-update/README.md).
 
 **Latest (development only).** `make stack VERSION=latest` takes the newest
-certified stack and then repins every DFE image at its own newest published GHCR
-tag. It is the development-currency mode, not a third deploy mode: the pins carry
-digests, but nobody certified that combination, so `make modes` reports it as
+certified stack and then repins every DFE image at the release its GitHub repo
+marks Latest. It is the development-currency mode, not a third deploy mode: the
+pins carry digests, but nobody certified that combination, so `make modes` reports it as
 LATEST rather than PINNED. Do not deploy off it -- pin a version.
 
 The daemon fast-forwards the checkout before pinning, because a stack version is
