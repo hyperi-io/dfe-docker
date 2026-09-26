@@ -482,6 +482,43 @@ services:
     restart: "no"
 
   # ===========================================================================
+  # catalogue-dfe-transform-elastic
+  # The source catalogue the engine offers, printed by the elastic transform's
+  # OWN pinned image (`emit-catalogue`) into dfe-engine-content, which the engine
+  # reads at DFE_SOURCE_CATALOGUE_FILE. The Kubernetes tier runs the same command
+  # as an init container.
+  #
+  # An image that predates the subcommand exits non-zero, so the command writes
+  # to a temporary file, keeps it only on success, and never fails itself: the
+  # engine starts and reports the catalogue missing instead.
+  # ===========================================================================
+
+  catalogue-dfe-transform-elastic:
+    image: ${IMAGE_REGISTRY:-ghcr.io/hyperi-io}/dfe-transform-elastic:${DFE_TRANSFORM_ELASTIC_VERSION:?run 'make stack VERSION=X.Y.Z' to pin DFE_TRANSFORM_ELASTIC_VERSION}
+    container_name: dfe-catalogue-dfe-transform-elastic
+    profiles: ["core"]
+    deploy: *limits-sidecar
+    # Root because an empty named volume lands root-owned at a path no image
+    # creates, and the engine only ever reads this directory.
+    user: "0:0"
+    entrypoint: ["/bin/sh", "-c"]
+    # A LIST with one element, for the reason dlq-init's command gives.
+    command:
+      - |
+        dst=/app/content/catalogue/sources.yaml
+        mkdir -p /app/content/catalogue
+        if dfe-transform-elastic emit-catalogue > "$$dst.tmp"; then
+          mv "$$dst.tmp" "$$dst"
+          echo "catalogue: dfe-transform-elastic emitted its catalogue to $$dst"
+        else
+          rm -f "$$dst.tmp"
+          echo "catalogue: dfe-transform-elastic emitted nothing, so the engine reports its catalogue missing" >&2
+        fi
+    volumes:
+      - dfe-engine-content:/app/content
+    restart: "no"
+
+  # ===========================================================================
   # dfe-archiver
   # Reads the landing topics off the broker, or receives on its scalo Push
   # listener where the profile has no broker (config/archiver/<transport>.yaml).
@@ -1123,6 +1160,11 @@ services:
       # volume. resolve_profile.py sets it EMPTY on a tier the engine renders no
       # app config for; unset (compose run without make) keeps the volume's path.
       DFE_APP_CONTRACT_DIR: ${DFE_ENGINE_CONTRACT_DIR-${DFE_ENGINE_CONTENT_DIR:-/app/content}/contract}
+      # The file catalogue-dfe-transform-elastic writes, on the same volume and on
+      # the same tiers as the contract directory. The engine refuses a named path
+      # nothing wrote rather than answering with no sources, and an EMPTY value
+      # from resolve_profile.py leaves it offering none.
+      DFE_SOURCE_CATALOGUE_FILE: ${DFE_ENGINE_CATALOGUE_FILE-${DFE_ENGINE_CONTENT_DIR:-/app/content}/catalogue/sources.yaml}
       # Where the engine writes env/<app>.custom.env, the sibling of the app
       # config directory above. A literal, because it names the bind mount below
       # and the two have to stay the same path -- and that path is the host tree,
@@ -1187,6 +1229,10 @@ services:
         condition: service_completed_successfully
         required: false
       contract-dfe-transform-vrl:
+        condition: service_completed_successfully
+        required: false
+      # The source catalogue, on the same terms: a failed emit only warns.
+      catalogue-dfe-transform-elastic:
         condition: service_completed_successfully
         required: false
     working_dir: /home/appuser
