@@ -21,7 +21,10 @@ already exists, so the key-level drift `init.py` computes is reported here as a
 warning. It stays a warning: an operator's env file is theirs, and this gate
 starts stacks rather than editing their config.
 
-Silent when nothing is missing and nothing has drifted.
+It also widens env/ to group-writable and setgid where `make init` predates
+that, because the engine writes each app's custom env file there.
+
+Silent when nothing is missing, nothing has drifted and env/ is already shared.
 """
 
 from __future__ import annotations
@@ -34,7 +37,7 @@ from _common import (
     _print,
     _rel_path,
 )
-from init import drift_keys
+from init import drift_keys, share_env_dir
 from init import main as init_main
 
 
@@ -84,6 +87,8 @@ def main() -> int:
                 f"file in {_rel_path(path=ENV_TEMPLATE_DIR)}/"
             )
             return 1
+    # A checkout initialised before the engine wrote here has env/ owner-only.
+    share_env_dir(env_dir=ENV_DIR)
     _report_drift(include_dotenv=not missing)
     return 0
 

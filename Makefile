@@ -23,7 +23,8 @@ export CLICKHOUSE_USERNAME
 # Host UID/GID passed to live-mode containers (docker-compose.live.yml) that
 # write to bind-mounted host dirs (dfe-engine config/schemas), so files are owned
 # by the host user rather than the image user and writes don't hit permission
-# errors.
+# errors. The GID is also the group every stack adds to dfe-engine, which is how
+# it writes env/<app>.custom.env into the checkout.
 export DFE_DEV_UID := $(shell id -u)
 export DFE_DEV_GID := $(shell id -g)
 

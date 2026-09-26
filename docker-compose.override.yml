@@ -45,13 +45,13 @@ services:
   dfe-transform-elastic:
     image: dfe-transform-elastic:local
 
-  dfe-transform-elastic-cisco-ios:
+  dfe-transform-e2e-elastic-cisco-ios:
     image: dfe-transform-elastic:local
 
   dfe-transform-vector:
     image: dfe-transform-vector:local
 
-  dfe-transform-vector-filebeat:
+  dfe-transform-e2e-vector-filebeat:
     image: dfe-transform-vector:local
 
   dfe-transform-vrl:

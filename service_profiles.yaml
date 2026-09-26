@@ -186,7 +186,7 @@ profiles:
         config_path: receiver/kafka.yaml
       dfe-transform-vector:
         config_path: transform-vector/kafka.yaml
-      dfe-transform-vector-filebeat:
+      dfe-transform-e2e-vector-filebeat:
         config_path: transform-vector/filebeat.yaml
 
   # The per-source shape on dfe-transform-elastic: the source is cisco-ios rather
@@ -202,7 +202,7 @@ profiles:
         config_path: loader/kafka.yaml
       dfe-receiver:
         config_path: receiver/kafka.yaml
-      dfe-transform-elastic-cisco-ios:
+      dfe-transform-e2e-elastic-cisco-ios:
         config_path: transform-elastic/cisco-ios.yaml
 
   kafka-receiver-archiver:
@@ -227,7 +227,7 @@ profiles:
         config_path: loader/kafka-resilience.yaml
       dfe-receiver:
         config_path: receiver/kafka.yaml
-      dfe-transform-elastic-cisco-ios:
+      dfe-transform-e2e-elastic-cisco-ios:
         config_path: transform-elastic/cisco-ios.yaml
       dfe-transform-vector:
         config_path: transform-vector/resilience.yaml

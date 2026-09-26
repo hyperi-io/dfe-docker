@@ -52,13 +52,13 @@ services:
     logging: *container-logs
   dfe-receiver:
     logging: *container-logs
+  dfe-transform-e2e-elastic-cisco-ios:
+    logging: *container-logs
+  dfe-transform-e2e-vector-filebeat:
+    logging: *container-logs
   dfe-transform-elastic:
     logging: *container-logs
-  dfe-transform-elastic-cisco-ios:
-    logging: *container-logs
   dfe-transform-vector:
-    logging: *container-logs
-  dfe-transform-vector-filebeat:
     logging: *container-logs
   dfe-transform-vrl:
     logging: *container-logs
