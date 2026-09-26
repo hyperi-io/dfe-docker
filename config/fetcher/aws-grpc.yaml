@@ -9,7 +9,7 @@
 output:
   type: grpc
   grpc:
-    endpoint: http://dfe-loader:50051
+    endpoint: http://dfe-loader:6000
 
 sources:
   aws:

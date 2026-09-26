@@ -137,7 +137,7 @@ credential fields are `env:`-interpolated. Change it there.
 |--------------------------------------------------|--------------------------------------------------------------------------------------|---------------------------------------------------------------------|
 | `DFE_LOADER_VERSION`                             | Version of dfe-loader to use                                                         | none -- `make stack` pins it; unset is a hard-fail                                                            |
 | `DFE_LOADER_PROMETHEUS_PORT`                     | Loader Prometheus port                                                               | `9091`                                                              |
-| `DFE_LOADER_GRPC_PORT`                           | Loader gRPC port                                                                     | `50051`                                                             |
+| `DFE_LOADER_GRPC_PORT`                           | Host port for the loader's gRPC Push listener (container port 6000)                  | `50051`                                                             |
 
 ### DFE Receiver
 
@@ -351,7 +351,7 @@ The same toggle points the engine at HyperDX: with it on, the engine receives `D
 | 9099  | dfe-transform-elastic | Prometheus metrics |
 | 13133 | otel-collector       | health_check       |
 | 19092 | Kafka (any backend)  | Plaintext host     |
-| 50051 | dfe-loader           | gRPC               |
+| 50051 | dfe-loader           | gRPC Push, container port 6000 |
 
 Additional receiver ports (commented out by default in docker-compose.yml):
 4317 (OTLP gRPC), 4318 (OTLP HTTP), 5044 (Beats), 8088 (HEC).

@@ -6,7 +6,7 @@
 # License:   BUSL-1.1
 # Copyright: (c) 2026 HYPERI PTY LIMITED
 
-# gRPC transport: receiver forwards events to dfe-loader via DFETransport/Push (:50051).
+# gRPC transport: receiver forwards events to dfe-loader via DFETransport/Push (:6000).
 
 grpc:
   enabled: true
@@ -19,6 +19,6 @@ routing:
 destinations:
   default: loader
 
+# No grpc_endpoint: the receiver's default loader address is dfe-loader:6000, and an engine-rendered destinations.loader overrides it.
 loader:
   transport: grpc
-  grpc_endpoint: http://dfe-loader:50051

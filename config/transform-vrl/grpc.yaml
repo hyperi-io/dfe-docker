@@ -15,4 +15,4 @@ transforms:
 
 sink:
   transport: direct
-  endpoint: http://dfe-loader:50051
+  endpoint: http://dfe-loader:6000
