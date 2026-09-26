@@ -80,6 +80,8 @@ Beyond resolution, these semantic assertions ride along.
   dev posture, because it refuses to start on one. See `_credential_failures`.
 - Every service the log-driver fragment ships must queue its lines and wait for
   the collector's ack. See `_log_driver_failures`.
+- Every path a pinned image declares as a VOLUME must be mounted from a named
+  volume or a bind. See `_IMAGE_VOLUMES`.
 """
 
 from __future__ import annotations
@@ -286,6 +288,18 @@ _LOG_DRIVER_OPTIONS = {
         "Docker's port proxy accepts lines before the collector listens and drops "
         "them, and the driver counts them as sent"
     ),
+}
+
+# The VOLUME paths each pinned image declares (`docker image inspect --format
+# '{{json .Config.Volumes}}'`), by service: one left unmounted gets an anonymous
+# volume per container that `make clean` cannot reach. A new pin that declares
+# another path is an edit here.
+_IMAGE_VOLUMES: dict[str, tuple[str, ...]] = {
+    "clickhouse": ("/var/lib/clickhouse",),
+    "hyperdx-ferretdb": ("/state",),
+    "hyperdx-postgres": ("/var/lib/postgresql/data",),
+    "kafka-apache": ("/etc/kafka/secrets", "/mnt/shared/config", "/var/lib/kafka/data"),
+    "kafka-redpanda": ("/var/lib/redpanda/data",),
 }
 
 # A dfe-transform-vector pipeline declares its own enrichment tables, and the
@@ -879,6 +893,44 @@ def _container_log_failures(*, env: dict[str, str]) -> tuple[list[str], int]:
     return _log_driver_failures(config=config), len(shipped)
 
 
+def _unmounted_image_volume_failures(*, config: dict) -> list[str]:
+    """Return one message per image-declared VOLUME path with nothing named mounted on it."""
+    services = config.get("services", {})
+    failures = []
+    for name, paths in sorted(_IMAGE_VOLUMES.items()):
+        if name not in services:
+            failures.append(f"{name}: in _IMAGE_VOLUMES but not in the stack")
+            continue
+        mounted = {
+            volume.get("target")
+            for volume in services[name].get("volumes") or []
+            if volume.get("source")
+        }
+        for path in paths:
+            if path not in mounted:
+                failures.append(
+                    f"{name}: its image declares VOLUME {path} and compose mounts "
+                    "nothing named there -- every `make down` strands an anonymous "
+                    "volume that `make clean` cannot remove"
+                )
+    return failures
+
+
+def _image_volume_failures(*, env: dict[str, str]) -> tuple[list[str], int]:
+    """Return (messages, paths checked) for the image VOLUME paths on the registry path.
+
+    Both Kafka backends are resolved into the one model, since each declares its
+    own paths.
+    """
+    config = _config_json(
+        env=env, files=[COMPOSE_FILE.name], extra_profiles=(_KAFKA_BACKENDS[1],)
+    )
+    if config is None:
+        return (["the registry path did not resolve, so volume mounts are unknown"], 0)
+    made = sum(len(paths) for paths in _IMAGE_VOLUMES.values())
+    return _unmounted_image_volume_failures(config=config), made
+
+
 def _override_coverage_failures(*, env: dict[str, str]) -> list[str]:
     """Return one message per service the committed override leaves on the registry.
 
@@ -1238,6 +1290,16 @@ def main() -> int:
     _print(
         msg=f"All {log_made} service(s) on the fluentd driver queue their lines and "
         "wait for the collector's ack"
+    )
+
+    volume_failures, volume_made = _image_volume_failures(env=env)
+    for message in volume_failures:
+        _print(msg=f"FAIL {message}")
+    if volume_failures:
+        return 1
+    _print(
+        msg=f"Every VOLUME path the pinned images declare is mounted from a named "
+        f"volume or a bind ({volume_made} assertions)"
     )
 
     coverage_failures = _override_coverage_failures(env=env)

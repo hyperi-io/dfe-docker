@@ -76,6 +76,60 @@ def test_a_shipped_service_that_does_not_queue_fails():
     assert len(failures) == 1
 
 
+def _every_image_volume_mounted() -> dict:
+    return {
+        "services": {
+            name: {
+                "volumes": [
+                    {"type": "volume", "source": f"v{index}", "target": path}
+                    for index, path in enumerate(paths)
+                ]
+            }
+            for name, paths in check_compose._IMAGE_VOLUMES.items()
+        }
+    }
+
+
+def test_an_image_volume_compose_leaves_unmounted_fails():
+    """An unmounted /state strands one anonymous volume per down/up cycle."""
+    config = _every_image_volume_mounted()
+    config["services"]["hyperdx-ferretdb"]["volumes"] = []
+
+    failures = check_compose._unmounted_image_volume_failures(config=config)
+
+    assert len(failures) == 1
+    assert "hyperdx-ferretdb" in failures[0]
+    assert "/state" in failures[0]
+
+
+def test_an_anonymous_compose_volume_is_still_unmounted():
+    """`- /state` with no source is the same anonymous volume, declared in compose."""
+    config = _every_image_volume_mounted()
+    config["services"]["hyperdx-ferretdb"]["volumes"] = [
+        {"type": "volume", "target": "/state"}
+    ]
+
+    assert check_compose._unmounted_image_volume_failures(config=config)
+
+
+def test_named_volumes_and_binds_both_count_as_mounted():
+    config = _every_image_volume_mounted()
+    config["services"]["hyperdx-ferretdb"]["volumes"] = [
+        {"type": "bind", "source": "/srv/ferret-state", "target": "/state"}
+    ]
+
+    assert check_compose._unmounted_image_volume_failures(config=config) == []
+
+
+def test_a_listed_service_missing_from_the_stack_fails_rather_than_passing():
+    config = _every_image_volume_mounted()
+    del config["services"]["kafka-apache"]
+
+    failures = check_compose._unmounted_image_volume_failures(config=config)
+
+    assert failures == ["kafka-apache: in _IMAGE_VOLUMES but not in the stack"]
+
+
 def test_a_service_that_queues_and_waits_passes_and_json_file_is_not_checked():
     config = {
         "services": {
