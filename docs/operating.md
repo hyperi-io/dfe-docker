@@ -371,20 +371,22 @@ Never commit `.env`.
 
 ## Persistence: what survives, and what `make clean` destroys
 
-Eight named volumes hold all durable state:
+These named volumes hold all durable state:
 
 | Volume | Holds |
 |---|---|
 | `clickhouse-data` | The ClickHouse warehouse (`/var/lib/clickhouse`) |
 | `kafka-redpanda-data` / `kafka-apache-data` | Broker log and offsets, per backend |
+| `kafka-apache-secrets` / `kafka-apache-config` | Apache Kafka's TLS and property-file inputs, empty unless a deployment supplies them |
 | `archiver-data` | dfe-archiver output (`/var/data/archive`) |
 | `dlq-spool` | Shared dead-letter spool (`/var/spool/dfe`) |
 | `dfe-engine-config` / `dfe-engine-schemas` | Engine config and schemas, seeded from the engine image on first run |
 | `hyperdx-pg-data` | HyperDX metadata store |
+| `hyperdx-ferretdb-state` | FerretDB's instance UUID and telemetry choice (`/state`) |
 
 `make down` stops containers and leaves every volume intact. `make clean` runs
 `docker compose --profile "*" down -v --remove-orphans` -- the `-v` deletes all
-eight, which now includes the warehouse. It always removed volumes; what changed
+of them, which now includes the warehouse. It always removed volumes; what changed
 is that ClickHouse data is in one.
 
 ### Retention

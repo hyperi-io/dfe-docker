@@ -58,6 +58,7 @@ that is a scalo contract change, not a Compose one.
 
 from __future__ import annotations
 
+import datetime
 import functools
 import json
 import os
@@ -442,6 +443,47 @@ def _container_name(service: str) -> str:
     )
     names = result.stdout.split()
     return names[0] if result.returncode == 0 and names else service
+
+
+def _container_started(name: str) -> int | None:
+    """The Unix second one container last started in, or None when docker cannot say.
+
+    Floored, because the log driver stamps each line in whole seconds.
+    """
+    result = subprocess.run(
+        ["docker", "container", "inspect", "--format", "{{.State.StartedAt}}", name],
+        capture_output=True,
+        check=False,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        timeout=API_EXEC_MARGIN_SECONDS,
+    )
+    if result.returncode != 0:
+        return None
+    try:
+        started = datetime.datetime.strptime(
+            result.stdout.strip()[:19], "%Y-%m-%dT%H:%M:%S"
+        )
+    except ValueError:
+        return None
+    # Docker reports year 1 for a container that has never started.
+    if started.year == 1:
+        return None
+    return int(started.replace(tzinfo=datetime.UTC).timestamp())
+
+
+def _log_window(name: str) -> str:
+    """The Timestamp clause that scopes one container's log rows to its current run.
+
+    A service that goes quiet once it is up has only its startup lines to show, and
+    a fixed freshness window ages them out while the earlier claims run. Rows from
+    an earlier container of the same name prove nothing about this one.
+    """
+    started = _container_started(name)
+    if started is None:
+        return f"Timestamp > now() - INTERVAL {OTEL_FRESH_WINDOW_SECONDS} SECOND"
+    return f"Timestamp >= toDateTime({started})"
 
 
 def _exec_request(
@@ -871,7 +913,8 @@ def _verify_container_logs(*, database: str) -> int:
 
     Freshness alone would pass on one container talking, so this asks per service:
     the log driver tags every stream with its container name, and the collector
-    turns that tag into ServiceName.
+    turns that tag into ServiceName. Each count covers what that container wrote
+    since it last started (`_log_window`).
     """
     names = ", ".join(CONTAINER_LOG_SERVICES)
     _print(
@@ -885,7 +928,7 @@ def _verify_container_logs(*, database: str) -> int:
             count = ch_int(
                 f"SELECT count() FROM {database}.{OTEL_LOGS_TABLE} "
                 f"WHERE ServiceName = '{escape_literal(stamped)}' "
-                f"AND Timestamp > now() - INTERVAL {OTEL_FRESH_WINDOW_SECONDS} SECOND"
+                f"AND {_log_window(stamped)}"
             )
             found[stamped] = 0 if count is None else count
         return found
@@ -906,8 +949,8 @@ def _verify_container_logs(*, database: str) -> int:
     if silent:
         _print(
             msg=f"FAIL  no rows in {database}.{OTEL_LOGS_TABLE} for {', '.join(silent)} "
-            f"within {OTEL_TIMEOUT_SECONDS:.0f}s -- container stdout is not reaching "
-            "the collector"
+            f"since it started, within {OTEL_TIMEOUT_SECONDS:.0f}s -- container stdout "
+            "is not reaching the collector"
         )
         return 1
     summary = ", ".join(f"{name}={count}" for name, count in sorted(counts.items()))

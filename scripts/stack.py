@@ -16,13 +16,18 @@ exactly as it was, so the merge is idempotent and safe to re-run.
 
 ``VERSION=latest`` is the DEV CURRENCY mode: it resolves the newest certified
 stack for the third-party images, then repins every image we publish to
-``ghcr.io/hyperi-io`` at its own newest published tag. That combination is newer
-than any stack anyone certified, so it is for development and integration, never
-a deployment -- `make modes` reports it as unpinned. The pins it writes still
-carry digests; nothing here ever emits a floating tag.
+``ghcr.io/hyperi-io`` at its component's newest GitHub release. That combination
+is newer than any stack anyone certified, so it is for development and
+integration, never a deployment -- `make modes` reports it as unpinned. The pins
+it writes still carry digests; nothing here ever emits a floating tag.
 
-``latest`` prefers a release and falls back to the newest pre-release on a repo
-that has published none; ``rc`` ranks pre-releases alongside releases throughout.
+The release GitHub marks Latest, not the highest registry tag, because version
+order is not release order: a fork can carry a release tagged above its own line,
+and ranking by version number pins that one ahead of every later release.
+
+``latest`` takes the release GitHub marks Latest and falls back to the newest
+pre-release on a repo that has published none; ``rc`` takes the newest release of
+either kind.
 
 Transport is EXPLICIT-LOCAL-FIRST, OCI-DEFAULT:
 
@@ -60,6 +65,7 @@ from _common import (
 from _registry import (
     DISCOVERY_WORDS,
     RegistryError,
+    latest_release,
     latest_tag,
     manifest_repo,
     resolve_digest,
@@ -214,6 +220,12 @@ def _refuse_undigested(pins: dict[str, str]) -> None:
         )
 
 
+def _our_image_lines() -> list[re.Match[str]]:
+    """Every compose image line for an image we publish, in file order."""
+    lines = COMPOSE_FILE.read_text(encoding="utf-8", errors="replace").splitlines()
+    return [match for line in lines if (match := _OUR_IMAGE_LINE.match(line))]
+
+
 def _our_image_repos() -> dict[str, str]:
     """Map each pin key to the ghcr.io/hyperi-io image repo that compose tags with it.
 
@@ -222,22 +234,33 @@ def _our_image_repos() -> dict[str, str]:
     wins over the compose default, which is what a registry mirror sets.
     """
     override = _dotenv_values().get("IMAGE_REGISTRY", "").strip()
-    repos: dict[str, str] = {}
-    for line in COMPOSE_FILE.read_text(encoding="utf-8", errors="replace").splitlines():
-        match = _OUR_IMAGE_LINE.match(line)
-        if match is None:
-            continue
-        repos[match["key"]] = f"{override or match['registry']}/{match['name']}"
-    return repos
+    return {
+        match["key"]: f"{override or match['registry']}/{match['name']}"
+        for match in _our_image_lines()
+    }
+
+
+def _our_release_repos() -> dict[str, str]:
+    """Map each pin key to the ``owner/name`` GitHub repo that releases its image.
+
+    A GHCR namespace is its GitHub owner, and each image shares its repo's name.
+    Taken from the compose default rather than ``IMAGE_REGISTRY``: a mirror moves
+    where the image is pulled from, not where it is released.
+    """
+    return {
+        match["key"]: f"{match['registry'].rsplit('/', 1)[-1]}/{match['name']}"
+        for match in _our_image_lines()
+    }
 
 
 def _latest_image_pins(*, prereleases: str) -> dict[str, str]:
-    """Return a pin line per DFE image, at its newest published tag plus digest."""
+    """Return a pin line per DFE image, at its component's newest release plus digest."""
+    sources = _our_release_repos()
     pins: dict[str, str] = {}
     for key, repo in sorted(_our_image_repos().items()):
-        tag = latest_tag(prereleases=prereleases, repo=repo)
+        tag = latest_release(prereleases=prereleases, repo=sources[key])
         digest = resolve_digest(reference=f"{repo}:{tag}")
-        pins[key] = f"{key}={tag}@{digest}  # {repo}, newest published"
+        pins[key] = f"{key}={tag}@{digest}  # {repo}, newest release of {sources[key]}"
     return pins
 
 

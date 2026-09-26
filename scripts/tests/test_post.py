@@ -17,6 +17,7 @@ rows are inside it), and that a run which skipped every claim exits non-zero.
 
 from __future__ import annotations
 
+import datetime
 import json
 
 import pytest
@@ -432,6 +433,72 @@ def test_the_log_query_matches_the_container_name_not_the_service(
     post._container_name.cache_clear()
 
     assert post._container_name("dfe-engine") == "accept-dfe-engine"
+
+
+def test_a_container_start_is_floored_to_the_second_the_log_driver_stamps(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        post.subprocess,
+        "run",
+        lambda args, **kwargs: _completed(stdout="2026-09-26T19:29:57.911126595Z\n"),
+    )
+
+    started = post._container_started("dfe-loader")
+
+    assert started == int(
+        datetime.datetime(2026, 9, 26, 19, 29, 57, tzinfo=datetime.UTC).timestamp()
+    )
+
+
+@pytest.mark.parametrize(
+    ("code", "stdout"),
+    [(1, ""), (0, "0001-01-01T00:00:00Z\n"), (0, "not a time\n")],
+)
+def test_a_start_docker_cannot_state_is_none(
+    monkeypatch: pytest.MonkeyPatch, code: int, stdout: str
+) -> None:
+    monkeypatch.setattr(
+        post.subprocess,
+        "run",
+        lambda args, **kwargs: _completed(code=code, stdout=stdout),
+    )
+
+    assert post._container_started("dfe-loader") is None
+
+
+def _count_log_queries(
+    monkeypatch: pytest.MonkeyPatch, started: int | None
+) -> list[str]:
+    """Run the container-log claim once and return every query it sent."""
+    queries: list[str] = []
+    monkeypatch.setattr(post, "OTEL_TIMEOUT_SECONDS", 0.0)
+    monkeypatch.setattr(post, "_container_name", lambda service: service)
+    monkeypatch.setattr(post, "_container_started", lambda name: started)
+    monkeypatch.setattr(post, "ch_int", lambda sql: queries.append(sql) or 1)
+    assert post._verify_container_logs(database="dfe") == 0
+    return queries
+
+
+def test_a_quiet_service_is_counted_from_its_own_start_not_a_window(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The loader logs at startup and then nothing, so a 300s window ages it out."""
+    queries = _count_log_queries(monkeypatch, 1790000000)
+
+    assert len(queries) == len(post.CONTAINER_LOG_SERVICES)
+    for sql in queries:
+        assert "Timestamp >= toDateTime(1790000000)" in sql
+        assert "now() - INTERVAL" not in sql
+
+
+def test_a_container_with_no_readable_start_falls_back_to_freshness(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    queries = _count_log_queries(monkeypatch, None)
+
+    for sql in queries:
+        assert f"now() - INTERVAL {post.OTEL_FRESH_WINDOW_SECONDS} SECOND" in sql
 
 
 def test_an_unresolvable_service_falls_back_to_its_own_name(

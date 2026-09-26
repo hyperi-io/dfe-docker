@@ -172,8 +172,14 @@ DFE_CONTAINER_LOGS_ENABLED=false
 The driver runs with `fluentd-async`, so a container starts whether or not the
 collector is up. Without it Docker refuses to create a container it cannot reach
 a logging endpoint for, which would put the collector on the startup path of the
-whole stack. The trade is that lines written while the collector is down are
-dropped rather than queued.
+whole stack. Lines written while the collector is down queue in the daemon and
+are sent when it answers.
+
+It also runs with `fluentd-request-ack`, and the queue depends on it. The
+collector's host port is Docker's port proxy, which accepts connections from the
+moment the container starts, before the collector inside is listening, and drops
+what it is sent. Without an ack the driver counts those lines as delivered, and a
+service starting beside the collector loses its startup lines.
 
 Node metrics are still not collected.
 
@@ -185,7 +191,9 @@ Node metrics are still not collected.
   as those exact rows in `dfe.main` inside 60s.
 - **Self-monitoring**, when a collector is running. Rows in the `dfe.otel_*` tables
   NEWER than five minutes, and a row in `dfe.otel_logs` under each of
-  `dfe-engine`, `dfe-loader` and `dfe-receiver`.
+  `dfe-engine`, `dfe-loader` and `dfe-receiver` written since that container
+  started. On the gRPC tier the loader logs at startup and is quiet after it, so
+  a five-minute window can age its only lines out while the earlier claims run.
 - **Observability**, when HyperDX is running. Its API returns the six seeded
   sources and at least one provisioned dashboard, read through the proxy that
   gives it an identity.

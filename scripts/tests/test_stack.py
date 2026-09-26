@@ -10,7 +10,7 @@
 
 Which keys that covers is DERIVED from docker-compose.yml rather than listed, so the test runs against the real compose file: a service added to the stack has to turn up here without anyone editing a list, and a third-party image must never turn up at all -- floating ClickHouse or Kafka is the thing this mode is not.
 
-The repin itself is asserted against fixed tags and digests, so what is pinned is the shape of the line written into `.env`, not GHCR's current contents.
+The repin itself is asserted against fixed releases and digests, so what is pinned is the shape of the line written into `.env` and the source each version comes from, not GitHub's or GHCR's current contents.
 """
 
 from __future__ import annotations
@@ -75,16 +75,59 @@ def test_an_image_registry_override_repoints_every_repo(dotenv: Path) -> None:
     assert repos["DFE_UI_VERSION"] == "registry.local/mirror/dfe-ui"
 
 
-def test_a_repin_line_carries_the_tag_the_digest_and_the_repo(
+def test_each_image_is_released_by_the_github_repo_of_the_same_name() -> None:
+    sources = stack._our_release_repos()
+
+    assert set(sources) == _OUR_KEYS
+    assert sources["DFE_ENGINE_VERSION"] == "hyperi-io/dfe-engine"
+    assert sources["DFE_HYPERDX_VERSION"] == "hyperi-io/dfe-hyperdx"
+
+
+def test_a_mirror_moves_the_image_and_not_its_release_source(dotenv: Path) -> None:
+    dotenv.write_text("IMAGE_REGISTRY=registry.local/mirror\n", encoding="utf-8")
+
+    assert stack._our_image_repos()["DFE_UI_VERSION"] == "registry.local/mirror/dfe-ui"
+    assert stack._our_release_repos()["DFE_UI_VERSION"] == "hyperi-io/dfe-ui"
+
+
+def test_a_repin_takes_the_release_and_never_the_highest_registry_tag(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    """dfe-hyperdx's registry carries a v1.0.0 that outranks its Latest release, v0.2.7."""
+    asked: dict[str, str] = {}
+
     def _latest_tag(*, prereleases: str = "exclude", repo: str) -> str:
+        return "v1.0.0"
+
+    def _latest_release(*, prereleases: str = "exclude", repo: str) -> str:
+        asked[repo] = prereleases
+        return "v0.2.7"
+
+    def _resolve_digest(*, reference: str) -> str:
+        assert reference.endswith(":v0.2.7"), reference
+        return "sha256:" + "c" * 64
+
+    monkeypatch.setattr(stack, "latest_tag", _latest_tag)
+    monkeypatch.setattr(stack, "latest_release", _latest_release)
+    monkeypatch.setattr(stack, "resolve_digest", _resolve_digest)
+
+    pins = stack._latest_image_pins(prereleases="fallback")
+
+    assert pins["DFE_HYPERDX_VERSION"].startswith("DFE_HYPERDX_VERSION=v0.2.7@sha256:")
+    assert asked["hyperi-io/dfe-hyperdx"] == "fallback"
+    assert set(asked) == set(stack._our_release_repos().values())
+
+
+def test_a_repin_line_carries_the_tag_the_digest_and_both_repos(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def _latest_release(*, prereleases: str = "exclude", repo: str) -> str:
         return "v1.19.36"
 
     def _resolve_digest(*, reference: str) -> str:
         return "sha256:" + "a" * 64
 
-    monkeypatch.setattr(stack, "latest_tag", _latest_tag)
+    monkeypatch.setattr(stack, "latest_release", _latest_release)
     monkeypatch.setattr(stack, "resolve_digest", _resolve_digest)
 
     pins = stack._latest_image_pins(prereleases="fallback")
@@ -92,18 +135,18 @@ def test_a_repin_line_carries_the_tag_the_digest_and_the_repo(
     assert set(pins) == _OUR_KEYS
     assert pins["DFE_ENGINE_VERSION"] == (
         f"DFE_ENGINE_VERSION=v1.19.36@sha256:{'a' * 64}"
-        "  # ghcr.io/hyperi-io/dfe-engine, newest published"
+        "  # ghcr.io/hyperi-io/dfe-engine, newest release of hyperi-io/dfe-engine"
     )
 
 
 def test_a_repin_never_writes_a_floating_tag(monkeypatch: pytest.MonkeyPatch) -> None:
-    def _latest_tag(*, prereleases: str = "exclude", repo: str) -> str:
+    def _latest_release(*, prereleases: str = "exclude", repo: str) -> str:
         return "v1.19.36"
 
     def _resolve_digest(*, reference: str) -> str:
         return "sha256:" + "b" * 64
 
-    monkeypatch.setattr(stack, "latest_tag", _latest_tag)
+    monkeypatch.setattr(stack, "latest_release", _latest_release)
     monkeypatch.setattr(stack, "resolve_digest", _resolve_digest)
 
     for line in stack._latest_image_pins(prereleases="fallback").values():

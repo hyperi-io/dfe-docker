@@ -23,9 +23,10 @@ which one a box is on should never have to be guessed:
     It never pulls `latest`; -rc builds join in with DFE_UPDATE_ALLOW_PRERELEASE=1.
 
   LATEST (development only) -- `make stack VERSION=latest` takes the newest
-    certified stack and then repins every DFE image at its own newest published
-    tag, which is a combination nobody certified. Still digest-pinned, so it is
-    reproducible; it is just not a set anyone tested together.
+    certified stack and then repins every DFE image at the release its GitHub
+    repo marks Latest, which is a combination nobody certified. Still
+    digest-pinned, so it is reproducible; it is just not a set anyone tested
+    together.
 
 This reads local files only (the deployment dial and .env), so it is safe on a
 fresh checkout and offline. The live "what is the newest published stack" answer
@@ -140,7 +141,7 @@ def main() -> int:
     print("  LATEST (development only, NOT a deployment)")
     print("    make stack VERSION=latest   # `rc` to rank pre-releases throughout")
     print("    Takes the newest certified stack, then repins every DFE image at")
-    print("    its own newest published tag -- a combination nobody certified.")
+    print("    its GitHub Latest release -- a combination nobody certified.")
     print("    Still digest-pinned; re-run it to move forward.")
     print()
 

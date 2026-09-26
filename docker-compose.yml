@@ -250,6 +250,10 @@ services:
       - ${DFE_BIND_HOST:-127.0.0.1}:${KAFKA_PLAINTEXT_HOST_PORT:-19092}:19092
     volumes:
       - kafka-apache-data:/var/lib/kafka/data
+      # The image declares these as VOLUMEs too, empty unless a deployment
+      # supplies TLS material or property files. Named, so no down/up strands one.
+      - kafka-apache-secrets:/etc/kafka/secrets
+      - kafka-apache-config:/mnt/shared/config
     healthcheck:
       test: ["CMD-SHELL", "/opt/kafka/bin/kafka-broker-api-versions.sh --bootstrap-server localhost:9092 > /dev/null 2>&1"]
       interval: 5s
@@ -1434,6 +1438,10 @@ services:
     deploy: *limits-service
     environment:
       FERRETDB_POSTGRESQL_URL: postgres://${HYPERDX_POSTGRES_USER:-hyperdx}:${HYPERDX_POSTGRES_PASSWORD:-hyperdx}@hyperdx-postgres:5432/postgres
+    volumes:
+      # The image's VOLUME: FerretDB's instance UUID and telemetry choice
+      # (state.json). Named, so a restart keeps them and `make clean` removes them.
+      - hyperdx-ferretdb-state:/state
     depends_on:
       hyperdx-postgres:
         condition: service_healthy
@@ -1633,10 +1641,15 @@ services:
         condition: service_healthy
         required: false
 
+# Every path an image declares as a VOLUME is mounted from one of these: an
+# unmounted one gets a fresh anonymous volume per container, which `make down`
+# strands and `make clean` cannot reach. check_compose.py holds the list.
 volumes:
   clickhouse-data:
   kafka-redpanda-data:
   kafka-apache-data:
+  kafka-apache-secrets:
+  kafka-apache-config:
   archiver-data:
   dlq-spool:
   dfe-engine-config:
@@ -1649,3 +1662,4 @@ volumes:
   dfe-app-config:
   hyperdx-dashboards:
   hyperdx-pg-data:
+  hyperdx-ferretdb-state:

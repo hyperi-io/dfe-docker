@@ -50,6 +50,8 @@ See [docs/architecture.md](docs/architecture.md).
 - [`oras`](https://oras.land) - `make stack` reads the signed OCI stack-manifest
   through it. Not needed if you render from a local dfe-infra checkout instead
   (`DFE_INFRA_DIR`).
+- [`gh`](https://cli.github.com), logged in - only for `make stack VERSION=latest`
+  or `rc`, which read each component's GitHub releases through it.
 
 ### Initialisation
 
@@ -89,8 +91,8 @@ make down   # Stop everything
 ```
 
 `VERSION=latest` instead pins the newest certified stack and then repins every
-DFE image at its own newest published tag - development currency, not a
-deployment. `make modes` states the three modes and which one this checkout is
+DFE image at the release its GitHub repo marks Latest - development currency, not
+a deployment. `make modes` states the three modes and which one this checkout is
 on.
 
 ### 2. Dev mode (builds from component source)
