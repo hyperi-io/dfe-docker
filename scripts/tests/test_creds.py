@@ -302,6 +302,55 @@ def test_the_summary_hands_over_the_external_origin(dotenv: Path) -> None:
     assert "- Engine API: http://dfe.example.test:8003" in body
 
 
+def test_a_port_the_environment_sets_beats_the_dotenv_one(dotenv: Path) -> None:
+    """Compose publishes the environment's port, so that is the one handed over."""
+    dotenv.write_text(f"{_ENV}DFE_UI_PORT=3000\n", encoding="utf-8", newline="\n")
+
+    values = creds.resolved_values(
+        dotenv=creds._dotenv_values(), environ={"DFE_UI_PORT": "23000"}
+    )
+
+    assert "    console      http://127.0.0.1:23000" in creds.summary_lines(
+        values=values
+    )
+
+
+def test_the_printed_summary_follows_the_environment(
+    dotenv: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    dotenv.write_text(
+        f"{_ENV}DFE_UI_PORT=3000\nDFE_ENGINE_PORT=8003\n",
+        encoding="utf-8",
+        newline="\n",
+    )
+    monkeypatch.setattr("sys.stdout.isatty", lambda: False)
+    monkeypatch.setenv("DFE_UI_PORT", "23000")
+    monkeypatch.setenv("DFE_ENGINE_PORT", "28003")
+    monkeypatch.setenv("DFE_BIND_SCOPE", "all")
+    monkeypatch.setenv("DFE_EXTERNAL_ORIGIN", "http://dfe.example.test")
+
+    assert creds.main([]) == 0
+
+    out = capsys.readouterr().out
+    assert "console      http://dfe.example.test:23000" in out
+    assert "engine API   http://dfe.example.test:28003" in out
+
+
+def test_a_password_in_the_environment_is_never_read(dotenv: Path) -> None:
+    dotenv.write_text(_ENV, encoding="utf-8", newline="\n")
+
+    values = creds.resolved_values(
+        dotenv=creds._dotenv_values(),
+        environ={
+            "DFE_AUTH_LOCAL_ADMIN_PASSWORD": "from-the-environment",
+            "DFE_AUTH_BREAKGLASS_PASSWORD": "also-from-the-environment",
+        },
+    )
+
+    assert values["DFE_AUTH_LOCAL_ADMIN_PASSWORD"] == _MINTED
+    assert values["DFE_AUTH_BREAKGLASS_PASSWORD"] == "another-minted-value"
+
+
 @pytest.mark.parametrize(
     ("values", "expected"),
     [

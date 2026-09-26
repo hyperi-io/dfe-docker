@@ -512,7 +512,7 @@ services:
       # The custom keys the engine writes for this app, AFTER the file above so
       # a custom key wins. Compose reads env_file at up-time, so a write needs
       # `docker compose up -d dfe-archiver` and a restart keeps the old values.
-      - path: env/archiver.custom.env
+      - path: env/dfe-archiver.custom.env
         required: false
     environment:
       LOG_LEVEL: ${LOG_LEVEL:-info}
@@ -563,7 +563,7 @@ services:
         required: false
       # The custom keys the engine writes for this app; an up -d applies them,
       # a restart keeps the environment the container already has.
-      - path: env/fetcher.custom.env
+      - path: env/dfe-fetcher.custom.env
         required: false
     environment:
       LOG_LEVEL: ${LOG_LEVEL:-info}
@@ -618,7 +618,7 @@ services:
         required: false
       # The custom keys the engine writes for this app; an up -d applies them,
       # a restart keeps the environment the container already has.
-      - path: env/loader.custom.env
+      - path: env/dfe-loader.custom.env
         required: false
     environment:
       CLICKHOUSE_USERNAME: ${CLICKHOUSE_USERNAME:-default}
@@ -684,7 +684,7 @@ services:
         required: false
       # The custom keys the engine writes for this app; an up -d applies them,
       # a restart keeps the environment the container already has.
-      - path: env/receiver.custom.env
+      - path: env/dfe-receiver.custom.env
         required: false
     environment:
       LOG_LEVEL: ${LOG_LEVEL:-info}
@@ -743,6 +743,10 @@ services:
     env_file:
       - path: env/transform-elastic.env
         required: false
+      # The custom keys the engine writes for this app; an up -d applies them,
+      # a restart keeps the environment the container already has.
+      - path: env/dfe-transform-elastic.custom.env
+        required: false
     environment:
       LOG_LEVEL: ${LOG_LEVEL:-info}
       LOG_FORMAT: ${LOG_FORMAT:-text}
@@ -793,6 +797,10 @@ services:
     env_file:
       - path: env/transform-elastic-cisco-ios.env
         required: false
+      # The custom keys the engine writes for this app; an up -d applies them,
+      # a restart keeps the environment the container already has.
+      - path: env/dfe-transform-elastic-cisco-ios.custom.env
+        required: false
     environment:
       LOG_LEVEL: ${LOG_LEVEL:-info}
       LOG_FORMAT: ${LOG_FORMAT:-text}
@@ -836,7 +844,7 @@ services:
         required: false
       # The custom keys the engine writes for this app; an up -d applies them,
       # a restart keeps the environment the container already has.
-      - path: env/transform-vector.custom.env
+      - path: env/dfe-transform-vector.custom.env
         required: false
     environment:
       LOG_LEVEL: ${LOG_LEVEL:-info}
@@ -899,7 +907,7 @@ services:
         required: false
       # The custom keys the engine writes for this app; an up -d applies them,
       # a restart keeps the environment the container already has.
-      - path: env/transform-vector-filebeat.custom.env
+      - path: env/dfe-transform-vector-filebeat.custom.env
         required: false
     environment:
       LOG_LEVEL: ${LOG_LEVEL:-info}
@@ -942,7 +950,7 @@ services:
         required: false
       # The custom keys the engine writes for this app; an up -d applies them,
       # a restart keeps the environment the container already has.
-      - path: env/transform-vrl.custom.env
+      - path: env/dfe-transform-vrl.custom.env
         required: false
     environment:
       LOG_LEVEL: ${LOG_LEVEL:-info}
@@ -995,7 +1003,7 @@ services:
         required: false
       # The custom keys the engine writes for this app; an up -d applies them,
       # a restart keeps the environment the container already has.
-      - path: env/transform-vrl-filebeat.custom.env
+      - path: env/dfe-transform-vrl-filebeat.custom.env
         required: false
     environment:
       LOG_LEVEL: ${LOG_LEVEL:-info}
@@ -1035,6 +1043,10 @@ services:
     profiles: ["core"]
     restart: unless-stopped
     deploy: *limits-service
+    # The engine runs as UID 1000 and ./env belongs to the operator, so it writes
+    # there through the operator's group; `make` exports DFE_DEV_GID.
+    group_add:
+      - "${DFE_DEV_GID:-1000}"
     ports:
       # dfe-proxy reaches the engine over the docker network; this host mapping
       # is for direct API work. PRODUCT class -- it is the API the UI consumes --
@@ -1134,8 +1146,9 @@ services:
       # volume. resolve_profile.py sets it EMPTY on a tier the engine renders no
       # app config for; unset (compose run without make) keeps the volume's path.
       DFE_APP_CONTRACT_DIR: ${DFE_ENGINE_CONTRACT_DIR-${DFE_ENGINE_CONTENT_DIR:-/app/content}/contract}
-      # Where the engine writes env/<app>.custom.env, the sibling of the app
-      # config directory above. A literal, because it names the bind mount below
+      # Where the engine writes env/<service>.custom.env, one per compose service
+      # (a per-source instance included), the sibling of the app config
+      # directory above. A literal, because it names the bind mount below
       # and the two have to stay the same path -- and that path is the host tree,
       # so a write here changes the operator's checkout.
       DFE_DEPLOYMENT_APP_ENV_DIR: /app/app-env
@@ -1150,8 +1163,8 @@ services:
       - dfe-engine-content:${DFE_ENGINE_CONTENT_DIR:-/app/content}
       # The only writer of this volume; every app mounts it read-only.
       - dfe-app-config:/app/app-config
-      # The per-service env files, READ-WRITE: the engine writes an app's custom
-      # keys to env/<app>.custom.env, and compose reads env_file off the host
+      # The per-service env files, READ-WRITE: the engine writes a service's custom
+      # keys to env/<service>.custom.env, and compose reads env_file off the host
       # tree rather than a volume. It is the operator's checkout being written.
       - ./env:/app/app-env
       # Each app's base config, as THIS tier committed it. The instance overlay

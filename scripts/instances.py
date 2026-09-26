@@ -46,6 +46,9 @@ COMPOSE_INSTANCES_FILE = REPO_ROOT / "docker-compose.instances.yml"
 INDEX_SUFFIX = ".instances"
 """What dfe-engine names its index (appmgmt/appconfig.py INSTANCE_INDEX_SUFFIX)."""
 
+CUSTOM_ENV_SUFFIX = ".custom.env"
+"""What dfe-engine names a service's custom env file (appmgmt/appconfig.py)."""
+
 # Where the apps mount the volume dfe-engine renders into. The engine is handed
 # the same path as DFE_APP_CONFIG_MOUNT, so the two cannot disagree.
 APP_CONFIG_MOUNT = "/etc/dfe/apps"
@@ -107,6 +110,15 @@ def service_name(service: str, instance: str) -> str:
     return f"{service}-{instance}"
 
 
+def custom_env_file(name: str) -> str:
+    """The env file dfe-engine writes one compose service's custom keys to.
+
+    Keyed on the service name, so each instance has its own
+    (appmgmt/appconfig.py CUSTOM_ENV_SUFFIX).
+    """
+    return f"env/{name}{CUSTOM_ENV_SUFFIX}"
+
+
 def _service_block(service: str, instance: str, compose_file: str) -> list[str]:
     """One generated service: what differs from the app's committed definition.
 
@@ -114,6 +126,9 @@ def _service_block(service: str, instance: str, compose_file: str) -> list[str]:
     an ingest listener, and N instances cannot share one host port; on Kubernetes
     this app renders no Service either, so nothing outside the stack addresses an
     instance directly.
+
+    The instance's own custom env file is appended to the ones `extends` carries,
+    so its keys win over the app's.
     """
     name = service_name(service, instance)
     config = f"{APP_CONFIG_MOUNT}/{service}/{instance}/{SERVICE_CONFIG_FILE[service]}"
@@ -124,6 +139,9 @@ def _service_block(service: str, instance: str, compose_file: str) -> list[str]:
         f"      service: {service}",
         f"    container_name: {name}",
         f'    command: ["--config", "{config}"]',
+        "    env_file:",
+        f"      - path: {custom_env_file(name)}",
+        "        required: false",
         "    environment:",
         f"      OTEL_SERVICE_NAME: {name}",
         "    ports: !reset []",

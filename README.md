@@ -95,7 +95,10 @@ and `make` turns each line into a compose service when it resolves the profile,
 so after a source is deployed through the console `make apply` creates that
 container. It runs no `down`: compose recreates only a service whose resolved
 definition changed and touches no volume. `make apply SERVICES="..."` narrows
-it, and `DEV=1` applies to a stack `make dev` started.
+it to those services and restarts them as well, because a config file the
+engine rewrote under a running container changes no service definition and `up`
+alone would leave that container reading the old one. That form is the command
+the engine's restart hint names. `DEV=1` applies to a stack `make dev` started.
 
 `VERSION=latest` instead pins the newest certified stack and then repins every
 DFE image at its own newest published tag - development currency, not a
@@ -202,7 +205,7 @@ In `dev` mode, they build from each repo's own Dockerfile (not the shared Rust b
 | `make e2e-posture` | Put `.env` into the stack the dfe-ui Playwright suite drives: `DFE_ENV=test`, the engine's e2e routes on, `e2e-` container names and 2xxxx ports -- [docs/developing.md](docs/developing.md#the-dfe-ui-playwright-suite----make-e2e-posture) |
 | `make creds`       | Print the access summary -- console URL, admin login, where the break-glass password lives. The password prints on a TTY only; a pipe, a file or `DFE_CREDS_SHOW=0` gets the `.env` key instead |
 | `make up`          | Start the pinned stack and print the access summary                |
-| `make apply`       | Start what the re-resolved profile adds or changes on a running stack, a new per-source instance included, recreating nothing unchanged and touching no volume (`DEV=1` for a `make dev` stack) |
+| `make apply`       | Start what the re-resolved profile adds or changes on a running stack, a new per-source instance included, recreating nothing unchanged and touching no volume. `SERVICES="..."` also restarts those services, so a mounted config the engine rewrote is read (`DEV=1` for a `make dev` stack) |
 | `make dev`         | Build local DFE images from source and start the stack (`LOCAL="..."` builds only those, rest pinned) |
 | `make dev-build`   | Build local DFE images from source (no start)                      |
 | `make ci`          | Pull and start infra and registry DFE images. Prints no credentials -- `make up` is the same start plus `make creds` |

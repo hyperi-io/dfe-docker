@@ -71,6 +71,20 @@ def _report_drift(*, include_dotenv: bool) -> None:
         )
 
 
+def grant_group_write() -> None:
+    """Let the operator's group write env/, which is how dfe-engine writes there.
+
+    The engine runs as a UID of its own and joins the operator's GID
+    (`group_add` in docker-compose.yml) to write each app's custom env file.
+    """
+    if not ENV_DIR.is_dir():
+        return
+    mode = ENV_DIR.stat().st_mode
+    # Only when a bit is missing: chmod on a directory another user owns raises.
+    if mode & 0o070 != 0o070:
+        ENV_DIR.chmod(mode | 0o070)
+
+
 def main() -> int:
     missing = _missing_files()
     if missing:
@@ -84,6 +98,7 @@ def main() -> int:
                 f"file in {_rel_path(path=ENV_TEMPLATE_DIR)}/"
             )
             return 1
+    grant_group_write()
     _report_drift(include_dotenv=not missing)
     return 0
 

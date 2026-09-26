@@ -59,15 +59,10 @@ ifneq (,$(filter-out $(BOOTSTRAP_GOALS),$(or $(MAKECMDGOALS),help)))
     ifeq ($(strip $(SERVICES)),)
         ACTIVE_SERVICES := $(DFE_SERVICES)
     else
-        # On a fresh checkout make parses once before .profile.mk exists, then
-        # remakes it and parses again; the name check only means anything on
-        # the second pass, when DFE_SERVICES is populated.
-        ifneq ($(strip $(DFE_SERVICES)),)
-            INVALID_SERVICES := $(filter-out $(DFE_SERVICES),$(SERVICES))
-            ifneq ($(INVALID_SERVICES),)
-                $(error 'SERVICES' contains names not in the resolved stack: $(INVALID_SERVICES). Available: $(DFE_SERVICES))
-            endif
-        endif
+        # Checked by the services-valid target, not here: this parse can hold the
+        # .profile.mk from before the engine declared a new per-source instance,
+        # and make regenerates it and parses again before any recipe runs.
+        INVALID_SERVICES := $(filter-out $(DFE_SERVICES),$(SERVICES))
         ACTIVE_SERVICES := $(filter $(SERVICES),$(DFE_SERVICES))
     endif
     # `make dev LOCAL="dfe-engine dfe-ui"` builds only those and keeps the rest
@@ -262,6 +257,15 @@ endif
 .PHONY: FORCE
 FORCE:
 
+# A prerequisite of every target that narrows to SERVICES. Recipes run only on
+# the pass that read the regenerated .profile.mk, so a per-source instance the
+# engine declared since the last run is a valid name here.
+.PHONY: services-valid
+services-valid:
+ifneq ($(strip $(INVALID_SERVICES)),)
+	$(error 'SERVICES' contains names not in the resolved stack: $(INVALID_SERVICES). Available: $(DFE_SERVICES))
+endif
+
 .env:
 	@python3 scripts/init.py
 
@@ -360,7 +364,7 @@ ifneq ($(strip $(DFE_DATA_ROOT)),)
 endif
 
 .PHONY: dev
-dev: env-files dev-posture down storage-dirs ## Build local DFE images from source and start the dev stack (LOCAL="svc ..." builds only those; AUTH=real for a minted login), then print the access summary
+dev: services-valid env-files dev-posture down storage-dirs ## Build local DFE images from source and start the dev stack (LOCAL="svc ..." builds only those; AUTH=real for a minted login), then print the access summary
 	docker compose $(DEV_PULL_FLAGS) $(PROFILE_FLAGS) pull
 	python3 scripts/build_dev_images.py $(DEV_OVERLAY_ARG) $(DEV_BUILD)
 	docker compose $(DEV_FLAGS) $(PROFILE_FLAGS) up -d $(ACTIVE_SERVICES)
@@ -368,7 +372,7 @@ dev: env-files dev-posture down storage-dirs ## Build local DFE images from sour
 	@$(MAKE) --no-print-directory creds
 
 .PHONY: dev-build
-dev-build: ## Build local DFE images from source (no start; honours LOCAL)
+dev-build: services-valid ## Build local DFE images from source (no start; honours LOCAL)
 	docker compose $(DEV_PULL_FLAGS) $(PROFILE_FLAGS) pull
 	python3 scripts/build_dev_images.py $(DEV_OVERLAY_ARG) $(DEV_BUILD)
 
@@ -377,7 +381,7 @@ dev-build: ## Build local DFE images from source (no start; honours LOCAL)
 # ---------------------------------------------------------------------------
 
 .PHONY: ci
-ci: login env-files down storage-dirs  ## Pull and start infra and registry DFE images. Prints no credentials -- run `make creds` for those
+ci: services-valid login env-files down storage-dirs  ## Pull and start infra and registry DFE images. Prints no credentials -- run `make creds` for those
 	docker compose -f docker-compose.yml $(STORAGE_FLAGS) $(UI_FLAGS) $(PROFILE_FLAGS) pull
 	docker compose -f docker-compose.yml $(STORAGE_FLAGS) $(UI_FLAGS) $(PROFILE_FLAGS) pull $(ACTIVE_SERVICES)
 	docker compose -f docker-compose.yml $(STORAGE_FLAGS) $(UI_FLAGS) $(PROFILE_FLAGS) up -d $(ACTIVE_SERVICES)
@@ -395,6 +399,12 @@ up: ci ## Start the stack from the pinned registry images, then print the access
 # by now. No `down` here: compose recreates only a service whose resolved
 # definition changed, and leaves every volume alone. DEV=1 uses the file chain
 # `make dev` starts with rather than the registry one.
+#
+# A config file the engine rewrote under a running container changes no service
+# definition, so `up` leaves that container as it is. Naming services therefore
+# restarts them as well, which is the engine's hint: one command creates,
+# recreates or restarts whatever the write needs. With no SERVICES nothing
+# unchanged is touched.
 ifneq ($(strip $(DEV)),)
     APPLY_FLAGS = $(DEV_FLAGS)
 else
@@ -402,11 +412,14 @@ else
 endif
 
 .PHONY: apply
-apply: storage-dirs ## Start what the re-resolved profile adds or changes on a running stack, a new per-source instance included; unchanged containers and every volume are left alone (DEV=1 for a `make dev` stack)
+apply: services-valid storage-dirs ## Start what the re-resolved profile adds or changes on a running stack, a new per-source instance included; SERVICES="..." also restarts those, so a rewritten mounted config is read; with no SERVICES unchanged containers are left alone. Volumes are never touched (DEV=1 for a `make dev` stack)
 	docker compose $(APPLY_FLAGS) $(PROFILE_FLAGS) up -d $(ACTIVE_SERVICES)
+ifneq ($(strip $(SERVICES)),)
+	docker compose $(APPLY_FLAGS) $(PROFILE_FLAGS) restart --no-deps $(ACTIVE_SERVICES)
+endif
 
 .PHONY: ci-pull
-ci-pull: login ## Pull infra and registry DFE images
+ci-pull: services-valid login ## Pull infra and registry DFE images
 	docker compose -f docker-compose.yml $(PROFILE_FLAGS) pull
 	docker compose -f docker-compose.yml $(PROFILE_FLAGS) pull $(ACTIVE_SERVICES)
 
