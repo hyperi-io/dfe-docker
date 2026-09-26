@@ -202,7 +202,7 @@ _AUTH_ENV = {
     "DFE_OIDC_ISSUER_URL": "https://idp.example.invalid/realms/dfe",
     "DFE_OIDC_CLIENT_ID": "compose-check",
     "DFE_OIDC_CLIENT_SECRET": "compose-check",
-    "DFE_OAUTH2_PROXY_COOKIE_SECRET": "0123456789abcdef0123456789abcdef",
+    "DFE_OAUTH2_PROXY_COOKIE_SECRET": "0123456789abcdef0123456789abcdef",  # gitleaks:allow
 }
 
 # Every overlay fragment the Makefile chains, read back out of its own
