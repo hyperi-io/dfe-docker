@@ -58,22 +58,51 @@ def test_a_request_over_the_network_carries_the_method_body_and_token(
         if args[:3] == ["docker", "compose", "ps"]:
             return _completed(stdout="c0ffee\n")
         recorded["args"] = args
+        recorded["env"] = kwargs["env"]
         return _completed(stdout='200\n{"access_token": "t"}')
 
     monkeypatch.setattr(post.subprocess, "run", _run)
     post._api_container.cache_clear()
 
     status, body = post._api_post_json(
-        f"{post.ENGINE_NETWORK_BASE}/auth/login", {"username": "admin"}, token="bearer"
+        f"{post.ENGINE_NETWORK_BASE}/auth/login",
+        {"username": "admin", "password": "hunter2"},
+        token="bearer",
     )
 
     assert (status, body) == (200, {"access_token": "t"})
     args = recorded["args"]
-    assert args[:2] == ["docker", "exec"]
-    spec = json.loads(args[3].split("=", 1)[1])
+    assert args[:4] == ["docker", "exec", "-e", post.API_REQUEST_KEY]
+    spec = json.loads(recorded["env"][post.API_REQUEST_KEY])
     assert spec["method"] == "POST"
     assert spec["token"] == "bearer"
-    assert json.loads(spec["body"]) == {"username": "admin"}
+    assert json.loads(spec["body"]) == {"username": "admin", "password": "hunter2"}
+
+
+def test_neither_the_password_nor_the_token_reaches_the_exec_argv(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Any local user can read another process's argv through `ps`."""
+    recorded: dict[str, object] = {}
+
+    def _run(args, **kwargs):
+        if args[:3] == ["docker", "compose", "ps"]:
+            return _completed(stdout="c0ffee\n")
+        recorded["args"] = args
+        return _completed(stdout="200\n{}")
+
+    monkeypatch.setattr(post.subprocess, "run", _run)
+    post._api_container.cache_clear()
+
+    post._api_post_json(
+        f"{post.ENGINE_NETWORK_BASE}/auth/login",
+        {"password": "pw-7c1e0b"},
+        token="tok-3f9a2d",
+    )
+
+    argv = " ".join(recorded["args"])
+    assert "pw-7c1e0b" not in argv
+    assert "tok-3f9a2d" not in argv
 
 
 def test_the_exec_addresses_the_container_compose_names_not_the_service(
