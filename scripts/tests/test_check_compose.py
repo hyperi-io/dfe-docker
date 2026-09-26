@@ -8,11 +8,12 @@
 #  License:      BUSL-1.1
 #  Copyright:    (c) 2026 HYPERI PTY LIMITED
 
-"""Tests for check_compose's `make -n dev` reader.
+"""Tests for check_compose's pure halves: the `make -n dev` reader and the rules
+it applies to a resolved compose model.
 
 The rest of check_compose.py shells out to `docker compose` and `make`, which
-needs a resolved stack. This half is a parser over the output, so it is testable
-on a string -- and it is the half that decides how much the LOCAL-path guard
+needs a resolved stack. These halves are parsers and rules over the output, so
+they are testable on a string or a dict -- and they decide how much each guard
 actually looks at.
 """
 
@@ -49,3 +50,41 @@ def test_a_second_line_does_not_hide_the_first():
 
 def test_a_goal_that_prints_no_compose_line_reads_as_absent():
     assert check_compose._dev_compose_files(output="echo nothing to do\n") == {}
+
+
+def _logged(**options: str) -> dict:
+    return {"logging": {"driver": "fluentd", "options": options}}
+
+
+def test_a_shipped_service_that_does_not_wait_for_the_ack_fails():
+    """Without the ack, lines sent before the collector listens are counted as sent."""
+    config = {"services": {"dfe-loader": _logged(**{"fluentd-async": "true"})}}
+
+    failures = check_compose._log_driver_failures(config=config)
+
+    assert len(failures) == 1
+    assert "dfe-loader" in failures[0]
+    assert "fluentd-request-ack" in failures[0]
+
+
+def test_a_shipped_service_that_does_not_queue_fails():
+    config = {"services": {"dfe-loader": _logged(**{"fluentd-request-ack": "true"})}}
+
+    failures = check_compose._log_driver_failures(config=config)
+
+    assert [f for f in failures if "fluentd-async" in f] == failures
+    assert len(failures) == 1
+
+
+def test_a_service_that_queues_and_waits_passes_and_json_file_is_not_checked():
+    config = {
+        "services": {
+            "dfe-loader": _logged(
+                **{"fluentd-async": "true", "fluentd-request-ack": "true"}
+            ),
+            "clickhouse": {"logging": {"driver": "json-file"}},
+            "kafka-ui": {},
+        }
+    }
+
+    assert check_compose._log_driver_failures(config=config) == []

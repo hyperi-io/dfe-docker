@@ -78,6 +78,8 @@ Beyond resolution, these semantic assertions ride along.
   that service's own bind mounts. See `_enrichment_table_failures`.
 - The engine must never receive an empty or `changeme` admin password outside a
   dev posture, because it refuses to start on one. See `_credential_failures`.
+- Every service the log-driver fragment ships must queue its lines and wait for
+  the collector's ack. See `_log_driver_failures`.
 """
 
 from __future__ import annotations
@@ -271,6 +273,19 @@ _DFE_OWNED_SERVICES = {
     "dfe-transform-vrl",
     "dfe-transform-vrl-filebeat",
     "dfe-ui",
+}
+
+# The fragment the Makefile chains to ship container stdout to the collector, and
+# the driver options each shipped service needs, with what breaks without one.
+_CONTAINER_LOGS_FRAGMENT = "docker-compose.container-logs.yml"
+_LOG_DRIVER_OPTIONS = {
+    "fluentd-async": (
+        "Docker refuses to create the container while the collector is not listening"
+    ),
+    "fluentd-request-ack": (
+        "Docker's port proxy accepts lines before the collector listens and drops "
+        "them, and the driver counts them as sent"
+    ),
 }
 
 # A dfe-transform-vector pipeline declares its own enrichment tables, and the
@@ -827,6 +842,43 @@ def _credential_failures(*, env: dict[str, str]) -> tuple[list[str], int]:
     return failures, made
 
 
+def _log_driver_failures(*, config: dict) -> list[str]:
+    """Return one message per fluentd-logged service missing a driver option it needs."""
+    failures = []
+    for name, service in sorted(config.get("services", {}).items()):
+        logging = service.get("logging") or {}
+        if logging.get("driver") != "fluentd":
+            continue
+        options = logging.get("options") or {}
+        for key, consequence in sorted(_LOG_DRIVER_OPTIONS.items()):
+            if str(options.get(key, "")).strip().lower() != "true":
+                failures.append(
+                    f"{name}: fluentd logging without {key} -- {consequence}"
+                )
+    return failures
+
+
+def _container_log_failures(*, env: dict[str, str]) -> tuple[list[str], int]:
+    """Return (messages, services checked) for the log-driver fragment as it resolves."""
+    config = _config_json(env=env, files=[COMPOSE_FILE.name, _CONTAINER_LOGS_FRAGMENT])
+    if config is None:
+        return ([f"{_CONTAINER_LOGS_FRAGMENT} did not resolve on the registry path"], 0)
+    shipped = [
+        name
+        for name, service in config.get("services", {}).items()
+        if (service.get("logging") or {}).get("driver") == "fluentd"
+    ]
+    if not (shipped):
+        return (
+            [
+                f"{_CONTAINER_LOGS_FRAGMENT} puts no service on the fluentd driver -- "
+                "this check would assert nothing"
+            ],
+            0,
+        )
+    return _log_driver_failures(config=config), len(shipped)
+
+
 def _override_coverage_failures(*, env: dict[str, str]) -> list[str]:
     """Return one message per service the committed override leaves on the registry.
 
@@ -1176,6 +1228,16 @@ def main() -> int:
     _print(
         msg=f"{_ENGINE_SERVICE} never receives an empty or {_DEFAULT_PASSWORD!r} admin "
         f"password outside a dev posture ({credential_made} assertions)"
+    )
+
+    log_failures, log_made = _container_log_failures(env=env)
+    for message in log_failures:
+        _print(msg=f"FAIL {message}")
+    if log_failures:
+        return 1
+    _print(
+        msg=f"All {log_made} service(s) on the fluentd driver queue their lines and "
+        "wait for the collector's ack"
     )
 
     coverage_failures = _override_coverage_failures(env=env)
