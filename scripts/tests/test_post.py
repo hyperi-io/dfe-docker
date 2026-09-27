@@ -43,7 +43,9 @@ def test_the_ui_class_apis_are_read_over_the_compose_network(
 def test_a_container_address_takes_the_in_network_transport() -> None:
     assert post._over_network(f"{post.HYPERDX_NETWORK_BASE}/sources")
     assert post._over_network(f"{post.ENGINE_NETWORK_BASE}/auth/login")
+    assert post._over_network(f"{post.ENGINE_NETWORK_ORIGIN}/readyz")
     assert not post._over_network(_HOST_URL)
+    assert not post._over_network("http://localhost:8003/readyz")
 
 
 def test_the_exec_script_reads_the_key_the_request_is_passed_in() -> None:
@@ -422,22 +424,72 @@ def test_the_bus_is_read_off_the_resolved_profile(
     assert post._tier_has_bus() is bus
 
 
+def _no_host_port(url, **kwargs):
+    pytest.fail(f"the schema wait dialled {url} on the host")
+
+
 def _engine_answers(
     monkeypatch: pytest.MonkeyPatch, *, readyz: dict, schema_status: int
 ) -> list[str]:
-    """Serve /readyz and the schema route from fixed answers; return the paths asked."""
+    """Serve /readyz and the schema route in-network; return the URLs asked."""
     asked: list[str] = []
 
-    def _get(url, **kwargs):
+    def _run(args, **kwargs):
+        if args[:3] == ["docker", "compose", "ps"]:
+            return _completed(stdout="c0ffee\n")
+        url = json.loads(kwargs["env"][post.API_REQUEST_KEY])["url"]
         asked.append(url)
         if url.endswith("/readyz"):
-            return 200, readyz
-        return schema_status, {}
+            return _completed(stdout=f"200\n{json.dumps(readyz)}")
+        return _completed(stdout=f"{schema_status}\n{{}}")
 
-    monkeypatch.setattr(post, "http_get_json", _get)
+    monkeypatch.setattr(post.subprocess, "run", _run)
+    monkeypatch.setattr(post, "http_get_json", _no_host_port)
+    post._api_container.cache_clear()
     monkeypatch.setattr(post, "_resolved_services", lambda: [post.ENGINE_SERVICE])
     monkeypatch.setattr(post, "SCHEMA_TIMEOUT_SECONDS", 0.0)
     return asked
+
+
+def test_the_schema_wait_reads_the_engine_over_the_compose_network(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """DFE_ENGINE_API_EXTERNAL=false leaves no host port, and a moved one is moot."""
+    monkeypatch.setenv("DFE_POST_HOST", "127.0.0.2")
+    monkeypatch.setenv("DFE_ENGINE_PORT", "18003")
+    asked = _engine_answers(
+        monkeypatch, readyz={"checks": {"schema": True}}, schema_status=404
+    )
+
+    assert post._schema_state() == post.SCHEMA_CONVERGED
+    assert asked == ["http://dfe-engine:8000/readyz"]
+
+
+def test_the_schema_route_is_asked_over_the_compose_network_too(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    asked = _engine_answers(
+        monkeypatch, readyz={"checks": {"clickhouse": True}}, schema_status=404
+    )
+
+    assert post._schema_state() == post.SCHEMA_UNSERVED
+    assert asked == [
+        "http://dfe-engine:8000/readyz",
+        "http://dfe-engine:8000/api/v1/system/schema",
+    ]
+
+
+def test_an_engine_container_not_up_yet_reads_as_not_answering(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The wait starts while compose is still starting the engine."""
+    monkeypatch.setattr(
+        post.subprocess, "run", lambda args, **kwargs: _completed(stdout="")
+    )
+    monkeypatch.setattr(post, "http_get_json", _no_host_port)
+    post._api_container.cache_clear()
+
+    assert post._schema_state() is None
 
 
 def test_an_engine_that_predates_schema_control_is_skipped_loudly(
@@ -494,10 +546,14 @@ def test_a_converged_schema_check_passes_without_asking_the_route(
 def test_an_engine_that_never_answers_fails_rather_than_skips(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    def _refused(url, **kwargs):
-        raise ConnectionRefusedError(url)
+    def _refused(args, **kwargs):
+        if args[:3] == ["docker", "compose", "ps"]:
+            return _completed(stdout="c0ffee\n")
+        return _completed(code=1, stderr="ConnectionRefusedError: [Errno 111]")
 
-    monkeypatch.setattr(post, "http_get_json", _refused)
+    monkeypatch.setattr(post.subprocess, "run", _refused)
+    monkeypatch.setattr(post, "http_get_json", _no_host_port)
+    post._api_container.cache_clear()
     monkeypatch.setattr(post, "_resolved_services", lambda: [post.ENGINE_SERVICE])
     monkeypatch.setattr(post, "SCHEMA_TIMEOUT_SECONDS", 0.0)
 
