@@ -316,13 +316,14 @@ def test_no_committed_service_can_take_a_generated_instance_name():
     assert check_compose._instance_name_collisions(services=services) == []
 
 
-# An env/ directory for the custom env rule, as `docker compose config` names it.
-_ENV = Path("/stack/env")
-
-
 def _reads(*names: str, instance_of: str = "") -> dict:
-    """One service reading the env files named, in order, as the model carries them."""
-    service: dict = {"env_file": [{"path": str(_ENV / n)} for n in names]}
+    """One service that read the env files named, in order, over the sentinels."""
+    environment: dict[str, str] = {}
+    for index, name in enumerate(names):
+        environment[check_compose._SENTINEL_LAST] = name
+        if name.endswith(".custom.env"):
+            environment[f"{check_compose._SENTINEL_READ}{index}"] = name
+    service: dict = {"environment": environment}
     if instance_of:
         service["labels"] = {instances.INSTANCE_LABEL: instance_of}
     return service
@@ -331,13 +332,12 @@ def _reads(*names: str, instance_of: str = "") -> dict:
 def test_an_app_reading_the_short_custom_name_fails_twice():
     """The engine writes dfe-loader.custom.env, so loader.custom.env reached nothing."""
     failures = check_compose._custom_env_mismatches(
-        services={"dfe-loader": _reads("loader.env", "loader.custom.env")},
-        env_dir=_ENV,
+        services={"dfe-loader": _reads("loader.env", "loader.custom.env")}
     )
 
     assert len(failures) == 2
-    assert "loader.custom.env, which dfe-engine never writes" in failures[0]
-    assert "reads no dfe-loader.custom.env" in failures[1]
+    assert "env/loader.custom.env, which dfe-engine never writes" in failures[0]
+    assert "reads no env/dfe-loader.custom.env" in failures[1]
 
 
 def test_an_app_reading_its_own_custom_file_last_passes():
@@ -346,18 +346,17 @@ def test_an_app_reading_its_own_custom_file_last_passes():
         "kafka-ui": _reads(),
     }
 
-    assert check_compose._custom_env_mismatches(services=services, env_dir=_ENV) == []
+    assert check_compose._custom_env_mismatches(services=services) == []
 
 
 def test_an_app_whose_own_file_is_not_last_fails():
     failures = check_compose._custom_env_mismatches(
-        services={"dfe-loader": _reads("dfe-loader.custom.env", "loader.env")},
-        env_dir=_ENV,
+        services={"dfe-loader": _reads("dfe-loader.custom.env", "loader.env")}
     )
 
     assert failures == [
-        "dfe-loader: reads loader.env after dfe-loader.custom.env, so it outvotes a "
-        "key set through dfe-engine"
+        "dfe-loader: reads env/loader.env after env/dfe-loader.custom.env, so it "
+        "outvotes a key set through dfe-engine"
     ]
 
 
@@ -371,7 +370,7 @@ def test_an_instance_reads_its_apps_file_then_its_own():
         )
     }
 
-    assert check_compose._custom_env_mismatches(services=services, env_dir=_ENV) == []
+    assert check_compose._custom_env_mismatches(services=services) == []
 
 
 def test_an_instance_with_no_file_of_its_own_fails():
@@ -381,12 +380,11 @@ def test_an_instance_with_no_file_of_its_own_fails():
             "dfe-fetcher-okta": _reads(
                 "fetcher.env", "dfe-fetcher.custom.env", instance_of="dfe-fetcher"
             )
-        },
-        env_dir=_ENV,
+        }
     )
 
     assert failures == [
-        "dfe-fetcher-okta: reads no dfe-fetcher-okta.custom.env, so a key set "
+        "dfe-fetcher-okta: reads no env/dfe-fetcher-okta.custom.env, so a key set "
         "through dfe-engine never reaches it"
     ]
 
@@ -399,29 +397,11 @@ def test_a_service_the_engine_does_not_render_reads_no_custom_file():
                 "dfe-transform-e2e-vrl-filebeat": _reads(
                     "transform-vrl-filebeat.env", name
                 )
-            },
-            env_dir=_ENV,
+            }
         )
 
         assert len(failures) == 1
-        assert f"{name}, which dfe-engine never writes for it" in failures[0]
-
-
-def test_a_custom_file_outside_env_fails():
-    failures = check_compose._custom_env_mismatches(
-        services={
-            "dfe-loader": {
-                "env_file": [
-                    {"path": "/elsewhere/dfe-loader.custom.env"},
-                    {"path": str(_ENV / "dfe-loader.custom.env")},
-                ]
-            }
-        },
-        env_dir=_ENV,
-    )
-
-    assert len(failures) == 1
-    assert failures[0].startswith("dfe-loader: reads /elsewhere/dfe-loader.custom.env")
+        assert f"env/{name}, which dfe-engine never writes for it" in failures[0]
 
 
 def test_a_service_that_queues_and_waits_passes_and_json_file_is_not_checked():

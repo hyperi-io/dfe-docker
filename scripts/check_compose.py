@@ -96,8 +96,10 @@ import json
 import os
 import re
 import shlex
+import shutil
 import subprocess
 import sys
+import tempfile
 from pathlib import Path
 
 import instances
@@ -110,6 +112,7 @@ from _common import (
     DOTENV_FILE,
     DOTENV_TEMPLATE,
     ENV_DIR,
+    ENV_TEMPLATE_DIR,
     REPO_ROOT,
     SERVICE_CONFIG_FILE,
     SERVICE_PROFILES_FILE,
@@ -415,6 +418,10 @@ _TRANSFORM_FILE_SUFFIXES = (".yaml", ".yml")
 _TRANSFORM_PREFIX = "dfe-transform-"
 _LOADER_SERVICE = "dfe-loader"
 
+# The keys `_sentinel_model` writes into each env file it plants.
+_SENTINEL_LAST = "DFE_COMPOSE_CHECK_LAST_ENV_FILE"
+_SENTINEL_READ = "DFE_COMPOSE_CHECK_READ_"
+
 
 def _first_start_dotenv() -> dict[str, str]:
     """This checkout's .env, or the one `make init` would write, rendered in memory.
@@ -505,7 +512,6 @@ def _config_json(
     extra_profiles: tuple[str, ...] = (),
     env_file: Path | None = None,
     fragment: str | None = None,
-    interpolate: bool = True,
 ) -> dict | None:
     """Return the fully interpolated compose model, or None if it did not resolve.
 
@@ -519,9 +525,6 @@ def _config_json(
 
     `fragment` is one more compose file, read from stdin after `files`, so a
     generated file is checked without writing it into the checkout.
-
-    `interpolate` False keeps each service's `env_file` list, which the
-    interpolated model folds into `environment` and drops.
     """
     cmd = ["docker", "compose"]
     if env_file is not None:
@@ -533,8 +536,6 @@ def _config_json(
     for profile in [*_BASE_PROFILES, _KAFKA_BACKENDS[0], *extra_profiles]:
         cmd += ["--profile", profile]
     cmd += ["config", "--format", "json"]
-    if not interpolate:
-        cmd.append("--no-interpolate")
     result = subprocess.run(
         cmd,
         capture_output=True,
@@ -1186,43 +1187,91 @@ def _instance_name_failures(*, env: dict[str, str]) -> tuple[list[str], int]:
     return _instance_name_collisions(services=services), len(services)
 
 
-def _custom_env_mismatches(*, services: dict, env_dir: Path) -> list[str]:
+def _sentinel_model(*, env: dict[str, str], fragment: str) -> dict | None:
+    """Return the services, fragment included, rendered over sentinel env files.
+
+    Every env file sets `_SENTINEL_LAST` to its own name, and each custom one a
+    service could name also sets a `_SENTINEL_READ` key of its own, so a service's
+    environment says which custom files it read and which env file it read last.
+    A custom file is planted for every service, app and env.example stem, and a
+    name outside those carries no sentinel and goes unseen.
+    The effect is what is read because Compose 2.38, the CI runner's, prints no
+    `env_file` under any `config` flag and rejects `--no-interpolate` here.
+
+    Rendered from a copy of the compose file in a scratch directory, so no sentinel
+    lands in this checkout's env/. A copy, because Compose resolves an extended
+    service's paths against the file that declares it.
+    """
+    plain = _config_json(
+        env=env, files=[COMPOSE_FILE.name], extra_profiles=("*",), fragment=fragment
+    )
+    if plain is None:
+        return None
+    templates = sorted(ENV_TEMPLATE_DIR.glob("*.env"))
+    stems = {*plain.get("services", {}), *SERVICE_CONFIG_FILE}
+    stems.update(template.stem for template in templates)
+    with tempfile.TemporaryDirectory() as scratch:
+        compose = Path(scratch) / COMPOSE_FILE.name
+        shutil.copyfile(COMPOSE_FILE, compose)
+        env_dir = Path(scratch) / ENV_DIR.name
+        env_dir.mkdir()
+        for template in templates:
+            (env_dir / template.name).write_text(
+                f"{_SENTINEL_LAST}={template.name}\n", encoding="utf-8", newline="\n"
+            )
+        for index, stem in enumerate(sorted(stems)):
+            name = f"{stem}{CUSTOM_ENV_SUFFIX}"
+            (env_dir / name).write_text(
+                f"{_SENTINEL_LAST}={name}\n{_SENTINEL_READ}{index}={name}\n",
+                encoding="utf-8",
+                newline="\n",
+            )
+        config = _config_json(
+            env=env, files=[str(compose)], extra_profiles=("*",), fragment=fragment
+        )
+    return None if config is None else config.get("services", {})
+
+
+def _custom_env_mismatches(*, services: dict) -> list[str]:
     """Return one message per service the engine's custom env files do not reach.
 
-    dfe-engine writes ``<service>.custom.env`` into env/ for each service it
-    renders, an instance being ``<app>-<instance>``. A service reading any other
-    custom name reads a file nothing writes, and one whose own file is not last
-    lets a later file outvote a key the operator set through the console.
+    ``services`` is `_sentinel_model` output. dfe-engine writes
+    ``<service>.custom.env`` into env/ for each service it renders, an instance
+    being ``<app>-<instance>``. A service reading any other custom name reads a
+    file nothing writes, and one whose own file is not last lets a later file
+    outvote a key the operator set through the console.
     """
     failures = []
     for name, service in sorted(services.items()):
+        environment = service.get("environment") or {}
+        read = sorted(
+            str(value)
+            for key, value in environment.items()
+            if key.startswith(_SENTINEL_READ)
+        )
+        last = environment.get(_SENTINEL_LAST)
         app = (service.get("labels") or {}).get(instances.INSTANCE_LABEL, "")
         rendered = name in SERVICE_CONFIG_FILE or app in SERVICE_CONFIG_FILE
         writable = {f"{n}{CUSTOM_ENV_SUFFIX}" for n in (name, app) if n and rendered}
-        paths = [Path(entry["path"]) for entry in service.get("env_file") or []]
-        for path in paths:
-            if not path.name.endswith(CUSTOM_ENV_SUFFIX):
-                continue
-            in_env_dir = path.parent == env_dir
-            if not in_env_dir or path.name not in writable:
-                shown = f"{env_dir.name}/{path.name}" if in_env_dir else str(path)
+        for file in read:
+            if file not in writable:
                 failures.append(
-                    f"{name}: reads {shown}, which dfe-engine never writes for it -- "
-                    f"it writes {env_dir.name}/<service>{CUSTOM_ENV_SUFFIX}, and only "
-                    "for a service it renders"
+                    f"{name}: reads {ENV_DIR.name}/{file}, which dfe-engine never "
+                    f"writes for it -- it writes {ENV_DIR.name}/<service>"
+                    f"{CUSTOM_ENV_SUFFIX}, and only for a service it renders"
                 )
         if not rendered:
             continue
-        own = env_dir / f"{name}{CUSTOM_ENV_SUFFIX}"
-        if own not in paths:
+        own = f"{name}{CUSTOM_ENV_SUFFIX}"
+        if own not in read:
             failures.append(
-                f"{name}: reads no {own.name}, so a key set through dfe-engine never "
-                "reaches it"
+                f"{name}: reads no {ENV_DIR.name}/{own}, so a key set through "
+                "dfe-engine never reaches it"
             )
-        elif paths[-1] != own:
+        elif last != own:
             failures.append(
-                f"{name}: reads {paths[-1].name} after {own.name}, so it outvotes a "
-                "key set through dfe-engine"
+                f"{name}: reads {ENV_DIR.name}/{last} after {ENV_DIR.name}/{own}, so "
+                "it outvotes a key set through dfe-engine"
             )
     return failures
 
@@ -1234,25 +1283,18 @@ def _custom_env_failures(*, env: dict[str, str]) -> tuple[list[str], int]:
         for app in sorted(SERVICE_CONFIG_FILE)
         if instances.extendable(app)
     }
-    config = _config_json(
-        env=env,
-        files=[COMPOSE_FILE.name],
-        extra_profiles=("*",),
-        fragment=instances.fragment(probes),
-        interpolate=False,
-    )
-    if config is None:
+    services = _sentinel_model(env=env, fragment=instances.fragment(probes))
+    if services is None:
         return (
             ["the registry path with a generated instance per app did not resolve"],
             0,
         )
-    services = config.get("services", {})
     failures = [
         f"{probe}: generated but absent from the model, so its env files are unchecked"
         for probe in instances.services(probes)
         if probe not in services
     ]
-    failures += _custom_env_mismatches(services=services, env_dir=ENV_DIR)
+    failures += _custom_env_mismatches(services=services)
     return failures, len(services)
 
 
