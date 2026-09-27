@@ -96,8 +96,16 @@ def test_no_instance_publishes_a_host_port() -> None:
 def test_each_container_is_named_for_its_source() -> None:
     text = instances.fragment({FETCHER: ["okta-audit"]})
 
-    assert "container_name: dfe-fetcher-okta-audit" in text
+    assert "  dfe-fetcher-okta-audit:" in text
     assert "OTEL_SERVICE_NAME: dfe-fetcher-okta-audit" in text
+
+
+def test_each_instance_container_carries_the_stack_prefix() -> None:
+    # A container name is daemon-wide, so two stacks collide here as well as on
+    # the committed services.
+    text = instances.fragment({FETCHER: ["okta-audit"]})
+
+    assert "container_name: ${DFE_CONTAINER_PREFIX:-}dfe-fetcher-okta-audit" in text
 
 
 def test_an_app_this_repo_has_no_service_for_is_named(tmp_path: Path) -> None:

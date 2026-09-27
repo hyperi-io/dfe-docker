@@ -44,9 +44,11 @@ from _common import _external_origin, _load_dotenv, _print
 from _pipeline import env_or
 
 PROJECT_DIR = Path(__file__).resolve().parent.parent
-# Compose pins the archiver's container name, so the archive assertion reaches it
-# by name on any project.
-ARCHIVER_CONTAINER = "dfe-archiver"
+# Container names are daemon-wide and DFE_CONTAINER_PREFIX moves them, so the
+# archiver and every app the runner restarts are reached through compose.
+ARCHIVER_SERVICE = "dfe-archiver"
+# The runner appends the compose service key the engine names to this prefix.
+RESTART_EXEC = "docker compose --profile * restart --no-deps"
 RUNNER_PATH = Path("scripts") / "acceptance" / "source" / "run.py"
 # The cases that push a corpus, and the checkout the runner reads it out of.
 # One repo for all three: they feed the same corpus and the elastic case takes
@@ -138,14 +140,28 @@ def _archive_exec() -> list[str]:
     archive step as skipped when the profile deploys none.
     """
     running = subprocess.run(
-        ["docker", "inspect", "-f", "{{.State.Running}}", ARCHIVER_CONTAINER],
+        [
+            "docker",
+            "compose",
+            "--profile",
+            "*",
+            "ps",
+            "--status",
+            "running",
+            "--quiet",
+            ARCHIVER_SERVICE,
+        ],
         capture_output=True,
         check=False,
+        cwd=PROJECT_DIR,
         text=True,
+        encoding="utf-8",
+        errors="replace",
     )
-    if running.returncode != 0 or running.stdout.strip() != "true":
+    ids = running.stdout.split()
+    if running.returncode != 0 or not ids:
         return []
-    return ["--archive-exec", f"docker exec {ARCHIVER_CONTAINER}"]
+    return ["--archive-exec", f"docker exec {ids[0]}"]
 
 
 def _ui_host(*, bound: str, host: str) -> str:
@@ -300,10 +316,9 @@ def main(argv: list[str] | None = None) -> int:
         if os.environ.get(key):
             runner += [flag, os.environ[key]]
     runner += _archive_exec()
-    # Compose pins every container's name to its service name, so restarting one
-    # by the name the engine hands back needs nothing else from this script. No
-    # controller here does it for us, which is why the flag is passed at all.
-    runner += ["--restart-exec", "docker restart"]
+    # No controller here restarts an app after a config write, which is why the
+    # flag is passed at all.
+    runner += ["--restart-exec", RESTART_EXEC]
     runner += [arg for arg in runner_args if arg != "--"]
 
     _print(msg=f"case {args.case}, console {ui_url}, runner from {infra}")

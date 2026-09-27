@@ -135,7 +135,7 @@ services:
 
   clickhouse:
     image: clickhouse/clickhouse-server:${CLICKHOUSE_VERSION:?run 'make stack VERSION=X.Y.Z' to pin CLICKHOUSE_VERSION}
-    container_name: dfe-clickhouse
+    container_name: ${DFE_CONTAINER_PREFIX:-}dfe-clickhouse
     profiles: ["clickhouse"]
     restart: unless-stopped
     deploy: *limits-clickhouse
@@ -177,7 +177,7 @@ services:
 
   kafka-redpanda:
     image: docker.redpanda.com/redpandadata/redpanda:${REDPANDA_VERSION:?run 'make stack VERSION=X.Y.Z' to pin REDPANDA_VERSION}
-    container_name: dfe-kafka-redpanda
+    container_name: ${DFE_CONTAINER_PREFIX:-}dfe-kafka-redpanda
     profiles: ["kafka-redpanda"]
     restart: unless-stopped
     deploy: *limits-broker
@@ -217,7 +217,7 @@ services:
 
   kafka-apache:
     image: apache/kafka:${APACHE_KAFKA_VERSION:?run 'make stack VERSION=X.Y.Z' to pin APACHE_KAFKA_VERSION}
-    container_name: dfe-kafka-apache
+    container_name: ${DFE_CONTAINER_PREFIX:-}dfe-kafka-apache
     profiles: ["kafka-apache"]
     restart: unless-stopped
     deploy: *limits-broker
@@ -268,7 +268,7 @@ services:
 
   kafka-ui:
     image: ghcr.io/kafbat/kafka-ui:${KAFBAT_VERSION:?run 'make stack VERSION=X.Y.Z' to pin KAFBAT_VERSION}
-    container_name: dfe-kafka-ui
+    container_name: ${DFE_CONTAINER_PREFIX:-}dfe-kafka-ui
     profiles: ["kafka-ui"]
     restart: unless-stopped
     # Service tier, not sidecar: kafbat is a Spring Boot JVM, and the JVM sizes its
@@ -300,7 +300,7 @@ services:
 
   dlq-init:
     image: ${IMAGE_REGISTRY:-ghcr.io/hyperi-io}/dfe-archiver:${DFE_ARCHIVER_VERSION:?run 'make stack VERSION=X.Y.Z' to pin DFE_ARCHIVER_VERSION}
-    container_name: dfe-dlq-init
+    container_name: ${DFE_CONTAINER_PREFIX:-}dfe-dlq-init
     profiles: ["dfe"]
     deploy: *limits-sidecar
     user: "0:0"
@@ -336,7 +336,7 @@ services:
 
   contract-dfe-archiver:
     image: ${IMAGE_REGISTRY:-ghcr.io/hyperi-io}/dfe-archiver:${DFE_ARCHIVER_VERSION:?run 'make stack VERSION=X.Y.Z' to pin DFE_ARCHIVER_VERSION}
-    container_name: dfe-contract-dfe-archiver
+    container_name: ${DFE_CONTAINER_PREFIX:-}dfe-contract-dfe-archiver
     profiles: ["core"]
     deploy: *limits-sidecar
     # Root because an empty named volume lands root-owned at a path no image
@@ -363,7 +363,7 @@ services:
 
   contract-dfe-fetcher:
     image: ${IMAGE_REGISTRY:-ghcr.io/hyperi-io}/dfe-fetcher:${DFE_FETCHER_VERSION:?run 'make stack VERSION=X.Y.Z' to pin DFE_FETCHER_VERSION}
-    container_name: dfe-contract-dfe-fetcher
+    container_name: ${DFE_CONTAINER_PREFIX:-}dfe-contract-dfe-fetcher
     profiles: ["core"]
     deploy: *limits-sidecar
     # Root because an empty named volume lands root-owned at a path no image
@@ -387,7 +387,7 @@ services:
 
   contract-dfe-loader:
     image: ${IMAGE_REGISTRY:-ghcr.io/hyperi-io}/dfe-loader:${DFE_LOADER_VERSION:?run 'make stack VERSION=X.Y.Z' to pin DFE_LOADER_VERSION}
-    container_name: dfe-contract-dfe-loader
+    container_name: ${DFE_CONTAINER_PREFIX:-}dfe-contract-dfe-loader
     profiles: ["core"]
     deploy: *limits-sidecar
     # Root because an empty named volume lands root-owned at a path no image
@@ -411,7 +411,7 @@ services:
 
   contract-dfe-receiver:
     image: ${IMAGE_REGISTRY:-ghcr.io/hyperi-io}/dfe-receiver:${DFE_RECEIVER_VERSION:?run 'make stack VERSION=X.Y.Z' to pin DFE_RECEIVER_VERSION}
-    container_name: dfe-contract-dfe-receiver
+    container_name: ${DFE_CONTAINER_PREFIX:-}dfe-contract-dfe-receiver
     profiles: ["core"]
     deploy: *limits-sidecar
     # Root because an empty named volume lands root-owned at a path no image
@@ -435,7 +435,7 @@ services:
 
   contract-dfe-transform-vector:
     image: ${IMAGE_REGISTRY:-ghcr.io/hyperi-io}/dfe-transform-vector:${DFE_TRANSFORM_VECTOR_VERSION:?run 'make stack VERSION=X.Y.Z' to pin DFE_TRANSFORM_VECTOR_VERSION}
-    container_name: dfe-contract-dfe-transform-vector
+    container_name: ${DFE_CONTAINER_PREFIX:-}dfe-contract-dfe-transform-vector
     profiles: ["core"]
     deploy: *limits-sidecar
     # Root because an empty named volume lands root-owned at a path no image
@@ -459,7 +459,7 @@ services:
 
   contract-dfe-transform-vrl:
     image: ${IMAGE_REGISTRY:-ghcr.io/hyperi-io}/dfe-transform-vrl:${DFE_TRANSFORM_VRL_VERSION:?run 'make stack VERSION=X.Y.Z' to pin DFE_TRANSFORM_VRL_VERSION}
-    container_name: dfe-contract-dfe-transform-vrl
+    container_name: ${DFE_CONTAINER_PREFIX:-}dfe-contract-dfe-transform-vrl
     profiles: ["core"]
     deploy: *limits-sidecar
     # Root because an empty named volume lands root-owned at a path no image
@@ -495,7 +495,7 @@ services:
 
   catalogue-dfe-transform-elastic:
     image: ${IMAGE_REGISTRY:-ghcr.io/hyperi-io}/dfe-transform-elastic:${DFE_TRANSFORM_ELASTIC_VERSION:?run 'make stack VERSION=X.Y.Z' to pin DFE_TRANSFORM_ELASTIC_VERSION}
-    container_name: dfe-catalogue-dfe-transform-elastic
+    container_name: ${DFE_CONTAINER_PREFIX:-}dfe-catalogue-dfe-transform-elastic
     profiles: ["core"]
     deploy: *limits-sidecar
     # Root because an empty named volume lands root-owned at a path no image
@@ -526,7 +526,7 @@ services:
 
   dfe-archiver:
     image: ${IMAGE_REGISTRY:-ghcr.io/hyperi-io}/dfe-archiver:${DFE_ARCHIVER_VERSION:?run 'make stack VERSION=X.Y.Z' to pin DFE_ARCHIVER_VERSION}
-    container_name: dfe-archiver
+    container_name: ${DFE_CONTAINER_PREFIX:-}dfe-archiver
     profiles: ["dfe"]
     restart: unless-stopped
     deploy: *limits-service
@@ -576,7 +576,7 @@ services:
 
   dfe-fetcher:
     image: ${IMAGE_REGISTRY:-ghcr.io/hyperi-io}/dfe-fetcher:${DFE_FETCHER_VERSION:?run 'make stack VERSION=X.Y.Z' to pin DFE_FETCHER_VERSION}
-    container_name: dfe-fetcher
+    container_name: ${DFE_CONTAINER_PREFIX:-}dfe-fetcher
     profiles: ["dfe"]
     restart: unless-stopped
     deploy: *limits-service
@@ -627,7 +627,7 @@ services:
 
   dfe-loader:
     image: ${IMAGE_REGISTRY:-ghcr.io/hyperi-io}/dfe-loader:${DFE_LOADER_VERSION:?run 'make stack VERSION=X.Y.Z' to pin DFE_LOADER_VERSION}
-    container_name: dfe-loader
+    container_name: ${DFE_CONTAINER_PREFIX:-}dfe-loader
     profiles: ["dfe"]
     restart: unless-stopped
     deploy: *limits-service
@@ -685,7 +685,7 @@ services:
 
   dfe-receiver:
     image: ${IMAGE_REGISTRY:-ghcr.io/hyperi-io}/dfe-receiver:${DFE_RECEIVER_VERSION:?run 'make stack VERSION=X.Y.Z' to pin DFE_RECEIVER_VERSION}
-    container_name: dfe-receiver
+    container_name: ${DFE_CONTAINER_PREFIX:-}dfe-receiver
     profiles: ["dfe"]
     restart: unless-stopped
     deploy: *limits-service
@@ -755,7 +755,7 @@ services:
 
   dfe-transform-elastic:
     image: ${IMAGE_REGISTRY:-ghcr.io/hyperi-io}/dfe-transform-elastic:${DFE_TRANSFORM_ELASTIC_VERSION:?run 'make stack VERSION=X.Y.Z' to pin DFE_TRANSFORM_ELASTIC_VERSION}
-    container_name: dfe-transform-elastic
+    container_name: ${DFE_CONTAINER_PREFIX:-}dfe-transform-elastic
     profiles: ["dfe"]
     restart: unless-stopped
     deploy: *limits-service
@@ -807,7 +807,7 @@ services:
 
   dfe-transform-e2e-elastic-cisco-ios:
     image: ${IMAGE_REGISTRY:-ghcr.io/hyperi-io}/dfe-transform-elastic:${DFE_TRANSFORM_ELASTIC_VERSION:?run 'make stack VERSION=X.Y.Z' to pin DFE_TRANSFORM_ELASTIC_VERSION}
-    container_name: dfe-transform-e2e-elastic-cisco-ios
+    container_name: ${DFE_CONTAINER_PREFIX:-}dfe-transform-e2e-elastic-cisco-ios
     profiles: ["dfe"]
     restart: unless-stopped
     deploy: *limits-service
@@ -846,7 +846,7 @@ services:
 
   dfe-transform-vector:
     image: ${IMAGE_REGISTRY:-ghcr.io/hyperi-io}/dfe-transform-vector:${DFE_TRANSFORM_VECTOR_VERSION:?run 'make stack VERSION=X.Y.Z' to pin DFE_TRANSFORM_VECTOR_VERSION}
-    container_name: dfe-transform-vector
+    container_name: ${DFE_CONTAINER_PREFIX:-}dfe-transform-vector
     profiles: ["dfe"]
     restart: unless-stopped
     deploy: *limits-service
@@ -912,7 +912,7 @@ services:
 
   dfe-transform-e2e-vector-filebeat:
     image: ${IMAGE_REGISTRY:-ghcr.io/hyperi-io}/dfe-transform-vector:${DFE_TRANSFORM_VECTOR_VERSION:?run 'make stack VERSION=X.Y.Z' to pin DFE_TRANSFORM_VECTOR_VERSION}
-    container_name: dfe-transform-e2e-vector-filebeat
+    container_name: ${DFE_CONTAINER_PREFIX:-}dfe-transform-e2e-vector-filebeat
     profiles: ["dfe"]
     restart: unless-stopped
     deploy: *limits-service
@@ -955,7 +955,7 @@ services:
 
   dfe-transform-vrl:
     image: ${IMAGE_REGISTRY:-ghcr.io/hyperi-io}/dfe-transform-vrl:${DFE_TRANSFORM_VRL_VERSION:?run 'make stack VERSION=X.Y.Z' to pin DFE_TRANSFORM_VRL_VERSION}
-    container_name: dfe-transform-vrl
+    container_name: ${DFE_CONTAINER_PREFIX:-}dfe-transform-vrl
     profiles: ["dfe"]
     restart: unless-stopped
     deploy: *limits-service
@@ -1007,7 +1007,7 @@ services:
 
   dfe-transform-vrl-filebeat:
     image: ${IMAGE_REGISTRY:-ghcr.io/hyperi-io}/dfe-transform-vrl:${DFE_TRANSFORM_VRL_VERSION:?run 'make stack VERSION=X.Y.Z' to pin DFE_TRANSFORM_VRL_VERSION}
-    container_name: dfe-transform-vrl-filebeat
+    container_name: ${DFE_CONTAINER_PREFIX:-}dfe-transform-vrl-filebeat
     profiles: ["dfe"]
     restart: unless-stopped
     deploy: *limits-service
@@ -1054,7 +1054,7 @@ services:
 
   dfe-engine:
     image: ${IMAGE_REGISTRY:-ghcr.io/hyperi-io}/dfe-engine:${DFE_ENGINE_VERSION:?run 'make stack VERSION=X.Y.Z' to pin DFE_ENGINE_VERSION}
-    container_name: dfe-engine
+    container_name: ${DFE_CONTAINER_PREFIX:-}dfe-engine
     profiles: ["core"]
     restart: unless-stopped
     deploy: *limits-service
@@ -1253,7 +1253,7 @@ services:
 
   dfe-hunt-runner:
     image: ${IMAGE_REGISTRY:-ghcr.io/hyperi-io}/dfe-engine:${DFE_ENGINE_VERSION:?run 'make stack VERSION=X.Y.Z' to pin DFE_ENGINE_VERSION}
-    container_name: dfe-hunt-runner
+    container_name: ${DFE_CONTAINER_PREFIX:-}dfe-hunt-runner
     profiles: ["core"]
     restart: unless-stopped
     deploy: *limits-service
@@ -1309,7 +1309,7 @@ services:
 
   dfe-ui:
     image: ${IMAGE_REGISTRY:-ghcr.io/hyperi-io}/dfe-ui:${DFE_UI_VERSION:?run 'make stack VERSION=X.Y.Z' to pin DFE_UI_VERSION}
-    container_name: dfe-ui
+    container_name: ${DFE_CONTAINER_PREFIX:-}dfe-ui
     profiles: ["core"]
     restart: unless-stopped
     deploy: *limits-service
@@ -1349,7 +1349,7 @@ services:
 
   dfe-proxy:
     image: envoyproxy/envoy:${DFE_PROXY_VERSION:?run 'make stack VERSION=X.Y.Z' to pin DFE_PROXY_VERSION}
-    container_name: dfe-proxy
+    container_name: ${DFE_CONTAINER_PREFIX:-}dfe-proxy
     profiles: ["core"]
     restart: unless-stopped
     deploy: *limits-sidecar
@@ -1395,7 +1395,7 @@ services:
 
   otel-collector:
     image: otel/opentelemetry-collector-contrib:${DFE_OTEL_COLLECTOR_VERSION:?run 'make stack VERSION=X.Y.Z' to pin DFE_OTEL_COLLECTOR_VERSION}
-    container_name: dfe-otel-collector
+    container_name: ${DFE_CONTAINER_PREFIX:-}dfe-otel-collector
     profiles: ["otel"]
     restart: unless-stopped
     deploy: *limits-sidecar
@@ -1441,7 +1441,7 @@ services:
   # The k8s hyperdx chart runs the identical command as an init container.
   dfe-dashboards:
     image: ${IMAGE_REGISTRY:-ghcr.io/hyperi-io}/dfe-engine:${DFE_ENGINE_VERSION:?run 'make stack VERSION=X.Y.Z' to pin DFE_ENGINE_VERSION}
-    container_name: dfe-dashboards
+    container_name: ${DFE_CONTAINER_PREFIX:-}dfe-dashboards
     profiles: ["hyperdx"]
     deploy: *limits-sidecar
     # A fresh named volume mounted at a path the image does not create is owned by
@@ -1458,7 +1458,7 @@ services:
 
   hyperdx-postgres:
     image: ghcr.io/ferretdb/postgres-documentdb:${HYPERDX_POSTGRES_VERSION:?run 'make stack VERSION=X.Y.Z' to pin HYPERDX_POSTGRES_VERSION}
-    container_name: dfe-hyperdx-postgres
+    container_name: ${DFE_CONTAINER_PREFIX:-}dfe-hyperdx-postgres
     profiles: ["hyperdx"]
     restart: unless-stopped
     deploy: *limits-service
@@ -1478,7 +1478,7 @@ services:
 
   hyperdx-ferretdb:
     image: ghcr.io/ferretdb/ferretdb:${HYPERDX_FERRETDB_VERSION:?run 'make stack VERSION=X.Y.Z' to pin HYPERDX_FERRETDB_VERSION}
-    container_name: dfe-hyperdx-ferretdb
+    container_name: ${DFE_CONTAINER_PREFIX:-}dfe-hyperdx-ferretdb
     profiles: ["hyperdx"]
     restart: unless-stopped
     deploy: *limits-service
@@ -1509,7 +1509,7 @@ services:
     # Digest-pinned like the rest: versions.yaml carries digests.dfe-hyperdx, which
     # the render appends as tag@sha256.
     image: ${IMAGE_REGISTRY:-ghcr.io/hyperi-io}/dfe-hyperdx:${DFE_HYPERDX_VERSION:?run 'make stack VERSION=X.Y.Z' to pin DFE_HYPERDX_VERSION}
-    container_name: dfe-hyperdx
+    container_name: ${DFE_CONTAINER_PREFIX:-}dfe-hyperdx
     profiles: ["hyperdx"]
     restart: unless-stopped
     deploy: *limits-service
@@ -1586,7 +1586,7 @@ services:
   # so that one service answers to the infra exposure dials and the `auth` profile.
   dfe-hyperdx-proxy:
     image: envoyproxy/envoy:${DFE_PROXY_VERSION:?run 'make stack VERSION=X.Y.Z' to pin DFE_PROXY_VERSION}
-    container_name: dfe-hyperdx-proxy
+    container_name: ${DFE_CONTAINER_PREFIX:-}dfe-hyperdx-proxy
     profiles: ["hyperdx"]
     restart: unless-stopped
     deploy: *limits-sidecar
@@ -1624,7 +1624,7 @@ services:
 
   oauth2-proxy-kafbat:
     image: quay.io/oauth2-proxy/oauth2-proxy:${DFE_OAUTH2_PROXY_VERSION:-v7.15.4@sha256:b1b2021fe8f4004573e8d690dec6c7bb29cc44364572cf8510a05bf3a0ae2ded}
-    container_name: dfe-oauth2-proxy-kafbat
+    container_name: ${DFE_CONTAINER_PREFIX:-}dfe-oauth2-proxy-kafbat
     profiles: ["auth"]
     restart: unless-stopped
     deploy: *limits-sidecar
@@ -1641,7 +1641,7 @@ services:
 
   oauth2-proxy-hyperdx:
     image: quay.io/oauth2-proxy/oauth2-proxy:${DFE_OAUTH2_PROXY_VERSION:-v7.15.4@sha256:b1b2021fe8f4004573e8d690dec6c7bb29cc44364572cf8510a05bf3a0ae2ded}
-    container_name: dfe-oauth2-proxy-hyperdx
+    container_name: ${DFE_CONTAINER_PREFIX:-}dfe-oauth2-proxy-hyperdx
     profiles: ["auth"]
     restart: unless-stopped
     deploy: *limits-sidecar
@@ -1668,7 +1668,7 @@ services:
   # in at the app authorises this one too.
   oauth2-proxy-hyperdx-api:
     image: quay.io/oauth2-proxy/oauth2-proxy:${DFE_OAUTH2_PROXY_VERSION:-v7.15.4@sha256:b1b2021fe8f4004573e8d690dec6c7bb29cc44364572cf8510a05bf3a0ae2ded}
-    container_name: dfe-oauth2-proxy-hyperdx-api
+    container_name: ${DFE_CONTAINER_PREFIX:-}dfe-oauth2-proxy-hyperdx-api
     profiles: ["auth"]
     restart: unless-stopped
     deploy: *limits-sidecar
