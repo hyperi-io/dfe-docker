@@ -8,8 +8,9 @@
 
 .DEFAULT_GOAL := help
 
-# Non-fatal: init creates .env, so it must not exist on a fresh checkout
--include .env
+# Read only when present, because make builds a missing include before any goal
+# and `make help` must not mint secrets. Goals that need .env depend on it.
+-include $(wildcard .env)
 
 # `include` makes these make-variables, not environment ones, so the helper
 # scripts (post, test-flows, test-source, test_e2e) read an empty password and
@@ -274,9 +275,10 @@ init: ## Create .env and per-service env/<service>.env files from templates, and
 # Start targets require every per-service env file (dfe-ui reads INTERNAL_API_URL
 # from env/ui.env). Compose marks them optional so `make down` never needs them.
 # The guard creates what is missing (init is non-destructive) rather than refusing,
-# so a release that adds a template does not stop an initialised deployment.
+# so a release that adds a template does not stop an initialised deployment. The
+# .env prerequisite mints the secrets before a fresh checkout's first start.
 .PHONY: env-files
-env-files: ## Assert every env/<service>.env exists, creating any the templates have gained
+env-files: .env ## Assert every env/<service>.env exists, creating any the templates have gained
 	@python3 scripts/env_files.py
 
 # `make init` mints the admin and break-glass passwords and prints neither, so
@@ -392,7 +394,8 @@ up: ci ## Start the stack from the pinned registry images, then print the access
 
 # The command dfe-engine's restart and recreate hints name after a config write:
 # resolving the profile regenerates the instances fragment, so it creates a
-# per-source container the engine has just declared and recreates one that exists.
+# per-source container the engine has just declared, recreates one that exists,
+# and removes one whose source the engine has deleted.
 # DEV=1 recreates from the local images a `make dev` stack runs.
 ifneq ($(strip $(DEV)),)
     APPLY_FLAGS = $(DEV_FLAGS)
@@ -408,13 +411,15 @@ ifneq ($(filter apply apply-services,$(MAKECMDGOALS)),)
 endif
 
 .PHONY: apply
-apply: env-files storage-dirs ## Create or recreate the named services after a config write (SERVICES="svc ..."; DEV=1 for a `make dev` stack), the command dfe-engine's hints name
+apply: env-files storage-dirs ## Create or recreate the named services after a config write, removing the containers of deleted sources (SERVICES="svc ..."; DEV=1 for a `make dev` stack), the command dfe-engine's hints name
 	@$(MAKE) --no-print-directory apply-services
 
 # A second make, because it reads the .profile.mk this one just re-resolved and
-# so checks SERVICES against the instances the engine has declared.
+# so checks SERVICES against the instances the engine has declared. A source the
+# engine deleted has left that fragment, so its container is removed first.
 .PHONY: apply-services
 apply-services:
+	@python3 scripts/instances.py --prune -- $(APPLY_FLAGS) $(PROFILE_FLAGS)
 	docker compose $(APPLY_FLAGS) $(PROFILE_FLAGS) up -d --force-recreate --no-deps $(ACTIVE_SERVICES)
 
 .PHONY: ci-pull
@@ -426,8 +431,9 @@ ci-pull: login ## Pull infra and registry DFE images
 # Infrastructure only (Kafka + ClickHouse)
 # ---------------------------------------------------------------------------
 
+# .env first: ClickHouse keeps the password its volume was created with.
 .PHONY: infra
-infra: storage-dirs ## Start infrastructure services
+infra: .env storage-dirs ## Start infrastructure services
 	docker compose $(PROFILE_FLAGS) pull
 	docker compose $(PROFILE_FLAGS) up -d
 
@@ -435,12 +441,10 @@ infra: storage-dirs ## Start infrastructure services
 # Validation
 # The same commands CI runs, so a green local run means a green pipeline.
 #
-# Safe on a fresh checkout: no stack SSoT and no credentials needed. Two honest
-# caveats. Make remakes the `-include .env` above before any target, so a fresh
-# checkout gets a generated .env as a side effect of running these -- CI therefore
-# leaves one on the runner. And check-dockerfile pulls the pinned hadolint image
-# while check-tests resolves the pinned pytest, so those two want a network the
-# first time; the rest need none.
+# Safe on a fresh checkout: no stack SSoT and no credentials needed, and none of
+# them writes a .env. One honest caveat: check-dockerfile pulls the pinned
+# hadolint image while check-tests resolves the pinned pytest, so those two want
+# a network the first time; the rest need none.
 # ---------------------------------------------------------------------------
 
 .PHONY: check

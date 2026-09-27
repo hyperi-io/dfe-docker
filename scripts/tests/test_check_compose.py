@@ -17,11 +17,26 @@ they are testable on a string or a dict -- and they decide how much each guard
 actually looks at.
 """
 
-from __future__ import annotations
+from pathlib import Path
 
 import check_compose
+import init
 
 _FRAGMENTS = "-f docker-compose.yml -f docker-compose.override.yml"
+
+
+def test_a_checkout_with_no_env_is_checked_as_its_first_start(dotenv: Path) -> None:
+    # No check-* target writes .env, so the check mints its secrets in memory.
+    values = check_compose._first_start_dotenv()
+
+    assert not dotenv.exists()
+    assert all(values.get(key) for key in init.GENERATED_SECRETS)
+
+
+def test_a_checkout_with_an_env_is_checked_on_its_own(dotenv: Path) -> None:
+    dotenv.write_text("DFE_ENV=production\n", encoding="utf-8", newline="\n")
+
+    assert check_compose._first_start_dotenv() == {"DFE_ENV": "production"}
 
 
 def test_it_reads_the_files_off_each_subcommand():

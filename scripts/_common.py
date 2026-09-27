@@ -11,8 +11,6 @@
 Internal support module - imported by the runnable scripts, not executed directly. Resolves the repo root once and exposes the well-known file/dir locations the scripts read and write so every script agrees on where things live. Add further shared locations here, alphabetical by name.
 """
 
-from __future__ import annotations
-
 import os
 import re
 import sys
@@ -208,8 +206,13 @@ def _dotenv_values() -> dict[str, str]:
     """
     if not (DOTENV_FILE.is_file()):
         return {}
+    return _parse_dotenv(text=DOTENV_FILE.read_text(encoding="utf-8", errors="replace"))
+
+
+def _parse_dotenv(*, text: str) -> dict[str, str]:
+    """Parse dotenv text into a dict, by the subset `_dotenv_values` documents."""
     values: dict[str, str] = {}
-    for raw in DOTENV_FILE.read_text(encoding="utf-8", errors="replace").splitlines():
+    for raw in text.splitlines():
         line = raw.strip()
         if not (line) or (line.startswith("#")) or ("=" not in line):
             continue
