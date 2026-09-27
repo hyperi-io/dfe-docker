@@ -22,6 +22,8 @@ source:
   # Explicit, because the passthrough instance and this one must never share a
   # group: Kafka assigns the union of a group's subscriptions across its members.
   group_id: dfe-transform-vrl-filebeat
+  # The default (latest) skips what reached the topic before the group first joined.
+  auto_offset_reset: earliest
 
 transforms:
   dir: /etc/dfe-transform-vrl/transforms

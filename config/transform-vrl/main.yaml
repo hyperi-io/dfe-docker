@@ -14,6 +14,8 @@ source:
     - kafka:9092
   topics:
     - main_land
+  # The default (latest) skips what reached the topic before the group first joined.
+  auto_offset_reset: earliest
 
 transforms:
   dir: /etc/dfe-transform-vrl/transforms
