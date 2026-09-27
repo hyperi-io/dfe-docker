@@ -50,6 +50,9 @@ See [docs/architecture.md](docs/architecture.md).
 - [`oras`](https://oras.land) - `make stack` reads the signed OCI stack-manifest
   through it. Not needed if you render from a local dfe-infra checkout instead
   (`DFE_INFRA_DIR`).
+- [`gh`](https://cli.github.com), logged in - only for `DFE_STACK_REPIN_IMAGES=1`,
+  which reads each component's GitHub releases through it. Those repos are
+  private until GA, so it is a HyperI-internal option until then.
 
 ### Initialisation
 
@@ -88,10 +91,11 @@ make ci     # Uses active_profile from service_profiles.yaml
 make down   # Stop everything
 ```
 
-`VERSION=latest` instead pins the newest certified stack and then repins every
-DFE image at its own newest published tag - development currency, not a
-deployment. `make modes` states the three modes and which one this checkout is
-on.
+`VERSION=latest` instead pins the newest published stack, read anonymously from
+the OCI registry, and moves forward on every re-run - development and
+integration, not a deployment. `DFE_STACK_REPIN_IMAGES=1` also repins every DFE
+image at the release its GitHub repo marks Latest. `make modes` states the three
+modes and which one this checkout is on.
 
 ### 2. Dev mode (builds from component source)
 
@@ -207,6 +211,7 @@ In `dev` mode, they build from each repo's own Dockerfile (not the shared Rust b
 | Command            | Description                                                       |
 |--------------------|-------------------------------------------------------------------|
 | `make test-e2e`    | End-to-end test executor                                          |
+| `make test-resilience` | Opt-in outage tests: stop a service under load, prove the rest survives |
 | `make check-tests` | Unit tests over the credential helpers (`scripts/tests`)          |
 
 The e2e harness (`scripts/test_e2e.py`, config `tests/e2e/e2e-tests.yaml`) runs
@@ -329,7 +334,7 @@ Three ways a green run says less than it looks:
 
 - **`make check` starts nothing.** It resolves compose, lints the helpers and unit-tests them. `make dev`, `make ci`, `make post` and `make test-e2e` are the only things that prove the stack moves data, and CI runs none of them.
 - **`check-compose` validates compose STRUCTURE, not digests.** It substitutes placeholders for the mandatory keys so it needs neither the private stack SSoT nor registry credentials, which means no particular pin is proved to resolve.
-- **`check-profiles` is not part of `make check` and has never gated anything.** Locally with `DFE_INFRA_DIR` unset it prints `projection NOT checked (not a pass)` and exits 0. In CI the job is skipped for want of a `DFE_INFRA_TOKEN` secret and the run is still green (issue #119).
+- **`check-profiles` is not part of `make check` and has never gated anything.** Locally with `DFE_INFRA_DIR` unset it prints `projection NOT checked (not a pass)` and exits 0. In CI the job reads dfe-infra with a short-lived, read-only token minted from the org's CI GitHub App; until this repo can use the `GH_APP_PRIVATE_KEY` org secret, the job is skipped with a notice and the run is still green (issue #119).
 
 `check-hardfail` does earn its pass. It resolves compose with a scrubbed environment and an empty `--env-file` so a developer's pinned `.env` cannot mask it, requires the run to fail on a missing pin, then reads every `image:` line and requires each to resolve to an `@sha256:` digest.
 
@@ -339,13 +344,13 @@ Three ways a green run says less than it looks:
 |---|---|---|
 | Leave containers running when you are finished | `make down`, on every host you touched, the same session | `down` sweeps every profile rather than the active one, because passing only the active profile's services left the previous profile's containers up - still holding host ports and still answering health probes for a pipeline that was no longer wired (`Makefile`, the `down` target) |
 | Assume the deployment target is idle | Check what is already running before you start anything | The docker definition-of-done target carries a long-lived stack refreshed on a 6-hourly systemd timer (`ops/daemon-update/`), not a box you get to yourself |
-| Assume events go through Kafka | Read the profile's `transport` first | `slim`, the shipped `active_profile`, is `transport: grpc`: the receiver dials `dfe-loader:50051` directly and no broker starts. `single` is the Kafka one. The core data path is otherwise identical, and `post` and `test-e2e` assert the same landing row either way |
+| Assume events go through Kafka | Read the profile's `transport` first | `slim`, the shipped `active_profile`, is `transport: grpc`: the receiver dials `dfe-loader:6000` directly and no broker starts. `single` is the Kafka one. The core data path is otherwise identical, and `post` and `test-e2e` assert the same landing row either way |
 | Add a DDL file or a topic-creating step here | Change the schema in dfe-engine | dfe-engine ships the schemas in its own image and reports healthy only once it has applied them. `scripts/tests/test_engine_only_schema_control.py` fails the build on one (#118) |
 | Point the stack at an external ClickHouse with `CLICKHOUSE_HOST` alone | Edit `config/loader/*.yaml` as well | That variable moves dfe-engine only. The loader's host is a literal - `config/loader/grpc.yaml:15` is `- clickhouse:8123` - so the loader keeps talking to a container that is not running |
 | Remap the published ClickHouse port | Leave it, or fix the engine's reference first | One variable is both the published port and the in-network one, so moving the publish breaks dfe-engine (#75) |
-| Confuse the two gRPC ports | 6000 is dfe-receiver's external Vector protocol, 50051 is dfe-loader's internal `DfeTransport/Push` | Different protocols for different audiences, and the binding split is the tell: 6000 binds `DFE_INGRESS_BIND_HOST` (`0.0.0.0`), 50051 binds `DFE_BIND_HOST` (`127.0.0.1`) |
+| Move the loader's `grpc.listen` off 6000, or confuse it with the receiver's 6000 | Keep the loader on container port 6000, published on host port 50051 | dfe-engine compiles every sender's loader endpoint as `dfe-loader:6000`, so a loader listening anywhere else drops every record behind an HTTP 202 with nothing logged. The receiver's 6000 is the external Vector protocol and binds `DFE_INGRESS_BIND_HOST` (`0.0.0.0`). The loader's is the internal `DfeTransport/Push` and binds `DFE_BIND_HOST` (`127.0.0.1`). `scripts/tests/test_loader_grpc_port.py` fails the build on a mismatch |
 | Publish the UIs beyond loopback and leave `DFE_EXTERNAL_ORIGIN` alone | Set it to the address browsers actually use | `DFE_BIND_SCOPE=all` with a loopback origin builds HyperDX's frame-ancestors policy and every next-auth redirect from the wrong host, so the console comes up with its observability views blocked and sends logins to the wrong machine. The Makefile now refuses the combination (#108) |
-| Raise `REDPANDA_MEMORY` on its own | Raise `DFE_BROKER_MEMORY` above it | The container limit has to exceed the broker's own allocation or the broker is OOM-killed instead of starting (`.env.example:229`, `.env.example:519`) |
+| Raise `REDPANDA_MEMORY` on its own | Raise `DFE_BROKER_MEMORY` above it | The broker gets at most the container limit less the host's `vm.min_free_kbytes`: `redpanda/start.sh` lowers `--memory` to that and logs a WARN naming the `DFE_BROKER_MEMORY` that restores it (`.env.example:229`, `.env.example:519`) |
 | Run Kafka-transport tests on a host that already has a broker on 9092 | `make test-e2e KAFKA_PLAINTEXT_PORT=29092 KAFKA_PLAINTEXT_HOST_PORT=29192`, or run the gRPC-only tests | The broker publishes 9092 and 19092 and collides with an always-on dev daemon (#36) |
 | Set `DFE_UPDATE_WIPE_STATE=1` on a box that also sets `DFE_DATA_ROOT` | Leave `DFE_DATA_ROOT` unset if you rely on the wipe | `make clean` does not chain the storage overlay, so it removes the volume objects while the bind directories keep their contents and the wipe silently becomes a no-op (`ops/daemon-update/README.md`) |
 | Take the local `CLAUDE.md` as current | Read the file you are asking about | It is gitignored and unmaintained. It still names `dfe-operator` as the Kubernetes repo, claims `hyperi-hyperdx` floats on `:latest`, counts seven docs where there are nine, and points at a `scripts/deprecated/` directory that has been removed |

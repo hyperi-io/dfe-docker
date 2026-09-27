@@ -137,7 +137,7 @@ credential fields are `env:`-interpolated. Change it there.
 |--------------------------------------------------|--------------------------------------------------------------------------------------|---------------------------------------------------------------------|
 | `DFE_LOADER_VERSION`                             | Version of dfe-loader to use                                                         | none -- `make stack` pins it; unset is a hard-fail                                                            |
 | `DFE_LOADER_PROMETHEUS_PORT`                     | Loader Prometheus port                                                               | `9091`                                                              |
-| `DFE_LOADER_GRPC_PORT`                           | Loader gRPC port                                                                     | `50051`                                                             |
+| `DFE_LOADER_GRPC_PORT`                           | Host port for the loader's gRPC Push listener (container port 6000)                  | `50051`                                                             |
 
 ### DFE Receiver
 
@@ -158,7 +158,7 @@ credential fields are `env:`-interpolated. Change it there.
 |--------------------------------------------------|--------------------------------------------------------------------------------------|---------------------------------------------------------------------|
 | `DFE_TRANSFORM_ELASTIC_VERSION`                  | Version of dfe-transform-elastic to use                                              | none -- `make stack` pins it; unset is a hard-fail                                                            |
 | `DFE_TRANSFORM_ELASTIC_PROMETHEUS_PORT`          | Transform Elastic Prometheus port                                                    | `9099`                                                              |
-| `DFE_TRANSFORM_ELASTIC_CISCO_IOS_PROMETHEUS_PORT` | Prometheus port of the cisco-ios instance -- it runs the same image, so it needs its own | `9100`                                                          |
+| `DFE_TRANSFORM_ELASTIC_CISCO_IOS_PROMETHEUS_PORT` | Prometheus port of the cisco-ios instance -- it runs the same image, so it needs its own; 9100 is node_exporter's | `9089`                                                          |
 
 ### DFE Transform Vector
 
@@ -225,7 +225,7 @@ it is a second deployment of the one component, not a component of its own.
 | Variable                                         | Use                                                                                  | Default                                                             |
 |--------------------------------------------------|--------------------------------------------------------------------------------------|---------------------------------------------------------------------|
 | `REDPANDA_VERSION`                               | Version of Redpanda to use                                                           | none -- `make stack` pins it from the DFE stack SSoT; unset is a hard-fail                |
-| `REDPANDA_MEMORY`                                | Memory cap for the Redpanda broker (Seastar reserves this up front)                  | `1G`                                                                |
+| `REDPANDA_MEMORY`                                | Memory for the Redpanda broker (Seastar reserves this up front); `redpanda/start.sh` lowers it to what the container limit leaves after the host's `vm.min_free_kbytes` | `1G`                                                                |
 
 ### Kafka UI (Kafbat)
 
@@ -280,6 +280,8 @@ started from: `DFE_DEPLOYMENT_APP_ENV_DIR` names it (`/app/app-env` inside the
 container, the sibling of `DFE_DEPLOYMENT_APP_CONFIG_DIR`) and it is a read-write
 bind mount of `./env`, so the deployment's own working tree is what changes when
 an operator saves a setting.
+
+The engine runs as its image's user, not yours, so the two meet on a group. `make init` (and every start target) makes `env/` group-writable and setgid, the engine container gets the checkout's group through `group_add` (`DFE_DEV_GID`, which the Makefile sets to `id -g`), and each custom file is written `0640` in that group. Compose run by anyone in that group reads it, and nobody else on the host does. A bare `docker compose` without make adds group `1000`. When the engine cannot give a file the directory's group, its log says so and names the fix.
 
 ## Self-monitoring (opt-in)
 
@@ -336,8 +338,9 @@ The same toggle points the engine at HyperDX: with it on, the engine receives `D
 | 8090  | hyperdx              | App UI             |
 | 8123  | ClickHouse           | HTTP API           |
 | 8686  | dfe-transform-vector | Vector API         |
-| 8687  | dfe-transform-vector-filebeat | Vector API |
+| 8687  | dfe-transform-e2e-vector-filebeat | Vector API |
 | 9000  | ClickHouse           | Native protocol    |
+| 9089  | dfe-transform-e2e-elastic-cisco-ios | Prometheus metrics |
 | 9090  | dfe-receiver         | Prometheus metrics |
 | 9091  | dfe-loader           | Prometheus metrics |
 | 9092  | Kafka (any backend)  | Plaintext          |
@@ -346,12 +349,11 @@ The same toggle points the engine at HyperDX: with it on, the engine receives `D
 | 9095  | dfe-transform-vector | Prometheus metrics |
 | 9096  | dfe-transform-vrl    | Prometheus metrics |
 | 9097  | dfe-transform-vrl-filebeat | Prometheus metrics |
-| 9098  | dfe-transform-vector-filebeat | Prometheus metrics |
+| 9098  | dfe-transform-e2e-vector-filebeat | Prometheus metrics |
 | 9099  | dfe-transform-elastic | Prometheus metrics |
-| 9100  | dfe-transform-elastic-cisco-ios | Prometheus metrics |
 | 13133 | otel-collector       | health_check       |
 | 19092 | Kafka (any backend)  | Plaintext host     |
-| 50051 | dfe-loader           | gRPC               |
+| 50051 | dfe-loader           | gRPC Push, container port 6000 |
 
 Additional receiver ports (commented out by default in docker-compose.yml):
 4317 (OTLP gRPC), 4318 (OTLP HTTP), 5044 (Beats), 8088 (HEC).

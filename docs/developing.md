@@ -27,7 +27,7 @@ exist, and how a profile decides which of them run.
 |---|---|
 | Docker and Docker Compose v2 | everything |
 | Python 3 | the helper scripts under `scripts/` |
-| PyYAML | `make test-e2e` only (`pip install pyyaml`, or `uv run --with pyyaml`) |
+| PyYAML | `make test-e2e` and `make test-resilience` only (`pip install pyyaml`, or `uv run --with pyyaml`) |
 | ruff | `make check-python` only |
 | pytest | `make check-tests` only (`uvx` fetches the pin if you have it) |
 | git credentials for the hyperi-io repos (or `DFE_SRC_ROOT` checkouts) | `make dev` |
@@ -58,13 +58,16 @@ If neither is available it fails loudly -- there is no silent `latest`. Only
 `*_VERSION` keys are rewritten; your ports, hosts, credentials and profile
 survive the merge.
 
-`make stack VERSION=latest` is the development-currency variant, for when the
-certified stack lags the component you are working against. It takes the newest
-certified stack for the third-party images, then repins every DFE image at its own
-newest published GHCR tag. Those pins still carry digests, so the box stays
-reproducible -- it is just a combination nobody certified, which is why `make
-modes` reports LATEST rather than PINNED and why it is not a deploy. `VERSION=rc`
-ranks pre-releases throughout.
+`make stack VERSION=latest` pins the newest published stack (`rc` ranks
+pre-releases too). It reads only the public OCI registry, needs no credential,
+and records the word in `.env`, so a re-run moves forward -- `make modes` reports
+it as LATEST, and it is not a deploy.
+
+`DFE_STACK_REPIN_IMAGES=1` adds the development-currency step: every DFE image is
+repinned at the release its GitHub repo marks Latest (`rc`: the newest release of
+either kind), through a `gh` login that can read the component repos, which are
+private until GA. The pins still carry digests; the combination is one nobody
+certified.
 
 Skipping `make stack` is not a soft failure. Nearly every image pin uses
 `${VAR:?...}`, so an unpinned checkout aborts the compose command with a message
@@ -90,24 +93,14 @@ exists as the operator-facing name for the same start.
 first-run setup is incomplete, so an operator who lands there with no password is
 one command from having one.
 
-The two accounts are durable in different ways, deliberately. `admin` is
-reasserted from `.env` on every engine boot, so a teardown and rebuild restores
-exactly the password `make init` minted. `breakglass` is hashed into the engine's
-deploy repo on its first boot and the variable is ignored from then on, so it
-still works when the engine, the UI and `.env` are all gone. `make creds` says
-where its password lives rather than printing it.
+The two accounts are durable in different ways, deliberately. The engine issues `admin` from `.env` with a forced change at first login, which `make post` makes and records back in `.env`. A new value there is a rotation. The last issued value, or the account's current password, re-issues nothing. `breakglass` is hashed into the engine's deploy repo on its first boot and the variable is ignored from then on, so it still works when the engine, the UI and `.env` are all gone. `make creds` says where its password lives rather than printing it.
 
 The engine **refuses to start** on an empty or `changeme`
 `DFE_AUTH_LOCAL_ADMIN_PASSWORD` unless `DFE_ENV` names a dev posture. `make
 check-compose` asserts the compose file never hands it one, so that is caught
 before a container crash-loops.
 
-`make dev` is the exception and says so: it writes the known default password and
-`DFE_ENV=dev` into `.env`, because a dev loop should not need a lookup to log in.
-The engine accepts the default in that posture and asks for a change at first
-login. It **refuses** (exit 2) to run when `.env` already declares a non-dev
-`DFE_ENV` -- downgrading a deployment's posture and overwriting its admin password
-is not a build target's call. Start that stack with `make up`.
+`make dev` is the exception and says so: it writes the known default password and `DFE_ENV=dev` into `.env`, because a dev loop should not need a lookup to log in. The engine accepts the default in that posture and makes the admin replace it at first login, and a `.env` already on a dev posture keeps the replacement `make post` recorded. It **refuses** (exit 2) to run when `.env` already declares a non-dev `DFE_ENV` -- downgrading a deployment's posture and overwriting its admin password is not a build target's call. Start that stack with `make up`.
 
 When it does rewrite, it copies the file it replaced to `.env.bak-<utc>` first,
 mode 0600, and prints the path: a minted password is gone once overwritten. A run
@@ -119,7 +112,7 @@ for when the login is the thing under test. It mints a password and writes
 refuses. `make creds` reads the password back.
 
 ```bash
-make dev              # local images, known default password, DFE_ENV=dev
+make dev              # local images, DFE_ENV=dev, known default password until replaced
 make dev AUTH=real    # local images, minted password, DFE_ENV=production
 ```
 
@@ -325,6 +318,11 @@ landing fresh in the `dfe.otel_*` tables -- and `expected_http` adds a fourth, a
 status and optional body check per URL. `single` uses both, which is what makes
 `complete-single-node-stack` a whole-stack test rather than a data-path one.
 
+An archiver that subscribes to the test's landing topic and archives to a
+`file://` destination must also write a file there during the test, new or grown
+since a baseline taken before the send. The archive volume outlives the stack, so
+files from an earlier run never count.
+
 Two things about the runner worth knowing before you debug it:
 
 - **It waits on named services, never on a whole profile.** `docker compose up
@@ -339,12 +337,29 @@ Two things about the runner worth knowing before you debug it:
   Deleting it per run makes a run depend on the test definition, not on broker
   history.
 
+### Outage tests -- a service stopped under load
+
+```bash
+make test-resilience
+make test-resilience E2E_TESTS="clickhouse-outage kafka-outage"
+```
+
+Opt-in: `make test-e2e` never runs these, and refuses one named in `E2E_TESTS`.
+An `outage:` test sends steady load and, once its first records land, stops the
+named service for `seconds`, starts it again in a `finally`, and keeps sending
+for 30 s. It then asserts every other DFE service ran straight through (same
+pid, no restart, no die or OOM event), the receiver answered every request (a
+refusal such as 503 passes, silence fails), every accepted record landed, and on Kafka
+every consumer group is back at zero lag. They stop services, so they never run
+in `make post` either.
+
 ### Post-deploy source test -- what an operator does first
 
 ```bash
 DFE_INFRA_DIR=../dfe-infra make test-source
 DFE_INFRA_DIR=../dfe-infra make test-source SOURCE_ARGS="--case cloudwatch --aws-service cloudtrail"
 DFE_INFRA_DIR=../dfe-infra make test-source SOURCE_ARGS="--case elastic"
+DFE_INFRA_DIR=../dfe-infra make test-source SOURCE_ARGS="--case vector"
 ```
 
 Neither harness above adds a source. This one creates one in the console,
@@ -357,7 +372,8 @@ owns -- the published ports, the archiver container, and the admin login from
 `--headed`).
 
 Beyond a running stack it needs `DFE_INFRA_DIR` (the runner), `DFE_ENGINE_REPO`
-and `DFE_TRANSFORM_VRL_REPO` (the corpus wrapper, the bundled pipeline), and an
+and `DFE_TRANSFORM_VRL_REPO` (the corpus wrapper, the bundled pipeline), a
+dfe-transform-vector checkout beside the engine repo for the vector case, and an
 interpreter carrying Playwright -- `DFE_ACCEPTANCE_PYTHON` where the system one
 is externally managed. The cloudwatch case polls a real AWS upstream and writes
 nothing to it: put the two `AWS_*` credentials in `env/fetcher.env` and
@@ -415,6 +431,12 @@ make test-e2e E2E_TESTS="simple-receiver-to-loader-grpc simple-fetcher-to-loader
 
 The same reasoning applies to ClickHouse (`CLICKHOUSE_HTTP_PORT`,
 `CLICKHOUSE_NATIVE_PORT`) and every `*_PROMETHEUS_PORT`.
+
+Beside another stack on the same daemon, ports are not enough, because every
+`container_name` is daemon-wide. Set `COMPOSE_PROJECT_NAME`, the ports above,
+and `DFE_E2E_COMPOSE_FILES` naming an extra compose file (`:`-separated) the
+suite chains onto every `up`, one that re-prefixes each `container_name` and
+moves ClickHouse's host publish.
 
 ## Sharp edges
 

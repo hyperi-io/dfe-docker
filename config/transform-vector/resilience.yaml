@@ -1,0 +1,15 @@
+# Project:   dfe-docker
+# File:      config/transform-vector/resilience.yaml
+# Purpose:   dfe-transform-vector config - its own source, for the broker-outage e2e test
+# Language:  YAML
+#
+# License:   BUSL-1.1
+# Copyright: (c) 2026 HYPERI PTY LIMITED
+
+# Reads vector_land and writes vector_load, so it shares no topic with
+# dfe-transform-vrl in the same profile.
+dfe_source: vector
+source:
+  brokers: [kafka:9092]
+sink:
+  brokers: [kafka:9092]

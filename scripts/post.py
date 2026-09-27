@@ -10,7 +10,8 @@
 """Power-on self test (POST) for a stack that is ALREADY running.
 
 Eight claims. SUBSCRIPTION: where the tier has a bus, the loader is fetching at
-least one topic, so the events about to be injected have a consumer at all.
+least one topic -- asserted once the injected events land, because a topic nothing
+has been written to carries no lag series, and as the diagnosis when they do not.
 INGEST: uniquely-marked events put in at the ingest edge come out as those exact
 rows in ClickHouse. SELF-MONITORING: when the profile runs a collector, the
 stack's own telemetry is landing FRESH in the otel database, every service that
@@ -37,6 +38,11 @@ that is bus-shaped, and it SKIPS where the resolved tier has no bus.
 OPT-OUT, not opt-in: it runs unless `DFE_POST_ENABLED=false`. Something that only
 runs when you remember to ask for it is not a power-on self test.
 
+An engine that issues its bootstrap admin a password to replace at first login
+refuses that account every route but the change itself. POST makes the change,
+records the new password in .env where `make creds` and the next run read it, and
+logs in again.
+
 Exit codes:
   0  every claim the active profile can make, held (or POST is switched off)
   1  a claim failed, could not be checked, or the run asserted nothing at all --
@@ -53,17 +59,24 @@ that is a scalo contract change, not a Compose one.
 
 from __future__ import annotations
 
+import datetime
+import functools
 import json
 import os
+import stat
 import subprocess
 import sys
+import tempfile
 import time
 import typing
+from pathlib import Path
 from urllib.parse import quote
 
 from _common import (
+    ACCESS_SUMMARY_FILE,
+    DOTENV_FILE,
     FALSY,
-    _container_name,
+    _dotenv_values,
     _load_dotenv,
     _print,
     _profile_mk_value,
@@ -86,6 +99,8 @@ from _pipeline import (
     otel_fresh_counts,
     poll_until,
 )
+from creds import write_summary
+from init import GENERATED_SECRETS, _generate_secret, _setting_key
 
 # Kept small on purpose. This proves the path works; the e2e suite is what
 # exercises volume. A self test that writes thousands of rows into a production
@@ -108,8 +123,9 @@ READY_INTERVAL_SECONDS = 2.0
 # healthy and consumes nothing, which surfaces only as rows that never arrive.
 LOADER_SERVICE = "dfe-loader"
 LOADER_PROMETHEUS_PORT = "9091"
-# rdkafka reports a partition's consumer lag only while it is assigned and
-# fetching it, so a topic label here is the subscription, not the config.
+# rdkafka reports a partition's consumer lag only while it is assigned and the
+# group holds a committed offset there, so the series appears after the first
+# record is consumed and a topic label is the subscription, not the config.
 LOADER_TOPIC_METRIC = "rdkafka_topic_partition_consumer_lag"
 LOADER_TOPIC_LABEL = "topic"
 # The resolver re-runs every 60s and rdkafka publishes its statistics every 5s,
@@ -131,8 +147,15 @@ TARGET_TABLE = "main"
 # engine retries for DFE_CLICKHOUSE_BOOTSTRAP_WAIT_SECONDS (180) first.
 ENGINE_SERVICE = "dfe-engine"
 SCHEMA_READY_CHECK = "schema"
+# The route that reports the pass. It arrived with schema control in engine
+# v1.21.0, so an engine that 404s it has no schema check to wait on.
+SCHEMA_STATUS_PATH = "/api/v1/system/schema"
 SCHEMA_TIMEOUT_SECONDS = 300.0
 SCHEMA_INTERVAL_SECONDS = 5.0
+# What one read of the engine says. None is the fourth answer: nothing replied.
+SCHEMA_CONVERGED = "converged"
+SCHEMA_PENDING = "pending"
+SCHEMA_UNSERVED = "unserved"
 
 # Self-monitoring assertion. The collector batches on a 5s timeout and the SDKs
 # export on their own interval, so the window is generous and the timeout is the
@@ -152,14 +175,17 @@ CONTAINER_LOG_SERVICES = ("dfe-engine", "dfe-loader", "dfe-receiver")
 
 # The services whose OWN metrics have to reach the otel database, as name prefixes
 # so a per-source instance (dfe-transform-vrl-filebeat) is covered by its app.
-# dfe-ui carries the OTel API and no SDK, and dfe-hunt-runner keeps scalo-py's
-# prometheus backend, so neither pushes.
+# dfe-transform-e2e-vector-filebeat is a static extra instance named off that
+# shape, so no app prefix covers it and it is named in full. dfe-ui carries the
+# OTel API and no SDK, and dfe-hunt-runner keeps scalo-py's prometheus backend,
+# so neither pushes.
 OTEL_PUSHER_PREFIXES = (
     "dfe-archiver",
     "dfe-engine",
     "dfe-fetcher",
     "dfe-loader",
     "dfe-receiver",
+    "dfe-transform-e2e-vector-filebeat",
     "dfe-transform-vector",
     "dfe-transform-vrl",
 )
@@ -194,8 +220,6 @@ HYPERDX_INTERVAL_SECONDS = 5.0
 # HyperDX origin, and a published UI port binds DFE_UI_BIND_HOST rather than the
 # ingest address. Both APIs are therefore read over the compose network, where the
 # addresses are the container ports and hold on every exposure setting.
-# The exec target is a CONTAINER name, so it carries DFE_CONTAINER_PREFIX; the
-# two network bases below are compose service keys, which the prefix never moves.
 API_EXEC_SERVICE = "dfe-engine"
 API_REQUEST_KEY = "DFE_POST_API_REQUEST"
 ENGINE_NETWORK_BASE = "http://dfe-engine:8000/api/v1"
@@ -203,6 +227,15 @@ HYPERDX_NETWORK_BASE = "http://dfe-hyperdx-proxy:8000"
 # Long enough for docker to start the exec on a loaded host, on top of whatever
 # the request itself is given.
 API_EXEC_MARGIN_SECONDS = 10
+
+# Where the console password is read from, first match wins, and where a forced
+# change writes the new one back.
+POST_LOGIN_PASSWORD_KEY = "DFE_POST_LOGIN_PASSWORD"
+ADMIN_PASSWORD_KEY = "DFE_AUTH_LOCAL_ADMIN_PASSWORD"
+PASSWORD_KEYS = (POST_LOGIN_PASSWORD_KEY, ADMIN_PASSWORD_KEY)
+# The owner's own password change, the one call the engine serves an account that
+# is still on the password it was issued.
+CHANGE_PASSWORD_PATH = "/auth/accounts/reset-password"
 
 # Console assertion. dfe-ui holds no ClickHouse credential of its own -- it reads
 # through the engine's query API -- so exercising that API with the break-glass
@@ -367,6 +400,94 @@ def _over_network(url: str) -> bool:
     return url.startswith((ENGINE_NETWORK_BASE, HYPERDX_NETWORK_BASE))
 
 
+@functools.cache
+def _api_container() -> str:
+    """The container running API_EXEC_SERVICE in THIS compose project.
+
+    Container names are daemon-wide, so exec'ing a bare service name reaches
+    whichever stack on the host happens to own it -- and succeeds, against the
+    wrong deployment's credentials. Compose knows which container is ours.
+    """
+    result = subprocess.run(
+        ["docker", "compose", "ps", "--quiet", API_EXEC_SERVICE],
+        capture_output=True,
+        check=False,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        timeout=API_EXEC_MARGIN_SECONDS,
+    )
+    ids = result.stdout.split()
+    if result.returncode != 0 or not ids:
+        raise ApiUnreachable(
+            f"no running {API_EXEC_SERVICE} in this compose project: "
+            f"{result.stderr.strip() or 'docker compose ps named no container'}"
+        )
+    return ids[0]
+
+
+@functools.cache
+def _container_name(service: str) -> str:
+    """This project's container NAME for one compose service.
+
+    The fluentd log tag is `{{.Name}}`, so ServiceName in `otel_logs` is the
+    container name -- which an override may prefix. It equals the service name
+    only on a stack that did not rename anything.
+    """
+    result = subprocess.run(
+        ["docker", "compose", "ps", "--format", "{{.Name}}", service],
+        capture_output=True,
+        check=False,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        timeout=API_EXEC_MARGIN_SECONDS,
+    )
+    names = result.stdout.split()
+    return names[0] if result.returncode == 0 and names else service
+
+
+def _container_started(name: str) -> int | None:
+    """The Unix second one container last started in, or None when docker cannot say.
+
+    Floored, because the log driver stamps each line in whole seconds.
+    """
+    result = subprocess.run(
+        ["docker", "container", "inspect", "--format", "{{.State.StartedAt}}", name],
+        capture_output=True,
+        check=False,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        timeout=API_EXEC_MARGIN_SECONDS,
+    )
+    if result.returncode != 0:
+        return None
+    try:
+        started = datetime.datetime.strptime(
+            result.stdout.strip()[:19], "%Y-%m-%dT%H:%M:%S"
+        )
+    except ValueError:
+        return None
+    # Docker reports year 1 for a container that has never started.
+    if started.year == 1:
+        return None
+    return int(started.replace(tzinfo=datetime.UTC).timestamp())
+
+
+def _log_window(name: str) -> str:
+    """The Timestamp clause that scopes one container's log rows to its current run.
+
+    A service that goes quiet once it is up has only its startup lines to show, and
+    a fixed freshness window ages them out while the earlier claims run. Rows from
+    an earlier container of the same name prove nothing about this one.
+    """
+    started = _container_started(name)
+    if started is None:
+        return f"Timestamp > now() - INTERVAL {OTEL_FRESH_WINDOW_SECONDS} SECOND"
+    return f"Timestamp >= toDateTime({started})"
+
+
 def _exec_request(
     *, method: str, url: str, payload: dict | None, timeout: int, token: str
 ) -> tuple[int, str]:
@@ -378,26 +499,30 @@ def _exec_request(
         "token": token,
         "url": url,
     }
-    container = _container_name(service=API_EXEC_SERVICE)
     result = subprocess.run(
         [
             "docker",
             "exec",
             "-e",
-            f"{API_REQUEST_KEY}={json.dumps(spec)}",
-            container,
+            API_REQUEST_KEY,
+            _api_container(),
             "python",
             "-c",
             _EXEC_REQUEST_SCRIPT,
         ],
         capture_output=True,
         check=False,
+        # Named on argv and valued here: argv shows in `ps`, and the spec carries
+        # passwords and a bearer token.
+        env={**os.environ, API_REQUEST_KEY: json.dumps(spec)},
         text=True,
+        encoding="utf-8",
+        errors="replace",
         timeout=timeout + API_EXEC_MARGIN_SECONDS,
     )
     if result.returncode != 0:
         raise ApiUnreachable(
-            f"{method} {url} from {container}: "
+            f"{method} {url} from {API_EXEC_SERVICE}: "
             f"{result.stderr.strip() or 'docker exec failed'}"
         )
     status, _, body = result.stdout.partition("\n")
@@ -405,7 +530,7 @@ def _exec_request(
         return int(status), body
     except ValueError as error:
         raise ApiUnreachable(
-            f"{method} {url} from {container} answered no status: "
+            f"{method} {url} from {API_EXEC_SERVICE} answered no status: "
             f"{result.stdout.strip()!r}"
         ) from error
 
@@ -475,21 +600,33 @@ def _wait_ready(url: str) -> bool:
             time.sleep(READY_INTERVAL_SECONDS)
 
 
-def _schema_converged() -> bool | None:
-    """Whether the engine's `schema` readiness check is true right now.
-
-    None where the engine has not answered at all, so a stack still starting and
-    one reporting a failed apply do not read the same.
-    """
+def _engine_host_url(path: str) -> str:
+    """One engine path on the host port POST reads the engine's readiness from."""
     bind = os.environ.get("DFE_POST_HOST", "localhost")
     port = os.environ.get("DFE_ENGINE_PORT", "8003")
+    return f"http://{bind}:{port}{path}"
+
+
+def _schema_state() -> str | None:
+    """What the engine says about its schema pass right now.
+
+    The route is asked only when /readyz names no schema check at all, so an
+    engine that names one is judged on it and can never be skipped.
+    """
     try:
-        _, body = http_get_json(f"http://{bind}:{port}/readyz", timeout=5)
+        _, body = http_get_json(_engine_host_url("/readyz"), timeout=5)
     except Exception:  # noqa: BLE001 - unreachable is not-yet-answering here
         return None
     if not isinstance(body, dict):
         return None
-    return bool((body.get("checks") or {}).get(SCHEMA_READY_CHECK))
+    checks = body.get("checks") or {}
+    if SCHEMA_READY_CHECK in checks:
+        return SCHEMA_CONVERGED if checks[SCHEMA_READY_CHECK] else SCHEMA_PENDING
+    try:
+        status, _ = http_get_json(_engine_host_url(SCHEMA_STATUS_PATH), timeout=5)
+    except Exception:  # noqa: BLE001 - unreachable is not-yet-answering here
+        return None
+    return SCHEMA_UNSERVED if status == 404 else SCHEMA_PENDING
 
 
 def _wait_schema_converged() -> int:
@@ -508,17 +645,28 @@ def _wait_schema_converged() -> int:
     def _report(attempt, result):
         _print(msg=f"  attempt {attempt}: engine schema check = {result}")
 
-    converged = poll_until(
-        _schema_converged,
+    state = poll_until(
+        _schema_state,
         timeout=SCHEMA_TIMEOUT_SECONDS,
         interval=SCHEMA_INTERVAL_SECONDS,
-        done=lambda result: result is True,
+        done=lambda result: result in (SCHEMA_CONVERGED, SCHEMA_UNSERVED),
         on_attempt=_report,
     )
-    if converged is not True:
+    if state == SCHEMA_UNSERVED:
+        _print(
+            msg=f"SKIP  schema convergence NOT checked: {ENGINE_SERVICE} names no "
+            f"'{SCHEMA_READY_CHECK}' check on /readyz and answers 404 on "
+            f"{SCHEMA_STATUS_PATH}, so it predates schema control (v1.21.0) and has "
+            "no convergence to report"
+        )
+        _print(
+            msg="      the claims below still fail on a table or topic that is absent"
+        )
+        return 0
+    if state != SCHEMA_CONVERGED:
         _print(
             msg=f"FAIL  {ENGINE_SERVICE} did not report its schema converged within "
-            f"{SCHEMA_TIMEOUT_SECONDS:.0f}s -- GET /api/v1/system/schema on the engine "
+            f"{SCHEMA_TIMEOUT_SECONDS:.0f}s -- GET {SCHEMA_STATUS_PATH} on the engine "
             "carries the cause, object by object"
         )
         return 1
@@ -767,7 +915,8 @@ def _verify_container_logs(*, database: str) -> int:
 
     Freshness alone would pass on one container talking, so this asks per service:
     the log driver tags every stream with its container name, and the collector
-    turns that tag into ServiceName.
+    turns that tag into ServiceName. Each count covers what that container wrote
+    since it last started (`_log_window`).
     """
     names = ", ".join(CONTAINER_LOG_SERVICES)
     _print(
@@ -777,12 +926,13 @@ def _verify_container_logs(*, database: str) -> int:
     def _per_service():
         found: dict[str, int] = {}
         for service in CONTAINER_LOG_SERVICES:
+            stamped = _container_name(service)
             count = ch_int(
                 f"SELECT count() FROM {database}.{OTEL_LOGS_TABLE} "
-                f"WHERE ServiceName = '{escape_literal(service)}' "
-                f"AND Timestamp > now() - INTERVAL {OTEL_FRESH_WINDOW_SECONDS} SECOND"
+                f"WHERE ServiceName = '{escape_literal(stamped)}' "
+                f"AND {_log_window(stamped)}"
             )
-            found[service] = 0 if count is None else count
+            found[stamped] = 0 if count is None else count
         return found
 
     def _report(attempt, result):
@@ -801,8 +951,8 @@ def _verify_container_logs(*, database: str) -> int:
     if silent:
         _print(
             msg=f"FAIL  no rows in {database}.{OTEL_LOGS_TABLE} for {', '.join(silent)} "
-            f"within {OTEL_TIMEOUT_SECONDS:.0f}s -- container stdout is not reaching "
-            "the collector"
+            f"since it started, within {OTEL_TIMEOUT_SECONDS:.0f}s -- container stdout "
+            "is not reaching the collector"
         )
         return 1
     summary = ", ".join(f"{name}={count}" for name, count in sorted(counts.items()))
@@ -856,8 +1006,13 @@ def _verify_loader_subscription() -> Claim:
 
     The loader discovers its topics from the broker, so a topic that never appears
     -- or one scalo suppresses in favour of a `_load` sibling -- leaves it ready
-    and healthy with nothing to read. Asserted before the injection, because after
-    it the same fault is indistinguishable from a broken loader or a missing table.
+    and healthy with nothing to read.
+
+    Asserted after the injection, never before it. rdkafka reports a partition's
+    lag only once the group has committed an offset there, so on a stack started
+    from empty volumes no series exists until the first record is consumed, and a
+    check ahead of the injection fails a loader that is fetching correctly. After
+    rows land it confirms the subscription; after they do not, it is the diagnosis.
     """
     if _profile_mk_value(key=TRANSPORT_BUS_KEY)[:1] != ["true"]:
         _print(msg="SKIP  this tier has no bus -- the loader is handed its events")
@@ -896,11 +1051,12 @@ def _verify_loader_subscription() -> Claim:
     )
     if not (topics):
         _print(
-            msg=f"FAIL  {LOADER_SERVICE} is fetching no topic within "
-            f"{LOADER_TOPIC_TIMEOUT_SECONDS:.0f}s -- it resolved an empty subscription, "
-            "so events reach the broker and stop there. Read its resolved set with "
-            "`docker compose logs dfe-loader` (grep 'Resolved Kafka topics') and see "
-            "the `main_load` entry in docs/troubleshooting.md"
+            msg=f"FAIL  {LOADER_SERVICE} committed no offset on any topic within "
+            f"{LOADER_TOPIC_TIMEOUT_SECONDS:.0f}s -- either it resolved an empty "
+            "subscription, so events reach the broker and stop there, or it never "
+            "committed what it read. Read its resolved set with `docker compose logs "
+            "dfe-loader` (grep 'Resolved Kafka topics') and see the `main_load` entry "
+            "in docs/troubleshooting.md"
         )
         return Claim(asserted=True, failed=1)
     _print(msg=f"PASS  {LOADER_SERVICE} is fetching {', '.join(sorted(topics))}")
@@ -1027,11 +1183,11 @@ def _verify_routing_applied(*, database: str) -> Claim:
         return SKIPPED
 
     base = _engine_base()
-    token, status, username = _login(base)
-    if status != 200 or not (token):
+    token, _, _, fault = _login(base)
+    if fault:
         _print(
-            msg=f"FAIL  login as {username!r} returned HTTP {status} -- this run cannot "
-            "create the source it needs to prove the routing reaches the receiver"
+            msg=f"FAIL  {fault} -- this run cannot create the source it needs to "
+            "prove the routing reaches the receiver"
         )
         return Claim(asserted=True, failed=1)
 
@@ -1112,11 +1268,11 @@ def _verify_hyperdx() -> Claim:
         )
         return SKIPPED
 
-    token, status, username = _login(_engine_base())
-    if status != 200 or not (token):
+    token, _, _, fault = _login(_engine_base())
+    if fault:
         _print(
-            msg=f"FAIL  login as {username!r} returned HTTP {status} -- HyperDX "
-            "verifies that token, so this run cannot read it"
+            msg=f"FAIL  {fault} -- HyperDX verifies that token, so this run cannot "
+            "read it"
         )
         return Claim(asserted=True, failed=1)
 
@@ -1201,29 +1357,210 @@ def _engine_base() -> str:
     return ENGINE_NETWORK_BASE
 
 
-def _login(base: str) -> tuple[str, int, str]:
-    """Log a console account in. Returns (token, status, username).
+class Login(typing.NamedTuple):
+    """One console login: a token to use, or why there is none.
 
-    An empty token with status 0 means no password was available, which is a
-    different fault from a rejected login and reads differently to an operator.
+    Status is what the login answered, and 0 means no password was available,
+    which is a different fault from a rejected login and reads differently to an
+    operator. A token and a fault never both carry a value.
     """
-    # DFE_POST_LOGIN_* names any account; the break-glass admin is the fallback.
+
+    token: str
+    status: int
+    username: str
+    fault: str
+
+
+def _console_credential() -> tuple[str, str, str]:
+    """Return (username, the key the password came from, password) for POST's login."""
+    # DFE_POST_LOGIN_* names any account; the bootstrap admin is the fallback.
     username = (
         os.environ.get("DFE_POST_LOGIN_USER", "").strip()
         or os.environ.get("DFE_AUTH_LOCAL_ADMIN_NAME", "admin").strip()
         or "admin"
     )
-    password = (
-        os.environ.get("DFE_POST_LOGIN_PASSWORD", "").strip()
-        or os.environ.get("DFE_AUTH_LOCAL_ADMIN_PASSWORD", "").strip()
-    )
-    if not (password):
-        return "", 0, username
+    for key in PASSWORD_KEYS:
+        password = os.environ.get(key, "").strip()
+        if password:
+            return username, key, password
+    return username, ADMIN_PASSWORD_KEY, ""
+
+
+def _request_token(*, base: str, username: str, password: str) -> tuple[str, int, bool]:
+    """Log in once. Returns (token, status, whether the password must change first).
+
+    An engine that predates the forced change never sends the flag, so it reads as
+    False and the token is used as it is.
+    """
     status, body = _api_post_json(
         f"{base}/auth/login", {"username": username, "password": password}
     )
-    token = body.get("access_token", "") if isinstance(body, dict) else ""
-    return token, status, username
+    if not (isinstance(body, dict)):
+        return "", status, False
+    token = body.get("access_token", "")
+    return token, status, body.get("password_change_required") is True
+
+
+def _login(base: str) -> Login:
+    """Log POST's console account in, replacing an issued password first if it has to."""
+    username, key, password = _console_credential()
+    if not (password):
+        return Login("", 0, username, f"no password for {username!r} is set")
+    token, status, change_required = _request_token(
+        base=base, username=username, password=password
+    )
+    if status != 200 or not (token):
+        return Login(
+            "", status, username, f"login as {username!r} returned HTTP {status}"
+        )
+    if not (change_required):
+        return Login(token, status, username, "")
+    return _replace_issued_password(base=base, key=key, token=token, username=username)
+
+
+def _dotenv_with(*, text: str, key: str, value: str) -> str:
+    """Return dotenv text with every live assignment of key set to value.
+
+    Every live line is rewritten so no reader can pick up a stale duplicate, a
+    commented line is left alone, and a key with no live line is appended.
+    """
+    lines = []
+    found = False
+    for line in text.splitlines():
+        if not (line.lstrip().startswith("#")) and _setting_key(line=line) == key:
+            lines.append(f"{key}={value}")
+            found = True
+            continue
+        lines.append(line)
+    if not (found):
+        lines.append("")
+        lines.append(
+            "## Written by `make post` when the engine required a password change."
+        )
+        lines.append(f"{key}={value}")
+    return "\n".join(lines) + "\n"
+
+
+def _replace_file(*, path: Path, text: str) -> None:
+    """Write text over path through a renamed sibling, keeping the file's mode.
+
+    A reader sees the old file or the new one, never a half-written credential.
+    """
+    mode = stat.S_IMODE(path.stat().st_mode)
+    handle, temp = tempfile.mkstemp(
+        dir=path.parent, prefix=f".{path.name}.", suffix=".tmp"
+    )
+    try:
+        with os.fdopen(handle, "w", encoding="utf-8", newline="\n") as stream:
+            stream.write(text)
+            stream.flush()
+            os.fsync(stream.fileno())
+        os.chmod(temp, mode)
+        os.replace(temp, path)
+    except BaseException:
+        Path(temp).unlink(missing_ok=True)
+        raise
+
+
+def _refresh_access_summary() -> None:
+    """Rewrite access-summary.md where one exists, so it never hands out a dead password."""
+    if not (ACCESS_SUMMARY_FILE.is_file()):
+        return
+    try:
+        write_summary(values=_dotenv_values(), path=ACCESS_SUMMARY_FILE)
+    except OSError as error:
+        _print(
+            msg=f"      note: {ACCESS_SUMMARY_FILE.name} still names the replaced "
+            f"password -- it could not be rewritten ({error.strerror})"
+        )
+
+
+def _replace_issued_password(
+    *, base: str, key: str, token: str, username: str
+) -> Login:
+    """Replace an issued password with a fresh one, leaving .env on the one the engine holds.
+
+    The new password reaches .env BEFORE the engine is asked to take it, so a
+    change the engine applied is never one nothing recorded. When the engine did
+    not take it, .env is put back as it was.
+    """
+    replacement = _generate_secret(GENERATED_SECRETS[ADMIN_PASSWORD_KEY])
+    dotenv = DOTENV_FILE.resolve()
+    try:
+        original = dotenv.read_text(encoding="utf-8")
+        _replace_file(
+            path=dotenv, text=_dotenv_with(text=original, key=key, value=replacement)
+        )
+    except OSError as error:
+        return Login(
+            "",
+            200,
+            username,
+            f"{username!r} must replace the password it was issued, and {key} cannot "
+            f"be recorded in {DOTENV_FILE.name} ({error.strerror}) -- nothing was changed",
+        )
+    _print(
+        msg=f"      {username!r} is on an issued password -- replacing it, with the new "
+        f"one recorded as {key} in {DOTENV_FILE.name}"
+    )
+
+    try:
+        status, body = _api_post_json(
+            f"{base}{CHANGE_PASSWORD_PATH}", {"new_password": replacement}, token=token
+        )
+        change_fault = (
+            ""
+            if status == 200
+            else f"POST {CHANGE_PASSWORD_PATH} returned HTTP {status}: {body}"
+        )
+    except ApiUnreachable as error:
+        change_fault = str(error)
+
+    # Whatever the change answered, the password the engine holds is the one that logs in.
+    try:
+        new_token, new_status, still_required = _request_token(
+            base=base, username=username, password=replacement
+        )
+        login_fault = (
+            ""
+            if new_status == 200 and new_token
+            else f"logging in with the new password returned HTTP {new_status}"
+        )
+    except ApiUnreachable as error:
+        new_token, new_status, still_required, login_fault = "", 0, False, str(error)
+
+    if login_fault and change_fault:
+        restored = ""
+        try:
+            _replace_file(path=dotenv, text=original)
+        except OSError as error:
+            restored = (
+                f" -- and {DOTENV_FILE.name} could not be put back ({error.strerror}), "
+                f"so its {key} names a password the engine does not hold"
+            )
+        fault = (
+            f"{username!r} must replace the password it was issued and the engine did "
+            f"not take the new one: {change_fault}{restored}"
+        )
+        return Login("", 200, username, fault.replace(replacement, "<new password>"))
+
+    os.environ[key] = replacement
+    _refresh_access_summary()
+    if login_fault:
+        fault = f"{username!r} replaced the password it was issued, but {login_fault}"
+        return Login("", 200, username, fault.replace(replacement, "<new password>"))
+    if still_required:
+        return Login(
+            "",
+            new_status,
+            username,
+            f"{username!r} took a new password and the engine still requires a change",
+        )
+    _print(
+        msg=f"      {username!r} replaced the password it was issued -- {key} in "
+        f"{DOTENV_FILE.name} holds the new one"
+    )
+    return Login(new_token, new_status, username, "")
 
 
 def _ui_query_count(
@@ -1290,7 +1627,7 @@ def _verify_ui_query(*, database: str, marker: str, table: str) -> Claim:
         return SKIPPED
 
     base = _engine_base()
-    token, status, username = _login(base)
+    token, status, username, fault = _login(base)
     if status == 0:
         if _wizard_rotated_admin_password(base=base):
             _print(
@@ -1303,11 +1640,11 @@ def _verify_ui_query(*, database: str, marker: str, table: str) -> Claim:
         return Claim(asserted=True, failed=1)
 
     _print(msg=f"Querying {database}.{table} through the engine API as {username!r}")
-    if status != 200 or not (token):
+    if fault:
         # An engine seeded before this password was generated holds the old one, and
         # the setup wizard's last step rotates it: either way retrying cannot help.
         _print(
-            msg=f"FAIL  login as {username!r} returned HTTP {status} -- the console "
+            msg=f"FAIL  {fault} -- the console "
             "cannot authenticate, so nobody can read this data through dfe-ui. "
             "If the setup wizard rotated the break-glass password, pass the current "
             "one on the command line (shell env beats .env): "
@@ -1446,7 +1783,7 @@ def _verify_hunt(*, database: str, marker: str, table: str) -> Claim:
         return SKIPPED
 
     base = _engine_base()
-    token, status, username = _login(base)
+    token, status, _, fault = _login(base)
     if status == 0 and _wizard_rotated_admin_password(base=base):
         _print(
             msg="SKIP  the setup wizard rotated the break-glass password, so no "
@@ -1461,11 +1798,8 @@ def _verify_hunt(*, database: str, marker: str, table: str) -> Claim:
             "so this run can create the hunt it needs"
         )
         return Claim(asserted=True, failed=1)
-    if status != 200 or not (token):
-        _print(
-            msg=f"FAIL  login as {username!r} returned HTTP {status} -- the hunt API "
-            "rejected the credential, so this run cannot create the hunt it needs"
-        )
+    if fault:
+        _print(msg=f"FAIL  {fault} -- this run cannot create the hunt it needs")
         return Claim(asserted=True, failed=1)
 
     hunt_name = marker
@@ -1694,12 +2028,6 @@ def main() -> int:
         _print(msg=f"FAIL  {reason}")
         return 1
 
-    # Fails fast rather than joining the tally below: injecting into a pipeline
-    # whose consumer is not attached proves nothing about the pipeline.
-    subscription = _verify_loader_subscription()
-    if subscription.failed:
-        return 1
-
     marker = _run_id()
     _print(msg=f"Injecting {EVENT_COUNT} marked event(s) via {service} at {ingest_url}")
     _print(msg=f"Marker: {marker}")
@@ -1755,6 +2083,8 @@ def main() -> int:
                 "marker column could not be read -- this run cannot be identified, "
                 "so the schema may not carry `_tags`"
             )
+        # A loader subscribed to nothing is the commonest reason nothing lands.
+        _verify_loader_subscription()
         return 1
 
     if matched >= EVENT_COUNT:
@@ -1768,9 +2098,9 @@ def main() -> int:
         # is created: behind a slow claim, this run's rows fall outside it.
         return _report_claims(
             claims={
-                "subscription": subscription,
                 "ingest": HELD,
                 "hunts": _verify_hunt(database=database, marker=marker, table=table),
+                "subscription": _verify_loader_subscription(),
                 "self-monitoring": _verify_self_monitoring(),
                 "observability": _verify_hyperdx(),
                 "console": _verify_ui_query(
@@ -1785,6 +2115,7 @@ def main() -> int:
         msg=f"FAIL  only {matched}/{EVENT_COUNT} marked event(s) reached "
         f"{database}.{table} within {LAND_TIMEOUT_SECONDS:.0f}s"
     )
+    _verify_loader_subscription()
     return 1
 
 

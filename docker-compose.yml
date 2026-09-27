@@ -60,11 +60,9 @@ x-limits-clickhouse: &limits-clickhouse
       cpus: "${DFE_CLICKHOUSE_CPUS:-2.0}"
       memory: ${DFE_CLICKHOUSE_MEMORY:-3G}
 
-# Redpanda subtracts the HOST's vm.min_free_kbytes from the container limit
-# before checking it against --memory, so the usable figure is not the limit.
-# At 1536M a host with min_free_kbytes over ~512MB leaves under the 1G request
-# and the broker refuses to start. Headroom here rather than a smaller --memory,
-# because --memory is what the broker actually gets to work with.
+# Redpanda subtracts the HOST's vm.min_free_kbytes from this limit before it
+# checks --memory. redpanda/start.sh lowers --memory to what fits, and this
+# headroom keeps the full 1G on any host whose reserve is under 1536M.
 x-limits-broker: &limits-broker
   resources:
     limits:
@@ -187,12 +185,16 @@ services:
       default:
         aliases:
           - kafka
+    # redpanda/start.sh appends --memory: REDPANDA_MEMORY, lowered to what the
+    # container limit holds once this host's kernel reserve is taken off.
+    entrypoint: ["/bin/bash", "/usr/local/bin/dfe-redpanda-start.sh"]
+    environment:
+      REDPANDA_MEMORY: ${REDPANDA_MEMORY:-1G}
     command:
       - redpanda
       - start
       - --mode=${REDPANDA_MODE:-dev-container}
       - --smp=${REDPANDA_SMP:-1}
-      - --memory=${REDPANDA_MEMORY:-1G}
       - --kafka-addr=internal://0.0.0.0:9092,external://0.0.0.0:19092
       - --advertise-kafka-addr=internal://kafka:9092,external://${KAFKA_ADVERTISED_HOST:-localhost}:${KAFKA_PLAINTEXT_HOST_PORT:-19092}
     ports:
@@ -200,6 +202,7 @@ services:
       - ${DFE_BIND_HOST:-127.0.0.1}:${KAFKA_PLAINTEXT_HOST_PORT:-19092}:19092
     volumes:
       - kafka-redpanda-data:/var/lib/redpanda/data
+      - ./redpanda/start.sh:/usr/local/bin/dfe-redpanda-start.sh:ro
     healthcheck:
       test: ["CMD-SHELL", "rpk cluster health | grep -q 'Healthy:.*true'"]
       interval: 5s
@@ -247,6 +250,10 @@ services:
       - ${DFE_BIND_HOST:-127.0.0.1}:${KAFKA_PLAINTEXT_HOST_PORT:-19092}:19092
     volumes:
       - kafka-apache-data:/var/lib/kafka/data
+      # The image declares these as VOLUMEs too, empty unless a deployment
+      # supplies TLS material or property files. Named, so no down/up strands one.
+      - kafka-apache-secrets:/etc/kafka/secrets
+      - kafka-apache-config:/mnt/shared/config
     healthcheck:
       test: ["CMD-SHELL", "/opt/kafka/bin/kafka-broker-api-versions.sh --bootstrap-server localhost:9092 > /dev/null 2>&1"]
       interval: 5s
@@ -281,9 +288,10 @@ services:
 
   # ===========================================================================
   # dlq-init
-  # Makes the shared DLQ spool writable by the services that use it: Docker
-  # creates the `dlq-spool` mountpoint root-owned and all four consumers run as
-  # uid 1000, so without this dfe-archiver crash-loops on its eager DLQ writer.
+  # Makes the shared DLQ spool and the archive volume writable by the services
+  # that use them: Docker creates both mountpoints root-owned and every consumer
+  # runs as uid 1000, so without this dfe-archiver crash-loops on its eager DLQ
+  # writer and fails every archive write.
   #
   # Three sharp edges -- `required: false` means a FAILED dlq-init only warns,
   # uid 1000 is hard-coded, and no profile names this service, so dev mode builds
@@ -301,9 +309,10 @@ services:
     # into argv, so `sh -c` would receive only `chown` and the rest would land in
     # $0/$1/$2 -- which fails with "chown: missing operand".
     command:
-      - chown -R 1000:1000 /var/spool/dfe
+      - chown -R 1000:1000 /var/spool/dfe /var/data/archive
     volumes:
       - dlq-spool:/var/spool/dfe
+      - archiver-data:/var/data/archive
     restart: "no"
 
   # ===========================================================================
@@ -473,6 +482,43 @@ services:
     restart: "no"
 
   # ===========================================================================
+  # catalogue-dfe-transform-elastic
+  # The source catalogue the engine offers, printed by the elastic transform's
+  # OWN pinned image (`emit-catalogue`) into dfe-engine-content, which the engine
+  # reads at DFE_SOURCE_CATALOGUE_FILE. The Kubernetes tier runs the same command
+  # as an init container.
+  #
+  # An image that predates the subcommand exits non-zero, so the command writes
+  # to a temporary file, keeps it only on success, and never fails itself: the
+  # engine starts and reports the catalogue missing instead.
+  # ===========================================================================
+
+  catalogue-dfe-transform-elastic:
+    image: ${IMAGE_REGISTRY:-ghcr.io/hyperi-io}/dfe-transform-elastic:${DFE_TRANSFORM_ELASTIC_VERSION:?run 'make stack VERSION=X.Y.Z' to pin DFE_TRANSFORM_ELASTIC_VERSION}
+    container_name: ${DFE_CONTAINER_PREFIX:-}dfe-catalogue-dfe-transform-elastic
+    profiles: ["core"]
+    deploy: *limits-sidecar
+    # Root because an empty named volume lands root-owned at a path no image
+    # creates, and the engine only ever reads this directory.
+    user: "0:0"
+    entrypoint: ["/bin/sh", "-c"]
+    # A LIST with one element, for the reason dlq-init's command gives.
+    command:
+      - |
+        dst=/app/content/catalogue/sources.yaml
+        mkdir -p /app/content/catalogue
+        if dfe-transform-elastic emit-catalogue > "$$dst.tmp"; then
+          mv "$$dst.tmp" "$$dst"
+          echo "catalogue: dfe-transform-elastic emitted its catalogue to $$dst"
+        else
+          rm -f "$$dst.tmp"
+          echo "catalogue: dfe-transform-elastic emitted nothing, so the engine reports its catalogue missing" >&2
+        fi
+    volumes:
+      - dfe-engine-content:/app/content
+    restart: "no"
+
+  # ===========================================================================
   # dfe-archiver
   # Reads the landing topics off the broker, or receives on its scalo Push
   # listener where the profile has no broker (config/archiver/<transport>.yaml).
@@ -586,10 +632,11 @@ services:
     restart: unless-stopped
     deploy: *limits-service
     ports:
-      # 50051 is the INTERNAL DfeTransport/Push surface (receiver -> loader), not
+      # 6000 is the INTERNAL DfeTransport/Push surface (receiver -> loader), not
       # a client-facing one -- operators only, so it binds DFE_BIND_HOST.
+      # It publishes on 50051 because dfe-receiver already holds host port 6000.
       - ${DFE_BIND_HOST:-127.0.0.1}:${DFE_LOADER_PROMETHEUS_PORT:-9091}:9090
-      - ${DFE_BIND_HOST:-127.0.0.1}:${DFE_LOADER_GRPC_PORT:-50051}:50051
+      - ${DFE_BIND_HOST:-127.0.0.1}:${DFE_LOADER_GRPC_PORT:-50051}:6000
     env_file:
       - path: env/loader.env
         required: false
@@ -645,7 +692,7 @@ services:
     ports:
       # 6000 (Vector protocol) and 8080 (HTTP) are the INGEST surfaces external
       # clients push to, so they bind DFE_INGRESS_BIND_HOST. 9090 is operators.
-      # Do not confuse 6000 with the loader's 50051 -- different protocols.
+      # The loader's Push listener is also 6000 inside its container, published on 50051.
       - ${DFE_INGRESS_BIND_HOST:-0.0.0.0}:${DFE_RECEIVER_GRPC_PORT:-6000}:6000
       - ${DFE_INGRESS_BIND_HOST:-0.0.0.0}:${DFE_RECEIVER_HTTP_PORT:-8080}:8080
       - ${DFE_BIND_HOST:-127.0.0.1}:${DFE_RECEIVER_PROMETHEUS_PORT:-9090}:9090
@@ -744,7 +791,7 @@ services:
       retries: 5
 
   # ===========================================================================
-  # dfe-transform-elastic-cisco-ios
+  # dfe-transform-e2e-elastic-cisco-ios
   # A SECOND instance of the same image, for the cisco-ios source alone -- the
   # per-source shape dfe-transform-vrl-filebeat carries on the VRL side. The
   # receiver routes _source=cisco-ios to cisco-ios_land, this instance is the
@@ -753,24 +800,27 @@ services:
   # `source.name` in the config is the whole difference between two instances of
   # this app: the transform is compiled in, so a second source adds a block like
   # this one and nothing else.
+  #
+  # Named off the `<app>-<source>` shape because dfe-engine names a real
+  # per-source instance that way, and Compose merges two services sharing a name.
   # ===========================================================================
 
-  dfe-transform-elastic-cisco-ios:
+  dfe-transform-e2e-elastic-cisco-ios:
     image: ${IMAGE_REGISTRY:-ghcr.io/hyperi-io}/dfe-transform-elastic:${DFE_TRANSFORM_ELASTIC_VERSION:?run 'make stack VERSION=X.Y.Z' to pin DFE_TRANSFORM_ELASTIC_VERSION}
-    container_name: ${DFE_CONTAINER_PREFIX:-}dfe-transform-elastic-cisco-ios
+    container_name: ${DFE_CONTAINER_PREFIX:-}dfe-transform-e2e-elastic-cisco-ios
     profiles: ["dfe"]
     restart: unless-stopped
     deploy: *limits-service
     ports:
-      - ${DFE_BIND_HOST:-127.0.0.1}:${DFE_TRANSFORM_ELASTIC_CISCO_IOS_PROMETHEUS_PORT:-9100}:9090
+      - ${DFE_BIND_HOST:-127.0.0.1}:${DFE_TRANSFORM_ELASTIC_CISCO_IOS_PROMETHEUS_PORT:-9089}:9090
     env_file:
-      - path: env/transform-elastic-cisco-ios.env
+      - path: env/transform-e2e-elastic-cisco-ios.env
         required: false
     environment:
       LOG_LEVEL: ${LOG_LEVEL:-info}
       LOG_FORMAT: ${LOG_FORMAT:-text}
       OTEL_EXPORTER_OTLP_ENDPOINT: ${DFE_OTEL_EXPORTER_ENDPOINT:-}
-      OTEL_SERVICE_NAME: dfe-transform-elastic-cisco-ios
+      OTEL_SERVICE_NAME: dfe-transform-e2e-elastic-cisco-ios
     depends_on:
       # No dlq-init here: this service does not mount dlq-spool. dfe-engine
       # creates the topics it reads and writes, so it waits on that instead.
@@ -817,14 +867,25 @@ services:
       OTEL_SERVICE_NAME: dfe-transform-vector
     depends_on:
       # No dlq-init here: this service does not mount dlq-spool.
-      # The topic authority: dfe-engine creates the declared topic set at its own
-      # startup, so a transform started first subscribes to nothing.
-      # `required: false` for the tiers that run no engine.
+      # The writer of the rendered config below, and the topic authority:
+      # dfe-engine creates the declared topic set at its own startup, so a
+      # transform started first subscribes to nothing. `required: false` for the
+      # tiers that run no engine.
       dfe-engine:
         condition: service_healthy
         required: false
+    # The engine renders this app's config and its transform programs from the
+    # source it is given, on the tiers that run it; everywhere else the committed
+    # file below is what it reads.
+    command: ["--config", "${DFE_TRANSFORM_VECTOR_CONFIG_FILE:-/etc/dfe-transform-vector/config.yaml}"]
     volumes:
       - ./config/${DFE_TRANSFORM_VECTOR_CONFIG:-transform-vector/kafka.yaml}:/etc/dfe-transform-vector/config.yaml:ro
+      # The bundled pipeline names its enrichment table by an absolute path
+      # (dfe-transform-vector pipelines/filebeat/README.md), so the table has to
+      # be mounted there whichever config the app reads. A pipeline that cannot
+      # open it fails `vector validate` with exit 78 and an empty stderr.
+      - ./config/transform-vrl/data:/etc/dfe-transform-vector/data:ro
+      - dfe-app-config:/etc/dfe/apps:ro
     healthcheck:
       test: ["CMD", "curl", "-sf", "http://localhost:9090/livez"]
       interval: 10s
@@ -832,7 +893,7 @@ services:
       retries: 5
 
   # ===========================================================================
-  # dfe-transform-vector-filebeat
+  # dfe-transform-e2e-vector-filebeat
   # A SECOND instance of the same image, for the filebeat source alone -- the
   # dfe-transform-vector half of the shape dfe-transform-vrl-filebeat carries
   # below. The receiver routes _source=filebeat-vector to filebeat-vector_land,
@@ -844,11 +905,14 @@ services:
   # filebeat program and the timezone table it looks up is mounted from the
   # filebeat pipeline's own data directory, shared with the VRL instance rather
   # than copied.
+  #
+  # Named off the `<app>-<source>` shape because dfe-engine names a real
+  # per-source instance that way, and Compose merges two services sharing a name.
   # ===========================================================================
 
-  dfe-transform-vector-filebeat:
+  dfe-transform-e2e-vector-filebeat:
     image: ${IMAGE_REGISTRY:-ghcr.io/hyperi-io}/dfe-transform-vector:${DFE_TRANSFORM_VECTOR_VERSION:?run 'make stack VERSION=X.Y.Z' to pin DFE_TRANSFORM_VECTOR_VERSION}
-    container_name: ${DFE_CONTAINER_PREFIX:-}dfe-transform-vector-filebeat
+    container_name: ${DFE_CONTAINER_PREFIX:-}dfe-transform-e2e-vector-filebeat
     profiles: ["dfe"]
     restart: unless-stopped
     deploy: *limits-service
@@ -856,17 +920,17 @@ services:
       - ${DFE_BIND_HOST:-127.0.0.1}:${DFE_TRANSFORM_VECTOR_FILEBEAT_PROMETHEUS_PORT:-9098}:9090
       - ${DFE_BIND_HOST:-127.0.0.1}:${DFE_TRANSFORM_VECTOR_FILEBEAT_API_PORT:-8687}:8686
     env_file:
-      - path: env/transform-vector-filebeat.env
+      - path: env/transform-e2e-vector-filebeat.env
         required: false
       # The custom keys the engine writes for this app; an up -d applies them,
       # a restart keeps the environment the container already has.
-      - path: env/transform-vector-filebeat.custom.env
+      - path: env/transform-e2e-vector-filebeat.custom.env
         required: false
     environment:
       LOG_LEVEL: ${LOG_LEVEL:-info}
       LOG_FORMAT: ${LOG_FORMAT:-text}
       OTEL_EXPORTER_OTLP_ENDPOINT: ${DFE_OTEL_EXPORTER_ENDPOINT:-}
-      OTEL_SERVICE_NAME: dfe-transform-vector-filebeat
+      OTEL_SERVICE_NAME: dfe-transform-e2e-vector-filebeat
     depends_on:
       # No dlq-init here: this service does not mount dlq-spool.
       # The topic authority: dfe-engine creates the declared topic set at its own
@@ -994,6 +1058,10 @@ services:
     profiles: ["core"]
     restart: unless-stopped
     deploy: *limits-service
+    # The engine runs as UID 1000 and ./env belongs to the operator, so it writes
+    # there through the operator's group; `make` exports DFE_DEV_GID.
+    group_add:
+      - "${DFE_DEV_GID:-1000}"
     ports:
       # dfe-proxy reaches the engine over the docker network; this host mapping
       # is for direct API work. PRODUCT class -- it is the API the UI consumes --
@@ -1008,7 +1076,7 @@ services:
       # what an unset DFE_ENV should get: `make init` mints a password, so the
       # refusal only ever catches a stack that has no credential to speak of.
       # `make dev` writes DFE_ENV=dev for a tyre-kick that logs in on the shipped
-      # default. docs/operating.md#there-is-no-authentication
+      # default until the stack replaces it. docs/operating.md#there-is-no-authentication
       DFE_ENV: ${DFE_ENV:-production}
       # A Compose stack is one operator with no forge: a hunt or rule written at
       # production+team lands on a review branch nothing can merge, and the
@@ -1033,8 +1101,11 @@ services:
       # The broker the engine creates a source's topics on: the in-stack one on a
       # kafka tier unless .env names another, and nothing on a direct tier.
       DFE_KAFKA_BOOTSTRAP_SERVERS: ${DFE_KAFKA_BOOTSTRAP_SERVERS:-}
-      # The everyday admin, reasserted from .env on every boot. The engine refuses
-      # to start on an empty or "changeme" value unless DFE_ENV is a dev posture.
+      # The everyday admin, issued with a forced change at first login, which
+      # `make post` makes and records in .env. A changed value is a rotation the
+      # next boot issues the same way. A value the engine last issued, or the
+      # account's current password, re-issues nothing. The engine refuses to start
+      # on an empty value or the shipped default unless DFE_ENV is a dev posture.
       DFE_AUTH_LOCAL_ADMIN_NAME: ${DFE_AUTH_LOCAL_ADMIN_NAME:-admin}
       DFE_AUTH_LOCAL_ADMIN_PASSWORD: ${DFE_AUTH_LOCAL_ADMIN_PASSWORD:-}
       # The recovery admin. Mint-once: the engine hashes it into the deploy repo
@@ -1089,6 +1160,11 @@ services:
       # volume. resolve_profile.py sets it EMPTY on a tier the engine renders no
       # app config for; unset (compose run without make) keeps the volume's path.
       DFE_APP_CONTRACT_DIR: ${DFE_ENGINE_CONTRACT_DIR-${DFE_ENGINE_CONTENT_DIR:-/app/content}/contract}
+      # The file catalogue-dfe-transform-elastic writes, on the same volume and on
+      # the same tiers as the contract directory. The engine refuses a named path
+      # nothing wrote rather than answering with no sources, and an EMPTY value
+      # from resolve_profile.py leaves it offering none.
+      DFE_SOURCE_CATALOGUE_FILE: ${DFE_ENGINE_CATALOGUE_FILE-${DFE_ENGINE_CONTENT_DIR:-/app/content}/catalogue/sources.yaml}
       # Where the engine writes env/<app>.custom.env, the sibling of the app
       # config directory above. A literal, because it names the bind mount below
       # and the two have to stay the same path -- and that path is the host tree,
@@ -1153,6 +1229,10 @@ services:
         condition: service_completed_successfully
         required: false
       contract-dfe-transform-vrl:
+        condition: service_completed_successfully
+        required: false
+      # The source catalogue, on the same terms: a failed emit only warns.
+      catalogue-dfe-transform-elastic:
         condition: service_completed_successfully
         required: false
     working_dir: /home/appuser
@@ -1404,6 +1484,10 @@ services:
     deploy: *limits-service
     environment:
       FERRETDB_POSTGRESQL_URL: postgres://${HYPERDX_POSTGRES_USER:-hyperdx}:${HYPERDX_POSTGRES_PASSWORD:-hyperdx}@hyperdx-postgres:5432/postgres
+    volumes:
+      # The image's VOLUME: FerretDB's instance UUID and telemetry choice
+      # (state.json). Named, so a restart keeps them and `make clean` removes them.
+      - hyperdx-ferretdb-state:/state
     depends_on:
       hyperdx-postgres:
         condition: service_healthy
@@ -1603,10 +1687,15 @@ services:
         condition: service_healthy
         required: false
 
+# Every path an image declares as a VOLUME is mounted from one of these: an
+# unmounted one gets a fresh anonymous volume per container, which `make down`
+# strands and `make clean` cannot reach. check_compose.py holds the list.
 volumes:
   clickhouse-data:
   kafka-redpanda-data:
   kafka-apache-data:
+  kafka-apache-secrets:
+  kafka-apache-config:
   archiver-data:
   dlq-spool:
   dfe-engine-config:
@@ -1619,3 +1708,4 @@ volumes:
   dfe-app-config:
   hyperdx-dashboards:
   hyperdx-pg-data:
+  hyperdx-ferretdb-state:

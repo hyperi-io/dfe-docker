@@ -35,11 +35,6 @@ def __find_repo_root(*, marker: str = _REPO_MARKER) -> Path:
 # Basic constants
 FALSY = {"", "0", "false", "no", "off"}
 
-# The key re-prefixing every container_name so a second stack can run beside the
-# first: a container name is daemon-wide, so the compose project name alone does
-# not isolate one. Empty is today's names.
-CONTAINER_PREFIX_KEY = "DFE_CONTAINER_PREFIX"
-
 # The key naming the address a BROWSER reaches this deployment on, and the values
 # of it that resolve on the box the stack runs on and nowhere else.
 EXTERNAL_ORIGIN_KEY = "DFE_EXTERNAL_ORIGIN"
@@ -70,6 +65,19 @@ SERVICE_CONFIG_FILE = {
     "dfe-transform-elastic": "config.yaml",
     "dfe-transform-vector": "config.yaml",
     "dfe-transform-vrl": "config.yaml",
+}
+
+# The variable naming the engine-rendered config each resident service reads.
+# Compose runs `--config ${VAR:-<committed mount>}`, so an empty value reads the
+# committed file and the file NAME in the rendered path is SERVICE_CONFIG_FILE.
+SERVICE_TO_RENDERED_CONFIG_VAR = {
+    "dfe-archiver": "DFE_ARCHIVER_CONFIG_FILE",
+    "dfe-fetcher": "DFE_FETCHER_CONFIG_FILE",
+    "dfe-loader": "DFE_LOADER_CONFIG_FILE",
+    "dfe-receiver": "DFE_RECEIVER_CONFIG_FILE",
+    "dfe-transform-elastic": "DFE_TRANSFORM_ELASTIC_CONFIG_FILE",
+    "dfe-transform-vector": "DFE_TRANSFORM_VECTOR_CONFIG_FILE",
+    "dfe-transform-vrl": "DFE_TRANSFORM_VRL_CONFIG_FILE",
 }
 
 # Repo constants
@@ -177,15 +185,18 @@ def _config_enrichment_paths(*, path: Path) -> set[str]:
     return paths
 
 
-def _container_name(*, service: str) -> str:
-    """The daemon-wide container name a `docker` CLI call must use for a service.
+def _config_argument(*, args: typing.Sequence[str]) -> str | None:
+    """Return the file a service's `--config` argument names, else None.
 
-    Compose addresses a service by its key and resolves it on the network by that
-    same key, so only the raw `docker exec` / `inspect` / `logs` shapes need this.
-    Call it after _load_dotenv(): the prefix normally arrives from .env, not the
-    shell.
+    Takes the process arguments as `docker inspect` reports them (`.Args`), in
+    either the `--config <path>` or the `--config=<path>` form.
     """
-    return os.environ.get(CONTAINER_PREFIX_KEY, "").strip() + service
+    for index, arg in enumerate(args):
+        if arg == "--config" and index + 1 < len(args):
+            return args[index + 1]
+        if arg.startswith("--config="):
+            return arg.split("=", 1)[1]
+    return None
 
 
 def _dotenv_values() -> dict[str, str]:
@@ -227,14 +238,25 @@ def _load_dotenv() -> None:
         os.environ.setdefault(key, value)
 
 
+def _use_mounted_configs(*, environ: typing.MutableMapping[str, str]) -> None:
+    """Blank every rendered-config variable, so each service reads its mounted file.
+
+    `make` exports the engine-rendered paths from `.profile.mk` to every recipe
+    and `.env` can carry them too. Compose falls back to the committed mount on an
+    empty value, and a set-but-empty variable also beats the one in `.env`.
+    """
+    for var in SERVICE_TO_RENDERED_CONFIG_VAR.values():
+        environ[var] = ""
+
+
 def _parse_yaml_subset(*, text: str) -> dict[str, object]:
     """Parse a minimal YAML subset - nested maps, scalar string values - into dicts.
 
-    Dependency-free (no PyYAML): the scripts run under a plain ``python3`` on the
-    devex VMs. Handles ``key: value`` scalars and ``key:`` nesting by indentation,
-    skipping ``#`` comments and blank lines. It does NOT handle lists or inline
-    collections - a line it cannot place raises ValueError. Values come back as
-    strings (quotes stripped), which is all a dotenv render needs.
+    Dependency-free (no PyYAML): the scripts run under a plain ``python3`` on a
+    bare deployment VM. Handles ``key: value`` scalars and ``key:`` nesting by
+    indentation, skipping ``#`` comments and blank lines. It does NOT handle lists
+    or inline collections - a line it cannot place raises ValueError. Values come
+    back as strings (quotes stripped), which is all a dotenv render needs.
 
     resolve_profile.py keeps a local twin of this for service_profiles.yaml; fold
     that onto this shared one when convenient.

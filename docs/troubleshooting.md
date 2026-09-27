@@ -153,8 +153,10 @@ The e2e harness now does this for itself: `clean_topics` deletes the `_load`
 sibling of every expected `_land` topic, so a run depends on the test definition
 rather than on the broker's history.
 
-`make post` asserts the loader is fetching a topic before it injects anything, so
-an empty subscription is reported as one.
+When the injected events do not land, `make post` asks the loader which topics it
+is fetching, so an empty subscription is reported as one. It cannot ask first: the
+loader publishes a topic's lag only once it has committed an offset there, which a
+stack started from empty volumes has not.
 
 ## Events are accepted but nothing lands
 
@@ -214,8 +216,13 @@ other half of the picture.
 dfe-fetcher, dfe-loader and dfe-receiver. All four run as non-root `appuser` (uid
 1000), and none of the images pre-creates that path, so Docker creates the
 mountpoint owned by root and no service can write inside it. The `dlq-init`
-one-shot (`chown -R 1000:1000 /var/spool/dfe`) fixes that before the services
-start.
+one-shot (`chown -R 1000:1000 /var/spool/dfe /var/data/archive`) fixes that before
+the services start.
+
+`archiver-data`, mounted at `/var/data/archive`, has the same problem and the same
+fix. Without it every archive write fails with `Permission denied (os error 13)`,
+and because dfe-archiver commits an offset only after a write succeeds, it never
+commits one: the lag grows and nothing is archived.
 
 Without it, dfe-archiver crash-loops on `DLQ init failed ... Permission denied
 (os error 13)` -- it creates its DLQ writer eagerly at startup. The others create

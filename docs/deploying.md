@@ -86,11 +86,11 @@ default it tracks STABLE releases only; `DFE_UPDATE_ALLOW_PRERELEASE=1` (comment
 in the service unit) also takes `-rc` builds. See
 [ops/daemon-update/README.md](../ops/daemon-update/README.md).
 
-**Latest (development only).** `make stack VERSION=latest` takes the newest
-certified stack and then repins every DFE image at its own newest published GHCR
-tag. It is the development-currency mode, not a third deploy mode: the pins carry
-digests, but nobody certified that combination, so `make modes` reports it as
-LATEST rather than PINNED. Do not deploy off it -- pin a version.
+**Latest (development only).** `make stack VERSION=latest` pins the newest
+published stack, read anonymously from the OCI registry, and moves forward on
+every re-run; `DFE_STACK_REPIN_IMAGES=1` also repins each DFE image at its GitHub
+Latest release. It is not a third deploy mode: `make modes` reports it as LATEST
+rather than PINNED. Do not deploy off it -- pin a version.
 
 The daemon fast-forwards the checkout before pinning, because a stack version is
 images plus the compose that runs them. It refuses rather than pull over

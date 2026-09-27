@@ -17,8 +17,9 @@
 ## file alone -- no dfe-infra checkout needed.
 ##
 ## Copy to deployment.yaml (gitignored) and populate. Never commit real values:
-## secrets are REFERENCES to OpenBao, never literals; estate endpoints stay blank
-## here and are injected by hyperi-infra's thin caller at deploy time.
+## secrets are REFERENCES into the deployment's secrets backend, never literals;
+## estate endpoints stay blank here and are injected by the operator's own
+## tooling at deploy time.
 
 ## Which substrate this deployment targets. This renderer requires docker-vm.
 ## (docker-vm | k8s -- the k8s substrate renders via dfe-infra into a DeployContext.)
@@ -39,13 +40,14 @@ version:
   # track: latest
   # allow_prerelease: "false"
 
-## Secret backend + base path. REFERENCES only, never values. hyperi-infra's thin
-## caller resolves these from OpenBao and injects DFE_GHCR_USERNAME/TOKEN into
-## .env for `make login`; a standalone operator sets those two by hand instead.
+## Secret backend + base path. REFERENCES only, never values. The operator's own
+## tooling resolves these from the backend and injects DFE_GHCR_USERNAME/TOKEN
+## into .env for `make login`; without such tooling, set those two by hand.
 ## `make dial` never reads or writes a secret.
 secrets:
   backend: openbao          # openbao | aws-sm | file
-  ref: secret/dfe           # base path; ghcr-pull-secret lives under it
+  ## Base path; ghcr-pull-secret lives under it. Which path is estate context.
+  ref: ""
 
 ## Service footprint. Left commented, service_profiles.yaml's active_profile is
 ## used. The value must be a profile key defined there: `slim` and `single`
@@ -97,8 +99,8 @@ docker:
   ## Infra UI authentication. auth_enabled puts an oauth2-proxy in front of each
   ## infra UI, gating on OIDC sign-in AND group membership. It needs an issuer,
   ## so it stays off until a deployment has one. The client SECRET is not a dial
-  ## field -- hyperi-infra's thin caller injects DFE_OIDC_CLIENT_SECRET into .env
-  ## from OpenBao, the same way it injects the GHCR token.
+  ## field -- the operator's own tooling injects DFE_OIDC_CLIENT_SECRET into .env
+  ## from the secrets backend, the same way it injects the GHCR token.
   auth_enabled: "false"
   oidc_issuer_url: ""
   oidc_client_id: ""
@@ -108,7 +110,7 @@ docker:
 
 ## External endpoints -- BLANK here. Point a local engine at a remote ClickHouse
 ## for integration tests by setting clickhouse_host in deployment.yaml (or let the
-## thin caller inject it from bao). Left empty, the in-stack container is used.
+## operator's tooling inject it). Left empty, the in-stack container is used.
 endpoints:
   clickhouse_host: ""
 

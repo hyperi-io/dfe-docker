@@ -1,0 +1,18 @@
+# Project:   dfe-docker
+# File:      config/transform-vrl/grpc.yaml
+# Purpose:   dfe-transform-vrl config - gRPC in from the receiver, gRPC out to the loader
+# Language:  YAML
+#
+# License:   BUSL-1.1
+# Copyright: (c) 2026 HYPERI PTY LIMITED
+
+source:
+  transport: direct
+  listen: 0.0.0.0:6000
+
+transforms:
+  dir: /etc/dfe-transform-vrl/transforms
+
+sink:
+  transport: direct
+  endpoint: http://dfe-loader:6000

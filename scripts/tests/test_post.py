@@ -17,6 +17,7 @@ rows are inside it), and that a run which skipped every claim exits non-zero.
 
 from __future__ import annotations
 
+import datetime
 import json
 
 import pytest
@@ -52,48 +53,95 @@ def test_the_exec_script_reads_the_key_the_request_is_passed_in() -> None:
 def test_a_request_over_the_network_carries_the_method_body_and_token(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.delenv("DFE_CONTAINER_PREFIX", raising=False)
     recorded: dict[str, object] = {}
 
     def _run(args, **kwargs):
+        if args[:3] == ["docker", "compose", "ps"]:
+            return _completed(stdout="c0ffee\n")
         recorded["args"] = args
+        recorded["env"] = kwargs["env"]
         return _completed(stdout='200\n{"access_token": "t"}')
 
     monkeypatch.setattr(post.subprocess, "run", _run)
+    post._api_container.cache_clear()
 
     status, body = post._api_post_json(
-        f"{post.ENGINE_NETWORK_BASE}/auth/login", {"username": "admin"}, token="bearer"
+        f"{post.ENGINE_NETWORK_BASE}/auth/login",
+        {"username": "admin", "password": "hunter2"},
+        token="bearer",
     )
 
     assert (status, body) == (200, {"access_token": "t"})
     args = recorded["args"]
-    assert args[:2] == ["docker", "exec"]
-    assert post.API_EXEC_SERVICE in args
-    spec = json.loads(args[3].split("=", 1)[1])
+    assert args[:4] == ["docker", "exec", "-e", post.API_REQUEST_KEY]
+    spec = json.loads(recorded["env"][post.API_REQUEST_KEY])
     assert spec["method"] == "POST"
     assert spec["token"] == "bearer"
-    assert json.loads(spec["body"]) == {"username": "admin"}
+    assert json.loads(spec["body"]) == {"username": "admin", "password": "hunter2"}
 
 
-def test_the_exec_target_carries_the_stack_prefix(
+def test_neither_the_password_nor_the_token_reaches_the_exec_argv(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """`docker exec` resolves a container name, which a second stack re-prefixes."""
-    monkeypatch.setenv("DFE_CONTAINER_PREFIX", "accept-")
+    """Any local user can read another process's argv through `ps`."""
     recorded: dict[str, object] = {}
 
     def _run(args, **kwargs):
+        if args[:3] == ["docker", "compose", "ps"]:
+            return _completed(stdout="c0ffee\n")
         recorded["args"] = args
-        return _completed(stdout='200\n{"access_token": "t"}')
+        return _completed(stdout="200\n{}")
 
     monkeypatch.setattr(post.subprocess, "run", _run)
+    post._api_container.cache_clear()
 
     post._api_post_json(
-        f"{post.ENGINE_NETWORK_BASE}/auth/login", {"username": "admin"}, token="bearer"
+        f"{post.ENGINE_NETWORK_BASE}/auth/login",
+        {"password": "pw-7c1e0b"},
+        token="tok-3f9a2d",
     )
 
-    assert "accept-dfe-engine" in recorded["args"]
-    assert post.API_EXEC_SERVICE not in recorded["args"]
+    argv = " ".join(recorded["args"])
+    assert "pw-7c1e0b" not in argv
+    assert "tok-3f9a2d" not in argv
+
+
+def test_the_exec_addresses_the_container_compose_names_not_the_service(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A bare service name is daemon-wide, so it reaches another stack's container."""
+    recorded: dict[str, object] = {}
+
+    def _run(args, **kwargs):
+        if args[:3] == ["docker", "compose", "ps"]:
+            assert post.API_EXEC_SERVICE in args
+            return _completed(stdout="c0ffee\n")
+        recorded["args"] = args
+        return _completed(stdout="200\n{}")
+
+    monkeypatch.setattr(post.subprocess, "run", _run)
+    post._api_container.cache_clear()
+
+    post._api_post_json(f"{post.ENGINE_NETWORK_BASE}/auth/login", {})
+
+    args = recorded["args"]
+    assert "c0ffee" in args
+    assert post.API_EXEC_SERVICE not in args
+
+
+def test_no_container_for_this_project_is_reported_not_guessed(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Testing the wrong stack is the defect; finding no stack is a fine answer."""
+    monkeypatch.setattr(
+        post.subprocess,
+        "run",
+        lambda args, **kwargs: _completed(stdout="", stderr="no such service"),
+    )
+    post._api_container.cache_clear()
+
+    with pytest.raises(post.ApiUnreachable, match="no running"):
+        post._api_post_json(f"{post.ENGINE_NETWORK_BASE}/auth/login", {})
 
 
 def test_a_host_address_never_reaches_for_docker(
@@ -237,6 +285,135 @@ def test_the_hunt_is_created_before_the_slow_claims(
     assert calls.index("_verify_hunt") < calls.index("_verify_hyperdx")
 
 
+def test_the_subscription_is_asked_once_the_events_have_landed(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A topic nothing has been written to has no lag series, so asking first fails a working loader."""
+    calls = _stub_claims(monkeypatch)
+    _stub_main(monkeypatch)
+    monkeypatch.setattr(
+        post,
+        "_ingest_target",
+        lambda *, table: ("dfe-receiver", "http://ingest/ingest"),
+    )
+
+    def _posted(*args, **kwargs) -> int:
+        calls.append("http_post")
+        return 200
+
+    monkeypatch.setattr(post, "http_post", _posted)
+
+    assert post.main() == 0
+    assert calls.index("http_post") < calls.index("_verify_loader_subscription")
+    assert calls.index("_verify_hunt") < calls.index("_verify_loader_subscription")
+
+
+def test_events_that_never_land_ask_the_subscription_why(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls = _stub_claims(monkeypatch)
+    _stub_main(monkeypatch)
+    monkeypatch.setattr(
+        post,
+        "_ingest_target",
+        lambda *, table: ("dfe-receiver", "http://ingest/ingest"),
+    )
+    monkeypatch.setattr(post, "ch_marker_count", lambda *args, **kwargs: 0)
+    monkeypatch.setattr(post, "LAND_TIMEOUT_SECONDS", 0.0)
+
+    def _posted(*args, **kwargs) -> int:
+        calls.append("http_post")
+        return 200
+
+    monkeypatch.setattr(post, "http_post", _posted)
+
+    assert post.main() == 1
+    assert calls == ["http_post"] * post.EVENT_COUNT + ["_verify_loader_subscription"]
+
+
+def _engine_answers(
+    monkeypatch: pytest.MonkeyPatch, *, readyz: dict, schema_status: int
+) -> list[str]:
+    """Serve /readyz and the schema route from fixed answers; return the paths asked."""
+    asked: list[str] = []
+
+    def _get(url, **kwargs):
+        asked.append(url)
+        if url.endswith("/readyz"):
+            return 200, readyz
+        return schema_status, {}
+
+    monkeypatch.setattr(post, "http_get_json", _get)
+    monkeypatch.setattr(post, "_resolved_services", lambda: [post.ENGINE_SERVICE])
+    monkeypatch.setattr(post, "SCHEMA_TIMEOUT_SECONDS", 0.0)
+    return asked
+
+
+def test_an_engine_that_predates_schema_control_is_skipped_loudly(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """The v1.20 shape: no schema check on /readyz and no route to report one."""
+    _engine_answers(
+        monkeypatch, readyz={"checks": {"clickhouse": True}}, schema_status=404
+    )
+
+    assert post._wait_schema_converged() == 0
+    assert "SKIP  schema convergence NOT checked" in capsys.readouterr().err
+
+
+def test_a_named_schema_check_that_is_false_fails_even_where_the_route_404s(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The skip keys on the check being absent, never on the route alone."""
+    asked = _engine_answers(
+        monkeypatch,
+        readyz={"checks": {"clickhouse": True, "schema": False}},
+        schema_status=404,
+    )
+
+    assert post._wait_schema_converged() == 1
+    assert not any(url.endswith(post.SCHEMA_STATUS_PATH) for url in asked)
+
+
+def test_an_engine_serving_the_route_without_the_check_is_waited_on(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A 401 means the route exists, so the check is still to come."""
+    _engine_answers(
+        monkeypatch, readyz={"checks": {"clickhouse": True}}, schema_status=401
+    )
+
+    assert post._schema_state() == post.SCHEMA_PENDING
+    assert post._wait_schema_converged() == 1
+
+
+def test_a_converged_schema_check_passes_without_asking_the_route(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    asked = _engine_answers(
+        monkeypatch,
+        readyz={"checks": {"clickhouse": True, "schema": True}},
+        schema_status=404,
+    )
+
+    assert post._wait_schema_converged() == 0
+    assert not any(url.endswith(post.SCHEMA_STATUS_PATH) for url in asked)
+
+
+def test_an_engine_that_never_answers_fails_rather_than_skips(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def _refused(url, **kwargs):
+        raise ConnectionRefusedError(url)
+
+    monkeypatch.setattr(post, "http_get_json", _refused)
+    monkeypatch.setattr(post, "_resolved_services", lambda: [post.ENGINE_SERVICE])
+    monkeypatch.setattr(post, "SCHEMA_TIMEOUT_SECONDS", 0.0)
+
+    assert post._schema_state() is None
+    assert post._wait_schema_converged() == 1
+
+
 class _Completed:
     """Stand-in for a finished `docker exec`."""
 
@@ -288,3 +465,97 @@ def _stub_claims(monkeypatch: pytest.MonkeyPatch) -> list[str]:
     ):
         monkeypatch.setattr(post, name, _recorder(name))
     return calls
+
+
+def test_the_log_query_matches_the_container_name_not_the_service(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """ServiceName in otel_logs is the fluentd `{{.Name}}` tag, which an override renames."""
+    monkeypatch.setattr(
+        post.subprocess,
+        "run",
+        lambda args, **kwargs: _completed(stdout="accept-dfe-engine\n"),
+    )
+    post._container_name.cache_clear()
+
+    assert post._container_name("dfe-engine") == "accept-dfe-engine"
+
+
+def test_a_container_start_is_floored_to_the_second_the_log_driver_stamps(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        post.subprocess,
+        "run",
+        lambda args, **kwargs: _completed(stdout="2026-09-26T19:29:57.911126595Z\n"),
+    )
+
+    started = post._container_started("dfe-loader")
+
+    assert started == int(
+        datetime.datetime(2026, 9, 26, 19, 29, 57, tzinfo=datetime.UTC).timestamp()
+    )
+
+
+@pytest.mark.parametrize(
+    ("code", "stdout"),
+    [(1, ""), (0, "0001-01-01T00:00:00Z\n"), (0, "not a time\n")],
+)
+def test_a_start_docker_cannot_state_is_none(
+    monkeypatch: pytest.MonkeyPatch, code: int, stdout: str
+) -> None:
+    monkeypatch.setattr(
+        post.subprocess,
+        "run",
+        lambda args, **kwargs: _completed(code=code, stdout=stdout),
+    )
+
+    assert post._container_started("dfe-loader") is None
+
+
+def _count_log_queries(
+    monkeypatch: pytest.MonkeyPatch, started: int | None
+) -> list[str]:
+    """Run the container-log claim once and return every query it sent."""
+    queries: list[str] = []
+    monkeypatch.setattr(post, "OTEL_TIMEOUT_SECONDS", 0.0)
+    monkeypatch.setattr(post, "_container_name", lambda service: service)
+    monkeypatch.setattr(post, "_container_started", lambda name: started)
+    monkeypatch.setattr(post, "ch_int", lambda sql: queries.append(sql) or 1)
+    assert post._verify_container_logs(database="dfe") == 0
+    return queries
+
+
+def test_a_quiet_service_is_counted_from_its_own_start_not_a_window(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The loader logs at startup and then nothing, so a 300s window ages it out."""
+    queries = _count_log_queries(monkeypatch, 1790000000)
+
+    assert len(queries) == len(post.CONTAINER_LOG_SERVICES)
+    for sql in queries:
+        assert "Timestamp >= toDateTime(1790000000)" in sql
+        assert "now() - INTERVAL" not in sql
+
+
+def test_a_container_with_no_readable_start_falls_back_to_freshness(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    queries = _count_log_queries(monkeypatch, None)
+
+    for sql in queries:
+        assert f"now() - INTERVAL {post.OTEL_FRESH_WINDOW_SECONDS} SECOND" in sql
+
+
+def test_an_unresolvable_service_falls_back_to_its_own_name(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A stack that renames nothing, or a compose that cannot answer, still reads."""
+    monkeypatch.setattr(
+        post.subprocess,
+        "run",
+        lambda args, **kwargs: _completed(code=1, stdout="", stderr="no such service"),
+    )
+    post._container_name.cache_clear()
+
+    assert post._container_name("dfe-engine") == "dfe-engine"

@@ -91,9 +91,9 @@ def test_the_per_surface_override_still_wins() -> None:
         ({"DFE_EXTERNAL_ORIGIN": "http://localhost"}, "", "http://127.0.0.1"),
         ({"DFE_BIND_SCOPE": "all"}, "0.0.0.0", "http://localhost"),
         (
-            {"DFE_BIND_SCOPE": "all", "DFE_EXTERNAL_ORIGIN": "http://10.66.252.19"},
+            {"DFE_BIND_SCOPE": "all", "DFE_EXTERNAL_ORIGIN": "http://192.0.2.19"},
             "0.0.0.0",
-            "http://10.66.252.19",
+            "http://192.0.2.19",
         ),
         (
             {"DFE_EXTERNAL_ORIGIN": "https://dfe.example.test/"},

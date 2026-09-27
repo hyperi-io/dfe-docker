@@ -21,16 +21,11 @@ work, choose Kubernetes.
 
 ## Only the console authenticates -- everything else is bounded by that
 
-The engine's API requires a login. `make init` mints two passwords into `.env` and
-`make creds` hands them over: `admin` from `DFE_AUTH_LOCAL_ADMIN_PASSWORD`,
-reasserted on every engine boot, and the `breakglass` recovery admin, whose hash
-the engine commits to its deploy repo on the first boot and which therefore
-outlives the engine, the UI and `.env`. Rotate `admin` by changing the value in
-`.env` and running `make up` -- the store is not the source, so a rotation the
-engine alone performed would be undone on the next boot. The engine refuses to
-start when `DFE_AUTH_LOCAL_ADMIN_PASSWORD` is empty or `changeme` and `DFE_ENV` is
-not a dev posture. An unset `DFE_ENV` counts as `production`, so only a `.env` that
-says `dev` gets to run on the shipped password.
+The engine's API requires a login. `make init` mints two passwords into `.env` and `make creds` hands them over: `admin` from `DFE_AUTH_LOCAL_ADMIN_PASSWORD`, and the `breakglass` recovery admin, whose hash the engine commits to its deploy repo on the first boot and which therefore outlives the engine, the UI and `.env`.
+
+The engine issues `admin` with a forced change at first login, which `make post` makes and records back in `.env`. Rotate it by changing the value in `.env` and running `make up`. A value the engine last issued, or the account's current password, re-issues nothing, so a restart never undoes a change.
+
+The engine refuses to start when `DFE_AUTH_LOCAL_ADMIN_PASSWORD` is empty or the shipped default and `DFE_ENV` is not a dev posture. An unset `DFE_ENV` counts as `production`, so only a `.env` that says `dev` gets to run on the shipped password.
 
 `make init` and `make up` also write `access-summary.md` (0600, gitignored) with
 both minted passwords in plaintext. Retire the bootstrap admin from the console
@@ -144,7 +139,7 @@ Per-port, as published in `docker-compose.yml`:
 | 9096 | dfe-transform-vrl | operator | Metrics and health |
 | 9099 | dfe-transform-elastic | operator | Metrics and health |
 | 13133 | otel-collector | operator | `health_check` extension |
-| 50051 | dfe-loader | operator | Internal `DfeTransport/Push` gRPC |
+| 50051 | dfe-loader | operator | Internal `DfeTransport/Push` gRPC, container port 6000 |
 
 `dfe-ui`, `hyperdx`, `hyperdx-postgres` and `hyperdx-ferretdb` publish no host
 ports at all -- they are reached over the Docker network, HyperDX through the
@@ -329,12 +324,7 @@ For a small-environment deploy, set `REDPANDA_MODE=production` with real
 container limit that does not exceed it means the broker is OOM-killed rather
 than backpressured.
 
-Exceeding it is not sufficient on every host. Redpanda subtracts the HOST's
-`vm.min_free_kbytes` from the container limit before comparing it to `--memory`,
-so the usable figure is lower than the limit you set. A host with
-`min_free_kbytes` over ~512MB left the old 1536M default under the 1G request
-and the broker refused to start; the default is now 2560M. Check the host value
-with `sysctl vm.min_free_kbytes` and leave that much headroom on top.
+Redpanda subtracts the HOST's `vm.min_free_kbytes` from the container limit before it checks `--memory`, so the usable figure is lower than the limit you set, and it varies by host: a 92 GiB host reserving 1.84 GiB left the 2560M default 675M against a 1G request. `redpanda/start.sh` reads both at start and passes the smaller of `REDPANDA_MEMORY` and what the limit leaves, with a WARN naming the `DFE_BROKER_MEMORY` that restores the full amount. Under 512M it refuses to start and names the value that would fit. Check a host with `sysctl vm.min_free_kbytes`.
 
 ## Kafka backend licensing is a human decision
 
@@ -381,20 +371,22 @@ Never commit `.env`.
 
 ## Persistence: what survives, and what `make clean` destroys
 
-Eight named volumes hold all durable state:
+These named volumes hold all durable state:
 
 | Volume | Holds |
 |---|---|
 | `clickhouse-data` | The ClickHouse warehouse (`/var/lib/clickhouse`) |
 | `kafka-redpanda-data` / `kafka-apache-data` | Broker log and offsets, per backend |
+| `kafka-apache-secrets` / `kafka-apache-config` | Apache Kafka's TLS and property-file inputs, empty unless a deployment supplies them |
 | `archiver-data` | dfe-archiver output (`/var/data/archive`) |
 | `dlq-spool` | Shared dead-letter spool (`/var/spool/dfe`) |
 | `dfe-engine-config` / `dfe-engine-schemas` | Engine config and schemas, seeded from the engine image on first run |
 | `hyperdx-pg-data` | HyperDX metadata store |
+| `hyperdx-ferretdb-state` | FerretDB's instance UUID and telemetry choice (`/state`) |
 
 `make down` stops containers and leaves every volume intact. `make clean` runs
 `docker compose --profile "*" down -v --remove-orphans` -- the `-v` deletes all
-eight, which now includes the warehouse. It always removed volumes; what changed
+of them, which now includes the warehouse. It always removed volumes; what changed
 is that ClickHouse data is in one.
 
 ### Retention
@@ -471,6 +463,8 @@ The other outcomes are as informative as the PASS:
 
 - **FAIL on weak secrets** -- `DFE_UI_NEXTAUTH_SECRET` or
   `HYPERDX_POSTGRES_PASSWORD` is still the committed default. Run `make init`.
+- **FAIL, schema not converged** -- dfe-engine did not report its `schema` readiness check true within 300 seconds. `GET /api/v1/system/schema` on the engine names the object that failed.
+- **SKIP, schema convergence not checked** -- the engine names no `schema` check on `/readyz` and answers 404 on `/api/v1/system/schema`, which is every engine before v1.21.0. The rest of the run still asserts the rows land.
 - **FAIL, not ready** -- the profile declares an ingest component that never
   became ready within 90 seconds. Not the same as a skip, deliberately.
 - **FAIL, marker unreadable** -- rows arrived but the marker could not be read

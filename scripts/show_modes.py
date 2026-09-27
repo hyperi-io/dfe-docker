@@ -22,10 +22,11 @@ which one a box is on should never have to be guessed:
     SAME `make stack` + `make ci`, but only when something newer has shipped.
     It never pulls `latest`; -rc builds join in with DFE_UPDATE_ALLOW_PRERELEASE=1.
 
-  LATEST (development only) -- `make stack VERSION=latest` takes the newest
-    certified stack and then repins every DFE image at its own newest published
-    tag, which is a combination nobody certified. Still digest-pinned, so it is
-    reproducible; it is just not a set anyone tested together.
+  LATEST (development only) -- `make stack VERSION=latest` pins the newest
+    published stack and moves forward on every re-run. DFE_STACK_REPIN_IMAGES=1
+    also repins every DFE image at the release its GitHub repo marks Latest,
+    which is a combination nobody certified. Still digest-pinned either way, so
+    it is reproducible; it is just not a version anyone chose to deploy.
 
 This reads local files only (the deployment dial and .env), so it is safe on a
 fresh checkout and offline. The live "what is the newest published stack" answer
@@ -110,9 +111,9 @@ def _current_mode() -> tuple[str, str]:
     # reproducible deployment the box does not have.
     if env_pin in DISCOVERY_WORDS:
         return (
-            "LATEST (unpinned DFE images)",
-            f"`make stack VERSION={env_pin}` -- newer than any certified stack; "
-            "development and integration only",
+            "LATEST (unpinned)",
+            f"`make stack VERSION={env_pin}` -- follows the newest published stack "
+            "on every re-run; development and integration only",
         )
     if pin or env_pin:
         return "PINNED", f"at {env_pin or pin}"
@@ -139,9 +140,9 @@ def main() -> int:
     print()
     print("  LATEST (development only, NOT a deployment)")
     print("    make stack VERSION=latest   # `rc` to rank pre-releases throughout")
-    print("    Takes the newest certified stack, then repins every DFE image at")
-    print("    its own newest published tag -- a combination nobody certified.")
-    print("    Still digest-pinned; re-run it to move forward.")
+    print("    Pins the newest published stack; re-run it to move forward.")
+    print("    DFE_STACK_REPIN_IMAGES=1 also repins every DFE image at its GitHub")
+    print("    Latest release -- a combination nobody certified. Still digest-pinned.")
     print()
 
     label, detail = _current_mode()

@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import time
 import typing
 from urllib.error import URLError
@@ -43,13 +44,40 @@ MARKER_EXPRESSIONS = (
 )
 
 
+def env_or(name: str, fallback: str) -> str:
+    """Read an env var, treating empty as absent.
+
+    A `.env` key present with no value exports as an empty string, so a bare
+    ``os.environ.get(name, default)`` returns '' and the default never fires.
+    """
+    return os.environ.get(name, "").strip() or fallback
+
+
+_ENV_REFERENCE = re.compile(r"\$\{([A-Za-z_][A-Za-z0-9_]*)(?::-([^}]*))?\}")
+
+
+def expand_env(text: str) -> str:
+    """Replace each ``${NAME}`` or ``${NAME:-default}`` with its environment value.
+
+    Empty reads as unset, as it does in :func:`env_or`, so a test definition
+    follows the same port variables compose publishes the stack on.
+    """
+    return _ENV_REFERENCE.sub(
+        lambda match: env_or(match.group(1), match.group(2) or ""), text
+    )
+
+
 def clickhouse_url() -> str:
-    """Return the ClickHouse HTTP endpoint, honouring the same vars compose uses."""
+    """Return the ClickHouse HTTP endpoint, honouring the same vars compose uses.
+
+    The host is DFE_POST_HOST, the address every other POST claim dials, so a
+    second stack published beside another reads its own ClickHouse, not the first.
+    """
     explicit = os.environ.get("CLICKHOUSE_URL", "").strip()
     if explicit:
         return explicit
-    port = os.environ.get("CLICKHOUSE_HTTP_PORT", "8123")
-    return f"http://localhost:{port}"
+    host = env_or("DFE_POST_HOST", "localhost")
+    return f"http://{host}:{env_or('CLICKHOUSE_HTTP_PORT', '8123')}"
 
 
 def http_get(url: str, timeout: int = 5) -> str:
@@ -161,9 +189,7 @@ def ch_query(sql: str, *, debug: typing.Callable[[str], None] | None = None) -> 
     if debug:
         debug(f"Executing ClickHouse query: `{sql}`")
     request = Request(clickhouse_url(), data=sql.encode(), method="POST")
-    request.add_header(
-        "X-ClickHouse-User", os.environ.get("CLICKHOUSE_USERNAME", "default")
-    )
+    request.add_header("X-ClickHouse-User", env_or("CLICKHOUSE_USERNAME", "default"))
     request.add_header("X-ClickHouse-Key", os.environ.get("CLICKHOUSE_PASSWORD", ""))
     try:
         with urlopen(request, timeout=10) as response:

@@ -39,6 +39,7 @@ from _common import (
     PROJECTED_PROFILES,
     SERVICE_CONFIG_FILE,
     SERVICE_PROFILES_FILE,
+    SERVICE_TO_RENDERED_CONFIG_VAR,
     _load_dotenv,
     _print,
     _rel_path,
@@ -142,10 +143,10 @@ SERVICE_TO_CONFIG_VAR = {
     "dfe-fetcher": "DFE_FETCHER_CONFIG",
     "dfe-loader": "DFE_LOADER_CONFIG",
     "dfe-receiver": "DFE_RECEIVER_CONFIG",
+    "dfe-transform-e2e-elastic-cisco-ios": "DFE_TRANSFORM_ELASTIC_CISCO_IOS_CONFIG",
+    "dfe-transform-e2e-vector-filebeat": "DFE_TRANSFORM_VECTOR_FILEBEAT_CONFIG",
     "dfe-transform-elastic": "DFE_TRANSFORM_ELASTIC_CONFIG",
-    "dfe-transform-elastic-cisco-ios": "DFE_TRANSFORM_ELASTIC_CISCO_IOS_CONFIG",
     "dfe-transform-vector": "DFE_TRANSFORM_VECTOR_CONFIG",
-    "dfe-transform-vector-filebeat": "DFE_TRANSFORM_VECTOR_FILEBEAT_CONFIG",
     "dfe-transform-vrl": "DFE_TRANSFORM_VRL_CONFIG",
     "dfe-transform-vrl-filebeat": "DFE_TRANSFORM_VRL_FILEBEAT_CONFIG",
 }
@@ -163,6 +164,9 @@ ENGINE_APP_CONFIG_BASE_DIR_VAR = "DFE_ENGINE_APP_CONFIG_BASE_DIR"
 ENGINE_APP_CONFIG_BASE_DIR = "/app/app-config-base"
 APP_CONFIG_MOUNT_VAR = "DFE_APP_CONFIG_MOUNT"
 APP_CONFIG_MOUNT = "/etc/dfe/apps"
+# The volume the engine writes that layout into. Named here so the wiring test
+# can require the mount beside the path, rather than the path alone.
+APP_CONFIG_VOLUME = "dfe-app-config"
 # Where the contract one-shots write each app's container contract, and where the
 # engine reads it back from. It hangs off the content volume's own mount, so an
 # operator who moves that path moves both halves together.
@@ -170,16 +174,10 @@ ENGINE_CONTENT_DIR_VAR = "DFE_ENGINE_CONTENT_DIR"
 ENGINE_CONTENT_DIR = "/app/content"
 ENGINE_CONTRACT_DIR_VAR = "DFE_ENGINE_CONTRACT_DIR"
 ENGINE_CONTRACT_SUBDIR = "contract"
-# Which variable names the file the resident single-instance service reads. The
-# file NAME is _common.SERVICE_CONFIG_FILE, which scripts/instances.py shares.
-SERVICE_TO_RENDERED_CONFIG_VAR = {
-    "dfe-archiver": "DFE_ARCHIVER_CONFIG_FILE",
-    "dfe-fetcher": "DFE_FETCHER_CONFIG_FILE",
-    "dfe-loader": "DFE_LOADER_CONFIG_FILE",
-    "dfe-receiver": "DFE_RECEIVER_CONFIG_FILE",
-    "dfe-transform-elastic": "DFE_TRANSFORM_ELASTIC_CONFIG_FILE",
-    "dfe-transform-vrl": "DFE_TRANSFORM_VRL_CONFIG_FILE",
-}
+# The source catalogue catalogue-dfe-transform-elastic writes into the same
+# volume, handed to the engine on the same tiers as the contract directory.
+ENGINE_CATALOGUE_FILE_VAR = "DFE_ENGINE_CATALOGUE_FILE"
+ENGINE_CATALOGUE_FILE = "catalogue/sources.yaml"
 # A per-source transform instance is a service of its own here, because a
 # profile has to be able to run one without the other.
 SERVICES = [
@@ -187,10 +185,10 @@ SERVICES = [
     "dfe-fetcher",
     "dfe-loader",
     "dfe-receiver",
+    "dfe-transform-e2e-elastic-cisco-ios",
+    "dfe-transform-e2e-vector-filebeat",
     "dfe-transform-elastic",
-    "dfe-transform-elastic-cisco-ios",
     "dfe-transform-vector",
-    "dfe-transform-vector-filebeat",
     "dfe-transform-vrl",
     "dfe-transform-vrl-filebeat",
 ]
@@ -563,6 +561,10 @@ def main() -> int:
         lines.append(
             f"export {ENGINE_CONTRACT_DIR_VAR} := "
             f"{f'{content_dir}/{ENGINE_CONTRACT_SUBDIR}' if renders else ''}"
+        )
+        lines.append(
+            f"export {ENGINE_CATALOGUE_FILE_VAR} := "
+            f"{f'{content_dir}/{ENGINE_CATALOGUE_FILE}' if renders else ''}"
         )
         for service_name, var_name in SERVICE_TO_RENDERED_CONFIG_VAR.items():
             rendered = (

@@ -78,6 +78,10 @@ Beyond resolution, these semantic assertions ride along.
   that service's own bind mounts. See `_enrichment_table_failures`.
 - The engine must never receive an empty or `changeme` admin password outside a
   dev posture, because it refuses to start on one. See `_credential_failures`.
+- Every service the log-driver fragment ships must queue its lines and wait for
+  the collector's ack. See `_log_driver_failures`.
+- Every path a pinned image declares as a VOLUME must be mounted from a named
+  volume or a bind. See `_IMAGE_VOLUMES`.
 """
 
 from __future__ import annotations
@@ -202,7 +206,7 @@ _AUTH_ENV = {
     "DFE_OIDC_ISSUER_URL": "https://idp.example.invalid/realms/dfe",
     "DFE_OIDC_CLIENT_ID": "compose-check",
     "DFE_OIDC_CLIENT_SECRET": "compose-check",
-    "DFE_OAUTH2_PROXY_COOKIE_SECRET": "0123456789abcdef0123456789abcdef",
+    "DFE_OAUTH2_PROXY_COOKIE_SECRET": "0123456789abcdef0123456789abcdef",  # gitleaks:allow
 }
 
 # Every overlay fragment the Makefile chains, read back out of its own
@@ -264,13 +268,38 @@ _DFE_OWNED_SERVICES = {
     "dfe-fetcher",
     "dfe-loader",
     "dfe-receiver",
+    "dfe-transform-e2e-elastic-cisco-ios",
+    "dfe-transform-e2e-vector-filebeat",
     "dfe-transform-elastic",
-    "dfe-transform-elastic-cisco-ios",
     "dfe-transform-vector",
-    "dfe-transform-vector-filebeat",
     "dfe-transform-vrl",
     "dfe-transform-vrl-filebeat",
     "dfe-ui",
+}
+
+# The fragment the Makefile chains to ship container stdout to the collector, and
+# the driver options each shipped service needs, with what breaks without one.
+_CONTAINER_LOGS_FRAGMENT = "docker-compose.container-logs.yml"
+_LOG_DRIVER_OPTIONS = {
+    "fluentd-async": (
+        "Docker refuses to create the container while the collector is not listening"
+    ),
+    "fluentd-request-ack": (
+        "Docker's port proxy accepts lines before the collector listens and drops "
+        "them, and the driver counts them as sent"
+    ),
+}
+
+# The VOLUME paths each pinned image declares (`docker image inspect --format
+# '{{json .Config.Volumes}}'`), by service: one left unmounted gets an anonymous
+# volume per container that `make clean` cannot reach. A new pin that declares
+# another path is an edit here.
+_IMAGE_VOLUMES: dict[str, tuple[str, ...]] = {
+    "clickhouse": ("/var/lib/clickhouse",),
+    "hyperdx-ferretdb": ("/state",),
+    "hyperdx-postgres": ("/var/lib/postgresql/data",),
+    "kafka-apache": ("/etc/kafka/secrets", "/mnt/shared/config", "/var/lib/kafka/data"),
+    "kafka-redpanda": ("/var/lib/redpanda/data",),
 }
 
 # A dfe-transform-vector pipeline declares its own enrichment tables, and the
@@ -827,6 +856,81 @@ def _credential_failures(*, env: dict[str, str]) -> tuple[list[str], int]:
     return failures, made
 
 
+def _log_driver_failures(*, config: dict) -> list[str]:
+    """Return one message per fluentd-logged service missing a driver option it needs."""
+    failures = []
+    for name, service in sorted(config.get("services", {}).items()):
+        logging = service.get("logging") or {}
+        if logging.get("driver") != "fluentd":
+            continue
+        options = logging.get("options") or {}
+        for key, consequence in sorted(_LOG_DRIVER_OPTIONS.items()):
+            if str(options.get(key, "")).strip().lower() != "true":
+                failures.append(
+                    f"{name}: fluentd logging without {key} -- {consequence}"
+                )
+    return failures
+
+
+def _container_log_failures(*, env: dict[str, str]) -> tuple[list[str], int]:
+    """Return (messages, services checked) for the log-driver fragment as it resolves."""
+    config = _config_json(env=env, files=[COMPOSE_FILE.name, _CONTAINER_LOGS_FRAGMENT])
+    if config is None:
+        return ([f"{_CONTAINER_LOGS_FRAGMENT} did not resolve on the registry path"], 0)
+    shipped = [
+        name
+        for name, service in config.get("services", {}).items()
+        if (service.get("logging") or {}).get("driver") == "fluentd"
+    ]
+    if not (shipped):
+        return (
+            [
+                f"{_CONTAINER_LOGS_FRAGMENT} puts no service on the fluentd driver -- "
+                "this check would assert nothing"
+            ],
+            0,
+        )
+    return _log_driver_failures(config=config), len(shipped)
+
+
+def _unmounted_image_volume_failures(*, config: dict) -> list[str]:
+    """Return one message per image-declared VOLUME path with nothing named mounted on it."""
+    services = config.get("services", {})
+    failures = []
+    for name, paths in sorted(_IMAGE_VOLUMES.items()):
+        if name not in services:
+            failures.append(f"{name}: in _IMAGE_VOLUMES but not in the stack")
+            continue
+        mounted = {
+            volume.get("target")
+            for volume in services[name].get("volumes") or []
+            if volume.get("source")
+        }
+        for path in paths:
+            if path not in mounted:
+                failures.append(
+                    f"{name}: its image declares VOLUME {path} and compose mounts "
+                    "nothing named there -- every `make down` strands an anonymous "
+                    "volume that `make clean` cannot remove"
+                )
+    return failures
+
+
+def _image_volume_failures(*, env: dict[str, str]) -> tuple[list[str], int]:
+    """Return (messages, paths checked) for the image VOLUME paths on the registry path.
+
+    Both Kafka backends are resolved into the one model, since each declares its
+    own paths.
+    """
+    config = _config_json(
+        env=env, files=[COMPOSE_FILE.name], extra_profiles=(_KAFKA_BACKENDS[1],)
+    )
+    if config is None:
+        return (["the registry path did not resolve, so volume mounts are unknown"], 0)
+    made = sum(len(paths) for paths in _IMAGE_VOLUMES.values())
+    return _unmounted_image_volume_failures(config=config), made
+
+
 def _override_coverage_failures(*, env: dict[str, str]) -> list[str]:
     """Return one message per service the committed override leaves on the registry.
 
@@ -1176,6 +1280,26 @@ def main() -> int:
     _print(
         msg=f"{_ENGINE_SERVICE} never receives an empty or {_DEFAULT_PASSWORD!r} admin "
         f"password outside a dev posture ({credential_made} assertions)"
+    )
+
+    log_failures, log_made = _container_log_failures(env=env)
+    for message in log_failures:
+        _print(msg=f"FAIL {message}")
+    if log_failures:
+        return 1
+    _print(
+        msg=f"All {log_made} service(s) on the fluentd driver queue their lines and "
+        "wait for the collector's ack"
+    )
+
+    volume_failures, volume_made = _image_volume_failures(env=env)
+    for message in volume_failures:
+        _print(msg=f"FAIL {message}")
+    if volume_failures:
+        return 1
+    _print(
+        msg=f"Every VOLUME path the pinned images declare is mounted from a named "
+        f"volume or a bind ({volume_made} assertions)"
     )
 
     coverage_failures = _override_coverage_failures(env=env)

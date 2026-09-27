@@ -11,10 +11,20 @@
 # Non-fatal: init creates .env, so it must not exist on a fresh checkout
 -include .env
 
+# `include` makes these make-variables, not environment ones, so the helper
+# scripts (post, test-flows, test-source, test_e2e) read an empty password and
+# every ClickHouse query 401s. Compose reads .env itself and is unaffected.
+export CLICKHOUSE_HOST
+export CLICKHOUSE_HTTP_PORT
+export CLICKHOUSE_PASSWORD
+export CLICKHOUSE_URL
+export CLICKHOUSE_USERNAME
+
 # Host UID/GID passed to live-mode containers (docker-compose.live.yml) that
 # write to bind-mounted host dirs (dfe-engine config/schemas), so files are owned
 # by the host user rather than the image user and writes don't hit permission
-# errors.
+# errors. The GID is also the group every stack adds to dfe-engine, which is how
+# it writes env/<app>.custom.env into the checkout.
 export DFE_DEV_UID := $(shell id -u)
 export DFE_DEV_GID := $(shell id -g)
 
@@ -52,11 +62,15 @@ ifneq (,$(filter-out $(BOOTSTRAP_GOALS),$(or $(MAKECMDGOALS),help)))
     else
         # On a fresh checkout make parses once before .profile.mk exists, then
         # remakes it and parses again; the name check only means anything on
-        # the second pass, when DFE_SERVICES is populated.
+        # the second pass, when DFE_SERVICES is populated. `apply` skips it: it
+        # names instances declared since .profile.mk was last written, so the
+        # make it starts checks them against the re-resolved list instead.
         ifneq ($(strip $(DFE_SERVICES)),)
-            INVALID_SERVICES := $(filter-out $(DFE_SERVICES),$(SERVICES))
-            ifneq ($(INVALID_SERVICES),)
-                $(error 'SERVICES' contains names not in the resolved stack: $(INVALID_SERVICES). Available: $(DFE_SERVICES))
+            ifeq ($(filter apply,$(MAKECMDGOALS)),)
+                INVALID_SERVICES := $(filter-out $(DFE_SERVICES),$(SERVICES))
+                ifneq ($(INVALID_SERVICES),)
+                    $(error 'SERVICES' contains names not in the resolved stack: $(INVALID_SERVICES). Available: $(DFE_SERVICES))
+                endif
             endif
         endif
         ACTIVE_SERVICES := $(filter $(SERVICES),$(DFE_SERVICES))
@@ -148,7 +162,7 @@ endif
 # Only the goals that start or self-test the stack ask for it. The bootstrap
 # goals are exempt for the reason BOOTSTRAP_GOALS gives: needing a key to stop a
 # stack, or to check a file, is a lockout.
-ORIGIN_GOALS := dev ci up infra post test-source test-flows
+ORIGIN_GOALS := dev ci up apply infra post test-source test-flows
 # Origins a browser on another machine cannot use; scripts/_common.py keeps the
 # same set for the helpers that read the key.
 LOOPBACK_ORIGINS := http://localhost https://localhost http://127.0.0.1 https://127.0.0.1
@@ -275,6 +289,8 @@ creds: ## Print the access summary. The admin password prints on a TTY only -- a
 
 # A dev tyre-kick logs in without looking anything up, so `make dev` writes the
 # KNOWN default password and DFE_ENV=dev, the one posture the engine accepts it in.
+# A .env already on a dev posture keeps a non-default password, the replacement
+# `make post` recorded after the engine made the admin change the default.
 # It refuses with exit 2 on any other DFE_ENV, and copies .env to .env.bak-<utc>
 # before overwriting a minted password.
 #
@@ -288,7 +304,7 @@ else
 endif
 
 .PHONY: dev-posture
-dev-posture: .env ## Put .env into the dev posture (known admin password, DFE_ENV=dev); AUTH=real mints one and writes a non-dev posture instead
+dev-posture: .env ## Put .env into the dev posture (DFE_ENV=dev, known admin password until the stack replaces it); AUTH=real mints one and writes a non-dev posture instead
 	@python3 scripts/dev_posture.py $(DEV_POSTURE_ARG)
 
 # GHCR auth for the private dfe-* images and the signed stack-manifest. A no-op
@@ -302,13 +318,15 @@ login: ## Authenticate docker + oras to the image registry from .env (DFE_GHCR_U
 # `make stack VERSION=X.Y.Z` pins the certified set. `make dial` writes the dial's
 # version.pin to DFE_STACK_VERSION in .env, so `make dial && make stack` pins
 # straight from the deployment dial. An explicit VERSION= on the command line wins.
-# VERSION=latest (rc to include pre-releases) instead takes the newest certified
-# stack and repins every ghcr.io/hyperi-io image at its own newest published tag
-# -- development currency, not a deployment. Still digest-pinned either way.
+# VERSION=latest (rc to include pre-releases) instead pins the newest published
+# stack, read anonymously from the OCI registry. DFE_STACK_REPIN_IMAGES=1 also
+# repins every ghcr.io/hyperi-io image at its component's newest GitHub release,
+# through a gh login that can read the component repos -- development currency,
+# not a deployment. Still digest-pinned either way.
 VERSION ?= $(DFE_STACK_VERSION)
 
 .PHONY: stack
-stack: .env login ## Pin image versions into .env from the DFE stack SSoT (VERSION=X.Y.Z[-rc.N], or latest|rc for newest DFE images)
+stack: .env login ## Pin image versions into .env from the DFE stack SSoT (VERSION=X.Y.Z[-rc.N], or latest|rc for the newest published stack)
 	@python3 scripts/stack.py $(VERSION)
 
 # The deployment dial (deployment.yaml) is the single SSoT a deployment turns.
@@ -338,8 +356,11 @@ ifneq ($(strip $(DFE_DATA_ROOT)),)
 	@mkdir -p $(addprefix $(DFE_DATA_ROOT)/,clickhouse kafka-redpanda kafka-apache archiver dlq-spool engine-config engine-schemas hyperdx-pg)
 endif
 
+# `dev` and `dev-build` clone the component repos from github.com/hyperi-io,
+# which stay private until GA, so both are HyperI-internal until then; `make ci`
+# runs the same stack from the public images.
 .PHONY: dev
-dev: env-files dev-posture down storage-dirs ## Build local DFE images from source and start the dev stack (LOCAL="svc ..." builds only those; AUTH=real for a minted login), then print the access summary
+dev: env-files dev-posture down storage-dirs ## Build local DFE images from source and start the dev stack (LOCAL="svc ..." builds only those; AUTH=real for a minted login), then print the access summary. HyperI-internal: clones private repos
 	docker compose $(DEV_PULL_FLAGS) $(PROFILE_FLAGS) pull
 	python3 scripts/build_dev_images.py $(DEV_OVERLAY_ARG) $(DEV_BUILD)
 	docker compose $(DEV_FLAGS) $(PROFILE_FLAGS) up -d $(ACTIVE_SERVICES)
@@ -347,7 +368,7 @@ dev: env-files dev-posture down storage-dirs ## Build local DFE images from sour
 	@$(MAKE) --no-print-directory creds
 
 .PHONY: dev-build
-dev-build: ## Build local DFE images from source (no start; honours LOCAL)
+dev-build: ## Build local DFE images from source (no start; honours LOCAL). HyperI-internal: clones private repos
 	docker compose $(DEV_PULL_FLAGS) $(PROFILE_FLAGS) pull
 	python3 scripts/build_dev_images.py $(DEV_OVERLAY_ARG) $(DEV_BUILD)
 
@@ -368,6 +389,33 @@ ci: login env-files down storage-dirs  ## Pull and start infra and registry DFE 
 .PHONY: up
 up: ci ## Start the stack from the pinned registry images, then print the access summary (password on a TTY only) and write access-summary.md
 	@python3 scripts/creds.py --write
+
+# The command dfe-engine's restart and recreate hints name after a config write:
+# resolving the profile regenerates the instances fragment, so it creates a
+# per-source container the engine has just declared and recreates one that exists.
+# DEV=1 recreates from the local images a `make dev` stack runs.
+ifneq ($(strip $(DEV)),)
+    APPLY_FLAGS = $(DEV_FLAGS)
+else
+    APPLY_FLAGS = -f docker-compose.yml $(STORAGE_FLAGS) $(UI_FLAGS)
+endif
+
+# An empty SERVICES would recreate the whole stack.
+ifneq ($(filter apply apply-services,$(MAKECMDGOALS)),)
+    ifeq ($(strip $(SERVICES)),)
+        $(error apply needs SERVICES="<service> ...", the services the dfe-engine hint names)
+    endif
+endif
+
+.PHONY: apply
+apply: env-files storage-dirs ## Create or recreate the named services after a config write (SERVICES="svc ..."; DEV=1 for a `make dev` stack), the command dfe-engine's hints name
+	@$(MAKE) --no-print-directory apply-services
+
+# A second make, because it reads the .profile.mk this one just re-resolved and
+# so checks SERVICES against the instances the engine has declared.
+.PHONY: apply-services
+apply-services:
+	docker compose $(APPLY_FLAGS) $(PROFILE_FLAGS) up -d --force-recreate --no-deps $(ACTIVE_SERVICES)
 
 .PHONY: ci-pull
 ci-pull: login ## Pull infra and registry DFE images
@@ -485,6 +533,12 @@ check-dockerfile: ## Lint the dev builder Dockerfile (hadolint gates on error se
 .PHONY: test-e2e
 test-e2e: ## End-to-end test executor (pass test names via E2E_TESTS)
 	@python3 ./scripts/test_e2e.py $(E2E_TESTS)
+
+# Opt-in, never part of test-e2e: each test stops a backing service or a DFE app
+# under load.
+.PHONY: test-resilience
+test-resilience: ## Outage tests: stop a service under load and prove the rest survives (pass test names via E2E_TESTS)
+	@python3 ./scripts/test_e2e.py --outages $(E2E_TESTS)
 
 .PHONY: test-flows
 test-flows: ## Flow shapes against a running stack (needs DFE_ENGINE_REPO; FLOW_ARGS passes flags)

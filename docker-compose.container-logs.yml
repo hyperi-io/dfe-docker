@@ -26,13 +26,26 @@
 #
 # fluentd-async is what keeps the collector off the startup path: without it
 # Docker REFUSES to create a container whose logging endpoint is unreachable, so
-# a collector that is still starting would block the whole stack.
+# a collector that is still starting would block the whole stack. The driver
+# queues what it cannot send yet and retries.
+#
+# fluentd-request-ack is what makes that queue deliver. The collector's host port
+# is Docker's port proxy, which accepts a connection from the moment the
+# container starts, before the collector inside is listening, and drops the bytes
+# it is sent. Without an ack the driver counts those lines as sent: a service that
+# starts beside the collector loses its startup lines. With one, the driver
+# resends until the collector answers.
 
 x-container-logs: &container-logs
   driver: fluentd
   options:
-    fluentd-address: ${DFE_CONTAINER_LOG_ADDRESS:-tcp://127.0.0.1:24224}
+    # The port the collector actually publishes, not a fixed one: the driver
+    # dials a HOST port, so a second stack that moved DFE_OTEL_FLUENT_PORT would
+    # otherwise ship its containers' logs into the first stack's collector.
+    fluentd-address: ${DFE_CONTAINER_LOG_ADDRESS:-tcp://127.0.0.1:${DFE_OTEL_FLUENT_PORT:-24224}}
     fluentd-async: "true"
+    # A line counts as delivered only once the collector acks it (see above).
+    fluentd-request-ack: "true"
     # The container name, which every DFE service sets explicitly.
     tag: "{{.Name}}"
 
@@ -49,13 +62,13 @@ services:
     logging: *container-logs
   dfe-receiver:
     logging: *container-logs
+  dfe-transform-e2e-elastic-cisco-ios:
+    logging: *container-logs
+  dfe-transform-e2e-vector-filebeat:
+    logging: *container-logs
   dfe-transform-elastic:
     logging: *container-logs
-  dfe-transform-elastic-cisco-ios:
-    logging: *container-logs
   dfe-transform-vector:
-    logging: *container-logs
-  dfe-transform-vector-filebeat:
     logging: *container-logs
   dfe-transform-vrl:
     logging: *container-logs

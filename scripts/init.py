@@ -11,13 +11,15 @@
 
 Copies .env.example to .env and each env.example/<service>.env to env/<service>.env. Existing files are left untouched (reported as skipped) so the target is safe to re-run. Errors go to stderr with a non-zero exit.
 
-Two things happen beyond a plain copy:
+Beyond a plain copy:
 
 Generated secrets. The keys in GENERATED_SECRETS have deterministic, committed defaults in docker-compose.yml, which means a stack that never ran this script is using a signing key and a database password anyone with the repo already knows. This script mints a random value for each - into a new .env, and topped up into an existing .env that predates the key. Compose cannot hard-fail on them (its interpolation is not profile-gated, so a `:?` would abort `make down` too, for services the operator may not even run), so the enforcement lives in the power-on self test: scripts/post.py refuses to pass while a default is still in place.
 
 Drift report. A re-run reports template keys that never reached .env. The copy is one-shot, so an operator who ran `make init` months ago otherwise never learns that .env.example grew a setting. Reporting is all it does - editing an operator's .env is theirs to do, not ours.
 
 The retention question. A NEW .env is asked, once and on a TTY only, for the default TTL every time-series table gets, and the answer lands as a live DFE_CLICKHOUSE_DEFAULT_TTL_DAYS line. The environment pre-answers it; a non-interactive run keeps the template's commented 90; an existing .env is never re-asked.
+
+The env/ directory. The engine writes env/<app>.custom.env into it, so it is made group-writable and setgid: the engine writes through the group compose adds it to, and every file it creates keeps the group Compose reads it as.
 """
 
 from __future__ import annotations
@@ -26,6 +28,7 @@ import os
 import re
 import secrets
 import shutil
+import stat
 import string
 import sys
 from pathlib import Path
@@ -45,9 +48,10 @@ from _common import (
 # check (its default is empty, not a sentinel string), and
 # DFE_AUTH_LOCAL_ADMIN_PASSWORD by logging in with it. Keep them in step.
 #
-# The deploy mints two logins: DFE_AUTH_LOCAL_ADMIN_PASSWORD is `admin`, reasserted
-# from .env on every engine boot. DFE_AUTH_BREAKGLASS_PASSWORD is the recovery admin
-# the engine hashes into the deploy repo on first boot and ignores thereafter.
+# The deploy mints two logins: DFE_AUTH_LOCAL_ADMIN_PASSWORD is `admin`, issued with
+# a forced change at first login, which `make post` makes and records back in .env.
+# DFE_AUTH_BREAKGLASS_PASSWORD is the recovery admin the engine hashes into the
+# deploy repo on first boot and ignores thereafter.
 # Neither is printed here; `make creds` is the hand-over.
 #
 # CLICKHOUSE_PASSWORD is a BREAKING change on upgrade: a ClickHouse data volume
@@ -94,6 +98,9 @@ GENERATED_SECRETS = {
 # comment explaining the key, that documentation line would be replaced by a live
 # random assignment.
 _SETTING_RE = re.compile(r"^[ \t]*(?:#[ \t]?)?(?P<key>[A-Z][A-Z0-9_]*)[ \t]*=")
+
+ENV_DIR_GROUP_BITS = stat.S_IRWXG | stat.S_ISGID
+"""Group read, write and search on env/, plus setgid so new files inherit its group."""
 
 # The retention every time-series table gets unless a source or a dfe-schemas
 # definition sets its own. Whole days; 0 disables the default TTL.
@@ -297,6 +304,33 @@ def _report_drift(*, dotenv_path: Path, template_path: Path) -> None:
     )
 
 
+def share_env_dir(*, env_dir: Path) -> None:
+    """Let the engine write env/ through its group, and make every new file inherit that group.
+
+    The engine writes env/<app>.custom.env as its own user with this directory's
+    group added (compose `group_add`), writes it 0640, and Compose reads it back
+    as the operator, so the group has to write here and the setgid bit has to
+    hand each new file the group rather than the engine's own. Only ever widens.
+    """
+    if not (env_dir.is_dir()):
+        return
+    mode = stat.S_IMODE(env_dir.stat().st_mode)
+    wanted = mode | ENV_DIR_GROUP_BITS
+    if mode == wanted:
+        return
+    try:
+        env_dir.chmod(wanted)
+    except PermissionError as exc:
+        _print(
+            header=f"{_rel_path(path=env_dir)}/",
+            msg=f"WARNING: cannot add group write and setgid ({exc}) -- the engine "
+            f"cannot write custom env files here until its owner runs "
+            f"`chmod g+rwxs {_rel_path(path=env_dir)}`",
+        )
+        return
+    _print(header=f"{_rel_path(path=env_dir)}/", msg="Group-writable, setgid")
+
+
 def _copy_if_absent(*, dst_path: Path, src_path: Path) -> None:
     """Copy src_path to dst_path unless dst_path already exists - report the outcome."""
     if dst_path.exists():
@@ -323,6 +357,7 @@ def main() -> int:
         _ask_retention(dotenv_path=DOTENV_FILE)
 
     ENV_DIR.mkdir(exist_ok=True, parents=True)
+    share_env_dir(env_dir=ENV_DIR)
 
     templates = sorted(ENV_TEMPLATE_DIR.glob("*.env"))
     if not (templates):
