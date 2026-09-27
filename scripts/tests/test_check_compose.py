@@ -192,6 +192,74 @@ def test_a_dialler_missing_from_the_stack_fails_rather_than_passing():
     assert failures == ["dfe-hunt-runner: dials ClickHouse but is not in the stack"]
 
 
+def _seeding(connections: str) -> dict:
+    return {
+        "services": {"hyperdx": {"environment": {"DEFAULT_CONNECTIONS": connections}}}
+    }
+
+
+def test_hyperdx_dialling_the_wanted_url_passes():
+    config = _seeding('[{"name":"platform","host":"https://ch.example.invalid:8443"}]')
+
+    assert (
+        check_compose._hyperdx_connection_mismatches(
+            config=config, want="https://ch.example.invalid:8443"
+        )
+        == []
+    )
+
+
+def test_hyperdx_left_on_the_bundled_container_fails_an_external_host():
+    """The literal connection HyperDX kept whatever CLICKHOUSE_HOST said."""
+    config = _seeding('[{"name":"platform","host":"http://clickhouse:8123"}]')
+
+    failures = check_compose._hyperdx_connection_mismatches(
+        config=config, want="http://ch.example.invalid:8123"
+    )
+
+    assert failures == [
+        "hyperdx: DEFAULT_CONNECTIONS dials ['http://clickhouse:8123'], "
+        "want ['http://ch.example.invalid:8123']"
+    ]
+
+
+def test_hyperdx_on_plain_http_fails_a_tls_host():
+    config = _seeding('[{"name":"platform","host":"http://ch.example.invalid:8443"}]')
+
+    assert check_compose._hyperdx_connection_mismatches(
+        config=config, want="https://ch.example.invalid:8443"
+    )
+
+
+def test_a_second_hyperdx_connection_fails_rather_than_hiding_behind_the_first():
+    config = _seeding(
+        '[{"host":"http://clickhouse:8123"},{"host":"http://other.invalid:8123"}]'
+    )
+
+    assert check_compose._hyperdx_connection_mismatches(
+        config=config, want="http://clickhouse:8123"
+    )
+
+
+def test_unparseable_hyperdx_connections_fail_rather_than_passing():
+    config = _seeding("[{not json")
+
+    failures = check_compose._hyperdx_connection_mismatches(
+        config=config, want="http://clickhouse:8123"
+    )
+
+    assert len(failures) == 1
+    assert "is not JSON" in failures[0]
+
+
+def test_hyperdx_missing_from_the_stack_fails_rather_than_passing():
+    failures = check_compose._hyperdx_connection_mismatches(
+        config={"services": {}}, want="http://clickhouse:8123"
+    )
+
+    assert failures == ["hyperdx: dials ClickHouse but is not in the stack"]
+
+
 def test_a_service_that_queues_and_waits_passes_and_json_file_is_not_checked():
     config = {
         "services": {
