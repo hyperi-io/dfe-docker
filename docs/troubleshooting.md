@@ -148,8 +148,10 @@ The e2e harness now does this for itself: `clean_topics` deletes the `_load`
 sibling of every expected `_land` topic, so a run depends on the test definition
 rather than on the broker's history.
 
-`make post` asserts the loader is fetching a topic before it injects anything, so
-an empty subscription is reported as one.
+When the injected events do not land, `make post` asks the loader which topics it
+is fetching, so an empty subscription is reported as one. It cannot ask first: the
+loader publishes a topic's lag only once it has committed an offset there, which a
+stack started from empty volumes has not.
 
 ## Events are accepted but nothing lands
 

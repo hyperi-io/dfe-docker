@@ -285,6 +285,52 @@ def test_the_hunt_is_created_before_the_slow_claims(
     assert calls.index("_verify_hunt") < calls.index("_verify_hyperdx")
 
 
+def test_the_subscription_is_asked_once_the_events_have_landed(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A topic nothing has been written to has no lag series, so asking first fails a working loader."""
+    calls = _stub_claims(monkeypatch)
+    _stub_main(monkeypatch)
+    monkeypatch.setattr(
+        post,
+        "_ingest_target",
+        lambda *, table: ("dfe-receiver", "http://ingest/ingest"),
+    )
+
+    def _posted(*args, **kwargs) -> int:
+        calls.append("http_post")
+        return 200
+
+    monkeypatch.setattr(post, "http_post", _posted)
+
+    assert post.main() == 0
+    assert calls.index("http_post") < calls.index("_verify_loader_subscription")
+    assert calls.index("_verify_hunt") < calls.index("_verify_loader_subscription")
+
+
+def test_events_that_never_land_ask_the_subscription_why(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls = _stub_claims(monkeypatch)
+    _stub_main(monkeypatch)
+    monkeypatch.setattr(
+        post,
+        "_ingest_target",
+        lambda *, table: ("dfe-receiver", "http://ingest/ingest"),
+    )
+    monkeypatch.setattr(post, "ch_marker_count", lambda *args, **kwargs: 0)
+    monkeypatch.setattr(post, "LAND_TIMEOUT_SECONDS", 0.0)
+
+    def _posted(*args, **kwargs) -> int:
+        calls.append("http_post")
+        return 200
+
+    monkeypatch.setattr(post, "http_post", _posted)
+
+    assert post.main() == 1
+    assert calls == ["http_post"] * post.EVENT_COUNT + ["_verify_loader_subscription"]
+
+
 def _engine_answers(
     monkeypatch: pytest.MonkeyPatch, *, readyz: dict, schema_status: int
 ) -> list[str]:
