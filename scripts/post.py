@@ -225,7 +225,8 @@ HYPERDX_INTERVAL_SECONDS = 5.0
 # addresses are the container ports and hold on every exposure setting.
 API_EXEC_SERVICE = "dfe-engine"
 API_REQUEST_KEY = "DFE_POST_API_REQUEST"
-ENGINE_NETWORK_BASE = "http://dfe-engine:8000/api/v1"
+ENGINE_NETWORK_ORIGIN = "http://dfe-engine:8000"
+ENGINE_NETWORK_BASE = f"{ENGINE_NETWORK_ORIGIN}/api/v1"
 HYPERDX_NETWORK_BASE = "http://dfe-hyperdx-proxy:8000"
 # Long enough for docker to start the exec on a loaded host, on top of whatever
 # the request itself is given.
@@ -400,7 +401,7 @@ except Exception as error:
 
 def _over_network(url: str) -> bool:
     """Whether this URL names a container, so only a caller inside can reach it."""
-    return url.startswith((ENGINE_NETWORK_BASE, HYPERDX_NETWORK_BASE))
+    return url.startswith((ENGINE_NETWORK_ORIGIN, HYPERDX_NETWORK_BASE))
 
 
 @functools.cache
@@ -603,21 +604,16 @@ def _wait_ready(url: str) -> bool:
             time.sleep(READY_INTERVAL_SECONDS)
 
 
-def _engine_host_url(path: str) -> str:
-    """One engine path on the host port POST reads the engine's readiness from."""
-    bind = os.environ.get("DFE_POST_HOST", "localhost")
-    port = os.environ.get("DFE_ENGINE_PORT", "8003")
-    return f"http://{bind}:{port}{path}"
-
-
 def _schema_state() -> str | None:
     """What the engine says about its schema pass right now.
 
+    Read over the compose network, like every other engine call here, so a stack
+    whose engine API is unpublished (DFE_ENGINE_API_EXTERNAL=false) still answers.
     The route is asked only when /readyz names no schema check at all, so an
     engine that names one is judged on it and can never be skipped.
     """
     try:
-        _, body = http_get_json(_engine_host_url("/readyz"), timeout=5)
+        _, body = _api_get_json(f"{ENGINE_NETWORK_ORIGIN}/readyz", timeout=5)
     except Exception:  # noqa: BLE001 - unreachable is not-yet-answering here
         return None
     if not isinstance(body, dict):
@@ -626,7 +622,9 @@ def _schema_state() -> str | None:
     if SCHEMA_READY_CHECK in checks:
         return SCHEMA_CONVERGED if checks[SCHEMA_READY_CHECK] else SCHEMA_PENDING
     try:
-        status, _ = http_get_json(_engine_host_url(SCHEMA_STATUS_PATH), timeout=5)
+        status, _ = _api_get_json(
+            f"{ENGINE_NETWORK_ORIGIN}{SCHEMA_STATUS_PATH}", timeout=5
+        )
     except Exception:  # noqa: BLE001 - unreachable is not-yet-answering here
         return None
     return SCHEMA_UNSERVED if status == 404 else SCHEMA_PENDING
