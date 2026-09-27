@@ -1530,9 +1530,11 @@ services:
       # HyperDX's own /clickhouse-proxy, so the credential never leaves the stack.
       # The name must be `platform`: the shipped dashboards reference their
       # connection by that name and are skipped for a team that has no match.
-      # 8123 is the container port and a constant; CLICKHOUSE_HTTP_PORT is the
-      # host binding, so dialling it in-network breaks a moved port (#32).
-      DEFAULT_CONNECTIONS: '[{"name":"platform","host":"http://clickhouse:8123","username":"${CLICKHOUSE_USERNAME:-default}","password":"${CLICKHOUSE_PASSWORD:-}"}]'
+      # Only header-dev reads this: under oidc-proxy the fork asks dfe-engine for
+      # each team's connection, built from the same CLICKHOUSE_* keys.
+      # Host and port follow dfe-engine's, container port included (#75), and
+      # resolve_profile.py turns CLICKHOUSE_SECURE into the https scheme.
+      DEFAULT_CONNECTIONS: '[{"name":"platform","host":"${DFE_CLICKHOUSE_RESOLVED_SCHEME:-http}://${CLICKHOUSE_HOST:-clickhouse}:${CLICKHOUSE_EXTERNAL_HTTP_PORT:-8123}","username":"${CLICKHOUSE_USERNAME:-default}","password":"${CLICKHOUSE_PASSWORD:-}"}]'
       DEFAULT_SOURCES_FILE: /etc/hyperdx/default-sources.json
       # The engine is the issuer here as it is on Kubernetes: HyperDX verifies its
       # ES384 token against the engine's JWKS, taking it from a Bearer header or

@@ -102,6 +102,12 @@ HYPERDX_SERVICES = [
     "hyperdx-postgres",
 ]
 
+# HyperDX takes ClickHouse as a URL, so the TLS flag dfe-engine reads becomes a
+# scheme, on exactly the values the engine reads as TLS on.
+CLICKHOUSE_SECURE_ENV_VAR = "CLICKHOUSE_SECURE"
+CLICKHOUSE_SECURE_VALUES = frozenset({"1", "true", "yes"})
+CLICKHOUSE_SCHEME_VAR = "DFE_CLICKHOUSE_RESOLVED_SCHEME"
+
 OTEL_ENABLED_ENV_VAR = "DFE_OTEL_ENABLED"
 OTEL_SERVICES = ["otel-collector"]
 # Where the services push when the bundled collector runs and .env names no
@@ -516,6 +522,12 @@ def main() -> int:
         lines.append(
             f"export {HYPERDX_RESOLVED_BASE_URL_VAR} := "
             f"{hyperdx_base if footprint['hyperdx'] else ''}"
+        )
+        # Emitted unconditionally, for the reason the two lines above are.
+        secure = os.environ.get(CLICKHOUSE_SECURE_ENV_VAR, "").strip().lower()
+        lines.append(
+            f"export {CLICKHOUSE_SCHEME_VAR} := "
+            f"{'https' if secure in CLICKHOUSE_SECURE_VALUES else 'http'}"
         )
 
         # Point the services at the bundled collector, unless .env already names
