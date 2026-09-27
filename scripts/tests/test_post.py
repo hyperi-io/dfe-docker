@@ -22,6 +22,7 @@ import json
 
 import pytest
 
+import _pipeline
 import post
 
 _HOST_URL = "http://localhost:8003/api/v1/auth/login"
@@ -329,6 +330,96 @@ def test_events_that_never_land_ask_the_subscription_why(
 
     assert post.main() == 1
     assert calls == ["http_post"] * post.EVENT_COUNT + ["_verify_loader_subscription"]
+
+
+class _Clock:
+    """Time that passes only when the code under test sleeps."""
+
+    def __init__(self) -> None:
+        self.now = 0.0
+
+    def monotonic(self) -> float:
+        return self.now
+
+    def sleep(self, seconds: float) -> None:
+        self.now += seconds
+
+
+def _routed_row_at(
+    monkeypatch: pytest.MonkeyPatch, *, bus: bool, lands_at: float | None
+) -> _Clock:
+    """Make the new source's row land `lands_at` seconds into the wait, or never."""
+    clock = _Clock()
+    monkeypatch.setattr(_pipeline, "time", clock)
+    monkeypatch.setattr(post, "_tier_has_bus", lambda: bus)
+    monkeypatch.setattr(
+        post,
+        "_ingest_target",
+        lambda *, table: ("dfe-receiver", "http://ingest/ingest"),
+    )
+    monkeypatch.setattr(post, "http_post", lambda *args, **kwargs: 200)
+
+    def _rows(*args) -> int:
+        return int(lands_at is not None and clock.now >= lands_at)
+
+    monkeypatch.setattr(post, "ch_marker_count", _rows)
+    return clock
+
+
+@pytest.mark.parametrize(
+    "lands_at",
+    [
+        # The loader subscribes 44s after the topic is made, then flushes.
+        50.0,
+        # It subscribes a whole refresh after the topic is made, then flushes.
+        post.LOADER_TOPIC_REFRESH_SECONDS + 15.0,
+    ],
+)
+def test_the_routing_wait_outlasts_the_loaders_next_topic_refresh(
+    monkeypatch: pytest.MonkeyPatch, lands_at: float
+) -> None:
+    _routed_row_at(monkeypatch, bus=True, lands_at=lands_at)
+
+    assert post._await_routed_row(database="dfe", name="postroutetest") == 0
+
+
+def test_a_loader_that_never_subscribes_fails_the_claim_and_is_named(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    clock = _routed_row_at(monkeypatch, bus=True, lands_at=None)
+
+    assert post._await_routed_row(database="dfe", name="postroutetest") == 1
+    window = post._routing_timeout_seconds(bus=True)
+    assert window <= clock.now < window + post.ROUTING_INTERVAL_SECONDS
+    assert "never subscribed to its landing topic" in capsys.readouterr().err
+
+
+def test_only_a_tier_with_a_bus_waits_out_a_topic_refresh(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Without a bus the receiver hands the loader its records, so no topic is listed."""
+    gave_up_at: dict[bool, float] = {}
+    for bus in (True, False):
+        clock = _routed_row_at(monkeypatch, bus=bus, lands_at=None)
+        capsys.readouterr()
+        assert post._await_routed_row(database="dfe", name="postroutetest") == 1
+        gave_up_at[bus] = clock.now
+
+    assert "subscribed" not in capsys.readouterr().err
+    assert gave_up_at[True] - gave_up_at[False] >= (
+        post.LOADER_TOPIC_REFRESH_SECONDS - post.ROUTING_INTERVAL_SECONDS
+    )
+
+
+@pytest.mark.parametrize(
+    ("resolved", "bus"), [(["true"], True), (["false"], False), ([], False)]
+)
+def test_the_bus_is_read_off_the_resolved_profile(
+    monkeypatch: pytest.MonkeyPatch, resolved: list[str], bus: bool
+) -> None:
+    monkeypatch.setattr(post, "_profile_mk_value", lambda *, key: resolved)
+
+    assert post._tier_has_bus() is bus
 
 
 def _engine_answers(
