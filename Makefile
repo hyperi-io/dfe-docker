@@ -8,8 +8,9 @@
 
 .DEFAULT_GOAL := help
 
-# Non-fatal: init creates .env, so it must not exist on a fresh checkout
--include .env
+# Read only when present, because make builds a missing include before any goal
+# and `make help` must not mint secrets. Goals that need .env depend on it.
+-include $(wildcard .env)
 
 # `include` makes these make-variables, not environment ones, so the helper
 # scripts (post, test-flows, test-source, test_e2e) read an empty password and
@@ -274,9 +275,10 @@ init: ## Create .env and per-service env/<service>.env files from templates, and
 # Start targets require every per-service env file (dfe-ui reads INTERNAL_API_URL
 # from env/ui.env). Compose marks them optional so `make down` never needs them.
 # The guard creates what is missing (init is non-destructive) rather than refusing,
-# so a release that adds a template does not stop an initialised deployment.
+# so a release that adds a template does not stop an initialised deployment. The
+# .env prerequisite mints the secrets before a fresh checkout's first start.
 .PHONY: env-files
-env-files: ## Assert every env/<service>.env exists, creating any the templates have gained
+env-files: .env ## Assert every env/<service>.env exists, creating any the templates have gained
 	@python3 scripts/env_files.py
 
 # `make init` mints the admin and break-glass passwords and prints neither, so
@@ -426,8 +428,9 @@ ci-pull: login ## Pull infra and registry DFE images
 # Infrastructure only (Kafka + ClickHouse)
 # ---------------------------------------------------------------------------
 
+# .env first: ClickHouse keeps the password its volume was created with.
 .PHONY: infra
-infra: storage-dirs ## Start infrastructure services
+infra: .env storage-dirs ## Start infrastructure services
 	docker compose $(PROFILE_FLAGS) pull
 	docker compose $(PROFILE_FLAGS) up -d
 
@@ -435,12 +438,10 @@ infra: storage-dirs ## Start infrastructure services
 # Validation
 # The same commands CI runs, so a green local run means a green pipeline.
 #
-# Safe on a fresh checkout: no stack SSoT and no credentials needed. Two honest
-# caveats. Make remakes the `-include .env` above before any target, so a fresh
-# checkout gets a generated .env as a side effect of running these -- CI therefore
-# leaves one on the runner. And check-dockerfile pulls the pinned hadolint image
-# while check-tests resolves the pinned pytest, so those two want a network the
-# first time; the rest need none.
+# Safe on a fresh checkout: no stack SSoT and no credentials needed, and none of
+# them writes a .env. One honest caveat: check-dockerfile pulls the pinned
+# hadolint image while check-tests resolves the pinned pytest, so those two want
+# a network the first time; the rest need none.
 # ---------------------------------------------------------------------------
 
 .PHONY: check

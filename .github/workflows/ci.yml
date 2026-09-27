@@ -196,12 +196,6 @@ jobs:
           # .git/config where any later step could read it.
           persist-credentials: false
 
-      # Make runs scripts/init.py to build .env before any target, this one too.
-      - name: Set up Python
-        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
-        with:
-          python-version: ${{ env.PYTHON_VERSION }}
-
       # hadolint GATES: a decade old, stable rule IDs, and it lints the shell
       # inside RUN via ShellCheck -- a correctness check droast structurally
       # does not have.

@@ -20,8 +20,6 @@ check_compose gives -- interpolation and merging are most of the mechanism, so
 the source text is not the thing to assert about.
 """
 
-from __future__ import annotations
-
 import os
 import shutil
 from pathlib import Path
@@ -189,12 +187,16 @@ def test_a_custom_key_reaches_the_app_it_is_written_for() -> None:
     """The whole point of the second env_file, and the half compose does at up-time."""
     if _CUSTOM_ENV.exists():
         pytest.skip(f"{_CUSTOM_ENV} already exists in this checkout")
+    # A fresh checkout has no env/, and a check must leave it without one.
+    made_dir = not _CUSTOM_ENV.parent.exists()
     _CUSTOM_ENV.parent.mkdir(parents=True, exist_ok=True)
     _CUSTOM_ENV.write_text(f"{_CUSTOM_KEY}=reached\n", encoding="utf-8")
     try:
         services = _model()
     finally:
         _CUSTOM_ENV.unlink()
+        if made_dir:
+            _CUSTOM_ENV.parent.rmdir()
 
     assert services["dfe-loader"]["environment"][_CUSTOM_KEY] == "reached"
     assert _CUSTOM_KEY not in services["dfe-receiver"]["environment"]

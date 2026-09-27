@@ -25,10 +25,11 @@ mandatory, and only into this process's subprocess environment. A real value
 already present in the environment always wins, so a local run with a pinned .env
 validates the real pins.
 
-Note that on a fresh checkout Make will have created a .env before this runs (the
-`-include .env` rule in the Makefile), so the two generated secrets resolve for
-real and only the image pins get placeholders. That is harmless here -- this checks
-compose STRUCTURE, not that any particular digest exists.
+A fresh checkout has no .env, and no check-* target writes one, so there the
+check renders in memory the .env `make init` would write: the generated secrets
+resolve as a first start would see them, and only the image pins get
+placeholders. That is harmless here -- this checks compose STRUCTURE, not that
+any particular digest exists.
 
 Paths checked:
 
@@ -86,8 +87,6 @@ Beyond resolution, these semantic assertions ride along.
   volume or a bind. See `_IMAGE_VOLUMES`.
 """
 
-from __future__ import annotations
-
 import json
 import os
 import re
@@ -101,11 +100,14 @@ from _common import (
     COMPOSE_LIVE_FILE,
     COMPOSE_OVERRIDE_FILE,
     CONFIG_DIR,
+    DOTENV_FILE,
+    DOTENV_TEMPLATE,
     REPO_ROOT,
     SERVICE_PROFILES_FILE,
     _config_enrichment_paths,
     _config_topics,
     _dotenv_values,
+    _parse_dotenv,
     _print,
     _required_compose_vars,
     _transform_topics,
@@ -116,6 +118,7 @@ from build_dev_images import (
     local_image_services,
     overlay_text,
 )
+from init import _render_secrets
 from resolve_profile import _parse_yaml
 
 # The overlay `make dev LOCAL=...` generates, rendered for dfe-engine because it
@@ -404,13 +407,25 @@ _TRANSFORM_PREFIX = "dfe-transform-"
 _LOADER_SERVICE = "dfe-loader"
 
 
+def _first_start_dotenv() -> dict[str, str]:
+    """This checkout's .env, or the one `make init` would write, rendered in memory.
+
+    A start goal mints .env before its first compose call, so a checkout without
+    one is checked as it would start -- with nothing written to disk.
+    """
+    if DOTENV_FILE.is_file():
+        return _dotenv_values()
+    template = DOTENV_TEMPLATE.read_text(encoding="utf-8", errors="replace")
+    return _parse_dotenv(text=_render_secrets(text=template))
+
+
 def _check_env() -> tuple[dict[str, str], list[str]]:
     """Return (subprocess environment, keys we had to invent a value for).
 
     .env is folded in first so a pinned local checkout validates its REAL pins;
     placeholders then fill only what is still missing, which on CI is all of them.
     """
-    env = {**_dotenv_values(), **os.environ}
+    env = {**_first_start_dotenv(), **os.environ}
     injected = []
     # Discover across every shipped compose file, not just docker-compose.yml --
     # the live overlay declares its own hard-fail key (DFE_SRC_ROOT).

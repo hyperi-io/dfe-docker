@@ -17,8 +17,6 @@ module missed here would read, and in dev_posture's and post's case rewrite, the
 developer's own credentials.
 """
 
-from __future__ import annotations
-
 import sys
 from pathlib import Path
 
@@ -29,6 +27,7 @@ if str(SCRIPTS_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPTS_DIR))
 
 import _common  # noqa: E402
+import check_compose  # noqa: E402
 import creds  # noqa: E402
 import dev_posture  # noqa: E402
 import init  # noqa: E402
@@ -39,7 +38,7 @@ import post  # noqa: E402
 def dotenv(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     """Return the path of a throwaway .env every module under test points at."""
     path = tmp_path / ".env"
-    for module in (_common, creds, dev_posture, init, post):
+    for module in (_common, check_compose, creds, dev_posture, init, post):
         monkeypatch.setattr(module, "DOTENV_FILE", path)
     # The access summary carries plaintext passwords, so it goes to tmp_path too.
     for module in (creds, post):
