@@ -49,12 +49,11 @@ it no work: they are Ready,
 serve health and metrics, open no broker connection and hold `pipeline_idle` at
 1. `make post` asserts that on every start.
 
-**One of each app, and no more.** Compose declares its services in this repo and
-creates none at run time, so the apps a Kubernetes tier deploys one-per-source
-cannot arrive with a source here. `single` therefore starts one of each in
-advance, and an operator turns one on by giving it work. A second fetcher source
-or a second transform source needs Kubernetes, and dfe-engine refuses it at save
-rather than writing a definition nothing runs.
+**One per source, as on Kubernetes.** The fetcher and the transforms run one
+instance per source. dfe-engine writes each source's config into its own
+directory and its name into `env/<app>.instances`, and `scripts/instances.py`
+turns each name into a service in `docker-compose.instances.yml`, which
+`make apply` starts.
 
 ## Why the two tiers are projected
 
