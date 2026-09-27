@@ -17,12 +17,17 @@ they are testable on a string or a dict -- and they decide how much each guard
 actually looks at.
 """
 
+import re
 from pathlib import Path
 
 import check_compose
 import init
+from _common import COMPOSE_FILE
 
 _FRAGMENTS = "-f docker-compose.yml -f docker-compose.override.yml"
+
+# A service key in docker-compose.yml: two spaces in, alone on its line.
+_SERVICE_KEY_RE = re.compile(r"^  ([A-Za-z0-9._-]+):$", re.MULTILINE)
 
 
 def test_a_checkout_with_no_env_is_checked_as_its_first_start(dotenv: Path) -> None:
@@ -273,6 +278,41 @@ def test_hyperdx_missing_from_the_stack_fails_rather_than_passing():
     )
 
     assert failures == ["hyperdx: dials ClickHouse but is not in the stack"]
+
+
+def test_a_committed_service_named_like_a_generated_instance_fails():
+    """Compose merged a `filebeat` source's instance into the static one."""
+    failures = check_compose._instance_name_collisions(
+        services={"dfe-transform-vrl-filebeat": {}}
+    )
+
+    assert len(failures) == 1
+    assert failures[0].startswith("dfe-transform-vrl-filebeat: the dfe-transform-vrl")
+    assert "'filebeat'" in failures[0]
+
+
+def test_the_apps_and_their_e2e_instances_take_no_instance_name():
+    services = {
+        name: {}
+        for name in (
+            "dfe-fetcher",
+            "dfe-loader",
+            "dfe-transform-e2e-vrl-filebeat",
+            "dfe-transform-vrl",
+            "kafka-ui",
+        )
+    }
+
+    assert check_compose._instance_name_collisions(services=services) == []
+
+
+def test_no_committed_service_can_take_a_generated_instance_name():
+    text = COMPOSE_FILE.read_text(encoding="utf-8")
+    block = text.split("\nservices:\n", 1)[1].split("\nvolumes:\n", 1)[0]
+    services = {name: {} for name in _SERVICE_KEY_RE.findall(block)}
+
+    assert "dfe-transform-vrl" in services
+    assert check_compose._instance_name_collisions(services=services) == []
 
 
 def test_a_service_that_queues_and_waits_passes_and_json_file_is_not_checked():

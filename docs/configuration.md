@@ -351,7 +351,7 @@ The same toggle points the engine at HyperDX: with it on, the engine receives `D
 | 9094  | dfe-fetcher          | Prometheus metrics |
 | 9095  | dfe-transform-vector | Prometheus metrics |
 | 9096  | dfe-transform-vrl    | Prometheus metrics |
-| 9097  | dfe-transform-vrl-filebeat | Prometheus metrics |
+| 9097  | dfe-transform-e2e-vrl-filebeat | Prometheus metrics |
 | 9098  | dfe-transform-e2e-vector-filebeat | Prometheus metrics |
 | 9099  | dfe-transform-elastic | Prometheus metrics |
 | 13133 | otel-collector       | health_check       |

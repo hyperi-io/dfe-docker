@@ -85,6 +85,8 @@ Beyond resolution, these semantic assertions ride along.
   the collector's ack. See `_log_driver_failures`.
 - Every path a pinned image declares as a VOLUME must be mounted from a named
   volume or a bind. See `_IMAGE_VOLUMES`.
+- No committed service may carry a name a generated per-source instance can take.
+  See `_instance_name_collisions`.
 """
 
 import json
@@ -103,6 +105,7 @@ from _common import (
     DOTENV_FILE,
     DOTENV_TEMPLATE,
     REPO_ROOT,
+    SERVICE_CONFIG_FILE,
     SERVICE_PROFILES_FILE,
     _config_enrichment_paths,
     _config_topics,
@@ -366,10 +369,10 @@ _DFE_OWNED_SERVICES = {
     "dfe-receiver",
     "dfe-transform-e2e-elastic-cisco-ios",
     "dfe-transform-e2e-vector-filebeat",
+    "dfe-transform-e2e-vrl-filebeat",
     "dfe-transform-elastic",
     "dfe-transform-vector",
     "dfe-transform-vrl",
-    "dfe-transform-vrl-filebeat",
     "dfe-ui",
 }
 
@@ -1135,6 +1138,35 @@ def _image_volume_failures(*, env: dict[str, str]) -> tuple[list[str], int]:
     return _unmounted_image_volume_failures(config=config), made
 
 
+def _instance_name_collisions(*, services: dict) -> list[str]:
+    """Return one message per committed service a generated instance could be named.
+
+    scripts/instances.py names an app's per-source instance ``<app>-<source>`` and
+    Compose merges two services sharing a name, so the source that completes the
+    name would run with the committed service's volumes, ports and env files.
+    """
+    failures = []
+    for name in sorted(services):
+        for app in sorted(SERVICE_CONFIG_FILE):
+            if name.startswith(f"{app}-"):
+                failures.append(
+                    f"{name}: the {app} instance for a source named "
+                    f"{name[len(app) + 1 :]!r} takes this name, and Compose merges the "
+                    "two -- rename it off the <app>-<source> shape, as the "
+                    "dfe-transform-e2e-* services are"
+                )
+    return failures
+
+
+def _instance_name_failures(*, env: dict[str, str]) -> tuple[list[str], int]:
+    """Return (messages, services checked) for every service in every profile."""
+    config = _config_json(env=env, files=[COMPOSE_FILE.name], extra_profiles=("*",))
+    if config is None:
+        return (["the registry path did not resolve, so service names are unknown"], 0)
+    services = config.get("services", {})
+    return _instance_name_collisions(services=services), len(services)
+
+
 def _override_coverage_failures(*, env: dict[str, str]) -> list[str]:
     """Return one message per service the committed override leaves on the registry.
 
@@ -1514,6 +1546,16 @@ def main() -> int:
     _print(
         msg=f"Every VOLUME path the pinned images declare is mounted from a named "
         f"volume or a bind ({volume_made} assertions)"
+    )
+
+    name_failures, name_made = _instance_name_failures(env=env)
+    for message in name_failures:
+        _print(msg=f"FAIL {message}")
+    if name_failures:
+        return 1
+    _print(
+        msg=f"None of the {name_made} committed service(s) can take a generated "
+        "per-source instance's name"
     )
 
     coverage_failures = _override_coverage_failures(env=env)

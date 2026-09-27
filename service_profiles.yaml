@@ -169,7 +169,7 @@ profiles:
         config_path: receiver/kafka.yaml
       dfe-transform-vrl:
         config_path: transform-vrl/main.yaml
-      dfe-transform-vrl-filebeat:
+      dfe-transform-e2e-vrl-filebeat:
         config_path: transform-vrl/filebeat.yaml
 
   # The same per-source shape as kafka-filebeat, with dfe-transform-vector doing

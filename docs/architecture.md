@@ -110,9 +110,10 @@ reported by the API as `restart required: make apply SERVICES=<app>`, and one
 to its env file as `recreate required:` with the same command; `make apply`
 creates a per-source container the engine has only just declared and recreates
 one that exists, and removes the container of a source the engine has deleted
--- found by the `dfe.instance-of` label only generated services carry. An app
-that was IDLE needs no restart, because scalo's gate re-reads the file and
-starts the service on the spot.
+-- found by the `dfe.instance-of` label only generated services carry. A delete
+names no command, so `make apply` with no `SERVICES` does that removal alone and
+starts nothing. An app that was IDLE needs no restart, because scalo's gate
+re-reads the file and starts the service on the spot.
 
 ## A source with its own transform gets its own instance
 
@@ -127,7 +128,7 @@ mode, profile resolution and the checks working.
 
 | Piece | `kafka-filebeat`, on dfe-transform-vrl | `kafka-filebeat-vector`, on dfe-transform-vector |
 |---|---|---|
-| Compose service | `dfe-transform-vrl-filebeat`, the same image, its own metrics port | `dfe-transform-e2e-vector-filebeat`, likewise |
+| Compose service | `dfe-transform-e2e-vrl-filebeat`, the same image, its own metrics port | `dfe-transform-e2e-vector-filebeat`, likewise |
 | Config | `config/transform-vrl/filebeat.yaml` -- `filebeat_land` in, `filebeat_load` out | `config/transform-vector/filebeat.yaml` -- `dfe_source: filebeat-vector` derives both topics |
 | Program | `config/transform-vrl/transforms-filebeat/`, vendored from dfe-transform-vrl | `config/transform-vector/transforms-filebeat/`, the same VRL inside a Vector `remap`, vendored from dfe-transform-vector |
 | Loader | `config/loader/kafka-load-filebeat.yaml` lists `filebeat_load` alongside `main_load` | `config/loader/kafka-load-filebeat-vector.yaml` lists `filebeat-vector_load` |

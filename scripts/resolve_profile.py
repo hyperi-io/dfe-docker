@@ -151,10 +151,10 @@ SERVICE_TO_CONFIG_VAR = {
     "dfe-receiver": "DFE_RECEIVER_CONFIG",
     "dfe-transform-e2e-elastic-cisco-ios": "DFE_TRANSFORM_ELASTIC_CISCO_IOS_CONFIG",
     "dfe-transform-e2e-vector-filebeat": "DFE_TRANSFORM_VECTOR_FILEBEAT_CONFIG",
+    "dfe-transform-e2e-vrl-filebeat": "DFE_TRANSFORM_VRL_FILEBEAT_CONFIG",
     "dfe-transform-elastic": "DFE_TRANSFORM_ELASTIC_CONFIG",
     "dfe-transform-vector": "DFE_TRANSFORM_VECTOR_CONFIG",
     "dfe-transform-vrl": "DFE_TRANSFORM_VRL_CONFIG",
-    "dfe-transform-vrl-filebeat": "DFE_TRANSFORM_VRL_FILEBEAT_CONFIG",
 }
 
 # The engine is the Compose stand-in for the ConfigMap an app's chart renders on
@@ -193,10 +193,10 @@ SERVICES = [
     "dfe-receiver",
     "dfe-transform-e2e-elastic-cisco-ios",
     "dfe-transform-e2e-vector-filebeat",
+    "dfe-transform-e2e-vrl-filebeat",
     "dfe-transform-elastic",
     "dfe-transform-vector",
     "dfe-transform-vrl",
-    "dfe-transform-vrl-filebeat",
 ]
 
 TRANSPORT_TYPES = ["grpc", "kafka"]

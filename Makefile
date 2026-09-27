@@ -403,15 +403,8 @@ else
     APPLY_FLAGS = -f docker-compose.yml $(STORAGE_FLAGS) $(UI_FLAGS)
 endif
 
-# An empty SERVICES would recreate the whole stack.
-ifneq ($(filter apply apply-services,$(MAKECMDGOALS)),)
-    ifeq ($(strip $(SERVICES)),)
-        $(error apply needs SERVICES="<service> ...", the services the dfe-engine hint names)
-    endif
-endif
-
 .PHONY: apply
-apply: env-files storage-dirs ## Create or recreate the named services after a config write, removing the containers of deleted sources (SERVICES="svc ..."; DEV=1 for a `make dev` stack), the command dfe-engine's hints name
+apply: env-files storage-dirs ## Create or recreate the named services after a config write, removing the containers of deleted sources (SERVICES="svc ..."; DEV=1 for a `make dev` stack), the command dfe-engine's hints name. With no SERVICES it only removes, for after a source is deleted
 	@$(MAKE) --no-print-directory apply-services
 
 # A second make, because it reads the .profile.mk this one just re-resolved and
@@ -420,7 +413,10 @@ apply: env-files storage-dirs ## Create or recreate the named services after a c
 .PHONY: apply-services
 apply-services:
 	@python3 scripts/instances.py --prune -- $(APPLY_FLAGS) $(PROFILE_FLAGS)
+# The engine names no command after a delete, and an empty SERVICES would recreate the whole stack.
+ifneq ($(strip $(SERVICES)),)
 	docker compose $(APPLY_FLAGS) $(PROFILE_FLAGS) up -d --force-recreate --no-deps $(ACTIVE_SERVICES)
+endif
 
 .PHONY: ci-pull
 ci-pull: login ## Pull infra and registry DFE images

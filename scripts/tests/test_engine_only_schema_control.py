@@ -99,9 +99,9 @@ GATED_SERVICES = (
     "dfe-loader",
     "dfe-receiver",
     "dfe-transform-e2e-vector-filebeat",
+    "dfe-transform-e2e-vrl-filebeat",
     "dfe-transform-vector",
     "dfe-transform-vrl",
-    "dfe-transform-vrl-filebeat",
     "otel-collector",
 )
 
