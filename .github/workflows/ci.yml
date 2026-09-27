@@ -42,6 +42,11 @@ concurrency:
 permissions:
   contents: read
 
+# The house Python floor, one patch the pinned setup-python can install; the
+# runner's own python3 is older and would run every helper script on it.
+env:
+  PYTHON_VERSION: "3.14.7"
+
 jobs:
   compose:
     name: Compose
@@ -53,6 +58,14 @@ jobs:
           # No job here pushes, so the token has no reason to survive in
           # .git/config where any later step could read it.
           persist-credentials: false
+
+      # Every check below runs a Python helper script, and the pipx steps build
+      # ruff's and pytest's venvs on this interpreter too.
+      - name: Set up Python
+        id: python
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
 
       # Every step below runs a `make` target rather than the command directly,
       # so `make check` locally and CI cannot drift apart.
@@ -83,7 +96,7 @@ jobs:
       # lints with the same version this does. Installed here rather than run
       # through uvx to keep the runner off the network mid-job.
       - name: Install ruff
-        run: pipx install "ruff==$(make -s print-ruff-version)"
+        run: pipx install --python "${{ steps.python.outputs.python-path }}" "ruff==$(make -s print-ruff-version)"
 
       # Every check above is driven by a Python helper script, so a bug in one of
       # them shows up as a check that passes when it should not. They get linted
@@ -94,8 +107,10 @@ jobs:
       # The credential helpers rewrite .env and decide whether a minted password
       # reaches stdout, so they carry unit tests. Stdlib only, on a tmp_path .env:
       # nothing here starts a stack or touches the runner's own files.
+      # pipx builds each venv on its own interpreter unless told otherwise, and
+      # pytest runs the tests on whatever its venv holds.
       - name: Install pytest
-        run: pipx install "pytest==$(make -s print-pytest-version)"
+        run: pipx install --python "${{ steps.python.outputs.python-path }}" "pytest==$(make -s print-pytest-version)"
 
       - name: Tests
         run: make check-tests PYTEST=pytest
@@ -143,6 +158,12 @@ jobs:
         with:
           persist-credentials: false
 
+      # check-profiles is scripts/render_profiles.py.
+      - name: Set up Python
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
       - name: Mint a read-only dfe-infra token
         id: infra-token
         uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
@@ -174,6 +195,12 @@ jobs:
           # No job here pushes, so the token has no reason to survive in
           # .git/config where any later step could read it.
           persist-credentials: false
+
+      # Make runs scripts/init.py to build .env before any target, this one too.
+      - name: Set up Python
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
 
       # hadolint GATES: a decade old, stable rule IDs, and it lints the shell
       # inside RUN via ShellCheck -- a correctness check droast structurally
