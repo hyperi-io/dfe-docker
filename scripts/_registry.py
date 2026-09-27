@@ -12,7 +12,7 @@ Internal support module - imported by the runnable scripts, not executed directl
 
 The track-latest daemon and `make stack VERSION=latest` ask the signed stack-manifest repo for its newest TAG, through `oras`. Only semver tags are ranked, so the `sha-<commit>` build tags and the floating `latest` are ignored rather than compared. An optional leading `v` is carried through verbatim, because the tag itself is what goes into the pin. A release ranks above its own pre-releases; what happens when a repo has published only pre-releases is the caller's `prereleases` choice.
 
-`make stack VERSION=latest` then asks each DFE component for its newest GitHub RELEASE, through `gh`, and pins that release's image. Version order is not release order: a fork can carry a release tagged above its own line, and a version ranking pins that one ahead of every later release. GitHub's own `releases/latest` answer is the authority -- the one the repo page labels Latest, ranked by creation date.
+With `DFE_STACK_REPIN_IMAGES=1`, `make stack VERSION=latest` then asks each DFE component for its newest GitHub RELEASE, through `gh`, and pins that release's image. That is the only call here that leaves the public OCI registry, and it needs read access to every component repo. Version order is not release order: a fork can carry a release tagged above its own line, and a version ranking pins that one ahead of every later release. GitHub's own `releases/latest` answer is the authority -- the one the repo page labels Latest, ranked by creation date.
 """
 
 from __future__ import annotations

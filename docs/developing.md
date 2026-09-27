@@ -58,14 +58,16 @@ If neither is available it fails loudly -- there is no silent `latest`. Only
 `*_VERSION` keys are rewritten; your ports, hosts, credentials and profile
 survive the merge.
 
-`make stack VERSION=latest` is the development-currency variant, for when the
-certified stack lags the component you are working against. It takes the newest
-certified stack for the third-party images, then repins every DFE image at the
-release its GitHub repo marks Latest, read through a logged-in `gh`. Those pins
-still carry digests, so the box stays reproducible -- it is just a combination
-nobody certified, which is why `make modes` reports LATEST rather than PINNED and
-why it is not a deploy. `VERSION=rc` takes each
-component's newest release, pre-releases included.
+`make stack VERSION=latest` pins the newest published stack (`rc` ranks
+pre-releases too). It reads only the public OCI registry, needs no credential,
+and records the word in `.env`, so a re-run moves forward -- `make modes` reports
+it as LATEST, and it is not a deploy.
+
+`DFE_STACK_REPIN_IMAGES=1` adds the development-currency step: every DFE image is
+repinned at the release its GitHub repo marks Latest (`rc`: the newest release of
+either kind), through a `gh` login that can read the component repos, which are
+private until GA. The pins still carry digests; the combination is one nobody
+certified.
 
 Skipping `make stack` is not a soft failure. Nearly every image pin uses
 `${VAR:?...}`, so an unpinned checkout aborts the compose command with a message
