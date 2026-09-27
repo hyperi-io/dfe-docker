@@ -41,6 +41,7 @@ from pathlib import Path
 
 from _common import (
     COMPOSE_FILE,
+    CUSTOM_ENV_SUFFIX,
     ENV_DIR,
     REPO_ROOT,
     SERVICE_CONFIG_FILE,
@@ -130,6 +131,9 @@ def _service_block(service: str, instance: str, compose_file: str) -> list[str]:
     an ingest listener, and N instances cannot share one host port; on Kubernetes
     this app renders no Service either, so nothing outside the stack addresses an
     instance directly.
+
+    ``extends`` appends this env file after the app's own, so a custom key the
+    engine writes for the instance beats one it wrote for the app.
     """
     name = service_name(service, instance)
     config = f"{APP_CONFIG_MOUNT}/{service}/{instance}/{SERVICE_CONFIG_FILE[service]}"
@@ -142,6 +146,9 @@ def _service_block(service: str, instance: str, compose_file: str) -> list[str]:
         "    labels:",
         f"      {INSTANCE_LABEL}: {service}",
         f'    command: ["--config", "{config}"]',
+        "    env_file:",
+        f"      - path: {ENV_DIR.name}/{name}{CUSTOM_ENV_SUFFIX}",
+        "        required: false",
         "    environment:",
         f"      OTEL_SERVICE_NAME: {name}",
         "    ports: !reset []",

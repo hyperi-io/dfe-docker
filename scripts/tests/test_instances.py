@@ -85,6 +85,18 @@ def test_each_service_extends_the_committed_one() -> None:
     )
 
 
+def test_each_service_reads_the_custom_env_file_the_engine_names_for_it() -> None:
+    # dfe-engine writes a source's extraEnv to env/<app>-<source>.custom.env.
+    text = instances.fragment({FETCHER: ["crowdstrike-eu", "crowdstrike-us"]})
+
+    for source in ("crowdstrike-eu", "crowdstrike-us"):
+        assert (
+            "    env_file:\n"
+            f"      - path: env/dfe-fetcher-{source}.custom.env\n"
+            "        required: false\n"
+        ) in text
+
+
 def test_no_instance_publishes_a_host_port() -> None:
     # N containers cannot share one host port, and nothing outside the stack
     # addresses an instance directly.

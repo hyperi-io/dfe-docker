@@ -27,8 +27,9 @@ from pathlib import Path
 import pytest
 
 import check_compose
+import instances
 import resolve_profile
-from _common import ENV_DIR, PROJECTED_PROFILES
+from _common import CUSTOM_ENV_SUFFIX, ENV_DIR, PROJECTED_PROFILES, SERVICE_CONFIG_FILE
 
 # Every app with a contract to emit. The two -filebeat services run one of these
 # images a second time, so they are deployments rather than apps and emit nothing.
@@ -47,9 +48,13 @@ _ENGINE_SERVICE = "dfe-engine"
 # The host `env/` tree inside the engine, where it writes each app's custom keys.
 _APP_ENV_MOUNT = "/app/app-env"
 # Written by this module and removed again: nothing in a checkout carries one,
-# because the engine writes them at run time.
-_CUSTOM_ENV = ENV_DIR / "loader.custom.env"
+# because the engine writes them at run time. Named as dfe-engine names it.
+_CUSTOM_ENV = ENV_DIR / f"dfe-loader{CUSTOM_ENV_SUFFIX}"
 _CUSTOM_KEY = "DFE_LOADER_CONTRACT_EMIT_TEST"
+# One source's instance of a per-source app, as scripts/instances.py declares it.
+_INSTANCE_APP = "dfe-transform-vrl"
+_INSTANCE = {_INSTANCE_APP: ["contract-emit-test"]}
+_INSTANCE_SERVICE = instances.service_name(_INSTANCE_APP, "contract-emit-test")
 
 
 def _model(**overrides: str) -> dict[str, dict]:
@@ -200,6 +205,49 @@ def test_a_custom_key_reaches_the_app_it_is_written_for() -> None:
 
     assert services["dfe-loader"]["environment"][_CUSTOM_KEY] == "reached"
     assert _CUSTOM_KEY not in services["dfe-receiver"]["environment"]
+
+
+@pytest.fixture(scope="module")
+def reads() -> dict[str, dict]:
+    """The stack and one generated instance, rendered over sentinel env files."""
+    if shutil.which("docker") is None:
+        pytest.skip("`docker compose config` renders the model these assert on")
+    env, _ = check_compose._check_env()
+    services = check_compose._sentinel_model(
+        env=env, fragment=instances.fragment(_INSTANCE)
+    )
+    assert services is not None, "the registry compose path did not resolve"
+    return services
+
+
+def _custom_files_read(service: dict) -> set[str]:
+    return {
+        value
+        for key, value in service["environment"].items()
+        if key.startswith(check_compose._SENTINEL_READ)
+    }
+
+
+@pytest.mark.parametrize("app", sorted(SERVICE_CONFIG_FILE))
+def test_every_app_the_engine_renders_reads_the_file_it_writes_last(
+    app: str, reads: dict[str, dict]
+) -> None:
+    """dfe-engine names the file for the Compose service, and a later file would outvote it."""
+    own = f"{app}{CUSTOM_ENV_SUFFIX}"
+
+    assert _custom_files_read(reads[app]) == {own}
+    assert reads[app]["environment"][check_compose._SENTINEL_LAST] == own
+
+
+def test_a_generated_instance_reads_its_apps_file_then_its_own(
+    reads: dict[str, dict],
+) -> None:
+    """A per-source extraEnv reaches that source's container, over the app's."""
+    own = f"{_INSTANCE_SERVICE}{CUSTOM_ENV_SUFFIX}"
+    service = reads[_INSTANCE_SERVICE]
+
+    assert _custom_files_read(service) == {f"{_INSTANCE_APP}{CUSTOM_ENV_SUFFIX}", own}
+    assert service["environment"][check_compose._SENTINEL_LAST] == own
 
 
 @pytest.mark.parametrize("profile", PROJECTED_PROFILES)
