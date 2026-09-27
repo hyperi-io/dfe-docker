@@ -359,6 +359,7 @@ in `make post` either.
 DFE_INFRA_DIR=../dfe-infra make test-source
 DFE_INFRA_DIR=../dfe-infra make test-source SOURCE_ARGS="--case cloudwatch --aws-service cloudtrail"
 DFE_INFRA_DIR=../dfe-infra make test-source SOURCE_ARGS="--case elastic"
+DFE_INFRA_DIR=../dfe-infra make test-source SOURCE_ARGS="--case vector"
 ```
 
 Neither harness above adds a source. This one creates one in the console,
@@ -371,7 +372,8 @@ owns -- the published ports, the archiver container, and the admin login from
 `--headed`).
 
 Beyond a running stack it needs `DFE_INFRA_DIR` (the runner), `DFE_ENGINE_REPO`
-and `DFE_TRANSFORM_VRL_REPO` (the corpus wrapper, the bundled pipeline), and an
+and `DFE_TRANSFORM_VRL_REPO` (the corpus wrapper, the bundled pipeline), a
+dfe-transform-vector checkout beside the engine repo for the vector case, and an
 interpreter carrying Playwright -- `DFE_ACCEPTANCE_PYTHON` where the system one
 is externally managed. The cloudwatch case polls a real AWS upstream and writes
 nothing to it: put the two `AWS_*` credentials in `env/fetcher.env` and

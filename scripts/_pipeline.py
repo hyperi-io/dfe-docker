@@ -68,11 +68,16 @@ def expand_env(text: str) -> str:
 
 
 def clickhouse_url() -> str:
-    """Return the ClickHouse HTTP endpoint, honouring the same vars compose uses."""
+    """Return the ClickHouse HTTP endpoint, honouring the same vars compose uses.
+
+    The host is DFE_POST_HOST, the address every other POST claim dials, so a
+    second stack published beside another reads its own ClickHouse, not the first.
+    """
     explicit = os.environ.get("CLICKHOUSE_URL", "").strip()
     if explicit:
         return explicit
-    return f"http://localhost:{env_or('CLICKHOUSE_HTTP_PORT', '8123')}"
+    host = env_or("DFE_POST_HOST", "localhost")
+    return f"http://{host}:{env_or('CLICKHOUSE_HTTP_PORT', '8123')}"
 
 
 def http_get(url: str, timeout: int = 5) -> str:
