@@ -9,5 +9,8 @@
 dfe_source: main
 source:
   brokers: [kafka:9092]
+  # Kept by any source bound over this base. The default (largest) skips what
+  # reached the topic before the group first joined.
+  auto_offset_reset: smallest
 sink:
   brokers: [kafka:9092]

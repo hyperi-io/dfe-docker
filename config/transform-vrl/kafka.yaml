@@ -18,6 +18,9 @@ source:
   # Explicitly empty: an omitted list defaults to `events`, which is a topic to
   # consume and so not idle.
   topics: []
+  # Kept by any source bound over this base. The default (latest) skips what
+  # reached the topic before the group first joined.
+  auto_offset_reset: earliest
 
 transforms:
   dir: /etc/dfe-transform-vrl/transforms
