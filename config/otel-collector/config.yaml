@@ -38,7 +38,7 @@ receivers:
   # gateway so the DFE ClickHouse Health dashboard renders on both tiers.
   sqlquery/clickhouse:
     driver: clickhouse
-    datasource: "clickhouse://${env:CLICKHOUSE_USERNAME}:${env:CLICKHOUSE_PASSWORD}@${env:CLICKHOUSE_HOST}:${env:CLICKHOUSE_NATIVE_PORT}/${env:DFE_OTEL_DATABASE}"
+    datasource: "clickhouse://${env:CLICKHOUSE_USERNAME}:${env:CLICKHOUSE_PASSWORD}@${env:CLICKHOUSE_HOST}:${env:CLICKHOUSE_PORT}/${env:DFE_OTEL_DATABASE}"
     collection_interval: 30s
     queries:
       - sql: >-
@@ -186,7 +186,7 @@ processors:
 
 exporters:
   clickhouse:
-    endpoint: tcp://${env:CLICKHOUSE_HOST}:${env:CLICKHOUSE_NATIVE_PORT}
+    endpoint: tcp://${env:CLICKHOUSE_HOST}:${env:CLICKHOUSE_PORT}
     database: ${env:DFE_OTEL_DATABASE}
     username: ${env:CLICKHOUSE_USERNAME}
     password: ${env:CLICKHOUSE_PASSWORD}

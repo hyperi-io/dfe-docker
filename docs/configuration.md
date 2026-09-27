@@ -185,8 +185,10 @@ it is a second deployment of the one component, not a component of its own.
 |--------------------------------------------------|--------------------------------------------------------------------------------------|---------------------------------------------------------------------|
 | `CLICKHOUSE_VERSION`                             | Version of ClickHouse to use                                                         | none -- `make stack` pins it from the DFE stack SSoT; unset is a hard-fail                |
 | `CLICKHOUSE_HOST`                                | External ClickHouse host (skips Docker container)                                    | `clickhouse`                                                        |
-| `CLICKHOUSE_HTTP_PORT`                           | ClickHouse HTTP port                                                                 | `8123`                                                              |
-| `CLICKHOUSE_NATIVE_PORT`                         | ClickHouse native protocol port                                                      | `9000`                                                              |
+| `CLICKHOUSE_HTTP_PORT`                           | Host publish of the bundled ClickHouse's HTTP port; services in the stack dial 8123 whatever it says, so it is safe to move | `8123`                                                              |
+| `CLICKHOUSE_NATIVE_PORT`                         | Host publish of the bundled ClickHouse's native port; services in the stack dial 9000 whatever it says, so it is safe to move | `9000`                                                              |
+| `CLICKHOUSE_EXTERNAL_HTTP_PORT`                  | HTTP port dfe-engine and dfe-hunt-runner dial on an external `CLICKHOUSE_HOST`; leave unset for the bundled container | `8123`                                                              |
+| `CLICKHOUSE_EXTERNAL_NATIVE_PORT`                | Native port dfe-engine, dfe-hunt-runner and the collector dial on an external `CLICKHOUSE_HOST`; leave unset for the bundled container | `9000`                                                              |
 | `CLICKHOUSE_DB`                                  | ClickHouse initialisation database                                                   | `default`                                                           |
 | `CLICKHOUSE_USERNAME`                            | ClickHouse username to connect with                                                  | `default`                                                           |
 | `CLICKHOUSE_PASSWORD`                            | ClickHouse password associated to user                                               | -                                                                   |
@@ -198,7 +200,7 @@ it is a second deployment of the one component, not a component of its own.
 |--------------------------------------------------|--------------------------------------------------------------------------------------|---------------------------------------------------------------------|
 | `KAFKA_BACKEND`                                  | Kafka backend for `kafka` transport profiles                                         | `redpanda`                                                          |
 | `KAFKA_PLAINTEXT_HOST_PORT`                      | Kafka plaintext host port (host-facing)                                              | `19092`                                                             |
-| `KAFKA_PLAINTEXT_PORT`                           | Kafka plaintext port (in-network)                                                    | `9092`                                                              |
+| `KAFKA_PLAINTEXT_PORT`                           | Host publish of the broker's in-network listener; services in the stack dial `kafka:9092` whatever it says | `9092`                                                              |
 
 ### Apache Kafka
 
