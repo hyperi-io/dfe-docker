@@ -62,11 +62,15 @@ ifneq (,$(filter-out $(BOOTSTRAP_GOALS),$(or $(MAKECMDGOALS),help)))
     else
         # On a fresh checkout make parses once before .profile.mk exists, then
         # remakes it and parses again; the name check only means anything on
-        # the second pass, when DFE_SERVICES is populated.
+        # the second pass, when DFE_SERVICES is populated. `apply` skips it: it
+        # names instances declared since .profile.mk was last written, so the
+        # make it starts checks them against the re-resolved list instead.
         ifneq ($(strip $(DFE_SERVICES)),)
-            INVALID_SERVICES := $(filter-out $(DFE_SERVICES),$(SERVICES))
-            ifneq ($(INVALID_SERVICES),)
-                $(error 'SERVICES' contains names not in the resolved stack: $(INVALID_SERVICES). Available: $(DFE_SERVICES))
+            ifeq ($(filter apply,$(MAKECMDGOALS)),)
+                INVALID_SERVICES := $(filter-out $(DFE_SERVICES),$(SERVICES))
+                ifneq ($(INVALID_SERVICES),)
+                    $(error 'SERVICES' contains names not in the resolved stack: $(INVALID_SERVICES). Available: $(DFE_SERVICES))
+                endif
             endif
         endif
         ACTIVE_SERVICES := $(filter $(SERVICES),$(DFE_SERVICES))
@@ -158,7 +162,7 @@ endif
 # Only the goals that start or self-test the stack ask for it. The bootstrap
 # goals are exempt for the reason BOOTSTRAP_GOALS gives: needing a key to stop a
 # stack, or to check a file, is a lockout.
-ORIGIN_GOALS := dev ci up infra post test-source test-flows
+ORIGIN_GOALS := dev ci up apply infra post test-source test-flows
 # Origins a browser on another machine cannot use; scripts/_common.py keeps the
 # same set for the helpers that read the key.
 LOOPBACK_ORIGINS := http://localhost https://localhost http://127.0.0.1 https://127.0.0.1
@@ -385,6 +389,33 @@ ci: login env-files down storage-dirs  ## Pull and start infra and registry DFE 
 .PHONY: up
 up: ci ## Start the stack from the pinned registry images, then print the access summary (password on a TTY only) and write access-summary.md
 	@python3 scripts/creds.py --write
+
+# The command dfe-engine's restart and recreate hints name after a config write:
+# resolving the profile regenerates the instances fragment, so it creates a
+# per-source container the engine has just declared and recreates one that exists.
+# DEV=1 recreates from the local images a `make dev` stack runs.
+ifneq ($(strip $(DEV)),)
+    APPLY_FLAGS = $(DEV_FLAGS)
+else
+    APPLY_FLAGS = -f docker-compose.yml $(STORAGE_FLAGS) $(UI_FLAGS)
+endif
+
+# An empty SERVICES would recreate the whole stack.
+ifneq ($(filter apply apply-services,$(MAKECMDGOALS)),)
+    ifeq ($(strip $(SERVICES)),)
+        $(error apply needs SERVICES="<service> ...", the services the dfe-engine hint names)
+    endif
+endif
+
+.PHONY: apply
+apply: env-files storage-dirs ## Create or recreate the named services after a config write (SERVICES="svc ..."; DEV=1 for a `make dev` stack), the command dfe-engine's hints name
+	@$(MAKE) --no-print-directory apply-services
+
+# A second make, because it reads the .profile.mk this one just re-resolved and
+# so checks SERVICES against the instances the engine has declared.
+.PHONY: apply-services
+apply-services:
+	docker compose $(APPLY_FLAGS) $(PROFILE_FLAGS) up -d --force-recreate --no-deps $(ACTIVE_SERVICES)
 
 .PHONY: ci-pull
 ci-pull: login ## Pull infra and registry DFE images

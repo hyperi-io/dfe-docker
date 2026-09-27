@@ -106,9 +106,11 @@ this on for the projected tiers only: every other profile ships the config it
 exists to exercise.
 
 Nothing restarts a container. A change the running app cannot take in place is
-reported by the API as `restart required: docker compose restart <app>`; an app
-that was IDLE needs no restart, because scalo's gate re-reads the file and starts
-the service on the spot.
+reported by the API as `restart required: make apply SERVICES=<app>`, and one
+to its env file as `recreate required:` with the same command; `make apply`
+creates a per-source container the engine has only just declared and recreates
+one that exists. An app that was IDLE needs no restart, because scalo's gate
+re-reads the file and starts the service on the spot.
 
 ## A source with its own transform gets its own instance
 

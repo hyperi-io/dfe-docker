@@ -35,7 +35,16 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 # The sentence the guard is recognised by, quoted from the Makefile.
 _GUARD = "DFE_EXTERNAL_ORIGIN must name the address browsers use"
 
-_GUARDED_GOALS = ["dev", "ci", "up", "infra", "post", "test-source", "test-flows"]
+_GUARDED_GOALS = [
+    "dev",
+    "ci",
+    "up",
+    "apply",
+    "infra",
+    "post",
+    "test-source",
+    "test-flows",
+]
 # Stopping a stack and checking a file must work whatever the configuration says.
 _UNGUARDED_GOALS = ["down", "clean", "creds", "init", "help", "check-compose"]
 
