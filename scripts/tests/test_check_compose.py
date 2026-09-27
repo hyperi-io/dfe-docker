@@ -22,6 +22,7 @@ from pathlib import Path
 
 import check_compose
 import init
+import instances
 from _common import COMPOSE_FILE
 
 _FRAGMENTS = "-f docker-compose.yml -f docker-compose.override.yml"
@@ -313,6 +314,114 @@ def test_no_committed_service_can_take_a_generated_instance_name():
 
     assert "dfe-transform-vrl" in services
     assert check_compose._instance_name_collisions(services=services) == []
+
+
+# An env/ directory for the custom env rule, as `docker compose config` names it.
+_ENV = Path("/stack/env")
+
+
+def _reads(*names: str, instance_of: str = "") -> dict:
+    """One service reading the env files named, in order, as the model carries them."""
+    service: dict = {"env_file": [{"path": str(_ENV / n)} for n in names]}
+    if instance_of:
+        service["labels"] = {instances.INSTANCE_LABEL: instance_of}
+    return service
+
+
+def test_an_app_reading_the_short_custom_name_fails_twice():
+    """The engine writes dfe-loader.custom.env, so loader.custom.env reached nothing."""
+    failures = check_compose._custom_env_mismatches(
+        services={"dfe-loader": _reads("loader.env", "loader.custom.env")},
+        env_dir=_ENV,
+    )
+
+    assert len(failures) == 2
+    assert "loader.custom.env, which dfe-engine never writes" in failures[0]
+    assert "reads no dfe-loader.custom.env" in failures[1]
+
+
+def test_an_app_reading_its_own_custom_file_last_passes():
+    services = {
+        "dfe-loader": _reads("loader.env", "dfe-loader.custom.env"),
+        "kafka-ui": _reads(),
+    }
+
+    assert check_compose._custom_env_mismatches(services=services, env_dir=_ENV) == []
+
+
+def test_an_app_whose_own_file_is_not_last_fails():
+    failures = check_compose._custom_env_mismatches(
+        services={"dfe-loader": _reads("dfe-loader.custom.env", "loader.env")},
+        env_dir=_ENV,
+    )
+
+    assert failures == [
+        "dfe-loader: reads loader.env after dfe-loader.custom.env, so it outvotes a "
+        "key set through dfe-engine"
+    ]
+
+
+def test_an_instance_reads_its_apps_file_then_its_own():
+    services = {
+        "dfe-fetcher-okta": _reads(
+            "fetcher.env",
+            "dfe-fetcher.custom.env",
+            "dfe-fetcher-okta.custom.env",
+            instance_of="dfe-fetcher",
+        )
+    }
+
+    assert check_compose._custom_env_mismatches(services=services, env_dir=_ENV) == []
+
+
+def test_an_instance_with_no_file_of_its_own_fails():
+    """A per-source extraEnv lands in the instance's file, which it never read."""
+    failures = check_compose._custom_env_mismatches(
+        services={
+            "dfe-fetcher-okta": _reads(
+                "fetcher.env", "dfe-fetcher.custom.env", instance_of="dfe-fetcher"
+            )
+        },
+        env_dir=_ENV,
+    )
+
+    assert failures == [
+        "dfe-fetcher-okta: reads no dfe-fetcher-okta.custom.env, so a key set "
+        "through dfe-engine never reaches it"
+    ]
+
+
+def test_a_service_the_engine_does_not_render_reads_no_custom_file():
+    """The engine writes nothing for a static e2e instance, under any name."""
+    for name in ("transform-vrl-filebeat.custom.env", "dfe-transform-vrl.custom.env"):
+        failures = check_compose._custom_env_mismatches(
+            services={
+                "dfe-transform-e2e-vrl-filebeat": _reads(
+                    "transform-vrl-filebeat.env", name
+                )
+            },
+            env_dir=_ENV,
+        )
+
+        assert len(failures) == 1
+        assert f"{name}, which dfe-engine never writes for it" in failures[0]
+
+
+def test_a_custom_file_outside_env_fails():
+    failures = check_compose._custom_env_mismatches(
+        services={
+            "dfe-loader": {
+                "env_file": [
+                    {"path": "/elsewhere/dfe-loader.custom.env"},
+                    {"path": str(_ENV / "dfe-loader.custom.env")},
+                ]
+            }
+        },
+        env_dir=_ENV,
+    )
+
+    assert len(failures) == 1
+    assert failures[0].startswith("dfe-loader: reads /elsewhere/dfe-loader.custom.env")
 
 
 def test_a_service_that_queues_and_waits_passes_and_json_file_is_not_checked():

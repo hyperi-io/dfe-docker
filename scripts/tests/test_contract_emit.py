@@ -22,13 +22,16 @@ the source text is not the thing to assert about.
 
 import os
 import shutil
+from collections.abc import Iterator
+from contextlib import contextmanager
 from pathlib import Path
 
 import pytest
 
 import check_compose
+import instances
 import resolve_profile
-from _common import ENV_DIR, PROJECTED_PROFILES
+from _common import CUSTOM_ENV_SUFFIX, ENV_DIR, PROJECTED_PROFILES, SERVICE_CONFIG_FILE
 
 # Every app with a contract to emit. The two -filebeat services run one of these
 # images a second time, so they are deployments rather than apps and emit nothing.
@@ -47,22 +50,51 @@ _ENGINE_SERVICE = "dfe-engine"
 # The host `env/` tree inside the engine, where it writes each app's custom keys.
 _APP_ENV_MOUNT = "/app/app-env"
 # Written by this module and removed again: nothing in a checkout carries one,
-# because the engine writes them at run time.
-_CUSTOM_ENV = ENV_DIR / "loader.custom.env"
+# because the engine writes them at run time. Named as dfe-engine names it.
+_CUSTOM_ENV = ENV_DIR / f"dfe-loader{CUSTOM_ENV_SUFFIX}"
 _CUSTOM_KEY = "DFE_LOADER_CONTRACT_EMIT_TEST"
+# One source's instance of a per-source app, as scripts/instances.py declares it.
+_INSTANCE_APP = "dfe-transform-vrl"
+_INSTANCE = {_INSTANCE_APP: ["contract-emit-test"]}
+_INSTANCE_SERVICE = instances.service_name(_INSTANCE_APP, "contract-emit-test")
 
 
-def _model(**overrides: str) -> dict[str, dict]:
-    """Return the interpolated registry-path services, placeholders for the pins."""
+def _model(
+    fragment: str | None = None, *, interpolate: bool = True, **overrides: str
+) -> dict[str, dict]:
+    """Return the registry-path services, placeholders for the pins."""
     if shutil.which("docker") is None:
         pytest.skip("`docker compose config` renders the model these assert on")
     env, _ = check_compose._check_env()
     env.update(overrides)
     config = check_compose._config_json(
-        env=env, files=[check_compose.COMPOSE_FILE.name]
+        env=env,
+        files=[check_compose.COMPOSE_FILE.name],
+        fragment=fragment,
+        interpolate=interpolate,
     )
     assert config is not None, "the registry compose path did not resolve"
     return config["services"]
+
+
+@contextmanager
+def _custom_env(files: dict[Path, str]) -> Iterator[None]:
+    """Write custom env files for one render, and leave env/ as it was found."""
+    for path in files:
+        if path.exists():
+            pytest.skip(f"{path} already exists in this checkout")
+    # A fresh checkout has no env/, and a check must leave it without one.
+    made_dir = not ENV_DIR.exists()
+    ENV_DIR.mkdir(parents=True, exist_ok=True)
+    try:
+        for path, text in files.items():
+            path.write_text(text, encoding="utf-8")
+        yield
+    finally:
+        for path in files:
+            path.unlink(missing_ok=True)
+        if made_dir:
+            ENV_DIR.rmdir()
 
 
 def _resolved(
@@ -185,21 +217,55 @@ def test_a_missing_custom_env_leaves_every_app_resolving(
 
 def test_a_custom_key_reaches_the_app_it_is_written_for() -> None:
     """The whole point of the second env_file, and the half compose does at up-time."""
-    if _CUSTOM_ENV.exists():
-        pytest.skip(f"{_CUSTOM_ENV} already exists in this checkout")
-    # A fresh checkout has no env/, and a check must leave it without one.
-    made_dir = not _CUSTOM_ENV.parent.exists()
-    _CUSTOM_ENV.parent.mkdir(parents=True, exist_ok=True)
-    _CUSTOM_ENV.write_text(f"{_CUSTOM_KEY}=reached\n", encoding="utf-8")
-    try:
+    with _custom_env({_CUSTOM_ENV: f"{_CUSTOM_KEY}=reached\n"}):
         services = _model()
-    finally:
-        _CUSTOM_ENV.unlink()
-        if made_dir:
-            _CUSTOM_ENV.parent.rmdir()
 
     assert services["dfe-loader"]["environment"][_CUSTOM_KEY] == "reached"
     assert _CUSTOM_KEY not in services["dfe-receiver"]["environment"]
+
+
+@pytest.fixture(scope="module")
+def env_files() -> dict[str, dict]:
+    """The stack and one generated instance, un-interpolated so env_file survives."""
+    return _model(instances.fragment(_INSTANCE), interpolate=False)
+
+
+@pytest.mark.parametrize("app", sorted(SERVICE_CONFIG_FILE))
+def test_every_app_the_engine_renders_reads_the_file_it_writes_last(
+    app: str, env_files: dict[str, dict]
+) -> None:
+    """dfe-engine names the file for the Compose service, and a later file would outvote it."""
+    read = [Path(entry["path"]) for entry in env_files[app]["env_file"]]
+
+    assert read[-1] == ENV_DIR / f"{app}{CUSTOM_ENV_SUFFIX}"
+
+
+def test_a_generated_instance_reads_its_apps_file_then_its_own(
+    env_files: dict[str, dict],
+) -> None:
+    read = [Path(entry["path"]) for entry in env_files[_INSTANCE_SERVICE]["env_file"]]
+
+    assert read[-2:] == [
+        ENV_DIR / f"{_INSTANCE_APP}{CUSTOM_ENV_SUFFIX}",
+        ENV_DIR / f"{_INSTANCE_SERVICE}{CUSTOM_ENV_SUFFIX}",
+    ]
+
+
+def test_an_instances_own_key_beats_its_apps_and_stays_off_the_app() -> None:
+    """A per-source extraEnv reaches that source's container and no other."""
+    app_file = ENV_DIR / f"{_INSTANCE_APP}{CUSTOM_ENV_SUFFIX}"
+    own_file = ENV_DIR / f"{_INSTANCE_SERVICE}{CUSTOM_ENV_SUFFIX}"
+    written = {
+        app_file: f"{_CUSTOM_KEY}=app\n{_CUSTOM_KEY}_APP_ONLY=app\n",
+        own_file: f"{_CUSTOM_KEY}=instance\n",
+    }
+    with _custom_env(written):
+        services = _model(instances.fragment(_INSTANCE))
+
+    instance = services[_INSTANCE_SERVICE]["environment"]
+    assert instance[_CUSTOM_KEY] == "instance"
+    assert instance[f"{_CUSTOM_KEY}_APP_ONLY"] == "app"
+    assert services[_INSTANCE_APP]["environment"][_CUSTOM_KEY] == "app"
 
 
 @pytest.mark.parametrize("profile", PROJECTED_PROFILES)

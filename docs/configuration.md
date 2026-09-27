@@ -266,12 +266,11 @@ contract absent and the engine starts anyway, so a settings page with nothing on
 it for one app means that app's one-shot logged a failure -- `docker compose logs
 contract-<app>`.
 
-A setting the app's own schema does not declare is written as an environment
-variable instead, into `env/<app>.custom.env` beside the file `make init` creates.
-Each app reads both, the custom file second, so a custom key beats the same key in
-`env/<app>.env`; the `environment:` block in `docker-compose.yml` beats both, which
-is what keeps a custom key from taking over the broker address or the warehouse
-credentials. Neither file has to exist.
+A setting the app's own schema does not declare is written as an environment variable instead, into a file named for the Compose service: `env/dfe-loader.custom.env`, beside the `env/loader.env` that `make init` creates. Each app reads both, the custom file second, so a custom key beats the same key in the operator's file. The `environment:` block in `docker-compose.yml` beats both, which is what keeps a custom key from taking over the broker address or the warehouse credentials. Neither file has to exist.
+
+A per-source instance such as `dfe-transform-vrl-<source>` reads its app's custom file and then its own, `env/dfe-transform-vrl-<source>.custom.env`, so a key set on one source reaches that source's container alone. `make apply SERVICES=dfe-transform-vrl-<source>` recreates it, the command the engine's response names.
+
+Only the engine writes `*.custom.env`, and only for a service it renders, so the static `dfe-transform-e2e-*` services read none. A key you set by hand goes in the operator's file. Earlier checkouts read `env/loader.custom.env` and its siblings, names the engine never wrote and nothing reads now: move any key you put there into `env/loader.env`.
 
 **A custom env write needs `docker compose up -d <service>`, not a restart.**
 Compose reads `env_file` when it creates a container, so `docker compose restart`

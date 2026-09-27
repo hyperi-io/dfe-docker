@@ -78,6 +78,10 @@ SERVICE_TO_RENDERED_CONFIG_VAR = {
     "dfe-transform-vrl": "DFE_TRANSFORM_VRL_CONFIG_FILE",
 }
 
+# The suffix of the env file dfe-engine writes into env/ for one Compose service,
+# `<app>` or `<app>-<instance>` (appmgmt/appconfig.py CUSTOM_ENV_SUFFIX).
+CUSTOM_ENV_SUFFIX = ".custom.env"
+
 # Repo constants
 REPO_ROOT = __find_repo_root()
 # Written by `make init` / `make up`: the launcher's copy of the access summary,

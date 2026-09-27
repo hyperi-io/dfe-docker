@@ -87,6 +87,9 @@ Beyond resolution, these semantic assertions ride along.
   volume or a bind. See `_IMAGE_VOLUMES`.
 - No committed service may carry a name a generated per-source instance can take.
   See `_instance_name_collisions`.
+- Every service dfe-engine renders, and every instance the generator declares,
+  must read the custom env file the engine writes for it, last; no service may
+  read one the engine does not write. See `_custom_env_mismatches`.
 """
 
 import json
@@ -97,13 +100,16 @@ import subprocess
 import sys
 from pathlib import Path
 
+import instances
 from _common import (
     COMPOSE_FILE,
     COMPOSE_LIVE_FILE,
     COMPOSE_OVERRIDE_FILE,
     CONFIG_DIR,
+    CUSTOM_ENV_SUFFIX,
     DOTENV_FILE,
     DOTENV_TEMPLATE,
+    ENV_DIR,
     REPO_ROOT,
     SERVICE_CONFIG_FILE,
     SERVICE_PROFILES_FILE,
@@ -498,6 +504,8 @@ def _config_json(
     files: list[str],
     extra_profiles: tuple[str, ...] = (),
     env_file: Path | None = None,
+    fragment: str | None = None,
+    interpolate: bool = True,
 ) -> dict | None:
     """Return the fully interpolated compose model, or None if it did not resolve.
 
@@ -508,15 +516,25 @@ def _config_json(
 
     `env_file` replaces the .env compose would otherwise load, which is what lets a
     caller assert about a variable this checkout happens to have set.
+
+    `fragment` is one more compose file, read from stdin after `files`, so a
+    generated file is checked without writing it into the checkout.
+
+    `interpolate` False keeps each service's `env_file` list, which the
+    interpolated model folds into `environment` and drops.
     """
     cmd = ["docker", "compose"]
     if env_file is not None:
         cmd += ["--env-file", str(env_file)]
     for path in files:
         cmd += ["-f", path]
+    if fragment is not None:
+        cmd += ["-f", "-"]
     for profile in [*_BASE_PROFILES, _KAFKA_BACKENDS[0], *extra_profiles]:
         cmd += ["--profile", profile]
     cmd += ["config", "--format", "json"]
+    if not interpolate:
+        cmd.append("--no-interpolate")
     result = subprocess.run(
         cmd,
         capture_output=True,
@@ -524,6 +542,7 @@ def _config_json(
         encoding="utf-8",
         env=env,
         errors="replace",
+        input=fragment,
         text=True,
     )
     if result.returncode != 0:
@@ -1167,6 +1186,76 @@ def _instance_name_failures(*, env: dict[str, str]) -> tuple[list[str], int]:
     return _instance_name_collisions(services=services), len(services)
 
 
+def _custom_env_mismatches(*, services: dict, env_dir: Path) -> list[str]:
+    """Return one message per service the engine's custom env files do not reach.
+
+    dfe-engine writes ``<service>.custom.env`` into env/ for each service it
+    renders, an instance being ``<app>-<instance>``. A service reading any other
+    custom name reads a file nothing writes, and one whose own file is not last
+    lets a later file outvote a key the operator set through the console.
+    """
+    failures = []
+    for name, service in sorted(services.items()):
+        app = (service.get("labels") or {}).get(instances.INSTANCE_LABEL, "")
+        rendered = name in SERVICE_CONFIG_FILE or app in SERVICE_CONFIG_FILE
+        writable = {f"{n}{CUSTOM_ENV_SUFFIX}" for n in (name, app) if n and rendered}
+        paths = [Path(entry["path"]) for entry in service.get("env_file") or []]
+        for path in paths:
+            if not path.name.endswith(CUSTOM_ENV_SUFFIX):
+                continue
+            in_env_dir = path.parent == env_dir
+            if not in_env_dir or path.name not in writable:
+                shown = f"{env_dir.name}/{path.name}" if in_env_dir else str(path)
+                failures.append(
+                    f"{name}: reads {shown}, which dfe-engine never writes for it -- "
+                    f"it writes {env_dir.name}/<service>{CUSTOM_ENV_SUFFIX}, and only "
+                    "for a service it renders"
+                )
+        if not rendered:
+            continue
+        own = env_dir / f"{name}{CUSTOM_ENV_SUFFIX}"
+        if own not in paths:
+            failures.append(
+                f"{name}: reads no {own.name}, so a key set through dfe-engine never "
+                "reaches it"
+            )
+        elif paths[-1] != own:
+            failures.append(
+                f"{name}: reads {paths[-1].name} after {own.name}, so it outvotes a "
+                "key set through dfe-engine"
+            )
+    return failures
+
+
+def _custom_env_failures(*, env: dict[str, str]) -> tuple[list[str], int]:
+    """Return (messages, services checked), one generated instance per app included."""
+    probes = {
+        app: ["compose-check"]
+        for app in sorted(SERVICE_CONFIG_FILE)
+        if instances.extendable(app)
+    }
+    config = _config_json(
+        env=env,
+        files=[COMPOSE_FILE.name],
+        extra_profiles=("*",),
+        fragment=instances.fragment(probes),
+        interpolate=False,
+    )
+    if config is None:
+        return (
+            ["the registry path with a generated instance per app did not resolve"],
+            0,
+        )
+    services = config.get("services", {})
+    failures = [
+        f"{probe}: generated but absent from the model, so its env files are unchecked"
+        for probe in instances.services(probes)
+        if probe not in services
+    ]
+    failures += _custom_env_mismatches(services=services, env_dir=ENV_DIR)
+    return failures, len(services)
+
+
 def _override_coverage_failures(*, env: dict[str, str]) -> list[str]:
     """Return one message per service the committed override leaves on the registry.
 
@@ -1556,6 +1645,17 @@ def main() -> int:
     _print(
         msg=f"None of the {name_made} committed service(s) can take a generated "
         "per-source instance's name"
+    )
+
+    custom_failures, custom_made = _custom_env_failures(env=env)
+    for message in custom_failures:
+        _print(msg=f"FAIL {message}")
+    if custom_failures:
+        return 1
+    _print(
+        msg="Every service dfe-engine renders, a generated instance of each included, "
+        f"reads the custom env file the engine writes for it last, and none of the "
+        f"{custom_made} service(s) reads one it does not write"
     )
 
     coverage_failures = _override_coverage_failures(env=env)
