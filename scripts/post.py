@@ -999,13 +999,19 @@ def _metric_label_values(body: str, name: str, label: str) -> set[str]:
     return found
 
 
-def _verify_loader_subscription() -> Claim:
+def _verify_loader_subscription(*, ingest_url: str, table: str) -> Claim:
     """Prove the loader is fetching a topic, on a tier that has a bus.
 
     The loader discovers its topics from the broker, so a topic that never appears
     -- or one scalo suppresses in favour of a `_load` sibling -- leaves it ready
     and healthy with nothing to read. Asserted before the injection, because after
     it the same fault is indistinguishable from a broken loader or a missing table.
+
+    librdkafka reports a partition's lag as -1 until the group commits an offset
+    on it, and scalo exports only a lag it can state, so a fresh stack shows no
+    topic at all however well subscribed it is. Each attempt that sees none sends
+    one probe record through the ingest edge first: a subscribed loader loads and
+    commits it and names its topic, and one subscribed to nothing never does.
     """
     if _profile_mk_value(key=TRANSPORT_BUS_KEY)[:1] != ["true"]:
         _print(msg="SKIP  this tier has no bus -- the loader is handed its events")
@@ -1022,14 +1028,24 @@ def _verify_loader_subscription() -> Claim:
         or LOADER_PROMETHEUS_PORT
     )
     base = f"http://{bind}:{port}"
-    _print(msg=f"Waiting for {LOADER_SERVICE} to be fetching a topic at {base}")
+    probe = f"{_run_id()}-probe"
+    _print(
+        msg=f"Waiting for {LOADER_SERVICE} to be fetching a topic at {base}, "
+        f"sending probe records tagged {probe}"
+    )
 
     def _fetching():
         try:
             body = http_get(f"{base}/metrics", timeout=5)
         except Exception:  # noqa: BLE001 - unreachable and not-yet-serving are one answer
             return set()
-        return _metric_label_values(body, LOADER_TOPIC_METRIC, LOADER_TOPIC_LABEL)
+        topics = _metric_label_values(body, LOADER_TOPIC_METRIC, LOADER_TOPIC_LABEL)
+        if not (topics):
+            try:
+                http_post(ingest_url, marked_event(marker=probe, source=table))
+            except Exception:  # noqa: BLE001 - a refused probe is another attempt
+                pass
+        return topics
 
     def _report(attempt, result):
         _print(
@@ -1052,6 +1068,7 @@ def _verify_loader_subscription() -> Claim:
         )
         return Claim(asserted=True, failed=1)
     _print(msg=f"PASS  {LOADER_SERVICE} is fetching {', '.join(sorted(topics))}")
+    _print(msg=f"      note: the probe row(s) stay in {table} tagged {probe}")
     return HELD
 
 
@@ -2022,7 +2039,7 @@ def main() -> int:
 
     # Fails fast rather than joining the tally below: injecting into a pipeline
     # whose consumer is not attached proves nothing about the pipeline.
-    subscription = _verify_loader_subscription()
+    subscription = _verify_loader_subscription(ingest_url=ingest_url, table=table)
     if subscription.failed:
         return 1
 

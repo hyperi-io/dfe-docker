@@ -196,6 +196,7 @@ In `dev` mode, they build from each repo's own Dockerfile (not the shared Rust b
 | `make env-files`   | Assert every `env/<service>.env` exists, creating any the templates have gained |
 | `make creds`       | Print the access summary -- console URL, admin login, where the break-glass password lives. The password prints on a TTY only; a pipe, a file or `DFE_CREDS_SHOW=0` gets the `.env` key instead |
 | `make up`          | Start the pinned stack and print the access summary                |
+| `make apply`       | Start what the re-resolved profile adds or changes on a running stack, a new per-source instance included, recreating nothing unchanged and touching no volume. `SERVICES="..."` also restarts those services, so a mounted config the engine rewrote is read. It is the command the engine's restart hints name (`DEV=1` for a `make dev` stack) |
 | `make dev`         | Build local DFE images from source and start the stack (`LOCAL="..."` builds only those, rest pinned) |
 | `make dev-build`   | Build local DFE images from source (no start)                      |
 | `make ci`          | Pull and start infra and registry DFE images. Prints no credentials -- `make up` is the same start plus `make creds` |

@@ -148,8 +148,7 @@ The e2e harness now does this for itself: `clean_topics` deletes the `_load`
 sibling of every expected `_land` topic, so a run depends on the test definition
 rather than on the broker's history.
 
-`make post` asserts the loader is fetching a topic before it injects anything, so
-an empty subscription is reported as one.
+`make post` asserts the loader is fetching a topic before it injects anything, so an empty subscription is reported as one. The loader names no topic until its group has committed an offset, so on a stack that has carried no traffic the self test sends one probe record per attempt, tagged `post-<pid>-<hex>-probe`, and those rows stay in the table.
 
 ## Events are accepted but nothing lands
 
