@@ -10,7 +10,8 @@
 """Power-on self test (POST) for a stack that is ALREADY running.
 
 Eight claims. SUBSCRIPTION: where the tier has a bus, the loader is fetching at
-least one topic, so the events about to be injected have a consumer at all.
+least one topic -- asserted once the injected events land, because a topic nothing
+has been written to carries no lag series, and as the diagnosis when they do not.
 INGEST: uniquely-marked events put in at the ingest edge come out as those exact
 rows in ClickHouse. SELF-MONITORING: when the profile runs a collector, the
 stack's own telemetry is landing FRESH in the otel database, every service that
@@ -122,8 +123,9 @@ READY_INTERVAL_SECONDS = 2.0
 # healthy and consumes nothing, which surfaces only as rows that never arrive.
 LOADER_SERVICE = "dfe-loader"
 LOADER_PROMETHEUS_PORT = "9091"
-# rdkafka reports a partition's consumer lag only while it is assigned and
-# fetching it, so a topic label here is the subscription, not the config.
+# rdkafka reports a partition's consumer lag only while it is assigned and the
+# group holds a committed offset there, so the series appears after the first
+# record is consumed and a topic label is the subscription, not the config.
 LOADER_TOPIC_METRIC = "rdkafka_topic_partition_consumer_lag"
 LOADER_TOPIC_LABEL = "topic"
 # The resolver re-runs every 60s and rdkafka publishes its statistics every 5s,
@@ -1004,8 +1006,13 @@ def _verify_loader_subscription() -> Claim:
 
     The loader discovers its topics from the broker, so a topic that never appears
     -- or one scalo suppresses in favour of a `_load` sibling -- leaves it ready
-    and healthy with nothing to read. Asserted before the injection, because after
-    it the same fault is indistinguishable from a broken loader or a missing table.
+    and healthy with nothing to read.
+
+    Asserted after the injection, never before it. rdkafka reports a partition's
+    lag only once the group has committed an offset there, so on a stack started
+    from empty volumes no series exists until the first record is consumed, and a
+    check ahead of the injection fails a loader that is fetching correctly. After
+    rows land it confirms the subscription; after they do not, it is the diagnosis.
     """
     if _profile_mk_value(key=TRANSPORT_BUS_KEY)[:1] != ["true"]:
         _print(msg="SKIP  this tier has no bus -- the loader is handed its events")
@@ -1044,11 +1051,12 @@ def _verify_loader_subscription() -> Claim:
     )
     if not (topics):
         _print(
-            msg=f"FAIL  {LOADER_SERVICE} is fetching no topic within "
-            f"{LOADER_TOPIC_TIMEOUT_SECONDS:.0f}s -- it resolved an empty subscription, "
-            "so events reach the broker and stop there. Read its resolved set with "
-            "`docker compose logs dfe-loader` (grep 'Resolved Kafka topics') and see "
-            "the `main_load` entry in docs/troubleshooting.md"
+            msg=f"FAIL  {LOADER_SERVICE} committed no offset on any topic within "
+            f"{LOADER_TOPIC_TIMEOUT_SECONDS:.0f}s -- either it resolved an empty "
+            "subscription, so events reach the broker and stop there, or it never "
+            "committed what it read. Read its resolved set with `docker compose logs "
+            "dfe-loader` (grep 'Resolved Kafka topics') and see the `main_load` entry "
+            "in docs/troubleshooting.md"
         )
         return Claim(asserted=True, failed=1)
     _print(msg=f"PASS  {LOADER_SERVICE} is fetching {', '.join(sorted(topics))}")
@@ -2020,12 +2028,6 @@ def main() -> int:
         _print(msg=f"FAIL  {reason}")
         return 1
 
-    # Fails fast rather than joining the tally below: injecting into a pipeline
-    # whose consumer is not attached proves nothing about the pipeline.
-    subscription = _verify_loader_subscription()
-    if subscription.failed:
-        return 1
-
     marker = _run_id()
     _print(msg=f"Injecting {EVENT_COUNT} marked event(s) via {service} at {ingest_url}")
     _print(msg=f"Marker: {marker}")
@@ -2081,6 +2083,8 @@ def main() -> int:
                 "marker column could not be read -- this run cannot be identified, "
                 "so the schema may not carry `_tags`"
             )
+        # A loader subscribed to nothing is the commonest reason nothing lands.
+        _verify_loader_subscription()
         return 1
 
     if matched >= EVENT_COUNT:
@@ -2094,9 +2098,9 @@ def main() -> int:
         # is created: behind a slow claim, this run's rows fall outside it.
         return _report_claims(
             claims={
-                "subscription": subscription,
                 "ingest": HELD,
                 "hunts": _verify_hunt(database=database, marker=marker, table=table),
+                "subscription": _verify_loader_subscription(),
                 "self-monitoring": _verify_self_monitoring(),
                 "observability": _verify_hyperdx(),
                 "console": _verify_ui_query(
@@ -2111,6 +2115,7 @@ def main() -> int:
         msg=f"FAIL  only {matched}/{EVENT_COUNT} marked event(s) reached "
         f"{database}.{table} within {LAND_TIMEOUT_SECONDS:.0f}s"
     )
+    _verify_loader_subscription()
     return 1
 
 
