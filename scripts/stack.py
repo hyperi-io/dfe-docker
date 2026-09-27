@@ -14,20 +14,24 @@ stack and merges its ``*_VERSION=tag@digest`` lines into ``.env``. Only those
 keys are overwritten; every other key (ports, hosts, creds, profile) is left
 exactly as it was, so the merge is idempotent and safe to re-run.
 
-``VERSION=latest`` is the DEV CURRENCY mode: it resolves the newest certified
-stack for the third-party images, then repins every image we publish to
-``ghcr.io/hyperi-io`` at its component's newest GitHub release. That combination
-is newer than any stack anyone certified, so it is for development and
-integration, never a deployment -- `make modes` reports it as unpinned. The pins
-it writes still carry digests; nothing here ever emits a floating tag.
+``VERSION=latest`` pins the certified set of the newest stack the stack-manifest
+repo publishes: its newest release, or its newest pre-release while it has
+published no release. ``VERSION=rc`` takes its newest tag of either kind. Both
+read nothing but the public OCI registry, so they need no GitHub access and no
+credential. ``.env`` records the WORD, so a re-run moves forward; that makes them
+development and integration modes, never a deployment -- `make modes` reports
+them as unpinned.
 
-The release GitHub marks Latest, not the highest registry tag, because version
-order is not release order: a fork can carry a release tagged above its own line,
-and ranking by version number pins that one ahead of every later release.
-
-``latest`` takes the release GitHub marks Latest and falls back to the newest
-pre-release on a repo that has published none; ``rc`` takes the newest release of
-either kind.
+``DFE_STACK_REPIN_IMAGES=1`` adds the DEV CURRENCY step on top: every image we
+publish to ``ghcr.io/hyperi-io`` is repinned at its component's newest GitHub
+release, read through a logged-in ``gh`` that can see the component repos. That
+combination is newer than any stack anyone certified. ``latest`` takes the
+release GitHub marks Latest and falls back to the newest pre-release on a repo
+that has published none; ``rc`` takes the newest release of either kind. The
+GitHub release is the authority rather than the highest registry tag, because
+version order is not release order: a fork can carry a release tagged above its
+own line. The pins it writes still carry digests; nothing here ever emits a
+floating tag.
 
 Transport is EXPLICIT-LOCAL-FIRST, OCI-DEFAULT:
 
@@ -85,6 +89,11 @@ _PIN_LINE = re.compile(r"^(?P<key>[A-Z][A-Z0-9_]*)=(?P<rest>.+)$")
 # $(DFE_STACK_VERSION)` defaults from it, so it rides in `.env` beside the pins
 # while naming a stack rather than an image.
 STACK_VERSION_KEY = "DFE_STACK_VERSION"
+
+# Opt-in for the GitHub-release repin, which needs `gh` read access to every
+# component repo and so is never part of the default `latest` / `rc` path.
+REPIN_ENV = "DFE_STACK_REPIN_IMAGES"
+_TRUTHY = {"1", "true", "yes", "on"}
 
 # A compose image line for an image WE publish: the registry default is captured
 # so `.env` need not set IMAGE_REGISTRY for the repo to be known.
@@ -253,6 +262,11 @@ def _our_release_repos() -> dict[str, str]:
     }
 
 
+def _repin_requested() -> bool:
+    """Whether the caller opted into repinning each DFE image at its newest GitHub release."""
+    return os.environ.get(REPIN_ENV, "").strip().lower() in _TRUTHY
+
+
 def _latest_image_pins(*, prereleases: str) -> dict[str, str]:
     """Return a pin line per DFE image, at its component's newest release plus digest."""
     sources = _our_release_repos()
@@ -314,8 +328,9 @@ def main() -> int:
     parser.add_argument(
         "version",
         nargs="?",
-        help="stack version to pin (2.2.0, 2.2.0-rc.1), or `latest` / `rc` to "
-        "discover the newest and repin the DFE images on top of it",
+        help="stack version to pin (2.2.0, 2.2.0-rc.1), or `latest` / `rc` to pin "
+        f"the newest published stack ({REPIN_ENV}=1 also repins the DFE images "
+        "at their newest GitHub releases)",
     )
     args = parser.parse_args()
     requested = (args.version or "").strip()
@@ -325,6 +340,7 @@ def main() -> int:
                 "no VERSION given -- usage: make stack VERSION=X.Y.Z[-rc.N]|latest"
             )
         discover = requested in DISCOVERY_WORDS
+        repin = discover and _repin_requested()
         version = (
             latest_tag(prereleases=DISCOVERY_WORDS[requested], repo=manifest_repo())
             if discover
@@ -338,7 +354,7 @@ def main() -> int:
                 f"stack render for {version!r} produced no *_VERSION pins "
                 f"(source: {source})"
             )
-        if discover:
+        if repin:
             pins |= _latest_image_pins(prereleases=DISCOVERY_WORDS[requested])
         _refuse_undigested(pins)
         # Record WHICH stack these pins came from, alongside them. `make modes`
@@ -346,9 +362,10 @@ def main() -> int:
         # it, so a stale value makes both describe a stack the box is not on.
         # A discovered set records the WORD, so a re-run refreshes rather than
         # freezing on the stack that happened to be newest at the time.
+        resolved = f"  # resolved {version}" + (" + newest DFE images" if repin else "")
         marker = {
             STACK_VERSION_KEY: f"{STACK_VERSION_KEY}={requested}"
-            + (f"  # resolved {version} + newest DFE images" if discover else "")
+            + (resolved if discover else "")
         }
         merged = _merge_into_env(
             DOTENV_FILE.read_text(encoding="utf-8", errors="replace"), pins | marker
@@ -368,11 +385,18 @@ def main() -> int:
             if discover
             else f"  {stamped}  # the stack these came from"
         )
-        if discover:
+        if repin:
             _print(
                 msg=(
                     "This set is NEWER than any certified stack -- for development "
                     "and integration, not a deployment. Pin a version to deploy."
+                )
+            )
+        elif discover:
+            _print(
+                msg=(
+                    f"`{requested}` follows the newest published stack on every "
+                    "re-run -- pin a version to deploy."
                 )
             )
     except (RegistryError, StackError) as error:

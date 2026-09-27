@@ -50,8 +50,9 @@ See [docs/architecture.md](docs/architecture.md).
 - [`oras`](https://oras.land) - `make stack` reads the signed OCI stack-manifest
   through it. Not needed if you render from a local dfe-infra checkout instead
   (`DFE_INFRA_DIR`).
-- [`gh`](https://cli.github.com), logged in - only for `make stack VERSION=latest`
-  or `rc`, which read each component's GitHub releases through it.
+- [`gh`](https://cli.github.com), logged in - only for `DFE_STACK_REPIN_IMAGES=1`,
+  which reads each component's GitHub releases through it. Those repos are
+  private until GA, so it is a HyperI-internal option until then.
 
 ### Initialisation
 
@@ -90,10 +91,11 @@ make ci     # Uses active_profile from service_profiles.yaml
 make down   # Stop everything
 ```
 
-`VERSION=latest` instead pins the newest certified stack and then repins every
-DFE image at the release its GitHub repo marks Latest - development currency, not
-a deployment. `make modes` states the three modes and which one this checkout is
-on.
+`VERSION=latest` instead pins the newest published stack, read anonymously from
+the OCI registry, and moves forward on every re-run - development and
+integration, not a deployment. `DFE_STACK_REPIN_IMAGES=1` also repins every DFE
+image at the release its GitHub repo marks Latest. `make modes` states the three
+modes and which one this checkout is on.
 
 ### 2. Dev mode (builds from component source)
 

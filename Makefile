@@ -314,13 +314,15 @@ login: ## Authenticate docker + oras to the image registry from .env (DFE_GHCR_U
 # `make stack VERSION=X.Y.Z` pins the certified set. `make dial` writes the dial's
 # version.pin to DFE_STACK_VERSION in .env, so `make dial && make stack` pins
 # straight from the deployment dial. An explicit VERSION= on the command line wins.
-# VERSION=latest (rc to include pre-releases) instead takes the newest certified
-# stack and repins every ghcr.io/hyperi-io image at its own newest published tag
-# -- development currency, not a deployment. Still digest-pinned either way.
+# VERSION=latest (rc to include pre-releases) instead pins the newest published
+# stack, read anonymously from the OCI registry. DFE_STACK_REPIN_IMAGES=1 also
+# repins every ghcr.io/hyperi-io image at its component's newest GitHub release,
+# through a gh login that can read the component repos -- development currency,
+# not a deployment. Still digest-pinned either way.
 VERSION ?= $(DFE_STACK_VERSION)
 
 .PHONY: stack
-stack: .env login ## Pin image versions into .env from the DFE stack SSoT (VERSION=X.Y.Z[-rc.N], or latest|rc for newest DFE images)
+stack: .env login ## Pin image versions into .env from the DFE stack SSoT (VERSION=X.Y.Z[-rc.N], or latest|rc for the newest published stack)
 	@python3 scripts/stack.py $(VERSION)
 
 # The deployment dial (deployment.yaml) is the single SSoT a deployment turns.
@@ -350,8 +352,11 @@ ifneq ($(strip $(DFE_DATA_ROOT)),)
 	@mkdir -p $(addprefix $(DFE_DATA_ROOT)/,clickhouse kafka-redpanda kafka-apache archiver dlq-spool engine-config engine-schemas hyperdx-pg)
 endif
 
+# `dev` and `dev-build` clone the component repos from github.com/hyperi-io,
+# which stay private until GA, so both are HyperI-internal until then; `make ci`
+# runs the same stack from the public images.
 .PHONY: dev
-dev: env-files dev-posture down storage-dirs ## Build local DFE images from source and start the dev stack (LOCAL="svc ..." builds only those; AUTH=real for a minted login), then print the access summary
+dev: env-files dev-posture down storage-dirs ## Build local DFE images from source and start the dev stack (LOCAL="svc ..." builds only those; AUTH=real for a minted login), then print the access summary. HyperI-internal: clones private repos
 	docker compose $(DEV_PULL_FLAGS) $(PROFILE_FLAGS) pull
 	python3 scripts/build_dev_images.py $(DEV_OVERLAY_ARG) $(DEV_BUILD)
 	docker compose $(DEV_FLAGS) $(PROFILE_FLAGS) up -d $(ACTIVE_SERVICES)
@@ -359,7 +364,7 @@ dev: env-files dev-posture down storage-dirs ## Build local DFE images from sour
 	@$(MAKE) --no-print-directory creds
 
 .PHONY: dev-build
-dev-build: ## Build local DFE images from source (no start; honours LOCAL)
+dev-build: ## Build local DFE images from source (no start; honours LOCAL). HyperI-internal: clones private repos
 	docker compose $(DEV_PULL_FLAGS) $(PROFILE_FLAGS) pull
 	python3 scripts/build_dev_images.py $(DEV_OVERLAY_ARG) $(DEV_BUILD)
 
