@@ -130,6 +130,68 @@ def test_a_listed_service_missing_from_the_stack_fails_rather_than_passing():
     assert failures == ["kafka-apache: in _IMAGE_VOLUMES but not in the stack"]
 
 
+def _dialling(*, host: str, http: str, native: str) -> dict:
+    engine_keys = {
+        "DFE_CLICKHOUSE_HOST": host,
+        "DFE_CLICKHOUSE_PORT": http,
+        "DFE_CLICKHOUSE_NATIVE_PORT": native,
+    }
+    return {
+        "services": {
+            "dfe-engine": {"environment": dict(engine_keys)},
+            "dfe-hunt-runner": {"environment": dict(engine_keys)},
+            "otel-collector": {
+                "environment": {"CLICKHOUSE_HOST": host, "CLICKHOUSE_PORT": native}
+            },
+        }
+    }
+
+
+def test_every_dialler_on_the_container_ports_passes():
+    config = _dialling(host="clickhouse", http="8123", native="9000")
+
+    assert (
+        check_compose._clickhouse_dial_mismatches(
+            config=config, want=("clickhouse", "8123", "9000")
+        )
+        == []
+    )
+
+
+def test_a_dialler_on_the_moved_host_port_fails():
+    """The shape #75 reported: the engine dialled the publish, not the container."""
+    config = _dialling(host="clickhouse", http="8123", native="9000")
+    config["services"]["dfe-engine"]["environment"]["DFE_CLICKHOUSE_PORT"] = "18123"
+
+    failures = check_compose._clickhouse_dial_mismatches(
+        config=config, want=("clickhouse", "8123", "9000")
+    )
+
+    assert failures == ["dfe-engine: DFE_CLICKHOUSE_PORT=18123, want 8123"]
+
+
+def test_the_collector_is_held_to_the_native_port_it_dials():
+    config = _dialling(host="clickhouse", http="8123", native="9000")
+    config["services"]["otel-collector"]["environment"]["CLICKHOUSE_PORT"] = "19000"
+
+    failures = check_compose._clickhouse_dial_mismatches(
+        config=config, want=("clickhouse", "8123", "9000")
+    )
+
+    assert failures == ["otel-collector: CLICKHOUSE_PORT=19000, want 9000"]
+
+
+def test_a_dialler_missing_from_the_stack_fails_rather_than_passing():
+    config = _dialling(host="clickhouse", http="8123", native="9000")
+    del config["services"]["dfe-hunt-runner"]
+
+    failures = check_compose._clickhouse_dial_mismatches(
+        config=config, want=("clickhouse", "8123", "9000")
+    )
+
+    assert failures == ["dfe-hunt-runner: dials ClickHouse but is not in the stack"]
+
+
 def test_a_service_that_queues_and_waits_passes_and_json_file_is_not_checked():
     config = {
         "services": {

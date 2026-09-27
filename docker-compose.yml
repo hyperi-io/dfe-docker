@@ -140,6 +140,7 @@ services:
     restart: unless-stopped
     deploy: *limits-clickhouse
     ports:
+      # Host publish only: every service on the network dials 8123/9000 directly.
       - ${DFE_BIND_HOST:-127.0.0.1}:${CLICKHOUSE_HTTP_PORT:-8123}:8123
       - ${DFE_BIND_HOST:-127.0.0.1}:${CLICKHOUSE_NATIVE_PORT:-9000}:9000
     environment:
@@ -1128,8 +1129,10 @@ services:
       DFE_HYPERDX_ENABLED: ${DFE_HYPERDX_RESOLVED:-false}
       DFE_HYPERDX_BASE_URL: ${DFE_HYPERDX_RESOLVED_BASE_URL:-}
       DFE_CLICKHOUSE_HOST: ${CLICKHOUSE_HOST:-clickhouse}
-      DFE_CLICKHOUSE_PORT: ${CLICKHOUSE_HTTP_PORT:-8123}
-      DFE_CLICKHOUSE_NATIVE_PORT: ${CLICKHOUSE_NATIVE_PORT:-9000}
+      # The bundled ClickHouse listens on 8123/9000 whatever its host publish is,
+      # so only an external CLICKHOUSE_HOST sets these ports (#75).
+      DFE_CLICKHOUSE_PORT: ${CLICKHOUSE_EXTERNAL_HTTP_PORT:-8123}
+      DFE_CLICKHOUSE_NATIVE_PORT: ${CLICKHOUSE_EXTERNAL_NATIVE_PORT:-9000}
       DFE_CLICKHOUSE_DATABASE: ${CLICKHOUSE_DB:-default}
       DFE_CLICKHOUSE_USERNAME: ${CLICKHOUSE_USERNAME:-default}
       DFE_CLICKHOUSE_PASSWORD: ${CLICKHOUSE_PASSWORD:-}
@@ -1270,9 +1273,10 @@ services:
       # The runner builds the same DFESettings the API does, so it hits the same
       # start-up refusal without this.
       DFE_API_JWT_SECRET: ${DFE_API_JWT_SECRET:-}
+      # Container ports whatever the host publish is, as for dfe-engine (#75).
       DFE_CLICKHOUSE_HOST: ${CLICKHOUSE_HOST:-clickhouse}
-      DFE_CLICKHOUSE_PORT: ${CLICKHOUSE_HTTP_PORT:-8123}
-      DFE_CLICKHOUSE_NATIVE_PORT: ${CLICKHOUSE_NATIVE_PORT:-9000}
+      DFE_CLICKHOUSE_PORT: ${CLICKHOUSE_EXTERNAL_HTTP_PORT:-8123}
+      DFE_CLICKHOUSE_NATIVE_PORT: ${CLICKHOUSE_EXTERNAL_NATIVE_PORT:-9000}
       DFE_CLICKHOUSE_DATABASE: ${CLICKHOUSE_DB:-default}
       DFE_CLICKHOUSE_USERNAME: ${CLICKHOUSE_USERNAME:-default}
       DFE_CLICKHOUSE_PASSWORD: ${CLICKHOUSE_PASSWORD:-}
@@ -1408,8 +1412,9 @@ services:
       # and the daemon is on the host rather than on the compose network.
       - ${DFE_BIND_HOST:-127.0.0.1}:${DFE_OTEL_FLUENT_PORT:-24224}:24224
     environment:
+      # Container port whatever the host publish is, as for dfe-engine (#75).
       CLICKHOUSE_HOST: ${CLICKHOUSE_HOST:-clickhouse}
-      CLICKHOUSE_NATIVE_PORT: ${CLICKHOUSE_NATIVE_PORT:-9000}
+      CLICKHOUSE_PORT: ${CLICKHOUSE_EXTERNAL_NATIVE_PORT:-9000}
       CLICKHOUSE_USERNAME: ${CLICKHOUSE_USERNAME:-default}
       CLICKHOUSE_PASSWORD: ${CLICKHOUSE_PASSWORD:-}
       DFE_OTEL_DATABASE: ${DFE_OTEL_DATABASE:-dfe}

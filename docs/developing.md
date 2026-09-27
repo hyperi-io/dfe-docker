@@ -430,13 +430,15 @@ make test-e2e E2E_TESTS="simple-receiver-to-loader-grpc simple-fetcher-to-loader
 ```
 
 The same reasoning applies to ClickHouse (`CLICKHOUSE_HTTP_PORT`,
-`CLICKHOUSE_NATIVE_PORT`) and every `*_PROMETHEUS_PORT`.
+`CLICKHOUSE_NATIVE_PORT`) and every `*_PROMETHEUS_PORT`: services in the stack
+dial ClickHouse on 8123/9000 whatever its host publish is. The
+`CLICKHOUSE_EXTERNAL_*_PORT` pair is not a host port; it is only for an
+external `CLICKHOUSE_HOST`.
 
 Beside another stack on the same daemon, ports are not enough, because every
 `container_name` is daemon-wide. Set `COMPOSE_PROJECT_NAME`, the ports above,
 and `DFE_E2E_COMPOSE_FILES` naming an extra compose file (`:`-separated) the
-suite chains onto every `up`, one that re-prefixes each `container_name` and
-moves ClickHouse's host publish.
+suite chains onto every `up`, one that re-prefixes each `container_name`.
 
 ## Sharp edges
 

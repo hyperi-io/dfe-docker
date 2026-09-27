@@ -78,6 +78,8 @@ Beyond resolution, these semantic assertions ride along.
   that service's own bind mounts. See `_enrichment_table_failures`.
 - The engine must never receive an empty or `changeme` admin password outside a
   dev posture, because it refuses to start on one. See `_credential_failures`.
+- Moving ClickHouse's host publish must not move the port any service dials it
+  on in-network. See `_clickhouse_dial_failures`.
 - Every service the log-driver fragment ships must queue its lines and wait for
   the collector's ack. See `_log_driver_failures`.
 - Every path a pinned image declares as a VOLUME must be mounted from a named
@@ -258,6 +260,67 @@ _CREDENTIAL_CASES: tuple[tuple[str, str, str, bool], ...] = (
     ("posture unset, no password", "", "", True),
     (f"posture unset, {_DEFAULT_PASSWORD}", "", _DEFAULT_PASSWORD, True),
     ("posture unset, minted password", "", "aMintedValue123", False),
+)
+
+# Each service that dials ClickHouse from inside the stack, by the environment keys
+# carrying the host, HTTP port and native port it dials (None where it uses none).
+_CLICKHOUSE_DIALLERS: dict[str, tuple[str, str | None, str]] = {
+    "dfe-engine": (
+        "DFE_CLICKHOUSE_HOST",
+        "DFE_CLICKHOUSE_PORT",
+        "DFE_CLICKHOUSE_NATIVE_PORT",
+    ),
+    "dfe-hunt-runner": (
+        "DFE_CLICKHOUSE_HOST",
+        "DFE_CLICKHOUSE_PORT",
+        "DFE_CLICKHOUSE_NATIVE_PORT",
+    ),
+    "otel-collector": ("CLICKHOUSE_HOST", None, "CLICKHOUSE_PORT"),
+}
+_CLICKHOUSE_SERVICE = "clickhouse"
+# Every key that moves a ClickHouse address, stripped before each case so the
+# checkout's own .env cannot decide the answer.
+_CLICKHOUSE_ADDRESS_KEYS = frozenset(
+    {
+        "CLICKHOUSE_HOST",
+        "CLICKHOUSE_HTTP_PORT",
+        "CLICKHOUSE_NATIVE_PORT",
+        "CLICKHOUSE_EXTERNAL_HTTP_PORT",
+        "CLICKHOUSE_EXTERNAL_NATIVE_PORT",
+    }
+)
+_EXTERNAL_CLICKHOUSE = "clickhouse.example.invalid"
+# (label, environment, the (host, HTTP, native) every dialler must get, the host
+# ports the bundled container must publish). The publish is asserted too, so a
+# case that moved nothing cannot pass.
+_CLICKHOUSE_DIAL_CASES: tuple[
+    tuple[str, dict[str, str], tuple[str, str, str], tuple[str, ...]], ...
+] = (
+    ("defaults", {}, ("clickhouse", "8123", "9000"), ("8123", "9000")),
+    (
+        "host publish moved",
+        {"CLICKHOUSE_HTTP_PORT": "18123", "CLICKHOUSE_NATIVE_PORT": "19000"},
+        ("clickhouse", "8123", "9000"),
+        ("18123", "19000"),
+    ),
+    (
+        "external host",
+        {"CLICKHOUSE_HOST": _EXTERNAL_CLICKHOUSE},
+        (_EXTERNAL_CLICKHOUSE, "8123", "9000"),
+        ("8123", "9000"),
+    ),
+    (
+        "external host and ports",
+        {
+            "CLICKHOUSE_HOST": _EXTERNAL_CLICKHOUSE,
+            "CLICKHOUSE_HTTP_PORT": "18123",
+            "CLICKHOUSE_NATIVE_PORT": "19000",
+            "CLICKHOUSE_EXTERNAL_HTTP_PORT": "8443",
+            "CLICKHOUSE_EXTERNAL_NATIVE_PORT": "9440",
+        },
+        (_EXTERNAL_CLICKHOUSE, "8443", "9440"),
+        ("18123", "19000"),
+    ),
 )
 
 # Services this project owns and therefore holds to that surface. hyperdx,
@@ -809,6 +872,72 @@ def _credential_fault(*, config: dict) -> str:
     )
 
 
+def _empty_env_file() -> Path:
+    """Write and return an empty env file, so a render loads no .env at all."""
+    _EMPTY_ENV_FILE.parent.mkdir(parents=True, exist_ok=True)
+    _EMPTY_ENV_FILE.write_text("", encoding="utf-8", newline="\n")
+    return _EMPTY_ENV_FILE
+
+
+def _clickhouse_dial_mismatches(
+    *, config: dict, want: tuple[str, str, str]
+) -> list[str]:
+    """Return one message per dialler whose ClickHouse address is not `want`."""
+    services = config.get("services", {})
+    failures = []
+    for name, keys in sorted(_CLICKHOUSE_DIALLERS.items()):
+        if name not in services:
+            failures.append(f"{name}: dials ClickHouse but is not in the stack")
+            continue
+        environment = services[name].get("environment") or {}
+        for key, expected in zip(keys, want, strict=True):
+            if key is None:
+                continue
+            got = str(environment.get(key) or "")
+            if got != expected:
+                failures.append(f"{name}: {key}={got or 'unset'}, want {expected}")
+    return failures
+
+
+def _clickhouse_dial_failures(*, env: dict[str, str]) -> tuple[list[str], int]:
+    """Return (messages, assertions made) for the address the stack dials ClickHouse on.
+
+    CLICKHOUSE_HTTP_PORT and CLICKHOUSE_NATIVE_PORT publish the bundled container
+    on the host, and the container listens on 8123/9000 whatever they say. A
+    service dialling either in-network reaches a port nothing listens on as soon
+    as a second stack moves the publish (#75). An external CLICKHOUSE_HOST is the
+    one case whose port can differ, and CLICKHOUSE_EXTERNAL_*_PORT carries it.
+    """
+    empty_env_file = _empty_env_file()
+    base = {k: v for k, v in env.items() if k not in _CLICKHOUSE_ADDRESS_KEYS}
+    failures: list[str] = []
+    made = 0
+    for label, overrides, want, published in _CLICKHOUSE_DIAL_CASES:
+        made += 1
+        config = _config_json(
+            env={**base, **overrides},
+            files=[COMPOSE_FILE.name],
+            env_file=empty_env_file,
+        )
+        if config is None:
+            failures.append(f"the ClickHouse case {label!r} did not resolve")
+            continue
+        made += len(_CLICKHOUSE_DIALLERS)
+        failures.extend(
+            f"{label}: {message}"
+            for message in _clickhouse_dial_mismatches(config=config, want=want)
+        )
+        got = tuple(
+            port for _, port in _published(config=config, service=_CLICKHOUSE_SERVICE)
+        )
+        if got != published:
+            failures.append(
+                f"{label}: {_CLICKHOUSE_SERVICE} publishes {list(got)}, want "
+                f"{list(published)} -- the case did not move what it claims to"
+            )
+    return failures, made
+
+
 def _credential_failures(*, env: dict[str, str]) -> tuple[list[str], int]:
     """Return (messages, assertions made) for the engine's admin credential.
 
@@ -830,8 +959,7 @@ def _credential_failures(*, env: dict[str, str]) -> tuple[list[str], int]:
     if fault:
         failures.append(fault)
 
-    _EMPTY_ENV_FILE.parent.mkdir(parents=True, exist_ok=True)
-    _EMPTY_ENV_FILE.write_text("", encoding="utf-8", newline="\n")
+    empty_env_file = _empty_env_file()
     base = {
         k: v for k, v in env.items() if k not in (_POSTURE_KEY, _ADMIN_PASSWORD_KEY)
     }
@@ -841,7 +969,7 @@ def _credential_failures(*, env: dict[str, str]) -> tuple[list[str], int]:
         if posture:
             case[_POSTURE_KEY] = posture
         config = _config_json(
-            env=case, files=[COMPOSE_FILE.name], env_file=_EMPTY_ENV_FILE
+            env=case, files=[COMPOSE_FILE.name], env_file=empty_env_file
         )
         if config is None:
             failures.append(f"the credential case {label!r} did not resolve")
@@ -1280,6 +1408,16 @@ def main() -> int:
     _print(
         msg=f"{_ENGINE_SERVICE} never receives an empty or {_DEFAULT_PASSWORD!r} admin "
         f"password outside a dev posture ({credential_made} assertions)"
+    )
+
+    dial_failures, dial_made = _clickhouse_dial_failures(env=env)
+    for message in dial_failures:
+        _print(msg=f"FAIL {message}")
+    if dial_failures:
+        return 1
+    _print(
+        msg="Moving ClickHouse's host publish moves no in-network dial, and an "
+        f"external CLICKHOUSE_HOST is dialled on its own ports ({dial_made} assertions)"
     )
 
     log_failures, log_made = _container_log_failures(env=env)
