@@ -109,8 +109,10 @@ Nothing restarts a container. A change the running app cannot take in place is
 reported by the API as `restart required: make apply SERVICES=<app>`, and one
 to its env file as `recreate required:` with the same command; `make apply`
 creates a per-source container the engine has only just declared and recreates
-one that exists. An app that was IDLE needs no restart, because scalo's gate
-re-reads the file and starts the service on the spot.
+one that exists, and removes the container of a source the engine has deleted
+-- found by the `dfe.instance-of` label only generated services carry. An app
+that was IDLE needs no restart, because scalo's gate re-reads the file and
+starts the service on the spot.
 
 ## A source with its own transform gets its own instance
 

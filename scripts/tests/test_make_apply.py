@@ -1,17 +1,19 @@
 #  Project:      dfe-docker
 #  File:         tests/test_make_apply.py
-#  Purpose:      Assert what the start goals run, read off a dry run
+#  Purpose:      Assert what the start and apply goals run, read off a dry run
 #  Language:     Python
 #
 #  License:      BUSL-1.1
 #  Copyright:    (c) 2026 HYPERI PTY LIMITED
 
-"""The command lines the start goals print, in a copy of the Makefile.
+"""The command lines `make apply` and the start goals print, in a copy of the Makefile.
 
 These goals include .profile.mk, which scripts/resolve_profile.py writes from the
 real profiles and the engine's instance index. A stand-in resolver writes a fixed
-one instead, so what is asserted is the Makefile's own wiring: a start goal on a
-checkout with no .env has it minted before its first compose call.
+one instead, so what is asserted is the Makefile's own wiring: apply removes the
+instance containers the fragment no longer declares before it recreates anything,
+against the same compose project, and a start goal on a checkout with no .env has
+it minted before its first compose call.
 """
 
 import os
@@ -40,6 +42,8 @@ export DFE_OTEL_RESOLVED := false
 if not target.is_file() or target.read_text(encoding="utf-8") != content:
     target.write_text(content, encoding="utf-8")
 '''
+
+_PRUNE = "scripts/instances.py --prune"
 
 
 @pytest.fixture
@@ -82,6 +86,19 @@ def _index(lines: list[list[str]], *, starts: list[str], has: str = "") -> int:
         if tokens[: len(starts)] == starts and (not has or has in tokens):
             return number
     raise AssertionError(f"no {' '.join(starts)} ... {has} line in {lines}")
+
+
+@pytest.mark.parametrize("dev", ["", "1"])
+def test_apply_prunes_the_same_project_before_it_recreates(
+    checkout: Path, dev: str
+) -> None:
+    lines = _dry_run(cwd=checkout, args=["apply", "SERVICES=dfe-loader", f"DEV={dev}"])
+
+    prune = _index(lines, starts=["python3", *_PRUNE.split()])
+    up = _index(lines, starts=["docker", "compose"], has="up")
+    assert prune < up
+    compose_args = lines[up][2 : lines[up].index("up")]
+    assert lines[prune][lines[prune].index("--") + 1 :] == compose_args
 
 
 @pytest.mark.parametrize("goal", ["ci", "dev", "infra"])

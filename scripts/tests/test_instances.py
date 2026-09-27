@@ -14,8 +14,7 @@ dfe-engine writes when it renders each instance's config, so two sources are two
 containers and no source is none.
 """
 
-from __future__ import annotations
-
+import subprocess
 from pathlib import Path
 
 import pytest
@@ -24,6 +23,7 @@ import instances
 
 FETCHER = "dfe-fetcher"
 VRL = "dfe-transform-vrl"
+COMPOSE_ARGS = ["-f", "docker-compose.yml", "-f", "docker-compose.instances.yml"]
 
 
 def _index(env_dir: Path, service: str, *names: str) -> None:
@@ -143,3 +143,126 @@ def test_every_app_the_generator_knows_is_a_committed_compose_service(
     service: str,
 ) -> None:
     assert instances.extendable(service)
+
+
+def test_each_instance_container_is_labelled_with_its_app() -> None:
+    # The label is what tells a generated instance apart from any other orphan.
+    text = instances.fragment({VRL: ["cisco-meraki"]})
+
+    assert f"    labels:\n      {instances.INSTANCE_LABEL}: {VRL}\n" in text
+
+
+def test_the_fragment_in_place_names_the_services_it_declares(tmp_path: Path) -> None:
+    target = tmp_path / "docker-compose.instances.yml"
+    found = {FETCHER: ["okta-audit"], VRL: ["cisco-ios", "cisco-meraki"]}
+    instances.write(found, path=target)
+
+    assert instances.fragment_services(path=target) == set(instances.services(found))
+
+
+def test_no_fragment_declares_no_service(tmp_path: Path) -> None:
+    assert instances.fragment_services(path=tmp_path / "absent.yml") == set()
+
+
+class _Docker:
+    """Answers `docker compose ps` with a fixed listing and records every other call."""
+
+    def __init__(self, listing: str, *, ps_status: int = 0) -> None:
+        self.listing = listing
+        self.ps_status = ps_status
+        self.listed: list[list[str]] = []
+        self.changed: list[list[str]] = []
+
+    def __call__(self, args: list[str], **_: object) -> subprocess.CompletedProcess:
+        if args[:2] == ["docker", "compose"]:
+            self.listed.append(args)
+            return subprocess.CompletedProcess(
+                args, self.ps_status, stdout=self.listing, stderr="no daemon"
+            )
+        self.changed.append(args)
+        return subprocess.CompletedProcess(args, 0, stdout="", stderr="")
+
+
+def _listing(*rows: tuple[str, str, str]) -> str:
+    return "".join(
+        f"{container}\t{service}\t{app}\n" for container, service, app in rows
+    )
+
+
+# One container of each kind a compose project can hold here: a declared
+# instance, a deleted source's instance, a committed service whose name carries
+# an instance's prefix, and a service only a file outside the apply chain
+# declares -- an orphan to the apply exactly as the deleted source is.
+_PROJECT = _listing(
+    ("c1", "dfe-transform-vrl-cisco-ios", VRL),
+    ("c2", "dfe-transform-vrl-cisco-meraki", VRL),
+    ("c3", "dfe-transform-vrl-filebeat", ""),
+    ("c4", "dfe-e2e-sidecar", ""),
+    ("c5", "dfe-loader", ""),
+)
+
+
+def test_apply_removes_a_deleted_sources_container_and_nothing_else(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    docker = _Docker(_PROJECT)
+    monkeypatch.setattr(instances.subprocess, "run", docker)
+
+    status = instances.prune(COMPOSE_ARGS, keep={"dfe-transform-vrl-cisco-ios"})
+
+    assert status == 0
+    assert docker.changed == [["docker", "stop", "c2"], ["docker", "rm", "c2"]]
+
+
+def test_the_listing_is_of_the_applied_project_orphans_included(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    docker = _Docker(_PROJECT)
+    monkeypatch.setattr(instances.subprocess, "run", docker)
+
+    instances.prune(COMPOSE_ARGS, keep=set())
+
+    (listed,) = docker.listed
+    assert listed[: 2 + len(COMPOSE_ARGS) + 1] == [
+        "docker",
+        "compose",
+        *COMPOSE_ARGS,
+        "ps",
+    ]
+    assert "--all" in listed
+    assert "--orphans" in listed
+
+
+def test_nothing_is_removed_while_every_instance_is_declared(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    docker = _Docker(_PROJECT)
+    monkeypatch.setattr(instances.subprocess, "run", docker)
+
+    keep = {"dfe-transform-vrl-cisco-ios", "dfe-transform-vrl-cisco-meraki"}
+    assert instances.prune(COMPOSE_ARGS, keep=keep) == 0
+    assert docker.changed == []
+
+
+def test_a_tier_with_no_fragment_keeps_no_instance(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # The profile removes the fragment where the engine renders nothing, so an
+    # instance container left running is a leftover of the tier before.
+    docker = _Docker(_PROJECT)
+    monkeypatch.setattr(instances.subprocess, "run", docker)
+
+    instances.prune(COMPOSE_ARGS, keep=set())
+
+    assert docker.changed == [
+        ["docker", "stop", "c1", "c2"],
+        ["docker", "rm", "c1", "c2"],
+    ]
+
+
+def test_a_listing_that_fails_removes_nothing(monkeypatch: pytest.MonkeyPatch) -> None:
+    docker = _Docker(_PROJECT, ps_status=1)
+    monkeypatch.setattr(instances.subprocess, "run", docker)
+
+    assert instances.prune(COMPOSE_ARGS, keep=set()) == 1
+    assert docker.changed == []

@@ -394,7 +394,8 @@ up: ci ## Start the stack from the pinned registry images, then print the access
 
 # The command dfe-engine's restart and recreate hints name after a config write:
 # resolving the profile regenerates the instances fragment, so it creates a
-# per-source container the engine has just declared and recreates one that exists.
+# per-source container the engine has just declared, recreates one that exists,
+# and removes one whose source the engine has deleted.
 # DEV=1 recreates from the local images a `make dev` stack runs.
 ifneq ($(strip $(DEV)),)
     APPLY_FLAGS = $(DEV_FLAGS)
@@ -410,13 +411,15 @@ ifneq ($(filter apply apply-services,$(MAKECMDGOALS)),)
 endif
 
 .PHONY: apply
-apply: env-files storage-dirs ## Create or recreate the named services after a config write (SERVICES="svc ..."; DEV=1 for a `make dev` stack), the command dfe-engine's hints name
+apply: env-files storage-dirs ## Create or recreate the named services after a config write, removing the containers of deleted sources (SERVICES="svc ..."; DEV=1 for a `make dev` stack), the command dfe-engine's hints name
 	@$(MAKE) --no-print-directory apply-services
 
 # A second make, because it reads the .profile.mk this one just re-resolved and
-# so checks SERVICES against the instances the engine has declared.
+# so checks SERVICES against the instances the engine has declared. A source the
+# engine deleted has left that fragment, so its container is removed first.
 .PHONY: apply-services
 apply-services:
+	@python3 scripts/instances.py --prune -- $(APPLY_FLAGS) $(PROFILE_FLAGS)
 	docker compose $(APPLY_FLAGS) $(PROFILE_FLAGS) up -d --force-recreate --no-deps $(ACTIVE_SERVICES)
 
 .PHONY: ci-pull
