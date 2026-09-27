@@ -21,6 +21,7 @@ source:
     - filebeat_land
   # Explicit, because the passthrough instance and this one must never share a
   # group: Kafka assigns the union of a group's subscriptions across its members.
+  # dfe-engine gives a source named filebeat this group too, so the two split the topic rather than each reading all of it.
   group_id: dfe-transform-vrl-filebeat
   # The default (latest) skips what reached the topic before the group first joined.
   auto_offset_reset: earliest

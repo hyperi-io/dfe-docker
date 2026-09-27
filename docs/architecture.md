@@ -128,7 +128,7 @@ mode, profile resolution and the checks working.
 
 | Piece | `kafka-filebeat`, on dfe-transform-vrl | `kafka-filebeat-vector`, on dfe-transform-vector |
 |---|---|---|
-| Compose service | `dfe-transform-vrl-filebeat`, the same image, its own metrics port | `dfe-transform-e2e-vector-filebeat`, likewise |
+| Compose service | `dfe-transform-e2e-vrl-filebeat`, the same image, its own metrics port | `dfe-transform-e2e-vector-filebeat`, likewise |
 | Config | `config/transform-vrl/filebeat.yaml` -- `filebeat_land` in, `filebeat_load` out | `config/transform-vector/filebeat.yaml` -- `dfe_source: filebeat-vector` derives both topics |
 | Program | `config/transform-vrl/transforms-filebeat/`, vendored from dfe-transform-vrl | `config/transform-vector/transforms-filebeat/`, the same VRL inside a Vector `remap`, vendored from dfe-transform-vector |
 | Loader | `config/loader/kafka-load-filebeat.yaml` lists `filebeat_load` alongside `main_load` | `config/loader/kafka-load-filebeat-vector.yaml` lists `filebeat-vector_load` |

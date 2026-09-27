@@ -178,10 +178,10 @@ CONTAINER_LOG_SERVICES = ("dfe-engine", "dfe-loader", "dfe-receiver")
 
 # The services whose OWN metrics have to reach the otel database, as name prefixes
 # so a per-source instance (dfe-transform-vrl-filebeat) is covered by its app.
-# dfe-transform-e2e-vector-filebeat is a static extra instance named off that
-# shape, so no app prefix covers it and it is named in full. dfe-ui carries the
-# OTel API and no SDK, and dfe-hunt-runner keeps scalo-py's prometheus backend,
-# so neither pushes.
+# dfe-transform-e2e-vector-filebeat and dfe-transform-e2e-vrl-filebeat are static
+# extra instances named off that shape, so no app prefix covers them and each is
+# named in full. dfe-ui carries the OTel API and no SDK, and dfe-hunt-runner keeps
+# scalo-py's prometheus backend, so neither pushes.
 OTEL_PUSHER_PREFIXES = (
     "dfe-archiver",
     "dfe-engine",
@@ -189,6 +189,7 @@ OTEL_PUSHER_PREFIXES = (
     "dfe-loader",
     "dfe-receiver",
     "dfe-transform-e2e-vector-filebeat",
+    "dfe-transform-e2e-vrl-filebeat",
     "dfe-transform-vector",
     "dfe-transform-vrl",
 )
