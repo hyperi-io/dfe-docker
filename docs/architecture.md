@@ -315,10 +315,9 @@ from the same stack SSoT, so both run identical digests.
 
 Three deliberate asymmetries:
 
-- **One of each app.** Kubernetes deploys a fetcher and a transform per source
-  and the engine writes each instance; Compose declares its services here and
-  creates none at run time, so `single` starts one of each idle instead and a
-  second source of either kind needs Kubernetes.
+- **An operator applies a new source.** Both tiers run a fetcher and a transform
+  per source. On Kubernetes Argo creates the new Deployment; here the engine
+  declares the instance and reports `make apply`, which starts it.
 - **No authentication.** Compose runs god-mode. Envoy fronts both tiers, but its
   OIDC filters stay unconfigured here, because Docker mode can never assume an
   issuer exists. An OIDC issuer (the engine as provider, or an external IdP)
