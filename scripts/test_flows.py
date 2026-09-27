@@ -37,6 +37,7 @@ from pathlib import Path
 import yaml
 
 from _common import _load_dotenv
+from _pipeline import env_or
 
 PROJECT_DIR = Path(__file__).resolve().parent.parent
 SERVICE_PROFILES_FILE = PROJECT_DIR / "service_profiles.yaml"
@@ -126,21 +127,21 @@ def main(argv: list[str] | None = None) -> int:
     # The address the stack publishes on, which is `localhost` for one stack on a
     # box and something else for a second one beside it. The same variable
     # `make post` reads, so the two runners reach the same containers.
-    host = os.environ.get("DFE_POST_HOST", "localhost")
+    host = env_or("DFE_POST_HOST", "localhost")
     env = dict(os.environ)
     env.update(
         {
-            "DFE_E2E_RECEIVER_URL": os.environ.get(
+            "DFE_E2E_RECEIVER_URL": env_or(
                 "DFE_RECEIVER_INGEST_URL",
-                f"http://{host}:{os.environ.get('DFE_RECEIVER_HTTP_PORT', '8080')}/ingest",
+                f"http://{host}:{env_or('DFE_RECEIVER_HTTP_PORT', '8080')}/ingest",
             ),
             "DFE_E2E_CH_HOST": host,
-            "DFE_E2E_CH_PORT": os.environ.get("CLICKHOUSE_HTTP_PORT", "8123"),
-            "DFE_E2E_CH_USER": os.environ.get("CLICKHOUSE_USERNAME", "default"),
+            "DFE_E2E_CH_PORT": env_or("CLICKHOUSE_HTTP_PORT", "8123"),
+            "DFE_E2E_CH_USER": env_or("CLICKHOUSE_USERNAME", "default"),
             "DFE_E2E_CH_PASSWORD": os.environ.get("CLICKHOUSE_PASSWORD", ""),
-            "DFE_E2E_CH_DB": os.environ.get("DFE_OTEL_DATABASE", "dfe"),
-            "DFE_E2E_ENGINE_URL": f"http://{host}:{os.environ.get('DFE_ENGINE_PORT', '8003')}",
-            "DFE_E2E_ENGINE_USER": os.environ.get("DFE_AUTH_LOCAL_ADMIN_NAME", "admin"),
+            "DFE_E2E_CH_DB": env_or("DFE_OTEL_DATABASE", "dfe"),
+            "DFE_E2E_ENGINE_URL": f"http://{host}:{env_or('DFE_ENGINE_PORT', '8003')}",
+            "DFE_E2E_ENGINE_USER": env_or("DFE_AUTH_LOCAL_ADMIN_NAME", "admin"),
             "DFE_E2E_TRANSPORT": transport,
         }
     )

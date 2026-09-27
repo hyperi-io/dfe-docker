@@ -12,6 +12,7 @@
 #    ./scripts/test_source.py                                   # the filebeat case
 #    ./scripts/test_source.py --case cloudwatch --aws-service cloudtrail
 #    ./scripts/test_source.py --case elastic                    # dfe-transform-elastic
+#    ./scripts/test_source.py --case vector                     # dfe-transform-vector
 #    ./scripts/test_source.py -- --keep --per-module 5          # flags for the runner
 #    DFE_INFRA_DIR=../dfe-infra ./scripts/test_source.py
 
@@ -40,6 +41,7 @@ import sys
 from pathlib import Path
 
 from _common import _external_origin, _load_dotenv, _print
+from _pipeline import env_or
 
 PROJECT_DIR = Path(__file__).resolve().parent.parent
 # Compose pins the archiver's container name, so the archive assertion reaches it
@@ -47,11 +49,12 @@ PROJECT_DIR = Path(__file__).resolve().parent.parent
 ARCHIVER_CONTAINER = "dfe-archiver"
 RUNNER_PATH = Path("scripts") / "acceptance" / "source" / "run.py"
 # The cases that push a corpus, and the checkout the runner reads it out of.
-# One repo for both: they feed the same corpus and the elastic case takes its
-# cisco_ios module out of it, so there is nothing of dfe-transform-elastic's own
-# to name. A case absent here passes no --transform-repo, which is the fetched
+# One repo for all three: they feed the same corpus and the elastic case takes
+# its cisco_ios module out of it. The vector case's program comes from the
+# dfe-transform-vector checkout beside the engine repo, which the runner finds
+# itself. A case absent here passes no --transform-repo, which is the fetched
 # cloudwatch one.
-CORPUS_CASES = ("filebeat", "elastic")
+CORPUS_CASES = ("filebeat", "elastic", "vector")
 CORPUS_REPO_ENV_VAR = "DFE_TRANSFORM_VRL_REPO"
 CORPUS_MARKER = Path("pipelines") / "filebeat" / "filebeat.vrl"
 
@@ -188,19 +191,19 @@ def _suite_env(*, host: str, engine_url: str) -> dict[str, str]:
     env = dict(os.environ)
     env.update(
         {
-            "DFE_E2E_RECEIVER_URL": os.environ.get(
+            "DFE_E2E_RECEIVER_URL": env_or(
                 "DFE_RECEIVER_INGEST_URL",
-                f"http://{host}:{os.environ.get('DFE_RECEIVER_HTTP_PORT', '8080')}/ingest",
+                f"http://{host}:{env_or('DFE_RECEIVER_HTTP_PORT', '8080')}/ingest",
             ),
             "DFE_E2E_CH_HOST": host,
-            "DFE_E2E_CH_PORT": os.environ.get("CLICKHOUSE_HTTP_PORT", "8123"),
-            "DFE_E2E_CH_USER": os.environ.get("CLICKHOUSE_USERNAME", "default"),
+            "DFE_E2E_CH_PORT": env_or("CLICKHOUSE_HTTP_PORT", "8123"),
+            "DFE_E2E_CH_USER": env_or("CLICKHOUSE_USERNAME", "default"),
             "DFE_E2E_CH_PASSWORD": os.environ.get("CLICKHOUSE_PASSWORD", ""),
             # The data-path database the loader writes to (config/loader/*.yaml
             # all pin `database: dfe`), never DFE_OTEL_DATABASE's.
-            "DFE_E2E_CH_DB": os.environ.get("DFE_E2E_CH_DB", "dfe"),
+            "DFE_E2E_CH_DB": env_or("DFE_E2E_CH_DB", "dfe"),
             "DFE_E2E_ENGINE_URL": engine_url,
-            "DFE_E2E_ENGINE_USER": os.environ.get("DFE_AUTH_LOCAL_ADMIN_NAME", "admin"),
+            "DFE_E2E_ENGINE_USER": env_or("DFE_AUTH_LOCAL_ADMIN_NAME", "admin"),
             "DFE_E2E_ENGINE_PASSWORD": password,
             "DFE_E2E_ADMIN_PASSWORD": password,
         }
@@ -233,10 +236,10 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "--case",
         default="filebeat",
-        choices=("filebeat", "cloudwatch", "elastic"),
-        help="filebeat and elastic push real lines at the receiver, through "
-        "dfe-transform-vrl and dfe-transform-elastic; cloudwatch lets a fetcher "
-        "pull an AWS upstream",
+        choices=("filebeat", "cloudwatch", "elastic", "vector"),
+        help="filebeat, elastic and vector push real lines at the receiver, through "
+        "dfe-transform-vrl, dfe-transform-elastic and dfe-transform-vector; "
+        "cloudwatch lets a fetcher pull an AWS upstream",
     )
     parser.add_argument(
         "--aws-service",
@@ -263,10 +266,10 @@ def main(argv: list[str] | None = None) -> int:
     # The address the stack publishes on, which is `localhost` for one stack on a
     # box and something else for a second one beside it. The same variable
     # `make post` reads, so the two runners reach the same containers.
-    host = os.environ.get("DFE_POST_HOST", "localhost")
+    host = env_or("DFE_POST_HOST", "localhost")
     ui_origin = _ui_origin(bound=ui_bind, host=host)
-    ui_url = f"{ui_origin}:{os.environ.get('DFE_UI_PORT', '3000')}"
-    engine_url = f"{ui_origin}:{os.environ.get('DFE_ENGINE_PORT', '8003')}"
+    ui_url = f"{ui_origin}:{env_or('DFE_UI_PORT', '3000')}"
+    engine_url = f"{ui_origin}:{env_or('DFE_ENGINE_PORT', '8003')}"
 
     runner = [
         python,
