@@ -62,11 +62,15 @@ ifneq (,$(filter-out $(BOOTSTRAP_GOALS),$(or $(MAKECMDGOALS),help)))
     else
         # On a fresh checkout make parses once before .profile.mk exists, then
         # remakes it and parses again; the name check only means anything on
-        # the second pass, when DFE_SERVICES is populated.
+        # the second pass, when DFE_SERVICES is populated. `apply` skips it: it
+        # names instances declared since .profile.mk was last written, so the
+        # make it starts checks them against the re-resolved list instead.
         ifneq ($(strip $(DFE_SERVICES)),)
-            INVALID_SERVICES := $(filter-out $(DFE_SERVICES),$(SERVICES))
-            ifneq ($(INVALID_SERVICES),)
-                $(error 'SERVICES' contains names not in the resolved stack: $(INVALID_SERVICES). Available: $(DFE_SERVICES))
+            ifeq ($(filter apply,$(MAKECMDGOALS)),)
+                INVALID_SERVICES := $(filter-out $(DFE_SERVICES),$(SERVICES))
+                ifneq ($(INVALID_SERVICES),)
+                    $(error 'SERVICES' contains names not in the resolved stack: $(INVALID_SERVICES). Available: $(DFE_SERVICES))
+                endif
             endif
         endif
         ACTIVE_SERVICES := $(filter $(SERVICES),$(DFE_SERVICES))
@@ -396,11 +400,21 @@ else
     APPLY_FLAGS = -f docker-compose.yml $(STORAGE_FLAGS) $(UI_FLAGS)
 endif
 
+# An empty SERVICES would recreate the whole stack.
+ifneq ($(filter apply apply-services,$(MAKECMDGOALS)),)
+    ifeq ($(strip $(SERVICES)),)
+        $(error apply needs SERVICES="<service> ...", the services the dfe-engine hint names)
+    endif
+endif
+
 .PHONY: apply
 apply: env-files storage-dirs ## Create or recreate the named services after a config write (SERVICES="svc ..."; DEV=1 for a `make dev` stack), the command dfe-engine's hints name
-ifeq ($(strip $(SERVICES)),)
-	$(error apply needs SERVICES="<service> ...", the services the dfe-engine hint names)
-endif
+	@$(MAKE) --no-print-directory apply-services
+
+# A second make, because it reads the .profile.mk this one just re-resolved and
+# so checks SERVICES against the instances the engine has declared.
+.PHONY: apply-services
+apply-services:
 	docker compose $(APPLY_FLAGS) $(PROFILE_FLAGS) up -d --force-recreate --no-deps $(ACTIVE_SERVICES)
 
 .PHONY: ci-pull
