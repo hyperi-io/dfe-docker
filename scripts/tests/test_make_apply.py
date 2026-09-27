@@ -101,6 +101,48 @@ def test_apply_prunes_the_same_project_before_it_recreates(
     assert lines[prune][lines[prune].index("--") + 1 :] == compose_args
 
 
+@pytest.mark.parametrize("dev", ["", "1"])
+def test_a_bare_apply_prunes_and_recreates_nothing(checkout: Path, dev: str) -> None:
+    # The engine names no command after a delete, and an up with no service
+    # names recreates the whole stack.
+    lines = _dry_run(cwd=checkout, args=["apply", f"DEV={dev}"])
+
+    _index(lines, starts=["python3", *_PRUNE.split()])
+    assert [tokens for tokens in lines if tokens[:2] == ["docker", "compose"]] == []
+
+
+@pytest.mark.parametrize("dev", ["", "1"])
+def test_a_bare_apply_prunes_the_project_a_named_one_does(
+    checkout: Path, dev: str
+) -> None:
+    def prune_args(lines: list[list[str]]) -> list[str]:
+        prune = lines[_index(lines, starts=["python3", *_PRUNE.split()])]
+        return prune[prune.index("--") + 1 :]
+
+    bare = _dry_run(cwd=checkout, args=["apply", f"DEV={dev}"])
+    named = _dry_run(cwd=checkout, args=["apply", "SERVICES=dfe-loader", f"DEV={dev}"])
+
+    assert prune_args(bare) == prune_args(named)
+
+
+def test_a_bare_apply_prunes_against_the_profile_it_re_resolves(
+    checkout: Path,
+) -> None:
+    # Written before the engine declared any instance, so it chains no fragment.
+    (checkout / ".profile.mk").write_text(
+        "export PROFILE_FLAGS := --profile clickhouse\n"
+        "export DFE_SERVICES := dfe-loader\n"
+        "export DFE_INSTANCES_RESOLVED := false\n",
+        encoding="utf-8",
+        newline="\n",
+    )
+
+    lines = _dry_run(cwd=checkout, args=["apply"])
+
+    prune = lines[_index(lines, starts=["python3", *_PRUNE.split()])]
+    assert "docker-compose.instances.yml" in prune
+
+
 @pytest.mark.parametrize("goal", ["ci", "dev", "infra"])
 def test_a_start_goal_mints_env_before_its_first_compose_call(
     checkout: Path, goal: str
