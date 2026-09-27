@@ -128,9 +128,12 @@ LOADER_PROMETHEUS_PORT = "9091"
 # record is consumed and a topic label is the subscription, not the config.
 LOADER_TOPIC_METRIC = "rdkafka_topic_partition_consumer_lag"
 LOADER_TOPIC_LABEL = "topic"
-# The resolver re-runs every 60s and rdkafka publishes its statistics every 5s,
-# so this covers two missed refreshes rather than an expected duration.
-LOADER_TOPIC_TIMEOUT_SECONDS = 150.0
+# How long a new topic can wait for the loader to subscribe: scalo-rs
+# `kafka.topic_refresh_secs`, which dfe-loader has no setting for and leaves at 60.
+LOADER_TOPIC_REFRESH_SECONDS = 60.0
+# rdkafka publishes its statistics every 5s, so this covers two missed refreshes
+# rather than an expected duration.
+LOADER_TOPIC_TIMEOUT_SECONDS = 2 * LOADER_TOPIC_REFRESH_SECONDS + 30.0
 LOADER_TOPIC_INTERVAL_SECONDS = 5.0
 # `.profile.mk`'s resolved answer to "does this deployment have a bus", so the
 # claim is skipped on the gRPC tiers rather than failing on them.
@@ -280,11 +283,11 @@ IDLE_GAUGE = "pipeline_idle"
 # Routing assertion. A source created through the API compiles a receiver rule,
 # and on this target the engine renders that rule into the file the RUNNING
 # receiver polls. The receiver re-reads on a 5s mtime poll and rebuilds its
-# router in place, so the wait is that poll plus the trip through the broker and
-# the loader's batch -- nothing here waits on a deploy controller.
+# router in place; nothing here waits on a deploy controller. The window is
+# built from those parts in `_routing_timeout_seconds`.
 ROUTING_SERVICES = ("dfe-engine", "dfe-receiver", "dfe-loader")
 ROUTING_SOURCE_PREFIX = "postroute"
-ROUTING_TIMEOUT_SECONDS = 45.0
+RECEIVER_CONFIG_POLL_SECONDS = 5.0
 ROUTING_INTERVAL_SECONDS = 3.0
 # `.profile.mk`'s answer to "does the engine render this tier's app config": the
 # claim is only makeable where it does.
@@ -1001,6 +1004,11 @@ def _metric_label_values(body: str, name: str, label: str) -> set[str]:
     return found
 
 
+def _tier_has_bus() -> bool:
+    """Whether the resolved tier carries its records over a broker."""
+    return _profile_mk_value(key=TRANSPORT_BUS_KEY)[:1] == ["true"]
+
+
 def _verify_loader_subscription() -> Claim:
     """Prove the loader is fetching a topic, on a tier that has a bus.
 
@@ -1014,7 +1022,7 @@ def _verify_loader_subscription() -> Claim:
     check ahead of the injection fails a loader that is fetching correctly. After
     rows land it confirms the subscription; after they do not, it is the diagnosis.
     """
-    if _profile_mk_value(key=TRANSPORT_BUS_KEY)[:1] != ["true"]:
+    if not (_tier_has_bus()):
         _print(msg="SKIP  this tier has no bus -- the loader is handed its events")
         return SKIPPED
     if LOADER_SERVICE not in set(_resolved_services()):
@@ -1207,6 +1215,24 @@ def _verify_routing_applied(*, database: str) -> Claim:
         _remove(f"{base}/sources/{name}", kind="source", name=name, token=token)
 
 
+def _routing_timeout_seconds(*, bus: bool) -> float:
+    """How long the routing claim waits for the new source's first row.
+
+    The receiver takes the rule within one config poll. On a tier with a bus the
+    record then waits in the source's new landing topic until the loader's next
+    topic refresh subscribes to it, which can be a whole interval after the engine
+    created the topic. After that it is the trip the INGEST claim is given.
+
+    The loader's subscription itself cannot be waited on: its only per-topic
+    series needs a committed offset, and the loader commits once the row is in
+    ClickHouse, which is the row this claim is already polling for.
+    """
+    window = RECEIVER_CONFIG_POLL_SECONDS + LAND_TIMEOUT_SECONDS
+    if bus:
+        window += LOADER_TOPIC_REFRESH_SECONDS
+    return window
+
+
 def _await_routed_row(*, database: str, name: str) -> int:
     """Post to the receiver until a record lands in the new source's own table."""
     try:
@@ -1215,6 +1241,8 @@ def _await_routed_row(*, database: str, name: str) -> int:
         _print(msg=f"FAIL  {reason}")
         return 1
     marker = _run_id()
+    bus = _tier_has_bus()
+    timeout = _routing_timeout_seconds(bus=bus)
 
     def _landed():
         # Re-posted every attempt: before the receiver has re-read its config the
@@ -1231,16 +1259,22 @@ def _await_routed_row(*, database: str, name: str) -> int:
 
     landed = poll_until(
         _landed,
-        timeout=ROUTING_TIMEOUT_SECONDS,
+        timeout=timeout,
         interval=ROUTING_INTERVAL_SECONDS,
         done=lambda result: bool(result),
         on_attempt=_report,
     )
     if not (landed):
+        loader = (
+            f", or {LOADER_SERVICE} never subscribed to its landing topic across a "
+            f"{LOADER_TOPIC_REFRESH_SECONDS:.0f}s topic refresh"
+            if bus
+            else ""
+        )
         _print(
-            msg=f"FAIL  nothing reached {database}.{name} within "
-            f"{ROUTING_TIMEOUT_SECONDS:.0f}s, so the rule the engine compiled for "
-            f"{name!r} never reached the running receiver via {service}"
+            msg=f"FAIL  nothing reached {database}.{name} within {timeout:.0f}s, so "
+            f"the rule the engine compiled for {name!r} never reached the running "
+            f"receiver via {service}{loader}"
         )
         return 1
     _print(
