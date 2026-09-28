@@ -1337,7 +1337,9 @@ services:
       # leaves the origin the browser arrived on -- so this always carries a
       # value, and DFE_EXTERNAL_ORIGIN is what an operator moves.
       NEXTAUTH_URL: ${DFE_EXTERNAL_ORIGIN:-http://localhost}:${DFE_UI_PORT:-3000}
-      OTEL_EXPORTER_OTLP_ENDPOINT: ${DFE_OTEL_EXPORTER_ENDPOINT:-}
+      # The UI's exporter has no gRPC transport, so it takes the collector's HTTP port.
+      OTEL_EXPORTER_OTLP_ENDPOINT: ${DFE_OTEL_EXPORTER_HTTP_ENDPOINT:-}
+      OTEL_EXPORTER_OTLP_PROTOCOL: http/protobuf
       OTEL_SERVICE_NAME: dfe-ui
     healthcheck:
       # The image ships no curl; node's own fetch does it. `/livez` is a real

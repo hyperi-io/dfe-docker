@@ -122,6 +122,17 @@ OTEL_SERVICES = ["otel-collector"]
 # endpoint of its own. Empty exports nothing, which is the stack default.
 OTEL_ENDPOINT_ENV_VAR = "DFE_OTEL_EXPORTER_ENDPOINT"
 OTEL_BUNDLED_ENDPOINT = "http://otel-collector:4317"
+# dfe-ui's exporter speaks OTLP over HTTP only, so it gets the gRPC endpoint's
+# HTTP twin: the same collector on 4318.
+OTEL_HTTP_ENDPOINT_ENV_VAR = "DFE_OTEL_EXPORTER_HTTP_ENDPOINT"
+
+
+def otel_http_endpoint(endpoint: str) -> str:
+    """The OTLP/HTTP endpoint beside an OTLP/gRPC one; any other port is kept."""
+    if endpoint.endswith(":4317"):
+        return endpoint[: -len("4317")] + "4318"
+    return endpoint
+
 
 # The Rust services push whenever the endpoint is set. dfe-engine also needs its
 # backend switched, because scalo-py's CLI defaults it to prometheus (scalo-py#11).
@@ -681,6 +692,9 @@ def main(argv: Sequence[str] = ()) -> int:
                 or OTEL_BUNDLED_ENDPOINT
             )
             lines.append(f"export {OTEL_ENDPOINT_ENV_VAR} := {endpoint}")
+            lines.append(
+                f"export {OTEL_HTTP_ENDPOINT_ENV_VAR} := {otel_http_endpoint(endpoint)}"
+            )
             backend = (
                 os.environ.get(OTEL_ENGINE_BACKEND_ENV_VAR, "").strip()
                 or OTEL_ENGINE_BACKEND
