@@ -254,8 +254,10 @@ else ifneq ($(strip $(STORAGE_CHAIN))$(strip $(UI_CHAIN)),)
     export COMPOSE_FILE := docker-compose.yml:docker-compose.override.yml$(STORAGE_CHAIN)$(UI_CHAIN)
 endif
 
+# The gated infra UIs go to the resolver, so the engine's admin links name only
+# what the host publishes.
 .profile.mk: FORCE
-	@python3 scripts/resolve_profile.py
+	@python3 scripts/resolve_profile.py $(if $(KAFBAT_GATED),--unpublished kafbat) $(if $(HYPERDX_GATED),--unpublished hyperdx)
 
 .PHONY: FORCE
 FORCE:
