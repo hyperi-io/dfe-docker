@@ -1,0 +1,3 @@
+{"event_category":"auth","event_type":"login_failure","user_name":"root","service":"sshd","src_ip":"203.0.113.17","dst_ip":"10.10.7.36"}
+{"event_category":"auth","event_type":"login_failure","user_name":"root","service":"sshd","src_ip":"198.51.100.42","dst_ip":"10.10.7.36"}
+{"event_category":"auth","event_type":"login_failure","user_name":"root","service":"sshd","src_ip":"192.0.2.201","dst_ip":"10.10.3.92"}

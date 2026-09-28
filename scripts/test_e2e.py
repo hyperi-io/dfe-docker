@@ -45,13 +45,24 @@ from datetime import datetime, timezone
 from pathlib import Path
 from shutil import rmtree, which
 from urllib.error import HTTPError, URLError
+from urllib.parse import quote
 from urllib.request import Request, urlopen
 
+import _detection
 import _outage
+import post
 from _common import FALSY, _config_argument, _load_dotenv, _use_mounted_configs
 from _pipeline import MARKER_EXPRESSIONS  # noqa: F401 - re-exported for callers
 from _pipeline import ch_marker_count as _ch_marker_count
-from _pipeline import clickhouse_url, env_or, expand_env, otel_fresh_counts, poll_until
+from _pipeline import (
+    ch_int,
+    clickhouse_url,
+    env_or,
+    escape_literal,
+    expand_env,
+    otel_fresh_counts,
+    poll_until,
+)
 
 
 # ==============================================================================
@@ -114,9 +125,9 @@ EXTRA_COMPOSE_FILES_ENV_VAR = "DFE_E2E_COMPOSE_FILES"
 # ------------------------------------------------------------------------------
 SCHEMA_AUTHORITY_SERVICE = "dfe-engine"
 SCHEMA_AUTHORITY_PROFILE = "core"
-# The rest of the `core` profile: the user-facing surface a complete-stack test
-# asserts against. dfe-engine is started separately, earlier, as the authority.
-CORE_SURFACE_SERVICES = ["dfe-ui", "dfe-proxy"]
+# resolve_profile.py's `core` footprint, less dfe-engine, which starts first.
+HUNT_RUNNER_SERVICE = "dfe-hunt-runner"
+CORE_SURFACE_SERVICES = [HUNT_RUNNER_SERVICE, "dfe-ui", "dfe-proxy"]
 OTEL_PROFILE = "otel"
 OTEL_SERVICE = "otel-collector"
 OTEL_ENDPOINT_ENV_VAR = "DFE_OTEL_EXPORTER_ENDPOINT"
@@ -231,6 +242,23 @@ OUTAGE_SETTLE_TIMEOUT = 300
 OUTAGE_POLL_SECONDS = 5
 
 # ------------------------------------------------------------------------------
+# Detection Tests
+# - A test with a `detection:` block creates a rule and a hunt through the engine
+#   API and asserts the hunt detects exactly the events that match.
+#   docs/developing.md#rules-and-hunts----exactly-the-matching-events
+# ------------------------------------------------------------------------------
+DETECTION_TABLE = "detection"
+DETECTION_CUSTOMER = "e2e"
+DETECTION_POLL_SECONDS = 3
+# The runner beats at the top of every 15s poll, from its first one.
+RUNNER_ALIVE_TIMEOUT = 120
+# The runner re-reads hunts each poll, and a hunt with no watermark is due at once.
+HUNT_PICKUP_TIMEOUT = 120
+DETECTION_LAND_TIMEOUT = 60
+# A queued run waits one poll, and the next scheduled fire a minute on is the backstop.
+HUNT_COVER_TIMEOUT = 150
+
+# ------------------------------------------------------------------------------
 # Logging Related
 # - Custom log levels for test results (skip/pass/fail) and coloured output
 # ------------------------------------------------------------------------------
@@ -265,6 +293,7 @@ class TestContext:
 #   - compose_profiles: resolved compose profiles including infra (clickhouse, kafka backend profile, kafka-ui)
 #   - services: resolved {dfe-service: project-relative config path}
 #   - outage: {service, seconds, sources} for a test that stops a service under load
+#   - detection: {where, matching, other} for a test that proves a rule and a hunt
 # ------------------------------------------------------------------------------
 @dataclass
 class TestCase:
@@ -281,6 +310,7 @@ class TestCase:
     extra_services: list[str] = field(default_factory=list)
     expected_http: list[dict] = field(default_factory=list)
     outage: dict = field(default_factory=dict)
+    detection: dict = field(default_factory=dict)
 
 
 # ------------------------------------------------------------------------------
@@ -2154,6 +2184,446 @@ def run_outage(ctx, test, services, ingest_url):
 
 
 # ==============================================================================
+# Detection Tests
+# - A rule and a hunt created through the engine API, events that must match and
+#   events that must not, and the hunt's detections read back as exactly the
+#   matching rows
+# ==============================================================================
+
+
+# ------------------------------------------------------------------------------
+# Engine Call
+# - One engine API request over the compose network, the way `make post` makes
+#   it, as (status, body) with status 0 and the reason when nothing answered
+# ------------------------------------------------------------------------------
+def engine_call(method, path, token, payload=None):
+    url = f"{post._engine_base()}{path}"
+    try:
+        if method == "GET":
+            return post._api_get_json(url, token=token)
+        if method == "POST":
+            return post._api_post_json(url, payload or {}, token=token)
+        return post._api_delete(url, token=token), ""
+    except post.ApiUnreachable as error:
+        return 0, str(error)
+
+
+# ------------------------------------------------------------------------------
+# Hunt Row
+# - This hunt's row off the hunts list, which carries its run state, or None
+# ------------------------------------------------------------------------------
+def hunt_row(token, hunt):
+    status, body = engine_call("GET", f"/hunts?search={quote(hunt)}", token)
+    if status != 200 or not (isinstance(body, dict)):
+        return None
+    for row in body.get("items") or []:
+        if isinstance(row, dict) and row.get("name") == hunt:
+            return row
+    return None
+
+
+# ------------------------------------------------------------------------------
+# Detection Events
+# - The events of each set named in the test's `detection:` block
+# ------------------------------------------------------------------------------
+def detection_events(test):
+    events = {}
+    for kind in (_detection.MATCHING, _detection.OTHER):
+        lines = (PROJECT_DIR / test.detection[kind]).read_text(encoding="utf-8")
+        events[kind] = [json.loads(line) for line in lines.splitlines() if line.strip()]
+    return events
+
+
+# ------------------------------------------------------------------------------
+# Landed Labels
+# - {label: [row uuid]} for every row of this run in the landing table
+# ------------------------------------------------------------------------------
+def detection_landed(test):
+    marker = escape_literal(test.marker)
+    raw = ch_query(
+        f"SELECT toString(_uuid), {_detection.LABEL_EXPRESSION} "
+        f"FROM {test.database}.{test.table} "
+        f"WHERE {MARKER_EXPRESSIONS[0]} = '{marker}' FORMAT TabSeparated"
+    )
+    return _detection.landed_labels(raw)
+
+
+# ------------------------------------------------------------------------------
+# Last Load
+# - When the last of this run's rows was loaded, in epoch milliseconds, or None
+# ------------------------------------------------------------------------------
+def detection_last_load(test):
+    marker = escape_literal(test.marker)
+    raw = ch_query(
+        f"SELECT toUnixTimestamp64Milli(max(_timestamp_load)) "
+        f"FROM {test.database}.{test.table} "
+        f"WHERE {MARKER_EXPRESSIONS[0]} = '{marker}'"
+    )
+    try:
+        return int(raw)
+    except ValueError:
+        return None
+
+
+# ------------------------------------------------------------------------------
+# Runner Alive
+# - A hunt runner has beaten within its last two polls, by the engine's account
+# ------------------------------------------------------------------------------
+def runner_alive(ctx, test, token):
+    def _running():
+        status, body = engine_call("GET", "/hunts/status", token)
+        return status == 200 and isinstance(body, dict) and body.get("running") is True
+
+    if poll_until(
+        _running, timeout=RUNNER_ALIVE_TIMEOUT, interval=DETECTION_POLL_SECONDS
+    ):
+        mark_pass(ctx, f"[{test.name}] GET /hunts/status reports a live hunt runner")
+        return True
+    mark_fail(
+        ctx,
+        f"[{test.name}] GET /hunts/status reported no live hunt runner within "
+        f"{RUNNER_ALIVE_TIMEOUT}s, though '{HUNT_RUNNER_SERVICE}' was started",
+    )
+    report_unready(HUNT_RUNNER_SERVICE)
+    return False
+
+
+# ------------------------------------------------------------------------------
+# Create Rule
+# - The rule over this run's rows, created and checked as the engine stored it
+# ------------------------------------------------------------------------------
+def create_detection_rule(ctx, test, token, rule):
+    sql = _detection.rule_sql(
+        database=test.database,
+        table=test.table,
+        marker=test.marker,
+        where=test.detection["where"],
+    )
+    status, body = engine_call(
+        "POST",
+        "/rules",
+        token,
+        {
+            "name": rule,
+            "severity": _detection.SEVERITY,
+            "source_type": "raw",
+            "user_sql": sql,
+        },
+    )
+    if status != 201 or not (isinstance(body, dict)):
+        mark_fail(ctx, f"[{test.name}] POST /rules returned HTTP {status}: {body}")
+        return False
+    stored = body.get("rule") or {}
+    source = f"{stored.get('source_db')}.{stored.get('source_table')}"
+    if body.get("sql_errors") or source != f"{test.database}.{test.table}":
+        mark_fail(
+            ctx,
+            f"[{test.name}] the engine stored rule '{rule}' over '{source}' with SQL "
+            f"errors {body.get('sql_errors')}",
+        )
+        return False
+    mark_pass(ctx, f"[{test.name}] POST /rules created '{rule}' over '{source}'")
+    return True
+
+
+# ------------------------------------------------------------------------------
+# Create Hunt
+# - A one-rule hunt over the landing table into the detection table, which must
+#   then be picked up by the runner that is already running
+# ------------------------------------------------------------------------------
+def create_detection_hunt(ctx, test, token, hunt, rule):
+    request = _detection.hunt_request(
+        name=hunt,
+        rule=rule,
+        customer=DETECTION_CUSTOMER,
+        source=f"{test.database}.{test.table}",
+        target=f"{test.database}.{DETECTION_TABLE}",
+    )
+    status, body = engine_call("POST", "/hunts", token, request)
+    if status != 201:
+        mark_fail(ctx, f"[{test.name}] POST /hunts returned HTTP {status}: {body}")
+        return False
+    mark_pass(ctx, f"[{test.name}] POST /hunts created '{hunt}' on '{request['cron']}'")
+
+    row = poll_until(
+        lambda: hunt_row(token, hunt),
+        timeout=HUNT_PICKUP_TIMEOUT,
+        interval=DETECTION_POLL_SECONDS,
+        done=lambda got: got is not None and got.get("last_run") is not None,
+    )
+    if row is None or row.get("last_run") is None:
+        mark_fail(
+            ctx,
+            f"[{test.name}] the running hunt runner committed no window for '{hunt}' "
+            f"within {HUNT_PICKUP_TIMEOUT}s of its creation (hunts list row: {row})",
+        )
+        return False
+    mark_pass(
+        ctx,
+        f"[{test.name}] the running hunt runner picked up '{hunt}' without a restart "
+        f"(first window ends {row['last_run']})",
+    )
+    return True
+
+
+# ------------------------------------------------------------------------------
+# Send Detection Events
+# - Both sets, each event labelled, until every one has landed in the table
+# ------------------------------------------------------------------------------
+def send_detection_events(ctx, test, ingest_url, events):
+    bodies = _detection.labelled_events(
+        marker=test.marker, test_name=test.name, source=test.table, events=events
+    )
+    refused = []
+    for label, body in bodies:
+        try:
+            status = http_post(ingest_url, body)
+        except OSError:
+            status = 0
+        if status < 200 or status >= 300:
+            refused.append(f"{label} ({status})")
+    if refused:
+        mark_fail(ctx, f"[{test.name}] ingest refused {', '.join(refused)}")
+        return None
+    mark_pass(ctx, f"[{test.name}] ingest accepted all {len(bodies)} labelled events")
+
+    labels = {label for label, _ in bodies}
+    landed = poll_until(
+        lambda: detection_landed(test),
+        timeout=DETECTION_LAND_TIMEOUT,
+        interval=DETECTION_POLL_SECONDS,
+        done=lambda got: labels <= set(got),
+        on_attempt=report_changes(
+            lambda got: f"{len(set(got) & labels)}/{len(labels)} landed"
+        ),
+    )
+    missing = sorted(labels - set(landed))
+    if missing:
+        readable = ch_marker_count(test.database, test.table, test.marker)
+        mark_fail(
+            ctx,
+            f"[{test.name}] {len(missing)}/{len(labels)} events never reached "
+            f"'{test.database}.{test.table}' within {DETECTION_LAND_TIMEOUT}s: "
+            f"{', '.join(missing)} (rows carrying this run's marker: {readable})",
+        )
+        return None
+    rows = sum(len(uuids) for uuids in landed.values())
+    mark_pass(
+        ctx,
+        f"[{test.name}] all {len(labels)} events landed in "
+        f"'{test.database}.{test.table}' ({rows} row(s))",
+    )
+    return landed
+
+
+# ------------------------------------------------------------------------------
+# Queue Run
+# - Asks for a run now, once the requested fire is past the last row's load
+#   time, so the queued window covers every event
+# ------------------------------------------------------------------------------
+def queue_detection_run(ctx, test, token, hunt, last_load_ms):
+    time.sleep(max(0.0, min(2.0, last_load_ms / 1000 + 1.0 - time.time())))
+    status, body = engine_call("POST", f"/hunts/{quote(hunt)}/run", token)
+    if status != 202 or not (isinstance(body, dict)) or body.get("queued") is not True:
+        mark_fail(
+            ctx,
+            f"[{test.name}] POST /hunts/{hunt}/run returned HTTP {status}: {body} -- "
+            "waiting on the schedule instead",
+        )
+        return None
+    fire = int(body.get("requested_fire", 0))
+    mark_pass(
+        ctx,
+        f"[{test.name}] POST /hunts/{hunt}/run queued a run at {fire} "
+        f"(runner poll {body.get('poll_seconds')}s)",
+    )
+    return fire
+
+
+# ------------------------------------------------------------------------------
+# Await Coverage
+# - The hunt's committed windows reach past the last row's load time, after
+#   which every detection this run can produce has been written
+# ------------------------------------------------------------------------------
+def await_detection_coverage(ctx, test, token, hunt, last_load_ms, queued_fire):
+    def _render(row):
+        if row is None:
+            return "hunts list did not answer"
+        return (
+            f"last_run={row.get('last_run')} run_requested={row.get('run_requested')}"
+        )
+
+    def _covered(row):
+        last_run = (row or {}).get("last_run")
+        return last_run is not None and last_run * 1000 > last_load_ms
+
+    row = poll_until(
+        lambda: hunt_row(token, hunt),
+        timeout=HUNT_COVER_TIMEOUT,
+        interval=DETECTION_POLL_SECONDS,
+        done=_covered,
+        on_attempt=report_changes(_render),
+    )
+    if not (_covered(row)):
+        mark_fail(
+            ctx,
+            f"[{test.name}] '{hunt}' committed no window past the last event's load "
+            f"time within {HUNT_COVER_TIMEOUT}s ({_render(row)})",
+        )
+        return False
+    # A committed run leaves its own fire as the watermark.
+    by = (
+        "the queued run"
+        if queued_fire is not None and row["last_run"] == queued_fire
+        else "a scheduled fire"
+    )
+    mark_pass(
+        ctx,
+        f"[{test.name}] '{hunt}' scanned past the last event (last_run "
+        f"{row['last_run']}, covered by {by}, "
+        f"last run wrote {row.get('last_run_rows')})",
+    )
+    return True
+
+
+# ------------------------------------------------------------------------------
+# Verify Detections
+# - The hunt's rows in the detection table are exactly the matching events
+# ------------------------------------------------------------------------------
+def verify_detections(ctx, test, hunt, rule, landed, events):
+    this_hunt = f"hunt_name = '{escape_literal(hunt)}'"
+    held = f"FROM {test.database}.{DETECTION_TABLE} WHERE {this_hunt}"
+    if ch_int(f"SELECT count() {held}") is None:
+        mark_fail(
+            ctx,
+            f"[{test.name}] '{test.database}.{DETECTION_TABLE}' could not be read, so "
+            "no hunt on this stack has anywhere to land",
+        )
+        return
+    raw = ch_query(
+        f"SELECT toString(matched_uuid), rule_id, severity {held} FORMAT TabSeparated"
+    )
+    found = _detection.detections(raw)
+    matching = [
+        _detection.event_label(_detection.MATCHING, index)
+        for index in range(len(events[_detection.MATCHING]))
+    ]
+    other = [
+        _detection.event_label(_detection.OTHER, index)
+        for index in range(len(events[_detection.OTHER]))
+    ]
+    problems = _detection.verdict(
+        landed=landed, found=found, matching=matching, other=other, rule=rule
+    )
+    if problems:
+        mark_fail(
+            ctx,
+            f"[{test.name}] '{test.database}.{DETECTION_TABLE}' holds {len(found)} "
+            f"detection(s) for '{hunt}': {'; '.join(problems)}",
+        )
+        return
+    mark_pass(
+        ctx,
+        f"[{test.name}] '{test.database}.{DETECTION_TABLE}' holds exactly the "
+        f"{len(matching)} matching event(s) and none of the {len(other)} other(s), "
+        f"under rule '{rule}' at severity {_detection.SEVERITY}",
+    )
+
+
+# ------------------------------------------------------------------------------
+# Remove Detection Objects
+# - Deletes what the test created, the hunt first because the engine refuses to
+#   delete a rule a hunt still names, and proves both are gone
+# ------------------------------------------------------------------------------
+def remove_detection_objects(ctx, test, token, created):
+    left = []
+    for kind, name in created:
+        path = f"/{kind}s/{quote(name)}"
+        deleted, _ = engine_call("DELETE", path, token)
+        status, _ = engine_call("GET", path, token)
+        if status != 404:
+            left.append(f"{kind} '{name}' (DELETE {deleted}, then GET {status})")
+    if left:
+        mark_fail(ctx, f"[{test.name}] left behind on the stack: {', '.join(left)}")
+    elif created:
+        mark_pass(
+            ctx,
+            f"[{test.name}] removed {' and '.join(f'{k} {n!r}' for k, n in created)}",
+        )
+
+
+# ------------------------------------------------------------------------------
+# Run Detection
+# - Rule, hunt, first window, events, a queued run, the verdict and the cleanup,
+#   each its own verdict line
+# ------------------------------------------------------------------------------
+def run_detection(ctx, test, ingest_url):
+    if HUNT_RUNNER_SERVICE not in test.extra_services:
+        mark_skip(
+            ctx,
+            f"[{test.name}] profile '{test.profile}' runs no '{HUNT_RUNNER_SERVICE}' "
+            "(core footprint off), so no hunt can run",
+        )
+        return
+
+    # The engine container is new for every test, so no earlier lookup holds.
+    post._api_container.cache_clear()
+    try:
+        login = post._login(post._engine_base())
+    except post.ApiUnreachable as error:
+        mark_fail(ctx, f"[{test.name}] could not reach the engine API: {error}")
+        return
+    if login.fault:
+        mark_fail(
+            ctx,
+            f"[{test.name}] {login.fault} -- the rule and the hunt are made through "
+            "the engine API",
+        )
+        return
+    if not (runner_alive(ctx, test, login.token)):
+        return
+
+    events = detection_events(test)
+    rule = f"{test.marker}-rule"
+    hunt = test.marker
+    created = []
+    landed = None
+    try:
+        if not (create_detection_rule(ctx, test, login.token, rule)):
+            return
+        created.insert(0, ("rule", rule))
+        if not (create_detection_hunt(ctx, test, login.token, hunt, rule)):
+            return
+        created.insert(0, ("hunt", hunt))
+
+        print()
+        landed = send_detection_events(ctx, test, ingest_url, events)
+        if landed is None:
+            return
+        last_load_ms = detection_last_load(test)
+        if last_load_ms is None:
+            mark_fail(
+                ctx, f"[{test.name}] the landed rows' _timestamp_load could not be read"
+            )
+            return
+        queued = queue_detection_run(ctx, test, login.token, hunt, last_load_ms)
+        if not (
+            await_detection_coverage(ctx, test, login.token, hunt, last_load_ms, queued)
+        ):
+            return
+        print()
+        verify_detections(ctx, test, hunt, rule, landed, events)
+    finally:
+        print()
+        remove_detection_objects(ctx, test, login.token, created)
+        if landed:
+            LOGGER.info(
+                f"The '{test.table}' and '{DETECTION_TABLE}' rows this test wrote "
+                f"remain, tagged {test.marker}"
+            )
+
+
+# ==============================================================================
 # Test Functions
 # - Functions for resolving test cases from config and running the test flow
 # ==============================================================================
@@ -2193,6 +2663,19 @@ def resolve_test_case(test_config, global_config):
                 f"[{test_name}] outage 'sources' must map each _source to a data file"
             )
 
+    detection = test_config.get("detection") or {}
+    if detection:
+        if outage:
+            error(f"[{test_name}] a test is an outage or a detection test, not both")
+        if not (str(detection.get("where") or "").strip()):
+            error(f"[{test_name}] detection names no 'where' for its rule")
+        for kind in (_detection.MATCHING, _detection.OTHER):
+            data_file = detection.get(kind)
+            if not (data_file) or not ((PROJECT_DIR / data_file).is_file()):
+                error(
+                    f"[{test_name}] detection '{kind}' names no data file that exists"
+                )
+
     return TestCase(
         name=test_name,
         profile=profile_name,
@@ -2214,6 +2697,7 @@ def resolve_test_case(test_config, global_config):
         ),
         marker=f"{RUN_ID}-{test_name}",
         outage=outage,
+        detection=detection,
     )
 
 
@@ -2234,10 +2718,16 @@ def run_test(ctx, mode, test, persistent_services):
     print("------------------------------------------------------------")
     print(f"E2E Test: {test.name}")
     print(f"  - Profile: {test.profile}")
-    print(f"  - Data File: {test.data_file}")
+    if test.detection:
+        print(f"  - Matching: {test.detection[_detection.MATCHING]}")
+        print(f"  - Other: {test.detection[_detection.OTHER]}")
+    else:
+        print(f"  - Data File: {test.data_file}")
     if test.outage:
         seconds = test.outage.get("seconds", OUTAGE_DEFAULT_SECONDS)
         print(f"  - Outage: '{test.outage['service']}' stopped for {seconds}s")
+    if test.detection:
+        print(f"  - Detection: rule where {test.detection['where']}")
     for svc_name in sorted(test.services):
         print(f"  - {svc_name} Config: {test.services[svc_name]}")
     if test.database != RUN_ID.replace("-", "_"):
@@ -2282,6 +2772,8 @@ def run_test(ctx, mode, test, persistent_services):
     )
     if test.outage:
         run_outage(ctx, test, effective_services, ingest_url)
+    elif test.detection:
+        run_detection(ctx, test, ingest_url)
     else:
         # Baseline the landing table before send so verification measures the delta
         # this run contributes (the engine-provisioned table is shared, not per-run).
