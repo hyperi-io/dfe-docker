@@ -185,7 +185,7 @@ Node metrics are still not collected.
 
 ## What a passing self test proves
 
-`make post` makes up to five claims, and each one the profile can make must hold:
+`make post` makes up to eight claims, and each one the profile can make must hold:
 
 - **Ingest.** Three marked events posted at the profile's ingest edge come back
   as those exact rows in `dfe.main` inside 60s.
@@ -198,8 +198,16 @@ Node metrics are still not collected.
   sources and at least one provisioned dashboard, read through the proxy that
   gives it an identity.
 - **Console.** Those same marked rows read back through the engine query API.
-- **Hunts.** A hunt created while the runner is up is picked up and writes
-  detections.
+- **Hunts.** A hunt created while the runner is up is picked up without a
+  restart, and a run queued through the API detects exactly the events its rule
+  matches and none of its near misses.
+- **Subscription**, where the tier has a bus. The loader is fetching at least one
+  topic. It skips on the gRPC tiers.
+- **Idle apps.** Each app the tier starts with no work is serving and doing
+  nothing.
+- **Routing**, where the engine renders the tier's app config. A source created
+  through the API reaches the running receiver, and a record matching its rule
+  lands in a table of its own.
 
 The freshness window is what makes the second claim mean "streaming now" rather
 than "streamed once". The first two are the pair the Kubernetes bootstrap smoke
