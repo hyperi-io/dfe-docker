@@ -377,7 +377,9 @@ def test_the_hunt_claim_reports_a_failed_change_as_its_fault(
     )
     monkeypatch.setattr(post, "_resolved_services", lambda: list(post.HUNT_SERVICES))
 
-    claim = post._verify_hunt(database="dfe", marker="m", table="main")
+    claim = post._verify_hunt(
+        database="dfe", ingest_url="http://ingest/ingest", marker="m", table="main"
+    )
 
     assert claim == post.Claim(asserted=True, failed=1)
     assert "FAIL  'admin' must replace the password" in capsys.readouterr().err

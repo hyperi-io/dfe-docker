@@ -58,7 +58,6 @@ from _pipeline import (
     ch_int,
     clickhouse_url,
     env_or,
-    escape_literal,
     expand_env,
     otel_fresh_counts,
     poll_until,
@@ -249,14 +248,7 @@ OUTAGE_POLL_SECONDS = 5
 # ------------------------------------------------------------------------------
 DETECTION_TABLE = "detection"
 DETECTION_CUSTOMER = "e2e"
-DETECTION_POLL_SECONDS = 3
-# The runner beats at the top of every 15s poll, from its first one.
-RUNNER_ALIVE_TIMEOUT = 120
-# The runner re-reads hunts each poll, and a hunt with no watermark is due at once.
-HUNT_PICKUP_TIMEOUT = 120
 DETECTION_LAND_TIMEOUT = 60
-# A queued run waits one poll, and the next scheduled fire a minute on is the backstop.
-HUNT_COVER_TIMEOUT = 150
 
 # ------------------------------------------------------------------------------
 # Logging Related
@@ -2214,12 +2206,7 @@ def engine_call(method, path, token, payload=None):
 # ------------------------------------------------------------------------------
 def hunt_row(token, hunt):
     status, body = engine_call("GET", f"/hunts?search={quote(hunt)}", token)
-    if status != 200 or not (isinstance(body, dict)):
-        return None
-    for row in body.get("items") or []:
-        if isinstance(row, dict) and row.get("name") == hunt:
-            return row
-    return None
+    return _detection.hunt_row(status=status, body=body, name=hunt)
 
 
 # ------------------------------------------------------------------------------
@@ -2239,13 +2226,10 @@ def detection_events(test):
 # - {label: [row uuid]} for every row of this run in the landing table
 # ------------------------------------------------------------------------------
 def detection_landed(test):
-    marker = escape_literal(test.marker)
-    raw = ch_query(
-        f"SELECT toString(_uuid), {_detection.LABEL_EXPRESSION} "
-        f"FROM {test.database}.{test.table} "
-        f"WHERE {MARKER_EXPRESSIONS[0]} = '{marker}' FORMAT TabSeparated"
+    sql = _detection.landed_sql(
+        database=test.database, table=test.table, marker=test.marker
     )
-    return _detection.landed_labels(raw)
+    return _detection.landed_labels(ch_query(sql))
 
 
 # ------------------------------------------------------------------------------
@@ -2253,16 +2237,10 @@ def detection_landed(test):
 # - When the last of this run's rows was loaded, in epoch milliseconds, or None
 # ------------------------------------------------------------------------------
 def detection_last_load(test):
-    marker = escape_literal(test.marker)
-    raw = ch_query(
-        f"SELECT toUnixTimestamp64Milli(max(_timestamp_load)) "
-        f"FROM {test.database}.{test.table} "
-        f"WHERE {MARKER_EXPRESSIONS[0]} = '{marker}'"
+    sql = _detection.last_load_sql(
+        database=test.database, table=test.table, marker=test.marker
     )
-    try:
-        return int(raw)
-    except ValueError:
-        return None
+    return _detection.last_load_ms(ch_query(sql))
 
 
 # ------------------------------------------------------------------------------
@@ -2272,17 +2250,20 @@ def detection_last_load(test):
 def runner_alive(ctx, test, token):
     def _running():
         status, body = engine_call("GET", "/hunts/status", token)
-        return status == 200 and isinstance(body, dict) and body.get("running") is True
+        return _detection.runner_alive(status=status, body=body)
 
     if poll_until(
-        _running, timeout=RUNNER_ALIVE_TIMEOUT, interval=DETECTION_POLL_SECONDS
+        _running,
+        timeout=_detection.RUNNER_ALIVE_TIMEOUT_SECONDS,
+        interval=_detection.POLL_SECONDS,
     ):
         mark_pass(ctx, f"[{test.name}] GET /hunts/status reports a live hunt runner")
         return True
     mark_fail(
         ctx,
         f"[{test.name}] GET /hunts/status reported no live hunt runner within "
-        f"{RUNNER_ALIVE_TIMEOUT}s, though '{HUNT_RUNNER_SERVICE}' was started",
+        f"{_detection.RUNNER_ALIVE_TIMEOUT_SECONDS:.0f}s, though "
+        f"'{HUNT_RUNNER_SERVICE}' was started",
     )
     report_unready(HUNT_RUNNER_SERVICE)
     return False
@@ -2293,34 +2274,18 @@ def runner_alive(ctx, test, token):
 # - The rule over this run's rows, created and checked as the engine stored it
 # ------------------------------------------------------------------------------
 def create_detection_rule(ctx, test, token, rule):
-    sql = _detection.rule_sql(
+    request = _detection.rule_request(
+        name=rule,
         database=test.database,
         table=test.table,
         marker=test.marker,
         where=test.detection["where"],
     )
-    status, body = engine_call(
-        "POST",
-        "/rules",
-        token,
-        {
-            "name": rule,
-            "severity": _detection.SEVERITY,
-            "source_type": "raw",
-            "user_sql": sql,
-        },
-    )
-    if status != 201 or not (isinstance(body, dict)):
-        mark_fail(ctx, f"[{test.name}] POST /rules returned HTTP {status}: {body}")
-        return False
-    stored = body.get("rule") or {}
-    source = f"{stored.get('source_db')}.{stored.get('source_table')}"
-    if body.get("sql_errors") or source != f"{test.database}.{test.table}":
-        mark_fail(
-            ctx,
-            f"[{test.name}] the engine stored rule '{rule}' over '{source}' with SQL "
-            f"errors {body.get('sql_errors')}",
-        )
+    status, body = engine_call("POST", "/rules", token, request)
+    source = f"{test.database}.{test.table}"
+    fault = _detection.rule_fault(name=rule, status=status, body=body, source=source)
+    if fault:
+        mark_fail(ctx, f"[{test.name}] {fault}")
         return False
     mark_pass(ctx, f"[{test.name}] POST /rules created '{rule}' over '{source}'")
     return True
@@ -2347,15 +2312,16 @@ def create_detection_hunt(ctx, test, token, hunt, rule):
 
     row = poll_until(
         lambda: hunt_row(token, hunt),
-        timeout=HUNT_PICKUP_TIMEOUT,
-        interval=DETECTION_POLL_SECONDS,
+        timeout=_detection.PICKUP_TIMEOUT_SECONDS,
+        interval=_detection.POLL_SECONDS,
         done=lambda got: got is not None and got.get("last_run") is not None,
     )
     if row is None or row.get("last_run") is None:
         mark_fail(
             ctx,
             f"[{test.name}] the running hunt runner committed no window for '{hunt}' "
-            f"within {HUNT_PICKUP_TIMEOUT}s of its creation (hunts list row: {row})",
+            f"within {_detection.PICKUP_TIMEOUT_SECONDS:.0f}s of its creation "
+            f"(hunts list row: {row})",
         )
         return False
     mark_pass(
@@ -2391,7 +2357,7 @@ def send_detection_events(ctx, test, ingest_url, events):
     landed = poll_until(
         lambda: detection_landed(test),
         timeout=DETECTION_LAND_TIMEOUT,
-        interval=DETECTION_POLL_SECONDS,
+        interval=_detection.POLL_SECONDS,
         done=lambda got: labels <= set(got),
         on_attempt=report_changes(
             lambda got: f"{len(set(got) & labels)}/{len(labels)} landed"
@@ -2422,16 +2388,16 @@ def send_detection_events(ctx, test, ingest_url, events):
 #   time, so the queued window covers every event
 # ------------------------------------------------------------------------------
 def queue_detection_run(ctx, test, token, hunt, last_load_ms):
-    time.sleep(max(0.0, min(2.0, last_load_ms / 1000 + 1.0 - time.time())))
+    time.sleep(_detection.queue_delay(last_load_ms=last_load_ms, now=time.time()))
     status, body = engine_call("POST", f"/hunts/{quote(hunt)}/run", token)
-    if status != 202 or not (isinstance(body, dict)) or body.get("queued") is not True:
+    fire = _detection.queued_fire(status=status, body=body)
+    if fire is None:
         mark_fail(
             ctx,
             f"[{test.name}] POST /hunts/{hunt}/run returned HTTP {status}: {body} -- "
             "waiting on the schedule instead",
         )
         return None
-    fire = int(body.get("requested_fire", 0))
     mark_pass(
         ctx,
         f"[{test.name}] POST /hunts/{hunt}/run queued a run at {fire} "
@@ -2446,41 +2412,28 @@ def queue_detection_run(ctx, test, token, hunt, last_load_ms):
 #   which every detection this run can produce has been written
 # ------------------------------------------------------------------------------
 def await_detection_coverage(ctx, test, token, hunt, last_load_ms, queued_fire):
-    def _render(row):
-        if row is None:
-            return "hunts list did not answer"
-        return (
-            f"last_run={row.get('last_run')} run_requested={row.get('run_requested')}"
-        )
-
     def _covered(row):
-        last_run = (row or {}).get("last_run")
-        return last_run is not None and last_run * 1000 > last_load_ms
+        return _detection.covers(row, last_load_ms)
 
     row = poll_until(
         lambda: hunt_row(token, hunt),
-        timeout=HUNT_COVER_TIMEOUT,
-        interval=DETECTION_POLL_SECONDS,
+        timeout=_detection.COVER_TIMEOUT_SECONDS,
+        interval=_detection.POLL_SECONDS,
         done=_covered,
-        on_attempt=report_changes(_render),
+        on_attempt=report_changes(_detection.run_state),
     )
     if not (_covered(row)):
         mark_fail(
             ctx,
             f"[{test.name}] '{hunt}' committed no window past the last event's load "
-            f"time within {HUNT_COVER_TIMEOUT}s ({_render(row)})",
+            f"time within {_detection.COVER_TIMEOUT_SECONDS:.0f}s "
+            f"({_detection.run_state(row)})",
         )
         return False
-    # A committed run leaves its own fire as the watermark.
-    by = (
-        "the queued run"
-        if queued_fire is not None and row["last_run"] == queued_fire
-        else "a scheduled fire"
-    )
     mark_pass(
         ctx,
         f"[{test.name}] '{hunt}' scanned past the last event (last_run "
-        f"{row['last_run']}, covered by {by}, "
+        f"{row['last_run']}, set by {_detection.set_by(row, queued_fire)}, "
         f"last run wrote {row.get('last_run_rows')})",
     )
     return True
@@ -2491,27 +2444,19 @@ def await_detection_coverage(ctx, test, token, hunt, last_load_ms, queued_fire):
 # - The hunt's rows in the detection table are exactly the matching events
 # ------------------------------------------------------------------------------
 def verify_detections(ctx, test, hunt, rule, landed, events):
-    this_hunt = f"hunt_name = '{escape_literal(hunt)}'"
-    held = f"FROM {test.database}.{DETECTION_TABLE} WHERE {this_hunt}"
-    if ch_int(f"SELECT count() {held}") is None:
+    target = f"{test.database}.{DETECTION_TABLE}"
+    if ch_int(_detection.detection_count_sql(target=target, hunt=hunt)) is None:
         mark_fail(
             ctx,
-            f"[{test.name}] '{test.database}.{DETECTION_TABLE}' could not be read, so "
-            "no hunt on this stack has anywhere to land",
+            f"[{test.name}] '{target}' could not be read, so no hunt on this stack "
+            "has anywhere to land",
         )
         return
-    raw = ch_query(
-        f"SELECT toString(matched_uuid), rule_id, severity {held} FORMAT TabSeparated"
+    found = _detection.detections(
+        ch_query(_detection.detections_sql(target=target, hunt=hunt))
     )
-    found = _detection.detections(raw)
-    matching = [
-        _detection.event_label(_detection.MATCHING, index)
-        for index in range(len(events[_detection.MATCHING]))
-    ]
-    other = [
-        _detection.event_label(_detection.OTHER, index)
-        for index in range(len(events[_detection.OTHER]))
-    ]
+    matching = _detection.set_labels(events, _detection.MATCHING)
+    other = _detection.set_labels(events, _detection.OTHER)
     problems = _detection.verdict(
         landed=landed, found=found, matching=matching, other=other, rule=rule
     )

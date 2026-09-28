@@ -10,9 +10,10 @@
 
 Three things are asserted here and nothing else needs a stack to check them: the
 UI-class APIs are read over the compose network rather than a host port that a
-deployment dial can take away, the order the claims run in (a new hunt's first
-window looks back one cron interval, so it has to be created while this run's
-rows are inside it), and that a run which skipped every claim exits non-zero.
+deployment dial can take away, the order the claims run in (the loader's
+subscription is only visible once events have landed), and that a run which
+skipped every claim exits non-zero. The hunt claim's own steps are driven against
+a stand-in engine and ClickHouse, so its verdict is shown failing as well as holding.
 """
 
 from __future__ import annotations
@@ -273,23 +274,6 @@ def test_a_profile_that_can_prove_nothing_does_not_pass(
     assert post.main() == 1
 
 
-def test_the_hunt_is_created_before_the_slow_claims(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """A new hunt's first window is one cron interval wide, measured from creation."""
-    calls = _stub_claims(monkeypatch)
-    _stub_main(monkeypatch)
-    monkeypatch.setattr(
-        post,
-        "_ingest_target",
-        lambda *, table: ("dfe-receiver", "http://ingest/ingest"),
-    )
-
-    assert post.main() == 0
-    assert calls.index("_verify_hunt") < calls.index("_verify_self_monitoring")
-    assert calls.index("_verify_hunt") < calls.index("_verify_hyperdx")
-
-
 def test_the_subscription_is_asked_once_the_events_have_landed(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -310,7 +294,6 @@ def test_the_subscription_is_asked_once_the_events_have_landed(
 
     assert post.main() == 0
     assert calls.index("http_post") < calls.index("_verify_loader_subscription")
-    assert calls.index("_verify_hunt") < calls.index("_verify_loader_subscription")
 
 
 def test_events_that_never_land_ask_the_subscription_why(
@@ -339,11 +322,16 @@ def test_events_that_never_land_ask_the_subscription_why(
 class _Clock:
     """Time that passes only when the code under test sleeps."""
 
+    EPOCH = 1790000000.0
+
     def __init__(self) -> None:
         self.now = 0.0
 
     def monotonic(self) -> float:
         return self.now
+
+    def time(self) -> float:
+        return self.EPOCH + self.now
 
     def sleep(self, seconds: float) -> None:
         self.now += seconds
@@ -708,3 +696,207 @@ def test_an_unresolvable_service_falls_back_to_its_own_name(
     post._container_name.cache_clear()
 
     assert post._container_name("dfe-engine") == "dfe-engine"
+
+
+# The row each of the hunt's events lands as.
+_HUNT_UUIDS = {"matching-000": "u-m0", "other-000": "u-o0", "other-001": "u-o1"}
+
+
+class _HuntStack:
+    """The engine's hunt routes and the ClickHouse reads the hunt claim makes.
+
+    The first window the runner commits ends half a second before the hunt's
+    events load, so only a later window scans them: the queued run, or the
+    scheduled fire a minute on. `detected` names the events the hunt writes a
+    detection for.
+    """
+
+    FIRST_WINDOW = int(_Clock.EPOCH)
+    SCHEDULED_FIRE = FIRST_WINDOW + 60
+    LAST_LOAD_MS = FIRST_WINDOW * 1000 + 500
+
+    def __init__(
+        self,
+        clock: _Clock,
+        *,
+        detected: list[str],
+        running: bool = True,
+        picks_up: bool = True,
+        run_status: int = 202,
+    ) -> None:
+        self.clock = clock
+        self.detected = detected
+        self.running = running
+        self.picks_up = picks_up
+        self.run_status = run_status
+        self.hunts: dict[str, int | None] = {}
+        self.rules: list[dict] = []
+        self.sent: list[dict] = []
+        self.queued: list[int] = []
+
+    def _last_run(self, name: str) -> int | None:
+        last_run = self.hunts[name]
+        if last_run is not None and self.clock.time() >= self.SCHEDULED_FIRE:
+            return max(last_run, self.SCHEDULED_FIRE)
+        return last_run
+
+    def get_json(self, url: str, token: str = "", timeout: int = 30):
+        route = url.removeprefix(post.ENGINE_NETWORK_BASE)
+        if route == "/hunts/status":
+            return 200, {"running": self.running, "runners": int(self.running)}
+        if route.startswith("/hunts?search="):
+            items = [
+                {"name": name, "last_run": self._last_run(name), "run_requested": False}
+                for name in self.hunts
+            ]
+            return 200, {"items": items}
+        name = route.removeprefix("/hunts/")
+        return (200, {"name": name}) if name in self.hunts else (404, {})
+
+    def post_json(self, url: str, payload: dict, token: str = "", timeout: int = 30):
+        route = url.removeprefix(post.ENGINE_NETWORK_BASE)
+        if route == "/auth/login":
+            return 200, {"access_token": "t"}
+        if route == "/rules":
+            self.rules.append(payload)
+            stored = {"source_db": "dfe", "source_table": "main"}
+            return 201, {"rule": stored, "sql_errors": []}
+        if route == "/hunts":
+            self.hunts[payload["name"]] = self.FIRST_WINDOW if self.picks_up else None
+            return 201, payload
+        name = route.removeprefix("/hunts/").removesuffix("/run")
+        if self.run_status != 202:
+            return self.run_status, {"detail": "not implemented"}
+        fire = int(self.clock.time())
+        self.queued.append(fire)
+        self.hunts[name] = fire
+        return 202, {"queued": True, "requested_fire": fire, "poll_seconds": 15.0}
+
+    def delete(self, url: str, token: str = "", timeout: int = 10) -> int:
+        self.hunts.pop(url.rsplit("/", 1)[-1], None)
+        return 204
+
+    def ingest(self, url: str, body: str, *args, **kwargs) -> int:
+        self.sent.append(json.loads(body))
+        return 200
+
+    def query(self, sql: str) -> str:
+        if "toUnixTimestamp64Milli" in sql:
+            return str(self.LAST_LOAD_MS)
+        if "matched_uuid" in sql:
+            rule = self.rules[-1]["name"]
+            return "".join(f"{_HUNT_UUIDS[e]}\t{rule}\thigh\n" for e in self.detected)
+        return "".join(f"{uuid}\t{label}\n" for label, uuid in _HUNT_UUIDS.items())
+
+    def count(self, sql: str) -> int:
+        return len(self.detected)
+
+
+def _hunt_stack(monkeypatch: pytest.MonkeyPatch, **kwargs) -> _HuntStack:
+    """Serve the hunt claim from a stand-in stack, on a clock only its sleeps move."""
+    clock = _Clock()
+    monkeypatch.setattr(_pipeline, "time", clock)
+    monkeypatch.setattr(post, "time", clock)
+    stack = _HuntStack(clock, **kwargs)
+    monkeypatch.setattr(post, "_resolved_services", lambda: list(post.HUNT_SERVICES))
+    monkeypatch.setattr(post, "_api_get_json", stack.get_json)
+    monkeypatch.setattr(post, "_api_post_json", stack.post_json)
+    monkeypatch.setattr(post, "_api_delete", stack.delete)
+    monkeypatch.setattr(post, "http_post", stack.ingest)
+    monkeypatch.setattr(post, "ch_query", stack.query)
+    monkeypatch.setattr(post, "ch_int", stack.count)
+    for name in ("DFE_POST_LOGIN_USER", "DFE_POST_LOGIN_PASSWORD"):
+        monkeypatch.delenv(name, raising=False)
+    monkeypatch.setenv(post.ADMIN_PASSWORD_KEY, "a-password")
+    return stack
+
+
+def _hunt_claim() -> post.Claim:
+    return post._verify_hunt(
+        database="dfe", ingest_url="http://ingest/ingest", marker="m", table="main"
+    )
+
+
+def test_the_hunt_claim_holds_on_exactly_the_matching_event(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    stack = _hunt_stack(monkeypatch, detected=["matching-000"])
+
+    assert _hunt_claim() == post.HELD
+    assert len(stack.queued) == 1
+    assert stack.hunts == {}
+    assert "set by the queued run" in capsys.readouterr().err
+
+
+def test_the_hunt_reads_only_its_own_events_not_the_ingest_rows(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The console claim counts the ingest marker's rows, so the hunt's carry their own."""
+    stack = _hunt_stack(monkeypatch, detected=["matching-000"])
+
+    _hunt_claim()
+
+    assert "= 'm-hunt'" in stack.rules[0]["user_sql"]
+    assert {event["_tags"]["marker"] for event in stack.sent} == {"m-hunt"}
+    assert len(stack.sent) == sum(len(events) for events in post.HUNT_EVENTS.values())
+
+
+def test_a_detected_near_miss_fails_the_hunt_claim(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """An over-broad rule: every failed login, root or not."""
+    _hunt_stack(monkeypatch, detected=["matching-000", "other-000"])
+
+    assert _hunt_claim() == post.Claim(asserted=True, failed=1)
+    assert (
+        "events the rule must not match were detected: other-000"
+        in capsys.readouterr().err
+    )
+
+
+def test_a_missed_matching_event_fails_the_hunt_claim(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    _hunt_stack(monkeypatch, detected=[])
+
+    assert _hunt_claim() == post.Claim(asserted=True, failed=1)
+    assert "matching events with no detection: matching-000" in capsys.readouterr().err
+
+
+def test_a_run_now_that_does_not_queue_fails_and_the_schedule_is_still_judged(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    _hunt_stack(monkeypatch, detected=["matching-000"], run_status=501)
+
+    assert _hunt_claim() == post.Claim(asserted=True, failed=1)
+    err = capsys.readouterr().err
+    assert "POST /hunts/m-hunt/run returned HTTP 501" in err
+    assert "set by a scheduled fire" in err
+    assert "holds exactly the 1 matching event(s)" in err
+
+
+def test_a_hunt_the_runner_never_takes_up_fails_the_claim(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    stack = _hunt_stack(monkeypatch, detected=[], picks_up=False)
+
+    assert _hunt_claim() == post.Claim(asserted=True, failed=1)
+    assert "the runner committed no window for 'm-hunt'" in capsys.readouterr().err
+    assert stack.sent == []
+    assert stack.hunts == {}
+
+
+def test_no_live_runner_fails_the_claim_before_anything_is_created(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    stack = _hunt_stack(monkeypatch, detected=[], running=False)
+
+    assert _hunt_claim() == post.Claim(asserted=True, failed=1)
+    assert "reported no live hunt runner" in capsys.readouterr().err
+    assert stack.rules == []
+
+
+def test_the_hunt_events_carry_a_match_and_near_misses() -> None:
+    """Without both sets the verdict cannot tell an exact rule from an over-broad one."""
+    assert post.HUNT_EVENTS[post._detection.MATCHING]
+    assert post.HUNT_EVENTS[post._detection.OTHER]

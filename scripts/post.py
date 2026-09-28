@@ -21,8 +21,9 @@ seeds it and the dashboards the engine ships, read over the compose network
 through the proxy that fronts it. CONSOLE: those same marked rows read back
 through the engine query API that dfe-ui uses, so the data is not merely stored but
 reachable from the surface an operator works in. HUNTS: a hunt created through the
-API while the runner is already running is picked up and executed, and its
-detections land in the detection table. IDLE APPS: each app the tier starts with
+API while the runner is already running is picked up without a restart, and a run
+queued through the API detects exactly the events its rule matches and none of its
+near misses. IDLE APPS: each app the tier starts with
 no work is serving and doing nothing, which is the whole point of starting it.
 ROUTING: where the engine renders this tier's app config, a source created
 through the API reaches the RUNNING receiver, and a record matching its rule
@@ -72,6 +73,7 @@ import typing
 from pathlib import Path
 from urllib.parse import quote
 
+import _detection
 from _common import (
     ACCESS_SUMMARY_FILE,
     DOTENV_FILE,
@@ -255,21 +257,19 @@ UI_QUERY_INTERVAL_SECONDS = 3.0
 # "created while the runner was already up" a claim worth making.
 HUNT_SERVICES = ("dfe-engine", "dfe-hunt-runner")
 HUNT_TARGET_TABLE = "detection"
-
-# The tightest schedule a hunt config expresses, and the only way in: POST
-# /hunts/{name}/run answers 501, so no ad-hoc trigger can shorten the wait.
-HUNT_CRON = "* * * * *"
-
-# One runner reload plus the hunt's phase offset, which is a stable hash in
-# [0, 0.8*interval) -- up to 48s on a 60s hunt. The stuck-runner backstop.
-HUNT_PICKUP_TIMEOUT_SECONDS = 150.0
-HUNT_PICKUP_INTERVAL_SECONDS = 3.0
-
-# The fire that claims the hunt is not always the fire that matches: the hunt
-# carries log_buffer 60, so rows younger than that sit outside the window and are
-# picked up by the NEXT minute's fire. Long enough to cover that second fire.
-HUNT_DETECTION_TIMEOUT_SECONDS = 150.0
-HUNT_DETECTION_INTERVAL_SECONDS = 3.0
+HUNT_CUSTOMER = "post"
+# Failed root logins are the detection, and each near miss breaks one half of it.
+HUNT_WHERE = (
+    "toString(_json.event_type) = 'login_failure' "
+    "AND toString(_json.user_name) = 'root'"
+)
+HUNT_EVENTS = {
+    _detection.MATCHING: ({"event_type": "login_failure", "user_name": "root"},),
+    _detection.OTHER: (
+        {"event_type": "login_failure", "user_name": "alice"},
+        {"event_type": "login_success", "user_name": "root"},
+    ),
+}
 
 # Idle-app assertion: the config that gives each app no work, and the metrics
 # port compose publishes it on. dfe-infra apps.yaml declares the idle predicate
@@ -1713,44 +1713,30 @@ def _verify_ui_query(*, database: str, marker: str, table: str) -> Claim:
 
 
 def _create_hunt_rule(
-    *, base: str, database: str, marker: str, name: str, table: str, token: str
+    *, base: str, database: str, hunt: str, name: str, table: str, token: str
 ) -> str:
-    """Create the detection rule this run's hunt names. Returns '' or the fault."""
-    escaped = escape_literal(marker)
-    status, body = _api_post_json(
-        f"{base}/rules",
-        {
-            "name": name,
-            "severity": "high",
-            "source_type": "raw",
-            "user_sql": (
-                f"SELECT * FROM {database}.{table} "
-                f"WHERE {MARKER_EXPRESSIONS[0]} = '{escaped}'"
-            ),
-        },
-        token=token,
+    """Create the rule the hunt names, held to the hunt's own events. Returns '' or the fault."""
+    request = _detection.rule_request(
+        name=name, database=database, table=table, marker=hunt, where=HUNT_WHERE
     )
-    return "" if status == 201 else f"POST /rules returned HTTP {status}: {body}"
+    status, body = _api_post_json(f"{base}/rules", request, token=token)
+    return _detection.rule_fault(
+        name=name, status=status, body=body, source=f"{database}.{table}"
+    )
 
 
 def _create_hunt(
     *, base: str, database: str, name: str, rule: str, table: str, token: str
 ) -> str:
-    """Create the hunt over this run's rows. Returns '' or the fault."""
-    status, body = _api_post_json(
-        f"{base}/hunts",
-        {
-            "name": name,
-            "cron": HUNT_CRON,
-            "log_buffer": 60,
-            "customers": ["post"],
-            "rules": [rule],
-            "global_source_table_name": f"{database}.{table}",
-            "global_target_table_name": f"{database}.{HUNT_TARGET_TABLE}",
-            "checkpoint_timestamp_field": "_timestamp_load",
-        },
-        token=token,
+    """Create the one-rule hunt over the landing table. Returns '' or the fault."""
+    request = _detection.hunt_request(
+        name=name,
+        rule=rule,
+        customer=HUNT_CUSTOMER,
+        source=f"{database}.{table}",
+        target=f"{database}.{HUNT_TARGET_TABLE}",
     )
+    status, body = _api_post_json(f"{base}/hunts", request, token=token)
     return "" if status == 201 else f"POST /hunts returned HTTP {status}: {body}"
 
 
@@ -1761,12 +1747,42 @@ def _remove(url: str, *, kind: str, name: str, token: str) -> None:
         _print(msg=f"      note: {kind} {name!r} was not removed (HTTP {status})")
 
 
-def _hunt_status(*, base: str, token: str) -> tuple[bool, int]:
-    """Read (running, hunt_count) off GET /hunts/status, or (False, -1) if unreadable."""
-    status, body = _api_get_json(f"{base}/hunts/status", token=token, timeout=10)
-    if status != 200 or not (isinstance(body, dict)):
-        return False, -1
-    return bool(body.get("running")), int(body.get("hunt_count", -1))
+def _hunt_runner_alive(*, base: str, token: str) -> bool:
+    """Wait for GET /hunts/status to report a live runner, and say whether it did."""
+
+    def _alive():
+        try:
+            status, body = _api_get_json(
+                f"{base}/hunts/status", token=token, timeout=10
+            )
+        except ApiUnreachable:
+            return False
+        return _detection.runner_alive(status=status, body=body)
+
+    if poll_until(
+        _alive,
+        timeout=_detection.RUNNER_ALIVE_TIMEOUT_SECONDS,
+        interval=_detection.POLL_SECONDS,
+    ):
+        _print(msg="PASS  GET /hunts/status reports a live hunt runner")
+        return True
+    _print(
+        msg="FAIL  GET /hunts/status reported no live hunt runner within "
+        f"{_detection.RUNNER_ALIVE_TIMEOUT_SECONDS:.0f}s, though dfe-hunt-runner is in "
+        "the active profile"
+    )
+    return False
+
+
+def _hunt_row(*, base: str, hunt: str, token: str) -> dict | None:
+    """This hunt's row off the hunts list, which carries its run state, or None."""
+    try:
+        status, body = _api_get_json(
+            f"{base}/hunts?search={quote(hunt, safe='')}", token=token, timeout=10
+        )
+    except ApiUnreachable:
+        return None
+    return _detection.hunt_row(status=status, body=body, name=hunt)
 
 
 def _hunt_http_status(*, base: str, hunt: str, token: str) -> int:
@@ -1795,18 +1811,19 @@ def _assert_hunt_removed(*, base: str, hunt: str, token: str) -> int:
     return 0
 
 
-def _verify_hunt(*, database: str, marker: str, table: str) -> Claim:
-    """Prove a hunt created while the runner is running is picked up and executed.
+def _verify_hunt(*, database: str, ingest_url: str, marker: str, table: str) -> Claim:
+    """Prove a hunt created while the runner is running detects exactly what it should.
 
     Two things have to be true and only one of them is about ClickHouse. The
     runner must SEE a hunt written to the shared config volume seconds ago without
-    anything being restarted, and it must then run it into the detection table.
-    A stack where hunts only start working after a bounce is a stack where the
-    hunts page lies to whoever just used it.
+    anything being restarted, and a run queued through the API must then write a
+    detection for every event the rule matches and none for its near misses. A
+    stack where hunts only start working after a bounce is a stack where the hunts
+    page lies to whoever just used it.
 
-    A brand-new hunt's first window looks back exactly one cron interval, so this
-    runs before the slower claims: anything ahead of it ages this run's rows out
-    of that window and the detection never fires.
+    The hunt's events carry their own marker, so the rows the other claims count
+    stay out of it. They are sent once the hunt's first window has committed, so a
+    run queued after them scans them whatever the hunt's phase.
     """
     absent = [name for name in HUNT_SERVICES if name not in set(_resolved_services())]
     if absent:
@@ -1835,16 +1852,19 @@ def _verify_hunt(*, database: str, marker: str, table: str) -> Claim:
         _print(msg=f"FAIL  {fault} -- this run cannot create the hunt it needs")
         return Claim(asserted=True, failed=1)
 
-    hunt_name = marker
+    if not (_hunt_runner_alive(base=base, token=token)):
+        return Claim(asserted=True, failed=1)
+
+    hunt_name = f"{marker}-hunt"
     rule_name = f"{marker}-rule"
     _print(
-        msg=f"Creating rule {rule_name!r} and hunt {hunt_name!r} over this run's rows"
+        msg=f"Creating rule {rule_name!r} and hunt {hunt_name!r} over the hunt's own events"
     )
 
     fault = _create_hunt_rule(
         base=base,
         database=database,
-        marker=marker,
+        hunt=hunt_name,
         name=rule_name,
         table=table,
         token=token,
@@ -1867,7 +1887,13 @@ def _verify_hunt(*, database: str, marker: str, table: str) -> Claim:
             return Claim(asserted=True, failed=1)
         try:
             result = _await_hunt(
-                base=base, database=database, hunt=hunt_name, token=token
+                base=base,
+                database=database,
+                hunt=hunt_name,
+                ingest_url=ingest_url,
+                rule=rule_name,
+                table=table,
+                token=token,
             )
         finally:
             _remove(
@@ -1882,10 +1908,17 @@ def _verify_hunt(*, database: str, marker: str, table: str) -> Claim:
         _remove(f"{base}/rules/{rule_name}", kind="rule", name=rule_name, token=token)
 
 
-def _await_hunt(*, base: str, database: str, hunt: str, token: str) -> int:
-    """Wait for the runner to load the new hunt, run it, and write its detections."""
-    escaped = escape_literal(hunt)
-    running, _ = _hunt_status(base=base, token=token)
+def _await_hunt(
+    *,
+    base: str,
+    database: str,
+    hunt: str,
+    ingest_url: str,
+    rule: str,
+    table: str,
+    token: str,
+) -> int:
+    """Wait for the runner to take up the new hunt, then judge a queued run of it."""
     # This run's own hunt, not the global count: a concurrent `make post` or an
     # operator deleting an unrelated hunt moves the count either way.
     present = _hunt_http_status(base=base, hunt=hunt, token=token)
@@ -1897,99 +1930,192 @@ def _await_hunt(*, base: str, database: str, hunt: str, token: str) -> int:
         )
         return 1
 
-    seen_running = {"flag": running}
-
-    # The watermark is the runner's fingerprint -- the engine never writes one --
-    # so a row for a hunt that did not exist a moment ago is the runner having
-    # re-read its dir, with nothing restarted in between.
-    def _picked_up():
-        live, _ = _hunt_status(base=base, token=token)
-        seen_running["flag"] = seen_running["flag"] or live
-        return ch_int(
-            f"SELECT count() FROM {database}.hunt_watermark WHERE hunt_id = '{escaped}'"
-        )
-
-    def _report(attempt, result):
-        _print(msg=f"  attempt {attempt}: hunt_watermark rows = {result}")
+    def _report(attempt, row):
+        _print(msg=f"  attempt {attempt}: {_detection.run_state(row)}")
 
     _print(msg=f"Waiting for the running hunt-runner to pick up {hunt!r} (no restart)")
-    watermarks = poll_until(
-        _picked_up,
-        timeout=HUNT_PICKUP_TIMEOUT_SECONDS,
-        interval=HUNT_PICKUP_INTERVAL_SECONDS,
-        done=lambda result: result is not None and result > 0,
+    row = poll_until(
+        lambda: _hunt_row(base=base, hunt=hunt, token=token),
+        timeout=_detection.PICKUP_TIMEOUT_SECONDS,
+        interval=_detection.POLL_SECONDS,
+        done=lambda got: got is not None and got.get("last_run") is not None,
         on_attempt=_report,
     )
-
-    if watermarks is None:
+    if row is None or row.get("last_run") is None:
         _print(
-            msg=f"FAIL  {database}.hunt_watermark could not be read -- the hunt "
-            "coordination schema is missing, so no runner has ever started"
-        )
-        return 1
-    if watermarks <= 0:
-        _print(
-            msg=f"FAIL  the runner did not claim {hunt!r} within "
-            f"{HUNT_PICKUP_TIMEOUT_SECONDS:.0f}s -- a hunt created through the API is "
-            "not reaching the runner, so hunts only work after a restart"
+            msg=f"FAIL  the runner committed no window for {hunt!r} within "
+            f"{_detection.PICKUP_TIMEOUT_SECONDS:.0f}s ({_detection.run_state(row)}) -- "
+            "a hunt created through the API is not reaching the runner, so hunts only "
+            "work after a restart"
         )
         return 1
     _print(
-        msg=f"PASS  the already-running hunt-runner loaded {hunt!r} and ran it without a restart"
+        msg=f"PASS  the already-running hunt-runner loaded {hunt!r} and ran it without "
+        f"a restart (first window ends {row['last_run']})"
     )
 
-    # `running` is true only while a hunt holds a lease, and a lease is released as
-    # soon as the run commits, so a healthy runner reads as running for well under
-    # a second per fire. Reported, never asserted -- see the engine issue.
-    if seen_running["flag"]:
-        _print(msg="PASS  GET /hunts/status reported running: true during the fire")
-    else:
-        _print(
-            msg="      note: GET /hunts/status never reported running: true -- it counts "
-            "in-flight leases, not whether a runner process is alive"
-        )
-
-    def _detections():
-        return ch_int(
-            f"SELECT count() FROM {database}.{HUNT_TARGET_TABLE} "
-            f"WHERE hunt_name = '{escaped}'"
-        )
-
-    def _report_rows(attempt, result):
-        _print(msg=f"  attempt {attempt}: {HUNT_TARGET_TABLE} rows = {result}")
-
-    matched = poll_until(
-        _detections,
-        timeout=HUNT_DETECTION_TIMEOUT_SECONDS,
-        interval=HUNT_DETECTION_INTERVAL_SECONDS,
-        done=lambda result: result is not None and result > 0,
-        on_attempt=_report_rows,
+    landed = _send_hunt_events(
+        database=database, hunt=hunt, ingest_url=ingest_url, table=table
     )
-
-    if matched is None:
-        _print(
-            msg=f"FAIL  {database}.{HUNT_TARGET_TABLE} could not be read -- the hunt "
-            "output table does not exist, so no hunt on this stack can land anywhere"
-        )
+    if landed is None:
         return 1
-    if matched <= 0:
+    last_load = _detection.last_load_ms(
+        ch_query(_detection.last_load_sql(database=database, table=table, marker=hunt))
+    )
+    if last_load is None:
         _print(
-            msg=f"FAIL  the runner ran {hunt!r} but wrote no row to "
-            f"{database}.{HUNT_TARGET_TABLE} within {HUNT_DETECTION_TIMEOUT_SECONDS:.0f}s"
-        )
-        _print(
-            msg="      the runner claimed the hunt and completed the run, so it is the "
-            "detection write that did not happen -- check the hunt-runner logs and the "
-            "rule the hunt names"
+            msg=f"FAIL  the load time of the hunt's events in {database}.{table} could "
+            "not be read, so no run can be judged against them"
         )
         return 1
 
+    failed = 0
+    queued = _queue_hunt_run(base=base, hunt=hunt, last_load=last_load, token=token)
+    if queued is None:
+        failed += 1
+    if not (
+        _await_hunt_coverage(
+            base=base, hunt=hunt, last_load=last_load, queued=queued, token=token
+        )
+    ):
+        return failed + 1
+    return failed + _verify_hunt_detections(
+        database=database, hunt=hunt, landed=landed, rule=rule
+    )
+
+
+def _send_hunt_events(
+    *, database: str, hunt: str, ingest_url: str, table: str
+) -> dict[str, list[str]] | None:
+    """Send the hunt's labelled events and return their landed rows by label, or None."""
+    bodies = _detection.labelled_events(
+        marker=hunt, test_name="post", source=table, events=HUNT_EVENTS
+    )
+    refused = []
+    for label, body in bodies:
+        try:
+            status = http_post(ingest_url, body)
+        except OSError:
+            status = 0
+        if status < 200 or status >= 300:
+            refused.append(f"{label} ({status})")
+    if refused:
+        _print(msg=f"FAIL  ingest refused the hunt's events: {', '.join(refused)}")
+        return None
+
+    labels = {label for label, _ in bodies}
     _print(
-        msg=f"PASS  {hunt!r} wrote {matched} row(s) to {database}.{HUNT_TARGET_TABLE}"
+        msg=f"Sent {len(bodies)} labelled event(s) for {hunt!r}; waiting for them in "
+        f"{database}.{table}"
+    )
+    sql = _detection.landed_sql(database=database, table=table, marker=hunt)
+
+    def _report(attempt, got):
+        _print(
+            msg=f"  attempt {attempt}: {len(set(got) & labels)}/{len(labels)} landed"
+        )
+
+    landed = poll_until(
+        lambda: _detection.landed_labels(ch_query(sql)),
+        timeout=LAND_TIMEOUT_SECONDS,
+        interval=LAND_INTERVAL_SECONDS,
+        done=lambda got: labels <= set(got),
+        on_attempt=_report,
+    )
+    missing = sorted(labels - set(landed))
+    if missing:
+        _print(
+            msg=f"FAIL  {len(missing)}/{len(labels)} of the hunt's events never reached "
+            f"{database}.{table} within {LAND_TIMEOUT_SECONDS:.0f}s: {', '.join(missing)}"
+        )
+        return None
+    return landed
+
+
+def _queue_hunt_run(*, base: str, hunt: str, last_load: int, token: str) -> int | None:
+    """Queue a run of the hunt that fires past its last event. Returns the fire or None."""
+    time.sleep(_detection.queue_delay(last_load_ms=last_load, now=time.time()))
+    try:
+        status, body = _api_post_json(
+            f"{base}/hunts/{quote(hunt, safe='')}/run", {}, token=token
+        )
+    except ApiUnreachable as error:
+        status, body = 0, str(error)
+    fire = _detection.queued_fire(status=status, body=body)
+    if fire is None:
+        _print(
+            msg=f"FAIL  POST /hunts/{hunt}/run returned HTTP {status}: {body} -- "
+            "waiting on the schedule instead"
+        )
+        return None
+    _print(
+        msg=f"PASS  POST /hunts/{hunt}/run queued a run at {fire} "
+        f"(runner poll {body.get('poll_seconds')}s)"
+    )
+    return fire
+
+
+def _await_hunt_coverage(
+    *, base: str, hunt: str, last_load: int, queued: int | None, token: str
+) -> bool:
+    """Wait until the hunt's committed windows reach past its last event."""
+
+    def _report(attempt, row):
+        _print(msg=f"  attempt {attempt}: {_detection.run_state(row)}")
+
+    row = poll_until(
+        lambda: _hunt_row(base=base, hunt=hunt, token=token),
+        timeout=_detection.COVER_TIMEOUT_SECONDS,
+        interval=_detection.POLL_SECONDS,
+        done=lambda got: _detection.covers(got, last_load),
+        on_attempt=_report,
+    )
+    if not (_detection.covers(row, last_load)):
+        _print(
+            msg=f"FAIL  {hunt!r} committed no window past its last event's load time "
+            f"within {_detection.COVER_TIMEOUT_SECONDS:.0f}s ({_detection.run_state(row)})"
+        )
+        return False
+    _print(
+        msg=f"PASS  {hunt!r} scanned past its last event (last_run {row['last_run']}, "
+        f"set by {_detection.set_by(row, queued)})"
+    )
+    return True
+
+
+def _verify_hunt_detections(
+    *, database: str, hunt: str, landed: dict[str, list[str]], rule: str
+) -> int:
+    """Prove the hunt's detections are exactly its matching events. 0 when they are."""
+    target = f"{database}.{HUNT_TARGET_TABLE}"
+    if ch_int(_detection.detection_count_sql(target=target, hunt=hunt)) is None:
+        _print(
+            msg=f"FAIL  {target} could not be read -- the hunt output table does not "
+            "exist, so no hunt on this stack can land anywhere"
+        )
+        return 1
+    found = _detection.detections(
+        ch_query(_detection.detections_sql(target=target, hunt=hunt))
+    )
+    matching = _detection.set_labels(HUNT_EVENTS, _detection.MATCHING)
+    other = _detection.set_labels(HUNT_EVENTS, _detection.OTHER)
+    problems = _detection.verdict(
+        landed=landed, found=found, matching=matching, other=other, rule=rule
+    )
+    if problems:
+        _print(
+            msg=f"FAIL  {target} holds {len(found)} detection(s) for {hunt!r}: "
+            f"{'; '.join(problems)}"
+        )
+        return 1
+    _print(
+        msg=f"PASS  {target} holds exactly the {len(matching)} matching event(s) and "
+        f"none of the {len(other)} near miss(es), under rule {rule!r} at severity "
+        f"{_detection.SEVERITY}"
     )
     _print(
-        msg=f"      note: those row(s) remain, tagged hunt_name = {hunt} -- the hunt and "
-        "its rule are removed"
+        msg=f"      note: the hunt's events and its detections remain, tagged {hunt} -- "
+        "the hunt and its rule are removed"
     )
     return 0
 
@@ -2126,13 +2252,13 @@ def main() -> int:
         )
         _cleanup(database, table, marker)
         # Every remaining claim runs even when an earlier one fails, so one boot
-        # reports every broken pipeline rather than the first one. The hunt runs
-        # first because its first window looks back one cron interval from when it
-        # is created: behind a slow claim, this run's rows fall outside it.
+        # reports every broken pipeline rather than the first one.
         return _report_claims(
             claims={
                 "ingest": HELD,
-                "hunts": _verify_hunt(database=database, marker=marker, table=table),
+                "hunts": _verify_hunt(
+                    database=database, ingest_url=ingest_url, marker=marker, table=table
+                ),
                 "subscription": _verify_loader_subscription(),
                 "self-monitoring": _verify_self_monitoring(),
                 "observability": _verify_hyperdx(),
