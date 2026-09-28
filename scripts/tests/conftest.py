@@ -1,6 +1,6 @@
 #  Project:      dfe-docker
 #  File:         tests/conftest.py
-#  Purpose:      Put scripts/ on sys.path and give each test its own .env
+#  Purpose:      Put scripts/ on sys.path and keep every test's writes out of the checkout
 #  Language:     Python
 #
 #  License:      BUSL-1.1
@@ -31,7 +31,20 @@ import check_compose  # noqa: E402
 import creds  # noqa: E402
 import dev_posture  # noqa: E402
 import init  # noqa: E402
+import instances  # noqa: E402
 import post  # noqa: E402
+import resolve_profile  # noqa: E402
+
+
+@pytest.fixture(autouse=True)
+def generated_files_stay_in_tmp(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Point the files `make` generates at tmp_path, so no test rewrites the checkout's copies."""
+    monkeypatch.setattr(resolve_profile, "PROFILE_MK", tmp_path / ".profile.mk")
+    monkeypatch.setattr(
+        instances, "COMPOSE_INSTANCES_FILE", tmp_path / "docker-compose.instances.yml"
+    )
 
 
 @pytest.fixture
