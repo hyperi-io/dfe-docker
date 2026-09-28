@@ -35,9 +35,11 @@ from _common import (
     DEPLOYMENT_DIAL,
     DEPLOYMENT_DIAL_TEMPLATE,
     DOTENV_FILE,
+    DOTENV_MODE,
     _parse_yaml_subset,
     _print,
     _rel_path,
+    write_private,
 )
 
 # (dial path) -> .env key. Order matters: a later entry overrides an earlier one
@@ -120,8 +122,7 @@ def _merge_env(*, updates: dict[str, str]) -> None:
         out.append("## Set by `make dial` from deployment.yaml - do not edit by hand.")
         out.extend(f"{key}={value}" for key, value in remaining.items())
 
-    with DOTENV_FILE.open("w", encoding="utf-8", newline="\n") as handle:
-        handle.write("\n".join(out) + "\n")
+    write_private(path=DOTENV_FILE, text="\n".join(out) + "\n", mode=DOTENV_MODE)
 
 
 def main() -> int:

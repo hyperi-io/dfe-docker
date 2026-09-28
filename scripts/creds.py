@@ -58,6 +58,7 @@ from _common import (
     _external_origin,
     _print,
     _rel_path,
+    write_private,
 )
 
 # Set to 0 to keep the password off a terminal too.
@@ -294,15 +295,8 @@ def summary_markdown(*, values: dict[str, str]) -> str:
 
 
 def write_summary(*, values: dict[str, str], path: Path) -> Path:
-    """Write the summary 0600, creating it that way rather than fixing it after.
-
-    An existing file is truncated and its mode reasserted: a rerun must not leave
-    passwords behind a mode a previous run or an editor widened.
-    """
-    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
-    with os.fdopen(fd, "w", encoding="utf-8", newline="\n") as handle:
-        handle.write(summary_markdown(values=values))
-    os.chmod(path, 0o600)
+    """Write the summary 0600; a rerun reasserts the mode on an existing file."""
+    write_private(path=path, text=summary_markdown(values=values))
     return path
 
 

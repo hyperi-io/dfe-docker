@@ -61,10 +61,12 @@ from pathlib import Path
 from _common import (
     COMPOSE_FILE,
     DOTENV_FILE,
+    DOTENV_MODE,
     DOTENV_TEMPLATE,
     _dotenv_values,
     _print,
     _rel_path,
+    write_private,
 )
 from _registry import (
     DISCOVERY_WORDS,
@@ -370,7 +372,7 @@ def main() -> int:
         merged = _merge_into_env(
             DOTENV_FILE.read_text(encoding="utf-8", errors="replace"), pins | marker
         )
-        DOTENV_FILE.write_text(merged, encoding="utf-8", newline="\n")
+        write_private(path=DOTENV_FILE, text=merged, mode=DOTENV_MODE)
         _print(
             msg=(
                 f"Pinned {len(pins)} image version(s) for stack {version} into "

@@ -35,11 +35,13 @@ from pathlib import Path
 
 from _common import (
     DOTENV_FILE,
+    DOTENV_MODE,
     DOTENV_TEMPLATE,
     ENV_DIR,
     ENV_TEMPLATE_DIR,
     _print,
     _rel_path,
+    write_private,
 )
 
 # Secrets that must not be left at their weak/empty default. scripts/post.py
@@ -173,8 +175,7 @@ def _render_secrets(*, text: str) -> str:
 def _create_dotenv(*, dst_path: Path, src_path: Path) -> None:
     """Write a new .env from its template with generated secrets materialised."""
     template = src_path.read_text(encoding="utf-8")
-    with dst_path.open("w", encoding="utf-8", newline="\n") as handle:
-        handle.write(_render_secrets(text=template))
+    write_private(path=dst_path, text=_render_secrets(text=template), mode=DOTENV_MODE)
     _print(
         header=_rel_path(path=dst_path),
         msg=f"Created (generated {len(GENERATED_SECRETS)} secrets)",
@@ -235,8 +236,11 @@ def _ask_retention(*, dotenv_path: Path) -> None:
     if days is None:
         return
     text = dotenv_path.read_text(encoding="utf-8")
-    with dotenv_path.open("w", encoding="utf-8", newline="\n") as handle:
-        handle.write(_set_live(text=text, key=RETENTION_KEY, value=days))
+    write_private(
+        path=dotenv_path,
+        text=_set_live(text=text, key=RETENTION_KEY, value=days),
+        mode=DOTENV_MODE,
+    )
     _print(header=_rel_path(path=dotenv_path), msg=f"{RETENTION_KEY}={days}")
 
 
@@ -273,8 +277,7 @@ def _top_up_secrets(*, dotenv_path: Path) -> None:
             for key in sorted(pending)
         )
 
-    with dotenv_path.open("w", encoding="utf-8", newline="\n") as handle:
-        handle.write("\n".join(rewritten) + "\n")
+    write_private(path=dotenv_path, text="\n".join(rewritten) + "\n", mode=DOTENV_MODE)
     _print(
         header=_rel_path(path=dotenv_path),
         msg=f"Generated missing secrets: {', '.join(missing)}",
@@ -331,6 +334,23 @@ def share_env_dir(*, env_dir: Path) -> None:
     _print(header=f"{_rel_path(path=env_dir)}/", msg="Group-writable, setgid")
 
 
+def _close_dotenv_to_others(*, dotenv_path: Path) -> None:
+    """Drop every permission bit for others on an existing .env; owner and group are left as they are."""
+    mode = stat.S_IMODE(dotenv_path.stat().st_mode)
+    if not (mode & stat.S_IRWXO):
+        return
+    try:
+        dotenv_path.chmod(mode & ~stat.S_IRWXO)
+    except PermissionError as exc:
+        _print(
+            header=_rel_path(path=dotenv_path),
+            msg=f"WARNING: readable by every local user and cannot be narrowed ({exc}) -- "
+            f"its owner should run `chmod o-rwx {_rel_path(path=dotenv_path)}`",
+        )
+        return
+    _print(header=_rel_path(path=dotenv_path), msg="Closed to other users")
+
+
 def _copy_if_absent(*, dst_path: Path, src_path: Path) -> None:
     """Copy src_path to dst_path unless dst_path already exists - report the outcome."""
     if dst_path.exists():
@@ -350,6 +370,7 @@ def main() -> int:
 
     if DOTENV_FILE.exists():
         _print(header=_rel_path(path=DOTENV_FILE), msg="Skipped (already exists)")
+        _close_dotenv_to_others(dotenv_path=DOTENV_FILE)
         _top_up_secrets(dotenv_path=DOTENV_FILE)
         _report_drift(dotenv_path=DOTENV_FILE, template_path=DOTENV_TEMPLATE)
     else:
