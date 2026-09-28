@@ -337,6 +337,18 @@ Two things about the runner worth knowing before you debug it:
   Deleting it per run makes a run depend on the test definition, not on broker
   history.
 
+### Rules and hunts -- exactly the matching events
+
+```bash
+make test-e2e E2E_TESTS=rules-and-hunts
+```
+
+A test with a `detection:` block creates a rule (`POST /rules`) and a one-minute hunt over `dfe.main` into `dfe.detection` (`POST /hunts`) as the stack's admin, and the runner already running has to commit the hunt's first window. It then sends the `matching` events the rule's `where` must find and the `other` near misses it must not, queues a run (`POST /hunts/{name}/run`), and waits for the hunt's `last_run` to pass the last event's load time. The next scheduled fire is the backstop.
+
+The hunt's rows must name, by `matched_uuid`, every landed `matching` row once and no `other` row, under the rule and severity the test gave. The hunt and the rule are deleted and asserted gone. The rows stay, tagged with the run marker.
+
+The `core` footprint starts `dfe-hunt-runner`, as `make dev` does. On a profile with it off the test skips with that reason, and a skip fails the run.
+
 ### Outage tests -- a service stopped under load
 
 ```bash

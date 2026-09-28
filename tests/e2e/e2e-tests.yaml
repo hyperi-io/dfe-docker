@@ -32,6 +32,14 @@
 #
 # A test whose archiver subscribes to its landing topic and archives to a
 # file:// destination also asserts the archiver wrote a file during the test.
+#
+# A `detection` block replaces the one-shot send with the rules-and-hunts flow:
+# a rule and a one-minute hunt created through the engine API, the events in
+# `matching` and `other` sent under one marker, a queued run, and the hunt's rows
+# in dfe.detection asserted to be exactly the landed `matching` events. `where` is
+# the rule's detection logic over the landing table, and the suite holds it to
+# this run's rows by the marker. It needs dfe-hunt-runner, so it skips on a
+# profile with the core footprint off.
 
 global:
   data_file: tests/e2e/data/events.jsonl
@@ -94,6 +102,15 @@ tests:
       - url: http://localhost:${DFE_UI_PORT:-3000}/api/v1/auth/setup-status
         status: 200
         contains: "initial_setup"
+
+  # Failed root logins are the detection; a failure for another user, a root
+  # success and an unrelated API event are the near misses it must leave alone.
+  - name: rules-and-hunts
+    profile: grpc-receiver
+    detection:
+      where: "toString(_json.event_type) = 'login_failure' AND toString(_json.user_name) = 'root'"
+      matching: tests/e2e/data/detection-matching.jsonl
+      other: tests/e2e/data/detection-other.jsonl
 
   # ClickHouse down under load on the core data path: dfe-loader has to hold or
   # refuse what it cannot write, and deliver it once ClickHouse is back.
