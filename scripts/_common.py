@@ -91,6 +91,8 @@ CONFIG_DIR = REPO_ROOT / "config"
 DEPLOYMENT_DIAL = REPO_ROOT / "deployment.yaml"
 DEPLOYMENT_DIAL_TEMPLATE = REPO_ROOT / "deployment.example.yaml"
 DOTENV_FILE = REPO_ROOT / ".env"
+# Owner and group read it (a daemon install shares it through the checkout's group); others never.
+DOTENV_MODE = 0o640
 DOTENV_TEMPLATE = REPO_ROOT / ".env.example"
 ENV_DIR = REPO_ROOT / "env"
 ENV_TEMPLATE_DIR = REPO_ROOT / "env.example"
@@ -124,6 +126,19 @@ def _print(
 def _rel_path(*, path: Path) -> str:
     """Return path relative to the repo root for display."""
     return str(path.relative_to(REPO_ROOT))
+
+
+def write_private(*, path: Path, text: str, mode: int = 0o600) -> None:
+    """Write a file that holds secrets at `mode`, whatever the umask or a prior mode.
+
+    Created at `mode` rather than chmod'ed after, so a new file is never readable
+    by others; an existing file has its mode reasserted, so a rerun narrows one an
+    earlier version or an editor left wide.
+    """
+    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, mode)
+    with os.fdopen(fd, "w", encoding="utf-8", newline="\n") as handle:
+        handle.write(text)
+    os.chmod(path, mode)
 
 
 def _config_topics(*, path: Path) -> tuple[set[str], set[str], str]:

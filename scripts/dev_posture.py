@@ -37,11 +37,17 @@ from __future__ import annotations
 
 import argparse
 import datetime
-import os
 import sys
 from pathlib import Path
 
-from _common import DOTENV_FILE, _dotenv_values, _print, _rel_path
+from _common import (
+    DOTENV_FILE,
+    DOTENV_MODE,
+    _dotenv_values,
+    _print,
+    _rel_path,
+    write_private,
+)
 from creds import (
     _ADMIN_PASSWORD_KEY,
     _DEFAULT_PASSWORD,
@@ -64,10 +70,7 @@ def _backup(*, text: str) -> Path:
     """Copy the current .env alongside itself, 0600, and return the path written."""
     stamp = datetime.datetime.now(datetime.UTC).strftime("%Y%m%dT%H%M%SZ")
     path = DOTENV_FILE.with_name(f"{DOTENV_FILE.name}.bak-{stamp}")
-    # Opened 0600 rather than chmod'ed after, so the copy is never world-readable.
-    handle = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
-    with open(handle, "w", encoding="utf-8", newline="\n") as backup:
-        backup.write(text)
+    write_private(path=path, text=text)
     return path
 
 
@@ -166,8 +169,7 @@ def main(*, argv: list[str] | None = None) -> int:
         return 0
 
     backup = _backup(text=text)
-    with DOTENV_FILE.open("w", encoding="utf-8", newline="\n") as handle:
-        handle.write(rewritten)
+    write_private(path=DOTENV_FILE, text=rewritten, mode=DOTENV_MODE)
     written = (
         f"Real posture: DFE_ENV={wanted.get(_POSTURE_KEY, environment)}, admin password "
         f"minted. Read it with `make creds`."
