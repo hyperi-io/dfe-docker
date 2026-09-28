@@ -24,16 +24,24 @@ require one to exist.
 The matching env var wins over the profile key, because ``.env`` is what a deploy
 writes (via the deployment dial) while the profile is the committed shape -- the
 same precedence ``DFE_PROFILE`` already has over ``active_profile``.
+
+The Makefile passes ``--unpublished <ui>`` for each infra UI its exposure dials
+take off the host, so the admin links handed to the engine name only the UIs a
+browser can open.
 """
 
-from __future__ import annotations
-
+import argparse
+import json
 import os
+import sys
+from collections.abc import Collection, Mapping, Sequence
+from dataclasses import dataclass
 from pathlib import Path
 
 import instances
 from _common import (
     CONFIG_DIR,
+    EXTERNAL_ORIGIN_KEY,
     FALSY,
     PROFILE_MK,
     PROJECTED_PROFILES,
@@ -121,6 +129,60 @@ OTEL_BUNDLED_ENDPOINT = "http://otel-collector:4317"
 # costs a scraping estate nothing.
 OTEL_ENGINE_BACKEND_ENV_VAR = "DFE_ENGINE_METRICS_BACKEND"
 OTEL_ENGINE_BACKEND = "opentelemetry"
+
+# What the engine is handed as DFE_ADMIN_LINKS: the JSON list of admin UIs a
+# browser can open on this stack.
+ADMIN_LINKS_VAR = "DFE_ADMIN_LINKS_RESOLVED"
+# Compose's own fallback for DFE_EXTERNAL_ORIGIN, and the override the
+# oauth2-proxy callbacks are built from instead of it.
+DEFAULT_EXTERNAL_ORIGIN = "http://localhost"
+OAUTH2_PROXY_ORIGIN_VAR = "DFE_OAUTH2_PROXY_EXTERNAL_ORIGIN"
+
+
+@dataclass(frozen=True, slots=True)
+class _AdminUi:
+    """One infra-class UI as an admin link describes it.
+
+    Attributes:
+        name: What the UI is.
+        purpose: What an admin opens it for, in one line.
+        port_var: The variable holding its host port.
+        default_port: The host port compose publishes when port_var is unset.
+        probe_url: Its address on the compose network, which the engine GETs.
+        origin_var: The per-surface origin compose builds this UI's own URLs
+            from, empty where it has none.
+    """
+
+    name: str
+    purpose: str
+    port_var: str
+    default_port: str
+    probe_url: str
+    origin_var: str
+
+
+# Keyed by footprint component, in the order the console lists them. Infra class
+# only: ClickHouse Play is an operator port on DFE_BIND_HOST, loopback by design
+# and outside the UI exposure dials, and dfe-ui and the engine API are the product.
+ADMIN_UIS = {
+    "kafbat": _AdminUi(
+        name="Kafbat",
+        purpose="Topics, consumer groups and lag",
+        port_var="KAFBAT_PORT",
+        default_port="8081",
+        probe_url="http://kafka-ui:8080",
+        origin_var="",
+    ),
+    "hyperdx": _AdminUi(
+        name="HyperDX",
+        purpose="Logs, metrics and traces search",
+        port_var="DFE_HYPERDX_APP_PORT",
+        default_port="8090",
+        # The proxy carrying HyperDX's host port, so one probe answers for both.
+        probe_url="http://dfe-hyperdx-proxy:8090",
+        origin_var="DFE_HYPERDX_APP_URL",
+    ),
+}
 
 # Footprint components a profile may declare: yaml key -> (env override, default
 # when neither the key nor the env var is set). kafbat's default only applies on
@@ -394,7 +456,66 @@ def _resolve_profile(
     )
 
 
-def main() -> int:
+def _origin(*, environ: Mapping[str, str], keys: Sequence[str]) -> str:
+    """Return the first of keys holding a value, else compose's default origin."""
+    for key in keys:
+        value = environ.get(key, "").strip().rstrip("/")
+        if value:
+            return value
+    return DEFAULT_EXTERNAL_ORIGIN
+
+
+def _admin_links(
+    *,
+    auth: bool,
+    environ: Mapping[str, str],
+    running: Collection[str],
+    unpublished: Collection[str],
+) -> list[dict[str, str]]:
+    """Return the admin UIs this stack runs and publishes, as DFE_ADMIN_LINKS entries.
+
+    Each URL is the one docker-compose.yml builds for that surface: its origin
+    override, else DFE_EXTERNAL_ORIGIN, then the host port. Behind the auth
+    profile the override is the oauth2-proxy one, because the proxy's callback is
+    where the browser lands after sign-in.
+    """
+    links: list[dict[str, str]] = []
+    for component, ui in ADMIN_UIS.items():
+        if component not in running or component in unpublished:
+            continue
+        override = OAUTH2_PROXY_ORIGIN_VAR if auth else ui.origin_var
+        origin = _origin(
+            environ=environ,
+            keys=[key for key in (override, EXTERNAL_ORIGIN_KEY) if key],
+        )
+        port = environ.get(ui.port_var, "").strip() or ui.default_port
+        links.append(
+            {
+                "name": ui.name,
+                "purpose": ui.purpose,
+                "url": f"{origin}:{port}",
+                "probe_url": ui.probe_url,
+            }
+        )
+    return links
+
+
+def _parse_args(argv: Sequence[str]) -> argparse.Namespace:
+    parser = argparse.ArgumentParser(
+        description="Resolve the active service profile into .profile.mk."
+    )
+    parser.add_argument(
+        "--unpublished",
+        action="append",
+        choices=sorted(ADMIN_UIS),
+        default=[],
+        help="an infra UI the exposure dials take off the host (repeatable)",
+    )
+    return parser.parse_args(list(argv))
+
+
+def main(argv: Sequence[str] = ()) -> int:
+    args = _parse_args(argv)
     try:
         if not (SERVICE_PROFILES_FILE.is_file()):
             raise _ProfileError(
@@ -530,6 +651,23 @@ def main() -> int:
             f"{'https' if secure in CLICKHOUSE_SECURE_VALUES else 'http'}"
         )
 
+        # The admin UIs the engine lists, from the footprint that starts them and
+        # the dials that publish them. Emitted unconditionally, `[]` when none.
+        running = set()
+        if kafka_ui_enabled:
+            running.add("kafbat")
+        if footprint["hyperdx"]:
+            running.add("hyperdx")
+        links = _admin_links(
+            auth=footprint["auth"],
+            environ=os.environ,
+            running=running,
+            unpublished=args.unpublished,
+        )
+        lines.append(
+            f"export {ADMIN_LINKS_VAR} := {json.dumps(links, separators=(',', ':'))}"
+        )
+
         # Point the services at the bundled collector, unless .env already names
         # an endpoint -- an external OTLP backend is the other supported shape.
         #
@@ -606,4 +744,4 @@ def main() -> int:
 
 
 if __name__ == "__main__":
-    raise SystemExit(main())
+    raise SystemExit(main(sys.argv[1:]))

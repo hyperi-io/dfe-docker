@@ -1129,6 +1129,10 @@ services:
       # HyperDX containers and the engine that drives them.
       DFE_HYPERDX_ENABLED: ${DFE_HYPERDX_RESOLVED:-false}
       DFE_HYPERDX_BASE_URL: ${DFE_HYPERDX_RESOLVED_BASE_URL:-}
+      # The infra UIs this stack runs and publishes, as the console's admin links.
+      # resolve_profile.py builds the list from the footprint and the exposure
+      # dials, so a UI the dials take off the host is not offered.
+      DFE_ADMIN_LINKS: ${DFE_ADMIN_LINKS_RESOLVED:-}
       DFE_CLICKHOUSE_HOST: ${CLICKHOUSE_HOST:-clickhouse}
       # The bundled ClickHouse listens on 8123/9000 whatever its host publish is,
       # so only an external CLICKHOUSE_HOST sets these ports (#75).
