@@ -19,6 +19,6 @@ routing:
 destinations:
   default: loader
 
-# No grpc_endpoint: the receiver's default loader address is dfe-loader:6000, and an engine-rendered destinations.loader overrides it.
+# No grpc_endpoint: the receiver's default loader address is dfe-loader:6000, and an overlay setting loader.grpc_endpoint overrides it.
 loader:
   transport: grpc
