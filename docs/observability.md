@@ -185,7 +185,7 @@ Node metrics are still not collected.
 
 ## What a passing self test proves
 
-`make post` makes up to five claims, and each one the profile can make must hold:
+`make post` makes up to eight claims, and each one the profile can make must hold:
 
 - **Ingest.** Three marked events posted at the profile's ingest edge come back
   as those exact rows in `dfe.main` inside 60s.

@@ -25,6 +25,7 @@ from __future__ import annotations
 import os
 import shutil
 import subprocess
+from collections.abc import Iterator
 from pathlib import Path
 
 import pytest
@@ -126,6 +127,21 @@ def _run_emitter(
         else {}
     )
     return done.returncode, done.stdout + done.stderr, written
+
+
+@pytest.fixture(scope="module", autouse=True)
+def _default_container_prefix() -> Iterator[None]:
+    """Pin the default (empty) container prefix, whatever the caller's checkout sets.
+
+    Every name below assumes it -- a second local stack's .env sets one, and this
+    file must not fail depending on the environment it happens to run in.
+    """
+    previous = os.environ.pop("DFE_CONTAINER_PREFIX", None)
+    try:
+        yield
+    finally:
+        if previous is not None:
+            os.environ["DFE_CONTAINER_PREFIX"] = previous
 
 
 @pytest.fixture(scope="module")
