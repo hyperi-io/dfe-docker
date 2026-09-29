@@ -2889,15 +2889,19 @@ def run_search_detection(ctx, test, ingest_url, token):
                 ctx, f"[{test.name}] the landed rows' _timestamp_load could not be read"
             )
             return
-        queued = queue_detection_run(
-            ctx,
-            test,
-            token,
-            hunt,
-            last_load_ms,
-            trigger=lambda: console.trigger_hunt(hunt),
-            by="the console's Trigger On-Demand",
-        )
+        try:
+            queued = queue_detection_run(
+                ctx,
+                test,
+                token,
+                hunt,
+                last_load_ms,
+                trigger=lambda: console.trigger_hunt(hunt),
+                by="the console's Trigger On-Demand",
+            )
+        except _search_rule.ConsoleError as error:
+            mark_fail(ctx, f"[{test.name}] {error}")
+            return
         if not (await_detection_coverage(ctx, test, token, hunt, last_load_ms, queued)):
             return
         print()

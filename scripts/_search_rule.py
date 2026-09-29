@@ -18,6 +18,7 @@ filter from the search bar and from the side panel, press Create Rule, read the
 rule page it opens, add a hunt over the rule and trigger it on demand.
 """
 
+import functools
 import json
 import re
 from dataclasses import dataclass
@@ -51,6 +52,28 @@ PLAYWRIGHT_HINT = (
 
 class ConsoleError(Exception):
     """A console step the browser could not complete, with what it saw instead."""
+
+
+def _step(name: str):
+    """Report a browser error inside one console step as a ConsoleError, with a screenshot.
+
+    The suite catches ConsoleError only. A Playwright error reaching it ends the
+    run with a traceback, no teardown, no results and no picture of the page.
+    """
+
+    def wrap(method):
+        @functools.wraps(method)
+        def run(self, *args, **kwargs):
+            try:
+                return method(self, *args, **kwargs)
+            except self._browser_error as error:
+                self.shot(f"{name}-failed")
+                reason = str(error).strip().splitlines()[0]
+                raise ConsoleError(f"{name} failed: {reason}") from error
+
+        return run
+
+    return wrap
 
 
 def search_condition(*, marker: str, where: str) -> str:
@@ -124,11 +147,12 @@ class Console:
 
     def __init__(self, *, ui_url: str, shots_dir: Path, headed: bool) -> None:
         try:
-            from playwright.sync_api import expect, sync_playwright
+            from playwright.sync_api import Error, expect, sync_playwright
         except ModuleNotFoundError as error:
             raise ConsoleError(
                 f"no playwright in this interpreter -- {PLAYWRIGHT_HINT}"
             ) from error
+        self._browser_error = Error
         self._expect = expect
         self.ui_url = ui_url.rstrip("/")
         self.shots_dir = shots_dir
@@ -200,12 +224,29 @@ class Console:
         self.page.keyboard.press("Escape")
 
     def _select_source(self, frame, source: str) -> None:
+        """Put the search on source, once the page has picked a source of its own.
+
+        The page selects a default source shortly after the search bar shows, and
+        picking the option already selected clears it, which leaves the search
+        running nothing.
+        """
         selector = frame.get_by_test_id("source-selector")
         selector.wait_for(state="visible")
-        if selector.input_value().strip() == source:
-            return
-        selector.click()
-        frame.get_by_role("option", name=source, exact=True).click()
+        try:
+            self._expect(selector).not_to_have_value("", timeout=QUERY_TIMEOUT_MS)
+        except AssertionError as error:
+            self.shot("no-source")
+            raise ConsoleError("the search page never selected a source") from error
+        if selector.input_value().strip() != source:
+            selector.click()
+            frame.get_by_role("option", name=source, exact=True).click()
+        try:
+            self._expect(selector).to_have_value(source)
+        except AssertionError as error:
+            self.shot("source-not-selected")
+            raise ConsoleError(
+                f"the search is on {selector.input_value()!r}, not {source!r}"
+            ) from error
 
     def _apply_json_filter(self, frame, *, path: str, value: str) -> None:
         """Pick one value of one JSON sub-path in the side panel."""
@@ -249,6 +290,7 @@ class Console:
             reason = text
         return f"{CREATE_RULE_ROUTE} answered HTTP {response.status}: {reason}"
 
+    @_step("create-rule")
     def create_rule_from_search(
         self,
         *,
@@ -326,6 +368,7 @@ class Console:
         rule_page.close()
         return SearchRule(rule_id=rule_id, detail=detail)
 
+    @_step("create-hunt")
     def create_hunt(self, *, name: str, target: str, picks: list[HuntPick]) -> None:
         """Add a hunt through the console's form.
 
@@ -372,6 +415,7 @@ class Console:
         option.first.click()
         self.page.keyboard.press("Escape")
 
+    @_step("trigger-hunt")
     def trigger_hunt(self, name: str) -> tuple[int, object]:
         """Trigger the selected hunt on demand, returning what the engine answered."""
         page = self.page
