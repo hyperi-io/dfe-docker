@@ -322,6 +322,7 @@ The same toggle points the engine at HyperDX: with it on, the engine receives `D
 | `DFE_HYPERDX_AUTH_MODE`                          | `header-dev` runs HyperDX off request headers, for a stack with no engine            | `oidc-proxy`                                                        |
 | `DFE_HYPERDX_BASE_URL`                           | Where the ENGINE reaches HyperDX; name an external one here                          | `http://hyperdx:8000`                                               |
 | `DFE_HYPERDX_TEAM`                               | Team name when the token carries no group claim                                      | `dfe`                                                               |
+| `DFE_HYPERDX_USAGE_STATS_ENABLED`                | `true` sends upstream HyperDX's usage stats to `in-otel.hyperdx.io`, a third party   | `false`                                                             |
 | `HYPERDX_THEME`                                  | UI theme (NEXT_PUBLIC_THEME)                                                         | `dfe`                                                               |
 | `HYPERDX_POSTGRES_USER`                          | FerretDB/Postgres user                                                               | `hyperdx`                                                           |
 | `HYPERDX_POSTGRES_PASSWORD`                      | FerretDB/Postgres password                                                           | `hyperdx`                                                           |
