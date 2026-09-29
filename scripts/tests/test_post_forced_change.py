@@ -22,6 +22,7 @@ from pathlib import Path
 
 import pytest
 
+import _common
 import post
 
 _ISSUED = "IssuedByMakeInit0123456789"
@@ -160,6 +161,19 @@ def test_only_the_password_line_changes_and_the_mode_stays(
     )
     assert stat.S_IMODE(issued.stat().st_mode) == 0o600
     assert sorted(path.name for path in issued.parent.iterdir()) == [".env"]
+
+
+def test_a_dotenv_left_open_to_others_is_closed_by_the_rewrite(
+    issued: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The rewrite narrows to the documented mode rather than carrying a wide one over."""
+    issued.chmod(0o644)
+    _serve(monkeypatch, _Engine(password=_ISSUED, sends_flag=True))
+
+    post._login(_BASE)
+
+    assert _recorded(issued) != _ISSUED
+    assert stat.S_IMODE(issued.stat().st_mode) == 0o644 & _common.DOTENV_MODE
 
 
 def test_neither_password_is_printed(

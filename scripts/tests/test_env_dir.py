@@ -17,6 +17,7 @@ from pathlib import Path
 
 import pytest
 
+import _common
 import env_files
 import init
 
@@ -50,6 +51,18 @@ def test_init_leaves_env_group_writable_and_setgid(env_dir: Path) -> None:
     assert init.main() == 0
 
     assert _mode(env_dir) & init.ENV_DIR_GROUP_BITS == init.ENV_DIR_GROUP_BITS
+
+
+def test_a_new_service_env_file_is_closed_to_other_users(env_dir: Path) -> None:
+    """The templates carry cloud keys, OIDC client secrets and a SASL password to fill in."""
+    template = env_dir.parent / "env.example" / "engine.env"
+    template.chmod(0o644)
+
+    assert init.main() == 0
+
+    created = env_dir / "engine.env"
+    assert _mode(created) == _common.DOTENV_MODE
+    assert created.read_text(encoding="utf-8") == template.read_text(encoding="utf-8")
 
 
 def test_a_start_target_heals_an_env_dir_an_older_init_made(env_dir: Path) -> None:
