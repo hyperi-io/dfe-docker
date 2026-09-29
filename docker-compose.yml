@@ -289,10 +289,10 @@ services:
 
   # ===========================================================================
   # dlq-init
-  # Makes the shared DLQ spool and the archive volume writable by the services
-  # that use them: Docker creates both mountpoints root-owned and every consumer
-  # runs as uid 1000, so without this dfe-archiver crash-loops on its eager DLQ
-  # writer and fails every archive write.
+  # Makes the shared DLQ spool, the archive volume and the fetcher cursors
+  # writable by the services that use them: Docker creates each mountpoint
+  # root-owned and every consumer runs as uid 1000, so without this dfe-archiver
+  # crash-loops on its eager DLQ writer and fails every archive write.
   #
   # Three sharp edges -- `required: false` means a FAILED dlq-init only warns,
   # uid 1000 is hard-coded, and no profile names this service, so dev mode builds
@@ -310,10 +310,11 @@ services:
     # into argv, so `sh -c` would receive only `chown` and the rest would land in
     # $0/$1/$2 -- which fails with "chown: missing operand".
     command:
-      - chown -R 1000:1000 /var/spool/dfe /var/data/archive
+      - chown -R 1000:1000 /var/spool/dfe /var/data/archive /var/lib/dfe-fetcher
     volumes:
       - dlq-spool:/var/spool/dfe
       - archiver-data:/var/data/archive
+      - fetcher-cursors:/var/lib/dfe-fetcher
     restart: "no"
 
   # ===========================================================================
@@ -596,6 +597,8 @@ services:
       LOG_FORMAT: ${LOG_FORMAT:-text}
       OTEL_EXPORTER_OTLP_ENDPOINT: ${DFE_OTEL_EXPORTER_ENDPOINT:-}
       OTEL_SERVICE_NAME: dfe-fetcher
+      # One directory per fetcher service; scripts/instances.py sets each instance's.
+      DFE_FETCHER_CURSOR__DIRECTORY: /var/lib/dfe-fetcher/dfe-fetcher
     depends_on:
       dfe-loader:
         condition: service_healthy
@@ -615,6 +618,7 @@ services:
       - ./config/${DFE_FETCHER_CONFIG:-fetcher/kafka.yaml}:/etc/dfe/fetcher.yaml:ro
       - dfe-app-config:/etc/dfe/apps:ro
       - dlq-spool:/var/spool/dfe
+      - fetcher-cursors:/var/lib/dfe-fetcher
     healthcheck:
       test: ["CMD", "curl", "-sf", "http://localhost:9090/livez"]
       interval: 10s
@@ -1717,6 +1721,7 @@ volumes:
   kafka-apache-config:
   archiver-data:
   dlq-spool:
+  fetcher-cursors:
   dfe-engine-config:
   dfe-engine-schemas:
   dfe-engine-content:

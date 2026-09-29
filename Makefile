@@ -357,7 +357,7 @@ modes: ## Show the deploy modes -- pinned vs track-latest -- and which one this 
 .PHONY: storage-dirs
 storage-dirs:
 ifneq ($(strip $(DFE_DATA_ROOT)),)
-	@mkdir -p $(addprefix $(DFE_DATA_ROOT)/,clickhouse kafka-redpanda kafka-apache archiver dlq-spool engine-config engine-schemas hyperdx-pg)
+	@mkdir -p $(addprefix $(DFE_DATA_ROOT)/,clickhouse kafka-redpanda kafka-apache archiver dlq-spool fetcher-cursors engine-config engine-schemas hyperdx-pg)
 endif
 
 # `dev` and `dev-build` clone the component repos from github.com/hyperi-io,

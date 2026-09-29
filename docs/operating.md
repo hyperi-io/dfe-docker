@@ -380,6 +380,7 @@ These named volumes hold all durable state:
 | `kafka-apache-secrets` / `kafka-apache-config` | Apache Kafka's TLS and property-file inputs, empty unless a deployment supplies them |
 | `archiver-data` | dfe-archiver output (`/var/data/archive`) |
 | `dlq-spool` | Shared dead-letter spool (`/var/spool/dfe`) |
+| `fetcher-cursors` | dfe-fetcher cursors (`/var/lib/dfe-fetcher`), one directory per fetcher service |
 | `dfe-engine-config` / `dfe-engine-schemas` | Engine config and schemas, seeded from the engine image on first run |
 | `hyperdx-pg-data` | HyperDX metadata store |
 | `hyperdx-ferretdb-state` | FerretDB's instance UUID and telemetry choice (`/state`) |

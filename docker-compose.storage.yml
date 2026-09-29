@@ -24,6 +24,9 @@ volumes:
   dlq-spool:
     driver: local
     driver_opts: {type: none, o: bind, device: "${DFE_DATA_ROOT}/dlq-spool"}
+  fetcher-cursors:
+    driver: local
+    driver_opts: {type: none, o: bind, device: "${DFE_DATA_ROOT}/fetcher-cursors"}
   dfe-engine-config:
     driver: local
     driver_opts: {type: none, o: bind, device: "${DFE_DATA_ROOT}/engine-config"}
