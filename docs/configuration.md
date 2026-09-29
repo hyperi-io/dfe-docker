@@ -266,6 +266,8 @@ contract absent and the engine starts anyway, so a settings page with nothing on
 it for one app means that app's one-shot logged a failure -- `docker compose logs
 contract-<app>`.
 
+The metrics an app reports come from the running app. A metrics refresh has the engine read the app's `/metrics/manifest` at `DFE_SERVICES_METRICS_MANIFEST_URL`, set to `http://{service}:9090/metrics/manifest`: the app's own container port by service name, so the host port a stack publishes it on does not matter. `POST /api/v1/service-surfaces/<app>/metrics/refresh` answers `refreshed: false` when the app did not answer.
+
 A setting the app's own schema does not declare is written as an environment variable instead, into a file named for the Compose service: `env/dfe-loader.custom.env`, beside the `env/loader.env` that `make init` creates. Each app reads both, the custom file second, so a custom key beats the same key in the operator's file. The `environment:` block in `docker-compose.yml` beats both, which is what keeps a custom key from taking over the broker address or the warehouse credentials. Neither file has to exist.
 
 A per-source instance such as `dfe-transform-vrl-<source>` reads its app's custom file and then its own, `env/dfe-transform-vrl-<source>.custom.env`, so a key set on one source reaches that source's container alone. `make apply SERVICES=dfe-transform-vrl-<source>` recreates it, the command the engine's response names.
