@@ -1,0 +1,11 @@
+<clickhouse>
+  <!-- Merged over the image's own <logger>, so the log and err.log keep their
+       paths. Each rotates at 50M and keeps 3 gzipped archives: 400M on disk at
+       most, where the image default is trace, 1000M and 10 archives. Same values
+       as the k8s chart's clickhouse.serverLog in dfe-infra. -->
+  <logger>
+    <level>information</level>
+    <size>50M</size>
+    <count>3</count>
+  </logger>
+</clickhouse>
