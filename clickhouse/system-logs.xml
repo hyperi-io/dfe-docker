@@ -1,0 +1,25 @@
+<clickhouse>
+  <!-- Merged over the image's own system log sections, which keep their
+       partitioning and flush settings. The server appends each ttl to the engine
+       it creates the table with. A changed section takes effect at the next
+       start: the old table is renamed to <table>_0, keeps its rows and stops
+       growing. -->
+  <asynchronous_metric_log>
+    <ttl>event_date + INTERVAL 7 DAY DELETE</ttl>
+  </asynchronous_metric_log>
+  <metric_log>
+    <ttl>event_date + INTERVAL 7 DAY DELETE</ttl>
+  </metric_log>
+  <part_log>
+    <ttl>event_date + INTERVAL 7 DAY DELETE</ttl>
+  </part_log>
+  <query_log>
+    <ttl>event_date + INTERVAL 30 DAY DELETE</ttl>
+  </query_log>
+  <!-- Kept on: HyperDX's clickhouse_system source reads it. -->
+  <text_log>
+    <ttl>event_date + INTERVAL 7 DAY DELETE</ttl>
+  </text_log>
+  <!-- Removed, so the server never creates or writes it; nothing reads it. -->
+  <trace_log remove="remove"/>
+</clickhouse>

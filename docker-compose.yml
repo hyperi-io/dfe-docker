@@ -154,6 +154,10 @@ services:
       # Server config, not users config: access_control_improvements is only read
       # from config.d.
       - ./clickhouse/server-custom.xml:/etc/clickhouse-server/config.d/dfe-custom.xml:ro
+      # The image leaves the server log at trace and its system log tables with
+      # no TTL, so an idle stack fills its own disk without these two.
+      - ./clickhouse/server-logger.xml:/etc/clickhouse-server/config.d/dfe-logger.xml:ro
+      - ./clickhouse/system-logs.xml:/etc/clickhouse-server/config.d/dfe-system-logs.xml:ro
     healthcheck:
       test: ["CMD-SHELL", "clickhouse-client --password \"$$CLICKHOUSE_PASSWORD\" --query \"SELECT 1 FROM system.databases WHERE name = '\"$$CLICKHOUSE_DB\"'\""]
       interval: 5s
