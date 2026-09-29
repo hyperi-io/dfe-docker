@@ -45,8 +45,8 @@ _KAFBAT = {
     "probe_url": "http://kafka-ui:8080",
 }
 _HYPERDX = {
-    "name": "HyperDX",
-    "purpose": "Logs, metrics and traces search",
+    "name": "Search",
+    "purpose": "Logs, metrics and traces",
     "probe_url": "http://dfe-hyperdx-proxy:8090",
 }
 
