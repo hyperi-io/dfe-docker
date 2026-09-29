@@ -40,6 +40,11 @@
 # the rule's detection logic over the landing table, and the suite holds it to
 # this run's rows by the marker. It needs dfe-hunt-runner, so it skips on a
 # profile with the core footprint off.
+#
+# A `from_search` block inside `detection` replaces `where`: the rule comes from a
+# HyperDX search in the console, `search` in the search bar and `filter` picked in
+# the side panel, and the hunt is added and triggered from the console. It adds
+# HyperDX to the stack and needs Playwright and Chrome.
 
 global:
   data_file: tests/e2e/data/events.jsonl
@@ -111,6 +116,20 @@ tests:
       where: "toString(_json.event_type) = 'login_failure' AND toString(_json.user_name) = 'root'"
       matching: tests/e2e/data/detection-matching.jsonl
       other: tests/e2e/data/detection-other.jsonl
+
+  # The same detection made in the console: a search for failed logins, the side
+  # panel narrowed to root, Create Rule, then a hunt added and triggered from the
+  # console's form. Each filter alone lets a near miss through.
+  - name: search-rule-hunt
+    profile: grpc-receiver
+    detection:
+      matching: tests/e2e/data/detection-matching.jsonl
+      other: tests/e2e/data/detection-other.jsonl
+      from_search:
+        search: "toString(_json.event_type) = 'login_failure'"
+        filter:
+          path: user_name
+          value: root
 
   # ClickHouse down under load on the core data path: dfe-loader has to hold or
   # refuse what it cannot write, and deliver it once ClickHouse is back.

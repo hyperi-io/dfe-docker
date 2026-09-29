@@ -349,6 +349,20 @@ The hunt's rows must name, by `matched_uuid`, every landed `matching` row once a
 
 The `core` footprint starts `dfe-hunt-runner`, as `make dev` does. On a profile with it off the test skips with that reason, and a skip fails the run.
 
+### Search to rule to hunt -- the console path
+
+```bash
+uv run --with pyyaml --with playwright==1.63.0 python3 scripts/test_e2e.py search-rule-hunt
+```
+
+A `detection:` block carrying `from_search` makes its rule the way an analyst does, in a browser. It adds HyperDX to the stack, signs in to the console as the stack's admin and opens Observe search on `main`. The search bar gets the block's `search`, held to the run's marker, and the side panel picks its `filter`. Then Create Rule, and the rule page it opens.
+
+The stored rule has to scan `dfe.main` with no SQL errors and a WHERE that carries both filters. The hunt over it is added and triggered from the console's own form, and the verdict is the rules-and-hunts one: every matching event detected once, no near miss. Each filter alone lets a near miss through, so a filter lost between the search and the rule fails it.
+
+The side panel only offers values rows already hold, so both event sets are sent once before the search. The hunt's first window can reach those rows, so their near misses are judged too, and their matches are not.
+
+The console holds every page behind its setup wizard, so the test first makes the `e2e` organisation and one user of the deployment's own, as the wizard would. It needs an interpreter with Playwright and Google Chrome (`playwright install chrome` where Chrome is absent). `DFE_E2E_HEADED=1` shows the browser, and `DFE_E2E_SHOTS_DIR` keeps the step screenshots, which otherwise go to a new temporary directory named in the log.
+
 ### Outage tests -- a service stopped under load
 
 ```bash

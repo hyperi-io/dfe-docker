@@ -20,6 +20,7 @@ import argparse
 import json
 import logging
 import os
+import secrets
 import subprocess
 import sys
 import tempfile
@@ -50,6 +51,7 @@ from urllib.request import Request, urlopen
 
 import _detection
 import _outage
+import _search_rule
 import post
 from _common import FALSY, _config_argument, _load_dotenv, _use_mounted_configs
 from _pipeline import MARKER_EXPRESSIONS  # noqa: F401 - re-exported for callers
@@ -58,6 +60,7 @@ from _pipeline import (
     ch_int,
     clickhouse_url,
     env_or,
+    escape_literal,
     expand_env,
     otel_fresh_counts,
     poll_until,
@@ -199,6 +202,8 @@ DFE_RECEIVER_INGEST_URL = env_or(
     "DFE_RECEIVER_INGEST_URL",
     f"http://localhost:{env_or('DFE_RECEIVER_HTTP_PORT', '8080')}/ingest",
 )
+# dfe-proxy's port, which serves the console and the HyperDX it embeds.
+DFE_UI_URL = env_or("DFE_UI_URL", f"http://localhost:{env_or('DFE_UI_PORT', '3000')}")
 TEST_CONFIG = Path(
     os.environ.get("TEST_CONFIG", str(PROJECT_DIR / "tests" / "e2e" / "e2e-tests.yaml"))
 )
@@ -251,6 +256,36 @@ DETECTION_CUSTOMER = "e2e"
 DETECTION_LAND_TIMEOUT = 60
 
 # ------------------------------------------------------------------------------
+# Search Rule Tests
+# - A detection test whose `detection:` block carries `from_search` makes its rule
+#   the way an analyst does: a HyperDX search in the console, a side-panel filter
+#   and Create Rule, then a hunt added and triggered from the console's own form.
+#   docs/developing.md#search-to-rule-to-hunt----the-console-path
+# ------------------------------------------------------------------------------
+# resolve_profile.py's HyperDX footprint, and the engine settings it exports for it.
+HYPERDX_PROFILE = "hyperdx"
+HYPERDX_SERVICES = [
+    "dfe-dashboards",
+    "dfe-hyperdx-proxy",
+    "hyperdx",
+    "hyperdx-ferretdb",
+    "hyperdx-postgres",
+]
+HYPERDX_ENGINE_ENVIRONMENT = {
+    "DFE_HYPERDX_ENABLED": "true",
+    "DFE_HYPERDX_BASE_URL": "http://hyperdx:8000",
+}
+# HyperDX seeds a team's sources on the first request that carries an identity.
+HYPERDX_READY_TIMEOUT = 180
+# The source the search runs on, which is the table the rule has to scan.
+SEARCH_SOURCE = "main"
+# The console holds every page behind its setup wizard until an organisation and
+# a user of the deployment's own exist.
+SETUP_FIRST_USER = "e2e-analyst"
+SHOTS_DIR_ENV_VAR = "DFE_E2E_SHOTS_DIR"
+HEADED_ENV_VAR = "DFE_E2E_HEADED"
+
+# ------------------------------------------------------------------------------
 # Logging Related
 # - Custom log levels for test results (skip/pass/fail) and coloured output
 # ------------------------------------------------------------------------------
@@ -285,7 +320,9 @@ class TestContext:
 #   - compose_profiles: resolved compose profiles including infra (clickhouse, kafka backend profile, kafka-ui)
 #   - services: resolved {dfe-service: project-relative config path}
 #   - outage: {service, seconds, sources} for a test that stops a service under load
-#   - detection: {where, matching, other} for a test that proves a rule and a hunt
+#   - detection: {where, matching, other} for a test that proves a rule and a hunt,
+#     or {from_search, matching, other} for one whose rule comes from a search
+#   - engine_environment: settings this test's stack hands dfe-engine
 # ------------------------------------------------------------------------------
 @dataclass
 class TestCase:
@@ -303,6 +340,7 @@ class TestCase:
     expected_http: list[dict] = field(default_factory=list)
     outage: dict = field(default_factory=dict)
     detection: dict = field(default_factory=dict)
+    engine_environment: dict = field(default_factory=dict)
 
 
 # ------------------------------------------------------------------------------
@@ -605,7 +643,7 @@ def parse_compose_services():
 # - Creates a temp docker-compose override file to mount test-specific configs
 #   services: dict {dfe-service-name: project-relative config path}
 # ------------------------------------------------------------------------------
-def generate_compose_override(services):
+def generate_compose_override(services, engine_environment=None):
     TMP_DIR.mkdir(parents=True, exist_ok=True)
     override_file = TMP_DIR / f"docker-compose.{RUN_ID}.e2e.yaml"
 
@@ -615,6 +653,10 @@ def generate_compose_override(services):
         content += (
             f"  {svc_name}:\n    volumes:\n      - ./{services[svc_name]}:{mount}:ro\n"
         )
+    if engine_environment:
+        content += f"  {SCHEMA_AUTHORITY_SERVICE}:\n    environment:\n"
+        for key, value in sorted(engine_environment.items()):
+            content += f"      {key}: {json.dumps(value)}\n"
 
     override_file.write_text(content, encoding="utf-8", newline="\n")
     LOGGER.debug(f"Generated compose override: '{override_file}'")
@@ -755,7 +797,7 @@ def stack_up(mode, test, services):
     for profile in test.compose_profiles:
         LOGGER.debug(f"  - {profile}")
 
-    override_file = generate_compose_override(services)
+    override_file = generate_compose_override(services, test.engine_environment)
 
     compose_files = ["-f", "docker-compose.yml"]
     if mode not in MODES:
@@ -2309,7 +2351,14 @@ def create_detection_hunt(ctx, test, token, hunt, rule):
         mark_fail(ctx, f"[{test.name}] POST /hunts returned HTTP {status}: {body}")
         return False
     mark_pass(ctx, f"[{test.name}] POST /hunts created '{hunt}' on '{request['cron']}'")
+    return await_hunt_pickup(ctx, test, token, hunt)
 
+
+# ------------------------------------------------------------------------------
+# Await Pickup
+# - The runner that is already running commits the new hunt's first window
+# ------------------------------------------------------------------------------
+def await_hunt_pickup(ctx, test, token, hunt):
     row = poll_until(
         lambda: hunt_row(token, hunt),
         timeout=_detection.PICKUP_TIMEOUT_SECONDS,
@@ -2387,20 +2436,24 @@ def send_detection_events(ctx, test, ingest_url, events):
 # - Asks for a run now, once the requested fire is past the last row's load
 #   time, so the queued window covers every event
 # ------------------------------------------------------------------------------
-def queue_detection_run(ctx, test, token, hunt, last_load_ms):
+def queue_detection_run(ctx, test, token, hunt, last_load_ms, trigger=None, by=None):
     time.sleep(_detection.queue_delay(last_load_ms=last_load_ms, now=time.time()))
-    status, body = engine_call("POST", f"/hunts/{quote(hunt)}/run", token)
+    if trigger is None:
+        status, body = engine_call("POST", f"/hunts/{quote(hunt)}/run", token)
+    else:
+        status, body = trigger()
+    by = by or f"POST /hunts/{hunt}/run"
     fire = _detection.queued_fire(status=status, body=body)
     if fire is None:
         mark_fail(
             ctx,
-            f"[{test.name}] POST /hunts/{hunt}/run returned HTTP {status}: {body} -- "
+            f"[{test.name}] {by} returned HTTP {status}: {body} -- "
             "waiting on the schedule instead",
         )
         return None
     mark_pass(
         ctx,
-        f"[{test.name}] POST /hunts/{hunt}/run queued a run at {fire} "
+        f"[{test.name}] {by} queued a run at {fire} "
         f"(runner poll {body.get('poll_seconds')}s)",
     )
     return fire
@@ -2443,7 +2496,9 @@ def await_detection_coverage(ctx, test, token, hunt, last_load_ms, queued_fire):
 # Verify Detections
 # - The hunt's rows in the detection table are exactly the matching events
 # ------------------------------------------------------------------------------
-def verify_detections(ctx, test, hunt, rule, landed, events):
+def verify_detections(
+    ctx, test, hunt, rule, landed, matching, other, severity=_detection.SEVERITY
+):
     target = f"{test.database}.{DETECTION_TABLE}"
     if ch_int(_detection.detection_count_sql(target=target, hunt=hunt)) is None:
         mark_fail(
@@ -2455,10 +2510,13 @@ def verify_detections(ctx, test, hunt, rule, landed, events):
     found = _detection.detections(
         ch_query(_detection.detections_sql(target=target, hunt=hunt))
     )
-    matching = _detection.set_labels(events, _detection.MATCHING)
-    other = _detection.set_labels(events, _detection.OTHER)
     problems = _detection.verdict(
-        landed=landed, found=found, matching=matching, other=other, rule=rule
+        landed=landed,
+        found=found,
+        matching=matching,
+        other=other,
+        rule=rule,
+        severity=severity,
     )
     if problems:
         mark_fail(
@@ -2471,7 +2529,7 @@ def verify_detections(ctx, test, hunt, rule, landed, events):
         ctx,
         f"[{test.name}] '{test.database}.{DETECTION_TABLE}' holds exactly the "
         f"{len(matching)} matching event(s) and none of the {len(other)} other(s), "
-        f"under rule '{rule}' at severity {_detection.SEVERITY}",
+        f"under rule '{rule}' at severity {severity}",
     )
 
 
@@ -2527,6 +2585,9 @@ def run_detection(ctx, test, ingest_url):
         return
     if not (runner_alive(ctx, test, login.token)):
         return
+    if test.detection.get("from_search"):
+        run_search_detection(ctx, test, ingest_url, login.token)
+        return
 
     events = detection_events(test)
     rule = f"{test.marker}-rule"
@@ -2557,10 +2618,307 @@ def run_detection(ctx, test, ingest_url):
         ):
             return
         print()
-        verify_detections(ctx, test, hunt, rule, landed, events)
+        verify_detections(
+            ctx,
+            test,
+            hunt,
+            rule,
+            landed,
+            matching=_detection.set_labels(events, _detection.MATCHING),
+            other=_detection.set_labels(events, _detection.OTHER),
+        )
     finally:
         print()
         remove_detection_objects(ctx, test, login.token, created)
+        if landed:
+            LOGGER.info(
+                f"The '{test.table}' and '{DETECTION_TABLE}' rows this test wrote "
+                f"remain, tagged {test.marker}"
+            )
+
+
+# ==============================================================================
+# Search Rule Tests
+# - The rule made from a HyperDX search in the console, the hunt added and
+#   triggered from the console's form, and the same exact-detections verdict
+# ==============================================================================
+
+
+# ------------------------------------------------------------------------------
+# Complete Setup
+# - The organisation the hunt runs for and a user of the deployment's own, which
+#   the console's setup wizard holds every other page back for
+# ------------------------------------------------------------------------------
+def complete_setup(ctx, test, token):
+    org_path = f"/orgs/{quote(DETECTION_CUSTOMER)}"
+    status, org = engine_call("GET", org_path, token)
+    if status == 404:
+        request = {
+            "name": DETECTION_CUSTOMER,
+            "display_name": DETECTION_CUSTOMER.upper(),
+        }
+        engine_call("POST", "/orgs", token, request)
+        status, org = engine_call("GET", org_path, token)
+    if status != 200 or not (isinstance(org, dict)):
+        mark_fail(
+            ctx,
+            f"[{test.name}] organisation '{DETECTION_CUSTOMER}' could not be read or "
+            f"made: HTTP {status}: {org}",
+        )
+        return None
+
+    status, setup = engine_call("GET", "/auth/setup-status", token)
+    pending = ((setup or {}).get("initial_setup") or {}).get("pending_steps") or []
+    if "first_user" in pending:
+        # A real account nobody signs in as: the password is minted and dropped.
+        account = {
+            "username": SETUP_FIRST_USER,
+            "password": secrets.token_urlsafe(24),
+            "name": "E2E Analyst",
+        }
+        engine_call("POST", "/auth/accounts", token, account)
+        status, setup = engine_call("GET", "/auth/setup-status", token)
+    initial = (setup or {}).get("initial_setup") or {}
+    if status != 200 or initial.get("complete") is not True:
+        mark_fail(
+            ctx,
+            f"[{test.name}] setup is still incomplete, so the console serves only its "
+            f"wizard (pending: {initial.get('pending_steps')})",
+        )
+        return None
+    mark_pass(
+        ctx,
+        f"[{test.name}] setup complete, with organisation "
+        f"'{org.get('display_name') or DETECTION_CUSTOMER}' for the hunt to run for",
+    )
+    return org.get("display_name") or DETECTION_CUSTOMER
+
+
+# ------------------------------------------------------------------------------
+# HyperDX Ready
+# - HyperDX answers the console's token and holds the source the search runs on
+# ------------------------------------------------------------------------------
+def hyperdx_ready(ctx, test, token):
+    url = f"{post._hyperdx_base()}/sources"
+
+    def _names():
+        try:
+            status, body = post._api_get_json(url, token=token)
+        except post.ApiUnreachable:
+            return None
+        if status != 200 or not (isinstance(body, list)):
+            return None
+        return {source.get("name") for source in body if isinstance(source, dict)}
+
+    names = poll_until(
+        _names,
+        timeout=HYPERDX_READY_TIMEOUT,
+        interval=_detection.POLL_SECONDS,
+        done=lambda got: got is not None and SEARCH_SOURCE in got,
+    )
+    if names is None or SEARCH_SOURCE not in names:
+        mark_fail(
+            ctx,
+            f"[{test.name}] HyperDX offered no '{SEARCH_SOURCE}' source within "
+            f"{HYPERDX_READY_TIMEOUT}s (sources: {sorted(names or [])})",
+        )
+        return False
+    mark_pass(ctx, f"[{test.name}] HyperDX serves the '{SEARCH_SOURCE}' source")
+    return True
+
+
+# ------------------------------------------------------------------------------
+# Seed Events
+# - Both sets once more, sent before the search so the side panel has values
+# ------------------------------------------------------------------------------
+def seed_events(events):
+    return {f"seed-{kind}": sets for kind, sets in events.items()}
+
+
+# ------------------------------------------------------------------------------
+# Verify Search Rule
+# - The rule the console made scans the searched table and carries every filter
+# ------------------------------------------------------------------------------
+def verify_search_rule(ctx, test, token, rule_id, fragments):
+    status, stored = engine_call("GET", f"/rules/{quote(rule_id)}", token)
+    if status != 200 or not (isinstance(stored, dict)):
+        mark_fail(ctx, f"[{test.name}] GET /rules/{rule_id} returned HTTP {status}")
+        return None
+    source = f"{test.database}.{test.table}"
+    over = f"{stored.get('source_db')}.{stored.get('source_table')}"
+    where = str(stored.get("where_clause") or "")
+    problems = []
+    if over != source:
+        problems.append(f"it scans '{over}', not '{source}'")
+    if stored.get("sql_errors"):
+        problems.append(f"it carries SQL errors {stored['sql_errors']}")
+    if not (where.strip()):
+        problems.append("it has no WHERE, so it would match every row")
+    missing = _search_rule.missing_fragments(where, fragments)
+    if missing:
+        problems.append(f"its WHERE drops {missing}")
+    if problems:
+        mark_fail(
+            ctx,
+            f"[{test.name}] rule '{rule_id}' is not the search: {'; '.join(problems)} "
+            f"(WHERE: {where})",
+        )
+        return None
+    mark_pass(
+        ctx,
+        f"[{test.name}] rule '{rule_id}' scans '{over}' with the search bar and the "
+        f"side-panel filter in its WHERE: {where}",
+    )
+    return stored
+
+
+# ------------------------------------------------------------------------------
+# Open Console
+# - A browser signed in as the account the suite's engine calls are made as
+# ------------------------------------------------------------------------------
+def open_console(ctx, test):
+    shots = os.environ.get(SHOTS_DIR_ENV_VAR, "").strip()
+    shots_dir = (
+        Path(shots) if shots else Path(tempfile.mkdtemp(prefix=f"{RUN_ID}-shots-"))
+    )
+    headed = os.environ.get(HEADED_ENV_VAR, "").strip().lower() not in FALSY
+    username, _, password = post._console_credential()
+    try:
+        console = _search_rule.Console(
+            ui_url=DFE_UI_URL, shots_dir=shots_dir, headed=headed
+        )
+    except _search_rule.ConsoleError as error:
+        mark_fail(ctx, f"[{test.name}] {error}")
+        return None
+    LOGGER.info(f"Screenshots go to '{shots_dir}'")
+    try:
+        console.sign_in(username=username, password=password)
+    except Exception as error:
+        console.shot("sign-in-failed")
+        console.close()
+        mark_fail(
+            ctx, f"[{test.name}] the console did not sign '{username}' in: {error}"
+        )
+        return None
+    mark_pass(ctx, f"[{test.name}] the console signed '{username}' in at {DFE_UI_URL}")
+    return console
+
+
+# ------------------------------------------------------------------------------
+# Run Search Detection
+# - Seed, search, Create Rule, the stored rule, the hunt form, the first window,
+#   events, a run triggered from the console, the verdict and the cleanup
+# ------------------------------------------------------------------------------
+def run_search_detection(ctx, test, ingest_url, token):
+    search = test.detection["from_search"]
+    search_filter = search["filter"]
+    events = detection_events(test)
+    seeds = seed_events(events)
+    hunt = _search_rule.hunt_identifier(test.marker)
+    target = f"{test.database}.{DETECTION_TABLE}"
+    created = []
+    landed = None
+    console = None
+    try:
+        organisation = complete_setup(ctx, test, token)
+        if organisation is None or not (hyperdx_ready(ctx, test, token)):
+            return
+        print()
+        if send_detection_events(ctx, test, ingest_url, seeds) is None:
+            return
+        console = open_console(ctx, test)
+        if console is None:
+            return
+
+        try:
+            rule = console.create_rule_from_search(
+                source=SEARCH_SOURCE,
+                search=_search_rule.search_condition(
+                    marker=test.marker, where=search["search"]
+                ),
+                filter_path=search_filter["path"],
+                filter_value=search_filter["value"],
+                # Held to the run, both filters leave exactly the seeded matches.
+                view_rows=len(events[_detection.MATCHING]),
+            )
+        except _search_rule.ConsoleError as error:
+            mark_fail(ctx, f"[{test.name}] {error}")
+            return
+        created.insert(0, ("rule", rule.rule_id))
+        mark_pass(
+            ctx,
+            f"[{test.name}] Create Rule opened rule '{rule.rule_id}' in the console",
+        )
+        stored = verify_search_rule(
+            ctx,
+            test,
+            token,
+            rule.rule_id,
+            fragments=[
+                test.marker,
+                search["search"],
+                search_filter["path"],
+                f"'{escape_literal(search_filter['value'])}'",
+            ],
+        )
+        if stored is None:
+            return
+
+        picks = [
+            _search_rule.HuntPick("Organisations", "", organisation),
+            _search_rule.HuntPick("Source Table", "", test.table),
+            _search_rule.HuntPick("Rules", rule.rule_id, stored["display_name"]),
+        ]
+        try:
+            console.create_hunt(name=hunt, target=target, picks=picks)
+        except _search_rule.ConsoleError as error:
+            mark_fail(ctx, f"[{test.name}] {error}")
+            return
+        created.insert(0, ("hunt", hunt))
+        mark_pass(ctx, f"[{test.name}] the console's hunt form created '{hunt}'")
+        if not (await_hunt_pickup(ctx, test, token, hunt)):
+            return
+
+        print()
+        landed = send_detection_events(ctx, test, ingest_url, events)
+        if landed is None:
+            return
+        last_load_ms = detection_last_load(test)
+        if last_load_ms is None:
+            mark_fail(
+                ctx, f"[{test.name}] the landed rows' _timestamp_load could not be read"
+            )
+            return
+        queued = queue_detection_run(
+            ctx,
+            test,
+            token,
+            hunt,
+            last_load_ms,
+            trigger=lambda: console.trigger_hunt(hunt),
+            by="the console's Trigger On-Demand",
+        )
+        if not (await_detection_coverage(ctx, test, token, hunt, last_load_ms, queued)):
+            return
+        print()
+        verify_detections(
+            ctx,
+            test,
+            hunt,
+            rule.rule_id,
+            landed,
+            matching=_detection.set_labels(events, _detection.MATCHING),
+            other=[
+                *_detection.set_labels(events, _detection.OTHER),
+                *_detection.set_labels(seeds, f"seed-{_detection.OTHER}"),
+            ],
+            severity=stored["severity"],
+        )
+    finally:
+        if console is not None:
+            console.close()
+        print()
+        remove_detection_objects(ctx, test, token, created)
         if landed:
             LOGGER.info(
                 f"The '{test.table}' and '{DETECTION_TABLE}' rows this test wrote "
@@ -2609,10 +2967,23 @@ def resolve_test_case(test_config, global_config):
             )
 
     detection = test_config.get("detection") or {}
+    engine_environment = {}
     if detection:
         if outage:
             error(f"[{test_name}] a test is an outage or a detection test, not both")
-        if not (str(detection.get("where") or "").strip()):
+        from_search = detection.get("from_search") or {}
+        if from_search:
+            search_filter = from_search.get("filter") or {}
+            if not (str(from_search.get("search") or "").strip()):
+                error(f"[{test_name}] from_search names no 'search' for the search bar")
+            if not (search_filter.get("path") and search_filter.get("value")):
+                error(
+                    f"[{test_name}] from_search names no side-panel 'filter' path and value"
+                )
+            compose_profiles = [*compose_profiles, HYPERDX_PROFILE]
+            extra_services = [*extra_services, *HYPERDX_SERVICES]
+            engine_environment = dict(HYPERDX_ENGINE_ENVIRONMENT)
+        elif not (str(detection.get("where") or "").strip()):
             error(f"[{test_name}] detection names no 'where' for its rule")
         for kind in (_detection.MATCHING, _detection.OTHER):
             data_file = detection.get(kind)
@@ -2643,6 +3014,7 @@ def resolve_test_case(test_config, global_config):
         marker=f"{RUN_ID}-{test_name}",
         outage=outage,
         detection=detection,
+        engine_environment=engine_environment,
     )
 
 
@@ -2671,7 +3043,13 @@ def run_test(ctx, mode, test, persistent_services):
     if test.outage:
         seconds = test.outage.get("seconds", OUTAGE_DEFAULT_SECONDS)
         print(f"  - Outage: '{test.outage['service']}' stopped for {seconds}s")
-    if test.detection:
+    if test.detection.get("from_search"):
+        search = test.detection["from_search"]
+        print(
+            f"  - Detection: rule from a search of '{search['search']}' filtered to "
+            f"{search['filter']['path']} = {search['filter']['value']}"
+        )
+    elif test.detection:
         print(f"  - Detection: rule where {test.detection['where']}")
     for svc_name in sorted(test.services):
         print(f"  - {svc_name} Config: {test.services[svc_name]}")
