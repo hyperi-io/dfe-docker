@@ -102,6 +102,24 @@ def test_another_rule_or_severity_is_named() -> None:
     ]
 
 
+def test_the_severity_judged_is_the_one_the_rule_was_given() -> None:
+    found = [_hit("u-m0", severity="medium"), _hit("u-m1", severity="medium")]
+
+    problems = _detection.verdict(
+        landed=_LANDED,
+        found=found,
+        matching=["matching-000", "matching-001"],
+        other=["other-000"],
+        rule=_RULE,
+        severity="medium",
+    )
+
+    assert problems == []
+    assert _verdict(found) == [
+        "detections at another severity than high: medium",
+    ]
+
+
 def test_landed_rows_are_read_by_label() -> None:
     tsv = "u-1\tmatching-000\nu-2\tother-000\nu-3\tmatching-000\n\n"
 

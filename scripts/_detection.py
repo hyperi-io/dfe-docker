@@ -286,6 +286,7 @@ def verdict(
     matching: Iterable[str],
     other: Iterable[str],
     rule: str,
+    severity: str = SEVERITY,
 ) -> list[str]:
     """Every way the detections differ from exactly the matching rows; empty when none.
 
@@ -295,6 +296,7 @@ def verdict(
         matching: Labels of the events the rule must match.
         other: Labels of the events it must not.
         rule: The rule id every detection should carry.
+        severity: The severity every detection should carry.
 
     Returns:
         One line per problem, naming the events it concerns.
@@ -332,9 +334,9 @@ def verdict(
     rules = sorted({d.rule_id for d in found if d.rule_id != rule})
     if rules:
         problems.append(f"detections under another rule id: {', '.join(rules)}")
-    severities = sorted({d.severity for d in found if d.severity != SEVERITY})
+    severities = sorted({d.severity for d in found if d.severity != severity})
     if severities:
         problems.append(
-            f"detections at another severity than {SEVERITY}: {', '.join(severities)}"
+            f"detections at another severity than {severity}: {', '.join(severities)}"
         )
     return problems
