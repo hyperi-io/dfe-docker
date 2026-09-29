@@ -185,8 +185,8 @@ ADMIN_UIS = {
         origin_var="",
     ),
     "hyperdx": _AdminUi(
-        name="HyperDX",
-        purpose="Logs, metrics and traces search",
+        name="Search",
+        purpose="Logs, metrics and traces",
         port_var="DFE_HYPERDX_APP_PORT",
         default_port="8090",
         # The proxy carrying HyperDX's host port, so one probe answers for both.
