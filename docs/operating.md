@@ -260,7 +260,7 @@ container takes the host down.
 |---|---|
 | `DFE_CLICKHOUSE_*` | clickhouse |
 | `DFE_BROKER_*` | kafka-redpanda, kafka-apache |
-| `DFE_SERVICE_*` | the DFE components, engine, UI, kafka-ui, HyperDX, its Postgres and FerretDB |
+| `DFE_SERVICE_*` | the DFE components, engine, UI, kafka-ui, HyperDX, its Postgres and FerretDB. HyperDX's memory is `DFE_HYPERDX_MEMORY` |
 | `DFE_SIDECAR_*` | dlq-init, dfe-dashboards, dfe-proxy |
 
 For the actual values and totals, ask the stack rather than this page:

@@ -79,6 +79,15 @@ x-limits-service: &limits-service
       cpus: "${DFE_SERVICE_CPUS:-2.0}"
       memory: ${DFE_SERVICE_MEMORY:-768M}
 
+# HyperDX takes the service tier's CPUs but not its memory.
+# On node 24 its four Node processes hold about 820 MiB for the first 100 s after a start, so 768M OOM-kills it in a loop.
+# 2G is the limit the Kubernetes hyperdx chart gives the same image.
+x-limits-hyperdx: &limits-hyperdx
+  resources:
+    limits:
+      cpus: "${DFE_SERVICE_CPUS:-2.0}"
+      memory: ${DFE_HYPERDX_MEMORY:-2G}
+
 # 512M rather than less: a sidecar's whole job is to exit cleanly, and a tighter
 # cap risks an OOM kill on one.
 x-limits-sidecar: &limits-sidecar
@@ -1537,7 +1546,7 @@ services:
     container_name: ${DFE_CONTAINER_PREFIX:-}dfe-hyperdx
     profiles: ["hyperdx"]
     restart: unless-stopped
-    deploy: *limits-service
+    deploy: *limits-hyperdx
     # No published ports: dfe-hyperdx-proxy carries both origins, so the infra
     # exposure dials and the `auth` profile govern one service.
     env_file:
