@@ -1573,6 +1573,10 @@ services:
       DFE_ENGINE_JWKS_URL: ${DFE_ENGINE_JWKS_URL:-http://dfe-engine:8000/.well-known/jwks.json}
       # The team a token carrying no group claim lands in.
       DFE_AUTH_DEFAULT_TEAM: ${DFE_HYPERDX_TEAM:-dfe}
+      # Upstream's usage-stats task reports to a third party, and reads each
+      # connection without its password, so it fails ClickHouse auth on every API
+      # start. Off unless the deployer opts in, the same default as the k8s chart.
+      USAGE_STATS_ENABLED: ${DFE_HYPERDX_USAGE_STATS_ENABLED:-false}
       # Setting the directory is what starts the provisioner: entry.prod.sh
       # launches the provision-dashboards task only when it is present. It then
       # re-runs on a one-minute cron, which is how a team created after startup
