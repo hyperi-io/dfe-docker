@@ -1140,8 +1140,8 @@ services:
       # lands root-owned and the engine runs as UID 1000.
       DFE_GITOPS_ENABLED: ${DFE_GITOPS_ENABLED:-true}
       DFE_GITOPS_LOCAL_PATH: ${DFE_ENGINE_CONFIG_DIR:-/app/config}/deploy-repo
-      # HyperDX's control surface: the engine confirms the fork's default team and
-      # seeds its connections and sources. Both follow the resolved footprint
+      # HyperDX's control surface: the engine fans the sources it deploys onto
+      # every HyperDX team. Both follow the resolved footprint
       # (scripts/resolve_profile.py), so one DFE_HYPERDX_ENABLED governs the
       # HyperDX containers and the engine that drives them.
       DFE_HYPERDX_ENABLED: ${DFE_HYPERDX_RESOLVED:-false}
