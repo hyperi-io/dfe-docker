@@ -92,6 +92,7 @@ DEPLOYMENT_DIAL = REPO_ROOT / "deployment.yaml"
 DEPLOYMENT_DIAL_TEMPLATE = REPO_ROOT / "deployment.example.yaml"
 DOTENV_FILE = REPO_ROOT / ".env"
 # Owner and group read it (a daemon install shares it through the checkout's group); others never.
+# The per-service env/<service>.env files take the same mode.
 DOTENV_MODE = 0o640
 DOTENV_TEMPLATE = REPO_ROOT / ".env.example"
 ENV_DIR = REPO_ROOT / "env"
@@ -132,13 +133,15 @@ def write_private(*, path: Path, text: str, mode: int = 0o600) -> None:
     """Write a file that holds secrets at `mode`, whatever the umask or a prior mode.
 
     Created at `mode` rather than chmod'ed after, so a new file is never readable
-    by others; an existing file has its mode reasserted, so a rerun narrows one an
-    earlier version or an editor left wide.
+    by others; an existing file is set to `mode` on the open descriptor before any
+    of `text` lands, so a rerun narrows one an earlier version or an editor left
+    wide without the new text ever sitting in it.
     """
     fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, mode)
     with os.fdopen(fd, "w", encoding="utf-8", newline="\n") as handle:
+        # O_CREAT's mode applies only to a new file, so an existing one is set here.
+        os.fchmod(fd, mode)
         handle.write(text)
-    os.chmod(path, mode)
 
 
 def _config_topics(*, path: Path) -> tuple[set[str], set[str], str]:

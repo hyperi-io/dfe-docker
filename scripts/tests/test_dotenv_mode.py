@@ -97,14 +97,15 @@ def test_a_secret_top_up_reasserts_the_mode(
     assert _mode(dotenv) == _common.DOTENV_MODE
 
 
-def test_write_private_narrows_an_existing_file(
-    tmp_path: Path, open_umask: None
+def test_write_private_narrows_an_existing_file_before_the_new_text_lands(
+    tmp_path: Path, open_umask: None, chmod_watch
 ) -> None:
     path = tmp_path / "secret"
     path.write_text("old\n", encoding="utf-8")
     path.chmod(0o666)
 
-    _common.write_private(path=path, text="new\n")
+    _common.write_private(path=path, text="new-secret-value\n")
 
+    assert chmod_watch.exposed(secret="new-secret-value", allowed=0o600) == []
     assert _mode(path) == 0o600
-    assert path.read_text(encoding="utf-8") == "new\n"
+    assert path.read_text(encoding="utf-8") == "new-secret-value\n"

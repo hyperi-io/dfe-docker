@@ -190,17 +190,22 @@ def test_the_file_also_names_the_two_dotenv_keys(dotenv: Path) -> None:
     assert "DFE_AUTH_BREAKGLASS_PASSWORD" in body
 
 
-def test_a_rerun_reasserts_the_mode(
-    dotenv: Path, monkeypatch: pytest.MonkeyPatch
+def test_a_rerun_narrows_the_summary_before_the_new_passwords_land(
+    dotenv: Path, monkeypatch: pytest.MonkeyPatch, chmod_watch
 ) -> None:
+    """A rerun over a summary someone widened must not write the new password wide."""
+    rotated = "rotated-minted-value"
     dotenv.write_text(_ENV, encoding="utf-8", newline="\n")
     monkeypatch.setattr("sys.stdout.isatty", lambda: False)
     creds.main(["--write"])
     creds.ACCESS_SUMMARY_FILE.chmod(0o644)
+    dotenv.write_text(_ENV.replace(_MINTED, rotated), encoding="utf-8", newline="\n")
 
     creds.main(["--write"])
 
+    assert chmod_watch.exposed(secret=rotated, allowed=0o600) == []
     assert creds.ACCESS_SUMMARY_FILE.stat().st_mode & 0o777 == 0o600
+    assert rotated in creds.ACCESS_SUMMARY_FILE.read_text(encoding="utf-8")
 
 
 def test_without_write_no_file_is_left_behind(
