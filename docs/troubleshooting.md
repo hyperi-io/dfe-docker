@@ -216,13 +216,15 @@ other half of the picture.
 dfe-fetcher, dfe-loader and dfe-receiver. All four run as non-root `appuser` (uid
 1000), and none of the images pre-creates that path, so Docker creates the
 mountpoint owned by root and no service can write inside it. The `dlq-init`
-one-shot (`chown -R 1000:1000 /var/spool/dfe /var/data/archive`) fixes that before
+one-shot (`chown -R 1000:1000 /var/spool/dfe /var/data/archive /var/lib/dfe-fetcher`) fixes that before
 the services start.
 
 `archiver-data`, mounted at `/var/data/archive`, has the same problem and the same
 fix. Without it every archive write fails with `Permission denied (os error 13)`,
 and because dfe-archiver commits an offset only after a write succeeds, it never
 commits one: the lag grows and nothing is archived.
+
+`fetcher-cursors`, mounted at `/var/lib/dfe-fetcher`, gets the same fix. Without it every fetcher logs `Cursor directory is not writable` and re-fetches its lookback window on each restart.
 
 Without it, dfe-archiver crash-loops on `DLQ init failed ... Permission denied
 (os error 13)` -- it creates its DLQ writer eagerly at startup. The others create

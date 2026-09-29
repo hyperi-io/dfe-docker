@@ -70,6 +70,10 @@ INSTANCE_DEPENDS_ON = (
 INSTANCE_LABEL = "dfe.instance-of"
 """Marks a generated instance's container, with the app it runs as the value."""
 
+# The variable naming the directory an app resumes from, and the volume path its
+# committed service mounts; each instance takes its own service name under it.
+STATE_DIRS = {"dfe-fetcher": ("DFE_FETCHER_CURSOR__DIRECTORY", "/var/lib/dfe-fetcher")}
+
 # A service key in the fragment: two spaces in, as `_service_block` writes it.
 _SERVICE_KEY_RE = re.compile(r"^  ([A-Za-z0-9._-]+):$")
 
@@ -151,9 +155,11 @@ def _service_block(service: str, instance: str, compose_file: str) -> list[str]:
         "        required: false",
         "    environment:",
         f"      OTEL_SERVICE_NAME: {name}",
-        "    ports: !reset []",
-        "    depends_on:",
     ]
+    if service in STATE_DIRS:
+        variable, root = STATE_DIRS[service]
+        lines.append(f"      {variable}: {root}/{name}")
+    lines += ["    ports: !reset []", "    depends_on:"]
     for dependency, condition in INSTANCE_DEPENDS_ON:
         lines += [
             f"      {dependency}:",
