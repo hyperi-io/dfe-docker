@@ -34,8 +34,10 @@ _SYSTEM_LOG_TTL = {
     "metric_log": "event_date + INTERVAL 7 DAY DELETE",
     "part_log": "event_date + INTERVAL 7 DAY DELETE",
     "query_log": "event_date + INTERVAL 30 DAY DELETE",
+    # HyperDX's clickhouse_system source reads it, so it stays on.
+    "text_log": "event_date + INTERVAL 7 DAY DELETE",
 }
-_SWITCHED_OFF = ("text_log", "trace_log")
+_SWITCHED_OFF = ("trace_log",)
 
 
 def _root(*, path: Path) -> ElementTree.Element:
@@ -106,7 +108,7 @@ def test_each_kept_system_log_table_carries_its_ttl() -> None:
         }, table
 
 
-def test_text_log_and_trace_log_are_removed_rather_than_kept() -> None:
+def test_trace_log_is_removed_rather_than_kept() -> None:
     root = _root(path=_SYSTEM_LOGS_FILE)
 
     for table in _SWITCHED_OFF:
