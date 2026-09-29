@@ -166,19 +166,20 @@ A service that is not a locally buildable DFE component (ClickHouse, the broker,
 `kafka-ui`) is skipped with a message rather than failing the build.
 
 A service that runs a component's image under another name follows it:
-`dlq-init` runs the archiver image, `dfe-hunt-runner` the engine image. The map is
-`IMAGE_CONSUMERS` in `scripts/build_dev_images.py`, and `make check-compose`
-asserts the override covers all of it.
+`dlq-init` runs the archiver image, `dfe-hunt-runner` and `dfe-dashboards` the
+engine image. The map is `IMAGE_CONSUMERS` in `scripts/build_dev_images.py`, and
+`make check-compose` asserts the override covers all of it.
 
-The `contract-<app>` one-shots are the deliberate exception: they emit the
-contract of the PINNED release and stay on the registry pin while a local build
-runs beside them, because moving them onto `:local` would make a core-only
-profile compile all six Rust components to emit six files.
+The `contract-<app>` and `catalogue-<app>` one-shots are the deliberate
+exception: they emit an artefact of the PINNED release and stay on the registry
+pin while a local build runs beside them, because moving them onto `:local` would
+make a core-only profile compile the Rust components to emit a few files.
 
-One of them is started by a `depends_on` rather than named by a profile
-(`IMPLICIT_CONSUMERS`, same file): the archiver for `dlq-init`. `make dev` builds
-it even on a profile that runs no archiver of its own, or the override points it
-at a `:local` tag the run never produced.
+Two of them can start without their component (`IMPLICIT_CONSUMERS`, same file):
+`dlq-init`, which a `depends_on` starts under every Rust app, and
+`dfe-dashboards`, which starts with `hyperdx` whether or not the engine runs.
+`make dev` builds the archiver or the engine for them even on a profile that runs
+neither, or the override points them at a `:local` tag the run never produced.
 
 ### Some from source, the rest pinned
 
