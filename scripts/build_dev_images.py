@@ -45,16 +45,18 @@ IMAGE_TAG = "local"
 # build must repoint all of them or the stack runs two builds of one component.
 IMAGE_CONSUMERS: dict[str, tuple[str, ...]] = {
     "dfe-archiver": ("dlq-init",),
-    "dfe-engine": ("dfe-hunt-runner",),
+    "dfe-engine": ("dfe-dashboards", "dfe-hunt-runner"),
     "dfe-transform-elastic": ("dfe-transform-e2e-elastic-cisco-ios",),
     "dfe-transform-vector": ("dfe-transform-e2e-vector-filebeat",),
     "dfe-transform-vrl": ("dfe-transform-e2e-vrl-filebeat",),
 }
-# The IMAGE_CONSUMERS no profile names, mapped to the services whose
-# `depends_on` starts them. The committed override repoints them at `:local`
-# like every other consumer, so a build of the profile's own services alone
-# leaves them on a tag nothing produced.
+# The IMAGE_CONSUMERS a stack can start without their component, mapped to the
+# services whose `depends_on` starts them (hyperdx runs with the engine off).
+# The committed override repoints them at `:local` like every other consumer,
+# so a build of the profile's own services alone leaves them on a tag nothing
+# produced.
 IMPLICIT_CONSUMERS: dict[str, tuple[str, ...]] = {
+    "dfe-dashboards": ("hyperdx",),
     "dlq-init": ("dfe-archiver", "dfe-fetcher", "dfe-loader", "dfe-receiver"),
 }
 RUST_COMPONENTS = [
@@ -67,7 +69,6 @@ RUST_COMPONENTS = [
     "dfe-transform-vrl",
 ]
 SELF_CONTAINED_COMPONENTS = ["dfe-engine", "dfe-ui", "hyperdx"]
-SERVICE_BUILD_ARGS = {"hyperdx": {"NEXT_PUBLIC_IS_LOCAL_MODE": "true"}}
 # Compose service name -> source repo NAME (the GitHub repo and therefore the
 # checkout directory name), for the cases where they differ; hyperdx's repo and
 # image are `dfe-hyperdx`.
@@ -181,21 +182,7 @@ def _docker_build(*, context: Path, dockerfile: Path, service: str) -> None:
         header=service,
         msg=f"Packaging {service_tag!r} via {str(dockerfile)!r}...",
     )
-    build_args = []
-    for name, value in SERVICE_BUILD_ARGS.get(service, {}).items():
-        build_args.extend(["--build-arg", f"{name}={value}"])
-    _run(
-        args=[
-            "docker",
-            "build",
-            "-f",
-            str(dockerfile),
-            "-t",
-            service_tag,
-            *build_args,
-            str(context),
-        ]
-    )
+    _run(args=_package_command(context=context, dockerfile=dockerfile, service=service))
 
 
 def _export_rust_binary(*, repo: Path, service: str, workdir: Path) -> Path:
@@ -254,6 +241,23 @@ def _implicit_components(*, services: list[str]) -> dict[str, str]:
             if requested.intersection(IMPLICIT_CONSUMERS.get(consumer, ())):
                 needed[consumer] = component
     return dict(sorted(needed.items()))
+
+
+def _package_command(*, context: Path, dockerfile: Path, service: str) -> list[str]:
+    """Return the docker build that packages <service>:local from dockerfile.
+
+    It passes no `--build-arg`, so every Dockerfile default the released image
+    was built with applies here too.
+    """
+    return [
+        "docker",
+        "build",
+        "-f",
+        str(dockerfile),
+        "-t",
+        f"{service}:{IMAGE_TAG}",
+        str(context),
+    ]
 
 
 def _resolve_ref(*, checkout: Path, ref: str, service: str) -> str:
