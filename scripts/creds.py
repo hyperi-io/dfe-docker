@@ -313,6 +313,7 @@ def main(argv: list[str] | None = None) -> int:
         is_tty=sys.stdout.isatty(), setting=os.environ.get(_SHOW_KEY, "")
     )
     for line in summary_lines(values=values, reveal=reveal):
+        # codeql[py/clear-text-logging-sensitive-data] `make creds` exists to show the admin login, on a terminal only
         print(line)
     if write:
         path = write_summary(values=values, path=ACCESS_SUMMARY_FILE)
