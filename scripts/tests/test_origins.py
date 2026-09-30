@@ -80,8 +80,11 @@ def test_the_per_surface_override_still_wins() -> None:
         DFE_HYPERDX_APP_URL="http://dfe.example.test",
     )
 
-    assert "http://dfe.example.test:3000" in found
-    assert "http://10.0.0.5:3000" not in found
+    assert found == [
+        "http://localhost:3000",
+        "http://127.0.0.1:3000",
+        "http://dfe.example.test:3000",
+    ]
 
 
 @pytest.mark.parametrize(

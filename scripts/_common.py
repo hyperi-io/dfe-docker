@@ -119,6 +119,7 @@ def _print(
     # Resolved at call time, not bound as a default: a caller that replaces
     # sys.stderr (pytest's capture) must still see the message.
     print(
+        # codeql[py/clear-text-logging-sensitive-data] callers pass a secret's key or committed default, never a minted value
         f"{Path(sys.argv[0]).stem}{f' ({header})' if header else ''}: {msg}",
         file=file or sys.stderr,
     )
