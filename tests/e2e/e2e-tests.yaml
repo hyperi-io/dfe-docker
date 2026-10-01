@@ -27,8 +27,15 @@
 # receiver answers every request (a refusal is backpressure and passes), every
 # accepted record lands, and on Kafka every consumer group catches up.
 # `sources` maps each `_source` the load sends to its data file, defaulting to
-# the test's table and `data_file`. Outage tests run only under
-# `make test-resilience`, never in the default `make test-e2e`.
+# the test's table and `data_file`. `method` is `stop` (the default, a graceful
+# stop that lets the service drain) or `kill` (SIGKILL, no drain). A kill test
+# also fails when the kill caught nothing in flight: no request out the instant
+# the service died or, for a Kafka consumer, nothing its group had left
+# uncommitted just before. `workers` and `interval` set the load, by default 4
+# workers each waiting 0.5s between requests. When the service is the one the
+# load posts to, a request overlapping its outage may go unanswered. Outage
+# tests run only under `make test-resilience`, never in the default
+# `make test-e2e`.
 #
 # A test whose archiver subscribes to its landing topic and archives to a
 # file:// destination also asserts the archiver wrote a file during the test.
@@ -158,6 +165,50 @@ tests:
     outage:
       service: dfe-transform-vrl
       seconds: 60
+
+  # A hop killed with SIGKILL mid-stream rather than stopped, so whatever it held
+  # in memory gets no drain. Every record the receiver answered 2xx still has to
+  # land, on the Kafka path and on the direct gRPC path. The load is dense enough
+  # that the kill lands with records in flight; a kill that catches none fails.
+  - name: loader-kill-kafka
+    profile: kafka-receiver
+    expected_topics:
+      - main_land
+    outage:
+      service: dfe-loader
+      method: kill
+      seconds: 30
+      workers: 16
+      interval: 0.01
+
+  - name: receiver-kill-kafka
+    profile: kafka-receiver
+    expected_topics:
+      - main_land
+    outage:
+      service: dfe-receiver
+      method: kill
+      seconds: 30
+      workers: 16
+      interval: 0.01
+
+  - name: loader-kill-grpc
+    profile: grpc-receiver
+    outage:
+      service: dfe-loader
+      method: kill
+      seconds: 30
+      workers: 16
+      interval: 0.01
+
+  - name: transform-vrl-kill-grpc
+    profile: grpc-receiver-transform-vrl
+    outage:
+      service: dfe-transform-vrl
+      method: kill
+      seconds: 30
+      workers: 16
+      interval: 0.01
 
   # The broker down under load with every Kafka app consuming. The vector and
   # cisco-ios records keep dfe-transform-vector's and dfe-transform-elastic's

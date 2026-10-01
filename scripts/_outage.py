@@ -13,9 +13,11 @@ only, so the unit tests import it without PyYAML.
 
 A stack survives an outage when no DFE container exits or restarts, every request
 the receiver takes gets an HTTP answer, every record it accepted lands once the
-service is back, and every Kafka consumer catches up again. This module holds the
-load that makes those claims testable and the readers that judge them. Starting
-and stopping containers stays with the suite, which owns the compose project.
+service is back, and every Kafka consumer catches up again. An outage stops its
+service gracefully or kills it with SIGKILL, which gets no drain. This module
+holds the load that makes those claims testable and the readers that judge them.
+Starting and stopping containers stays with the suite, which owns the compose
+project.
 """
 
 import http.client
@@ -26,6 +28,7 @@ import time
 from collections import Counter
 from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from pathlib import Path
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
@@ -34,6 +37,69 @@ from _common import _config_topics
 from _pipeline import MARKER_EXPRESSIONS, ch_int, ch_query, escape_literal, marked_event
 
 PHASES = ("before", "during", "after")
+
+
+@dataclass(frozen=True, slots=True)
+class Method:
+    """One way an outage takes its service down.
+
+    Attributes:
+        compose: The `docker compose` arguments that take the service down.
+        done: What happened to the service, for the log.
+        drains: Whether the service gets to finish what it holds before it exits.
+    """
+
+    compose: tuple[str, ...]
+    done: str
+    drains: bool
+
+
+METHODS = {
+    "stop": Method(compose=("stop",), done="stopped", drains=True),
+    # Whatever the service held in memory dies with the process.
+    "kill": Method(
+        compose=("kill", "--signal", "SIGKILL"),
+        done="killed with SIGKILL",
+        drains=False,
+    ),
+}
+DEFAULT_METHOD = "stop"
+
+
+def config_problems(outage: Mapping, default_seconds: int) -> list[str]:
+    """Say what is wrong with one test's `outage:` block, empty when nothing is."""
+    problems = []
+    if not outage.get("service"):
+        problems.append("outage names no 'service' to stop")
+    try:
+        seconds = int(outage.get("seconds", default_seconds))
+    except (TypeError, ValueError):
+        seconds = 0
+    if seconds < 1:
+        problems.append("outage 'seconds' must be a whole number above 0")
+    if not isinstance(outage.get("sources") or {}, dict):
+        problems.append("outage 'sources' must map each _source to a data file")
+    workers = outage.get("workers", 1)
+    if isinstance(workers, bool) or not isinstance(workers, int) or workers < 1:
+        problems.append("outage 'workers' must be a whole number above 0")
+    interval = outage.get("interval", 0)
+    if (
+        isinstance(interval, bool)
+        or not isinstance(interval, int | float)
+        or interval < 0
+    ):
+        problems.append("outage 'interval' must be a number of seconds, 0 or more")
+    method = outage.get("method", DEFAULT_METHOD)
+    if not isinstance(method, str) or method not in METHODS:
+        problems.append(
+            f"outage 'method' must be one of {', '.join(METHODS)}, got '{method}'"
+        )
+    return problems
+
+
+def method_of(outage: Mapping) -> Method:
+    """The way a validated `outage:` block takes its service down."""
+    return METHODS[outage.get("method", DEFAULT_METHOD)]
 
 
 def record_marker(prefix: str, seq: int) -> str:
@@ -60,6 +126,7 @@ class Sent:
         phase: Which part of the outage the request was sent in.
         status: The HTTP status, or None when no answer arrived.
         error: Why no answer arrived, empty when one did.
+        started: When the request went out, as a unix time.
         seconds: How long the request took.
     """
 
@@ -68,6 +135,7 @@ class Sent:
     phase: str
     status: int | None
     error: str
+    started: float
     seconds: float
 
     @property
@@ -189,7 +257,8 @@ class SteadyLoad:
             body = marked_event(
                 marker=record_marker(self._prefix, seq), source=source, extra=event
             )
-            started = time.monotonic()
+            started = time.time()
+            clock = time.monotonic()
             status, error = post_record(self._url, body, self._timeout)
             record = Sent(
                 seq=seq,
@@ -197,7 +266,8 @@ class SteadyLoad:
                 phase=phase,
                 status=status,
                 error=error,
-                seconds=time.monotonic() - started,
+                started=started,
+                seconds=time.monotonic() - clock,
             )
             with self._lock:
                 self._sent.append(record)
@@ -225,14 +295,93 @@ def accepted_by_seq(sent: Iterable[Sent], source: str) -> dict[int, str]:
     return {r.seq: r.phase for r in sent if r.accepted and r.source == source}
 
 
-def landed_seqs(
+@dataclass(frozen=True, slots=True)
+class Outage:
+    """When one outage took its service down and when it was back, as unix times.
+
+    Attributes:
+        issued: When the command that took the service down was run.
+        down: When the service's process exited, as its container reports it, or
+            when the command returned if the container could not say.
+        healthy: When the service was healthy again after it was started.
+        uncommitted: Records a killed Kafka consumer's group had not committed
+            just before the kill, None when nobody read them.
+    """
+
+    issued: float
+    down: float
+    healthy: float
+    uncommitted: int | None = None
+
+
+def overlapping(sent: Iterable[Sent], start: float, end: float) -> list[Sent]:
+    """The requests that were out and unanswered at some moment from `start` to `end`."""
+    return [r for r in sent if r.started <= end and r.started + r.seconds >= start]
+
+
+def unix_time(stamp: str) -> float | None:
+    """Read a time as `docker inspect` prints it, None when unset or unreadable."""
+    text = stamp.strip()
+    if not text.endswith("Z"):
+        return None
+    whole, _, fraction = text[:-1].partition(".")
+    try:
+        moment = datetime.strptime(whole, "%Y-%m-%dT%H:%M:%S").replace(tzinfo=UTC)
+    except ValueError:
+        return None
+    # Docker's zero time, 0001-01-01, means the container has never exited.
+    if moment.year == 1 or (fraction and not fraction.isdigit()):
+        return None
+    nanos = int(fraction[:9].ljust(9, "0")) if fraction else 0
+    return moment.timestamp() + nanos / 1e9
+
+
+def consumer_group(config: Path) -> str:
+    """The Kafka consumer group one service config commits as, empty when it names none."""
+    for raw in config.read_text(encoding="utf-8", errors="replace").splitlines():
+        line = raw.strip()
+        if line.startswith("group: "):
+            return line.split(": ", 1)[1].strip().strip("\"'")
+    return ""
+
+
+def unexplained_silence(
+    sent: Iterable[Sent], down: tuple[float, float] | None = None
+) -> list[Sent]:
+    """The requests nothing answered, less those in flight while the ingest edge was down.
+
+    `down` is the unix-time span from the moment the service the load posts to was
+    taken down until it was healthy again. Nothing was there to answer a request
+    overlapping it, so only silence outside it means a running edge dropped one.
+    """
+    silent = [record for record in sent if record.status is None]
+    if down is None:
+        return silent
+    excused = set(overlapping(silent, *down))
+    return [record for record in silent if record not in excused]
+
+
+def rows_per_seq(grouped: str, prefix: str) -> Counter[int]:
+    """Count the rows each record of this load landed as, from `<marker>\\t<rows>` lines."""
+    rows: Counter[int] = Counter()
+    for line in grouped.splitlines():
+        cells = line.split("\t")
+        if len(cells) != 2 or not cells[1].strip().isdigit():
+            continue
+        seq = seq_of(cells[0].strip(), prefix)
+        if seq is not None:
+            rows[seq] += int(cells[1])
+    return rows
+
+
+def landed_rows(
     database: str,
     table: str,
     prefix: str,
     *,
     debug: Callable[[str], None] | None = None,
-) -> set[int] | None:
-    """Every record of this load that has landed, or None when no marker can be read.
+) -> Counter[int] | None:
+    """Rows per landed record of this load, or None when no marker can be read.
 
     An expression that runs and matches nothing is only trusted once it reads some
     row's marker, because a fallback that does not fit the schema returns '' for
@@ -249,21 +398,49 @@ def landed_seqs(
             continue
         if count:
             raw = ch_query(
-                f"SELECT DISTINCT {expression} FROM {database}.{table} "
-                f"WHERE {where} FORMAT TabSeparated",
+                f"SELECT {expression}, count() FROM {database}.{table} "
+                f"WHERE {where} GROUP BY {expression} FORMAT TabSeparated",
                 debug=debug,
             )
-            return {
-                seq
-                for line in raw.splitlines()
-                if (seq := seq_of(line.strip(), prefix)) is not None
-            }
+            return rows_per_seq(raw, prefix)
         probe = ch_int(
             f"SELECT count() FROM {database}.{table} WHERE {expression} != ''",
             debug=debug,
         )
         readable = readable or bool(probe)
-    return set() if readable else None
+    return Counter() if readable else None
+
+
+@dataclass(frozen=True, slots=True)
+class Landing:
+    """How the records one load sent turned up in its table.
+
+    Attributes:
+        accepted: Records the receiver answered 2xx, each owed at least one row.
+        landed: Accepted records with at least one row.
+        lost: Accepted records with no row, in sequence order.
+        duplicates: Rows beyond the first, over every record of the load.
+        unaccepted: Records with a row that the receiver never answered 2xx.
+    """
+
+    accepted: int
+    landed: int
+    lost: tuple[int, ...]
+    duplicates: int
+    unaccepted: int
+
+
+def landing(accepted: Iterable[int], rows: Mapping[int, int]) -> Landing:
+    """Tally the accepted records against the rows each landed as."""
+    owed = set(accepted)
+    present = {seq for seq, count in rows.items() if count > 0}
+    return Landing(
+        accepted=len(owed),
+        landed=len(owed & present),
+        lost=tuple(sorted(owed - present)),
+        duplicates=sum(count - 1 for count in rows.values() if count > 1),
+        unaccepted=len(present - owed),
+    )
 
 
 @dataclass(frozen=True, slots=True)
@@ -276,6 +453,7 @@ class ContainerState:
         health: The healthcheck's verdict, or empty when there is none.
         restarts: How many times the engine has restarted it.
         started_at: When its current process started.
+        finished_at: When its last process exited, docker's zero time if none has.
         pid: Its current process id.
     """
 
@@ -284,6 +462,7 @@ class ContainerState:
     health: str
     restarts: int
     started_at: str
+    finished_at: str
     pid: int
 
 
@@ -297,6 +476,7 @@ def container_state(inspected: Mapping) -> ContainerState:
         health=str(health.get("Status", "")),
         restarts=int(inspected.get("RestartCount", 0) or 0),
         started_at=str(state.get("StartedAt", "")),
+        finished_at=str(state.get("FinishedAt", "")),
         pid=int(state.get("Pid", 0) or 0),
     )
 
