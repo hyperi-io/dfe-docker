@@ -45,15 +45,118 @@ def test_a_marker_from_another_run_or_test_is_not_this_loads(marker: str) -> Non
     assert _outage.seq_of(marker, "e2e-1-kafka-outage") is None
 
 
-def _sent(seq: int, status: int | None, *, phase: str = "during", source: str = "main"):
+def _sent(
+    seq: int,
+    status: int | None,
+    *,
+    phase: str = "during",
+    source: str = "main",
+    started: float = 1000.0,
+    seconds: float = 0.1,
+):
     return _outage.Sent(
         seq=seq,
         source=source,
         phase=phase,
         status=status,
         error="" if status is not None else "ConnectionRefusedError",
-        seconds=0.1,
+        started=started,
+        seconds=seconds,
     )
+
+
+def test_an_outage_block_that_names_its_service_is_valid() -> None:
+    assert _outage.config_problems({"service": "dfe-loader"}, 60) == []
+    assert _outage.config_problems({"service": "kafka", "seconds": "30"}, 60) == []
+
+
+@pytest.mark.parametrize("method", ["stop", "kill"])
+def test_both_outage_methods_are_valid(method: str) -> None:
+    assert (
+        _outage.config_problems({"service": "dfe-loader", "method": method}, 60) == []
+    )
+
+
+@pytest.mark.parametrize("method", ["restart", "SIGKILL", "", None, 9, ["kill"]])
+def test_an_unknown_outage_method_is_named(method: object) -> None:
+    problems = _outage.config_problems({"service": "dfe-loader", "method": method}, 60)
+
+    assert problems == [
+        f"outage 'method' must be one of stop, kill, got '{method}'",
+    ]
+
+
+def test_an_outage_with_no_method_stops_its_service() -> None:
+    method = _outage.method_of({"service": "dfe-loader"})
+
+    assert method.compose == ("stop",)
+    assert method.done == "stopped"
+    assert method.drains
+
+
+def test_a_kill_outage_sends_sigkill_through_compose() -> None:
+    method = _outage.method_of({"service": "dfe-loader", "method": "kill"})
+
+    assert method.compose == ("kill", "--signal", "SIGKILL")
+    assert method.done == "killed with SIGKILL"
+    assert not method.drains
+
+
+def test_an_outage_may_set_a_denser_load() -> None:
+    outage = {"service": "dfe-loader", "workers": 16, "interval": 0.01}
+
+    assert _outage.config_problems(outage, 60) == []
+    assert _outage.config_problems({**outage, "interval": 0}, 60) == []
+
+
+@pytest.mark.parametrize("workers", [0, -1, 2.5, "16", True, None])
+def test_a_load_with_no_whole_number_of_workers_is_named(workers: object) -> None:
+    problems = _outage.config_problems({"service": "x", "workers": workers}, 60)
+
+    assert problems == ["outage 'workers' must be a whole number above 0"]
+
+
+@pytest.mark.parametrize("interval", [-0.5, "0.01", False, None])
+def test_a_load_with_a_bad_interval_is_named(interval: object) -> None:
+    problems = _outage.config_problems({"service": "x", "interval": interval}, 60)
+
+    assert problems == ["outage 'interval' must be a number of seconds, 0 or more"]
+
+
+@pytest.mark.parametrize(
+    ("outage", "problem"),
+    [
+        ({"seconds": 60}, "outage names no 'service' to stop"),
+        (
+            {"service": "dfe-loader", "seconds": 0},
+            "outage 'seconds' must be a whole number above 0",
+        ),
+        (
+            {"service": "dfe-loader", "seconds": -5},
+            "outage 'seconds' must be a whole number above 0",
+        ),
+        (
+            {"service": "dfe-loader", "seconds": "soon"},
+            "outage 'seconds' must be a whole number above 0",
+        ),
+        (
+            {"service": "dfe-loader", "seconds": None},
+            "outage 'seconds' must be a whole number above 0",
+        ),
+        (
+            {"service": "dfe-loader", "sources": ["main"]},
+            "outage 'sources' must map each _source to a data file",
+        ),
+    ],
+)
+def test_each_bad_outage_field_is_named(outage: dict, problem: str) -> None:
+    assert _outage.config_problems(outage, 60) == [problem]
+
+
+def test_every_problem_in_an_outage_block_is_reported_at_once() -> None:
+    problems = _outage.config_problems({"seconds": 0, "method": "pause"}, 60)
+
+    assert len(problems) == 3
 
 
 def test_only_a_2xx_obliges_the_record_to_land() -> None:
@@ -93,6 +196,138 @@ def test_only_accepted_records_of_the_named_source_are_owed() -> None:
     ]
 
     assert _outage.accepted_by_seq(sent, "main") == {0: "before", 3: "after"}
+
+
+def test_with_the_edge_up_every_silent_request_is_unexplained() -> None:
+    sent = [_sent(0, 200), _sent(1, None), _sent(2, 503), _sent(3, None)]
+
+    assert [r.seq for r in _outage.unexplained_silence(sent)] == [1, 3]
+
+
+def test_silence_overlapping_the_edges_own_outage_is_excused() -> None:
+    down = (1000.0, 1030.0)
+    sent = [
+        # In flight when the kill landed.
+        _sent(0, None, started=999.5, seconds=0.7),
+        _sent(1, None, started=1010.0),
+        # Sent the instant the edge was healthy again.
+        _sent(2, None, started=1030.0),
+        _sent(3, 200, started=1040.0),
+    ]
+
+    assert _outage.unexplained_silence(sent, down) == []
+
+
+def test_silence_outside_the_edges_own_outage_still_fails() -> None:
+    down = (1000.0, 1030.0)
+    before = _sent(0, None, started=990.0, seconds=0.5)
+    after = _sent(1, None, started=1031.0)
+    sent = [before, _sent(2, None, started=1015.0), after]
+
+    assert _outage.unexplained_silence(sent, down) == [before, after]
+
+
+def test_a_request_out_across_any_part_of_a_span_overlaps_it() -> None:
+    sent = [
+        _sent(0, 200, started=999.0, seconds=0.5),
+        _sent(1, 202, started=999.8, seconds=0.4),
+        _sent(2, None, started=1000.5, seconds=0.0),
+        _sent(3, 200, started=1002.0),
+    ]
+
+    assert [r.seq for r in _outage.overlapping(sent, 1000.0, 1001.0)] == [1, 2]
+
+
+def test_a_request_is_in_flight_at_an_instant_only_while_it_is_out() -> None:
+    sent = [
+        _sent(0, 200, started=999.0, seconds=0.5),
+        _sent(1, 503, started=999.8, seconds=0.4),
+        _sent(2, None, started=1000.0, seconds=0.0),
+        _sent(3, 200, started=1000.1),
+    ]
+
+    assert [r.seq for r in _outage.overlapping(sent, 1000.0, 1000.0)] == [1, 2]
+
+
+def test_docker_exit_times_read_to_the_nanosecond() -> None:
+    stamp = "2026-10-01T16:30:12.123456789Z"
+
+    assert _outage.unix_time(stamp) == pytest.approx(1790872212.123456789, abs=1e-6)
+    assert _outage.unix_time("2026-10-01T16:30:12Z") == pytest.approx(
+        1790872212.0, abs=1e-6
+    )
+
+
+@pytest.mark.parametrize(
+    "stamp",
+    [
+        "0001-01-01T00:00:00Z",
+        "",
+        "not a time",
+        "2026-10-01T16:30:12.12a4Z",
+        "2026-10-01T16:30:12+00:00",
+    ],
+)
+def test_an_unset_or_unreadable_exit_time_is_none(stamp: str) -> None:
+    assert _outage.unix_time(stamp) is None
+
+
+def test_the_exit_time_rides_in_the_container_state() -> None:
+    exited = json.loads(json.dumps(_RUNNING))
+    exited["State"].update(Status="exited", FinishedAt="2026-10-01T16:30:12.5Z")
+
+    state = _outage.container_state(exited)
+
+    assert _outage.unix_time(state.finished_at) == pytest.approx(1790872212.5, abs=1e-6)
+
+
+def test_a_consumer_config_names_the_group_it_commits_as(tmp_path) -> None:
+    loader = tmp_path / "loader.yaml"
+    loader.write_text(
+        "kafka:\n  brokers:\n  - kafka:9092\n  group: dfe-loader\n  topic_regex: .*_land\n",
+        encoding="utf-8",
+    )
+    receiver = tmp_path / "receiver.yaml"
+    receiver.write_text("kafka:\n  brokers:\n    - kafka:9092\n", encoding="utf-8")
+
+    assert _outage.consumer_group(loader) == "dfe-loader"
+    assert _outage.consumer_group(receiver) == ""
+
+
+def test_rows_are_counted_per_record_of_this_load_only() -> None:
+    grouped = "\n".join(
+        [
+            "e2e-1-kill-000003\t2",
+            "e2e-1-kill-000004\t1",
+            "e2e-1-kill-longer-000005\t1",
+            "e2e-2-kill-000006\t1",
+            "e2e-1-kill-000007\tnot a count",
+            "",
+        ]
+    )
+
+    assert _outage.rows_per_seq(grouped, "e2e-1-kill") == {3: 2, 4: 1}
+
+
+def test_landing_counts_lost_duplicated_and_unaccepted_records() -> None:
+    accepted = {1: "before", 2: "during", 3: "after"}
+    rows = {1: 1, 2: 3, 4: 1}
+
+    tally = _outage.landing(accepted, rows)
+
+    assert tally.accepted == 3
+    assert tally.landed == 2
+    assert tally.lost == (3,)
+    assert tally.duplicates == 2
+    assert tally.unaccepted == 1
+
+
+def test_landing_with_every_accepted_record_present_loses_none() -> None:
+    tally = _outage.landing([5, 6], {5: 1, 6: 1})
+
+    assert tally.lost == ()
+    assert tally.duplicates == 0
+    assert tally.landed == tally.accepted == 2
 
 
 def test_sources_alternate_and_a_short_one_repeats() -> None:

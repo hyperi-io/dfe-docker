@@ -230,8 +230,8 @@ KAFKA_BOOTSTRAP = "kafka:9092"
 
 # ------------------------------------------------------------------------------
 # Outage Tests
-# - A test with an `outage:` block stops one service under steady load and
-#   starts it again. docs/developing.md#outage-tests----a-service-stopped-under-load
+# - A test with an `outage:` block stops or kills one service under steady load
+#   and starts it again. docs/developing.md#outage-tests----a-service-stopped-under-load
 # ------------------------------------------------------------------------------
 OUTAGE_DEFAULT_SECONDS = 60
 OUTAGE_WORKERS = 4
@@ -319,7 +319,8 @@ class TestContext:
 #   - profile: service_profiles.yaml profile name (e.g. kafka-receiver)
 #   - compose_profiles: resolved compose profiles including infra (clickhouse, kafka backend profile, kafka-ui)
 #   - services: resolved {dfe-service: project-relative config path}
-#   - outage: {service, seconds, sources} for a test that stops a service under load
+#   - outage: {service, method, seconds, sources} for a test that stops or kills a
+#     service under load
 #   - detection: {where, matching, other} for a test that proves a rule and a hunt,
 #     or {from_search, matching, other} for one whose rule comes from a search
 #   - engine_environment: settings this test's stack hands dfe-engine
@@ -1667,9 +1668,9 @@ def verify_self_monitoring(ctx, test_name):
 
 # ==============================================================================
 # Outage Tests
-# - One service stopped under steady load, then started again: every other DFE
-#   app may refuse work meanwhile, never exit, restart, drop a request, lose an
-#   accepted record or stop consuming
+# - One service stopped or killed under steady load, then started again: every
+#   other DFE app may refuse work meanwhile, never exit, restart, drop a request,
+#   lose an accepted record or stop consuming
 # ==============================================================================
 
 
@@ -1717,12 +1718,22 @@ def outage_service(name):
 
 # ------------------------------------------------------------------------------
 # Compose Lifecycle
-# - Stops or starts one service of this project, whichever profile declares it
+# - Runs one `docker compose` lifecycle command, given as its arguments, on one
+#   service of this project, whichever profile declares it
 # ------------------------------------------------------------------------------
 def compose_lifecycle(action, service):
     return run_cmd(
-        ["docker", "compose", "--profile", "*", action, service], capture=True
+        ["docker", "compose", "--profile", "*", *action, service], capture=True
     )
+
+
+# ------------------------------------------------------------------------------
+# On Kafka
+# - Whether the test's records travel through the broker, which owes an outage a
+#   proof the load reached Kafka before it and a consumer catch-up after it
+# ------------------------------------------------------------------------------
+def on_kafka(test):
+    return KAFKA_BACKEND_PROFILE in test.compose_profiles and bool(test.expected_topics)
 
 
 # ------------------------------------------------------------------------------
@@ -1744,10 +1755,10 @@ def outage_records(test):
 
 # ------------------------------------------------------------------------------
 # Landed Records
-# - The load's records that have reached the test's table, or None if unreadable
+# - Rows per load record that has reached the test's table, or None if unreadable
 # ------------------------------------------------------------------------------
 def landed_records(test):
-    return _outage.landed_seqs(
+    return _outage.landed_rows(
         test.database, test.table, test.marker, debug=LOGGER.debug
     )
 
@@ -1873,33 +1884,77 @@ def report_changes(render):
 
 
 # ------------------------------------------------------------------------------
-# Break And Restore
-# - Stops the backing service for the outage and always starts it again,
-#   returning the stop time once it is healthy, else None
+# Group Uncommitted
+# - Records one consumer group has not committed across its topics, which a
+#   consumer killed now has to read again, or None when the broker cannot say
 # ------------------------------------------------------------------------------
-def break_and_restore(ctx, test, backing, seconds, load):
-    stopped_at = None
+def group_uncommitted(group):
+    lag = consumer_group_lag()
+    if lag is None or group not in lag:
+        return None
+    return sum(lag[group].values())
+
+
+# ------------------------------------------------------------------------------
+# Exit Time
+# - When one service's process exited, read off its container once it has
+#   stopped running, or None when the container cannot say
+# ------------------------------------------------------------------------------
+def exit_time(service, timeout=10):
+    deadline = time.monotonic() + timeout
+    while True:
+        state = container_state(service)
+        if state and state.status != "running":
+            return _outage.unix_time(state.finished_at)
+        if time.monotonic() >= deadline:
+            return None
+        time.sleep(0.2)
+
+
+# ------------------------------------------------------------------------------
+# Break And Restore
+# - Takes the backing service down by the outage's method and always starts it
+#   again, returning an _outage.Outage once it is healthy, else None
+# - `group` is the consumer group of a killed Kafka consumer, whose uncommitted
+#   records are read just before the kill
+# ------------------------------------------------------------------------------
+def break_and_restore(ctx, test, backing, seconds, load, group=None):
+    method = _outage.method_of(test.outage)
+    uncommitted = group_uncommitted(group) if (group) else None
+    issued = None
     try:
-        stop = compose_lifecycle("stop", backing)
-        if stop.returncode == 0:
-            stopped_at = time.time()
-            load.phase = "during"
+        load.phase = "during"
+        started = time.time()
+        down = compose_lifecycle(method.compose, backing)
+        if down.returncode == 0:
+            issued, returned = started, time.time()
+            down_at = exit_time(backing)
+            if down_at is None:
+                LOGGER.info(
+                    f"'{backing}' did not report when it exited; timing the outage "
+                    "from when the command returned"
+                )
+                down_at = returned
             LOGGER.info(
-                f"'{backing}' stopped; holding it down for {seconds}s under load..."
+                f"'{backing}' {method.done}; holding it down for {seconds}s under load..."
             )
             time.sleep(seconds)
         else:
-            detail = (stop.stderr or stop.stdout or "").strip()
-            mark_fail(ctx, f"[{test.name}] could not stop '{backing}': {detail}")
+            detail = (down.stderr or down.stdout or "").strip()
+            mark_fail(
+                ctx,
+                f"[{test.name}] could not take '{backing}' down "
+                f"({' '.join(method.compose)}): {detail}",
+            )
     finally:
-        start = compose_lifecycle("start", backing)
+        start = compose_lifecycle(["start"], backing)
         load.phase = "after"
 
     if start.returncode != 0:
         detail = (start.stderr or start.stdout or "").strip()
         mark_fail(ctx, f"[{test.name}] could not start '{backing}' again: {detail}")
         return None
-    if stopped_at is None:
+    if issued is None:
         return None
     if not (wait_healthy(backing, OUTAGE_RECOVERY_TIMEOUT)):
         mark_fail(
@@ -1908,18 +1963,24 @@ def break_and_restore(ctx, test, backing, seconds, load):
             "it was started again",
         )
         return None
-    LOGGER.info(
-        f"'{backing}' healthy again {time.time() - stopped_at:.0f}s after the stop"
+    outage = _outage.Outage(
+        issued=issued, down=down_at, healthy=time.time(), uncommitted=uncommitted
     )
-    return stopped_at
+    LOGGER.info(
+        f"'{backing}' healthy again {outage.healthy - outage.issued:.0f}s after it "
+        "went down"
+    )
+    return outage
 
 
 # ------------------------------------------------------------------------------
 # Verify Answers
 # - Every request gets an HTTP answer: a refusal is backpressure and passes,
 #   silence means nothing was there to refuse it
+# - `edge_down`, the (down, healthy) span of an outage of the service the load
+#   posts to, excuses only the requests that overlap it
 # ------------------------------------------------------------------------------
-def verify_answers(ctx, test, sent):
+def verify_answers(ctx, test, sent, edge_down=None):
     slowest = _outage.slowest_by_phase(sent)
     for phase, counts in _outage.outcomes_by_phase(sent).items():
         answers = ", ".join(f"{outcome} x{n}" for outcome, n in counts.most_common())
@@ -1928,7 +1989,8 @@ def verify_answers(ctx, test, sent):
             f" (slowest {slowest.get(phase, 0.0):.1f}s)"
         )
 
-    silent = [record for record in sent if record.status is None]
+    silent = _outage.unexplained_silence(sent, edge_down)
+    while_down = sum(1 for record in sent if record.status is None) - len(silent)
     if silent:
         by_phase = _outage.outcomes_by_phase(silent)
         where = "; ".join(
@@ -1939,6 +2001,14 @@ def verify_answers(ctx, test, sent):
         mark_fail(
             ctx,
             f"[{test.name}] {len(silent)}/{len(sent)} requests got no HTTP answer ({where})",
+        )
+    elif edge_down is not None:
+        refused = sum(1 for r in sent if r.status is not None and not (r.accepted))
+        mark_pass(
+            ctx,
+            f"[{test.name}] the receiver answered every request outside its own "
+            f"outage ({len(sent)} sent, {while_down} unanswered while it was down, "
+            f"{refused} refused, the rest accepted)",
         )
     else:
         refused = sum(1 for record in sent if not (record.accepted))
@@ -1952,7 +2022,7 @@ def verify_answers(ctx, test, sent):
 # ------------------------------------------------------------------------------
 # Verify Outage Landing
 # - Every record for the test's table the receiver accepted, in any phase,
-#   reaches that table, duplicates allowed
+#   reaches that table, duplicates allowed and counted
 # ------------------------------------------------------------------------------
 def verify_outage_landing(ctx, test, sent):
     accepted = _outage.accepted_by_seq(sent, test.table)
@@ -1962,18 +2032,18 @@ def verify_outage_landing(ctx, test, sent):
         )
         return
 
-    def _render(landed):
-        got = len(set(accepted) & landed) if landed is not None else "unreadable"
+    def _render(rows):
+        got = len(accepted.keys() & rows.keys()) if rows is not None else "unreadable"
         return f"{got}/{len(accepted)} accepted records landed"
 
-    landed = poll_until(
+    rows = poll_until(
         lambda: landed_records(test),
         timeout=OUTAGE_SETTLE_TIMEOUT,
         interval=OUTAGE_POLL_SECONDS,
-        done=lambda got: got is not None and set(accepted) <= got,
+        done=lambda got: got is not None and accepted.keys() <= got.keys(),
         on_attempt=report_changes(_render),
     )
-    if landed is None:
+    if rows is None:
         mark_fail(
             ctx,
             f"[{test.name}] no marker readable in '{test.database}.{test.table}', "
@@ -1981,27 +2051,35 @@ def verify_outage_landing(ctx, test, sent):
         )
         return
 
-    missing = sorted(set(accepted) - landed)
-    per_phase = Counter(accepted.values())
-    if missing:
-        lost = Counter(accepted[seq] for seq in missing)
+    tally = _outage.landing(accepted, rows)
+    LOGGER.info(
+        f"[{test.name}] '{test.table}': sent "
+        f"{sum(1 for record in sent if record.source == test.table)}, accepted "
+        f"{tally.accepted}, landed {tally.landed}, lost {len(tally.lost)}, "
+        f"duplicate rows {tally.duplicates}, landed but never accepted "
+        f"{tally.unaccepted}"
+    )
+    if tally.lost:
+        lost = Counter(accepted[seq] for seq in tally.lost)
+        LOGGER.error(f"    lost sequence numbers: {list(tally.lost)}")
         mark_fail(
             ctx,
-            f"[{test.name}] {len(missing)}/{len(accepted)} accepted records never "
+            f"[{test.name}] {len(tally.lost)}/{tally.accepted} accepted records never "
             f"landed in '{test.database}.{test.table}' within {OUTAGE_SETTLE_TIMEOUT}s "
-            f"(by phase sent: {dict(lost)}; first: {missing[:5]})",
+            f"(by phase sent: {dict(lost)}; first: {list(tally.lost[:5])})",
         )
     else:
         mark_pass(
             ctx,
-            f"[{test.name}] all {len(accepted)} accepted records landed in "
-            f"'{test.database}.{test.table}' (by phase sent: {dict(per_phase)})",
+            f"[{test.name}] all {tally.accepted} accepted records landed in "
+            f"'{test.database}.{test.table}' (by phase sent: "
+            f"{dict(Counter(accepted.values()))})",
         )
 
 
 # ------------------------------------------------------------------------------
 # Verify Consumers
-# - Every Kafka consumer caught up after the broker came back: each subscribed
+# - Every Kafka consumer caught up after the outage: each subscribed
 #   topic has a committing group per subscriber, and no group on any of the
 #   test's topics is behind
 # ------------------------------------------------------------------------------
@@ -2108,7 +2186,7 @@ def verify_survivors(ctx, test, before, exited, since, stopped_at):
             continue
 
         timed = [
-            f"{label} {at - stopped_at:+.0f}s from the stop" if stopped_at else label
+            f"{label} {at - stopped_at:+.0f}s from the outage" if stopped_at else label
             for at, label in died
         ]
         mark_fail(
@@ -2129,23 +2207,28 @@ def verify_survivors(ctx, test, before, exited, since, stopped_at):
 
 # ------------------------------------------------------------------------------
 # Drive Outage
-# - Steady load, a pre-outage landing gate (plus, for a broker outage, proof the
-#   load went through the broker), then the outage itself, returning every
-#   request sent and the stop time, None when no outage ran
+# - Steady load, a pre-outage landing gate (plus, on Kafka, proof the load went
+#   through the broker), then the outage itself, returning every request sent
+#   and the _outage.Outage, None when no outage ran
 # ------------------------------------------------------------------------------
-def drive_outage(ctx, test, services, backing, ingest_url):
+def drive_outage(ctx, test, services, backing, ingest_url, group=None):
+    workers = int(test.outage.get("workers", OUTAGE_WORKERS))
+    interval = float(test.outage.get("interval", OUTAGE_INTERVAL_SECONDS))
     load = _outage.SteadyLoad(
         url=ingest_url,
         prefix=test.marker,
         records=outage_records(test),
-        workers=OUTAGE_WORKERS,
-        interval=OUTAGE_INTERVAL_SECONDS,
+        workers=workers,
+        interval=interval,
         timeout=OUTAGE_REQUEST_TIMEOUT,
     )
     seconds = int(test.outage.get("seconds", OUTAGE_DEFAULT_SECONDS))
     started = time.time()
-    stopped_at = None
-    LOGGER.info(f"Sending steady load to '{ingest_url}' ({OUTAGE_WORKERS} workers)...")
+    outage = None
+    LOGGER.info(
+        f"Sending steady load to '{ingest_url}' ({workers} workers, {interval}s "
+        "between each one's requests)..."
+    )
     load.start()
     try:
         path_lands = poll_until(
@@ -2156,38 +2239,78 @@ def drive_outage(ctx, test, services, backing, ingest_url):
         )
         if path_lands:
             time.sleep(max(0.0, OUTAGE_LEAD_SECONDS - (time.time() - started)))
-            unreached = (
-                kafka_unreached(test, services) if (backing == KAFKA_SERVICE) else []
-            )
+            unreached = kafka_unreached(test, services) if (on_kafka(test)) else []
             if unreached:
                 mark_fail(
                     ctx,
                     f"[{test.name}] the load never reached Kafka before '{backing}' "
-                    f"was stopped, so no broker outage was run: {'; '.join(unreached)}",
+                    f"went down, so no outage was run: {'; '.join(unreached)}",
                 )
             else:
-                stopped_at = break_and_restore(ctx, test, backing, seconds, load)
-            if stopped_at is not None:
+                outage = break_and_restore(ctx, test, backing, seconds, load, group)
+            if outage is not None:
                 time.sleep(OUTAGE_TAIL_SECONDS)
         else:
             mark_fail(
                 ctx,
                 f"[{test.name}] nothing landed in '{test.database}.{test.table}' within "
                 f"{OUTAGE_READY_TIMEOUT}s of load, so the path was broken before "
-                f"'{backing}' was stopped",
+                f"'{backing}' went down",
             )
     finally:
         load.stop()
-    return load.sent(), stopped_at
+    return load.sent(), outage
+
+
+# ------------------------------------------------------------------------------
+# Verify Kill Caught
+# - A kill proves something only if it caught records in flight: requests out
+#   the instant the service died, or for a killed Kafka consumer (`group` set)
+#   records its group had not committed just before the kill. Zero fails.
+# ------------------------------------------------------------------------------
+def verify_kill_caught(ctx, test, backing, sent, outage, group):
+    if group == "":
+        mark_fail(
+            ctx,
+            f"[{test.name}] '{backing}' names no consumer group in its config, so "
+            "what the kill caught is unknown",
+        )
+        return
+    if group is None:
+        caught = len(_outage.overlapping(sent, outage.down, outage.down))
+        what = "request(s) out the instant it died"
+    else:
+        caught = outage.uncommitted
+        what = f"record(s) group '{group}' had not committed just before the kill"
+    if caught is None:
+        mark_fail(
+            ctx,
+            f"[{test.name}] the broker did not say what group '{group}' had not "
+            "committed, so what the kill caught is unknown",
+        )
+    elif caught > 0:
+        mark_pass(ctx, f"[{test.name}] the kill of '{backing}' caught {caught} {what}")
+    else:
+        mark_fail(
+            ctx,
+            f"[{test.name}] the kill of '{backing}' caught nothing in flight (0 {what}), "
+            "so it proved nothing about a crash: give the outage a denser load",
+        )
 
 
 # ------------------------------------------------------------------------------
 # Run Outage
-# - Every service healthy, then the outage under load, then the four verdicts:
-#   answers, landing, consumers (Kafka only) and survivors
+# - Every service healthy, then the outage under load, then the verdicts:
+#   answers, what a kill caught, landing, consumers (Kafka only) and survivors
 # ------------------------------------------------------------------------------
-def run_outage(ctx, test, services, ingest_url):
+def run_outage(ctx, test, services, ingest_url, ingest_service):
     backing = outage_service(test.outage["service"])
+    method = _outage.method_of(test.outage)
+    # A killed Kafka consumer holds no request open, so what it caught is its lag.
+    group = None
+    killed_consumer = backing in services and backing != ingest_service
+    if not (method.drains) and on_kafka(test) and killed_consumer:
+        group = _outage.consumer_group(PROJECT_DIR / services[backing])
     for service in sorted(test.services):
         if not (wait_healthy(service, OUTAGE_READY_TIMEOUT)):
             mark_fail(
@@ -2202,18 +2325,30 @@ def run_outage(ctx, test, services, ingest_url):
     since = time.time() - 1
     watcher = watch_exits(state.container_id for state in before.values())
     try:
-        sent, stopped_at = drive_outage(ctx, test, services, backing, ingest_url)
+        sent, outage = drive_outage(ctx, test, services, backing, ingest_url, group)
         print()
-        verify_answers(ctx, test, sent)
-        if stopped_at is not None:
+        edge_down = None
+        if outage is not None and backing == ingest_service:
+            edge_down = (outage.issued, outage.healthy)
+        verify_answers(ctx, test, sent, edge_down)
+        if outage is not None:
+            if method.drains:
+                in_flight = _outage.overlapping(sent, outage.down, outage.down)
+                LOGGER.info(
+                    f"[{test.name}] {len(in_flight)} request(s) out the instant "
+                    f"'{backing}' exited"
+                )
+            else:
+                verify_kill_caught(ctx, test, backing, sent, outage, group)
             print()
             verify_outage_landing(ctx, test, sent)
-            if backing == KAFKA_SERVICE:
+            if on_kafka(test):
                 print()
                 verify_consumers(ctx, test, services)
     finally:
         exited = stop_watching(watcher)
     print()
+    stopped_at = outage.issued if outage else None
     verify_survivors(ctx, test, before, exited, since, stopped_at)
 
 
@@ -2957,18 +3092,9 @@ def resolve_test_case(test_config, global_config):
 
     outage = test_config.get("outage") or {}
     if outage:
-        if not (outage.get("service")):
-            error(f"[{test_name}] outage names no 'service' to stop")
-        try:
-            seconds = int(outage.get("seconds", OUTAGE_DEFAULT_SECONDS))
-        except (TypeError, ValueError):
-            seconds = 0
-        if seconds < 1:
-            error(f"[{test_name}] outage 'seconds' must be a whole number above 0")
-        if not (isinstance(outage.get("sources") or {}, dict)):
-            error(
-                f"[{test_name}] outage 'sources' must map each _source to a data file"
-            )
+        problems = _outage.config_problems(outage, OUTAGE_DEFAULT_SECONDS)
+        if problems:
+            error(f"[{test_name}] {'; '.join(problems)}")
 
     detection = test_config.get("detection") or {}
     engine_environment = {}
@@ -3046,7 +3172,11 @@ def run_test(ctx, mode, test, persistent_services):
         print(f"  - Data File: {test.data_file}")
     if test.outage:
         seconds = test.outage.get("seconds", OUTAGE_DEFAULT_SECONDS)
-        print(f"  - Outage: '{test.outage['service']}' stopped for {seconds}s")
+        method = _outage.method_of(test.outage)
+        workers = test.outage.get("workers", OUTAGE_WORKERS)
+        interval = test.outage.get("interval", OUTAGE_INTERVAL_SECONDS)
+        print(f"  - Outage: '{test.outage['service']}' {method.done}, down {seconds}s")
+        print(f"  - Load: {workers} workers, {interval}s between each one's requests")
     if test.detection.get("from_search"):
         search = test.detection["from_search"]
         print(
@@ -3092,13 +3222,16 @@ def run_test(ctx, mode, test, persistent_services):
 
     has_fetcher = "dfe-fetcher" in test.services
     has_receiver = "dfe-receiver" in test.services
+    ingest_service = (
+        "dfe-fetcher" if (has_fetcher and not (has_receiver)) else "dfe-receiver"
+    )
     ingest_url = (
         f"{DFE_FETCHER_INGEST_URL}/{test.table}"
-        if (has_fetcher and not (has_receiver))
+        if (ingest_service == "dfe-fetcher")
         else DFE_RECEIVER_INGEST_URL
     )
     if test.outage:
-        run_outage(ctx, test, effective_services, ingest_url)
+        run_outage(ctx, test, effective_services, ingest_url, ingest_service)
     elif test.detection:
         run_detection(ctx, test, ingest_url)
     else:
