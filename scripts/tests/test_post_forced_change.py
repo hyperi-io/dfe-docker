@@ -256,6 +256,28 @@ def test_a_refusal_that_echoes_the_new_password_does_not_print_it(
     assert "<new password>" in login.fault
 
 
+def test_a_refusal_that_echoes_the_current_password_does_not_print_it(
+    issued: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The current password rides in the same request body, so it can come back too."""
+    engine = _Engine(password=_ISSUED, sends_flag=True, change_status=422)
+
+    def _echoing(url: str, payload: dict, token: str = "", timeout: int = 30):
+        if url.endswith(post.CHANGE_PASSWORD_PATH):
+            engine.change_body = {"detail": [{"input": payload}]}
+        return engine.post_json(url, payload, token=token, timeout=timeout)
+
+    monkeypatch.setattr(post, "_api_post_json", _echoing)
+
+    login = post._login(_BASE)
+
+    assert "HTTP 422" in login.fault
+    assert _ISSUED not in login.fault
+    assert engine.changes[0]["new_password"] not in login.fault
+    assert "<current password>" in login.fault
+    assert "<new password>" in login.fault
+
+
 def test_a_change_that_applied_without_an_answer_is_kept(
     issued: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
