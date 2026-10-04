@@ -900,3 +900,41 @@ def test_the_hunt_events_carry_a_match_and_near_misses() -> None:
     """Without both sets the verdict cannot tell an exact rule from an over-broad one."""
     assert post.HUNT_EVENTS[post._detection.MATCHING]
     assert post.HUNT_EVENTS[post._detection.OTHER]
+
+
+_RUNNER_PASSWORD_KEY = "DFE_HUNT_RUNNER_CLICKHOUSE_PASSWORD"
+
+
+def _only_the_runner_password_in_play(
+    monkeypatch: pytest.MonkeyPatch, services: list[str]
+) -> None:
+    """The bundled ClickHouse with its admin password set, and these services running."""
+    monkeypatch.setattr(post, "_resolved_services", lambda: services)
+    monkeypatch.delenv("CLICKHOUSE_HOST", raising=False)
+    monkeypatch.setenv("CLICKHOUSE_PASSWORD", "aMintedAdminValue123")
+
+
+def test_an_unset_hunt_runner_password_fails_the_self_test(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Empty leaves dfe_hunt_runner on a password the engine mints and the runner never sees."""
+    _only_the_runner_password_in_play(monkeypatch, ["dfe-engine", "dfe-hunt-runner"])
+    monkeypatch.delenv(_RUNNER_PASSWORD_KEY, raising=False)
+
+    assert [name for name, _value in post._weak_secrets()] == [_RUNNER_PASSWORD_KEY]
+
+
+def test_a_minted_hunt_runner_password_passes(monkeypatch: pytest.MonkeyPatch) -> None:
+    _only_the_runner_password_in_play(monkeypatch, ["dfe-engine", "dfe-hunt-runner"])
+    monkeypatch.setenv(_RUNNER_PASSWORD_KEY, "aMintedRunnerValue123")
+
+    assert post._weak_secrets() == []
+
+
+def test_a_stack_without_the_runner_needs_no_runner_password(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _only_the_runner_password_in_play(monkeypatch, ["dfe-engine"])
+    monkeypatch.delenv(_RUNNER_PASSWORD_KEY, raising=False)
+
+    assert post._weak_secrets() == []

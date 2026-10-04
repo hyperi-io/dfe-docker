@@ -346,11 +346,11 @@ because Compose interpolates every service before profiles filter anything. A
 Redpanda pin in `.env` is not a Redpanda deployment -- but if your licence
 position requires zero reference to the artefact, that is the remaining edge.
 
-## Secrets: three are generated
+## Secrets: `make init` generates them
 
-`make init` mints a random value for `DFE_UI_NEXTAUTH_SECRET`,
-`HYPERDX_POSTGRES_PASSWORD` and `CLICKHOUSE_PASSWORD`, including topping up an
-existing `.env` that predates any of them (`scripts/init.py`). Compose carries a
+`make init` mints a random value for every key in `GENERATED_SECRETS`
+(`scripts/init.py`), including topping up an existing `.env` that predates any
+of them. Compose carries a
 sentinel (or empty) default rather than a `${VAR:?}` hard-fail -- interpolation is
 not profile-gated, so a hard-fail would abort `make down` too, for a service the
 operator may not even run. The check lives in the power-on self test instead:
@@ -366,6 +366,11 @@ want it enforced, run `make post` as its own step and check the exit code.
 skips it when `CLICKHOUSE_HOST` points at an external instance, because then the
 credential is the operator's, not the stack's. See the upgrade note below -- a
 generated password against an existing warehouse volume is a breaking change.
+
+`DFE_HUNT_RUNNER_CLICKHOUSE_PASSWORD` is the hunt runner's own ClickHouse user,
+`dfe_hunt_runner`. The engine creates that user on this password, with `SELECT`
+and `INSERT` on the data database and nothing else, and the runner connects with
+the same value instead of the admin account.
 
 Never commit `.env`.
 
