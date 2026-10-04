@@ -71,6 +71,12 @@ class _Engine:
             return 200, body
         if route == post.CHANGE_PASSWORD_PATH:
             self.changes.append({"token": token, **payload})
+            if "current_password" not in payload:
+                return 422, {
+                    "detail": [{"loc": ["body", "current_password"], "type": "missing"}]
+                }
+            if payload["current_password"] != self.password:
+                return 403, {"detail": {"code": "invalid_current_password"}}
             if self.change_status != 200:
                 return self.change_status, self.change_body
             self.password = payload["new_password"]
@@ -127,7 +133,9 @@ def test_an_issued_password_is_replaced_recorded_and_logged_in_again(
 
     recorded = _recorded(issued)
     assert login == post.Login("token-2", 200, "admin", "")
-    assert engine.changes == [{"token": "token-1", "new_password": recorded}]
+    assert engine.changes == [
+        {"token": "token-1", "current_password": _ISSUED, "new_password": recorded}
+    ]
     assert engine.password == recorded != _ISSUED
     assert len(recorded) == 24
     assert recorded.isalnum()
@@ -245,6 +253,28 @@ def test_a_refusal_that_echoes_the_new_password_does_not_print_it(
     submitted = engine.changes[0]["new_password"]
     assert "HTTP 422" in login.fault
     assert submitted not in login.fault
+    assert "<new password>" in login.fault
+
+
+def test_a_refusal_that_echoes_the_current_password_does_not_print_it(
+    issued: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The current password rides in the same request body, so it can come back too."""
+    engine = _Engine(password=_ISSUED, sends_flag=True, change_status=422)
+
+    def _echoing(url: str, payload: dict, token: str = "", timeout: int = 30):
+        if url.endswith(post.CHANGE_PASSWORD_PATH):
+            engine.change_body = {"detail": [{"input": payload}]}
+        return engine.post_json(url, payload, token=token, timeout=timeout)
+
+    monkeypatch.setattr(post, "_api_post_json", _echoing)
+
+    login = post._login(_BASE)
+
+    assert "HTTP 422" in login.fault
+    assert _ISSUED not in login.fault
+    assert engine.changes[0]["new_password"] not in login.fault
+    assert "<current password>" in login.fault
     assert "<new password>" in login.fault
 
 

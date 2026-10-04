@@ -1449,7 +1449,9 @@ def _login(base: str) -> Login:
         )
     if not (change_required):
         return Login(token, status, username, "")
-    return _replace_issued_password(base=base, key=key, token=token, username=username)
+    return _replace_issued_password(
+        base=base, key=key, token=token, username=username, current=password
+    )
 
 
 def _dotenv_with(*, text: str, key: str, value: str) -> str:
@@ -1510,8 +1512,14 @@ def _refresh_access_summary() -> None:
         )
 
 
+def _without_passwords(text: str, new: str, current: str) -> str:
+    """Return text with both passwords of a change masked, since a refusal can echo the request."""
+    masked = text.replace(new, "<new password>")
+    return masked.replace(current, "<current password>") if current else masked
+
+
 def _replace_issued_password(
-    *, base: str, key: str, token: str, username: str
+    *, base: str, key: str, token: str, username: str, current: str
 ) -> Login:
     """Replace an issued password with a fresh one, leaving .env on the one the engine holds.
 
@@ -1541,7 +1549,9 @@ def _replace_issued_password(
 
     try:
         status, body = _api_post_json(
-            f"{base}{CHANGE_PASSWORD_PATH}", {"new_password": replacement}, token=token
+            f"{base}{CHANGE_PASSWORD_PATH}",
+            {"current_password": current, "new_password": replacement},
+            token=token,
         )
         change_fault = (
             ""
@@ -1577,13 +1587,13 @@ def _replace_issued_password(
             f"{username!r} must replace the password it was issued and the engine did "
             f"not take the new one: {change_fault}{restored}"
         )
-        return Login("", 200, username, fault.replace(replacement, "<new password>"))
+        return Login("", 200, username, _without_passwords(fault, replacement, current))
 
     os.environ[key] = replacement
     _refresh_access_summary()
     if login_fault:
         fault = f"{username!r} replaced the password it was issued, but {login_fault}"
-        return Login("", 200, username, fault.replace(replacement, "<new password>"))
+        return Login("", 200, username, _without_passwords(fault, replacement, current))
     if still_required:
         return Login(
             "",
