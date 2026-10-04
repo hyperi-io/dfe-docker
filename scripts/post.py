@@ -1449,7 +1449,9 @@ def _login(base: str) -> Login:
         )
     if not (change_required):
         return Login(token, status, username, "")
-    return _replace_issued_password(base=base, key=key, token=token, username=username)
+    return _replace_issued_password(
+        base=base, key=key, token=token, username=username, current=password
+    )
 
 
 def _dotenv_with(*, text: str, key: str, value: str) -> str:
@@ -1511,7 +1513,7 @@ def _refresh_access_summary() -> None:
 
 
 def _replace_issued_password(
-    *, base: str, key: str, token: str, username: str
+    *, base: str, key: str, token: str, username: str, current: str
 ) -> Login:
     """Replace an issued password with a fresh one, leaving .env on the one the engine holds.
 
@@ -1541,7 +1543,9 @@ def _replace_issued_password(
 
     try:
         status, body = _api_post_json(
-            f"{base}{CHANGE_PASSWORD_PATH}", {"new_password": replacement}, token=token
+            f"{base}{CHANGE_PASSWORD_PATH}",
+            {"current_password": current, "new_password": replacement},
+            token=token,
         )
         change_fault = (
             ""

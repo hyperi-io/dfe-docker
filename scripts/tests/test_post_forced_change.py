@@ -71,6 +71,12 @@ class _Engine:
             return 200, body
         if route == post.CHANGE_PASSWORD_PATH:
             self.changes.append({"token": token, **payload})
+            if "current_password" not in payload:
+                return 422, {
+                    "detail": [{"loc": ["body", "current_password"], "type": "missing"}]
+                }
+            if payload["current_password"] != self.password:
+                return 403, {"detail": {"code": "invalid_current_password"}}
             if self.change_status != 200:
                 return self.change_status, self.change_body
             self.password = payload["new_password"]
@@ -127,7 +133,9 @@ def test_an_issued_password_is_replaced_recorded_and_logged_in_again(
 
     recorded = _recorded(issued)
     assert login == post.Login("token-2", 200, "admin", "")
-    assert engine.changes == [{"token": "token-1", "new_password": recorded}]
+    assert engine.changes == [
+        {"token": "token-1", "current_password": _ISSUED, "new_password": recorded}
+    ]
     assert engine.password == recorded != _ISSUED
     assert len(recorded) == 24
     assert recorded.isalnum()
