@@ -22,7 +22,3 @@ kafka:
   # scalo drops `<base>_land` whenever `<base>_load` exists, so a source without
   # a transform is still read once and only at its landing topic.
   topic_regex: .*_(land|load)
-
-routing:
-  dlq:
-    enabled: false

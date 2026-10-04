@@ -27,5 +27,3 @@ routing:
   source_to_table:
     vector: main
     cisco-ios: main
-  dlq:
-    enabled: false
