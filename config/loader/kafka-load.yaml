@@ -20,7 +20,3 @@ kafka:
   group: dfe-loader
   topics:
     - main_load
-
-routing:
-  dlq:
-    enabled: false

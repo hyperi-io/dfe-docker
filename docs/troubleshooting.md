@@ -169,7 +169,7 @@ flowchart TD
     loader{"Loader /readyz OK?"}
     schema{"dfe.main exists<br/>in ClickHouse?"}
     topic{"Consumed topic<br/>exists on broker?"}
-    dlq{"Files under<br/>/var/spool/dfe?"}
+    dlq{"Dead letters in /var/spool/dfe<br/>or dfe_loader_dlq?"}
 
     start --> loader
     loader -->|no| fixloader["Read loader logs:<br/>ClickHouse unreachable or auth"]
@@ -178,7 +178,7 @@ flowchart TD
     schema -->|yes| topic
     topic -->|no| fixtopic["Topic mismatch -- see known issues"]
     topic -->|yes| dlq
-    dlq -->|yes| fixdlq["Events were dead-lettered;<br/>read the spooled files"]
+    dlq -->|yes| fixdlq["Events were dead-lettered;<br/>read the dead letters"]
     dlq -->|no| lag["Check consumer lag in Kafbat :8081"]
 ```
 
@@ -249,14 +249,13 @@ Three ways that arrangement fails:
    the list leaves dlq-init on the **registry** image instead, which needs GHCR
    access and a pinned `DFE_ARCHIVER_VERSION`.
 
-**Files under `/var/spool/dfe/dlq` mean events were accepted and then could not be
-delivered.** They are evidence, not noise: read them to see what was rejected and
-why. Note that the shipped loader configs set `routing.dlq.enabled: false`, so on
-those profiles spooled files come from another component, not the loader.
+**Files under `/var/spool/dfe/dlq` mean events were accepted and then could not be delivered.** They are evidence, not noise: read them to see what was rejected and why. On a gRPC profile, where there is no broker, the loader writes its own dead letters there, under `dlq/loader/`. On a Kafka profile it writes them to the `dfe_loader_dlq` topic, which Kafbat on `:8081` shows, and to that file only when the broker does not take them.
 
 ```bash
-docker compose exec dfe-loader ls -la /var/spool/dfe/dlq
+docker compose exec dfe-loader ls -la /var/spool/dfe/dlq/loader
 ```
+
+A row ClickHouse refuses with no working DLQ to take it is lost. The loader logs `No working DLQ` and counts it in `dfe_loader_rows_lost_total`, so any count there is data loss.
 
 ## Common failures
 
