@@ -18,7 +18,7 @@
 # builder's base drifts newer than the component's runtime base, the glibc the
 # binary links against stops existing and it will not start. An explicit tag makes
 # that a visible version bump in a PR instead of a digest nobody reads.
-ARG RUST_IMAGE=rust:1.97-trixie@sha256:9a2cd304a852f05d3352f75bc2775242371c0169a72dbb40d5d881379d571989
+ARG RUST_IMAGE=rust:1.98-trixie@sha256:a8a5f0a1e5fe7dfe1d352591e4a1c7dd2c08fd70475cae872cf3458ba0df0546
 FROM ${RUST_IMAGE} AS builder
 
 # Default `sh -c` does not fail a pipeline when an EARLY stage fails -- only the
