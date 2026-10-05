@@ -1195,10 +1195,6 @@ services:
       # and the two have to stay the same path -- and that path is the host tree,
       # so a write here changes the operator's checkout.
       DFE_DEPLOYMENT_APP_ENV_DIR: /app/app-env
-      # Where a metrics refresh reads each app's live manifest: every app serves it
-      # on its own container's 9090, reached by service name whatever host port
-      # publishes it. {service} is the engine's placeholder, not interpolation.
-      DFE_SERVICES_METRICS_MANIFEST_URL: "http://{service}:9090/metrics/manifest"
       OTEL_EXPORTER_OTLP_ENDPOINT: ${DFE_OTEL_EXPORTER_ENDPOINT:-}
       OTEL_SERVICE_NAME: dfe-engine
       # scalo's CLI falls back to the prometheus backend, so the endpoint alone
