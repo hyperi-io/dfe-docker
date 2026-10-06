@@ -307,6 +307,12 @@ APP_CONFIG_DIR_KEY = "DFE_ENGINE_APP_CONFIG_DIR"
 WEAK_SECRET_DEFAULTS = {
     "DFE_UI_NEXTAUTH_SECRET": ("RUN-make-init-TO-GENERATE-A-REAL-SECRET", "dfe-ui"),
     "HYPERDX_POSTGRES_PASSWORD": ("hyperdx", "hyperdx"),
+    "HYPERDX_EXPRESS_SESSION_SECRET": (
+        "RUN-make-init-TO-GENERATE-A-REAL-SECRET",
+        "hyperdx",
+    ),
+    # Empty, not a sentinel: HyperDX refuses to start on a malformed key.
+    "HYPERDX_TOKEN_ENCRYPTION_KEY": ("", "hyperdx"),
 }
 
 

@@ -1595,6 +1595,13 @@ services:
       NEXT_PUBLIC_DFE_UI_BASE_URL: ${DFE_HYPERDX_APP_URL:-${DFE_EXTERNAL_ORIGIN:-http://localhost}}:${DFE_UI_PORT:-3000}
       # HyperDX talks Mongo wire protocol; FerretDB serves it over Postgres.
       MONGO_URI: mongodb://${HYPERDX_POSTGRES_USER:-hyperdx}:${HYPERDX_POSTGRES_PASSWORD:-hyperdx}@hyperdx-ferretdb:27017/hyperdx?authSource=admin
+      # Unset, HyperDX signs sessions with a key published upstream, so `make init`
+      # generates one. Not a `:?` hard-fail -- see NEXTAUTH_SECRET.
+      EXPRESS_SESSION_SECRET: ${HYPERDX_EXPRESS_SESSION_SECRET:-RUN-make-init-TO-GENERATE-A-REAL-SECRET}
+      # Encrypts stored third-party tokens; `make init` generates 64 hex chars. The
+      # fallback is empty (plain text), not a sentinel: HyperDX refuses to start on
+      # a malformed key.
+      TOKEN_ENCRYPTION_KEY: ${HYPERDX_TOKEN_ENCRYPTION_KEY:-}
       NEXT_PUBLIC_THEME: ${HYPERDX_THEME:-dfe}
     volumes:
       - ./config/hyperdx/default-sources.json:/etc/hyperdx/default-sources.json:ro
