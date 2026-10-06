@@ -1,0 +1,45 @@
+# Project:   dfe-docker
+# File:      docker-compose.tls.yml
+# Purpose:   Serve the console and HyperDX over TLS and trust forwarded headers from dfe-proxy alone
+# Language:  YAML
+#
+# License:   BUSL-1.1
+# Copyright: (c) 2026 HYPERI PTY LIMITED
+#
+# NOT auto-loaded. The Makefile chains it when DFE_PROXY_TLS=true, once it has checked the certificate, the key and the https origins this needs.
+#
+# Outside a dev posture the engine marks its OIDC state and token cookies Secure and a browser discards a Secure cookie that reaches it over plain http from any host but localhost. TLS at the two proxies is what lets a sign-in on a real hostname complete.
+#
+# The engine builds the OIDC callback URL from X-Forwarded-Proto and believes that header only from the addresses in DFE_API_FORWARDED_ALLOW_IPS. That list is dfe-proxy's address and nothing else. The bridge gateway stays out because under rootless Docker, Docker Desktop or the userland proxy every caller of a published port arrives from it. Trusting it would let any of them forge X-Forwarded-For past the engine's login throttle.
+#
+# dfe-proxy's address is therefore fixed. The network is pinned to DFE_NETWORK_SUBNET and Docker allocates every other container from its first half, while dfe-proxy takes its last host address. The Makefile derives both (scripts/proxy_tls.py) and exports them as DFE_NETWORK_IP_RANGE and DFE_PROXY_IP.
+#
+# Both proxies run as the user who ran make: the key stays 0600 and owned by that user, so the image's own user (uid 101) could not read it.
+
+services:
+  dfe-engine:
+    environment:
+      DFE_API_FORWARDED_ALLOW_IPS: ${DFE_PROXY_IP:?chained by make, which derives it from DFE_NETWORK_SUBNET}
+
+  dfe-proxy:
+    user: "${DFE_DEV_UID:-1000}:${DFE_DEV_GID:-1000}"
+    networks:
+      default:
+        ipv4_address: ${DFE_PROXY_IP:?chained by make, which derives it from DFE_NETWORK_SUBNET}
+    # The config mount shares its target with the base file's, so it replaces that one.
+    volumes:
+      - ./config/proxy/envoy.tls.yaml:/etc/envoy/envoy.yaml:ro
+      - ${DFE_PROXY_CERT_DIR:?chained by make, which defaults it to ./certs}:/etc/envoy/certs:ro
+
+  dfe-hyperdx-proxy:
+    user: "${DFE_DEV_UID:-1000}:${DFE_DEV_GID:-1000}"
+    volumes:
+      - ./config/proxy/hyperdx.tls.yaml:/etc/envoy/envoy.yaml:ro
+      - ${DFE_PROXY_CERT_DIR:?chained by make, which defaults it to ./certs}:/etc/envoy/certs:ro
+
+networks:
+  default:
+    ipam:
+      config:
+        - subnet: ${DFE_NETWORK_SUBNET:?chained by make, which defaults it to 10.207.0.0/24}
+          ip_range: ${DFE_NETWORK_IP_RANGE:?chained by make, which derives it from DFE_NETWORK_SUBNET}

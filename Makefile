@@ -52,7 +52,7 @@ endif
 # any more (both sweep every profile), and requiring a resolvable profile to STOP
 # a stack is the same lockout the compose secret comments argue against -- set
 # DFE_PROFILE to something that does not exist and you could not tear down.
-BOOTSTRAP_GOALS := init env-files creds dev-posture help login stack dial modes down clean limits check check-compose check-hardfail check-dockerfile check-docs check-python check-tests
+BOOTSTRAP_GOALS := init env-files creds dev-posture help login stack dial modes down clean limits check check-compose check-hardfail check-dockerfile check-docs check-proxy check-python check-tests
 
 # Resolve the active profile only when a goal actually needs the compose stack
 ifneq (,$(filter-out $(BOOTSTRAP_GOALS),$(or $(MAKECMDGOALS),help)))
@@ -176,6 +176,33 @@ ifeq ($(strip $(DFE_BIND_SCOPE)),all)
     endif
 endif
 
+# Compose appends `:<port>` to each of these (next-auth's NEXTAUTH_URL, HyperDX's FRONTEND_URL, the oauth2-proxy callbacks), so a value that already carries a port, a path or a query builds a URL no browser can parse: dfe-ui answers 500 on `https://host:3000:3000`. Each must be a scheme and a host only, on every stack and with TLS on or off.
+APPENDED_ORIGINS := DFE_EXTERNAL_ORIGIN DFE_HYPERDX_APP_URL DFE_OAUTH2_PROXY_EXTERNAL_ORIGIN
+# The value without the surrounding quotes compose strips and make keeps.
+origin_value = $(patsubst "%",%,$(patsubst '%',%,$(strip $($(1)))))
+# What follows the scheme.
+origin_rest = $(patsubst https://%,%,$(patsubst http://%,%,$(call origin_value,$(1))))
+# What is wrong with one origin, empty when it is a scheme and a host or unset. A bracketed IPv6 host keeps its colons.
+origin_fault = $(if $(call origin_value,$(1)),$(strip \
+    $(if $(word 2,$(call origin_value,$(1))),contains a space,\
+    $(if $(filter http://% https://%,$(call origin_value,$(1))),\
+    $(if $(call origin_rest,$(1)),\
+    $(if $(findstring /,$(call origin_rest,$(1))),carries a path (a trailing slash counts),\
+    $(if $(findstring ?,$(call origin_rest,$(1))),carries a query,\
+    $(if $(and $(findstring :,$(call origin_rest,$(1))),$(if $(filter [%],$(call origin_rest,$(1))),,colon)),carries a port))),\
+    names no host),\
+    has no http:// or https:// scheme))))
+# The host the value names, a bracketed IPv6 one whole.
+origin_host = $(if $(filter [%,$(call origin_rest,$(1))),$(firstword $(subst ], ,$(call origin_rest,$(1))))],$(firstword $(subst /, ,$(subst ?, ,$(subst :, ,$(call origin_rest,$(1)))))))
+# The scheme and host the value meant: its own scheme, else https under console TLS and http without.
+origin_fix = $(if $(filter http://%,$(call origin_value,$(1))),http,$(if $(or $(filter https://%,$(call origin_value,$(1))),$(filter true,$(strip $(DFE_PROXY_TLS)))),https,http))://$(or $(call origin_host,$(1)),<the host browsers use>)
+ifneq (,$(filter $(ORIGIN_GOALS),$(or $(MAKECMDGOALS),help)))
+    ORIGIN_MALFORMED := $(firstword $(foreach key,$(APPENDED_ORIGINS),$(if $(call origin_fault,$(key)),$(key))))
+    ifneq ($(ORIGIN_MALFORMED),)
+        $(error $(ORIGIN_MALFORMED)='$(call origin_value,$(ORIGIN_MALFORMED))' $(call origin_fault,$(ORIGIN_MALFORMED)). It must be a scheme and a host only, no port: compose appends the port itself (DFE_UI_PORT for the console), so this value builds $(call origin_value,$(ORIGIN_MALFORMED)):$(or $(strip $(DFE_UI_PORT)),3000) and the console answers 500. Set $(ORIGIN_MALFORMED)=$(call origin_fix,$(ORIGIN_MALFORMED)))
+    endif
+endif
+
 DFE_INFRA_UIS_EXTERNAL ?= true
 DFE_UI_EXTERNAL ?= true
 DFE_ENGINE_API_EXTERNAL ?= true
@@ -248,6 +275,61 @@ ifeq ($(strip $(DFE_OTEL_RESOLVED))-$(strip $(DFE_CONTAINER_LOGS_ENABLED)),true-
     $(eval $(call chain_fragment,docker-compose.container-logs.yml))
 endif
 
+# ---------------------------------------------------------------------------
+# Console TLS (opt-in)
+#
+# DFE_PROXY_TLS=true chains docker-compose.tls.yml, which serves the console, the HyperDX embed and both HyperDX origins over TLS with one certificate. Outside a dev posture the engine marks its OIDC cookies Secure, so a sign-in on any hostname but localhost needs it.
+#
+# The engine trusts X-Forwarded-Proto from dfe-proxy's address alone, so that address is fixed: the last host of DFE_NETWORK_SUBNET, with every other container allocated from the first half. Make cannot do the address arithmetic, so scripts/proxy_tls.py does.
+# ---------------------------------------------------------------------------
+# Exactly `true` or `false`, so a `True` or a `1` fails here rather than quietly serving plain http. Empty reads as false.
+DFE_PROXY_TLS ?= false
+ifneq ($(filter-out true false,$(strip $(DFE_PROXY_TLS)))$(word 2,$(DFE_PROXY_TLS)),)
+    $(error DFE_PROXY_TLS must be `true` or `false`, got '$(strip $(DFE_PROXY_TLS))')
+endif
+
+ifeq ($(strip $(DFE_PROXY_TLS)),true)
+    # Private space outside Docker's stock pools (172.17-31/16, 192.168/20) and the fleet's 172.16.0.0/12 pool.
+    DFE_NETWORK_SUBNET ?= 10.207.0.0/24
+    DFE_PROXY_CERT_DIR ?= ./certs
+    export DFE_NETWORK_SUBNET
+    export DFE_PROXY_CERT_DIR
+    PROXY_NETWORK := $(shell python3 scripts/proxy_tls.py network '$(strip $(DFE_NETWORK_SUBNET))')
+    export DFE_PROXY_IP := $(word 1,$(PROXY_NETWORK))
+    export DFE_NETWORK_IP_RANGE := $(word 2,$(PROXY_NETWORK))
+    $(eval $(call chain_fragment,docker-compose.tls.yml))
+    # The e2e suite probes the console at http://localhost, which a TLS-only proxy never answers.
+    ifneq (,$(filter test-e2e test-resilience,$(MAKECMDGOALS)))
+        $(error The e2e suite probes the console over plain http://localhost:DFE_UI_PORT, which DFE_PROXY_TLS=true no longer answers. Turn DFE_PROXY_TLS off for e2e)
+    endif
+endif
+
+# Only the start goals need the certificate, for the reason ORIGIN_GOALS gives. The auth refusal is in the .profile.mk recipe instead, because it reads DFE_AUTH_RESOLVED and this pass may still hold the previous run's.
+PROXY_TLS_START := $(and $(filter true,$(strip $(DFE_PROXY_TLS))),$(filter $(ORIGIN_GOALS),$(or $(MAKECMDGOALS),help)))
+ifneq ($(PROXY_TLS_START),)
+    ifeq ($(filter https://%,$(call origin_value,DFE_EXTERNAL_ORIGIN)),)
+        $(error DFE_PROXY_TLS=true serves the console over https only, so DFE_EXTERNAL_ORIGIN must start with https:// and it is $(if $(strip $(DFE_EXTERNAL_ORIGIN)),'$(strip $(DFE_EXTERNAL_ORIGIN))',unset). next-auth builds every redirect from it and the proxy no longer answers plain http. Set DFE_EXTERNAL_ORIGIN=https://<the hostname the certificate names>)
+    endif
+    ifneq ($(call origin_value,DFE_HYPERDX_APP_URL),)
+        ifeq ($(filter https://%,$(call origin_value,DFE_HYPERDX_APP_URL)),)
+            $(error DFE_PROXY_TLS=true serves HyperDX over https, so DFE_HYPERDX_APP_URL must start with https:// or be unset. It is '$(strip $(DFE_HYPERDX_APP_URL))')
+        endif
+    endif
+endif
+
+# These goals recreate services on the network that already exists with no `make down` first. Docker cannot re-address a live network, so a stack whose network predates a DFE_PROXY_TLS flip would leave every recreated service Exited.
+NETWORK_REUSE_GOALS := apply apply-services infra
+PROXY_NETWORK_REUSE := $(filter $(NETWORK_REUSE_GOALS),$(or $(MAKECMDGOALS),help))
+# Compose names the default network after the project, which is COMPOSE_PROJECT_NAME or this directory.
+PROXY_PROJECT := $(or $(strip $(COMPOSE_PROJECT_NAME)),$(notdir $(CURDIR)))
+# The certificate pair, the subnet and the network as Docker holds it now; the helper prints the first problem and nothing when there is none.
+ifneq ($(PROXY_TLS_START)$(PROXY_NETWORK_REUSE),)
+    PROXY_TLS_PROBLEM := $(shell python3 scripts/proxy_tls.py precheck $(if $(PROXY_TLS_START),--certs --overlap) $(if $(PROXY_NETWORK_REUSE),--toggle) --cert-dir '$(DFE_PROXY_CERT_DIR)' --project '$(PROXY_PROJECT)' --subnet '$(strip $(DFE_NETWORK_SUBNET))' --tls $(if $(filter true,$(strip $(DFE_PROXY_TLS))),true,false))
+    ifneq ($(strip $(PROXY_TLS_PROBLEM)),)
+        $(error $(PROXY_TLS_PROBLEM))
+    endif
+endif
+
 ifneq ($(strip $(LIVE)),)
     export COMPOSE_FILE := docker-compose.yml:docker-compose.override.yml:docker-compose.live.yml$(STORAGE_CHAIN)$(UI_CHAIN)
 else ifneq ($(strip $(STORAGE_CHAIN))$(strip $(UI_CHAIN)),)
@@ -256,8 +338,13 @@ endif
 
 # The gated infra UIs go to the resolver, so the engine's admin links name only
 # what the host publishes.
+#
+# Console TLS refuses the auth profile here, after the resolver has written this run's answer: the oauth2-proxy ports serve no TLS, so an https origin gives them callbacks they cannot answer.
 .profile.mk: FORCE
 	@python3 scripts/resolve_profile.py $(if $(KAFBAT_GATED),--unpublished kafbat) $(if $(HYPERDX_GATED),--unpublished hyperdx)
+ifneq ($(PROXY_TLS_START),)
+	@if grep -qx 'export DFE_AUTH_RESOLVED := true' $@; then echo "DFE_PROXY_TLS=true cannot start with the auth profile: oauth2-proxy serves no TLS here, so the https callbacks it registers with the IdP never answer. Set DFE_AUTH_ENABLED=false (or drop auth from the profile) to keep TLS. Set DFE_PROXY_TLS=false to keep the auth profile" >&2; exit 1; fi
+endif
 
 .PHONY: FORCE
 FORCE:
@@ -443,10 +530,12 @@ infra: .env storage-dirs ## Start infrastructure services
 # them writes a .env. One honest caveat: check-dockerfile pulls the pinned
 # hadolint image while check-tests resolves the pinned pytest, so those two want
 # a network the first time; the rest need none.
+#
+# check-proxy pulls the pinned Envoy image the same way and needs openssl on the host for its throwaway certificate.
 # ---------------------------------------------------------------------------
 
 .PHONY: check
-check: check-compose check-hardfail check-dockerfile check-docs check-python check-tests ## Run every static check CI runs
+check: check-compose check-hardfail check-dockerfile check-docs check-proxy check-python check-tests ## Run every static check CI runs
 
 .PHONY: limits
 limits: ## Show the resource limits and totals, computed from the resolved config
@@ -527,6 +616,27 @@ check-docs: ## Assert every relative link in the docs set still resolves
 .PHONY: check-dockerfile
 check-dockerfile: ## Lint the dev builder Dockerfile (hadolint gates on error severity)
 	docker run --rm -i hadolint/hadolint:v2.14.0@sha256:27086352fd5e1907ea2b934eb1023f217c5ae087992eb59fde121dce9c9ff21e hadolint --failure-threshold error - < docker/dfe-rust-builder.Dockerfile
+
+# Validate mode loads every listener, cluster and TLS context, so a config that would crash-loop either proxy fails here instead.
+#
+# The Envoy version tracks services.envoy-proxy in dfe-infra's versions.yaml, the pin `make stack` writes to DFE_PROXY_VERSION. The digest is that file's services-digests.envoy-proxy, the manifest-list digest, so move both together.
+#
+# The TLS variants read their certificate at validation, so a throwaway P-384 pair is minted into a scratch directory. Envoy runs as the make user, as both proxies do under TLS, because the image's own user cannot read a 0600 key.
+ENVOY_IMAGE := envoyproxy/envoy:v1.39.0@sha256:d59f7f5fa10cff6d5892b6c5e7df5c9297ddfb2c3683e33fbfb82da24de4fa66
+PROXY_CHECK_DIR := .tmp/check-proxy
+PROXY_CONFIGS := envoy hyperdx envoy.tls hyperdx.tls
+
+.PHONY: check-proxy
+check-proxy: ## Validate the Envoy proxy configs, plain and TLS, on the pinned Envoy
+	@rm -rf $(PROXY_CHECK_DIR) && mkdir -p $(PROXY_CHECK_DIR)
+	@openssl req -x509 -newkey ec -pkeyopt ec_paramgen_curve:P-384 -nodes -days 1 -subj /CN=check-proxy -keyout $(PROXY_CHECK_DIR)/console.key -out $(PROXY_CHECK_DIR)/console.crt 2>/dev/null
+	@status=0; for config in $(PROXY_CONFIGS); do \
+		if out=$$(docker run --rm --user $(DFE_DEV_UID):$(DFE_DEV_GID) -v "$(CURDIR)/config/proxy/$$config.yaml:/etc/envoy/envoy.yaml:ro" -v "$(CURDIR)/$(PROXY_CHECK_DIR):/etc/envoy/certs:ro" $(ENVOY_IMAGE) envoy --mode validate -c /etc/envoy/envoy.yaml --log-level error 2>&1); then \
+			echo "OK   config/proxy/$$config.yaml"; \
+		else \
+			status=1; echo "FAIL config/proxy/$$config.yaml"; echo "$$out"; \
+		fi; \
+	done; rm -rf $(PROXY_CHECK_DIR); exit $$status
 
 # ---------------------------------------------------------------------------
 # Testing

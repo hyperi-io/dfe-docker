@@ -45,9 +45,8 @@ table and the UI classes.
 
 ### External origin
 
-The scheme and host a browser reaches this box on, with no port and no trailing
-slash -- every service appends its own port. Four surfaces build absolute URLs
-from it, and each is wrong when it says `localhost` and the browser did not: the
+The scheme and host a browser reaches this box on: scheme and host only, no port and no trailing slash. Compose appends the port itself (`DFE_UI_PORT` for the console), so `make` refuses a value with a port, a path, a query or no scheme. The same holds for `DFE_HYPERDX_APP_URL` and `DFE_OAUTH2_PROXY_EXTERNAL_ORIGIN`. Four surfaces build absolute URLs
+from the origin, and each is wrong when it says `localhost` and the browser did not: the
 DFE UI's post-logout redirect, the oauth2-proxy callbacks registered with the
 IdP, HyperDX's link-backs into the DFE UI, and the `frame-ancestors` policy the
 proxy serves HyperDX under. The first three send the browser somewhere it cannot
@@ -59,13 +58,49 @@ logout to `http://localhost:3000`. Set it on any deployment a browser reaches
 by anything other than `localhost`; `DFE_BIND_SCOPE=all` requires it, and `make`
 stops the start goals until it is set.
 
+With [console TLS](#console-tls-opt-in) on it must start with `https://`.
+
 The ancestors list keeps `http://localhost` and `http://127.0.0.1` at the UI port
 alongside it, so setting an origin never takes the console away from an operator
 working on the box itself.
 
 | Variable                                         | Use                                                                                  | Default                                                             |
 |--------------------------------------------------|--------------------------------------------------------------------------------------|---------------------------------------------------------------------|
-| `DFE_EXTERNAL_ORIGIN`                            | Browser-facing scheme and host for every absolute URL the stack builds                | `http://localhost`                                                  |
+| `DFE_EXTERNAL_ORIGIN`                            | Browser-facing scheme and host only, no port, for every absolute URL the stack builds | `http://localhost`                                                  |
+
+### Console TLS (opt-in)
+
+`DFE_PROXY_TLS=true` serves the console (`DFE_UI_PORT`), the HyperDX embed (`DFE_HYPERDX_EMBED_PORT`) and both HyperDX origins (`DFE_HYPERDX_APP_PORT`, `DFE_HYPERDX_API_PORT`) over TLS 1.2 or 1.3 with one certificate. Key exchange prefers hybrid post-quantum X25519MLKEM768, then P-384; TLS 1.2 offers AEAD suites only, AES-256-GCM first. OIDC sign-in needs it on any hostname but `localhost`: outside a dev posture the engine marks its OIDC state and token cookies `Secure` and a browser drops a `Secure` cookie sent over plain http.
+
+Generate a P-384 key and a certificate whose subjectAltName covers every name browsers use. Both proxies run as the user who runs `make` under TLS, so keep the key `0600` and owned by that user:
+
+```bash
+mkdir -p certs
+openssl req -x509 -newkey ec -pkeyopt ec_paramgen_curve:P-384 -nodes -sha384 -days 365 \
+  -subj "/CN=dfe.example.com" -addext "subjectAltName=DNS:dfe.example.com" \
+  -keyout certs/console.key -out certs/console.crt
+chmod 600 certs/console.key
+```
+
+That certificate is self-signed, which suits an evaluation. A CA-issued one goes in the same two files, with the full chain in `console.crt`. Copy real files rather than linking them: a symlink, certbot's `live/` layout included, dangles inside the container, so `cp -L` the pair into place.
+
+Set `DFE_EXTERNAL_ORIGIN=https://dfe.example.com` and make `DFE_HYPERDX_APP_URL` an `https://` origin too if you set it. Register the engine's callback with the IdP as `https://<hostname>:<DFE_UI_PORT>/api/v1/auth/oidc/<provider>/callback`, without the port when `DFE_UI_PORT` is 443.
+
+`make` refuses to start the stack until both files are real files the make user can read, `openssl` accepts them as a matching certificate and unencrypted key, both origins start with `https://`, `DFE_NETWORK_SUBNET` overlaps no other Docker network and the `auth` profile is off. oauth2-proxy serves no TLS here, so its callbacks could not answer an `https://` origin.
+
+dfe-proxy's two ports serve TLS only. The HyperDX ports answer TLS and plain HTTP on the same port, because the engine's admin-link probe, `make post` and the oauth2-proxy upstreams dial them over http on the compose network.
+
+The engine builds the callback URL from `X-Forwarded-Proto`, which it believes from dfe-proxy alone. TLS therefore pins the compose network to `DFE_NETWORK_SUBNET`, gives dfe-proxy its last host address and allocates every other container from the first half, so no other container and not the bridge gateway can hold the address the engine trusts. The default `10.207.0.0/24` sits outside Docker's stock address pools and the fleet's `172.16.0.0/12` pool. Move it when a second stack on the same host also runs TLS. Move it too when `make` reports an overlap or the range clashes with a LAN or VPN route. It must be a private (RFC 1918) network from `/16` to `/24`.
+
+Turning `DFE_PROXY_TLS` on or off on a running stack needs `make down` first, because Docker cannot re-address a live network. `make up`, `make ci` and `make dev` stop the stack themselves; `make apply` and `make infra` refuse until you do.
+
+The e2e suite probes the console over plain http, so `make test-e2e` and `make test-resilience` refuse while the dial is on.
+
+| Variable                                         | Use                                                                                  | Default                                                             |
+|--------------------------------------------------|--------------------------------------------------------------------------------------|---------------------------------------------------------------------|
+| `DFE_PROXY_TLS`                                  | Serve the console and HyperDX over TLS (`true`\|`false`)                              | `false`                                                             |
+| `DFE_PROXY_CERT_DIR`                             | Directory holding `console.crt` and `console.key`; a path starting `/`, `./` or `../` | `./certs`                                                           |
+| `DFE_NETWORK_SUBNET`                             | Compose network under TLS, private and `/16` to `/24`; dfe-proxy takes its last host  | `10.207.0.0/24`                                                     |
 
 ### Infra UI authentication (opt-in)
 
@@ -83,8 +118,8 @@ other profile may require an issuer.
 | `DFE_OIDC_EMAIL_DOMAINS`                         | Extra email-domain restriction on top of the group check                             | `*`                                                                 |
 | `DFE_OAUTH2_PROXY_COOKIE_SECRET`                 | Session cookie key, shared by all three proxies; `make init` generates 32 bytes      | generated                                                           |
 | `DFE_OAUTH2_PROXY_COOKIE_DOMAIN`                 | Cookie domain; blank is a host-only cookie, which shares one session across the box  | blank                                                               |
-| `DFE_OAUTH2_PROXY_COOKIE_SECURE`                 | Set the Secure cookie flag; `true` only behind real TLS                              | `false`                                                             |
-| `DFE_OAUTH2_PROXY_EXTERNAL_ORIGIN`               | Base origin the OAuth redirect URLs are built from; overrides `DFE_EXTERNAL_ORIGIN`  | follows `DFE_EXTERNAL_ORIGIN`                                       |
+| `DFE_OAUTH2_PROXY_COOKIE_SECURE`                 | Set the Secure cookie flag; `true` only behind TLS of your own, as the oauth2-proxies stay plain HTTP under console TLS | `false`                              |
+| `DFE_OAUTH2_PROXY_EXTERNAL_ORIGIN`               | Scheme and host only, no port, the OAuth redirect URLs are built from; overrides `DFE_EXTERNAL_ORIGIN` | follows `DFE_EXTERNAL_ORIGIN`                                       |
 | `DFE_OAUTH2_PROXY_VERSION`                       | Override the oauth2-proxy image pin; not SSoT-derived, keep the `tag@sha256` form    | pinned in `docker-compose.yml`                                      |
 
 ### Image Registry
@@ -317,7 +352,7 @@ The same toggle points the engine at HyperDX: with it on, the engine receives `D
 | `DFE_HYPERDX_VERSION`                            | Version of the dfe-hyperdx fork image to use                                         | pinned by `make stack` from the SSoT (fail-loud, like every image)  |
 | `DFE_HYPERDX_API_PORT`                           | HyperDX API host port, on `dfe-hyperdx-proxy`                                        | `8000`                                                              |
 | `DFE_HYPERDX_APP_PORT`                           | HyperDX App UI host port, on `dfe-hyperdx-proxy`                                     | `8090`                                                              |
-| `DFE_HYPERDX_APP_URL`                            | Base URL the browser uses to reach HyperDX; overrides `DFE_EXTERNAL_ORIGIN`          | follows `DFE_EXTERNAL_ORIGIN`                                       |
+| `DFE_HYPERDX_APP_URL`                            | Scheme and host only, no port, the browser uses to reach HyperDX; overrides `DFE_EXTERNAL_ORIGIN` | follows `DFE_EXTERNAL_ORIGIN`                                       |
 | `DFE_HYPERDX_AUTH_MODE`                          | `header-dev` runs HyperDX off request headers, for a stack with no engine            | `oidc-proxy`                                                        |
 | `DFE_HYPERDX_BASE_URL`                           | Where the ENGINE reaches HyperDX; name an external one here                          | `http://hyperdx:8000`                                               |
 | `DFE_HYPERDX_TEAM`                               | Team name when the token carries no group claim                                      | `dfe`                                                               |

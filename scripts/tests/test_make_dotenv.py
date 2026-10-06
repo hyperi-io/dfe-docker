@@ -44,6 +44,7 @@ _READ_ONLY_GOALS = [
     "check-hardfail",
     "check-dockerfile",
     "check-docs",
+    "check-proxy",
     "check-python",
     "check-tests",
 ]

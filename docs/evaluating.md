@@ -138,7 +138,8 @@ the admin one on a terminal and names the `.env` key holding the other;
 `access-summary.md`, written beside `.env` and readable only by you, carries
 both. Kafbat and HyperDX answer to anyone who can reach them on these profiles,
 the opt-in `auth` profile puts an OIDC sign-in in front of both, and nothing here
-serves TLS. That is fine on your machine and on a throwaway demo box. It is not
+serves TLS until you turn [console TLS](configuration.md#console-tls-opt-in) on.
+That is fine on your machine and on a throwaway demo box. It is not
 fine on anything reachable by people you have not met.
 
 If the proof of concept goes well and the box becomes something real - even

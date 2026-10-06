@@ -36,6 +36,8 @@ FALSY = {"", "0", "false", "no", "off"}
 # The key naming the address a BROWSER reaches this deployment on, and the values
 # of it that resolve on the box the stack runs on and nowhere else.
 EXTERNAL_ORIGIN_KEY = "DFE_EXTERNAL_ORIGIN"
+# Console TLS: dfe-proxy's ports then answer https only while the engine's own port never serves TLS.
+PROXY_TLS_KEY = "DFE_PROXY_TLS"
 LOOPBACK_ORIGINS = frozenset(
     {
         "http://localhost",
@@ -256,6 +258,28 @@ def _external_origin(*, values: typing.Mapping[str, str]) -> str:
     """
     origin = values.get(EXTERNAL_ORIGIN_KEY, "").strip().rstrip("/")
     return "" if origin in LOOPBACK_ORIGINS else origin
+
+
+def _published_url(
+    *,
+    default_port: str,
+    host: str,
+    port_key: str,
+    proxied: bool,
+    values: typing.Mapping[str, str],
+) -> str:
+    """Return the URL a browser reaches one published port on, `host` standing in where no origin names one.
+
+    Under console TLS the scheme follows the port rather than the origin: https where dfe-proxy serves it (`proxied`) and http on the engine's own port. The host is then the origin's even at loopback, because that is the name the certificate carries.
+    """
+    port = (values.get(port_key, "").strip()) or (default_port)
+    if values.get(PROXY_TLS_KEY, "").strip() == "true":
+        named = (
+            values.get(EXTERNAL_ORIGIN_KEY, "").strip().rstrip("/").partition("://")[2]
+        )
+        return f"{'https' if proxied else 'http'}://{(named) or (host)}:{port}"
+    origin = _external_origin(values=values)
+    return f"{(origin) or (f'http://{host}')}:{port}"
 
 
 def _load_dotenv() -> None:

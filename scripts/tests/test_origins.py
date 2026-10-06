@@ -90,18 +90,39 @@ def test_the_per_surface_override_still_wins() -> None:
 @pytest.mark.parametrize(
     ("environment", "bound", "expected"),
     [
-        ({}, "", "http://127.0.0.1"),
-        ({"DFE_EXTERNAL_ORIGIN": "http://localhost"}, "", "http://127.0.0.1"),
-        ({"DFE_BIND_SCOPE": "all"}, "0.0.0.0", "http://localhost"),
+        ({}, "", ("http://127.0.0.1:3000", "http://127.0.0.1:8003")),
+        (
+            {"DFE_EXTERNAL_ORIGIN": "http://localhost"},
+            "",
+            ("http://127.0.0.1:3000", "http://127.0.0.1:8003"),
+        ),
+        (
+            {"DFE_BIND_SCOPE": "all"},
+            "0.0.0.0",
+            ("http://localhost:3000", "http://localhost:8003"),
+        ),
         (
             {"DFE_BIND_SCOPE": "all", "DFE_EXTERNAL_ORIGIN": "http://192.0.2.19"},
             "0.0.0.0",
-            "http://192.0.2.19",
+            ("http://192.0.2.19:3000", "http://192.0.2.19:8003"),
         ),
         (
             {"DFE_EXTERNAL_ORIGIN": "https://dfe.example.test/"},
             "",
-            "https://dfe.example.test",
+            ("https://dfe.example.test:3000", "https://dfe.example.test:8003"),
+        ),
+        (
+            {
+                "DFE_EXTERNAL_ORIGIN": "https://dfe.example.test",
+                "DFE_PROXY_TLS": "true",
+            },
+            "",
+            ("https://dfe.example.test:3000", "http://dfe.example.test:8003"),
+        ),
+        (
+            {"DFE_EXTERNAL_ORIGIN": "https://localhost", "DFE_PROXY_TLS": "true"},
+            "",
+            ("https://localhost:3000", "http://localhost:8003"),
         ),
     ],
 )
@@ -109,11 +130,17 @@ def test_the_source_runner_drives_the_address_testers_use(
     monkeypatch: pytest.MonkeyPatch,
     environment: dict[str, str],
     bound: str,
-    expected: str,
+    expected: tuple[str, str],
 ) -> None:
-    for key in ("DFE_EXTERNAL_ORIGIN", "DFE_BIND_SCOPE"):
+    for key in (
+        "DFE_BIND_SCOPE",
+        "DFE_ENGINE_PORT",
+        "DFE_EXTERNAL_ORIGIN",
+        "DFE_PROXY_TLS",
+        "DFE_UI_PORT",
+    ):
         monkeypatch.delenv(key, raising=False)
     for key, value in environment.items():
         monkeypatch.setenv(key, value)
 
-    assert test_source._ui_origin(bound=bound, host="localhost") == expected
+    assert test_source._ui_urls(bound=bound, host="localhost") == expected

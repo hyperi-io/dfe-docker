@@ -329,7 +329,7 @@ make test-e2e    # the declarative suite, one stack per test
 make down        # stop and remove containers across EVERY profile
 ```
 
-`make check` is `check-compose check-hardfail check-dockerfile check-docs check-python check-tests`, and CI runs each one through the same make target so the two cannot drift.
+`make check` is `check-compose check-hardfail check-dockerfile check-docs check-proxy check-python check-tests`, and CI runs each one through the same make target so the two cannot drift.
 
 Three ways a green run says less than it looks:
 

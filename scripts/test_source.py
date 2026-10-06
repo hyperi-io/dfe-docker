@@ -40,7 +40,7 @@ import subprocess
 import sys
 from pathlib import Path
 
-from _common import _external_origin, _load_dotenv, _print
+from _common import _load_dotenv, _print, _published_url
 from _pipeline import env_or
 
 PROJECT_DIR = Path(__file__).resolve().parent.parent
@@ -178,18 +178,32 @@ def _ui_host(*, bound: str, host: str) -> str:
     return host if resolved == "0.0.0.0" else resolved
 
 
-def _ui_origin(*, bound: str, host: str) -> str:
-    """The scheme and host the console and the engine API answer on.
+def _ui_urls(*, bound: str, host: str) -> tuple[str, str]:
+    """The console URL and the engine API URL the suite drives.
 
     DFE_EXTERNAL_ORIGIN is the address this deployment hands to browsers, so the
     suite drives the console there: the URL testers use is the one worth testing,
     and it is the one the stack builds its own absolute URLs from. It falls back
     to the published address where no such origin is set.
+
+    Under console TLS the console is https while the engine's own port stays http, the split creds.py hands the operator.
     """
-    return (
-        _external_origin(values=os.environ)
-        or f"http://{_ui_host(bound=bound, host=host)}"
+    fallback = _ui_host(bound=bound, host=host)
+    console = _published_url(
+        default_port="3000",
+        host=fallback,
+        port_key="DFE_UI_PORT",
+        proxied=True,
+        values=os.environ,
     )
+    engine = _published_url(
+        default_port="8003",
+        host=fallback,
+        port_key="DFE_ENGINE_PORT",
+        proxied=False,
+        values=os.environ,
+    )
+    return console, engine
 
 
 def _suite_env(*, host: str, engine_url: str) -> dict[str, str]:
@@ -283,9 +297,7 @@ def main(argv: list[str] | None = None) -> int:
     # box and something else for a second one beside it. The same variable
     # `make post` reads, so the two runners reach the same containers.
     host = env_or("DFE_POST_HOST", "localhost")
-    ui_origin = _ui_origin(bound=ui_bind, host=host)
-    ui_url = f"{ui_origin}:{env_or('DFE_UI_PORT', '3000')}"
-    engine_url = f"{ui_origin}:{env_or('DFE_ENGINE_PORT', '8003')}"
+    ui_url, engine_url = _ui_urls(bound=ui_bind, host=host)
 
     runner = [
         python,

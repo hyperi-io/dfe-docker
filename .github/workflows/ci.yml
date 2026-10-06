@@ -1,6 +1,6 @@
 # Project:   dfe-docker
 # File:      .github/workflows/ci.yml
-# Purpose:   Validate the compose stack and lint the dev builder Dockerfile
+# Purpose:   Validate the compose stack, lint the dev builder Dockerfile and validate the proxy configs
 #
 # License:   BUSL-1.1 - HYPERI PTY LIMITED
 # Copyright: (c) 2026 HYPERI PTY LIMITED
@@ -214,6 +214,10 @@ jobs:
       # warning inform without blocking, and the reason sits in the Dockerfile.
       - name: Hadolint
         run: make check-dockerfile
+
+      # Envoy's validate mode loads every listener, cluster and TLS context, so a proxy config that would crash-loop dfe-proxy or dfe-hyperdx-proxy fails here. The pinned Envoy is the Makefile's; the TLS variants get a throwaway certificate from the runner's openssl.
+      - name: Proxy configs
+        run: make check-proxy
 
 # droast is DELIBERATELY NOT RUN HERE. That matches hyperi-ci's own posture --
 # quality/droast.py resolves it with `find_tool(recommended=False)` and info-skips
