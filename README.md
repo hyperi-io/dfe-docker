@@ -67,10 +67,11 @@ This creates `.env` from `.env.example` and `env/<service>.env` for every templa
 Re-running `make init` is safe - existing files are never overwritten. It does two
 things beyond the copy:
 
-- **Generates secrets.** A random value is minted for `DFE_UI_NEXTAUTH_SECRET` and
-  `HYPERDX_POSTGRES_PASSWORD`. An existing `.env` that predates a key is topped up,
-  so upgrading does not break your checkout. Compose carries a sentinel default for
-  both rather than hard-failing (a hard-fail would abort `make down` too); the
+- **Generates secrets.** A random value is minted for `DFE_UI_NEXTAUTH_SECRET`,
+  `HYPERDX_POSTGRES_PASSWORD`, `HYPERDX_EXPRESS_SESSION_SECRET` and
+  `HYPERDX_TOKEN_ENCRYPTION_KEY`. An existing `.env` that predates a key is topped up,
+  so upgrading does not break your checkout. Compose carries a sentinel (or empty)
+  default for each rather than hard-failing (a hard-fail would abort `make down` too); the
   power-on self test is what refuses to pass while a default is still in place.
 - **Reports drift.** The copy is one-shot, so an `.env` created months ago never
   learns that `.env.example` grew a setting. A re-run lists the keys you are

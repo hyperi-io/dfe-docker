@@ -1198,10 +1198,6 @@ services:
       # and the two have to stay the same path -- and that path is the host tree,
       # so a write here changes the operator's checkout.
       DFE_DEPLOYMENT_APP_ENV_DIR: /app/app-env
-      # Where a metrics refresh reads each app's live manifest: every app serves it
-      # on its own container's 9090, reached by service name whatever host port
-      # publishes it. {service} is the engine's placeholder, not interpolation.
-      DFE_SERVICES_METRICS_MANIFEST_URL: "http://{service}:9090/metrics/manifest"
       OTEL_EXPORTER_OTLP_ENDPOINT: ${DFE_OTEL_EXPORTER_ENDPOINT:-}
       OTEL_SERVICE_NAME: dfe-engine
       # scalo's CLI falls back to the prometheus backend, so the endpoint alone
@@ -1605,6 +1601,13 @@ services:
       NEXT_PUBLIC_DFE_UI_BASE_URL: ${DFE_HYPERDX_APP_URL:-${DFE_EXTERNAL_ORIGIN:-http://localhost}}:${DFE_UI_PORT:-3000}
       # HyperDX talks Mongo wire protocol; FerretDB serves it over Postgres.
       MONGO_URI: mongodb://${HYPERDX_POSTGRES_USER:-hyperdx}:${HYPERDX_POSTGRES_PASSWORD:-hyperdx}@hyperdx-ferretdb:27017/hyperdx?authSource=admin
+      # Unset, HyperDX signs sessions with a key published upstream, so `make init`
+      # generates one. Not a `:?` hard-fail -- see NEXTAUTH_SECRET.
+      EXPRESS_SESSION_SECRET: ${HYPERDX_EXPRESS_SESSION_SECRET:-RUN-make-init-TO-GENERATE-A-REAL-SECRET}
+      # Encrypts stored third-party tokens; `make init` generates 64 hex chars. The
+      # fallback is empty (plain text), not a sentinel: HyperDX refuses to start on
+      # a malformed key.
+      TOKEN_ENCRYPTION_KEY: ${HYPERDX_TOKEN_ENCRYPTION_KEY:-}
       NEXT_PUBLIC_THEME: ${HYPERDX_THEME:-dfe}
     volumes:
       - ./config/hyperdx/default-sources.json:/etc/hyperdx/default-sources.json:ro
@@ -1669,7 +1672,7 @@ services:
   # ===========================================================================
 
   oauth2-proxy-kafbat:
-    image: quay.io/oauth2-proxy/oauth2-proxy:${DFE_OAUTH2_PROXY_VERSION:-v7.15.4@sha256:b1b2021fe8f4004573e8d690dec6c7bb29cc44364572cf8510a05bf3a0ae2ded}
+    image: quay.io/oauth2-proxy/oauth2-proxy:${DFE_OAUTH2_PROXY_VERSION:-v7.15.5@sha256:8498b0d0ef0a7b29686414000a08aee467f02d0299c9ed1e006a8f33fc017916}
     container_name: ${DFE_CONTAINER_PREFIX:-}dfe-oauth2-proxy-kafbat
     profiles: ["auth"]
     restart: unless-stopped
@@ -1686,7 +1689,7 @@ services:
         required: false
 
   oauth2-proxy-hyperdx:
-    image: quay.io/oauth2-proxy/oauth2-proxy:${DFE_OAUTH2_PROXY_VERSION:-v7.15.4@sha256:b1b2021fe8f4004573e8d690dec6c7bb29cc44364572cf8510a05bf3a0ae2ded}
+    image: quay.io/oauth2-proxy/oauth2-proxy:${DFE_OAUTH2_PROXY_VERSION:-v7.15.5@sha256:8498b0d0ef0a7b29686414000a08aee467f02d0299c9ed1e006a8f33fc017916}
     container_name: ${DFE_CONTAINER_PREFIX:-}dfe-oauth2-proxy-hyperdx
     profiles: ["auth"]
     restart: unless-stopped
@@ -1713,7 +1716,7 @@ services:
   # and name as the app proxy above, and cookies are not port-scoped, so signing
   # in at the app authorises this one too.
   oauth2-proxy-hyperdx-api:
-    image: quay.io/oauth2-proxy/oauth2-proxy:${DFE_OAUTH2_PROXY_VERSION:-v7.15.4@sha256:b1b2021fe8f4004573e8d690dec6c7bb29cc44364572cf8510a05bf3a0ae2ded}
+    image: quay.io/oauth2-proxy/oauth2-proxy:${DFE_OAUTH2_PROXY_VERSION:-v7.15.5@sha256:8498b0d0ef0a7b29686414000a08aee467f02d0299c9ed1e006a8f33fc017916}
     container_name: ${DFE_CONTAINER_PREFIX:-}dfe-oauth2-proxy-hyperdx-api
     profiles: ["auth"]
     restart: unless-stopped

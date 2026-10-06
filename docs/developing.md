@@ -44,8 +44,8 @@ make up                    # pull and start, self test, then print the login
 to `env/<service>.env`. Existing files are never overwritten, so it is safe to
 re-run. It does two things beyond the copy:
 
-- **Generates secrets.** `DFE_UI_NEXTAUTH_SECRET` and `HYPERDX_POSTGRES_PASSWORD`
-  get a random value. An existing `.env` that predates a key is topped up.
+- **Generates secrets.** `DFE_UI_NEXTAUTH_SECRET`, `HYPERDX_POSTGRES_PASSWORD`,
+  `HYPERDX_EXPRESS_SESSION_SECRET` and `HYPERDX_TOKEN_ENCRYPTION_KEY` get a random value. An existing `.env` that predates a key is topped up.
 - **Reports drift.** The copy is one-shot, so a `.env` made months ago never
   learns that `.env.example` grew a setting. A re-run lists the keys yours is
   missing and stops there -- editing your `.env` is yours to do.

@@ -26,7 +26,3 @@ kafka:
   topics:
     - main_load
     - filebeat-vector_load
-
-routing:
-  dlq:
-    enabled: false
