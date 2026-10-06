@@ -10,9 +10,12 @@
 # its language detection returns nothing for a compose-packaging repo, so there
 # is no reusable workflow to call for this shape. The house conventions are
 # followed deliberately -- least-privilege permissions, SHA-pinned third-party
-# actions with a version comment, Title Case job names, ubuntu-latest -- so that
-# when hyperi-ci grows the container/compose gating it is currently missing,
-# this collapses into a `uses:` line rather than a rewrite.
+# actions with a version comment, Title Case job names, a named runner image --
+# so that when hyperi-ci grows the container/compose gating it is currently
+# missing, this collapses into a `uses:` line rather than a rewrite.
+#
+# The runner image is named (ubuntu-24.04) rather than ubuntu-latest, so a move
+# of that label cannot swap the tools these jobs run on.
 #
 # Renovate automerges patch and digest updates in this repo "when CI passes", and
 # before this workflow existed there was no CI to pass -- the rule was asserting a
@@ -50,7 +53,7 @@ env:
 jobs:
   compose:
     name: Compose
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -123,7 +126,7 @@ jobs:
   # cross-repo drift guard takes.
   profile-projection-precondition:
     name: profile projection (can this run check it)
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     outputs:
       can_check: ${{ steps.gate.outputs.can_check }}
     steps:
@@ -151,7 +154,7 @@ jobs:
     name: Profile projection
     needs: profile-projection-precondition
     if: needs.profile-projection-precondition.outputs.can_check == 'true'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -182,12 +185,17 @@ jobs:
           path: .dfe-infra
           persist-credentials: false
 
+      # dfe-infra's composition.py reads apps.yaml with ruamel.yaml; its own
+      # hash-pinned CI requirements are what that code is tested against.
+      - name: Install dfe-infra's pinned Python requirements
+        run: python3 -m pip install --quiet --require-hashes -r .dfe-infra/scripts/tests/requirements-ci.txt
+
       - name: Projected profiles match the Kubernetes ones
         run: make check-profiles DFE_INFRA_DIR="$PWD/.dfe-infra"
 
   dockerfile:
     name: Dockerfile
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
