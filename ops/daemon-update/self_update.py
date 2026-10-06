@@ -22,7 +22,8 @@ Flow:
      DFE_UPDATE_ALLOW_PRERELEASE=1).
   3. Compare to the last-applied version recorded in the state file.
   4. If newer (or nothing applied yet): fast-forward the checkout, then
-     `make stack VERSION=<new>` then `make ci`, and record the version on success.
+     `make init`, `make stack VERSION=<new>` and `make ci`, and record the
+     version on success.
 
 A target that ranks BELOW the applied version is refused at step 4 and logged. The
 newest PUBLISHED manifest can be older than what a VM runs -- a box installed from
@@ -35,6 +36,10 @@ half-update that reports success: the 2.2.0-rc.2 engine, for one, needs a
 DFE_ENV declaration and a healthcheck path that older compose files do not have,
 so the schema authority restart-loops while the timer records a clean run. Set
 DFE_UPDATE_SKIP_GIT_PULL=1 on a box whose checkout is managed some other way.
+
+The same goes for .env. A version can add a generated secret, and the power-on
+self test fails while one is still at its built-in default, so `make init` tops
+up the existing .env before the bring-up. It never overwrites a value.
 
 DFE_UPDATE_WIPE_STATE=1 inserts `make clean` between the pin and the bring-up, so
 a DISPOSABLE box re-initialises from empty volumes on every new version and the
@@ -186,7 +191,7 @@ def _wipe_state_enabled() -> bool:
 
 
 def _apply(repo_dir: Path, version: str) -> None:
-    """Run OUR updater: refresh the checkout, pin the version, then pull + restart.
+    """Run OUR updater: refresh the checkout, top up .env, pin the version, then pull + restart.
 
     With DFE_UPDATE_WIPE_STATE set, `make clean` runs between the pin and the
     bring-up so the new version initialises from nothing -- the disposable-VM
@@ -201,7 +206,7 @@ def _apply(repo_dir: Path, version: str) -> None:
     one shipping with the version being installed.
     """
     _refresh_checkout(repo_dir)
-    commands = [["make", "stack", f"VERSION={version}"]]
+    commands = [["make", "init"], ["make", "stack", f"VERSION={version}"]]
     if _wipe_state_enabled():
         _log("DFE_UPDATE_WIPE_STATE is set -- deleting every volume before bring-up")
         commands.append(["make", "clean"])
