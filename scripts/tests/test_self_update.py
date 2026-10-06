@@ -1,6 +1,6 @@
 #  Project:      dfe-docker
 #  File:         tests/test_self_update.py
-#  Purpose:      Assert the VM updater refuses a target older than the applied version
+#  Purpose:      Assert the VM updater's version floor and update command order
 #  Language:     Python
 #
 #  License:      BUSL-1.1
@@ -15,6 +15,7 @@ next timer tick would install the older manifest over it.
 
 from __future__ import annotations
 
+import subprocess
 import sys
 from pathlib import Path
 
@@ -88,3 +89,27 @@ def test_a_newer_manifest_is_still_applied(
     assert self_update.main() == 0
     assert applied == [(repo, "2.2.0-rc.14")]
     assert (repo / self_update.STATE_FILENAME).read_text().strip() == "2.2.0-rc.14"
+
+
+@pytest.mark.parametrize(
+    ("wipe", "expected"),
+    [
+        ("", ["init", "stack VERSION=2.2.0", "ci"]),
+        ("1", ["init", "stack VERSION=2.2.0", "clean", "ci"]),
+    ],
+)
+def test_an_update_tops_up_env_before_the_bring_up(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, wipe: str, expected: list[str]
+) -> None:
+    """A version that adds a generated secret fails the self test on an old .env."""
+    ran: list[str] = []
+    monkeypatch.setenv("DFE_UPDATE_WIPE_STATE", wipe)
+    monkeypatch.setattr(self_update, "_refresh_checkout", lambda repo_dir: None)
+
+    def _run(cmd: list[str], cwd: Path) -> subprocess.CompletedProcess[str]:
+        ran.append(" ".join(cmd[1:]))
+        return subprocess.CompletedProcess(args=cmd, returncode=0, stdout="", stderr="")
+
+    monkeypatch.setattr(self_update, "_run", _run)
+    self_update._apply(tmp_path, "2.2.0")
+    assert ran == expected

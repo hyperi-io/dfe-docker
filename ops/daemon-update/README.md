@@ -2,8 +2,9 @@
 
 Keeps a single-VM dfe-docker deployment CURRENT using the stack's OWN updater -
 not watchtower. A systemd timer periodically discovers the newest certified
-stack version and, only when there is something new, runs
-`make stack VERSION=<new>` (pin from the signed OCI stack-manifest) then
+stack version and, only when there is something new, runs `make init` (tops up
+any generated secret the new version added to .env, never overwrites one), then
+`make stack VERSION=<new>` (pin from the signed OCI stack-manifest), then
 `make ci` (pull + up -d).
 
 Why not watchtower: watchtower bumps individual container tags blindly. The DFE

@@ -1270,7 +1270,9 @@ services:
       test: ["CMD", "curl", "-sf", "http://localhost:8000/readyz"]
       interval: 10s
       timeout: 3s
-      start_period: 30s
+      # A first start creates every ClickHouse table before /readyz answers,
+      # which can take over a minute on an empty volume.
+      start_period: 180s
       retries: 5
 
   # ===========================================================================
