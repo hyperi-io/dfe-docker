@@ -46,10 +46,11 @@ from _common import (
 )
 
 # Secrets that must not be left at their weak/empty default. scripts/post.py
-# enforces them: DFE_UI_NEXTAUTH_SECRET and HYPERDX_POSTGRES_PASSWORD via its
-# WEAK_SECRET_DEFAULTS service-map, CLICKHOUSE_PASSWORD via its own external-CH
-# check (its default is empty, not a sentinel string), and
-# DFE_AUTH_LOCAL_ADMIN_PASSWORD by logging in with it. Keep them in step.
+# enforces them: DFE_UI_NEXTAUTH_SECRET, HYPERDX_POSTGRES_PASSWORD and
+# HYPERDX_EXPRESS_SESSION_SECRET via its WEAK_SECRET_DEFAULTS service-map,
+# CLICKHOUSE_PASSWORD via its own external-CH check (its default is empty, not a
+# sentinel string), and DFE_AUTH_LOCAL_ADMIN_PASSWORD by logging in with it. Keep
+# them in step.
 #
 # The deploy mints two logins: DFE_AUTH_LOCAL_ADMIN_PASSWORD is `admin`, issued with
 # a forced change at first login, which `make post` makes and records back in .env.
@@ -78,8 +79,8 @@ _LEN_KEY = 48  # signing keys and other long-lived key material
 _LEN_COOKIE = 32
 
 # Name -> length tier. DB passwords are the 128-bit credential tier; the dfe-ui
-# NextAuth and engine JWT values are session-signing KEYS, so they take the
-# 256-bit tier.
+# NextAuth, engine JWT and HyperDX session values are session-signing KEYS, so
+# they take the 256-bit tier.
 GENERATED_SECRETS = {
     "CLICKHOUSE_PASSWORD": _LEN_CREDENTIAL,
     "DFE_AUTH_BREAKGLASS_PASSWORD": _LEN_CREDENTIAL,
@@ -87,6 +88,7 @@ GENERATED_SECRETS = {
     "HYPERDX_POSTGRES_PASSWORD": _LEN_CREDENTIAL,
     "DFE_API_JWT_SECRET": _LEN_KEY,
     "DFE_UI_NEXTAUTH_SECRET": _LEN_KEY,
+    "HYPERDX_EXPRESS_SESSION_SECRET": _LEN_KEY,
     "DFE_OAUTH2_PROXY_COOKIE_SECRET": _LEN_COOKIE,
 }
 

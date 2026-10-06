@@ -15,6 +15,8 @@ against the engine's JWKS. With either half unset a source added through the
 console never gets its HyperDX view, and the engine answers 503 `hyperdx_absent`.
 HyperDX's own ClickHouse connection has to follow the engine's too, or an external
 ClickHouse leaves every HyperDX query aimed at a container that is not running.
+Its session signing key comes from `make init`, or the fork signs with a key
+published upstream.
 
 Read the way compose reads it: the `.profile.mk` values resolve_profile writes for
 a profile, expanded over the `${NAME:-default}` forms docker-compose.yml uses.
@@ -28,11 +30,14 @@ from pathlib import Path
 
 import pytest
 
+import init
+import post
 import resolve_profile
 from _common import COMPOSE_FILE, REPO_ROOT
 
 _ENGINE_SERVICE = "dfe-engine"
 _HYPERDX_SERVICE = "hyperdx"
+_SESSION_KEY = "HYPERDX_EXPRESS_SESSION_SECRET"
 _IN_STACK_HYPERDX = "http://hyperdx:8000"
 _JWKS_URL = "http://dfe-engine:8000/.well-known/jwks.json"
 
@@ -264,6 +269,44 @@ def test_a_developer_with_no_engine_can_still_select_header_dev() -> None:
         )
         == "header-dev"
     )
+
+
+def test_hyperdx_signs_sessions_with_the_key_make_init_mints() -> None:
+    """Unset, the fork signs sessions with a key published in upstream's source."""
+    template = _service_environment(service=_HYPERDX_SERVICE)["EXPRESS_SESSION_SECRET"]
+    minted = init._generate_secret(init.GENERATED_SECRETS[_SESSION_KEY])
+
+    assert init.GENERATED_SECRETS[_SESSION_KEY] >= 32
+    assert _expand(template=template, values={_SESSION_KEY: minted}) == minted
+    # The fallback compose runs on is exactly what `make post` refuses on HyperDX.
+    assert post.WEAK_SECRET_DEFAULTS[_SESSION_KEY] == (
+        _expand(template=template, values={}),
+        _HYPERDX_SERVICE,
+    )
+
+
+def test_an_env_that_predates_the_session_key_gets_one_and_keeps_it(
+    dotenv: Path,
+) -> None:
+    older = "".join(
+        f"{key}=already-minted-value\n"
+        for key in init.GENERATED_SECRETS
+        if key != _SESSION_KEY
+    )
+    dotenv.write_text(older, encoding="utf-8", newline="\n")
+
+    init._top_up_secrets(dotenv_path=dotenv)
+    topped_up = dotenv.read_text(encoding="utf-8")
+    init._top_up_secrets(dotenv_path=dotenv)
+
+    assert topped_up.startswith(older)
+    session = [
+        line.partition("=")[2]
+        for line in topped_up.splitlines()
+        if line.startswith(f"{_SESSION_KEY}=")
+    ]
+    assert [len(value) for value in session] == [init.GENERATED_SECRETS[_SESSION_KEY]]
+    assert dotenv.read_text(encoding="utf-8") == topped_up
 
 
 def test_nothing_stamps_an_identity_hyperdx_no_longer_reads() -> None:
