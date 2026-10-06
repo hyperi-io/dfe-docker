@@ -1159,6 +1159,9 @@ services:
       DFE_CLICKHOUSE_USERNAME: ${CLICKHOUSE_USERNAME:-default}
       DFE_CLICKHOUSE_PASSWORD: ${CLICKHOUSE_PASSWORD:-}
       DFE_CLICKHOUSE_SECURE: ${CLICKHOUSE_SECURE:-false}
+      # The password the engine gives dfe_hunt_runner: the same value the runner
+      # below connects with, minted by `make init`.
+      DFE_CLICKHOUSE_HUNT_RUNNER_PASSWORD: ${DFE_HUNT_RUNNER_CLICKHOUSE_PASSWORD:-}
       # Default TTL for every time-series table; 0 = none; a source or a
       # dfe-schemas TTL overrides it.
       DFE_CLICKHOUSE_DEFAULT_TTL_DAYS: ${DFE_CLICKHOUSE_DEFAULT_TTL_DAYS:-90}
@@ -1301,8 +1304,11 @@ services:
       DFE_CLICKHOUSE_PORT: ${CLICKHOUSE_EXTERNAL_HTTP_PORT:-8123}
       DFE_CLICKHOUSE_NATIVE_PORT: ${CLICKHOUSE_EXTERNAL_NATIVE_PORT:-9000}
       DFE_CLICKHOUSE_DATABASE: ${CLICKHOUSE_DB:-default}
-      DFE_CLICKHOUSE_USERNAME: ${CLICKHOUSE_USERNAME:-default}
-      DFE_CLICKHOUSE_PASSWORD: ${CLICKHOUSE_PASSWORD:-}
+      # Its own user, not the admin account: the worker runs INSERT ... SELECT
+      # built from rule text, and dfe_hunt_runner can reach nothing but the data
+      # database. The engine names the user, so it is not a dial.
+      DFE_CLICKHOUSE_USERNAME: dfe_hunt_runner
+      DFE_CLICKHOUSE_PASSWORD: ${DFE_HUNT_RUNNER_CLICKHOUSE_PASSWORD:-}
       DFE_CLICKHOUSE_SECURE: ${CLICKHOUSE_SECURE:-false}
       DFE_CONFIG_DIR: ${DFE_ENGINE_CONFIG_DIR:-/app/config}
       # Same volume as the API's, so both read the one signing key.

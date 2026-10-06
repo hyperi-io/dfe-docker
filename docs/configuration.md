@@ -193,6 +193,7 @@ it is a second deployment of the one component, not a component of its own.
 | `CLICKHOUSE_DB`                                  | ClickHouse initialisation database                                                   | `default`                                                           |
 | `CLICKHOUSE_USERNAME`                            | ClickHouse username to connect with                                                  | `default`                                                           |
 | `CLICKHOUSE_PASSWORD`                            | ClickHouse password associated to user                                               | -                                                                   |
+| `DFE_HUNT_RUNNER_CLICKHOUSE_PASSWORD`            | Password of `dfe_hunt_runner`, the hunt runner's own ClickHouse user; the engine creates the user on it and the runner connects with it | generated                                                           |
 | `DFE_CLICKHOUSE_DEFAULT_TTL_DAYS`                | Days every time-series table keeps rows, the OTel tables included; 0 disables the default TTL; a source or dfe-schemas TTL overrides it | `90`                                                                |
 
 ### Kafka - General

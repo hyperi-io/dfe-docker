@@ -47,10 +47,14 @@ from _common import (
 
 # Secrets that must not be left at their weak/empty default. scripts/post.py
 # enforces them: DFE_UI_NEXTAUTH_SECRET, HYPERDX_POSTGRES_PASSWORD,
-# HYPERDX_EXPRESS_SESSION_SECRET and HYPERDX_TOKEN_ENCRYPTION_KEY via its
-# WEAK_SECRET_DEFAULTS service-map, CLICKHOUSE_PASSWORD via its own external-CH
-# check (its default is empty, not a sentinel string), and
-# DFE_AUTH_LOCAL_ADMIN_PASSWORD by logging in with it. Keep them in step.
+# HYPERDX_EXPRESS_SESSION_SECRET, HYPERDX_TOKEN_ENCRYPTION_KEY and
+# DFE_HUNT_RUNNER_CLICKHOUSE_PASSWORD via its WEAK_SECRET_DEFAULTS service-map,
+# CLICKHOUSE_PASSWORD via its own external-CH check (its default is empty, not a
+# sentinel string), and DFE_AUTH_LOCAL_ADMIN_PASSWORD by logging in with it. Keep
+# them in step.
+#
+# DFE_HUNT_RUNNER_CLICKHOUSE_PASSWORD is dfe_hunt_runner's: the engine creates
+# that ClickHouse user on this password and the hunt runner connects with it.
 #
 # The deploy mints two logins: DFE_AUTH_LOCAL_ADMIN_PASSWORD is `admin`, issued with
 # a forced change at first login, which `make post` makes and records back in .env.
@@ -89,6 +93,7 @@ GENERATED_SECRETS = {
     "CLICKHOUSE_PASSWORD": _LEN_CREDENTIAL,
     "DFE_AUTH_BREAKGLASS_PASSWORD": _LEN_CREDENTIAL,
     "DFE_AUTH_LOCAL_ADMIN_PASSWORD": _LEN_CREDENTIAL,
+    "DFE_HUNT_RUNNER_CLICKHOUSE_PASSWORD": _LEN_CREDENTIAL,
     "HYPERDX_POSTGRES_PASSWORD": _LEN_CREDENTIAL,
     "DFE_API_JWT_SECRET": _LEN_KEY,
     "DFE_UI_NEXTAUTH_SECRET": _LEN_KEY,

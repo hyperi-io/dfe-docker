@@ -313,6 +313,8 @@ WEAK_SECRET_DEFAULTS = {
     ),
     # Empty, not a sentinel: HyperDX refuses to start on a malformed key.
     "HYPERDX_TOKEN_ENCRYPTION_KEY": ("", "hyperdx"),
+    # Empty leaves dfe_hunt_runner on a password the engine mints, which the runner never sees.
+    "DFE_HUNT_RUNNER_CLICKHOUSE_PASSWORD": ("", "dfe-hunt-runner"),
 }
 
 
