@@ -311,6 +311,8 @@ WEAK_SECRET_DEFAULTS = {
         "RUN-make-init-TO-GENERATE-A-REAL-SECRET",
         "hyperdx",
     ),
+    # Empty, not a sentinel: HyperDX refuses to start on a malformed key.
+    "HYPERDX_TOKEN_ENCRYPTION_KEY": ("", "hyperdx"),
 }
 
 

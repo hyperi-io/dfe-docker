@@ -1598,6 +1598,10 @@ services:
       # Unset, HyperDX signs sessions with a key published upstream, so `make init`
       # generates one. Not a `:?` hard-fail -- see NEXTAUTH_SECRET.
       EXPRESS_SESSION_SECRET: ${HYPERDX_EXPRESS_SESSION_SECRET:-RUN-make-init-TO-GENERATE-A-REAL-SECRET}
+      # Encrypts stored third-party tokens; `make init` generates 64 hex chars. The
+      # fallback is empty (plain text), not a sentinel: HyperDX refuses to start on
+      # a malformed key.
+      TOKEN_ENCRYPTION_KEY: ${HYPERDX_TOKEN_ENCRYPTION_KEY:-}
       NEXT_PUBLIC_THEME: ${HYPERDX_THEME:-dfe}
     volumes:
       - ./config/hyperdx/default-sources.json:/etc/hyperdx/default-sources.json:ro

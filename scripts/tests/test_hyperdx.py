@@ -16,7 +16,7 @@ console never gets its HyperDX view, and the engine answers 503 `hyperdx_absent`
 HyperDX's own ClickHouse connection has to follow the engine's too, or an external
 ClickHouse leaves every HyperDX query aimed at a container that is not running.
 Its session signing key comes from `make init`, or the fork signs with a key
-published upstream.
+published upstream; so does its token encryption key, in a format it parses.
 
 Read the way compose reads it: the `.profile.mk` values resolve_profile writes for
 a profile, expanded over the `${NAME:-default}` forms docker-compose.yml uses.
@@ -38,6 +38,9 @@ from _common import COMPOSE_FILE, REPO_ROOT
 _ENGINE_SERVICE = "dfe-engine"
 _HYPERDX_SERVICE = "hyperdx"
 _SESSION_KEY = "HYPERDX_EXPRESS_SESSION_SECRET"
+_TOKEN_KEY = "HYPERDX_TOKEN_ENCRYPTION_KEY"
+# The hex form of the two the fork's tokenEncryption.ts parseEncryptionKey accepts.
+_HEX_AES256 = re.compile(r"[0-9a-f]{64}")
 _IN_STACK_HYPERDX = "http://hyperdx:8000"
 _JWKS_URL = "http://dfe-engine:8000/.well-known/jwks.json"
 
@@ -274,7 +277,7 @@ def test_a_developer_with_no_engine_can_still_select_header_dev() -> None:
 def test_hyperdx_signs_sessions_with_the_key_make_init_mints() -> None:
     """Unset, the fork signs sessions with a key published in upstream's source."""
     template = _service_environment(service=_HYPERDX_SERVICE)["EXPRESS_SESSION_SECRET"]
-    minted = init._generate_secret(init.GENERATED_SECRETS[_SESSION_KEY])
+    minted = init._mint(_SESSION_KEY)
 
     assert init.GENERATED_SECRETS[_SESSION_KEY] >= 32
     assert _expand(template=template, values={_SESSION_KEY: minted}) == minted
@@ -285,13 +288,32 @@ def test_hyperdx_signs_sessions_with_the_key_make_init_mints() -> None:
     )
 
 
-def test_an_env_that_predates_the_session_key_gets_one_and_keeps_it(
-    dotenv: Path,
+def test_the_minted_token_key_is_one_hyperdx_parses() -> None:
+    """HyperDX refuses to start unless the key is 64 hex chars or base64 of 32 bytes."""
+    minted = init._mint(_TOKEN_KEY)
+
+    assert _HEX_AES256.fullmatch(minted)
+    assert len(bytes.fromhex(minted)) == 32
+
+
+def test_hyperdx_encrypts_tokens_with_the_key_make_init_mints() -> None:
+    template = _service_environment(service=_HYPERDX_SERVICE)["TOKEN_ENCRYPTION_KEY"]
+    minted = init._mint(_TOKEN_KEY)
+
+    assert _expand(template=template, values={_TOKEN_KEY: minted}) == minted
+    # Empty reads as encryption off; a sentinel would read as a malformed key.
+    assert _expand(template=template, values={}) == ""
+    assert post.WEAK_SECRET_DEFAULTS[_TOKEN_KEY] == ("", _HYPERDX_SERVICE)
+
+
+@pytest.mark.parametrize("key", [_SESSION_KEY, _TOKEN_KEY])
+def test_an_env_that_predates_a_hyperdx_key_gets_one_and_keeps_it(
+    dotenv: Path, key: str
 ) -> None:
     older = "".join(
-        f"{key}=already-minted-value\n"
-        for key in init.GENERATED_SECRETS
-        if key != _SESSION_KEY
+        f"{other}=already-minted-value\n"
+        for other in init.GENERATED_SECRETS
+        if other != key
     )
     dotenv.write_text(older, encoding="utf-8", newline="\n")
 
@@ -300,12 +322,12 @@ def test_an_env_that_predates_the_session_key_gets_one_and_keeps_it(
     init._top_up_secrets(dotenv_path=dotenv)
 
     assert topped_up.startswith(older)
-    session = [
+    minted = [
         line.partition("=")[2]
         for line in topped_up.splitlines()
-        if line.startswith(f"{_SESSION_KEY}=")
+        if line.startswith(f"{key}=")
     ]
-    assert [len(value) for value in session] == [init.GENERATED_SECRETS[_SESSION_KEY]]
+    assert [len(value) for value in minted] == [init.GENERATED_SECRETS[key]]
     assert dotenv.read_text(encoding="utf-8") == topped_up
 
 
