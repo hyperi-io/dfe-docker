@@ -1,0 +1,214 @@
+# BEGIN TLS
+# Project:   dfe-docker
+# File:      config/proxy/hyperdx.tls.yaml
+# Purpose:   dfe-hyperdx-proxy serving TLS and plain HTTP on both HyperDX origins
+# Language:  Envoy static config
+#
+# License:   BUSL-1.1
+# Copyright: (c) 2026 HYPERI PTY LIMITED
+#
+# docker-compose.tls.yml mounts this in place of hyperdx.yaml when DFE_PROXY_TLS=true.
+# It is hyperdx.yaml verbatim plus the blocks between BEGIN TLS and END TLS; scripts/tests/test_proxy_tls_config.py fails on any other difference, so a change to one file goes into both.
+# Each TLS chain repeats the filters of the plain chain after it and the same test holds the two equal.
+# END TLS
+# Project:   dfe-docker
+# File:      config/proxy/hyperdx.yaml
+# Purpose:   Identity-injecting reverse proxy in front of HyperDX
+# Language:  Envoy static config
+#
+# License:   BUSL-1.1
+# Copyright: (c) 2026 HYPERI PTY LIMITED
+#
+# HyperDX runs in DFE_AUTH_MODE=oidc-proxy and identifies a caller by the engine
+# token it carries, so this proxy injects nothing: its job is to hold both HyperDX
+# origins on one service, which is what the infra exposure dials and the `auth`
+# profile's oauth2-proxy attach to.
+#
+# Two origins, one UI:
+#    :8090  the app     -> hyperdx:8090
+#    :8000  the API     -> hyperdx:8000
+# The browser only ever uses the first. HyperDX's bundle calls its API at a
+# relative /api/*, which the Next.js server proxies on container loopback, so the
+# cookie sent to the app origin reaches both halves. :8000 is the operator and
+# machine surface, published so `make post` and an operator can read it.
+#
+# The DFE UI iframes a THIRD origin, config/proxy/envoy.yaml's embed listener on
+# dfe-proxy, which rewrites frame-ancestors so the console can frame it.
+#
+# STRICT_DNS resolves per refresh via Docker's embedded DNS, so this boots while
+# HyperDX is still starting and recovers when it arrives.
+
+admin:
+  # Local healthcheck surface only -- never published by compose.
+  address:
+    socket_address: { address: 127.0.0.1, port_value: 9901 }
+
+static_resources:
+  listeners:
+    - name: hyperdx-app
+      address:
+        socket_address: { address: 0.0.0.0, port_value: 8090 }
+      # BEGIN TLS
+      # Browsers arrive over TLS while the engine's admin-link probe (the probe_url resolve_profile.py hands it) and the oauth2-proxy upstream send plain HTTP on the compose network, so the inspector picks a chain per connection on the one port.
+      listener_filters:
+        - name: envoy.filters.listener.tls_inspector
+          typed_config:
+            "@type": type.googleapis.com/envoy.extensions.filters.listener.tls_inspector.v3.TlsInspector
+      # END TLS
+      filter_chains:
+        # BEGIN TLS
+        # TLS with the console's certificate, because DFE_HYPERDX_APP_URL (else DFE_EXTERNAL_ORIGIN) gives this origin the console's https scheme.
+        - filter_chain_match:
+            transport_protocol: tls
+          transport_socket: &hyperdx_tls
+            name: envoy.transport_sockets.tls
+            typed_config:
+              "@type": type.googleapis.com/envoy.extensions.transport_sockets.tls.v3.DownstreamTlsContext
+              common_tls_context:
+                tls_params:
+                  tls_minimum_protocol_version: TLSv1_2
+                  tls_maximum_protocol_version: TLSv1_3
+                  # TLS 1.2 only, AEAD only and AES-256-GCM first per the house crypto posture. TLS 1.3 negotiates its own suites.
+                  cipher_suites:
+                    - ECDHE-ECDSA-AES256-GCM-SHA384
+                    - ECDHE-RSA-AES256-GCM-SHA384
+                    - ECDHE-ECDSA-CHACHA20-POLY1305
+                    - ECDHE-RSA-CHACHA20-POLY1305
+                    - ECDHE-ECDSA-AES128-GCM-SHA256
+                    - ECDHE-RSA-AES128-GCM-SHA256
+                  # Hybrid post-quantum first, then P-384, with X25519 and P-256 kept for clients that offer neither.
+                  ecdh_curves:
+                    - X25519MLKEM768
+                    - P-384
+                    - X25519
+                    - P-256
+                tls_certificates:
+                  - certificate_chain:
+                      filename: /etc/envoy/certs/console.crt
+                    private_key:
+                      filename: /etc/envoy/certs/console.key
+          filters:
+            - name: envoy.filters.network.http_connection_manager
+              typed_config:
+                "@type": type.googleapis.com/envoy.extensions.filters.network.http_connection_manager.v3.HttpConnectionManager
+                stat_prefix: hyperdx_app
+                use_remote_address: true
+                upgrade_configs:
+                  - upgrade_type: websocket
+                http_filters:
+                  # AUTH SEAM: the oauth2 filter chains in here when an OIDC
+                  # issuer fronts this origin, in place of the `auth` profile's
+                  # oauth2-proxy container.
+                  - name: envoy.filters.http.router
+                    typed_config:
+                      "@type": type.googleapis.com/envoy.extensions.filters.http.router.v3.Router
+                route_config:
+                  name: hyperdx_app
+                  virtual_hosts:
+                    - name: hyperdx
+                      domains: ["*"]
+                      routes:
+                        - match: { prefix: / }
+                          route: { cluster: hyperdx }
+        # The chain below takes everything else: plain HTTP from the compose network.
+        # END TLS
+        - filters:
+            - name: envoy.filters.network.http_connection_manager
+              typed_config:
+                "@type": type.googleapis.com/envoy.extensions.filters.network.http_connection_manager.v3.HttpConnectionManager
+                stat_prefix: hyperdx_app
+                use_remote_address: true
+                upgrade_configs:
+                  - upgrade_type: websocket
+                http_filters:
+                  # AUTH SEAM: the oauth2 filter chains in here when an OIDC
+                  # issuer fronts this origin, in place of the `auth` profile's
+                  # oauth2-proxy container.
+                  - name: envoy.filters.http.router
+                    typed_config:
+                      "@type": type.googleapis.com/envoy.extensions.filters.http.router.v3.Router
+                route_config:
+                  name: hyperdx_app
+                  virtual_hosts:
+                    - name: hyperdx
+                      domains: ["*"]
+                      routes:
+                        - match: { prefix: / }
+                          route: { cluster: hyperdx }
+    - name: hyperdx-api
+      address:
+        socket_address: { address: 0.0.0.0, port_value: 8000 }
+      # BEGIN TLS
+      # Same split as the app listener, for `make post` and the oauth2-proxy upstream on the compose network.
+      listener_filters:
+        - name: envoy.filters.listener.tls_inspector
+          typed_config:
+            "@type": type.googleapis.com/envoy.extensions.filters.listener.tls_inspector.v3.TlsInspector
+      # END TLS
+      filter_chains:
+        # BEGIN TLS
+        # Same certificate as the app origin, for an operator reaching the API from another machine.
+        - filter_chain_match:
+            transport_protocol: tls
+          transport_socket: *hyperdx_tls
+          filters:
+            - name: envoy.filters.network.http_connection_manager
+              typed_config:
+                "@type": type.googleapis.com/envoy.extensions.filters.network.http_connection_manager.v3.HttpConnectionManager
+                stat_prefix: hyperdx_api
+                use_remote_address: true
+                http_filters:
+                  - name: envoy.filters.http.router
+                    typed_config:
+                      "@type": type.googleapis.com/envoy.extensions.filters.http.router.v3.Router
+                route_config:
+                  name: hyperdx_api
+                  virtual_hosts:
+                    - name: hyperdx
+                      domains: ["*"]
+                      routes:
+                        - match: { prefix: / }
+                          route: { cluster: hyperdx-api }
+        # The chain below takes everything else: plain HTTP from the compose network.
+        # END TLS
+        - filters:
+            - name: envoy.filters.network.http_connection_manager
+              typed_config:
+                "@type": type.googleapis.com/envoy.extensions.filters.network.http_connection_manager.v3.HttpConnectionManager
+                stat_prefix: hyperdx_api
+                use_remote_address: true
+                http_filters:
+                  - name: envoy.filters.http.router
+                    typed_config:
+                      "@type": type.googleapis.com/envoy.extensions.filters.http.router.v3.Router
+                route_config:
+                  name: hyperdx_api
+                  virtual_hosts:
+                    - name: hyperdx
+                      domains: ["*"]
+                      routes:
+                        - match: { prefix: / }
+                          route: { cluster: hyperdx-api }
+  clusters:
+    # Both ports are constants inside the image (HYPERDX_APP_PORT,
+    # HYPERDX_API_PORT); the DFE_HYPERDX_*_PORT dials are host bindings only.
+    - name: hyperdx
+      type: STRICT_DNS
+      dns_lookup_family: V4_ONLY
+      load_assignment:
+        cluster_name: hyperdx
+        endpoints:
+          - lb_endpoints:
+              - endpoint:
+                  address:
+                    socket_address: { address: hyperdx, port_value: 8090 }
+    - name: hyperdx-api
+      type: STRICT_DNS
+      dns_lookup_family: V4_ONLY
+      load_assignment:
+        cluster_name: hyperdx-api
+        endpoints:
+          - lb_endpoints:
+              - endpoint:
+                  address:
+                    socket_address: { address: hyperdx, port_value: 8000 }

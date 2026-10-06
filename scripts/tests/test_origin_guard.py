@@ -138,3 +138,77 @@ def test_a_workstation_needs_no_origin(makefile: Path) -> None:
     result = _make(cwd=makefile, goal="ci")
 
     assert _GUARD not in result.stderr
+
+
+# The sentence the shape guard is recognised by, quoted from the Makefile.
+_SHAPE_GUARD = "It must be a scheme and a host only, no port"
+
+
+@pytest.mark.parametrize(
+    ("origin", "fault", "fixed"),
+    [
+        (
+            "https://dfe.example.test:3000",
+            "carries a port",
+            "https://dfe.example.test",
+        ),
+        ("https://dfe.example.test/", "carries a path", "https://dfe.example.test"),
+        (
+            "https://dfe.example.test/console",
+            "carries a path",
+            "https://dfe.example.test",
+        ),
+        ("http://dfe.example.test?x=1", "carries a query", "http://dfe.example.test"),
+        (
+            "dfe.example.test",
+            "has no http:// or https:// scheme",
+            "http://dfe.example.test",
+        ),
+    ],
+)
+def test_an_origin_compose_cannot_append_a_port_to_stops_the_start(
+    makefile: Path, origin: str, fault: str, fixed: str
+) -> None:
+    result = _make(cwd=makefile, goal="ci", DFE_EXTERNAL_ORIGIN=origin)
+
+    assert result.returncode != 0
+    assert _SHAPE_GUARD in result.stderr
+    assert fault in result.stderr
+    assert "compose appends the port itself (DFE_UI_PORT" in result.stderr
+    assert f"Set DFE_EXTERNAL_ORIGIN={fixed}" in result.stderr
+
+
+@pytest.mark.parametrize(
+    "key", ["DFE_HYPERDX_APP_URL", "DFE_OAUTH2_PROXY_EXTERNAL_ORIGIN"]
+)
+def test_every_origin_compose_appends_a_port_to_is_held_to_the_same_shape(
+    makefile: Path, key: str
+) -> None:
+    result = _make(cwd=makefile, goal="ci", **{key: "https://dfe.example.test:8443"})
+
+    assert result.returncode != 0
+    assert f"{key}='https://dfe.example.test:8443' carries a port" in result.stderr
+
+
+@pytest.mark.parametrize("tls", ["false", "true"])
+@pytest.mark.parametrize("origin", ["https://dfe.example.test", "http://[::1]"])
+def test_a_scheme_and_host_passes_the_shape_guard_with_tls_on_or_off(
+    makefile: Path, tls: str, origin: str
+) -> None:
+    result = _make(
+        cwd=makefile, goal="ci", DFE_EXTERNAL_ORIGIN=origin, DFE_PROXY_TLS=tls
+    )
+
+    assert _SHAPE_GUARD not in result.stderr
+
+
+@pytest.mark.parametrize("goal", _UNGUARDED_GOALS)
+def test_stopping_and_checking_never_judge_the_origin_shape(
+    makefile: Path, goal: str
+) -> None:
+    result = _make(
+        cwd=makefile, goal=goal, DFE_EXTERNAL_ORIGIN="https://dfe.example.test:3000"
+    )
+
+    assert result.returncode == 0
+    assert _SHAPE_GUARD not in result.stderr

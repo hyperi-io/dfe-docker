@@ -294,6 +294,68 @@ def test_the_console_url_follows_the_external_origin(
     )
 
 
+@pytest.mark.parametrize(
+    ("values", "console", "api"),
+    [
+        (
+            {
+                "DFE_EXTERNAL_ORIGIN": "https://dfe.example.test",
+                "DFE_PROXY_TLS": "true",
+            },
+            "https://dfe.example.test:3000",
+            "http://dfe.example.test:8003",
+        ),
+        (
+            {"DFE_EXTERNAL_ORIGIN": "https://localhost", "DFE_PROXY_TLS": "true"},
+            "https://localhost:3000",
+            "http://localhost:8003",
+        ),
+        ({"DFE_PROXY_TLS": "true"}, "https://127.0.0.1:3000", "http://127.0.0.1:8003"),
+        (
+            {
+                "DFE_EXTERNAL_ORIGIN": "https://dfe.example.test",
+                "DFE_PROXY_TLS": "false",
+            },
+            "https://dfe.example.test:3000",
+            "https://dfe.example.test:8003",
+        ),
+    ],
+)
+def test_console_tls_moves_the_console_to_https_and_leaves_the_engine_port_on_http(
+    values: dict[str, str], console: str, api: str
+) -> None:
+    assert (
+        creds._url(default_port="3000", port_key="DFE_UI_PORT", values=values)
+        == console
+    )
+    assert (
+        creds._url(
+            default_port="8003",
+            port_key="DFE_ENGINE_PORT",
+            proxied=False,
+            values=values,
+        )
+        == api
+    )
+
+
+def test_both_summaries_hand_over_https_console_and_http_engine_under_console_tls() -> (
+    None
+):
+    values = {
+        "DFE_EXTERNAL_ORIGIN": "https://dfe.example.test",
+        "DFE_PROXY_TLS": "true",
+    }
+
+    printed = "\n".join(creds.summary_lines(values=values))
+    written = creds.summary_markdown(values=values)
+
+    assert "console      https://dfe.example.test:3000" in printed
+    assert "engine API   http://dfe.example.test:8003" in printed
+    assert "- Console: https://dfe.example.test:3000" in written
+    assert "- Engine API: http://dfe.example.test:8003" in written
+
+
 def test_the_summary_hands_over_the_external_origin(dotenv: Path) -> None:
     dotenv.write_text(
         f"{_ENV}DFE_BIND_SCOPE=all\nDFE_EXTERNAL_ORIGIN=http://dfe.example.test\n",

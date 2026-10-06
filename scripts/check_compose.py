@@ -83,6 +83,7 @@ Beyond resolution, these semantic assertions ride along.
   on in-network. See `_clickhouse_dial_failures`.
 - Every service the log-driver fragment ships must queue its lines and wait for
   the collector's ack. See `_log_driver_failures`.
+- Console TLS must change nothing until it is dialled on. Once on, it must move both proxies onto their TLS configs and the certificate and pin the network so the engine trusts dfe-proxy's address alone. See `_proxy_tls_mismatches`.
 - Every path a pinned image declares as a VOLUME must be mounted from a named
   volume or a bind. See `_IMAGE_VOLUMES`.
 - No committed service may carry a name a generated per-source instance can take.
@@ -103,6 +104,7 @@ import tempfile
 from pathlib import Path
 
 import instances
+import proxy_tls
 from _common import (
     COMPOSE_FILE,
     COMPOSE_LIVE_FILE,
@@ -245,6 +247,20 @@ _FRAGMENT_DIALS = {
     "DFE_INFRA_UIS_EXTERNAL": "false",
     "DFE_UI_EXTERNAL": "false",
     "DFE_ENGINE_API_EXTERNAL": "false",
+    "DFE_PROXY_TLS": "true",
+}
+# Console TLS refuses to start beside the auth profile, so `make dev` runs once per side, each held to the chain its own dials produce. The TLS run also needs what that refusal and the TLS precheck look for: an https origin and a certificate pair openssl accepts.
+_DEV_PATH_CERT_DIR = REPO_ROOT / ".tmp" / "compose-check-certs"
+_DEV_PATH_BIN_DIR = REPO_ROOT / ".tmp" / "compose-check-bin"
+_DEV_PATH_RUNS = {
+    "auth": {"DFE_PROXY_TLS": "false"},
+    "console TLS": {
+        "DFE_AUTH_ENABLED": "false",
+        "DFE_AUTH_RESOLVED": "false",
+        "DFE_EXTERNAL_ORIGIN": "https://compose-check.invalid",
+        "DFE_HYPERDX_APP_URL": "",
+        "DFE_PROXY_CERT_DIR": f"./{_DEV_PATH_CERT_DIR.relative_to(REPO_ROOT)}",
+    },
 }
 # The two `docker compose` lines `make dev` runs, by the tokens that identify one.
 _DEV_SUBCOMMANDS = {"pull": ("pull",), "up": ("up", "-d")}
@@ -397,6 +413,21 @@ _LOG_DRIVER_OPTIONS = {
         "them, and the driver counts them as sent"
     ),
 }
+
+# The fragment the Makefile chains under DFE_PROXY_TLS=true and each proxy it moves, by its (plain, TLS) config file.
+_TLS_FRAGMENT = "docker-compose.tls.yml"
+_TLS_PROXY_CONFIGS = {
+    "dfe-hyperdx-proxy": ("config/proxy/hyperdx.yaml", "config/proxy/hyperdx.tls.yaml"),
+    "dfe-proxy": ("config/proxy/envoy.yaml", "config/proxy/envoy.tls.yaml"),
+}
+_TLS_FORWARDING_PROXY = "dfe-proxy"
+_ENVOY_CONFIG_TARGET = "/etc/envoy/envoy.yaml"
+_ENVOY_CERT_TARGET = "/etc/envoy/certs"
+_TLS_CERT_DIR = "./compose-check-tls-certs"
+_TRUSTED_PROXIES_KEY = "DFE_API_FORWARDED_ALLOW_IPS"
+# None of these is a default, so a render that ignored a dial and used a literal fails.
+_TLS_SUBNET = "10.231.7.0/24"
+_TLS_USER = {"DFE_DEV_GID": "4343", "DFE_DEV_UID": "4242"}
 
 # The VOLUME paths each pinned image declares (`docker image inspect --format
 # '{{json .Config.Volumes}}'`), by service: one left unmounted gets an anonymous
@@ -1120,6 +1151,111 @@ def _container_log_failures(*, env: dict[str, str]) -> tuple[list[str], int]:
     return _log_driver_failures(config=config), len(shipped)
 
 
+def _proxy_tls_mismatches(*, config: dict, tls: dict[str, str] | None) -> list[str]:
+    """Return one message per way the proxies, the network and the engine differ from the console TLS side they are on.
+
+    `tls` holds the values the Makefile exports under DFE_PROXY_TLS=true; None means the dial is off.
+    """
+    services = config.get("services", {})
+    failures = []
+    for name, (plain, encrypted) in sorted(_TLS_PROXY_CONFIGS.items()):
+        if name not in services:
+            failures.append(f"{name!r}: not in the stack")
+            continue
+        service = services[name]
+        mounts = {
+            str(volume.get("target")): volume
+            for volume in (service.get("volumes")) or ([])
+        }
+        # Resolved on both sides, because compose names a source through the working directory it was handed.
+        want = {_ENVOY_CONFIG_TARGET: REPO_ROOT / (plain if tls is None else encrypted)}
+        if tls is not None:
+            want[_ENVOY_CERT_TARGET] = REPO_ROOT / tls["DFE_PROXY_CERT_DIR"]
+        want = {target: path.resolve() for target, path in want.items()}
+        got = {
+            target: Path(str(volume.get("source", ""))).resolve()
+            for target, volume in mounts.items()
+        }
+        if got != want:
+            failures.append(f"{name!r}: mounts {got}, want {want}")
+        writable = sorted(
+            target for target, volume in mounts.items() if not (volume.get("read_only"))
+        )
+        if writable:
+            failures.append(f"{name!r}: mounts {writable} writable, want read-only")
+        user = service.get("user")
+        want_user = (
+            None if tls is None else f"{tls['DFE_DEV_UID']}:{tls['DFE_DEV_GID']}"
+        )
+        if user != want_user:
+            failures.append(
+                f"{name!r}: runs as {user!r}, want {want_user!r}. Under TLS only the user who "
+                "owns the 0600 key can read it; without TLS the image's own user runs"
+            )
+
+    default_network = (config.get("networks", {}).get("default")) or ({})
+    ipam = (default_network.get("ipam")) or ({})
+    pinned = (ipam.get("config")) or ([])
+    want_pinned = (
+        []
+        if tls is None
+        else [
+            {
+                "ip_range": tls["DFE_NETWORK_IP_RANGE"],
+                "subnet": tls["DFE_NETWORK_SUBNET"],
+            }
+        ]
+    )
+    if pinned != want_pinned:
+        failures.append(f"the default network pins {pinned}, want {want_pinned}")
+
+    proxy_networks = (services.get(_TLS_FORWARDING_PROXY, {}).get("networks")) or ({})
+    address = ((proxy_networks.get("default")) or ({})).get("ipv4_address")
+    engine_environment = (services.get(_ENGINE_SERVICE, {}).get("environment")) or ({})
+    trusted = engine_environment.get(_TRUSTED_PROXIES_KEY)
+    want_address = None if tls is None else tls["DFE_PROXY_IP"]
+    if address != want_address:
+        failures.append(
+            f"{_TLS_FORWARDING_PROXY!r}: holds address {address!r}, want {want_address!r}"
+        )
+    if trusted != want_address:
+        failures.append(
+            f"{_ENGINE_SERVICE!r}: {_TRUSTED_PROXIES_KEY}={trusted!r}, want {want_address!r}. "
+            f"The engine must believe X-Forwarded-Proto from {_TLS_FORWARDING_PROXY!r} alone "
+            "under TLS and from nothing while TLS is off"
+        )
+    return failures
+
+
+def _proxy_tls_failures(*, env: dict[str, str]) -> tuple[list[str], int]:
+    """Return (messages, sides checked) for the registry path with console TLS off and on.
+
+    The on side renders from a subnet and a user that are not the defaults, with the address and range derived the way the Makefile derives them.
+    """
+    address, allocation = proxy_tls.derive(subnet=_TLS_SUBNET)
+    tls = {
+        **_TLS_USER,
+        "DFE_NETWORK_IP_RANGE": allocation,
+        "DFE_NETWORK_SUBNET": _TLS_SUBNET,
+        "DFE_PROXY_CERT_DIR": _TLS_CERT_DIR,
+        "DFE_PROXY_IP": address,
+    }
+    failures = []
+    for label, files, side in (
+        ("TLS off", [COMPOSE_FILE.name], None),
+        ("TLS on", [COMPOSE_FILE.name, _TLS_FRAGMENT], tls),
+    ):
+        config = _config_json(env={**env, **((side) or ({}))}, files=files)
+        if config is None:
+            failures.append(f"{label}: the registry path did not resolve")
+            continue
+        failures.extend(
+            f"{label}: {message}"
+            for message in _proxy_tls_mismatches(config=config, tls=side)
+        )
+    return failures, 2
+
+
 def _unmounted_image_volume_failures(*, config: dict) -> list[str]:
     """Return one message per image-declared VOLUME path with nothing named mounted on it."""
     services = config.get("services", {})
@@ -1451,19 +1587,30 @@ def _implicit_consumer_failures(*, env: dict[str, str]) -> tuple[list[str], int]
 
 
 def _make(
-    *, goals: list[str], variables: dict[str, str], dry_run: bool = False
+    *,
+    goals: list[str],
+    variables: dict[str, str],
+    dry_run: bool = False,
+    bin_dir: Path | None = None,
 ) -> subprocess.CompletedProcess:
-    """Run make for one goal set, with `VAR=value` overrides on the command line."""
+    """Run make for one goal set, with `VAR=value` overrides on the command line.
+
+    `bin_dir` goes first on PATH, so a stub there answers in place of a host tool.
+    """
     cmd = ["make", "--no-print-directory"]
     if dry_run:
         cmd.append("-n")
     cmd += goals
     cmd += [f"{key}={value}" for key, value in sorted(variables.items())]
+    environment = dict(os.environ)
+    if bin_dir is not None:
+        environment["PATH"] = f"{bin_dir}{os.pathsep}{environment.get('PATH', '')}"
     return subprocess.run(
         cmd,
         capture_output=True,
         cwd=REPO_ROOT,
         encoding="utf-8",
+        env=environment,
         errors="replace",
         text=True,
     )
@@ -1501,6 +1648,60 @@ def _dev_compose_files(*, output: str) -> dict[str, list[list[str]]]:
     return found
 
 
+def _compose_chain(
+    *, bin_dir: Path | None = None, variables: dict[str, str]
+) -> tuple[list[str], str]:
+    """Return the COMPOSE_FILE chain make resolves for these dials, with make's output instead when it fails."""
+    result = _make(bin_dir=bin_dir, goals=[_COMPOSE_FILE_GOAL], variables=variables)
+    if result.returncode != 0:
+        return [], (result.stderr.strip()) or (result.stdout.strip())
+    chain = []
+    for line in result.stdout.splitlines():
+        if line.startswith(_COMPOSE_FILE_PREFIX):
+            chain = line[len(_COMPOSE_FILE_PREFIX) :].strip().split(":")
+    return chain, ""
+
+
+def _dev_run_failures(
+    *, bin_dir: Path, declared: set[str], run: str, variables: dict[str, str]
+) -> tuple[list[str], int, set[str]]:
+    """Return (messages, assertions made, fragments compared) for one `make -n dev LOCAL=...` run."""
+    chain, error = _compose_chain(bin_dir=bin_dir, variables=variables)
+    if error:
+        return [f"{run}: `make {_COMPOSE_FILE_GOAL}` failed:\n{error}"], 1, set()
+    want = {name for name in chain if name in declared}
+    dev = _make(
+        bin_dir=bin_dir,
+        dry_run=True,
+        goals=["dev"],
+        variables={**variables, "LOCAL": " ".join(_LOCAL_SAMPLE)},
+    )
+    if dev.returncode != 0:
+        detail = (dev.stderr.strip()) or (dev.stdout.strip())
+        return [f"{run}: `make -n dev LOCAL=...` failed:\n{detail}"], 1, set()
+    failures = []
+    made = 0
+    lines = _dev_compose_files(output=dev.stdout)
+    for label in sorted(_DEV_SUBCOMMANDS):
+        made += 1
+        occurrences = lines.get(label)
+        if not (occurrences):
+            failures.append(
+                f"{run}: `make -n dev LOCAL=...` printed no `docker compose ... {label}` line"
+            )
+            continue
+        for files in occurrences:
+            made += 1
+            missing = sorted(want - set(files))
+            if missing:
+                failures.append(
+                    f"{run}: `make dev LOCAL=...` runs its {label} without {', '.join(missing)} -- "
+                    "the COMPOSE_FILE chain carries them and this path does not, so every "
+                    "dial they hold is ignored on it"
+                )
+    return failures, made, want
+
+
 def _dev_path_fragment_failures() -> tuple[list[str], int]:
     """Return (messages, assertions made) for the LOCAL dev path's overlay fragments.
 
@@ -1515,17 +1716,14 @@ def _dev_path_fragment_failures() -> tuple[list[str], int]:
     Every dial is forced on first, and the chain is required to carry the full
     declared set before anything is compared -- a run that chains fewer would
     make this assert nothing.
+
+    `make dev` itself cannot start with every dial on, because console TLS refuses the auth profile. It runs once per side (`_DEV_PATH_RUNS`) against the chain that side resolves; together the runs must compare every declared fragment.
     """
     declared = _declared_fragments()
     made = 1
-    reference = _make(goals=[_COMPOSE_FILE_GOAL], variables=_FRAGMENT_DIALS)
-    if reference.returncode != 0:
-        detail = reference.stderr.strip() or reference.stdout.strip()
-        return ([f"`make {_COMPOSE_FILE_GOAL}` failed:\n{detail}"], made)
-    chain: list[str] = []
-    for line in reference.stdout.splitlines():
-        if line.startswith(_COMPOSE_FILE_PREFIX):
-            chain = line[len(_COMPOSE_FILE_PREFIX) :].strip().split(":")
+    chain, error = _compose_chain(variables=_FRAGMENT_DIALS)
+    if error:
+        return ([f"`make {_COMPOSE_FILE_GOAL}` failed:\n{error}"], made)
     want = {name for name in chain if name in declared}
     if want != declared:
         return (
@@ -1536,33 +1734,35 @@ def _dev_path_fragment_failures() -> tuple[list[str], int]:
             made,
         )
 
-    failures: list[str] = []
-    dev = _make(
-        goals=["dev"],
-        variables={**_FRAGMENT_DIALS, "LOCAL": " ".join(_LOCAL_SAMPLE)},
-        dry_run=True,
-    )
-    if dev.returncode != 0:
-        detail = dev.stderr.strip() or dev.stdout.strip()
-        return ([f"`make -n dev LOCAL=...` failed:\n{detail}"], made)
-    lines = _dev_compose_files(output=dev.stdout)
-    for label in sorted(_DEV_SUBCOMMANDS):
-        made += 1
-        occurrences = lines.get(label)
-        if not (occurrences):
-            failures.append(
-                f"`make -n dev LOCAL=...` printed no `docker compose ... {label}` line"
+    failures = []
+    compared = set()
+    # The TLS precheck reads the pair with openssl, so it has to be a real one.
+    proxy_tls.throwaway_pair(directory=_DEV_PATH_CERT_DIR)
+    # The precheck also asks the daemon which subnets are taken. A stack this host happens to run must not decide a static check, so a stub docker answers that none are.
+    _DEV_PATH_BIN_DIR.mkdir(exist_ok=True, parents=True)
+    stub = _DEV_PATH_BIN_DIR / "docker"
+    stub.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8", newline="\n")
+    stub.chmod(0o755)
+    try:
+        for run, overrides in sorted(_DEV_PATH_RUNS.items()):
+            run_failures, run_made, run_compared = _dev_run_failures(
+                bin_dir=_DEV_PATH_BIN_DIR,
+                declared=declared,
+                run=run,
+                variables={**_FRAGMENT_DIALS, **overrides},
             )
-            continue
-        for files in occurrences:
-            made += 1
-            missing = sorted(want - set(files))
-            if missing:
-                failures.append(
-                    f"`make dev LOCAL=...` runs its {label} without {', '.join(missing)} -- "
-                    "the COMPOSE_FILE chain carries them and this path does not, so every "
-                    "dial they hold is ignored on it"
-                )
+            failures += run_failures
+            made += run_made
+            compared |= run_compared
+    finally:
+        shutil.rmtree(_DEV_PATH_CERT_DIR, ignore_errors=True)
+        shutil.rmtree(_DEV_PATH_BIN_DIR, ignore_errors=True)
+    made += 1
+    if not (failures) and compared != declared:
+        failures.append(
+            f"no `make -n dev` run chains {', '.join(sorted(declared - compared))}, so "
+            "its dev path is never compared"
+        )
     return failures, made
 
 
@@ -1667,6 +1867,17 @@ def main() -> int:
     _print(
         msg=f"All {log_made} service(s) on the fluentd driver queue their lines and "
         "wait for the collector's ack"
+    )
+
+    tls_failures, tls_made = _proxy_tls_failures(env=env)
+    for message in tls_failures:
+        _print(msg=f"FAIL {message}")
+    if tls_failures:
+        return 1
+    _print(
+        msg="Console TLS changes nothing while off; on, it moves both proxies onto "
+        "their TLS configs and the certificate and trusts dfe-proxy's pinned address "
+        f"alone ({tls_made} sides)"
     )
 
     volume_failures, volume_made = _image_volume_failures(env=env)

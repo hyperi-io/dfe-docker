@@ -96,6 +96,9 @@ docker:
   ## means they all assume localhost. Set it to a real hostname on anything but
   ## a workstation.
   external_origin: ""
+  ## Console TLS: "true" serves the console and HyperDX over https with the certificate in certs/, which OIDC sign-in needs on any hostname but localhost. It needs an https external_origin and auth_enabled "false"; docs/configuration.md has the certificate command.
+  ## (true | false)
+  proxy_tls: "false"
   ## Infra UI authentication. auth_enabled puts an oauth2-proxy in front of each
   ## infra UI, gating on OIDC sign-in AND group membership. It needs an issuer,
   ## so it stays off until a deployment has one. The client SECRET is not a dial

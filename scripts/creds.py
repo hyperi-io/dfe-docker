@@ -55,8 +55,8 @@ from _common import (
     DOTENV_FILE,
     FALSY,
     _dotenv_values,
-    _external_origin,
     _print,
+    _published_url,
     _rel_path,
     write_private,
 )
@@ -102,24 +102,28 @@ _NEXT_STEPS = (
 )
 
 
-def _url(*, values: dict[str, str], port_key: str, default_port: str) -> str:
+def _url(
+    *, default_port: str, port_key: str, proxied: bool = True, values: dict[str, str]
+) -> str:
     """The URL a browser reaches one published UI on.
 
     A deployment that publishes beyond loopback sets DFE_EXTERNAL_ORIGIN, and that
     is the address its operator hands out -- so the summary quotes it rather than
     an address that only resolves on the box the stack runs on.
     """
-    port = values.get(port_key, "").strip() or default_port
-    origin = _external_origin(values=values)
-    if origin:
-        return f"{origin}:{port}"
     # DFE_BIND_SCOPE=all publishes on every address; name the host's own.
     host = (
         "localhost"
         if values.get("DFE_BIND_SCOPE", "").strip() == "all"
         else "127.0.0.1"
     )
-    return f"http://{host}:{port}"
+    return _published_url(
+        default_port=default_port,
+        host=host,
+        port_key=port_key,
+        proxied=proxied,
+        values=values,
+    )
 
 
 def is_dev_posture(environment: str) -> bool:
@@ -186,7 +190,7 @@ def summary_lines(*, values: dict[str, str], reveal: bool = True) -> list[str]:
         "",
         "  DFE access",
         f"    console      {_url(values=values, port_key='DFE_UI_PORT', default_port='3000')}",
-        f"    engine API   {_url(values=values, port_key='DFE_ENGINE_PORT', default_port='8003')}",
+        f"    engine API   {_url(default_port='8003', port_key='DFE_ENGINE_PORT', proxied=False, values=values)}",
     ]
     if password and reveal:
         lines.append(f"    login        {admin} / {password}")
@@ -270,7 +274,9 @@ def summary_markdown(*, values: dict[str, str]) -> str:
     admin_password = values.get(_ADMIN_PASSWORD_KEY, "").strip()
     breakglass_password = values.get(_BREAKGLASS_PASSWORD_KEY, "").strip()
     console = _url(values=values, port_key="DFE_UI_PORT", default_port="3000")
-    api = _url(values=values, port_key="DFE_ENGINE_PORT", default_port="8003")
+    api = _url(
+        default_port="8003", port_key="DFE_ENGINE_PORT", proxied=False, values=values
+    )
     dotenv = _rel_path(path=DOTENV_FILE)
     lines = [
         _SUMMARY_HEADING,

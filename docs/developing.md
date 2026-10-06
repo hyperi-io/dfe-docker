@@ -424,6 +424,7 @@ that is a finding about the console rather than about the pipeline.
 | `make check-hardfail` | asserts an unpinned checkout refuses to resolve instead of pulling `latest` |
 | `make check-dockerfile` | hadolint on `docker/dfe-rust-builder.Dockerfile` |
 | `make check-docs` | asserts every relative link across the README and the five docs resolves |
+| `make check-proxy` | `envoy --mode validate` on both proxy configs and their console TLS variants, on the Envoy the stack pins |
 | `make check-python` | `ruff check` and `ruff format --check` on `scripts/` |
 | `make check-tests` | `pytest scripts/tests` -- unit tests over the credential helpers |
 
@@ -441,6 +442,8 @@ still passes.
 `check-dockerfile` pulls the pinned hadolint image and `check-tests` resolves the
 pinned pytest through `uvx`, so both want a network the first time. The rest need
 none.
+
+`check-proxy` pulls the pinned Envoy image the same way and mints a throwaway P-384 certificate with the host's `openssl` for the TLS variants.
 
 ## Port collisions on a shared dev host
 

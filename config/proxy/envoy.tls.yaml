@@ -1,0 +1,200 @@
+# BEGIN TLS
+# Project:   dfe-docker
+# File:      config/proxy/envoy.tls.yaml
+# Purpose:   dfe-proxy with TLS on the console and the HyperDX embed
+# Language:  Envoy static config
+#
+# License:   BUSL-1.1
+# Copyright: (c) 2026 HYPERI PTY LIMITED
+#
+# docker-compose.tls.yml mounts this in place of envoy.yaml when DFE_PROXY_TLS=true.
+# It is envoy.yaml verbatim plus the blocks between BEGIN TLS and END TLS; scripts/tests/test_proxy_tls_config.py fails on any other difference, so a change to one file goes into both.
+# Both listeners serve TLS only, because every caller of dfe-proxy is a browser.
+# END TLS
+# Project:   dfe-docker
+# File:      config/proxy/envoy.yaml
+# Purpose:   Single-origin reverse proxy fronting dfe-ui + dfe-engine
+# Language:  Envoy static config
+#
+# License:   BUSL-1.1
+# Copyright: (c) 2026 HYPERI PTY LIMITED
+#
+# The dfe-ui image ships a Next.js client that calls the engine with a
+# relative base URL (/api/v1/...), so UI and engine must answer on ONE
+# origin. This proxy provides that origin:
+#    /api/v1/*  -> dfe-engine:8000  (config/schema API)
+#    everything else (UI, /_next, NextAuth /api/auth/*) -> dfe-ui:3000
+#
+# Envoy replaces nginx as THE entrypoint across the product (same proxy the
+# k8s tier runs at its edge): OSS nginx has no free inbound OIDC, while
+# Envoy's oauth2/jwt_authn filters are Apache-2.0. Those auth filters chain
+# in here when an OIDC issuer fronts this origin (the engine as OIDC provider,
+# or an external IdP) -- semantically the same edge policy the k8s
+# SecurityPolicies express.
+#
+# Docker mode never assumes an issuer exists. OIDC is a capability that fronts
+# THIS origin when an issuer is wired, never a requirement any profile inherits;
+# ingest, machine paths, metrics and the datastores stay outside it.
+#
+# STRICT_DNS clusters resolve per refresh via Docker's embedded DNS, so the
+# proxy boots while a backend is down and recovers when it returns (the
+# equivalent of nginx's variable-upstream resolver trick).
+#
+# The embed listener is the ONE HyperDX origin served from here, because the DFE
+# UI iframes it and only this proxy knows the DFE origin to allow. HyperDX's own
+# two origins are config/proxy/hyperdx.yaml on dfe-hyperdx-proxy, so the infra
+# exposure dials govern one service. The browser carries its own engine token to
+# all three -- dfe-ui mirrors the console session into a dfe_token cookie, and
+# cookies ignore ports.
+
+admin:
+  # Local healthcheck surface only -- never published by compose.
+  address:
+    socket_address: { address: 127.0.0.1, port_value: 9901 }
+
+static_resources:
+  listeners:
+    - name: ingress
+      # Unprivileged port; compose maps ${DFE_UI_PORT}:8080.
+      address:
+        socket_address: { address: 0.0.0.0, port_value: 8080 }
+      filter_chains:
+        - filters:
+            - name: envoy.filters.network.http_connection_manager
+              typed_config:
+                "@type": type.googleapis.com/envoy.extensions.filters.network.http_connection_manager.v3.HttpConnectionManager
+                stat_prefix: ingress
+                # Sets X-Forwarded-For / X-Forwarded-Proto from the real peer.
+                use_remote_address: true
+                upgrade_configs:
+                  - upgrade_type: websocket
+                http_filters:
+                  # AUTH SEAM: jwt_authn + oauth2 filters insert here when an
+                  # OIDC issuer fronts this origin (the engine or an external IdP).
+                  # Scope them per-route, never chain-wide: /api/v1 is a machine
+                  # path and must return 401, not a login redirect.
+                  - name: envoy.filters.http.router
+                    typed_config:
+                      "@type": type.googleapis.com/envoy.extensions.filters.http.router.v3.Router
+                route_config:
+                  name: single_origin
+                  virtual_hosts:
+                    - name: dfe
+                      domains: ["*"]
+                      request_headers_to_add:
+                        - header:
+                            key: X-Real-IP
+                            value: "%DOWNSTREAM_REMOTE_ADDRESS_WITHOUT_PORT%"
+                      routes:
+                        # Liveness, answered by the proxy itself so it does not
+                        # depend on a backend. Readiness is envoy's admin
+                        # /ready, which the compose healthcheck drives; a static
+                        # /readyz here would claim a readiness it cannot know.
+                        - match: { path: /livez }
+                          direct_response:
+                            status: 200
+                            body: { inline_string: "ok\n" }
+                        - match: { prefix: /api/v1/ }
+                          route: { cluster: dfe-engine }
+                        - match: { prefix: / }
+                          route: { cluster: dfe-ui }
+          # BEGIN TLS
+          # TLS terminates here because the engine marks its OIDC state and token cookies Secure outside a dev posture and a browser drops a Secure cookie sent over plain http by any host but localhost.
+          # use_remote_address then sends the engine X-Forwarded-Proto: https, which it believes from this proxy's reserved address alone (docker-compose.tls.yml).
+          transport_socket: &console_tls
+            name: envoy.transport_sockets.tls
+            typed_config:
+              "@type": type.googleapis.com/envoy.extensions.transport_sockets.tls.v3.DownstreamTlsContext
+              common_tls_context:
+                tls_params:
+                  tls_minimum_protocol_version: TLSv1_2
+                  tls_maximum_protocol_version: TLSv1_3
+                  # TLS 1.2 only, AEAD only and AES-256-GCM first per the house crypto posture. TLS 1.3 negotiates its own suites.
+                  cipher_suites:
+                    - ECDHE-ECDSA-AES256-GCM-SHA384
+                    - ECDHE-RSA-AES256-GCM-SHA384
+                    - ECDHE-ECDSA-CHACHA20-POLY1305
+                    - ECDHE-RSA-CHACHA20-POLY1305
+                    - ECDHE-ECDSA-AES128-GCM-SHA256
+                    - ECDHE-RSA-AES128-GCM-SHA256
+                  # Hybrid post-quantum first, then P-384, with X25519 and P-256 kept for clients that offer neither.
+                  ecdh_curves:
+                    - X25519MLKEM768
+                    - P-384
+                    - X25519
+                    - P-256
+                tls_certificates:
+                  - certificate_chain:
+                      filename: /etc/envoy/certs/console.crt
+                    private_key:
+                      filename: /etc/envoy/certs/console.key
+          # END TLS
+    # HyperDX compiles `frame-ancestors 'self'` into its build, so dfe-ui cannot
+    # iframe it from another port. Re-state the header on the way out.
+    - name: hyperdx-embed
+      address:
+        socket_address: { address: 0.0.0.0, port_value: 8091 }
+      filter_chains:
+        - filters:
+            - name: envoy.filters.network.http_connection_manager
+              typed_config:
+                "@type": type.googleapis.com/envoy.extensions.filters.network.http_connection_manager.v3.HttpConnectionManager
+                stat_prefix: hyperdx_embed
+                use_remote_address: true
+                upgrade_configs:
+                  - upgrade_type: websocket
+                http_filters:
+                  - name: envoy.filters.http.router
+                    typed_config:
+                      "@type": type.googleapis.com/envoy.extensions.filters.http.router.v3.Router
+                route_config:
+                  name: hyperdx_embed
+                  virtual_hosts:
+                    - name: hyperdx
+                      domains: ["*"]
+                      # OVERWRITE: browsers intersect multiple CSP headers. The
+                      # variable carries the whole space-separated source list,
+                      # which docker-compose.yml builds from the UI's origins.
+                      response_headers_to_add:
+                        - header:
+                            key: Content-Security-Policy
+                            value: "frame-ancestors 'self' %ENVIRONMENT(DFE_HYPERDX_EMBED_ANCESTOR)%"
+                          append_action: OVERWRITE_IF_EXISTS_OR_ADD
+                      routes:
+                        - match: { prefix: / }
+                          route: { cluster: hyperdx }
+          # BEGIN TLS
+          # Same certificate as the console, because an https console framing an http embed is mixed content and the browser blocks it.
+          transport_socket: *console_tls
+          # END TLS
+  clusters:
+    - name: hyperdx
+      type: STRICT_DNS
+      dns_lookup_family: V4_ONLY
+      load_assignment:
+        cluster_name: hyperdx
+        endpoints:
+          - lb_endpoints:
+              - endpoint:
+                  address:
+                    socket_address: { address: hyperdx, port_value: 8090 }
+    - name: dfe-engine
+      type: STRICT_DNS
+      dns_lookup_family: V4_ONLY
+      load_assignment:
+        cluster_name: dfe-engine
+        endpoints:
+          - lb_endpoints:
+              - endpoint:
+                  address:
+                    socket_address: { address: dfe-engine, port_value: 8000 }
+    - name: dfe-ui
+      type: STRICT_DNS
+      dns_lookup_family: V4_ONLY
+      load_assignment:
+        cluster_name: dfe-ui
+        endpoints:
+          - lb_endpoints:
+              - endpoint:
+                  address:
+                    socket_address: { address: dfe-ui, port_value: 3000 }
