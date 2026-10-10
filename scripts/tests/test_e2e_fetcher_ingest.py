@@ -9,9 +9,10 @@
 """The e2e fetcher tests post to an ingest endpoint their config turns on.
 
 dfe-fetcher leaves ingest off unless configured, and a test on a config that
-leaves it off gets no answer to any POST. The stack configs keep it off, so
-`make dev` publishes no unauthenticated ingest. A text read, because these
-tests run with no PyYAML.
+leaves it off gets no answer to any POST. It also refuses to start an ingest
+listener with no token unless the config allows that, and the suite posts with
+none. The stack configs keep ingest off, so `make dev` publishes no
+unauthenticated ingest. A text read, because these tests run with no PyYAML.
 """
 
 from pathlib import Path
@@ -22,8 +23,8 @@ from _common import CONFIG_DIR, REPO_ROOT, SERVICE_PROFILES_FILE
 _E2E_TESTS = REPO_ROOT / "tests" / "e2e" / "e2e-tests.yaml"
 
 
-def _ingest_enabled(path: Path) -> bool:
-    """Return whether a fetcher config sets `ingest.enabled: true`."""
+def _ingest_sets(path: Path, flag: str) -> bool:
+    """Return whether a fetcher config sets `ingest.<flag>: true`."""
     in_ingest = False
     for raw in path.read_text(encoding="utf-8").splitlines():
         line = raw.strip()
@@ -31,9 +32,14 @@ def _ingest_enabled(path: Path) -> bool:
             continue
         if not (raw.startswith((" ", "\t"))):
             in_ingest = line == "ingest:"
-        elif in_ingest and line == "enabled: true":
+        elif in_ingest and line == f"{flag}: true":
             return True
     return False
+
+
+def _ingest_enabled(path: Path) -> bool:
+    """Return whether a fetcher config sets `ingest.enabled: true`."""
+    return _ingest_sets(path, "enabled")
 
 
 def _e2e_tests() -> dict[str, dict[str, str]]:
@@ -93,6 +99,23 @@ def test_every_fetcher_ingest_test_runs_a_config_with_ingest_on() -> None:
 
     assert tests
     assert off == {}, "ingest is off in the fetcher config these tests post to"
+
+
+def test_every_e2e_ingest_config_lets_the_suite_post_without_a_token() -> None:
+    configs = [
+        path
+        for path in (REPO_ROOT / "tests" / "e2e" / "config").glob("fetcher-*.yaml")
+        if _ingest_enabled(path)
+    ]
+
+    refused = sorted(
+        path.name
+        for path in configs
+        if not (_ingest_sets(path, "allow_unauthenticated"))
+    )
+
+    assert configs
+    assert refused == [], "dfe-fetcher refuses an open ingest listener in these"
 
 
 def test_no_stack_fetcher_config_turns_ingest_on() -> None:

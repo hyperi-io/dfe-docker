@@ -9,7 +9,8 @@
 """The e2e HTTP checks follow the ports compose publishes the stack on.
 
 A literal port in a check URL probes whatever holds that port, which beside
-another stack on the same daemon is the other stack.
+another stack on the same daemon is the other stack. A literal scheme and host
+probes plain http on localhost, which console TLS no longer answers.
 """
 
 import re
@@ -55,3 +56,12 @@ def test_no_check_url_names_a_literal_local_port() -> None:
 
     assert urls
     assert literal == []
+
+
+def test_every_check_url_is_on_the_console_url_the_suite_resolves() -> None:
+    urls = re.findall(r"url:\s*(\S+)", _CHECKS.read_text(encoding="utf-8"))
+
+    elsewhere = [url for url in urls if not (url.startswith("${DFE_UI_URL}/"))]
+
+    assert urls
+    assert elsewhere == []

@@ -13,6 +13,7 @@ Most of them are parse-time `$(error)`s, reachable from a copy of the Makefile i
 
 import json
 import os
+import re
 import shutil
 import subprocess
 from pathlib import Path
@@ -26,7 +27,6 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 # The sentences each guard is recognised by, quoted from the Makefile and scripts/proxy_tls.py.
 _AUTH = "cannot start with the auth profile"
 _BARE_CERT_DIR = "must be a path starting with"
-_E2E = "Turn DFE_PROXY_TLS off for e2e"
 _HTTP_HYPERDX = "DFE_HYPERDX_APP_URL must start with https://"
 _HTTP_ORIGIN = "DFE_EXTERNAL_ORIGIN must start with https://"
 _MISSING_CERT = "needs the certificate ./certs/console.crt"
@@ -42,7 +42,6 @@ _UNREADABLE_KEY = "./certs/console.key exists but"
 _GUARDS = (
     _AUTH,
     _BARE_CERT_DIR,
-    _E2E,
     _HTTP_HYPERDX,
     _HTTP_ORIGIN,
     _MISSING_CERT,
@@ -68,8 +67,11 @@ _GUARDED_GOALS = [
     "test-source",
     "test-flows",
 ]
+# The e2e suites, which start a stack per test and join ORIGIN_GOALS under console TLS only.
+_E2E_GOALS = ["test-e2e", "test-resilience"]
+_TLS_START_GOALS = _GUARDED_GOALS + _E2E_GOALS
 # The goals that recreate services on the live network with no `make down` first.
-_REUSE_GOALS = ["apply", "apply-services", "infra"]
+_REUSE_GOALS = ["apply", "apply-services", "infra", *_E2E_GOALS]
 # Stopping a stack, checking a file and reading the chain must work whatever TLS needs.
 _UNGUARDED_GOALS = [
     "down",
@@ -193,7 +195,7 @@ def makefile(tmp_path: Path) -> Path:
     return tmp_path
 
 
-@pytest.mark.parametrize("goal", _GUARDED_GOALS)
+@pytest.mark.parametrize("goal", _TLS_START_GOALS)
 def test_a_prepared_start_passes_every_guard(goal: str, makefile: Path) -> None:
     result = _make(cwd=makefile, goal=goal, **_TLS_ON)
 
@@ -201,7 +203,7 @@ def test_a_prepared_start_passes_every_guard(goal: str, makefile: Path) -> None:
     assert not ([guard for guard in _GUARDS if guard in result.stderr])
 
 
-@pytest.mark.parametrize("goal", _GUARDED_GOALS)
+@pytest.mark.parametrize("goal", _TLS_START_GOALS)
 def test_a_missing_certificate_stops_the_start(goal: str, makefile: Path) -> None:
     (makefile / "certs" / "console.crt").unlink()
 
@@ -268,12 +270,13 @@ def test_a_cert_dir_that_is_no_directory_stops_the_start(
     assert said in result.stderr
 
 
+@pytest.mark.parametrize("goal", ["ci", *_E2E_GOALS])
 @pytest.mark.parametrize("origin", ["", "http://dfe.example.test"])
 def test_an_origin_that_is_not_https_stops_the_start(
-    makefile: Path, origin: str
+    goal: str, makefile: Path, origin: str
 ) -> None:
     result = _make(
-        cwd=makefile, goal="ci", **{**_TLS_ON, "DFE_EXTERNAL_ORIGIN": origin}
+        cwd=makefile, goal=goal, **{**_TLS_ON, "DFE_EXTERNAL_ORIGIN": origin}
     )
 
     assert result.returncode != 0
@@ -304,7 +307,7 @@ def test_a_hyperdx_url_must_be_https_when_set(
     assert (result.returncode != 0) == refused
 
 
-@pytest.mark.parametrize("goal", _GUARDED_GOALS)
+@pytest.mark.parametrize("goal", _TLS_START_GOALS)
 def test_the_auth_profile_stops_the_start(goal: str, makefile: Path) -> None:
     _resolve_auth(auth=True, cwd=makefile)
 
@@ -383,12 +386,64 @@ def test_goals_that_run_down_first_may_meet_the_old_network(
     assert _STALE_NETWORK not in result.stderr
 
 
-@pytest.mark.parametrize("goal", ["test-e2e", "test-resilience"])
-def test_the_e2e_suite_refuses_console_tls(goal: str, makefile: Path) -> None:
+def _e2e_chain(*, stdout: str) -> list[str]:
+    """Return the compose files a dry-run e2e recipe hands the suite, in order."""
+    match = re.search(r"DFE_E2E_COMPOSE_FILES='([^']*)'", stdout)
+    assert match, stdout
+    return [name for name in match.group(1).split(":") if name]
+
+
+@pytest.mark.parametrize("goal", _E2E_GOALS)
+def test_the_e2e_suites_start_on_the_tls_chain(goal: str, makefile: Path) -> None:
     result = _make(cwd=makefile, goal=goal, **_TLS_ON)
 
-    assert result.returncode != 0
-    assert _E2E in result.stderr
+    assert result.returncode == 0, result.stderr
+    assert _e2e_chain(stdout=result.stdout) == ["docker-compose.tls.yml"]
+
+
+@pytest.mark.parametrize("goal", _E2E_GOALS)
+def test_the_e2e_suites_take_the_exposure_opt_outs_under_tls(
+    goal: str, makefile: Path
+) -> None:
+    result = _make(
+        cwd=makefile, goal=goal, **{**_TLS_ON, "DFE_INFRA_UIS_EXTERNAL": "false"}
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert _e2e_chain(stdout=result.stdout) == [
+        "docker-compose.unpublish-kafbat.yml",
+        "docker-compose.unpublish-hyperdx.yml",
+        "docker-compose.tls.yml",
+    ]
+
+
+@pytest.mark.parametrize("goal", _E2E_GOALS)
+def test_the_e2e_suites_keep_their_own_files_with_the_dial_off(
+    goal: str, makefile: Path
+) -> None:
+    shutil.rmtree(makefile / "certs")
+
+    result = _make(
+        cwd=makefile,
+        goal=goal,
+        DFE_EXTERNAL_ORIGIN="http://dfe.example.test",
+        DFE_INFRA_UIS_EXTERNAL="false",
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert _e2e_chain(stdout=result.stdout) == []
+
+
+@pytest.mark.parametrize("tls", ["true", "false"])
+def test_the_operators_e2e_files_come_last(makefile: Path, tls: str) -> None:
+    result = _make(
+        cwd=makefile,
+        goal="test-e2e",
+        **{**_TLS_ON, "DFE_E2E_COMPOSE_FILES": "rename.yml", "DFE_PROXY_TLS": tls},
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert _e2e_chain(stdout=result.stdout)[-1] == "rename.yml"
 
 
 @pytest.mark.parametrize("goal", ["ci", "down", "help"])

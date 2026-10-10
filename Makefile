@@ -164,6 +164,11 @@ endif
 # goals are exempt for the reason BOOTSTRAP_GOALS gives: needing a key to stop a
 # stack, or to check a file, is a lockout.
 ORIGIN_GOALS := dev ci up apply infra post test-source test-flows
+# The e2e suites start a stack per test and probe the console at DFE_EXTERNAL_ORIGIN's host under console TLS, so there they need what a start goal needs.
+E2E_GOALS := test-e2e test-resilience
+ifeq ($(strip $(DFE_PROXY_TLS)),true)
+    ORIGIN_GOALS += $(E2E_GOALS)
+endif
 # Origins a browser on another machine cannot use; scripts/_common.py keeps the
 # same set for the helpers that read the key.
 LOOPBACK_ORIGINS := http://localhost https://localhost http://127.0.0.1 https://127.0.0.1
@@ -298,10 +303,6 @@ ifeq ($(strip $(DFE_PROXY_TLS)),true)
     export DFE_PROXY_IP := $(word 1,$(PROXY_NETWORK))
     export DFE_NETWORK_IP_RANGE := $(word 2,$(PROXY_NETWORK))
     $(eval $(call chain_fragment,docker-compose.tls.yml))
-    # The e2e suite probes the console at http://localhost, which a TLS-only proxy never answers.
-    ifneq (,$(filter test-e2e test-resilience,$(MAKECMDGOALS)))
-        $(error The e2e suite probes the console over plain http://localhost:DFE_UI_PORT, which DFE_PROXY_TLS=true no longer answers. Turn DFE_PROXY_TLS off for e2e)
-    endif
 endif
 
 # Only the start goals need the certificate, for the reason ORIGIN_GOALS gives. The auth refusal is in the .profile.mk recipe instead, because it reads DFE_AUTH_RESOLVED and this pass may still hold the previous run's.
@@ -317,8 +318,8 @@ ifneq ($(PROXY_TLS_START),)
     endif
 endif
 
-# These goals recreate services on the network that already exists with no `make down` first. Docker cannot re-address a live network, so a stack whose network predates a DFE_PROXY_TLS flip would leave every recreated service Exited.
-NETWORK_REUSE_GOALS := apply apply-services infra
+# These goals recreate services on the network that already exists with no `make down` first; the e2e suites keep ClickHouse, and so its network, between tests. Docker cannot re-address a live network, so a stack whose network predates a DFE_PROXY_TLS flip would leave every recreated service Exited.
+NETWORK_REUSE_GOALS := apply apply-services infra $(E2E_GOALS)
 PROXY_NETWORK_REUSE := $(filter $(NETWORK_REUSE_GOALS),$(or $(MAKECMDGOALS),help))
 # Compose names the default network after the project, which is COMPOSE_PROJECT_NAME or this directory.
 PROXY_PROJECT := $(or $(strip $(COMPOSE_PROJECT_NAME)),$(notdir $(CURDIR)))
@@ -642,15 +643,18 @@ check-proxy: ## Validate the Envoy proxy configs, plain and TLS, on the pinned E
 # Testing
 # ---------------------------------------------------------------------------
 
+# The suite starts each test's stack from its own -f list. Under console TLS that stack needs the TLS fragment and the network it pins, so the suite takes every fragment `make ci` chains, the exposure opt-outs and container logs included; with TLS off it keeps its own list. DFE_E2E_COMPOSE_FILES follows either way, and the suite skips the empty entries the colons leave.
+E2E_COMPOSE_FILES = $(if $(filter true,$(strip $(DFE_PROXY_TLS))),$(UI_CHAIN)):$(strip $(DFE_E2E_COMPOSE_FILES))
+
 .PHONY: test-e2e
 test-e2e: ## End-to-end test executor (pass test names via E2E_TESTS)
-	@python3 ./scripts/test_e2e.py $(E2E_TESTS)
+	@DFE_E2E_COMPOSE_FILES='$(E2E_COMPOSE_FILES)' python3 ./scripts/test_e2e.py $(E2E_TESTS)
 
 # Opt-in, never part of test-e2e: each test stops a backing service or a DFE app
 # under load.
 .PHONY: test-resilience
 test-resilience: ## Outage tests: stop a service under load and prove the rest survives (pass test names via E2E_TESTS)
-	@python3 ./scripts/test_e2e.py --outages $(E2E_TESTS)
+	@DFE_E2E_COMPOSE_FILES='$(E2E_COMPOSE_FILES)' python3 ./scripts/test_e2e.py --outages $(E2E_TESTS)
 
 .PHONY: test-flows
 test-flows: ## Flow shapes against a running stack (needs DFE_ENGINE_REPO; FLOW_ARGS passes flags)
