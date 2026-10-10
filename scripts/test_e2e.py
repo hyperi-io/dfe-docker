@@ -2963,13 +2963,13 @@ def open_console(ctx, test):
         except _console_tls.ConsoleTrustError as problem:
             mark_fail(ctx, f"[{test.name}] {problem}")
             return None
-        trusted = (
+        anchors = (
             os.environ.get(_console_tls.CA_BUNDLE_VAR, "").strip()
-        ) or "the system trust store"
+        ) or "the system store"
         mark_pass(
             ctx,
             f"[{test.name}] {DFE_UI_URL} presents a certificate that verifies "
-            f"against {trusted}",
+            f"against {anchors}",
         )
     try:
         console = _search_rule.Console(
