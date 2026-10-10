@@ -34,7 +34,7 @@ registry: ghcr.io/hyperi-io
 version:
   ## Pinned release -- written to DFE_STACK_VERSION, which `make stack` pins the
   ## whole certified set from. An explicit `make stack VERSION=...` still wins.
-  pin: 2.2.1-rc.4
+  pin: 2.2.1-rc.5
   ## Track-latest instead: comment out `pin` above and use these. The daemon owns
   ## the roll; leave DFE_STACK_VERSION unset.
   # track: latest
