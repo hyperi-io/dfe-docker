@@ -94,13 +94,16 @@ The engine builds the callback URL from `X-Forwarded-Proto`, which it believes f
 
 Turning `DFE_PROXY_TLS` on or off on a running stack needs `make down` first, because Docker cannot re-address a live network. `make up`, `make ci` and `make dev` stop the stack themselves; `make apply` and `make infra` refuse until you do.
 
-The e2e suite probes the console over plain http, so `make test-e2e` and `make test-resilience` refuse while the dial is on.
+`make test-e2e` and `make test-resilience` run under the dial too, with the same prechecks as a start. Each test's stack chains the fragments `make ci` does, so the exposure opt-outs and container logs apply to it as well. The suite probes the console at `https://<DFE_EXTERNAL_ORIGIN host>:<DFE_UI_PORT>` and verifies its certificate by chain and by name, never with verification off.
+
+A certificate from a public CA verifies against the system trust store. For a private CA, set `DFE_PROXY_CA_BUNDLE` to a PEM file holding the CA chain that signed `console.crt`. Chrome takes no CA bundle, so the browser steps are pinned to the public key of the certificate that check has just verified.
 
 | Variable                                         | Use                                                                                  | Default                                                             |
 |--------------------------------------------------|--------------------------------------------------------------------------------------|---------------------------------------------------------------------|
 | `DFE_PROXY_TLS`                                  | Serve the console and HyperDX over TLS (`true`\|`false`)                              | `false`                                                             |
 | `DFE_PROXY_CERT_DIR`                             | Directory holding `console.crt` and `console.key`; a path starting `/`, `./` or `../` | `./certs`                                                           |
 | `DFE_NETWORK_SUBNET`                             | Compose network under TLS, private and `/16` to `/24`; dfe-proxy takes its last host  | `10.207.0.0/24`                                                     |
+| `DFE_PROXY_CA_BUNDLE`                            | PEM CA chain the e2e suites verify the console certificate against                   | unset: the system trust store                                       |
 
 ### Infra UI authentication (opt-in)
 

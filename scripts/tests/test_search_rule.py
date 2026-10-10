@@ -9,8 +9,9 @@
 """The half of the search-rule-hunt e2e test that needs no browser and no stack.
 
 What the search bar gets, how the rule id is read off the page Create Rule opens,
-the hunt name the console's form accepts, and the fragments a stored rule has to
-carry. The browser steps themselves run only against a stack.
+the hunt name the console's form accepts, how a form field is found by its label,
+and the fragments a stored rule has to carry. The browser steps themselves run
+only against a stack.
 """
 
 import re
@@ -92,6 +93,20 @@ def test_a_stored_where_names_every_fragment_it_dropped() -> None:
         where, ["run-1", "login_failure", "user_name", "'root'"]
     ) == ["user_name", "'root'"]
     assert _search_rule.missing_fragments(where, ["run-1"]) == []
+
+
+@pytest.mark.parametrize(
+    "accessible_name", ["Username", "* Username", "Username *", "*Username"]
+)
+def test_a_field_is_found_with_its_required_marker_on_either_side(
+    accessible_name: str,
+) -> None:
+    assert _search_rule._label("Username").match(accessible_name)
+
+
+@pytest.mark.parametrize("accessible_name", ["Username hint", "New Username", ""])
+def test_a_field_with_another_label_is_not_found(accessible_name: str) -> None:
+    assert not (_search_rule._label("Username").match(accessible_name))
 
 
 def test_the_suite_defines_a_search_rule_test_with_both_filters() -> None:

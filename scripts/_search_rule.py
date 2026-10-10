@@ -33,6 +33,21 @@ QUERY_TIMEOUT_MS = 60_000
 # A checkbox click registers at once, so one that has not shows within this.
 FILTER_CHECKED_TIMEOUT_MS = 3_000
 FILTER_CLICK_ATTEMPTS = 5
+# A nested group renders only the rows near its viewport, so a sub-path is sought one screen at a time, wrapping while facets stream in.
+NESTED_SCROLL_STEPS = 30
+NESTED_SCROLL_WAIT_MS = 2_000
+# Scrolls a nested group's list down one screen, or back to the top from its end.
+_SCROLL_NESTED_LIST = """panel => {
+    const box = [...panel.querySelectorAll("div")].find(
+        (el) => getComputedStyle(el).overflowY === "auto"
+    );
+    if (!box) {
+        return false;
+    }
+    const atEnd = box.scrollTop + box.clientHeight >= box.scrollHeight - 1;
+    box.scrollTop = atEnd ? 0 : box.scrollTop + box.clientHeight;
+    return true;
+}"""
 LOCAL_LOGIN_TAB = "Login with Local"
 SEARCH_PATH = "/observe/search"
 # The HyperDX route Create Rule posts to, which forwards the engine's answer.
@@ -109,8 +124,8 @@ def missing_fragments(where_clause: str, fragments: list[str]) -> list[str]:
 
 
 def _label(name: str) -> re.Pattern[str]:
-    """Match a form field by label, with or without the required marker beside it."""
-    return re.compile(rf"^\s*{re.escape(name)}\s*\*?\s*$")
+    """Match a form field by label, with or without the required marker on either side of it."""
+    return re.compile(rf"^\s*\*?\s*{re.escape(name)}\s*\*?\s*$")
 
 
 @dataclass(frozen=True, slots=True)
@@ -145,7 +160,9 @@ class SearchRule:
 class Console:
     """One signed-in browser session on the console, closed by `close`."""
 
-    def __init__(self, *, ui_url: str, shots_dir: Path, headed: bool) -> None:
+    def __init__(
+        self, *, ui_url: str, shots_dir: Path, headed: bool, trusted_spki: str = ""
+    ) -> None:
         try:
             from playwright.sync_api import Error, expect, sync_playwright
         except ModuleNotFoundError as error:
@@ -159,9 +176,15 @@ class Console:
         self.shots_dir.mkdir(parents=True, exist_ok=True)
         self.shots: list[Path] = []
         self._playwright = sync_playwright().start()
+        # Chrome takes no CA bundle, so it trusts the key of the leaf the suite has verified by chain and name.
+        args = (
+            [f"--ignore-certificate-errors-spki-list={trusted_spki}"]
+            if trusted_spki
+            else []
+        )
         try:
             self._browser = self._playwright.chromium.launch(
-                channel="chrome", headless=not (headed)
+                args=args, channel="chrome", headless=not (headed)
             )
         except Exception as error:
             self._playwright.stop()
@@ -258,17 +281,31 @@ class Console:
         sub_path = group.get_by_text(
             re.compile(rf"^{re.escape(path)}(\s*\(\d+\))?$")
         ).first
+        panel = group.get_by_test_id("nested-filter-group-panel")
+        for _ in range(NESTED_SCROLL_STEPS):
+            try:
+                sub_path.wait_for(state="visible", timeout=NESTED_SCROLL_WAIT_MS)
+                break
+            except self._browser_error:
+                if not (panel.evaluate(_SCROLL_NESTED_LIST)):
+                    break
         sub_path.wait_for(state="visible", timeout=QUERY_TIMEOUT_MS)
         sub_path.click()
         box = frame.get_by_test_id(f"filter-checkbox-{path}-{value}-input")
         box.wait_for(state="attached", timeout=QUERY_TIMEOUT_MS)
+        # The applied filter shows as a pill in the search bar, while the checkbox can re-render away as the list re-measures.
+        pill = frame.get_by_text(f"{JSON_COLUMN}.{path} = {value}")
         # Facet values stream in and re-render, which can drop a single click.
         for _ in range(FILTER_CLICK_ATTEMPTS):
-            if not (box.is_checked()):
-                box.scroll_into_view_if_needed()
-                box.click()
             try:
-                self._expect(box).to_be_checked(timeout=FILTER_CHECKED_TIMEOUT_MS)
+                if not (box.is_checked(timeout=FILTER_CHECKED_TIMEOUT_MS)):
+                    box.scroll_into_view_if_needed(timeout=FILTER_CHECKED_TIMEOUT_MS)
+                    box.click(timeout=FILTER_CHECKED_TIMEOUT_MS)
+            except self._browser_error:
+                # A checkbox the list re-rendered away is tried again on the next pass.
+                pass
+            try:
+                self._expect(pill).to_be_visible(timeout=FILTER_CHECKED_TIMEOUT_MS)
                 return
             except AssertionError:
                 continue

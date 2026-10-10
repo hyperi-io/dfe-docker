@@ -16,3 +16,5 @@ output:
 
 ingest:
   enabled: true
+  # The suite posts with no token, and the fetcher refuses an open listener unless this says so.
+  allow_unauthenticated: true

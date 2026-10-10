@@ -17,10 +17,12 @@
 #    LOG_LEVEL=debug ./scripts/test-e2e.py                       # Verbose service logs
 
 import argparse
+import functools
 import json
 import logging
 import os
 import secrets
+import ssl
 import subprocess
 import sys
 import tempfile
@@ -49,6 +51,7 @@ from urllib.error import HTTPError, URLError
 from urllib.parse import quote
 from urllib.request import Request, urlopen
 
+import _console_tls
 import _detection
 import _outage
 import _search_rule
@@ -127,6 +130,9 @@ EXTRA_COMPOSE_FILES_ENV_VAR = "DFE_E2E_COMPOSE_FILES"
 # ------------------------------------------------------------------------------
 SCHEMA_AUTHORITY_SERVICE = "dfe-engine"
 SCHEMA_AUTHORITY_PROFILE = "core"
+# Two-second attempts: the engine restores its accounts and reconciles ClickHouse
+# RBAC before it listens, which can outlast 90 seconds.
+ENGINE_READY_ATTEMPTS = 90
 # resolve_profile.py's `core` footprint, less dfe-engine, which starts first.
 HUNT_RUNNER_SERVICE = "dfe-hunt-runner"
 CORE_SURFACE_SERVICES = [HUNT_RUNNER_SERVICE, "dfe-ui", "dfe-proxy"]
@@ -202,8 +208,11 @@ DFE_RECEIVER_INGEST_URL = env_or(
     "DFE_RECEIVER_INGEST_URL",
     f"http://localhost:{env_or('DFE_RECEIVER_HTTP_PORT', '8080')}/ingest",
 )
-# dfe-proxy's port, which serves the console and the HyperDX it embeds.
-DFE_UI_URL = env_or("DFE_UI_URL", f"http://localhost:{env_or('DFE_UI_PORT', '3000')}")
+# dfe-proxy's port, which serves the console and the HyperDX it embeds: http on
+# localhost, or https at DFE_EXTERNAL_ORIGIN's host under console TLS.
+DFE_UI_URL = _console_tls.console_url(environ=os.environ)
+# The HTTP checks in the test definitions name it as ${DFE_UI_URL}.
+os.environ[_console_tls.UI_URL_VAR] = DFE_UI_URL
 TEST_CONFIG = Path(
     os.environ.get("TEST_CONFIG", str(PROJECT_DIR / "tests" / "e2e" / "e2e-tests.yaml"))
 )
@@ -452,6 +461,16 @@ def ch_query(sql):
     except Exception as e:
         LOGGER.debug(f"ClickHouse query failed. Error message: {e}")
         return ""
+
+
+# ------------------------------------------------------------------------------
+# Console Context
+# - Verifies the console's certificate by chain and by name, or None over plain
+#   http. Raises ConsoleTrustError for a CA bundle that does not load.
+# ------------------------------------------------------------------------------
+@functools.cache
+def console_context():
+    return _console_tls.tls_context(environ=os.environ, url=DFE_UI_URL)
 
 
 # ==============================================================================
@@ -839,7 +858,11 @@ def stack_up(mode, test, services):
             f"Schema authority failed to start: {filtered if (filtered) else (authority_result.stderr or authority_result.stdout)}"
         )
         return False
-    if not (wait_for_service("dfe-engine", DFE_ENGINE_HEALTH_URL, max_attempts=45)):
+    if not (
+        wait_for_service(
+            "dfe-engine", DFE_ENGINE_HEALTH_URL, max_attempts=ENGINE_READY_ATTEMPTS
+        )
+    ):
         return False
 
     # Kafka profiles: bring up infra first, create topics, then start the full profile.
@@ -1602,12 +1625,23 @@ def verify_http(ctx, test_name, checks):
         want = int(check.get("status", 200))
         needle = check.get("contains", "")
         try:
-            with urlopen(Request(url), timeout=15) as response:
+            with urlopen(
+                Request(url), timeout=15, context=console_context()
+            ) as response:
                 got = response.status
                 body = response.read().decode("utf-8", errors="replace")
         except HTTPError as error:
             got, body = error.code, ""
-        except (URLError, OSError) as error:
+        except URLError as error:
+            if isinstance(error.reason, ssl.SSLCertVerificationError):
+                problem = _console_tls.trust_problem(
+                    environ=os.environ, error=error.reason, url=url
+                )
+                mark_fail(ctx, f"[{test_name}] {problem}")
+            else:
+                mark_fail(ctx, f"[{test_name}] {url} unreachable: {error}")
+            continue
+        except OSError as error:
             mark_fail(ctx, f"[{test_name}] {url} unreachable: {error}")
             continue
 
@@ -2918,9 +2952,28 @@ def open_console(ctx, test):
     )
     headed = os.environ.get(HEADED_ENV_VAR, "").strip().lower() not in FALSY
     username, _, password = post._console_credential()
+    pin = ""
+    context = console_context()
+    if context is not None:
+        try:
+            certificate = _console_tls.verify_console(
+                context=context, environ=os.environ, url=DFE_UI_URL
+            )
+            pin = _console_tls.chrome_pin(certificate=certificate)
+        except _console_tls.ConsoleTrustError as problem:
+            mark_fail(ctx, f"[{test.name}] {problem}")
+            return None
+        anchors = (
+            os.environ.get(_console_tls.CA_BUNDLE_VAR, "").strip()
+        ) or "the system store"
+        mark_pass(
+            ctx,
+            f"[{test.name}] {DFE_UI_URL} presents a certificate that verifies "
+            f"against {anchors}",
+        )
     try:
         console = _search_rule.Console(
-            ui_url=DFE_UI_URL, shots_dir=shots_dir, headed=headed
+            ui_url=DFE_UI_URL, shots_dir=shots_dir, headed=headed, trusted_spki=pin
         )
     except _search_rule.ConsoleError as error:
         mark_fail(ctx, f"[{test.name}] {error}")
@@ -3384,12 +3437,20 @@ def main():
     print(f"Run ID:     {RUN_ID}")
     print(f"Log level:  {LOG_LEVEL}")
     print(f"Start Time: {start_time.strftime('%Y-%m-%dT%H:%M:%S%z')}")
+    print(f"Console:    {DFE_UI_URL}")
     print()
     print("============================================================")
 
     # Ensure required commands are available. Not curl -- this harness speaks HTTP
     # through urllib and has not shelled out to curl for some time.
     require_command("docker")
+
+    # A CA bundle that cannot load fails every console check alike, so it stops
+    # the run before any stack starts.
+    try:
+        console_context()
+    except _console_tls.ConsoleTrustError as problem:
+        error(str(problem))
 
     # Confirm test configuration file exists and load it
     if not (TEST_CONFIG.exists()):
