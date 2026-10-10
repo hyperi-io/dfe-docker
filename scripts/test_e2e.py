@@ -212,7 +212,7 @@ DFE_RECEIVER_INGEST_URL = env_or(
 # localhost, or https at DFE_EXTERNAL_ORIGIN's host under console TLS.
 DFE_UI_URL = _console_tls.console_url(environ=os.environ)
 # The HTTP checks in the test definitions name it as ${DFE_UI_URL}.
-os.environ[_console_tls.UI_URL_KEY] = DFE_UI_URL
+os.environ[_console_tls.UI_URL_VAR] = DFE_UI_URL
 TEST_CONFIG = Path(
     os.environ.get("TEST_CONFIG", str(PROJECT_DIR / "tests" / "e2e" / "e2e-tests.yaml"))
 )
@@ -2964,7 +2964,7 @@ def open_console(ctx, test):
             mark_fail(ctx, f"[{test.name}] {problem}")
             return None
         trusted = (
-            os.environ.get(_console_tls.CA_BUNDLE_KEY, "").strip()
+            os.environ.get(_console_tls.CA_BUNDLE_VAR, "").strip()
         ) or "the system trust store"
         mark_pass(
             ctx,

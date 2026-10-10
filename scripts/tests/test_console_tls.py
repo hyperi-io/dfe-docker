@@ -206,6 +206,7 @@ def test_with_no_bundle_the_system_store_verifies_chain_and_name() -> None:
     assert context is not None
     assert context.verify_mode == ssl.CERT_REQUIRED
     assert context.check_hostname is True
+    assert context.minimum_version == ssl.TLSVersion.TLSv1_2
 
 
 def test_a_bundle_that_is_no_file_names_the_variable(tmp_path: Path) -> None:

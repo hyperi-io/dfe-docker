@@ -28,8 +28,8 @@ from urllib.parse import urlsplit
 
 from _common import PROXY_TLS_KEY, _published_url
 
-CA_BUNDLE_KEY = "DFE_PROXY_CA_BUNDLE"
-UI_URL_KEY = "DFE_UI_URL"
+CA_BUNDLE_VAR = "DFE_PROXY_CA_BUNDLE"
+UI_URL_VAR = "DFE_UI_URL"
 # OpenSSL's X509_V_ERR_* codes for the failures that need advice other than a CA bundle.
 _NOT_YET_VALID = 9
 _EXPIRED = 10
@@ -49,7 +49,7 @@ def console_url(*, environ: typing.Mapping[str, str]) -> str:
 
     Plain http is http://localhost:<DFE_UI_PORT>. Under console TLS it is https at DFE_EXTERNAL_ORIGIN's host, the name the certificate carries.
     """
-    explicit = environ.get(UI_URL_KEY, "").strip().rstrip("/")
+    explicit = environ.get(UI_URL_VAR, "").strip().rstrip("/")
     if explicit:
         return explicit
     if environ.get(PROXY_TLS_KEY, "").strip() != "true":
@@ -74,19 +74,23 @@ def tls_context(
     """
     if urlsplit(url).scheme != "https":
         return None
-    bundle = environ.get(CA_BUNDLE_KEY, "").strip()
+    bundle = environ.get(CA_BUNDLE_VAR, "").strip()
     if not (bundle):
-        return ssl.create_default_context()
-    if not (Path(bundle).is_file()):
+        context = ssl.create_default_context()
+    elif not (Path(bundle).is_file()):
         raise ConsoleTrustError(
-            f"{CA_BUNDLE_KEY}={bundle!r} is not a file. Point it at the PEM bundle of the CA chain that signed the console certificate"
+            f"{CA_BUNDLE_VAR}={bundle!r} is not a file. Point it at the PEM bundle of the CA chain that signed the console certificate"
         )
-    try:
-        return ssl.create_default_context(cafile=bundle)
-    except OSError as error:
-        raise ConsoleTrustError(
-            f"{CA_BUNDLE_KEY}={bundle!r} is not a PEM certificate bundle this user can load: {error}"
-        ) from error
+    else:
+        try:
+            context = ssl.create_default_context(cafile=bundle)
+        except OSError as error:
+            raise ConsoleTrustError(
+                f"{CA_BUNDLE_VAR}={bundle!r} is not a PEM certificate bundle this user can load: {error}"
+            ) from error
+    # Both proxies offer TLS 1.2 and 1.3 only.
+    context.minimum_version = ssl.TLSVersion.TLSv1_2
+    return context
 
 
 def trust_problem(
@@ -99,10 +103,10 @@ def trust_problem(
         return f"{url} presents a certificate that does not name {host} ({detail}). Reissue console.crt with {host} in its subjectAltName, or set DFE_EXTERNAL_ORIGIN to a name it carries"
     if error.verify_code in (_NOT_YET_VALID, _EXPIRED):
         return f"{url} presents a certificate outside its validity period ({detail}). Replace console.crt in DFE_PROXY_CERT_DIR"
-    bundle = environ.get(CA_BUNDLE_KEY, "").strip()
+    bundle = environ.get(CA_BUNDLE_VAR, "").strip()
     if bundle:
-        return f"{url} presents a certificate that does not verify against {CA_BUNDLE_KEY}={bundle!r} ({detail}). Point {CA_BUNDLE_KEY} at the PEM bundle of the CA chain that signed console.crt"
-    return f"{url} presents a certificate the system trust store does not accept ({detail}). Set {CA_BUNDLE_KEY} to the PEM bundle of the CA chain that signed console.crt"
+        return f"{url} presents a certificate that does not verify against {CA_BUNDLE_VAR}={bundle!r} ({detail}). Point {CA_BUNDLE_VAR} at the PEM bundle of the CA chain that signed console.crt"
+    return f"{url} presents a certificate the system trust store does not accept ({detail}). Set {CA_BUNDLE_VAR} to the PEM bundle of the CA chain that signed console.crt"
 
 
 def verify_console(
