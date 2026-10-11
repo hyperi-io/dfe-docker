@@ -52,7 +52,7 @@ endif
 # any more (both sweep every profile), and requiring a resolvable profile to STOP
 # a stack is the same lockout the compose secret comments argue against -- set
 # DFE_PROFILE to something that does not exist and you could not tear down.
-BOOTSTRAP_GOALS := init env-files creds dev-posture help login stack dial modes down clean limits check check-compose check-hardfail check-dockerfile check-docs check-proxy check-python check-tests
+BOOTSTRAP_GOALS := init env-files creds dev-posture help login stack dial modes down clean limits check check-compose check-hardfail check-dockerfile check-docs check-locks check-proxy check-python check-tests
 
 # Resolve the active profile only when a goal actually needs the compose stack
 ifneq (,$(filter-out $(BOOTSTRAP_GOALS),$(or $(MAKECMDGOALS),help)))
@@ -536,7 +536,7 @@ infra: .env storage-dirs ## Start infrastructure services
 # ---------------------------------------------------------------------------
 
 .PHONY: check
-check: check-compose check-hardfail check-dockerfile check-docs check-proxy check-python check-tests ## Run every static check CI runs
+check: check-compose check-hardfail check-dockerfile check-docs check-proxy check-python check-tests check-locks ## Run every static check CI runs
 
 .PHONY: limits
 limits: ## Show the resource limits and totals, computed from the resolved config
@@ -570,6 +570,20 @@ print-pytest-version:
 .PHONY: check-tests
 check-tests: ## Run the helper-script unit tests (scripts/tests)
 	$(PYTEST) -q scripts/tests
+
+# Each inline-metadata script runs with `uv run --locked`, and Renovate's pep723 manager rewrites a pin but never its lock, so this fails a pin and lock that disagree.
+# Pinned and installed in CI the way RUFF is (LOCK_UV=uv).
+UV_VERSION := 0.13.0
+LOCK_UV ?= uvx uv@$(UV_VERSION)
+
+.PHONY: print-uv-version
+print-uv-version:
+	@echo $(UV_VERSION)
+
+.PHONY: check-locks
+check-locks: ## Assert each inline-metadata script's lock matches its pins (relock with `uv lock --script <script>`)
+	$(LOCK_UV) lock --check --script scripts/test_e2e.py
+	$(LOCK_UV) lock --check --script scripts/test_flows.py
 
 # `slim` and `single` are projections of the Kubernetes tiers of the same name,
 # so both targets need DFE_INFRA_DIR pointed at a dfe-infra checkout. Unset,
@@ -646,19 +660,22 @@ check-proxy: ## Validate the Envoy proxy configs, plain and TLS, on the pinned E
 # The suite starts each test's stack from its own -f list. Under console TLS that stack needs the TLS fragment and the network it pins, so the suite takes every fragment `make ci` chains, the exposure opt-outs and container logs included; with TLS off it keeps its own list. DFE_E2E_COMPOSE_FILES follows either way, and the suite skips the empty entries the colons leave.
 E2E_COMPOSE_FILES = $(if $(filter true,$(strip $(DFE_PROXY_TLS))),$(UI_CHAIN)):$(strip $(DFE_E2E_COMPOSE_FILES))
 
+# The scripts that import packages beyond the standard library declare them inline (PEP 723) and lock them beside the script, so uv installs exactly the hashed set and a host needs only uv.
+UV ?= uv
+
 .PHONY: test-e2e
 test-e2e: ## End-to-end test executor (pass test names via E2E_TESTS)
-	@DFE_E2E_COMPOSE_FILES='$(E2E_COMPOSE_FILES)' python3 ./scripts/test_e2e.py $(E2E_TESTS)
+	@DFE_E2E_COMPOSE_FILES='$(E2E_COMPOSE_FILES)' $(UV) run --locked --script ./scripts/test_e2e.py $(E2E_TESTS)
 
 # Opt-in, never part of test-e2e: each test stops a backing service or a DFE app
 # under load.
 .PHONY: test-resilience
 test-resilience: ## Outage tests: stop a service under load and prove the rest survives (pass test names via E2E_TESTS)
-	@DFE_E2E_COMPOSE_FILES='$(E2E_COMPOSE_FILES)' python3 ./scripts/test_e2e.py --outages $(E2E_TESTS)
+	@DFE_E2E_COMPOSE_FILES='$(E2E_COMPOSE_FILES)' $(UV) run --locked --script ./scripts/test_e2e.py --outages $(E2E_TESTS)
 
 .PHONY: test-flows
 test-flows: ## Flow shapes against a running stack (needs DFE_ENGINE_REPO; FLOW_ARGS passes flags)
-	@python3 ./scripts/test_flows.py $(FLOW_ARGS)
+	@$(UV) run --locked --script ./scripts/test_flows.py $(FLOW_ARGS)
 
 # The post-deploy source test: add a source through the console and prove every
 # hop. The runner is dfe-infra's, the same one `dfe-ops acceptance --suite

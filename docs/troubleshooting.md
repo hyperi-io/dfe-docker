@@ -367,15 +367,16 @@ nothing set and requiring that it fails for the right reason. A green run proves
 the stack refuses to resolve with nothing set; it does not prove every single
 image is pinned, because compose aborts on the first missing variable.
 
-### `PyYAML is required and not installed`
+### `PyYAML is not installed in this interpreter`
 
-PyYAML is the e2e harness's only third-party dependency, and it is not in the
-standard library:
+The e2e harness declares PyYAML and Playwright inline (PEP 723), locked in `scripts/test_e2e.py.lock`, and `make test-e2e` runs it through uv, which installs them. A bare `python3 scripts/test_e2e.py` skips that step:
 
 ```bash
-pip install pyyaml
-uv run --with pyyaml python3 scripts/test_e2e.py   # or run it this way
+make test-e2e
+uv run --locked --script scripts/test_e2e.py   # the same, without make
 ```
+
+`The lockfile at uv.lock needs to be updated` from either means a pin in the script moved without its lock: run `uv lock --script scripts/test_e2e.py` and commit both.
 
 The power-on self test (`scripts/post.py`) has no such dependency -- it is
 stdlib-only and works on a bare machine.

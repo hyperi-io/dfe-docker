@@ -938,3 +938,123 @@ def test_a_stack_without_the_runner_needs_no_runner_password(
     monkeypatch.delenv(_RUNNER_PASSWORD_KEY, raising=False)
 
     assert post._weak_secrets() == []
+
+
+# ClickHouse 26.3's answer to a lightweight DELETE on a table with a projection.
+_PROJECTION_REFUSAL = (
+    "Code: 344. DB::Exception: DELETE query is not allowed for table dfe.main "
+    "because as it has projections and setting lightweight_mutation_projection_mode "
+    "is set to THROW. User should change lightweight_mutation_projection_mode OR "
+    "drop all the projections manually before running the query. "
+    "(SUPPORT_IS_DISABLED) (version 26.3.42.3 (official build))"
+)
+
+
+class _ClickHouse:
+    """A stand-in ClickHouse whose marked rows go once a delete is accepted and lands."""
+
+    def __init__(
+        self, *, refuse_lightweight: str = "", rows: int = 3, deletes_land: bool = True
+    ) -> None:
+        self.refuse_lightweight = refuse_lightweight
+        self.rows = rows
+        self.deletes_land = deletes_land
+        self.statements: list[str] = []
+
+    def execute(self, sql: str, *, timeout: int) -> tuple[bool, str]:
+        self.statements.append(sql)
+        if sql.startswith("DELETE") and self.refuse_lightweight:
+            return False, self.refuse_lightweight
+        if self.deletes_land:
+            self.rows = 0
+        return True, ""
+
+    def count(self, sql: str, **kwargs) -> int:
+        return self.rows
+
+
+def _stub_clickhouse(monkeypatch: pytest.MonkeyPatch, clickhouse: _ClickHouse) -> None:
+    monkeypatch.setattr(post, "ch_execute", clickhouse.execute)
+    monkeypatch.setattr(post, "ch_int", clickhouse.count)
+    monkeypatch.setattr(post, "ch_query", lambda sql: "")
+    monkeypatch.setattr(post, "CLEANUP_TIMEOUT_SECONDS", 0.0)
+
+
+def test_a_table_with_projections_is_cleaned_by_a_mutation(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture
+) -> None:
+    clickhouse = _ClickHouse(refuse_lightweight=_PROJECTION_REFUSAL)
+    _stub_clickhouse(monkeypatch, clickhouse)
+
+    post._cleanup("dfe", "main", "post-1-abcd")
+
+    assert [sql.split()[0] for sql in clickhouse.statements] == ["DELETE", "ALTER"]
+    assert clickhouse.statements[1].startswith("ALTER TABLE dfe.main DELETE WHERE ")
+    assert "'post-1-abcd'" in clickhouse.statements[1]
+    assert "by mutation" in capsys.readouterr().err
+
+
+def test_a_table_without_projections_takes_the_lightweight_delete(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture
+) -> None:
+    clickhouse = _ClickHouse()
+    _stub_clickhouse(monkeypatch, clickhouse)
+
+    post._cleanup("dfe", "main", "post-1-abcd")
+
+    assert len(clickhouse.statements) == 1
+    assert clickhouse.statements[0].startswith("DELETE FROM dfe.main WHERE ")
+    assert "by lightweight DELETE" in capsys.readouterr().err
+
+
+def test_any_other_refusal_is_reported_and_not_retried_as_a_mutation(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture
+) -> None:
+    clickhouse = _ClickHouse(
+        refuse_lightweight="Code: 497. DB::Exception: default: Not enough privileges."
+    )
+    _stub_clickhouse(monkeypatch, clickhouse)
+
+    post._cleanup("dfe", "main", "post-1-abcd")
+
+    assert len(clickhouse.statements) == 1
+    assert "Not enough privileges" in capsys.readouterr().err
+
+
+def test_rows_still_there_at_the_deadline_are_reported(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture
+) -> None:
+    clickhouse = _ClickHouse(refuse_lightweight=_PROJECTION_REFUSAL, deletes_land=False)
+    _stub_clickhouse(monkeypatch, clickhouse)
+
+    post._cleanup("dfe", "main", "post-1-abcd")
+
+    assert "3 synthetic row(s) tagged post-1-abcd remain" in capsys.readouterr().err
+
+
+def test_no_marked_row_means_nothing_is_deleted(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    clickhouse = _ClickHouse(rows=0)
+    _stub_clickhouse(monkeypatch, clickhouse)
+
+    post._cleanup("dfe", "main", "post-1-abcd")
+
+    assert clickhouse.statements == []
+
+
+def test_the_rows_are_deleted_after_the_console_reads_them_back(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls = _stub_claims(monkeypatch)
+    _stub_main(monkeypatch)
+    monkeypatch.setattr(
+        post,
+        "_ingest_target",
+        lambda *, table: ("dfe-receiver", "http://ingest/ingest"),
+    )
+    monkeypatch.setattr(post, "_cleanup", lambda *args: calls.append("_cleanup"))
+
+    assert post.main() == 0
+    assert calls[-1] == "_cleanup"
+    assert calls.index("_verify_ui_query") < calls.index("_cleanup")

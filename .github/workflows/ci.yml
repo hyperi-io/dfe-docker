@@ -118,6 +118,15 @@ jobs:
       - name: Tests
         run: make check-tests PYTEST=pytest
 
+      # `make test-e2e` runs its scripts with `uv run --locked`, and Renovate's
+      # pep723 manager can bump a script's pin but has no step that rewrites its
+      # lock, so a pin and lock that disagree are caught here, not mid-suite.
+      - name: Install uv
+        run: pipx install --python "${{ steps.python.outputs.python-path }}" "uv==$(make -s print-uv-version)"
+
+      - name: Script locks
+        run: make check-locks LOCK_UV=uv
+
   # The slim and single profiles are projections of the Kubernetes tiers of the
   # same name, so they go stale when those tiers move and nothing here notices.
   # dfe-infra is PRIVATE, so the checkout reads it with a short-lived GitHub App

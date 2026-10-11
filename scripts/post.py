@@ -89,6 +89,7 @@ from _pipeline import (
     MARKER_EXPRESSIONS,
     _decoded,
     ch_count,
+    ch_execute,
     ch_int,
     ch_marker_count,
     ch_query,
@@ -115,6 +116,15 @@ EVENT_COUNT = 3
 # than an expected duration.
 LAND_TIMEOUT_SECONDS = 60.0
 LAND_INTERVAL_SECONDS = 3.0
+
+# Both deletes run asynchronously and the rows are polled until gone, so a large
+# table cannot hold a request past its timeout.
+CLEANUP_TIMEOUT_SECONDS = 60.0
+CLEANUP_INTERVAL_SECONDS = 2.0
+CLEANUP_STATEMENT_TIMEOUT_SECONDS = 30
+# How ClickHouse refuses a lightweight DELETE on a table with projections, under a
+# table-level lightweight_mutation_projection_mode that no query setting overrides.
+PROJECTION_REFUSAL = ("Code: 344", "projection")
 
 # How long to wait for the ingest component to report ready. `make dev`/`make ci`
 # do not pass `--wait` to `docker compose up`, so this runs while containers are
@@ -749,28 +759,89 @@ def _run_id() -> str:
     return f"post-{os.getpid()}-{os.urandom(4).hex()}"
 
 
+def _marker_predicate(database: str, table: str, marker: str) -> str | None:
+    """The WHERE clause that finds this run's rows, or None when none can be found."""
+    escaped = escape_literal(marker)
+    for expression in MARKER_EXPRESSIONS:
+        where = f"{expression} = '{escaped}'"
+        if (ch_int(f"SELECT count() FROM {database}.{table} WHERE {where}") or 0) > 0:
+            return where
+    return None
+
+
+def _refused_for_projections(answer: str) -> bool:
+    """Whether ClickHouse refused a lightweight DELETE because the table has projections."""
+    return all(part in answer for part in PROJECTION_REFUSAL)
+
+
+def _mutation_failure(database: str, table: str, marker: str) -> str:
+    """The last failure of this run's unfinished delete mutation, or empty."""
+    return ch_query(
+        "SELECT latest_fail_reason FROM system.mutations "
+        f"WHERE database = '{escape_literal(database)}' "
+        f"AND table = '{escape_literal(table)}' AND NOT is_done "
+        f"AND position(command, '{escape_literal(marker)}') > 0 LIMIT 1"
+    )
+
+
 def _cleanup(database: str, table: str, marker: str) -> None:
-    """Report that this run's synthetic rows remain. It cannot remove them.
+    """Delete this run's synthetic rows, by mutation where a lightweight DELETE is refused.
 
-    We tried deleting them and it does not work: the engine-provisioned
-    `dfe.main` carries PROJECTIONS, and ClickHouse refuses a lightweight
-    DELETE on such a table unless `lightweight_mutation_projection_mode` is
-    changed:
+    A table the engine created before it stopped adding the `_timestamp_optimized`
+    projection still carries it, and ClickHouse refuses a lightweight DELETE there
+    (Code 344) while the table's `lightweight_mutation_projection_mode` is `throw`.
+    A mutation (`ALTER TABLE ... DELETE`) rebuilds the projection with the parts it
+    rewrites, so it is the fallback, and the table's setting is left alone.
 
-        Code: 344. DELETE query is not allowed for table dfe.main because
-        as it has projections and setting lightweight_mutation_projection_mode
-        is set to THROW.
-
-    Changing a server-level mutation setting to tidy up after a self test is a
-    worse trade than leaving three rows, so it says so instead. The rows are
-    identifiable (`post-<pid>-<hex>` in `_tags.marker`) if you want them gone.
-
-    Writing to the real landing table is deliberate: a dedicated table would
-    prove a different pipeline than the one being asserted.
+    Tidy-up only: what it could not remove is reported, never failed. Writing to
+    the real landing table is deliberate, because a dedicated table would prove a
+    different pipeline than the one being asserted.
     """
+    where = _marker_predicate(database, table, marker)
+    if where is None:
+        _print(
+            msg=f"      note: no row tagged {marker} in {database}.{table} to remove"
+        )
+        return
+
+    how = "lightweight DELETE"
+    deleted, answer = ch_execute(
+        f"DELETE FROM {database}.{table} WHERE {where} "
+        "SETTINGS lightweight_deletes_sync = 0",
+        timeout=CLEANUP_STATEMENT_TIMEOUT_SECONDS,
+    )
+    if not (deleted) and _refused_for_projections(answer):
+        how = "mutation, as the table's projections refuse a lightweight DELETE"
+        deleted, answer = ch_execute(
+            f"ALTER TABLE {database}.{table} DELETE WHERE {where} "
+            "SETTINGS mutations_sync = 0",
+            timeout=CLEANUP_STATEMENT_TIMEOUT_SECONDS,
+        )
+    if not (deleted):
+        refusal = answer.splitlines()[0] if answer else "no answer"
+        _print(
+            msg=f"      note: {EVENT_COUNT} synthetic row(s) remain in {database}.{table} "
+            f"tagged {marker} -- the {how} was refused: {refusal}"
+        )
+        return
+
+    left = poll_until(
+        lambda: ch_int(f"SELECT count() FROM {database}.{table} WHERE {where}"),
+        timeout=CLEANUP_TIMEOUT_SECONDS,
+        interval=CLEANUP_INTERVAL_SECONDS,
+        done=lambda count: count == 0,
+    )
+    if left == 0:
+        _print(
+            msg=f"      removed the synthetic rows tagged {marker} from "
+            f"{database}.{table} by {how}"
+        )
+        return
+    failure = _mutation_failure(database, table, marker)
     _print(
-        msg=f"      note: {EVENT_COUNT} synthetic row(s) remain in {database}.{table} "
-        f"tagged {marker} -- lightweight DELETE is refused on a table with projections"
+        msg=f"      note: {left} synthetic row(s) tagged {marker} remain in "
+        f"{database}.{table} {CLEANUP_TIMEOUT_SECONDS:.0f}s after the {how}"
+        + (f": {failure}" if failure else " -- system.mutations carries its progress")
     )
 
 
@@ -2270,25 +2341,23 @@ def main() -> int:
         _print(
             msg=f"PASS  {matched}/{EVENT_COUNT} marked event(s) landed in {database}.{table}"
         )
-        _cleanup(database, table, marker)
         # Every remaining claim runs even when an earlier one fails, so one boot
         # reports every broken pipeline rather than the first one.
-        return _report_claims(
-            claims={
-                "ingest": HELD,
-                "hunts": _verify_hunt(
-                    database=database, ingest_url=ingest_url, marker=marker, table=table
-                ),
-                "subscription": _verify_loader_subscription(),
-                "self-monitoring": _verify_self_monitoring(),
-                "observability": _verify_hyperdx(),
-                "console": _verify_ui_query(
-                    database=database, marker=marker, table=table
-                ),
-                "idle apps": _verify_idle_apps(),
-                "routing": _verify_routing_applied(database=database),
-            }
-        )
+        claims = {
+            "ingest": HELD,
+            "hunts": _verify_hunt(
+                database=database, ingest_url=ingest_url, marker=marker, table=table
+            ),
+            "subscription": _verify_loader_subscription(),
+            "self-monitoring": _verify_self_monitoring(),
+            "observability": _verify_hyperdx(),
+            "console": _verify_ui_query(database=database, marker=marker, table=table),
+            "idle apps": _verify_idle_apps(),
+            "routing": _verify_routing_applied(database=database),
+        }
+        # After the console claim, which reads these same rows back.
+        _cleanup(database, table, marker)
+        return _report_claims(claims=claims)
 
     _print(
         msg=f"FAIL  only {matched}/{EVENT_COUNT} marked event(s) reached "
