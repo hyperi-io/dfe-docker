@@ -207,7 +207,8 @@ Node metrics are still not collected.
   nothing.
 - **Routing**, where the engine renders the tier's app config. A source created
   through the API reaches the running receiver, and a record matching its rule
-  lands in a table of its own.
+  lands in a table of its own. The source is deleted afterwards and then that
+  table is dropped, because the engine's source delete leaves the table.
 
 Once every claim has run, the three ingest rows are deleted: a lightweight `DELETE`, or a mutation (`ALTER TABLE ... DELETE`) on a table whose projections refuse one. A delete that does not finish within 60s is reported, never failed.
 

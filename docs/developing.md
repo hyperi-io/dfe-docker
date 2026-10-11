@@ -368,7 +368,7 @@ The stored rule has to scan `dfe.main` with no SQL errors and a WHERE that carri
 
 The side panel only offers values rows already hold, so both event sets are sent once before the search. The hunt's first window can reach those rows, so their near misses are judged too, and their matches are not.
 
-The console holds every page behind its setup wizard, so the test first makes the `e2e` organisation and one user of the deployment's own, as the wizard would. uv installs Playwright from the script's inline metadata, and the test drives Google Chrome (`uvx playwright install chrome` where it is absent). `DFE_E2E_HEADED=1` shows the browser, and `DFE_E2E_SHOTS_DIR` keeps the step screenshots, which otherwise go to a new temporary directory named in the log.
+The console holds every page behind its setup wizard, so the test first makes the `e2e` organisation and one user of the deployment's own (`e2e-analyst`), as the wizard would, and deletes whichever of the two it made once the hunt and the rule are gone. uv installs Playwright from the script's inline metadata, and the test drives Google Chrome (`uvx playwright install chrome` where it is absent). `DFE_E2E_HEADED=1` shows the browser, and `DFE_E2E_SHOTS_DIR` keeps the step screenshots, which otherwise go to a new temporary directory named in the log.
 
 Under console TLS the suite first verifies the console certificate itself, then pins Chrome to that certificate's public key, because Chrome takes no CA bundle.
 

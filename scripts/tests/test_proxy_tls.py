@@ -226,6 +226,19 @@ def test_an_unreadable_file_is_named_as_unreadable_not_missing(
     assert "is missing" not in problem
 
 
+@pytest.mark.skipif(
+    os.geteuid() == 0, reason="root enters a 0000 directory, so nothing is closed"
+)
+def test_a_cert_dir_this_user_cannot_open_is_refused_not_raised(pair: Path) -> None:
+    pair.chmod(0o000)
+    try:
+        problem = proxy_tls.cert_problem(cert_dir=str(pair))
+    finally:
+        pair.chmod(0o700)
+
+    assert "exists but this user cannot open it" in problem
+
+
 @pytest.mark.parametrize(
     ("cert_dir", "said"),
     [

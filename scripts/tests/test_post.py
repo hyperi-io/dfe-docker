@@ -1058,3 +1058,85 @@ def test_the_rows_are_deleted_after_the_console_reads_them_back(
     assert post.main() == 0
     assert calls[-1] == "_cleanup"
     assert calls.index("_verify_ui_query") < calls.index("_cleanup")
+
+
+def _stub_routed_removal(
+    monkeypatch: pytest.MonkeyPatch, delete
+) -> tuple[list[tuple[str, int]], list[str]]:
+    """Record each source DELETE (url, timeout) and each ClickHouse statement."""
+    deletes: list[tuple[str, int]] = []
+    statements: list[str] = []
+
+    def _delete(url: str, token: str = "", timeout: int = 10) -> int:
+        deletes.append((url, timeout))
+        return delete()
+
+    def _execute(sql: str, *, timeout: int) -> tuple[bool, str]:
+        statements.append(sql)
+        return True, ""
+
+    monkeypatch.setattr(post, "_api_delete", _delete)
+    monkeypatch.setattr(post, "ch_execute", _execute)
+    return deletes, statements
+
+
+@pytest.mark.parametrize("status", [204, 404])
+def test_the_routing_table_is_dropped_once_its_source_is_gone(
+    monkeypatch: pytest.MonkeyPatch, status: int
+) -> None:
+    deletes, statements = _stub_routed_removal(monkeypatch, lambda: status)
+
+    post._remove_routed_source(
+        base="http://engine/api/v1", database="dfe", name="postroute1a2b3c4d", token="t"
+    )
+
+    assert deletes == [
+        (
+            "http://engine/api/v1/sources/postroute1a2b3c4d",
+            post.ROUTING_DELETE_TIMEOUT_SECONDS,
+        )
+    ]
+    assert statements == ["DROP TABLE IF EXISTS dfe.postroute1a2b3c4d SYNC"]
+
+
+def test_the_routing_table_stays_while_its_source_remains(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture
+) -> None:
+    _, statements = _stub_routed_removal(monkeypatch, lambda: 500)
+
+    post._remove_routed_source(
+        base="http://engine/api/v1", database="dfe", name="postroute1a2b3c4d", token="t"
+    )
+
+    assert statements == []
+    assert "dfe.postroute1a2b3c4d is kept while its source remains" in (
+        capsys.readouterr().err
+    )
+
+
+@pytest.mark.parametrize("name", ["main", "postroute", "postroute1a2b3c4d; x"])
+def test_a_table_this_claim_did_not_name_is_never_dropped(
+    monkeypatch: pytest.MonkeyPatch, name: str
+) -> None:
+    _, statements = _stub_routed_removal(monkeypatch, lambda: 204)
+
+    post._remove_routed_source(
+        base="http://engine/api/v1", database="dfe", name=name, token="t"
+    )
+
+    assert statements == []
+
+
+def test_a_source_delete_with_no_answer_keeps_the_table_and_does_not_raise(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def _unanswered() -> int:
+        raise post.ApiUnreachable("DELETE timed out")
+
+    _, statements = _stub_routed_removal(monkeypatch, _unanswered)
+
+    post._remove_routed_source(
+        base="http://engine/api/v1", database="dfe", name="postroute1a2b3c4d", token="t"
+    )
+
+    assert statements == []
