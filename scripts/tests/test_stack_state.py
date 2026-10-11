@@ -72,12 +72,12 @@ def test_what_was_not_running_or_finished_cleanly_stays_down(document: dict) -> 
     assert _stack_state.restores(_stack_state.containers([document])) == []
 
 
-def test_the_restore_names_the_project_directory_and_files_it_came_from() -> None:
+def test_the_restore_names_the_project_directory_files_and_profiles() -> None:
     [restore] = _stack_state.restores(
         _stack_state.containers([_document("dfe-engine")])
     )
 
-    assert restore.command() == [
+    assert restore.command(["core", "clickhouse", "core"]) == [
         "docker",
         "compose",
         "--project-name",
@@ -89,11 +89,45 @@ def test_the_restore_names_the_project_directory_and_files_it_came_from() -> Non
         "-f",
         "/opt/dfe/docker-compose.tls.yml",
         "--profile",
-        "*",
+        "clickhouse",
+        "--profile",
+        "core",
         "up",
         "-d",
         "dfe-engine",
     ]
+
+
+# The shape that matters: dfe-engine depends on both brokers, each optional and
+# gated by its own profile, so enabling every profile starts both.
+_MODEL = {
+    "services": {
+        "clickhouse": {"profiles": ["clickhouse"]},
+        "dfe-engine": {"profiles": ["core"]},
+        "kafka-apache": {"profiles": ["kafka-apache"]},
+        "kafka-redpanda": {"profiles": ["kafka-redpanda"]},
+        "dfe-instance": {},
+    }
+}
+
+
+def test_only_the_restored_services_profiles_are_enabled() -> None:
+    profiles = _stack_state.profiles_of(_MODEL, ["dfe-engine", "clickhouse"])
+
+    assert profiles == {"core", "clickhouse"}
+
+
+def test_a_service_with_no_profile_or_unknown_to_the_model_adds_none() -> None:
+    assert _stack_state.profiles_of(_MODEL, ["dfe-instance", "gone"]) == set()
+
+
+def test_the_config_command_reads_every_service_the_files_define() -> None:
+    [restore] = _stack_state.restores(
+        _stack_state.containers([_document("dfe-engine")])
+    )
+
+    assert restore.config()[-5:] == ["--profile", "*", "config", "--format", "json"]
+    assert "*" not in restore.command(["core"])
 
 
 def test_a_compose_file_that_is_gone_is_left_out_and_named() -> None:

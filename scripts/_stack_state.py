@@ -112,15 +112,40 @@ class Restore:
     services: tuple[str, ...]
     missing: tuple[str, ...] = ()
 
-    def command(self) -> list[str]:
-        """The compose command, every profile enabled so each service resolves."""
+    def compose(self) -> list[str]:
+        """`docker compose` on the project, directory and files the services came from."""
         command = ["docker", "compose", "--project-name", self.project]
         command += ["--project-directory", self.working_dir]
         for path in self.environment_files:
             command += ["--env-file", path]
         for path in self.config_files:
             command += ["-f", path]
-        return command + ["--profile", "*", "up", "-d", *self.services]
+        return command
+
+    def config(self) -> list[str]:
+        """The command that prints every service those files define, as JSON."""
+        return self.compose() + ["--profile", "*", "config", "--format", "json"]
+
+    def command(self, profiles: Iterable[str] = ()) -> list[str]:
+        """The `up`, with only the given profiles enabled.
+
+        Every profile at once is wrong: both brokers are optional dependencies
+        of dfe-engine, and the profile is what picks which one starts.
+        """
+        flags = [
+            part for profile in sorted(set(profiles)) for part in ("--profile", profile)
+        ]
+        return self.compose() + flags + ["up", "-d", *self.services]
+
+
+def profiles_of(model: Mapping, services: Iterable[str]) -> set[str]:
+    """The profiles the named services belong to, from `docker compose config` JSON."""
+    defined = model.get("services") or {}
+    return {
+        profile
+        for service in services
+        for profile in (defined.get(service) or {}).get("profiles") or ()
+    }
 
 
 def restores(

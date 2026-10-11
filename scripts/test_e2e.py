@@ -1110,8 +1110,8 @@ def put_back(ctx, found):
             LOGGER.warning(
                 f"    Left out, as they no longer exist: {', '.join(restore.missing)}"
             )
-        result = subprocess.run(
-            restore.command(),
+        run = functools.partial(
+            subprocess.run,
             cwd=restore.working_dir or PROJECT_DIR,
             env=FOUND_ENVIRON,
             capture_output=True,
@@ -1119,6 +1119,19 @@ def put_back(ctx, found):
             encoding="utf-8",
             errors="replace",
         )
+        config = run(restore.config())
+        try:
+            model = json.loads(config.stdout) if (config.returncode == 0) else None
+        except ValueError:
+            model = None
+        if model is None:
+            mark_fail(
+                ctx,
+                "the services this run found are not started again: compose could "
+                f"not resolve the files they came from: {config.stderr.strip()}",
+            )
+            continue
+        result = run(restore.command(_stack_state.profiles_of(model, restore.services)))
         if result.returncode != 0:
             detail = (result.stderr or result.stdout or "").strip()
             mark_fail(ctx, f"the services this run found did not start again: {detail}")
