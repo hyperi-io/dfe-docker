@@ -26,6 +26,8 @@ import os
 import re
 import time
 import typing
+from concurrent.futures import ThreadPoolExecutor
+from http.client import HTTPException
 from urllib.error import URLError
 from urllib.request import Request, urlopen
 
@@ -169,6 +171,26 @@ def http_post(
     )[0]
 
 
+def post_all(
+    url: str, bodies: typing.Sequence[str], *, workers: int, timeout: int = 10
+) -> list[int]:
+    """POST every body from `workers` concurrent senders, returning each status in order.
+
+    The receiver answers once the next hop holds the record, so one request at a
+    time waits out the loader's flush on every event. A request that got no HTTP
+    answer at all reports status 0.
+    """
+
+    def _send(body: str) -> int:
+        try:
+            return http_post(url, body, timeout=timeout)
+        except (HTTPException, OSError):
+            return 0
+
+    with ThreadPoolExecutor(max_workers=max(1, workers)) as pool:
+        return list(pool.map(_send, bodies))
+
+
 def http_delete(url: str, token: str = "", timeout: int = 10) -> int:
     """DELETE a resource and return the HTTP status.
 
@@ -198,6 +220,26 @@ def ch_query(sql: str, *, debug: typing.Callable[[str], None] | None = None) -> 
         if debug:
             debug(f"ClickHouse query failed. Error message: {error}")
         return ""
+
+
+def ch_execute(sql: str, *, timeout: int = 10) -> tuple[bool, str]:
+    """Run a statement over ClickHouse's HTTP interface, keeping the server's answer.
+
+    Returns (True, body) on success and (False, the error text) otherwise, for a
+    caller that has to act on WHY a statement was refused.
+    """
+    request = Request(clickhouse_url(), data=sql.encode(), method="POST")
+    request.add_header("X-ClickHouse-User", env_or("CLICKHOUSE_USERNAME", "default"))
+    request.add_header("X-ClickHouse-Key", os.environ.get("CLICKHOUSE_PASSWORD", ""))
+    try:
+        with urlopen(request, timeout=timeout) as response:
+            return True, response.read().decode().strip()
+    except URLError as error:
+        if hasattr(error, "read"):
+            return False, error.read().decode(errors="replace").strip()
+        return False, str(error.reason)
+    except OSError as error:
+        return False, str(error)
 
 
 def ch_count(database: str, table: str, *, debug=None) -> int:

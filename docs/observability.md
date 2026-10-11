@@ -209,6 +209,8 @@ Node metrics are still not collected.
   through the API reaches the running receiver, and a record matching its rule
   lands in a table of its own.
 
+Once every claim has run, the three ingest rows are deleted: a lightweight `DELETE`, or a mutation (`ALTER TABLE ... DELETE`) on a table whose projections refuse one. A delete that does not finish within 60s is reported, never failed.
+
 The freshness window is what makes the second claim mean "streaming now" rather
 than "streamed once". The first two are the pair the Kubernetes bootstrap smoke
 asserts as CORE 1 and CORE 2.

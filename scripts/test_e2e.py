@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+#!/usr/bin/env -S uv run --script
 
 #  Project:   dfe-docker
 #  File:      scripts/test-e2e.py
@@ -16,12 +16,21 @@
 #    TEST_CONFIG=tests/e2e/e2e-tests.yaml ./scripts/test-e2e.py  # Custom config
 #    LOG_LEVEL=debug ./scripts/test-e2e.py                       # Verbose service logs
 
+# /// script
+# requires-python = ">=3.12"
+# dependencies = [
+#     "playwright==1.63.0",
+#     "pyyaml==6.0.3",
+# ]
+# ///
+
 import argparse
 import functools
 import json
 import logging
 import os
 import secrets
+import signal
 import ssl
 import subprocess
 import sys
@@ -31,15 +40,14 @@ import time
 try:
     import yaml
 except ModuleNotFoundError:  # pragma: no cover - environment guard
-    # PyYAML is the harness's only third-party dependency and it is NOT in the
-    # stdlib, so a plain `make test-e2e` on a fresh machine dies with a bare
-    # ModuleNotFoundError that says nothing about how to proceed. Every other
-    # missing prerequisite here (docker) gets an actionable message; this one
-    # should too.
+    # An interpreter that skipped the inline metadata above, such as a bare
+    # `python3 scripts/test_e2e.py`, otherwise dies with a ModuleNotFoundError
+    # that does not say how to proceed.
     sys.exit(
-        "test_e2e: PyYAML is required and not installed.\n"
-        "  Install it:      pip install pyyaml\n"
-        "  Or run via uv:   uv run --with pyyaml python3 scripts/test_e2e.py"
+        "test_e2e: PyYAML is not installed in this interpreter.\n"
+        "  Run it through uv, which installs what the script declares:\n"
+        "    make test-e2e\n"
+        "    uv run --script scripts/test_e2e.py"
     )
 
 from collections import Counter
@@ -55,6 +63,7 @@ import _console_tls
 import _detection
 import _outage
 import _search_rule
+import _stack_state
 import post
 from _common import FALSY, _config_argument, _load_dotenv, _use_mounted_configs
 from _pipeline import MARKER_EXPRESSIONS  # noqa: F401 - re-exported for callers
@@ -67,6 +76,7 @@ from _pipeline import (
     expand_env,
     otel_fresh_counts,
     poll_until,
+    post_all,
 )
 
 
@@ -151,6 +161,11 @@ ARCHIVE_TIMEOUT_SECONDS = 180
 ARCHIVE_INTERVAL_SECONDS = 10
 TARGET_DB = "dfe"
 TARGET_TABLE = "main"
+# The receiver answers each request once the loader has flushed it, which one
+# sender at a time waits out per event, so a data file goes in this many at once.
+SEND_WORKERS = 16
+# How long the services the run found have, together, to come back healthy.
+RESTORE_TIMEOUT_SECONDS = 300
 
 # Marker lookup lives in _pipeline, shared with the power-on self test.
 
@@ -163,7 +178,10 @@ TARGET_TABLE = "main"
 # - Every rendered-config variable is then blanked. `make` exports the engine's
 #   render paths, and compose inherits them unless each service is sent back to
 #   the config this suite mounts for it.
+# - FOUND_ENVIRON keeps the environment as the run received it, the one the
+#   services it found are started again under.
 # ------------------------------------------------------------------------------
+FOUND_ENVIRON = dict(os.environ)
 _load_dotenv()
 _use_mounted_configs(environ=os.environ)
 
@@ -1032,6 +1050,118 @@ def container_id(service):
 
 
 # ------------------------------------------------------------------------------
+# Project Containers
+# - Every service container in THIS compose project, stopped or not, as
+#   _stack_state reads them, or None when docker could not say
+# ------------------------------------------------------------------------------
+def project_containers():
+    listed = run_cmd(
+        ["docker", "compose", "--profile", "*", "ps", "--all", "--quiet"], capture=True
+    )
+    if listed.returncode != 0:
+        LOGGER.error(f"Could not list this project's containers: {listed.stderr}")
+        return None
+    ids = (listed.stdout or "").split()
+    if not (ids):
+        return []
+    inspected = run_cmd(["docker", "inspect", *ids], capture=True)
+    try:
+        return _stack_state.containers(json.loads(inspected.stdout or "[]"))
+    except ValueError:
+        LOGGER.error(f"Could not inspect this project's containers: {inspected.stderr}")
+        return None
+
+
+# ------------------------------------------------------------------------------
+# Wait Settled
+# - Polls until one service is back as it was found: running and healthy, or a
+#   one-shot that has finished, or the deadline passes
+# ------------------------------------------------------------------------------
+def wait_settled(container, deadline):
+    while True:
+        state = container_state(container.service)
+        if state and container.running:
+            if state.status == "running" and state.health in ("healthy", ""):
+                return
+        elif state and state.status != "running":
+            return
+        if time.monotonic() >= deadline:
+            return
+        time.sleep(2)
+
+
+# ------------------------------------------------------------------------------
+# Put Back
+# - Leaves the project as the run found it: the test stack down, then each service
+#   that was running, or had run to completion, started again from the compose
+#   files, project and environment it was started with, and checked against the
+#   config hash compose recorded for it
+# ------------------------------------------------------------------------------
+def put_back(ctx, found):
+    print()
+    stack_down()
+
+    for restore in _stack_state.restores(found, exists=os.path.exists):
+        LOGGER.info(
+            f"Starting the {len(restore.services)} service(s) this run found, from "
+            f"{len(restore.config_files)} compose file(s)..."
+        )
+        if restore.missing:
+            LOGGER.warning(
+                f"    Left out, as they no longer exist: {', '.join(restore.missing)}"
+            )
+        run = functools.partial(
+            subprocess.run,
+            cwd=restore.working_dir or PROJECT_DIR,
+            env=FOUND_ENVIRON,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+        )
+        config = run(restore.config())
+        try:
+            model = json.loads(config.stdout) if (config.returncode == 0) else None
+        except ValueError:
+            model = None
+        if model is None:
+            mark_fail(
+                ctx,
+                "the services this run found are not started again: compose could "
+                f"not resolve the files they came from: {config.stderr.strip()}",
+            )
+            continue
+        result = run(restore.command(_stack_state.profiles_of(model, restore.services)))
+        if result.returncode != 0:
+            detail = (result.stderr or result.stdout or "").strip()
+            mark_fail(ctx, f"the services this run found did not start again: {detail}")
+
+    deadline = time.monotonic() + RESTORE_TIMEOUT_SECONDS
+    for container in found:
+        if container.restored:
+            wait_settled(container, deadline)
+
+    after = project_containers()
+    problems = (
+        ["the project could not be read back"]
+        if (after is None)
+        else _stack_state.differences(found, after)
+    )
+    running = sum(1 for container in found if container.running)
+    completed = sum(1 for container in found if container.run_to_completion)
+    if problems:
+        mark_fail(ctx, f"the stack is not as this run found it: {'; '.join(problems)}")
+    elif running or completed:
+        mark_pass(
+            ctx,
+            f"the stack is as this run found it: {running} service(s) running and "
+            f"{completed} one-shot(s) completed, each on the config it had",
+        )
+    else:
+        mark_pass(ctx, "this run found no stack running and leaves none")
+
+
+# ------------------------------------------------------------------------------
 # Report Unready Service
 # - Dumps what a timed-out service was actually doing, before teardown removes it
 #
@@ -1189,28 +1319,26 @@ def send_events(ctx, test_name, marker, data_file_name, database, table, ingest_
     events = data_file_path.read_text(encoding="utf-8").splitlines()
     num_events = len(events)
 
-    LOGGER.info(f"Sending {num_events} events to '{ingest_url}'...")
+    LOGGER.info(
+        f"Sending {num_events} events to '{ingest_url}' ({SEND_WORKERS} at a time)..."
+    )
     LOGGER.debug(f"Marker: '{marker}'")
 
-    ctx.total_sent = 0
-    send_errors = 0
-
+    bodies = []
     for line in events:
         event = json.loads(line)
         event["_source"] = table
         event["_tags"] = {"marker": marker, "test_name": test_name}
-        enriched = json.dumps(event, separators=(",", ":"))
+        bodies.append(json.dumps(event, separators=(",", ":")))
 
-        try:
-            status = http_post(ingest_url, enriched)
-        except Exception:
-            status = 0
-
+    send_errors = 0
+    for body, status in zip(
+        bodies, post_all(ingest_url, bodies, workers=SEND_WORKERS), strict=True
+    ):
         if status < 200 or status >= 300:
-            LOGGER.debug(f"Response code '{status}' received for '{enriched}'")
+            LOGGER.debug(f"Response code '{status}' received for '{body}'")
             send_errors += 1
-
-        ctx.total_sent += 1
+    ctx.total_sent = len(bodies)
 
     LOGGER.info(f"Sent {ctx.total_sent} events (errors = {send_errors})")
 
@@ -3346,6 +3474,30 @@ def run_test(ctx, mode, test, persistent_services):
     print("------------------------------------------------------------")
 
 
+# ------------------------------------------------------------------------------
+# Run Suite
+# - Reads the project, stops it, builds and runs every test, then puts the project
+#   back as it was found on every way out, a SIGTERM included
+# ------------------------------------------------------------------------------
+def run_suite(ctx, mode, tests, persistent_services):
+    found = project_containers()
+    if found is None:
+        error("the running stack could not be read, so nothing was stopped")
+    signal.signal(signal.SIGTERM, lambda signum, frame: sys.exit(128 + signum))
+    try:
+        if stack_is_up():
+            print()
+            stack_down(persistent_services)
+
+        # Build only the DFE services the selected tests actually need.
+        build_images(mode, {service for test in tests for service in test.services})
+
+        for test in tests:
+            run_test(ctx, mode, test, persistent_services)
+    finally:
+        put_back(ctx, found)
+
+
 # ==============================================================================
 # Miscellaneous Functions
 # ==============================================================================
@@ -3462,12 +3614,7 @@ def main():
     global_config = config.get("global", {}).copy()
     global_config["clickhouse"] = config.get("clickhouse", {})
 
-    # Tear down any existing stack before starting
     persistent_services = get_config("persistent_services", {}, global_config)
-    if stack_is_up():
-        print()
-        stack_down(persistent_services)
-
     mode = get_config("mode", {}, global_config)
 
     # Resolve which tests to run - CLI args filter, otherwise every test of the
@@ -3496,16 +3643,8 @@ def main():
             if bool(test_config.get("outage")) == args.outages:
                 tests_to_run.append(resolve_test_case(test_config, global_config))
 
-    # Build only the DFE services the selected tests actually need.
-    all_services = set()
-    for test in tests_to_run:
-        all_services.update(test.services.keys())
-
-    build_images(mode, all_services)
-
-    # Run resolved tests
-    for test in tests_to_run:
-        run_test(ctx, mode, test, persistent_services)
+    if tests_to_run:
+        run_suite(ctx, mode, tests_to_run, persistent_services)
 
     # Post test execution cleanup
     cleanup(global_config.get("clickhouse", {}))

@@ -27,7 +27,7 @@ exist, and how a profile decides which of them run.
 |---|---|
 | Docker and Docker Compose v2 | everything |
 | Python 3 | the helper scripts under `scripts/` |
-| PyYAML | `make test-e2e` and `make test-resilience` only (`pip install pyyaml`, or `uv run --with pyyaml`) |
+| uv | `make test-e2e`, `make test-resilience` and `make test-flows` only. It installs the PyYAML and Playwright those scripts declare inline |
 | ruff | `make check-python` only |
 | pytest | `make check-tests` only (`uvx` fetches the pin if you have it) |
 | git credentials for the hyperi-io repos (or `DFE_SRC_ROOT` checkouts) | `make dev` |
@@ -324,6 +324,10 @@ An archiver that subscribes to the test's landing topic and archives to a
 since a baseline taken before the send. The archive volume outlives the stack, so
 files from an earlier run never count.
 
+The data file goes to the ingest edge 16 requests at a time. The receiver answers each request once the loader has flushed it, so one at a time costs a flush per event.
+
+The suite stops whatever stack the project is running, so it reads the project first. On every way out, a failure or a SIGTERM included, it starts each service that was running or had run to completion again, from the compose files it was started from. A last verdict fails if one comes back on a different config hash. Run it as the user that started the stack: `make` writes that user's GID into the engine's config, and under console TLS its UID and GID into both proxies'.
+
 Under [console TLS](configuration.md#console-tls-opt-in) each test's stack chains the fragments `make ci` does, the exposure opt-outs and container logs included. The console checks go to `https://<DFE_EXTERNAL_ORIGIN host>:<DFE_UI_PORT>` and verify its certificate by chain and name, against `DFE_PROXY_CA_BUNDLE` when a private CA signed it. A certificate that does not verify fails the check with the variable to change.
 
 Two things about the runner worth knowing before you debug it:
@@ -355,7 +359,7 @@ The `core` footprint starts `dfe-hunt-runner`, as `make dev` does. On a profile 
 ### Search to rule to hunt -- the console path
 
 ```bash
-uv run --with pyyaml --with playwright==1.63.0 python3 scripts/test_e2e.py search-rule-hunt
+make test-e2e E2E_TESTS=search-rule-hunt
 ```
 
 A `detection:` block carrying `from_search` makes its rule the way an analyst does, in a browser. It adds HyperDX to the stack, signs in to the console as the stack's admin and opens Observe search on `main`. The search bar gets the block's `search`, held to the run's marker, and the side panel picks its `filter`. Then Create Rule, and the rule page it opens.
@@ -364,7 +368,7 @@ The stored rule has to scan `dfe.main` with no SQL errors and a WHERE that carri
 
 The side panel only offers values rows already hold, so both event sets are sent once before the search. The hunt's first window can reach those rows, so their near misses are judged too, and their matches are not.
 
-The console holds every page behind its setup wizard, so the test first makes the `e2e` organisation and one user of the deployment's own, as the wizard would. It needs an interpreter with Playwright and Google Chrome (`playwright install chrome` where Chrome is absent). `DFE_E2E_HEADED=1` shows the browser, and `DFE_E2E_SHOTS_DIR` keeps the step screenshots, which otherwise go to a new temporary directory named in the log.
+The console holds every page behind its setup wizard, so the test first makes the `e2e` organisation and one user of the deployment's own, as the wizard would. uv installs Playwright from the script's inline metadata, and the test drives Google Chrome (`uvx playwright install chrome` where it is absent). `DFE_E2E_HEADED=1` shows the browser, and `DFE_E2E_SHOTS_DIR` keeps the step screenshots, which otherwise go to a new temporary directory named in the log.
 
 Under console TLS the suite first verifies the console certificate itself, then pins Chrome to that certificate's public key, because Chrome takes no CA bundle.
 
