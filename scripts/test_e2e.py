@@ -2832,13 +2832,22 @@ def verify_detections(
 
 # ------------------------------------------------------------------------------
 # Remove Detection Objects
-# - Deletes what the test created, the hunt first because the engine refuses to
-#   delete a rule a hunt still names, and proves both are gone
+# - Deletes what the test created in the order given, the hunt before the rule
+#   because the engine refuses to delete a rule a hunt still names, and proves
+#   each is gone
 # ------------------------------------------------------------------------------
+DETECTION_OBJECT_PATHS = {
+    "account": "/auth/accounts",
+    "hunt": "/hunts",
+    "organisation": "/orgs",
+    "rule": "/rules",
+}
+
+
 def remove_detection_objects(ctx, test, token, created):
     left = []
     for kind, name in created:
-        path = f"/{kind}s/{quote(name)}"
+        path = f"{DETECTION_OBJECT_PATHS[kind]}/{quote(name)}"
         deleted, _ = engine_call("DELETE", path, token)
         status, _ = engine_call("GET", path, token)
         if status != 404:
@@ -2945,8 +2954,10 @@ def run_detection(ctx, test, ingest_url):
 # Complete Setup
 # - The organisation the hunt runs for and a user of the deployment's own, which
 #   the console's setup wizard holds every other page back for
+# - Each one this run had to make goes to the front of `created`, so the test
+#   removes it after the hunt and the rule; one that already existed stays
 # ------------------------------------------------------------------------------
-def complete_setup(ctx, test, token):
+def complete_setup(ctx, test, token, created):
     org_path = f"/orgs/{quote(DETECTION_CUSTOMER)}"
     status, org = engine_call("GET", org_path, token)
     if status == 404:
@@ -2954,7 +2965,9 @@ def complete_setup(ctx, test, token):
             "name": DETECTION_CUSTOMER,
             "display_name": DETECTION_CUSTOMER.upper(),
         }
-        engine_call("POST", "/orgs", token, request)
+        made, _ = engine_call("POST", "/orgs", token, request)
+        if made == 201:
+            created.insert(0, ("organisation", DETECTION_CUSTOMER))
         status, org = engine_call("GET", org_path, token)
     if status != 200 or not (isinstance(org, dict)):
         mark_fail(
@@ -2973,7 +2986,9 @@ def complete_setup(ctx, test, token):
             "password": secrets.token_urlsafe(24),
             "name": "E2E Analyst",
         }
-        engine_call("POST", "/auth/accounts", token, account)
+        made, _ = engine_call("POST", "/auth/accounts", token, account)
+        if made in (200, 201):
+            created.insert(0, ("account", SETUP_FIRST_USER))
         status, setup = engine_call("GET", "/auth/setup-status", token)
     initial = (setup or {}).get("initial_setup") or {}
     if status != 200 or initial.get("complete") is not True:
@@ -3136,7 +3151,7 @@ def run_search_detection(ctx, test, ingest_url, token):
     landed = None
     console = None
     try:
-        organisation = complete_setup(ctx, test, token)
+        organisation = complete_setup(ctx, test, token, created)
         if organisation is None or not (hyperdx_ready(ctx, test, token)):
             return
         print()

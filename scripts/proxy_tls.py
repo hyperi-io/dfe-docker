@@ -103,15 +103,20 @@ def cert_problem(*, cert_dir: str) -> str:
         return f"{setting} must be a path starting with /, ./ or ../ because compose reads a bare name as a named volume"
     if not (Path(cert_dir).is_dir()):
         return f"{setting} is not a directory. It must hold {_CERT} and {_KEY}"
+    if not (os.access(cert_dir, os.X_OK)):
+        return f"{setting} exists but this user cannot open it. Under TLS both proxies run as the user who runs make, so that user must be able to read {_CERT} and {_KEY} there. Run make as the user who owns it rather than widening its mode"
     paths = {}
     for name, kind in ((_CERT, "certificate"), (_KEY, "private key")):
         shown = f"{cert_dir.rstrip('/')}/{name}"
         path = Path(cert_dir) / name
         paths[name] = path
-        if path.is_symlink():
-            return f"{shown} is a symlink, which dangles inside the container (certbot's live/ directory is all symlinks). Copy the file itself with `cp -L`"
-        if not (path.is_file()):
-            return f"DFE_PROXY_TLS=true needs the {kind} {shown} and it is missing. Generate the pair as docs/configuration.md (Console TLS) shows. Set DFE_PROXY_TLS=false to start without TLS"
+        try:
+            if path.is_symlink():
+                return f"{shown} is a symlink, which dangles inside the container (certbot's live/ directory is all symlinks). Copy the file itself with `cp -L`"
+            if not (path.is_file()):
+                return f"DFE_PROXY_TLS=true needs the {kind} {shown} and it is missing. Generate the pair as docs/configuration.md (Console TLS) shows. Set DFE_PROXY_TLS=false to start without TLS"
+        except OSError as error:
+            return f"{shown} cannot be checked ({error.strerror}), so the start is refused rather than assumed safe"
         if not (os.access(path, os.R_OK)):
             return f"{shown} exists but this user cannot read it. Under TLS both proxies run as the user who runs make, so the {kind} must be readable by that user. Keep the key 0600 and chown it rather than widening the mode"
     if shutil.which("openssl") is None:

@@ -48,11 +48,15 @@ _PRUNE = "scripts/instances.py --prune"
 
 @pytest.fixture
 def checkout(tmp_path: Path) -> Path:
-    """The Makefile, a stand-in resolver, and no .env."""
+    """The Makefile, a stand-in resolver, the network precheck, and no .env."""
     shutil.copy(REPO_ROOT / "Makefile", tmp_path / "Makefile")
     (tmp_path / "scripts").mkdir()
     (tmp_path / "scripts" / "resolve_profile.py").write_text(
         _RESOLVER, encoding="utf-8", newline="\n"
+    )
+    # The goals that reuse a live network run it while make parses, and a precheck that cannot run refuses the start.
+    shutil.copy(
+        REPO_ROOT / "scripts" / "proxy_tls.py", tmp_path / "scripts" / "proxy_tls.py"
     )
     return tmp_path
 

@@ -27,6 +27,8 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 # The sentences each guard is recognised by, quoted from the Makefile and scripts/proxy_tls.py.
 _AUTH = "cannot start with the auth profile"
 _BARE_CERT_DIR = "must be a path starting with"
+_CLOSED_CERT_DIR = "exists but this user cannot open it"
+_CRASHED = "precheck failed before it could check the console TLS setup"
 _HTTP_HYPERDX = "DFE_HYPERDX_APP_URL must start with https://"
 _HTTP_ORIGIN = "DFE_EXTERNAL_ORIGIN must start with https://"
 _MISSING_CERT = "needs the certificate ./certs/console.crt"
@@ -42,6 +44,8 @@ _UNREADABLE_KEY = "./certs/console.key exists but"
 _GUARDS = (
     _AUTH,
     _BARE_CERT_DIR,
+    _CLOSED_CERT_DIR,
+    _CRASHED,
     _HTTP_HYPERDX,
     _HTTP_ORIGIN,
     _MISSING_CERT,
@@ -253,6 +257,43 @@ def test_an_unreadable_key_is_named_as_unreadable_not_missing(makefile: Path) ->
     assert result.returncode != 0
     assert _UNREADABLE_KEY in result.stderr
     assert _MISSING_KEY not in result.stderr
+
+
+@pytest.mark.skipif(
+    os.geteuid() == 0, reason="root enters a 0000 directory, so nothing is closed"
+)
+def test_a_cert_dir_this_user_cannot_open_stops_the_start(makefile: Path) -> None:
+    (makefile / "certs").chmod(0o000)
+    try:
+        result = _make(cwd=makefile, goal="ci", **_TLS_ON)
+    finally:
+        (makefile / "certs").chmod(0o700)
+
+    assert result.returncode != 0
+    assert _CLOSED_CERT_DIR in result.stderr
+
+
+# Answers `network` as the real helper does and dies on `precheck`, before printing anything.
+_CRASHING_HELPER = """\
+import sys
+
+if sys.argv[1] == "network":
+    print("10.207.0.254 10.207.0.0/25")
+    raise SystemExit(0)
+raise RuntimeError("precheck could not run")
+"""
+
+
+@pytest.mark.parametrize("goal", ["ci", "apply"])
+def test_a_precheck_that_crashes_stops_the_start(goal: str, makefile: Path) -> None:
+    (makefile / "scripts" / "proxy_tls.py").write_text(
+        _CRASHING_HELPER, encoding="utf-8", newline="\n"
+    )
+
+    result = _make(cwd=makefile, goal=goal, **_TLS_ON)
+
+    assert result.returncode != 0
+    assert _CRASHED in result.stderr
 
 
 @pytest.mark.parametrize(

@@ -64,6 +64,7 @@ import datetime
 import functools
 import json
 import os
+import re
 import stat
 import subprocess
 import sys
@@ -300,8 +301,13 @@ IDLE_GAUGE = "pipeline_idle"
 # built from those parts in `_routing_timeout_seconds`.
 ROUTING_SERVICES = ("dfe-engine", "dfe-receiver", "dfe-loader")
 ROUTING_SOURCE_PREFIX = "postroute"
+# The prefix and the last 8 hex digits of a `_run_id`.
+ROUTED_TABLE_NAME = re.compile(rf"{ROUTING_SOURCE_PREFIX}[0-9a-f]{{8}}")
 RECEIVER_CONFIG_POLL_SECONDS = 5.0
 ROUTING_INTERVAL_SECONDS = 3.0
+# The engine deletes a source's two topics before it answers, each delete allowed
+# 30s after a 10s topic listing, which a broker that does not answer uses in full.
+ROUTING_DELETE_TIMEOUT_SECONDS = 90
 # `.profile.mk`'s answer to "does the engine render this tier's app config": the
 # claim is only makeable where it does.
 APP_CONFIG_DIR_KEY = "DFE_ENGINE_APP_CONFIG_DIR"
@@ -1283,7 +1289,7 @@ def _verify_routing_applied(*, database: str) -> Claim:
     fault = _create_routed_source(base=base, name=name, token=token)
     if fault:
         _print(msg=f"FAIL  {fault}")
-        _remove(f"{base}/sources/{name}", kind="source", name=name, token=token)
+        _remove_routed_source(base=base, database=database, name=name, token=token)
         return Claim(asserted=True, failed=1)
 
     try:
@@ -1291,7 +1297,36 @@ def _verify_routing_applied(*, database: str) -> Claim:
             asserted=True, failed=_await_routed_row(database=database, name=name)
         )
     finally:
-        _remove(f"{base}/sources/{name}", kind="source", name=name, token=token)
+        _remove_routed_source(base=base, database=database, name=name, token=token)
+
+
+def _remove_routed_source(*, base: str, database: str, name: str, token: str) -> None:
+    """Delete the routing claim's source, then the table its deploy created.
+
+    The engine's source delete takes the topics, the fetcher instance and the
+    receiver rule, and leaves the table. It is dropped only once the source is
+    gone, because a table pulled from under a live source fails its loads.
+    """
+    removed = _remove(
+        f"{base}/sources/{name}",
+        kind="source",
+        name=name,
+        token=token,
+        timeout=ROUTING_DELETE_TIMEOUT_SECONDS,
+    )
+    if not (removed):
+        _print(msg=f"      note: {database}.{name} is kept while its source remains")
+        return
+    # Only a name this claim makes, so the drop can never reach another table.
+    if not (ROUTED_TABLE_NAME.fullmatch(name)):
+        return
+    dropped, answer = ch_execute(
+        f"DROP TABLE IF EXISTS {database}.{name} SYNC",
+        timeout=CLEANUP_STATEMENT_TIMEOUT_SECONDS,
+    )
+    if not (dropped):
+        refusal = answer.splitlines()[0] if answer else "no answer"
+        _print(msg=f"      note: {database}.{name} was not dropped: {refusal}")
 
 
 def _routing_timeout_seconds(*, bus: bool) -> float:
@@ -1831,11 +1866,17 @@ def _create_hunt(
     return "" if status == 201 else f"POST /hunts returned HTTP {status}: {body}"
 
 
-def _remove(url: str, *, kind: str, name: str, token: str) -> None:
-    """Delete one thing this run created, and say so when it does not go."""
-    status = _api_delete(url, token=token)
-    if status not in (200, 204):
+def _remove(url: str, *, kind: str, name: str, token: str, timeout: int = 10) -> bool:
+    """Delete one thing this run created, say so when it does not go, and return whether it went."""
+    try:
+        status = _api_delete(url, token=token, timeout=timeout)
+    except (ApiUnreachable, OSError, subprocess.TimeoutExpired) as error:
+        _print(msg=f"      note: {kind} {name!r} was not removed: {error}")
+        return False
+    if status not in (200, 204, 404):
         _print(msg=f"      note: {kind} {name!r} was not removed (HTTP {status})")
+        return False
+    return True
 
 
 def _hunt_runner_alive(*, base: str, token: str) -> bool:

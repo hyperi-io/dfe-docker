@@ -324,8 +324,9 @@ PROXY_NETWORK_REUSE := $(filter $(NETWORK_REUSE_GOALS),$(or $(MAKECMDGOALS),help
 # Compose names the default network after the project, which is COMPOSE_PROJECT_NAME or this directory.
 PROXY_PROJECT := $(or $(strip $(COMPOSE_PROJECT_NAME)),$(notdir $(CURDIR)))
 # The certificate pair, the subnet and the network as Docker holds it now; the helper prints the first problem and nothing when there is none.
+# A helper that exits non-zero printed no problem because it checked nothing, so that exit becomes the problem and the start is refused.
 ifneq ($(PROXY_TLS_START)$(PROXY_NETWORK_REUSE),)
-    PROXY_TLS_PROBLEM := $(shell python3 scripts/proxy_tls.py precheck $(if $(PROXY_TLS_START),--certs --overlap) $(if $(PROXY_NETWORK_REUSE),--toggle) --cert-dir '$(DFE_PROXY_CERT_DIR)' --project '$(PROXY_PROJECT)' --subnet '$(strip $(DFE_NETWORK_SUBNET))' --tls $(if $(filter true,$(strip $(DFE_PROXY_TLS))),true,false))
+    PROXY_TLS_PROBLEM := $(shell python3 scripts/proxy_tls.py precheck $(if $(PROXY_TLS_START),--certs --overlap) $(if $(PROXY_NETWORK_REUSE),--toggle) --cert-dir '$(DFE_PROXY_CERT_DIR)' --project '$(PROXY_PROJECT)' --subnet '$(strip $(DFE_NETWORK_SUBNET))' --tls $(if $(filter true,$(strip $(DFE_PROXY_TLS))),true,false) || echo "scripts/proxy_tls.py precheck failed before it could check the console TLS setup, so the start is refused rather than assumed safe. Its error is printed above")
     ifneq ($(strip $(PROXY_TLS_PROBLEM)),)
         $(error $(PROXY_TLS_PROBLEM))
     endif

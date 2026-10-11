@@ -91,6 +91,17 @@ ALLOWED = {
     "scripts/tests/test_engine_only_schema_control.py",
 }
 
+# The self test's routing claim drops the throwaway table its own source
+# deployed, once that source is gone, because the engine's source delete leaves
+# the table. This one statement, and nothing else in post.py, is let through.
+ALLOWED_LINES = {
+    ("scripts/post.py", 'f"DROP TABLE IF EXISTS {database}.{name} SYNC",'),
+    (
+        "scripts/tests/test_post.py",
+        'assert statements == ["DROP TABLE IF EXISTS dfe.postroute1a2b3c4d SYNC"]',
+    ),
+}
+
 # Services whose start order the engine's schema pass governs: each reads a table
 # or a topic dfe-schemas declares and dfe-engine makes.
 GATED_SERVICES = (
@@ -198,7 +209,7 @@ def _offenders(pattern: re.Pattern[str]) -> list[str]:
         except (UnicodeDecodeError, OSError):
             continue
         for number, line in enumerate(body.splitlines(), start=1):
-            if pattern.search(line):
+            if pattern.search(line) and (rel, line.strip()) not in ALLOWED_LINES:
                 hits.append(f"{rel}:{number}: {line.strip()[:120]}")
     return hits
 

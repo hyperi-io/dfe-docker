@@ -25,11 +25,23 @@ EVENTS = 10
 
 
 class _HoldingReceiver(BaseHTTPRequestHandler):
-    """Answers each POST after HOLD_SECONDS, 503 for a body asking to be refused."""
+    """Answers each POST after HOLD_SECONDS, 503 for a body asking to be refused.
+
+    It counts the requests it is holding at once, and keeps the most it held.
+    """
+
+    lock = threading.Lock()
+    holding = 0
+    most_held = 0
 
     def do_POST(self) -> None:
         body = self.rfile.read(int(self.headers["Content-Length"]))
+        with self.lock:
+            type(self).holding += 1
+            type(self).most_held = max(type(self).most_held, type(self).holding)
         time.sleep(HOLD_SECONDS)
+        with self.lock:
+            type(self).holding -= 1
         self.send_response(503 if b"refuse" in body else 200)
         self.end_headers()
 
@@ -39,6 +51,8 @@ class _HoldingReceiver(BaseHTTPRequestHandler):
 
 @pytest.fixture
 def receiver_url():
+    _HoldingReceiver.holding = 0
+    _HoldingReceiver.most_held = 0
     server = ThreadingHTTPServer(("127.0.0.1", 0), _HoldingReceiver)
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
@@ -61,13 +75,14 @@ def test_one_sender_at_a_time_pays_the_hold_per_event(receiver_url: str) -> None
 
     assert statuses == [200] * EVENTS
     assert elapsed >= EVENTS * HOLD_SECONDS
+    assert _HoldingReceiver.most_held == 1
 
 
 def test_concurrent_senders_share_the_hold(receiver_url: str) -> None:
-    statuses, elapsed = _timed(receiver_url, workers=EVENTS)
+    statuses, _ = _timed(receiver_url, workers=EVENTS)
 
     assert statuses == [200] * EVENTS
-    assert elapsed < EVENTS * HOLD_SECONDS / 2
+    assert _HoldingReceiver.most_held > 1
 
 
 def test_each_answer_stays_with_its_own_request(receiver_url: str) -> None:
