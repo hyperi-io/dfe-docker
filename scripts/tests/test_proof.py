@@ -24,7 +24,13 @@ import proof
 @pytest.fixture
 def steps(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> dict:
     """Fake make steps; ``outcome`` sets each step's result, ``ran`` records order."""
-    state: dict = {"ran": [], "outcome": {}, "work": None}
+    state: dict = {
+        "ran": [],
+        "outcome": {},
+        "work": None,
+        "applied": tmp_path / ".dfe-stack-applied",
+        "proven": tmp_path / ".dfe-proof-passed",
+    }
     work = tmp_path / "work"
 
     def fake_mkdtemp(prefix: str) -> str:
@@ -46,8 +52,67 @@ def steps(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> dict:
     monkeypatch.setattr(proof.tempfile, "mkdtemp", fake_mkdtemp)
     monkeypatch.setattr(proof, "run_step", fake_run_step)
     monkeypatch.setattr(proof, "source_step", fake_source_step)
+    monkeypatch.setattr(proof, "APPLIED_MARKER", state["applied"])
+    monkeypatch.setattr(proof, "PROVEN_MARKER", state["proven"])
     monkeypatch.delenv("DFE_PROOF_SKIP", raising=False)
+    monkeypatch.delenv("DFE_PROOF_FORCE", raising=False)
     return state
+
+
+def test_a_pass_marks_the_applied_version_proven(steps: dict) -> None:
+    steps["applied"].write_text("2.2.1\n", encoding="utf-8")
+    assert proof.main() == 0
+    assert steps["proven"].read_text(encoding="utf-8") == "2.2.1\n"
+
+
+def test_a_proven_version_is_not_run_again(steps: dict) -> None:
+    steps["applied"].write_text("2.2.1\n", encoding="utf-8")
+    steps["proven"].write_text("2.2.1\n", encoding="utf-8")
+    assert proof.main() == 0
+    assert steps["ran"] == []
+    assert steps["work"] is None
+
+
+def test_a_new_version_runs_although_an_older_one_is_proven(steps: dict) -> None:
+    steps["applied"].write_text("2.2.2\n", encoding="utf-8")
+    steps["proven"].write_text("2.2.1\n", encoding="utf-8")
+    assert proof.main() == 0
+    assert steps["ran"] == ["e2e", "restore", "source"]
+    assert steps["proven"].read_text(encoding="utf-8") == "2.2.2\n"
+
+
+def test_a_failure_leaves_the_version_unproven(steps: dict) -> None:
+    steps["applied"].write_text("2.2.2\n", encoding="utf-8")
+    steps["proven"].write_text("2.2.1\n", encoding="utf-8")
+    steps["outcome"]["source"] = False
+    assert proof.main() == 1
+    assert steps["proven"].read_text(encoding="utf-8") == "2.2.1\n"
+
+
+def test_force_runs_a_proven_version(
+    steps: dict, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    steps["applied"].write_text("2.2.1\n", encoding="utf-8")
+    steps["proven"].write_text("2.2.1\n", encoding="utf-8")
+    monkeypatch.setenv("DFE_PROOF_FORCE", "1")
+    assert proof.main() == 0
+    assert steps["ran"] == ["e2e", "restore", "source"]
+
+
+def test_a_partial_run_never_marks_proven(
+    steps: dict, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    steps["applied"].write_text("2.2.1\n", encoding="utf-8")
+    monkeypatch.setenv("DFE_PROOF_SKIP", "e2e")
+    assert proof.main() == 0
+    assert not steps["proven"].exists()
+
+
+def test_no_applied_marker_always_runs_and_marks_nothing(steps: dict) -> None:
+    steps["proven"].write_text("2.2.1\n", encoding="utf-8")
+    assert proof.main() == 0
+    assert steps["ran"] == ["e2e", "restore", "source"]
+    assert steps["proven"].read_text(encoding="utf-8") == "2.2.1\n"
 
 
 def test_all_steps_pass(steps: dict) -> None:
