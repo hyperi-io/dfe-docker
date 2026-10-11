@@ -369,12 +369,14 @@ image is pinned, because compose aborts on the first missing variable.
 
 ### `PyYAML is not installed in this interpreter`
 
-The e2e harness declares PyYAML and Playwright inline (PEP 723), and `make test-e2e` runs it through uv, which installs them. A bare `python3 scripts/test_e2e.py` skips that step:
+The e2e harness declares PyYAML and Playwright inline (PEP 723), locked in `scripts/test_e2e.py.lock`, and `make test-e2e` runs it through uv, which installs them. A bare `python3 scripts/test_e2e.py` skips that step:
 
 ```bash
 make test-e2e
-uv run --script scripts/test_e2e.py   # the same, without make
+uv run --locked --script scripts/test_e2e.py   # the same, without make
 ```
+
+`The lockfile at uv.lock needs to be updated` from either means a pin in the script moved without its lock: run `uv lock --script scripts/test_e2e.py` and commit both.
 
 The power-on self test (`scripts/post.py`) has no such dependency -- it is
 stdlib-only and works on a bare machine.

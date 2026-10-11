@@ -27,7 +27,7 @@ exist, and how a profile decides which of them run.
 |---|---|
 | Docker and Docker Compose v2 | everything |
 | Python 3 | the helper scripts under `scripts/` |
-| uv | `make test-e2e`, `make test-resilience` and `make test-flows` only. It installs the PyYAML and Playwright those scripts declare inline |
+| uv | `make test-e2e`, `make test-resilience` and `make test-flows` only. It installs the PyYAML and Playwright those scripts declare inline, hash-checked against the `<script>.lock` beside each |
 | ruff | `make check-python` only |
 | pytest | `make check-tests` only (`uvx` fetches the pin if you have it) |
 | git credentials for the hyperi-io repos (or `DFE_SRC_ROOT` checkouts) | `make dev` |
@@ -435,6 +435,7 @@ that is a finding about the console rather than about the pipeline.
 | `make check-proxy` | `envoy --mode validate` on both proxy configs and their console TLS variants, on the Envoy the stack pins |
 | `make check-python` | `ruff check` and `ruff format --check` on `scripts/` |
 | `make check-tests` | `pytest scripts/tests` -- unit tests over the credential helpers |
+| `make check-locks` | `uv lock --check` on each script that declares packages inline, so a pin moved without `uv lock --script <script>` fails here rather than mid-suite |
 
 `check-compose` is hermetic: it reads the mandatory `${VAR:?}` keys out of the
 compose file and substitutes placeholders, so it needs neither the stack SSoT nor
@@ -447,9 +448,9 @@ for why a lower ceiling takes health endpoints dark.
 external URLs and does not check `#anchors`, so a live file with a stale anchor
 still passes.
 
-`check-dockerfile` pulls the pinned hadolint image and `check-tests` resolves the
-pinned pytest through `uvx`, so both want a network the first time. The rest need
-none.
+`check-dockerfile` pulls the pinned hadolint image, `check-tests` resolves the
+pinned pytest through `uvx` and `check-locks` the pinned uv, so those want a
+network the first time. The rest need none.
 
 `check-proxy` pulls the pinned Envoy image the same way and mints a throwaway P-384 certificate with the host's `openssl` for the TLS variants.
 

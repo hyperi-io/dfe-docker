@@ -1,4 +1,4 @@
-#!/usr/bin/env -S uv run --script
+#!/usr/bin/env -S uv run --locked --script
 
 #  Project:   dfe-docker
 #  File:      scripts/test-e2e.py
@@ -45,9 +45,9 @@ except ModuleNotFoundError:  # pragma: no cover - environment guard
     # that does not say how to proceed.
     sys.exit(
         "test_e2e: PyYAML is not installed in this interpreter.\n"
-        "  Run it through uv, which installs what the script declares:\n"
+        "  Run it through uv, which installs what the script locks:\n"
         "    make test-e2e\n"
-        "    uv run --script scripts/test_e2e.py"
+        "    uv run --locked --script scripts/test_e2e.py"
     )
 
 from collections import Counter
