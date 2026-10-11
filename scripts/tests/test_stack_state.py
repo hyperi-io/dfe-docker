@@ -96,6 +96,18 @@ def test_the_restore_names_the_project_directory_and_files_it_came_from() -> Non
     ]
 
 
+def test_a_compose_file_that_is_gone_is_left_out_and_named() -> None:
+    found = _stack_state.containers([_document("clickhouse")])
+
+    [restore] = _stack_state.restores(
+        found, exists=lambda path: not (path.endswith("tls.yml"))
+    )
+
+    assert restore.config_files == ("/opt/dfe/docker-compose.yml",)
+    assert restore.missing == ("/opt/dfe/docker-compose.tls.yml",)
+    assert "/opt/dfe/docker-compose.tls.yml" not in restore.command()
+
+
 def test_services_started_from_different_files_get_one_up_each() -> None:
     found = _stack_state.containers(
         [

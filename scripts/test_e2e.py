@@ -1101,11 +1101,15 @@ def put_back(ctx, found):
     print()
     stack_down()
 
-    for restore in _stack_state.restores(found):
+    for restore in _stack_state.restores(found, exists=os.path.exists):
         LOGGER.info(
             f"Starting the {len(restore.services)} service(s) this run found, from "
             f"{len(restore.config_files)} compose file(s)..."
         )
+        if restore.missing:
+            LOGGER.warning(
+                f"    Left out, as they no longer exist: {', '.join(restore.missing)}"
+            )
         result = subprocess.run(
             restore.command(),
             cwd=restore.working_dir or PROJECT_DIR,

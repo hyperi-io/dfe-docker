@@ -17,7 +17,7 @@ back is configured as the one that went.
 """
 
 from collections import defaultdict
-from collections.abc import Iterable, Mapping
+from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass
 
 SERVICE_LABEL = "com.docker.compose.service"
@@ -97,13 +97,20 @@ def containers(documents: Iterable[Mapping]) -> list[Container]:
 
 @dataclass(frozen=True, slots=True)
 class Restore:
-    """One `docker compose up` that starts services from the files they came from."""
+    """One `docker compose up` that starts services from the files they came from.
+
+    Attributes:
+        missing: Compose files the services were started from that no longer exist,
+            left out of the command, and the config hash check judges what that
+            changed.
+    """
 
     project: str
     working_dir: str
     config_files: tuple[str, ...]
     environment_files: tuple[str, ...]
     services: tuple[str, ...]
+    missing: tuple[str, ...] = ()
 
     def command(self) -> list[str]:
         """The compose command, every profile enabled so each service resolves."""
@@ -116,8 +123,14 @@ class Restore:
         return command + ["--profile", "*", "up", "-d", *self.services]
 
 
-def restores(found: Iterable[Container]) -> list[Restore]:
-    """One `up` per set of compose files the restored containers were started from."""
+def restores(
+    found: Iterable[Container], *, exists: Callable[[str], bool] = lambda path: True
+) -> list[Restore]:
+    """One `up` per set of compose files the restored containers were started from.
+
+    A file `exists` rejects is left out, as an e2e run's own override is once the
+    run has cleaned up after itself.
+    """
     groups: dict[tuple, list[str]] = defaultdict(list)
     for container in found:
         if container.restored:
@@ -129,7 +142,14 @@ def restores(found: Iterable[Container]) -> list[Restore]:
             )
             groups[key].append(container.service)
     return [
-        Restore(project, working_dir, files, env_files, tuple(sorted(services)))
+        Restore(
+            project,
+            working_dir,
+            tuple(path for path in files if exists(path)),
+            env_files,
+            tuple(sorted(services)),
+            missing=tuple(path for path in files if not (exists(path))),
+        )
         for (project, working_dir, files, env_files), services in sorted(groups.items())
     ]
 
