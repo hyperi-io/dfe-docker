@@ -685,6 +685,12 @@ test-flows: ## Flow shapes against a running stack (needs DFE_ENGINE_REPO; FLOW_
 test-source: ## Post-deploy source test against a running stack (needs DFE_INFRA_DIR + DFE_ENGINE_REPO; SOURCE_ARGS passes flags)
 	@python3 ./scripts/test_source.py $(SOURCE_ARGS)
 
+# For a host that keeps a stack running and updates itself on a timer: it ends
+# with the standing stack back up and deletes everything it created.
+.PHONY: proof
+proof: ## Unattended acceptance: test-e2e, restore the stack (make ci), then test-source from fresh checkouts; cleans up after itself
+	@python3 ./scripts/proof.py
+
 # ---------------------------------------------------------------------------
 # Power-on self test
 # Runs automatically after `make dev` / `make ci`. Opt OUT with
