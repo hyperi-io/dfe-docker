@@ -326,7 +326,7 @@ files from an earlier run never count.
 
 The data file goes to the ingest edge 16 requests at a time. The receiver answers each request once the loader has flushed it, so one at a time costs a flush per event.
 
-The suite stops whatever stack the project is running, so it reads the project first. On every way out, a failure or a SIGTERM included, it starts each service that was running or had run to completion again, from the compose files it was started from. A last verdict fails if one comes back on a different config hash. Run it as the user that started the stack: `make` writes that user's UID and GID into the proxies' and the engine's config.
+The suite stops whatever stack the project is running, so it reads the project first. On every way out, a failure or a SIGTERM included, it starts each service that was running or had run to completion again, from the compose files it was started from. A last verdict fails if one comes back on a different config hash. Run it as the user that started the stack: `make` writes that user's GID into the engine's config, and under console TLS its UID and GID into both proxies'.
 
 Under [console TLS](configuration.md#console-tls-opt-in) each test's stack chains the fragments `make ci` does, the exposure opt-outs and container logs included. The console checks go to `https://<DFE_EXTERNAL_ORIGIN host>:<DFE_UI_PORT>` and verify its certificate by chain and name, against `DFE_PROXY_CA_BUNDLE` when a private CA signed it. A certificate that does not verify fails the check with the variable to change.
 
