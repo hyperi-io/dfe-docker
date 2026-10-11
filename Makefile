@@ -646,19 +646,22 @@ check-proxy: ## Validate the Envoy proxy configs, plain and TLS, on the pinned E
 # The suite starts each test's stack from its own -f list. Under console TLS that stack needs the TLS fragment and the network it pins, so the suite takes every fragment `make ci` chains, the exposure opt-outs and container logs included; with TLS off it keeps its own list. DFE_E2E_COMPOSE_FILES follows either way, and the suite skips the empty entries the colons leave.
 E2E_COMPOSE_FILES = $(if $(filter true,$(strip $(DFE_PROXY_TLS))),$(UI_CHAIN)):$(strip $(DFE_E2E_COMPOSE_FILES))
 
+# The scripts that import packages beyond the standard library declare them inline (PEP 723), so uv installs them and a host needs only uv.
+UV ?= uv
+
 .PHONY: test-e2e
 test-e2e: ## End-to-end test executor (pass test names via E2E_TESTS)
-	@DFE_E2E_COMPOSE_FILES='$(E2E_COMPOSE_FILES)' python3 ./scripts/test_e2e.py $(E2E_TESTS)
+	@DFE_E2E_COMPOSE_FILES='$(E2E_COMPOSE_FILES)' $(UV) run --script ./scripts/test_e2e.py $(E2E_TESTS)
 
 # Opt-in, never part of test-e2e: each test stops a backing service or a DFE app
 # under load.
 .PHONY: test-resilience
 test-resilience: ## Outage tests: stop a service under load and prove the rest survives (pass test names via E2E_TESTS)
-	@DFE_E2E_COMPOSE_FILES='$(E2E_COMPOSE_FILES)' python3 ./scripts/test_e2e.py --outages $(E2E_TESTS)
+	@DFE_E2E_COMPOSE_FILES='$(E2E_COMPOSE_FILES)' $(UV) run --script ./scripts/test_e2e.py --outages $(E2E_TESTS)
 
 .PHONY: test-flows
 test-flows: ## Flow shapes against a running stack (needs DFE_ENGINE_REPO; FLOW_ARGS passes flags)
-	@python3 ./scripts/test_flows.py $(FLOW_ARGS)
+	@$(UV) run --script ./scripts/test_flows.py $(FLOW_ARGS)
 
 # The post-deploy source test: add a source through the console and prove every
 # hop. The runner is dfe-infra's, the same one `dfe-ops acceptance --suite

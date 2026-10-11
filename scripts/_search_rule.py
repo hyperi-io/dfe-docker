@@ -59,9 +59,9 @@ JSON_COLUMN = "_json"
 # An option in whichever console select is open.
 OPEN_OPTION = ".ant-select-dropdown:not(.ant-select-dropdown-hidden) .ant-select-item-option-content"
 PLAYWRIGHT_HINT = (
-    "run the suite under an interpreter carrying Playwright, e.g. "
-    "`uv run --with pyyaml --with playwright python3 scripts/test_e2e.py`, and "
-    "`playwright install chrome` where Google Chrome is not installed"
+    "run the suite through uv, which installs the Playwright it declares "
+    "(`make test-e2e`, or `uv run --script scripts/test_e2e.py`), and install "
+    "Google Chrome where it is absent (`uvx playwright install chrome`)"
 )
 
 

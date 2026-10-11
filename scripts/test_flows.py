@@ -14,6 +14,13 @@
 #    ./scripts/test_flows.py --engine-repo ../dfe-engine
 #    DFE_ENGINE_REPO=../dfe-engine ./scripts/test_flows.py
 
+# /// script
+# requires-python = ">=3.12"
+# dependencies = [
+#     "pyyaml==6.0.3",
+# ]
+# ///
+
 """The flow shapes, on the compose stack, over localhost ports.
 
 The fixtures and the assertions live in dfe-engine (``tests/e2e/flows``) and are
