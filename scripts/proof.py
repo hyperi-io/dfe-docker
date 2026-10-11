@@ -23,6 +23,12 @@ Everything it creates lives in one temporary directory that is deleted at the
 end, pass or fail: the checkouts, the virtualenv and every screenshot. Nothing
 accumulates between runs, so a host can run this on a timer indefinitely.
 
+Each stack version is proven once. A full pass writes the version from
+.dfe-stack-applied to .dfe-proof-passed, and a later run on the same version
+exits 0 without touching the stack, so a timer that fires with nothing new does
+not take the standing stack away. A failed version runs again on the next fire.
+A checkout with no .dfe-stack-applied always runs.
+
 The browser is the host's installed Chrome (the runner drives ``--channel
 chrome``); this script never downloads one.
 
@@ -33,7 +39,9 @@ Environment:
                            default branch
     DFE_PROOF_ENGINE_REPO  dfe-engine clone URL (default: the public repo)
     DFE_PROOF_ENGINE_REF   branch or tag (default: the default branch)
-    DFE_PROOF_SKIP         comma-separated steps to skip: e2e, source
+    DFE_PROOF_SKIP         comma-separated steps to skip: e2e, source (a
+                           partial run never marks a version proven)
+    DFE_PROOF_FORCE        1 to run a version that is already proven
 
 Exit 0 only when every step that ran passed.
 
@@ -52,6 +60,8 @@ from pathlib import Path
 
 PROJECT_DIR = Path(__file__).resolve().parent.parent
 APPLIED_MARKER = PROJECT_DIR / ".dfe-stack-applied"
+PROVEN_MARKER = PROJECT_DIR / ".dfe-proof-passed"
+TRUTHY = {"1", "true", "yes", "on"}
 DEFAULT_INFRA_REPO = "https://github.com/hyperi-io/dfe-infra.git"
 DEFAULT_ENGINE_REPO = "https://github.com/hyperi-io/dfe-engine.git"
 ACCEPTANCE_REQUIREMENTS = Path("scripts") / "acceptance" / "requirements.txt"
@@ -152,10 +162,19 @@ def source_step(work: Path, env: dict[str, str]) -> bool:
     return run_step("source", ["make", "--no-print-directory", "test-source"], step_env)
 
 
+def read_marker(path: Path) -> str:
+    return path.read_text(encoding="utf-8").strip() if path.is_file() else ""
+
+
 def main() -> int:
     skip = {
         s.strip() for s in os.environ.get("DFE_PROOF_SKIP", "").split(",") if s.strip()
     }
+    applied = read_marker(APPLIED_MARKER)
+    force = os.environ.get("DFE_PROOF_FORCE", "").strip().lower() in TRUTHY
+    if applied and not skip and not force and read_marker(PROVEN_MARKER) == applied:
+        log(f"SKIP {applied} is already proven; DFE_PROOF_FORCE=1 runs it again")
+        return 0
     results: dict[str, bool] = {}
     work = Path(tempfile.mkdtemp(prefix="dfe-proof-"))
     try:
@@ -179,7 +198,10 @@ def main() -> int:
         f"{name}={'pass' if ok else 'FAIL'}" for name, ok in results.items()
     )
     log(f"RESULT {summary or 'nothing ran'}")
-    return 0 if results and all(results.values()) else 1
+    passed = bool(results) and all(results.values())
+    if passed and applied and not skip:
+        PROVEN_MARKER.write_text(f"{applied}\n", encoding="utf-8", newline="\n")
+    return 0 if passed else 1
 
 
 if __name__ == "__main__":
