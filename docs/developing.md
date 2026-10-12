@@ -237,7 +237,9 @@ Next.js only accepts hot-reload connections from `localhost` or the host it serv
 
 The dev server answers its source-map and stack-frame endpoints without a login, so with `DFE_BIND_SCOPE=all` anyone who can reach the console port can read the console's source. Use live mode on a network you trust. `LIVE_UI` only applies to `make dev` and `make apply DEV=1`, never to `make ci` or `make up`.
 
-The container runs as your user and writes `node_modules` and `.next` into the checkout, so stop any `next dev` you run there yourself first. It needs a Linux host, because on macOS its install would swap the native modules your host's `node_modules` relies on. Keys the stack does not set are filled from the checkout's `apps/dfe-core-ui` env files (`.env`, `.env.local` and `.env.development*`). `LOCAL` must not name dfe-ui alongside it.
+The container runs as your user and writes `node_modules` and `.next` into the checkout, so stop any `next dev` you run there yourself first. Keys the stack does not set are filled from the checkout's `apps/dfe-core-ui` env files (`.env`, `.env.local` and `.env.development*`). `LOCAL` must not name dfe-ui alongside it.
+
+Live mode needs a Linux host: on macOS the container's install would swap the native modules your host's `node_modules` relies on. On a Mac, run `next dev` on the host against the stack's engine instead, on port 5173 since dfe-proxy holds 3000, as dfe-ui's [local development guide](https://github.com/hyperi-io/dfe-ui/blob/main/docs/local-development.md) describes.
 
 ## Picking a profile
 
