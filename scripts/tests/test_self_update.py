@@ -79,6 +79,62 @@ def test_a_manifest_older_than_the_applied_version_is_refused(
     assert "refusing 2.2.0-rc.13 -> 2.2.0-rc.12" in capsys.readouterr().out
 
 
+def test_a_current_version_still_fast_forwards_the_checkout(
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    repo = _checkout(applied="2.2.1-rc.6", tmp_path=tmp_path)
+    applied = _discovery(monkeypatch=monkeypatch, latest="2.2.1-rc.6")
+    refreshed: list[Path] = []
+    monkeypatch.setattr(self_update, "_refresh_checkout", refreshed.append)
+    monkeypatch.setattr(sys, "argv", ["self_update.py", "--repo-dir", str(repo)])
+
+    assert self_update.main() == 0
+    assert refreshed == [repo]
+    assert applied == []
+    assert "checkout refreshed" in capsys.readouterr().out
+
+
+def test_a_current_version_with_a_refused_refresh_fails_the_tick(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    repo = _checkout(applied="2.2.1-rc.6", tmp_path=tmp_path)
+    _discovery(monkeypatch=monkeypatch, latest="2.2.1-rc.6")
+
+    def refuse(repo_dir: Path) -> None:
+        raise self_update.UpdateError("the checkout has uncommitted changes")
+
+    monkeypatch.setattr(self_update, "_refresh_checkout", refuse)
+    monkeypatch.setattr(sys, "argv", ["self_update.py", "--repo-dir", str(repo)])
+
+    assert self_update.main() == 1
+
+
+def test_a_current_version_dry_run_touches_nothing(
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    repo = _checkout(applied="2.2.1-rc.6", tmp_path=tmp_path)
+    _discovery(monkeypatch=monkeypatch, latest="2.2.1-rc.6")
+    refreshed: list[Path] = []
+    monkeypatch.setattr(self_update, "_refresh_checkout", refreshed.append)
+    monkeypatch.setattr(
+        self_update, "_refresh_plan", lambda repo_dir: "run `git pull --ff-only`"
+    )
+    monkeypatch.setattr(
+        sys, "argv", ["self_update.py", "--repo-dir", str(repo), "--dry-run"]
+    )
+
+    assert self_update.main() == 0
+    assert refreshed == []
+    assert (
+        "dry-run: already current; checkout refresh would run"
+        in capsys.readouterr().out
+    )
+
+
 def test_a_newer_manifest_is_still_applied(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
