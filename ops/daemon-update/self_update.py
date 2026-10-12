@@ -50,8 +50,10 @@ none of which the image can reseed. Leave it unset anywhere the data matters.
 The pull replaces this script mid-run; Python has already loaded it, so the
 current tick finishes on the old code and the next uses the new.
 
-Idempotent: when the VM is already on the newest version it is a no-op. Fails
-loudly (non-zero) so systemd marks the unit failed and the next timer tick retries.
+Idempotent: when the VM is already on the newest version it only fast-forwards the
+checkout, so a Makefile or ops change reaches the box without waiting for the next
+stack release. Fails loudly (non-zero) so systemd marks the unit failed and the next
+timer tick retries.
 """
 
 from __future__ import annotations
@@ -254,7 +256,13 @@ def main() -> int:
         _log(f"repo={repo} latest={latest} applied={applied or '(none)'}")
 
         if applied == latest:
-            _log("already current - nothing to do")
+            if args.dry_run:
+                _log(
+                    f"dry-run: already current; checkout refresh would {_refresh_plan(repo_dir)}"
+                )
+                return 0
+            _refresh_checkout(repo_dir)
+            _log("already current - checkout refreshed, nothing else to do")
             return 0
         if applied and _is_downgrade(applied=applied, target=latest):
             _log(
