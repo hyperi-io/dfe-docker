@@ -11,13 +11,16 @@
 
 A host runs this on a timer forever, so three properties matter more than any one
 test: the standing stack is restored even after the e2e suite fails, a failure
-anywhere is a non-zero exit, and the work directory is gone afterwards.
+anywhere is a non-zero exit, and the work directory is gone afterwards. The run
+also excludes the daemon updater through the stack lock, refuses a user who does
+not own .env, and tests the dfe-engine version the stack pins.
 """
 
 from pathlib import Path
 
 import pytest
 
+import _stack_lock
 import proof
 
 
@@ -52,6 +55,8 @@ def steps(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> dict:
     monkeypatch.setattr(proof.tempfile, "mkdtemp", fake_mkdtemp)
     monkeypatch.setattr(proof, "run_step", fake_run_step)
     monkeypatch.setattr(proof, "source_step", fake_source_step)
+    monkeypatch.setattr(proof, "PROJECT_DIR", tmp_path)
+    monkeypatch.setattr(proof, "ENV_FILE", tmp_path / ".env")
     monkeypatch.setattr(proof, "APPLIED_MARKER", state["applied"])
     monkeypatch.setattr(proof, "PROVEN_MARKER", state["proven"])
     monkeypatch.delenv("DFE_PROOF_SKIP", raising=False)
@@ -187,3 +192,119 @@ def test_source_step_refuses_without_chrome(
 ) -> None:
     monkeypatch.setattr(proof.shutil, "which", lambda name: None)
     assert proof.source_step(tmp_path, {}) is False
+
+
+def test_a_user_who_does_not_own_env_is_refused(
+    steps: dict,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    tmp_path: Path,
+) -> None:
+    (tmp_path / ".env").write_text("CLICKHOUSE_PASSWORD=hunter2\n", encoding="utf-8")
+    owner = (tmp_path / ".env").stat().st_uid
+    monkeypatch.setattr(proof.os, "getuid", lambda: owner + 1)
+    assert proof.main() == 1
+    shown = capsys.readouterr().out
+    assert f"uid {owner}" in shown
+    assert f"sudo -u '#{owner}' make proof" in shown
+    assert "hunter2" not in shown
+    assert steps["ran"] == []
+    assert steps["work"] is None
+
+
+def test_the_owner_of_env_runs_the_proof(steps: dict, tmp_path: Path) -> None:
+    (tmp_path / ".env").write_text("A=1\n", encoding="utf-8")
+    assert proof.main() == 0
+    assert steps["ran"] == ["e2e", "restore", "source"]
+
+
+def test_a_proof_does_not_start_while_the_stack_lock_is_held(
+    steps: dict, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    with _stack_lock.stack_lock(directory=tmp_path) as held:
+        assert held
+        assert proof.main() == 1
+    assert steps["ran"] == []
+    assert "nothing was run" in capsys.readouterr().out
+
+
+def test_every_step_runs_under_the_stack_lock_and_it_is_released_after(
+    steps: dict, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    held_during: list[bool] = []
+
+    def probing_run_step(name: str, argv: list[str], env: dict[str, str]) -> bool:
+        with _stack_lock.stack_lock(directory=tmp_path) as other:
+            held_during.append(not other)
+        return True
+
+    monkeypatch.setattr(proof, "run_step", probing_run_step)
+    monkeypatch.setattr(proof, "source_step", lambda work, env: True)
+    assert proof.main() == 0
+    assert held_during == [True, True]
+    with _stack_lock.stack_lock(directory=tmp_path) as free:
+        assert free
+
+
+@pytest.fixture
+def engine_pin(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Path:
+    """An .env for proof.engine_ref to read, with the environment cleared."""
+    env_file = tmp_path / ".env"
+    monkeypatch.setattr(proof, "ENV_FILE", env_file)
+    monkeypatch.delenv("DFE_PROOF_ENGINE_REF", raising=False)
+    monkeypatch.delenv("DFE_ENGINE_VERSION", raising=False)
+    monkeypatch.setattr(proof, "remote_has_ref", lambda repo, ref: True)
+    return env_file
+
+
+def test_engine_ref_is_the_pinned_tag_without_its_digest(engine_pin: Path) -> None:
+    engine_pin.write_text(
+        f"DFE_ENGINE_VERSION=v1.22.16@sha256:{'a' * 64}\n", encoding="utf-8"
+    )
+    assert proof.engine_ref("repo") == "v1.22.16"
+
+
+def test_engine_ref_reads_the_environment_before_env(
+    engine_pin: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    engine_pin.write_text("DFE_ENGINE_VERSION=v1.0.0\n", encoding="utf-8")
+    monkeypatch.setenv("DFE_ENGINE_VERSION", "v1.22.16")
+    assert proof.engine_ref("repo") == "v1.22.16"
+
+
+def test_engine_ref_override_wins(
+    engine_pin: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    engine_pin.write_text("DFE_ENGINE_VERSION=v1.22.16\n", encoding="utf-8")
+    monkeypatch.setenv("DFE_PROOF_ENGINE_REF", "my-branch")
+    assert proof.engine_ref("repo") == "my-branch"
+
+
+def test_engine_ref_falls_back_when_the_tag_is_not_published(
+    engine_pin: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    engine_pin.write_text("DFE_ENGINE_VERSION=v9.9.9\n", encoding="utf-8")
+    monkeypatch.setattr(proof, "remote_has_ref", lambda repo, ref: False)
+    assert proof.engine_ref("repo") == ""
+
+
+def test_engine_ref_is_the_default_branch_with_no_pin(engine_pin: Path) -> None:
+    assert proof.engine_ref("repo") == ""
+
+
+def test_the_source_walk_clones_dfe_engine_at_the_pinned_tag(
+    engine_pin: Path, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    engine_pin.write_text(
+        f"DFE_ENGINE_VERSION=v1.22.16@sha256:{'a' * 64}\n", encoding="utf-8"
+    )
+    cloned: dict[str, str] = {}
+    monkeypatch.setattr(proof.shutil, "which", lambda name: "/usr/bin/chrome")
+    monkeypatch.setattr(
+        proof, "clone", lambda repo, ref, dest: cloned.update({dest.name: ref})
+    )
+    monkeypatch.setattr(proof, "infra_ref", lambda repo: "2.2.1")
+    monkeypatch.setattr(proof, "acceptance_python", lambda infra, venv: "python")
+    monkeypatch.setattr(proof, "run_step", lambda name, argv, env: True)
+    assert proof.source_step(tmp_path, {}) is True
+    assert cloned == {"dfe-infra": "2.2.1", "dfe-engine": "v1.22.16"}

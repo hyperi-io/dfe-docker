@@ -25,6 +25,7 @@ UPDATER_DIR = Path(__file__).resolve().parents[2] / "ops" / "daemon-update"
 if str(UPDATER_DIR) not in sys.path:
     sys.path.insert(0, str(UPDATER_DIR))
 
+import _stack_lock  # noqa: E402
 import self_update  # noqa: E402
 
 
@@ -169,3 +170,60 @@ def test_an_update_tops_up_env_before_the_bring_up(
     monkeypatch.setattr(self_update, "_run", _run)
     self_update._apply(tmp_path, "2.2.0")
     assert ran == expected
+
+
+def test_a_tick_skips_while_a_proof_holds_the_stack_lock(
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    repo = _checkout(applied="2.2.0-rc.13", tmp_path=tmp_path)
+    applied = _discovery(monkeypatch=monkeypatch, latest="2.2.0-rc.14")
+    refreshed: list[Path] = []
+    monkeypatch.setattr(self_update, "_refresh_checkout", refreshed.append)
+    monkeypatch.setattr(sys, "argv", ["self_update.py", "--repo-dir", str(repo)])
+
+    with _stack_lock.stack_lock(directory=repo) as proof_holds_it:
+        assert proof_holds_it
+        assert self_update.main() == 0
+
+    assert applied == []
+    assert refreshed == []
+    assert (repo / self_update.STATE_FILENAME).read_text().strip() == "2.2.0-rc.13"
+    assert "skipping this tick" in capsys.readouterr().out
+
+
+def test_the_stack_lock_is_held_while_an_update_applies(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    repo = _checkout(applied="2.2.0-rc.13", tmp_path=tmp_path)
+    free_during_apply: list[bool] = []
+
+    def probing_apply(repo_dir: Path, version: str) -> None:
+        with _stack_lock.stack_lock(directory=repo_dir) as other:
+            free_during_apply.append(other)
+
+    _discovery(monkeypatch=monkeypatch, latest="2.2.0-rc.14")
+    monkeypatch.setattr(self_update, "_apply", probing_apply)
+    monkeypatch.setattr(sys, "argv", ["self_update.py", "--repo-dir", str(repo)])
+
+    assert self_update.main() == 0
+    assert free_during_apply == [False]
+    with _stack_lock.stack_lock(directory=repo) as after:
+        assert after
+
+
+def test_a_dry_run_ignores_the_stack_lock(
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    repo = _checkout(applied="2.2.0-rc.13", tmp_path=tmp_path)
+    _discovery(monkeypatch=monkeypatch, latest="2.2.0-rc.14")
+    monkeypatch.setattr(self_update, "_refresh_plan", lambda repo_dir: "pull")
+    monkeypatch.setattr(
+        sys, "argv", ["self_update.py", "--repo-dir", str(repo), "--dry-run"]
+    )
+    with _stack_lock.stack_lock(directory=repo):
+        assert self_update.main() == 0
+    assert "dry-run: would update" in capsys.readouterr().out
