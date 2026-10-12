@@ -295,7 +295,7 @@ def test_live_ui_expands_a_tilde_in_the_source_root(
 def test_live_ui_serves_on_the_console_hostname_only_when_it_is_a_name(
     checkout: Path, origin: str, host: str
 ) -> None:
-    # Next only passes hot reload from the host it serves on, and it cannot serve on an IP it does not own.
+    # Next only passes hot reload from the host it serves on; it cannot serve on an IP it does not own.
     result = _make(
         args=[
             f"--eval={_PROBE}: ; @echo [$(DFE_UI_DEV_HOST)]",

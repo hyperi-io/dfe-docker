@@ -29,7 +29,7 @@ services:
         # The first page compiles the shared bundle, which outlasts dfe-proxy's 15s route timeout, so compile it before anyone asks.
         (node -e "const warm = () => fetch('http://localhost:3000/login').catch(() => setTimeout(warm, 2000)); setTimeout(warm, 2000);" &)
         exec corepack yarn workspace dfe-core-ui dev --hostname ${DFE_UI_DEV_HOST:-0.0.0.0} --port 3000
-    # Next accepts hot reload only from localhost or the host it serves on, and the console does not load without it, so it serves on the console's own hostname pointed at every interface.
+    # Next accepts hot reload only from localhost or the host it serves on. The console does not load without it, so it serves on the console's own hostname pointed at every interface.
     extra_hosts:
       - "${DFE_UI_DEV_HOST:-0.0.0.0}:0.0.0.0"
     environment:
