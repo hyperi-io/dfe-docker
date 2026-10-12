@@ -281,6 +281,35 @@ def test_live_ui_expands_a_tilde_in_the_source_root(
     assert result.stdout.splitlines()[-1] == _NODE_IMAGE
 
 
+@pytest.mark.parametrize(
+    ("origin", "host"),
+    [
+        ("https://console.example.test", "console.example.test"),
+        ('"https://quoted.example.test"', "quoted.example.test"),
+        ("http://localhost", "0.0.0.0"),
+        ("http://192.0.2.10", "0.0.0.0"),
+        ("http://[fd00::1]", "0.0.0.0"),
+        ("", "0.0.0.0"),
+    ],
+)
+def test_live_ui_serves_on_the_console_hostname_only_when_it_is_a_name(
+    checkout: Path, origin: str, host: str
+) -> None:
+    # Next only passes hot reload from the host it serves on, and it cannot serve on an IP it does not own.
+    result = _make(
+        args=[
+            f"--eval={_PROBE}: ; @echo [$(DFE_UI_DEV_HOST)]",
+            _PROBE,
+            "LIVE_UI=1",
+            f"DFE_EXTERNAL_ORIGIN={origin}",
+        ],
+        cwd=checkout,
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.splitlines()[-1] == f"[{host}]"
+
+
 def test_live_ui_without_a_checkout_leaves_the_node_image_unset(
     checkout: Path, tmp_path: Path
 ) -> None:

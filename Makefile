@@ -292,6 +292,10 @@ ifneq ($(strip $(LIVE_UI)),)
     LIVE_UI_DOCKERFILE := $(firstword $(wildcard $(call origin_value,DFE_SRC_ROOT)/dfe-ui/Dockerfile))
     DFE_UI_NODE_IMAGE := $(if $(LIVE_UI_DOCKERFILE),$(firstword $(patsubst NODE_IMAGE=%,%,$(filter NODE_IMAGE=%,$(file < $(LIVE_UI_DOCKERFILE))))))
     export DFE_UI_NODE_IMAGE
+    # Next lets hot reload through only from localhost or the host it serves on, and it can only serve on a name, so an IP or loopback origin keeps the all-interfaces bind.
+    LIVE_UI_ORIGIN_HOST := $(call origin_host,DFE_EXTERNAL_ORIGIN)
+    LIVE_UI_ORIGIN_NAME := $(and $(filter-out localhost [%,$(LIVE_UI_ORIGIN_HOST)),$(subst .,,$(subst 0,,$(subst 1,,$(subst 2,,$(subst 3,,$(subst 4,,$(subst 5,,$(subst 6,,$(subst 7,,$(subst 8,,$(subst 9,,$(LIVE_UI_ORIGIN_HOST)))))))))))))
+    export DFE_UI_DEV_HOST := $(if $(LIVE_UI_ORIGIN_NAME),$(LIVE_UI_ORIGIN_HOST),0.0.0.0)
     LIVE_UI_CHAIN := :docker-compose.live-ui.yml
     LIVE_UI_FLAGS := -f docker-compose.live-ui.yml
     # Refused here rather than at compose interpolation, which `make dev` reaches only after `down` has stopped the stack.

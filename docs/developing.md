@@ -231,7 +231,7 @@ make dev LIVE_UI=1   # dfe-ui runs `next dev` over $DFE_SRC_ROOT/dfe-ui
 
 The first start installs dependencies into the checkout, about 1 GB of yarn cache under its gitignored `.yarn/`; later starts install from that cache in seconds. Each route compiles on its first hit. The login page compiles as the dev server starts, so the first visit stays inside dfe-proxy's 15s route timeout.
 
-Next.js only accepts hot-reload connections from a `localhost` origin. On any other origin the console loads but never reloads, so browse it on `localhost:<DFE_UI_PORT>` (over `https://` when `DFE_PROXY_TLS=true`).
+Next.js only accepts hot-reload connections from `localhost` or the host it serves on, and the console does not finish loading without one. Live mode serves on the hostname `DFE_EXTERNAL_ORIGIN` names, so the console works there and on `localhost`. An origin that is an IP address cannot be served on by name, so browse that stack by hostname or on `localhost` instead.
 
 `make apply SERVICES=dfe-ui DEV=1 LIVE_UI=1` swaps a running dev stack's console into live mode and leaves every other service running. A stack started with `LOCAL` takes the same `LOCAL` with dfe-ui left out. The same command without `LIVE_UI` and with the stack's own `LOCAL` runs `dfe-ui:local` again, which exists only if an earlier `make dev` built it.
 
