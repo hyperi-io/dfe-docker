@@ -34,6 +34,13 @@ logged, because it reintroduces exactly the drift above.
 `--dry-run` reports what the refresh would do, so you can see a box is dirty
 before the timer does.
 
+## Running alongside `make proof`
+
+A tick and `make proof` both take the stack down, so they share a lock,
+`.dfe-stack.lock` in the checkout. A tick that finds a proof holding it logs
+`skipping this tick` and exits 0, and the next tick retries. `--dry-run` takes no
+lock.
+
 ## Disposable boxes: fresh state on every version
 
 `DFE_UPDATE_WIPE_STATE=1` runs `make clean` between the pin and the bring-up, so

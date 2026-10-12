@@ -29,6 +29,15 @@ exits 0 without touching the stack, so a timer that fires with nothing new does
 not take the standing stack away. A failed version runs again on the next fire.
 A checkout with no .dfe-stack-applied always runs.
 
+One run at a time. The proof holds the checkout's stack lock (.dfe-stack.lock,
+shared with the daemon updater) for its whole run, so an update tick that fires
+mid-proof skips itself rather than running ``make ci`` over the e2e stack. A
+proof that finds the lock held exits 1 and runs nothing.
+
+The user running it must own .env. Every stack the proof brings up is created
+with that user's group (DFE_DEV_GID), so a different user would hand the engine a
+group that cannot write the checkout's env/ directory.
+
 The browser is the host's installed Chrome (the runner drives ``--channel
 chrome``); this script never downloads one.
 
@@ -38,7 +47,9 @@ Environment:
                            .dfe-stack-applied when that tag exists, else the
                            default branch
     DFE_PROOF_ENGINE_REPO  dfe-engine clone URL (default: the public repo)
-    DFE_PROOF_ENGINE_REF   branch or tag (default: the default branch)
+    DFE_PROOF_ENGINE_REF   branch or tag; default is the tag in DFE_ENGINE_VERSION
+                           (the environment, else .env) when that tag exists, else
+                           the default branch
     DFE_PROOF_SKIP         comma-separated steps to skip: e2e, source (a
                            partial run never marks a version proven)
     DFE_PROOF_FORCE        1 to run a version that is already proven
@@ -58,7 +69,11 @@ import tempfile
 import time
 from pathlib import Path
 
+import _common
+import _stack_lock
+
 PROJECT_DIR = Path(__file__).resolve().parent.parent
+ENV_FILE = PROJECT_DIR / ".env"
 APPLIED_MARKER = PROJECT_DIR / ".dfe-stack-applied"
 PROVEN_MARKER = PROJECT_DIR / ".dfe-proof-passed"
 TRUTHY = {"1", "true", "yes", "on"}
@@ -104,6 +119,44 @@ def infra_ref(repo: str) -> str:
     return ""
 
 
+def engine_ref(repo: str) -> str:
+    """The dfe-engine ref matching the running stack, so the walk tests that version."""
+    explicit = os.environ.get("DFE_PROOF_ENGINE_REF", "").strip()
+    if explicit:
+        return explicit
+    pinned = os.environ.get("DFE_ENGINE_VERSION", "").strip()
+    if not pinned and ENV_FILE.is_file():
+        values = _common._parse_dotenv(
+            text=ENV_FILE.read_text(encoding="utf-8", errors="replace")
+        )
+        pinned = values.get("DFE_ENGINE_VERSION", "").strip()
+    tag = pinned.partition("@")[0]
+    if not tag:
+        return ""
+    if remote_has_ref(repo, f"refs/tags/{tag}"):
+        return tag
+    log(f"WARN dfe-engine has no tag {tag}; testing its default branch instead")
+    return ""
+
+
+def env_owner_problem() -> str | None:
+    """Why this user may not run the proof, or None when it may.
+
+    A missing .env is not a mismatch: there is nothing for another user to own.
+    """
+    if not ENV_FILE.is_file():
+        return None
+    owner = ENV_FILE.stat().st_uid
+    me = os.getuid()
+    if owner == me:
+        return None
+    return (
+        f"refusing to run as uid {me}: .env belongs to uid {owner}. The stack is "
+        "recreated with the running user's group, which cannot write env/ here. "
+        f"Run it as the owner: sudo -u '#{owner}' make proof"
+    )
+
+
 def clone(repo: str, ref: str, dest: Path) -> None:
     argv = ["git", "clone", "--quiet", "--depth", "1"]
     if ref:
@@ -143,11 +196,7 @@ def source_step(work: Path, env: dict[str, str]) -> bool:
     engine_repo = os.environ.get("DFE_PROOF_ENGINE_REPO", DEFAULT_ENGINE_REPO)
     try:
         clone(infra_repo, infra_ref(infra_repo), work / "dfe-infra")
-        clone(
-            engine_repo,
-            os.environ.get("DFE_PROOF_ENGINE_REF", "").strip(),
-            work / "dfe-engine",
-        )
+        clone(engine_repo, engine_ref(engine_repo), work / "dfe-engine")
         python = acceptance_python(work / "dfe-infra", work / "venv")
     except (subprocess.CalledProcessError, RuntimeError) as exc:
         log(f"FAIL source setup: {exc}")
@@ -167,6 +216,21 @@ def read_marker(path: Path) -> str:
 
 
 def main() -> int:
+    problem = env_owner_problem()
+    if problem is not None:
+        log(f"FAIL {problem}")
+        return 1
+    with _stack_lock.stack_lock(directory=PROJECT_DIR) as held:
+        if not held:
+            log(
+                "FAIL another proof or an update tick holds "
+                f"{_stack_lock.LOCK_FILENAME}; nothing was run"
+            )
+            return 1
+        return run_proof()
+
+
+def run_proof() -> int:
     skip = {
         s.strip() for s in os.environ.get("DFE_PROOF_SKIP", "").split(",") if s.strip()
     }

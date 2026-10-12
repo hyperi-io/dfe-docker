@@ -47,6 +47,12 @@ first-start paths get exercised for real. It deletes ClickHouse, Kafka, the DLQ
 spool and the engine's config volume -- sources, orgs and local accounts included,
 none of which the image can reseed. Leave it unset anywhere the data matters.
 
+A tick holds the checkout's stack lock (.dfe-stack.lock) from discovery to the
+end of the apply, the lock `make proof` holds for its whole run. When a proof has
+it the tick logs that and exits 0 without touching anything: `make ci` would take
+down the stack the proof is testing, and the next tick retries. --dry-run changes
+nothing, so it takes no lock.
+
 The pull replaces this script mid-run; Python has already loaded it, so the
 current tick finishes on the old code and the next uses the new.
 
@@ -69,6 +75,7 @@ from pathlib import Path
 # the floor below ranks versions the same way the discovery does.
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "scripts"))
 
+import _stack_lock  # noqa: E402
 from _registry import (  # noqa: E402
     RegistryError,
     _sort_key,
@@ -222,6 +229,50 @@ def _apply(repo_dir: Path, version: str) -> None:
             raise UpdateError(f"`{' '.join(cmd)}` failed (exit {out.returncode})")
 
 
+def _tick(
+    *, repo_dir: Path, state_path: Path, allow_prerelease: bool, dry_run: bool
+) -> int:
+    """Discover the newest stack version and apply it when it is newer."""
+    repo = manifest_repo()
+    latest = latest_tag(
+        prereleases="include" if allow_prerelease else "exclude", repo=repo
+    )
+    applied = _applied_version(state_path)
+    _log(f"repo={repo} latest={latest} applied={applied or '(none)'}")
+
+    if applied == latest:
+        if dry_run:
+            _log(
+                f"dry-run: already current; checkout refresh would {_refresh_plan(repo_dir)}"
+            )
+            return 0
+        _refresh_checkout(repo_dir)
+        _log("already current - checkout refreshed, nothing else to do")
+        return 0
+    if applied and _is_downgrade(applied=applied, target=latest):
+        _log(
+            f"refusing {applied} -> {latest}: the newest published manifest is "
+            "older than the version this VM has applied, so the update would "
+            "roll it backwards"
+        )
+        return 0
+    if dry_run:
+        _log(f"dry-run: would update {applied or '(none)'} -> {latest}")
+        _log(f"dry-run: checkout refresh would {_refresh_plan(repo_dir)}")
+        if _wipe_state_enabled():
+            _log(
+                "dry-run: DFE_UPDATE_WIPE_STATE is set -- EVERY volume would be "
+                "deleted (ClickHouse, Kafka, DLQ spool, engine config)"
+            )
+        return 0
+
+    _log(f"updating {applied or '(none)'} -> {latest}")
+    _apply(repo_dir, latest)
+    _record_applied(state_path, latest)
+    _log(f"updated to {latest}")
+    return 0
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__.split("\n")[0].strip())
     parser.add_argument(
@@ -248,47 +299,29 @@ def main() -> int:
     try:
         if not (repo_dir / "Makefile").is_file():
             raise UpdateError(f"{repo_dir} is not a dfe-docker checkout (no Makefile)")
-        repo = manifest_repo()
-        latest = latest_tag(
-            prereleases="include" if allow_prerelease else "exclude", repo=repo
-        )
-        applied = _applied_version(state_path)
-        _log(f"repo={repo} latest={latest} applied={applied or '(none)'}")
-
-        if applied == latest:
-            if args.dry_run:
+        if args.dry_run:
+            return _tick(
+                repo_dir=repo_dir,
+                state_path=state_path,
+                allow_prerelease=allow_prerelease,
+                dry_run=True,
+            )
+        with _stack_lock.stack_lock(directory=repo_dir) as held:
+            if not held:
                 _log(
-                    f"dry-run: already current; checkout refresh would {_refresh_plan(repo_dir)}"
+                    f"skipping this tick: a proof or another update holds "
+                    f"{_stack_lock.LOCK_FILENAME}; the next tick retries"
                 )
                 return 0
-            _refresh_checkout(repo_dir)
-            _log("already current - checkout refreshed, nothing else to do")
-            return 0
-        if applied and _is_downgrade(applied=applied, target=latest):
-            _log(
-                f"refusing {applied} -> {latest}: the newest published manifest is "
-                "older than the version this VM has applied, so the update would "
-                "roll it backwards"
+            return _tick(
+                repo_dir=repo_dir,
+                state_path=state_path,
+                allow_prerelease=allow_prerelease,
+                dry_run=False,
             )
-            return 0
-        if args.dry_run:
-            _log(f"dry-run: would update {applied or '(none)'} -> {latest}")
-            _log(f"dry-run: checkout refresh would {_refresh_plan(repo_dir)}")
-            if _wipe_state_enabled():
-                _log(
-                    "dry-run: DFE_UPDATE_WIPE_STATE is set -- EVERY volume would be "
-                    "deleted (ClickHouse, Kafka, DLQ spool, engine config)"
-                )
-            return 0
-
-        _log(f"updating {applied or '(none)'} -> {latest}")
-        _apply(repo_dir, latest)
-        _record_applied(state_path, latest)
-        _log(f"updated to {latest}")
     except (RegistryError, UpdateError) as error:
         _log(f"error: {error}")
         return 1
-    return 0
 
 
 if __name__ == "__main__":

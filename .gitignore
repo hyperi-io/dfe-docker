@@ -17,6 +17,8 @@ deployment.yaml
 .dfe-stack-applied
 # Written by make proof: the stack version it last proved end to end.
 .dfe-proof-passed
+# Held by make proof and the daemon updater while either has the stack down.
+.dfe-stack.lock
 *.log
 dist/
 dist-bin/
