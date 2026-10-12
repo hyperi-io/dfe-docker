@@ -1091,13 +1091,80 @@ def wait_settled(container, deadline):
 
 
 # ------------------------------------------------------------------------------
+# Restore Compose
+# - Runs one compose command for a restore, from the directory and environment
+#   the services it names were started with
+# ------------------------------------------------------------------------------
+def restore_compose(restore, command):
+    return subprocess.run(
+        command,
+        cwd=restore.working_dir or PROJECT_DIR,
+        env=FOUND_ENVIRON,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+    )
+
+
+# ------------------------------------------------------------------------------
+# Restore Profiles
+# - The profiles a restore's services belong to, read from the files they came
+#   from, or None and compose's error when those files do not resolve
+# ------------------------------------------------------------------------------
+def restore_profiles(restore):
+    config = restore_compose(restore, restore.config())
+    try:
+        model = json.loads(config.stdout) if (config.returncode == 0) else None
+    except ValueError:
+        model = None
+    if model is None:
+        return None, config.stderr.strip()
+    return _stack_state.profiles_of(model, restore.services), ""
+
+
+# ------------------------------------------------------------------------------
+# Expected Hashes
+# - The config hash each service this run found gets from the compose files and
+#   environment it was started with, read before anything is stopped
+# - A container keeps the hash it was created with after its .env or compose
+#   files move on, and any `up` recreates it on theirs, so the end of the run is
+#   held to these
+# - A service whose files cannot be read is held to its container instead
+# ------------------------------------------------------------------------------
+def expected_hashes(found):
+    expected = {}
+    for restore in _stack_state.restores(found, exists=os.path.exists):
+        profiles, problem = restore_profiles(restore)
+        if profiles is not None:
+            hashed = restore_compose(restore, restore.hashes(profiles))
+            if hashed.returncode == 0:
+                expected |= _stack_state.config_hashes(hashed.stdout, restore.services)
+                continue
+            problem = (hashed.stderr or "").strip()
+        LOGGER.warning(
+            f"Could not read the config {', '.join(restore.services)} get from "
+            f"their files, so each is held to its running container: {problem}"
+        )
+    stale = _stack_state.stale(found, expected)
+    if stale:
+        LOGGER.warning(
+            "Found on a config other than its compose files and environment give "
+            "now, so it comes back on theirs:"
+        )
+        for line in stale:
+            LOGGER.warning(f"    {line}")
+    return expected
+
+
+# ------------------------------------------------------------------------------
 # Put Back
 # - Leaves the project as the run found it: the test stack down, then each service
 #   that was running, or had run to completion, started again from the compose
 #   files, project and environment it was started with, and checked against the
-#   config hash compose recorded for it
+#   config hash those gave it when the run found it
 # ------------------------------------------------------------------------------
-def put_back(ctx, found):
+def put_back(ctx, found, expected):
     print()
     stack_down()
 
@@ -1110,28 +1177,15 @@ def put_back(ctx, found):
             LOGGER.warning(
                 f"    Left out, as they no longer exist: {', '.join(restore.missing)}"
             )
-        run = functools.partial(
-            subprocess.run,
-            cwd=restore.working_dir or PROJECT_DIR,
-            env=FOUND_ENVIRON,
-            capture_output=True,
-            text=True,
-            encoding="utf-8",
-            errors="replace",
-        )
-        config = run(restore.config())
-        try:
-            model = json.loads(config.stdout) if (config.returncode == 0) else None
-        except ValueError:
-            model = None
-        if model is None:
+        profiles, problem = restore_profiles(restore)
+        if profiles is None:
             mark_fail(
                 ctx,
                 "the services this run found are not started again: compose could "
-                f"not resolve the files they came from: {config.stderr.strip()}",
+                f"not resolve the files they came from: {problem}",
             )
             continue
-        result = run(restore.command(_stack_state.profiles_of(model, restore.services)))
+        result = restore_compose(restore, restore.command(profiles))
         if result.returncode != 0:
             detail = (result.stderr or result.stdout or "").strip()
             mark_fail(ctx, f"the services this run found did not start again: {detail}")
@@ -1145,7 +1199,7 @@ def put_back(ctx, found):
     problems = (
         ["the project could not be read back"]
         if (after is None)
-        else _stack_state.differences(found, after)
+        else _stack_state.differences(found, after, expected)
     )
     running = sum(1 for container in found if container.running)
     completed = sum(1 for container in found if container.run_to_completion)
@@ -1155,7 +1209,8 @@ def put_back(ctx, found):
         mark_pass(
             ctx,
             f"the stack is as this run found it: {running} service(s) running and "
-            f"{completed} one-shot(s) completed, each on the config it had",
+            f"{completed} one-shot(s) completed, each on the config its files gave "
+            "when the run started",
         )
     else:
         mark_pass(ctx, "this run found no stack running and leaves none")
@@ -3498,6 +3553,7 @@ def run_suite(ctx, mode, tests, persistent_services):
     found = project_containers()
     if found is None:
         error("the running stack could not be read, so nothing was stopped")
+    expected = expected_hashes(found)
     signal.signal(signal.SIGTERM, lambda signum, frame: sys.exit(128 + signum))
     try:
         if stack_is_up():
@@ -3510,7 +3566,7 @@ def run_suite(ctx, mode, tests, persistent_services):
         for test in tests:
             run_test(ctx, mode, test, persistent_services)
     finally:
-        put_back(ctx, found)
+        put_back(ctx, found, expected)
 
 
 # ==============================================================================

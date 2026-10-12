@@ -12,8 +12,14 @@ Internal support module - imported by the e2e suite, not executed directly. The
 suite stops every service to run one stack per test, so it reads the project
 first and starts the same services from the same compose files at the end. Compose
 labels each container with the files, directory and project it came from, and
-with a hash of its resolved config, which says whether the container that comes
-back is configured as the one that went.
+with a hash of its resolved config.
+
+That label is the config at the moment the container was created, and the files
+can move on without it: `make post` writes the admin password it rotates into
+.env after `make ci` has started the engine, and an edited .env or a pulled
+compose file waits for the next `up`. So the suite also asks compose, before it
+stops anything, for the hash the same files and environment give each service,
+and judges what comes back against that.
 """
 
 from collections import defaultdict
@@ -126,16 +132,27 @@ class Restore:
         """The command that prints every service those files define, as JSON."""
         return self.compose() + ["--profile", "*", "config", "--format", "json"]
 
+    def hashes(self, profiles: Iterable[str] = ()) -> list[str]:
+        """The command that prints the config hash of each service those files enable.
+
+        It takes the profiles the `up` takes, so each hash is the one that `up`
+        labels the service's container with.
+        """
+        return self.compose() + _profile_flags(profiles) + ["config", "--hash", "*"]
+
     def command(self, profiles: Iterable[str] = ()) -> list[str]:
         """The `up`, with only the given profiles enabled.
 
         Every profile at once is wrong: both brokers are optional dependencies
         of dfe-engine, and the profile is what picks which one starts.
         """
-        flags = [
-            part for profile in sorted(set(profiles)) for part in ("--profile", profile)
-        ]
-        return self.compose() + flags + ["up", "-d", *self.services]
+        return self.compose() + _profile_flags(profiles) + ["up", "-d", *self.services]
+
+
+def _profile_flags(profiles: Iterable[str]) -> list[str]:
+    return [
+        part for profile in sorted(set(profiles)) for part in ("--profile", profile)
+    ]
 
 
 def profiles_of(model: Mapping, services: Iterable[str]) -> set[str]:
@@ -146,6 +163,37 @@ def profiles_of(model: Mapping, services: Iterable[str]) -> set[str]:
         for service in services
         for profile in (defined.get(service) or {}).get("profiles") or ()
     }
+
+
+def config_hashes(output: str, services: Iterable[str]) -> dict[str, str]:
+    """The named services' hashes in `docker compose config --hash` output.
+
+    Each line is `<service> <hash>`. A named service the output leaves out, which
+    the files no longer define, gets no entry.
+    """
+    wanted = set(services)
+    hashes = {}
+    for line in output.splitlines():
+        parts = line.split()
+        if len(parts) == 2 and parts[0] in wanted:
+            hashes[parts[0]] = parts[1]
+    return hashes
+
+
+def stale(found: Iterable[Container], expected: Mapping[str, str]) -> list[str]:
+    """The restored services whose container runs a config other than its files give.
+
+    Any `up` recreates such a container, so it comes back on the files' config
+    whatever the run does.
+    """
+    return [
+        f"'{container.service}' runs config hash {container.config_hash[:12]}, "
+        f"its files give {expected[container.service][:12]}"
+        for container in found
+        if container.restored
+        and container.service in expected
+        and expected[container.service] != container.config_hash
+    ]
 
 
 def restores(
@@ -179,12 +227,28 @@ def restores(
     ]
 
 
-def differences(before: Iterable[Container], after: Iterable[Container]) -> list[str]:
+def differences(
+    before: Iterable[Container],
+    after: Iterable[Container],
+    expected: Mapping[str, str] | None = None,
+) -> list[str]:
     """How the project differs from how it was found, empty when it does not.
 
-    Each restored service must have a container configured as before, still
-    running if it was. Nothing may be running that was not.
+    Each restored service must have a container on the config its files gave
+    when the run found it, still running if it was. Nothing may be running that
+    was not.
+
+    Args:
+        before: The containers the run found.
+        after: The containers the project holds now.
+        expected: The config hash each service's files gave when the run found
+            it. A service it leaves out is held to its found container's hash.
+
+    Returns:
+        One line per difference.
     """
+    if expected is None:
+        expected = {}
     before = list(before)
     now = {container.service: container for container in after}
     problems = []
@@ -192,14 +256,15 @@ def differences(before: Iterable[Container], after: Iterable[Container]) -> list
         if not (was.restored):
             continue
         current = now.get(was.service)
+        reference = expected.get(was.service, was.config_hash)
         if current is None:
             problems.append(f"'{was.service}' has no container")
         elif was.running and not (current.running):
             problems.append(f"'{was.service}' is not running")
-        elif current.config_hash != was.config_hash:
+        elif current.config_hash != reference:
             problems.append(
                 f"'{was.service}' is configured differently (config hash "
-                f"{was.config_hash[:12]} became {current.config_hash[:12]})"
+                f"{reference[:12]} became {current.config_hash[:12]})"
             )
     was_running = {container.service for container in before if container.running}
     problems += [

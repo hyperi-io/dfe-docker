@@ -199,3 +199,75 @@ def test_a_stack_left_up_after_finding_none_is_a_difference() -> None:
     )
 
     assert problems == ["'clickhouse' is running and was not"]
+
+
+def test_the_hash_command_takes_the_up_profiles_and_prints_every_service() -> None:
+    [restore] = _stack_state.restores(
+        _stack_state.containers([_document("dfe-engine")])
+    )
+
+    command = restore.hashes(["core", "clickhouse", "core"])
+
+    assert command[: len(restore.compose())] == restore.compose()
+    assert command[len(restore.compose()) :] == [
+        "--profile",
+        "clickhouse",
+        "--profile",
+        "core",
+        "config",
+        "--hash",
+        "*",
+    ]
+
+
+def test_config_hashes_keeps_only_the_named_services_compose_printed() -> None:
+    output = "clickhouse 1111\ndfe-engine 2222\ndfe-ui 3333\n\nWARN not a hash line\n"
+
+    hashes = _stack_state.config_hashes(output, ["dfe-engine", "clickhouse", "gone"])
+
+    assert hashes == {"clickhouse": "1111", "dfe-engine": "2222"}
+
+
+def test_a_service_found_on_an_old_config_comes_back_on_its_files_cleanly() -> None:
+    found = _stack_state.containers([_document("dfe-engine", config_hash="aaaa")])
+    after = _stack_state.containers([_document("dfe-engine", config_hash="bbbb")])
+
+    assert _stack_state.differences(found, after, {"dfe-engine": "bbbb"}) == []
+
+
+def test_a_config_change_made_during_the_run_is_still_a_difference() -> None:
+    found = _stack_state.containers([_document("dfe-engine", config_hash="aaaa")])
+    after = _stack_state.containers([_document("dfe-engine", config_hash="cccc")])
+
+    problems = _stack_state.differences(found, after, {"dfe-engine": "bbbb"})
+
+    assert problems == [
+        "'dfe-engine' is configured differently (config hash bbbb became cccc)"
+    ]
+
+
+def test_a_service_with_no_expected_hash_is_held_to_its_container() -> None:
+    found = _stack_state.containers([_document("dfe-engine", config_hash="aaaa")])
+    after = _stack_state.containers([_document("dfe-engine", config_hash="bbbb")])
+
+    problems = _stack_state.differences(found, after, {"clickhouse": "bbbb"})
+
+    assert problems == [
+        "'dfe-engine' is configured differently (config hash aaaa became bbbb)"
+    ]
+
+
+def test_stale_names_only_restored_services_their_files_have_moved_past() -> None:
+    found = _stack_state.containers(
+        [
+            _document("dfe-engine", config_hash="aaaa"),
+            _document("clickhouse", config_hash="cccc"),
+            _document("dfe-loader", running=False, config_hash="dddd"),
+            _document("dfe-ui", config_hash="eeee"),
+        ]
+    )
+    expected = {"dfe-engine": "bbbb", "clickhouse": "cccc", "dfe-loader": "ffff"}
+
+    assert _stack_state.stale(found, expected) == [
+        "'dfe-engine' runs config hash aaaa, its files give bbbb"
+    ]
