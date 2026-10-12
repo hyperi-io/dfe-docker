@@ -39,6 +39,7 @@ Paths checked:
 - live: dev plus ``docker-compose.live.yml``, the path ``make dev LIVE=1``
   takes. Its ``${DFE_SRC_ROOT:?...}`` mounts are hard-fail by design, so the
   placeholder injection covers that key the same way it covers image pins.
+- live-ui: dev plus the container-logs fragment and ``docker-compose.live-ui.yml``, the path ``make dev LIVE_UI=1`` takes. Its Node image and source mount are hard-fail keys too.
 - local: the registry path plus the overlay ``make dev LOCAL=...`` generates,
   rendered here for one representative component so the generator's output is
   checked, not just its source.
@@ -108,6 +109,7 @@ import proxy_tls
 from _common import (
     COMPOSE_FILE,
     COMPOSE_LIVE_FILE,
+    COMPOSE_LIVE_UI_FILE,
     COMPOSE_OVERRIDE_FILE,
     CONFIG_DIR,
     CUSTOM_ENV_SUFFIX,
@@ -474,10 +476,14 @@ def _check_env() -> tuple[dict[str, str], list[str]]:
     """
     env = {**_first_start_dotenv(), **os.environ}
     injected = []
-    # Discover across every shipped compose file, not just docker-compose.yml --
-    # the live overlay declares its own hard-fail key (DFE_SRC_ROOT).
+    # Discover across every shipped compose file, not just docker-compose.yml: the live overlays declare their own hard-fail keys (DFE_SRC_ROOT, DFE_UI_NODE_IMAGE).
     required = _required_compose_vars(
-        files=(COMPOSE_FILE, COMPOSE_OVERRIDE_FILE, COMPOSE_LIVE_FILE)
+        files=(
+            COMPOSE_FILE,
+            COMPOSE_OVERRIDE_FILE,
+            COMPOSE_LIVE_FILE,
+            COMPOSE_LIVE_UI_FILE,
+        )
     )
     for name in sorted(required):
         if not (env.get(name, "").strip()):
@@ -801,12 +807,9 @@ def _render_local_overlay() -> None:
 
 def _paths() -> list[tuple[str, list[str]]]:
     """Return the (label, compose file list) pairs we ship and therefore must check."""
-    for shipped in (COMPOSE_OVERRIDE_FILE, COMPOSE_LIVE_FILE):
+    for shipped in (COMPOSE_OVERRIDE_FILE, COMPOSE_LIVE_FILE, COMPOSE_LIVE_UI_FILE):
         if not (shipped.is_file()):
-            # Not a skip. Both overlays are committed (`make dev` auto-loads the
-            # override, `make dev LIVE=1` chains the live file), so an absence
-            # means that path is broken, not absent. Skipping would shrink the
-            # coverage while still printing "All compose paths resolve".
+            # Not a skip. Every overlay here is committed (`make dev` auto-loads the override, `make dev LIVE=1` and `LIVE_UI=1` chain the live files), so an absence means that path is broken, not absent. Skipping would shrink the coverage while still printing "All compose paths resolve".
             raise FileNotFoundError(
                 f"{shipped.name} is missing -- it is committed and used by "
                 "`make dev`, so that path cannot be checked"
@@ -817,6 +820,16 @@ def _paths() -> list[tuple[str, list[str]]]:
         (
             "live",
             [COMPOSE_FILE.name, COMPOSE_OVERRIDE_FILE.name, COMPOSE_LIVE_FILE.name],
+        ),
+        # With the container-logs fragment ahead of it, as `make dev` chains it, so the overlay's logging reset is rendered against the fluentd driver it undoes.
+        (
+            "live-ui",
+            [
+                COMPOSE_FILE.name,
+                COMPOSE_OVERRIDE_FILE.name,
+                _CONTAINER_LOGS_FRAGMENT,
+                COMPOSE_LIVE_UI_FILE.name,
+            ],
         ),
         ("local", [COMPOSE_FILE.name, str(_LOCAL_RENDER.relative_to(REPO_ROOT))]),
     ]

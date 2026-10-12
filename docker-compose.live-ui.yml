@@ -1,0 +1,52 @@
+# Project:   dfe-docker
+# File:      docker-compose.live-ui.yml
+# Purpose:   Opt-in live-edit overlay - run dfe-ui as `next dev` from your checkout
+# Language:  YAML
+#
+# License:   BUSL-1.1
+# Copyright: (c) 2026 HYPERI PTY LIMITED
+#
+# NOT auto-loaded. `make dev LIVE_UI=1` chains it. dfe-ui then runs `next dev` over $DFE_SRC_ROOT/dfe-ui instead of a built image, still behind dfe-proxy, so a saved edit reaches the browser without a rebuild. Hot reload rides the websocket upgrade the proxy already allows on the console route.
+#
+# The Node image is the one the checkout's own Dockerfile builds with: the Makefile reads it into DFE_UI_NODE_IMAGE.
+#
+# It runs as the host user because it writes into the checkout: node_modules, .next and its corepack and yarn caches under .yarn/ (which dfe-ui gitignores). Keeping the caches in the checkout means a recreated container installs from disk, not the network.
+#
+# It serves Next's development endpoints (source maps, original stack frames) without a login, so on DFE_BIND_SCOPE=all anyone who can reach the console port can read the console's source.
+
+services:
+  dfe-ui:
+    image: ${DFE_UI_NODE_IMAGE:?LIVE_UI=1 reads the Node image from DFE_SRC_ROOT/dfe-ui/Dockerfile, so set DFE_SRC_ROOT to the directory holding your dfe-ui checkout}
+    user: "${DFE_DEV_UID:-1000}:${DFE_DEV_GID:-1000}"
+    init: true
+    working_dir: /src
+    command:
+      - sh
+      - -c
+      - |
+        set -e
+        corepack yarn install --immutable
+        # The first page compiles the shared bundle, which outlasts dfe-proxy's 15s route timeout, so compile it before anyone asks.
+        (node -e "const warm = () => fetch('http://localhost:3000/login').catch(() => setTimeout(warm, 2000)); setTimeout(warm, 2000);" &)
+        exec corepack yarn workspace dfe-core-ui dev --hostname 0.0.0.0 --port 3000
+    environment:
+      COREPACK_ENABLE_DOWNLOAD_PROMPT: "0"
+      COREPACK_HOME: /src/.yarn/corepack
+      HOME: /tmp
+      # Empty is what the production image bakes in: browser calls stay on the proxy's origin. Set, it also beats the checkout's apps/dfe-core-ui/.env.
+      NEXT_PUBLIC_API_URL: ""
+      NEXT_TELEMETRY_DISABLED: "1"
+      NODE_ENV: development
+      YARN_GLOBAL_FOLDER: /src/.yarn/berry
+    volumes:
+      - ${DFE_SRC_ROOT:?set DFE_SRC_ROOT to the directory holding your dfe-ui checkout (live mode mounts local source)}/dfe-ui:/src
+    deploy:
+      resources:
+        limits:
+          # `next dev` compiles routes in-process, which the service tier's memory ceiling cannot hold.
+          memory: 4G
+    # Back on the daemon's default driver, so `docker compose logs dfe-ui` shows install progress and compile errors.
+    logging: !reset null
+    healthcheck:
+      # The first start installs every dependency, then `/livez` compiles on its first hit.
+      start_period: 600s

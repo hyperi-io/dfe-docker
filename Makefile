@@ -88,9 +88,11 @@ ifneq (,$(filter-out $(BOOTSTRAP_GOALS),$(or $(MAKECMDGOALS),help)))
     # through an image consumer (dfe-hunt-runner runs dfe-engine's image), so it
     # bites even when the profile holds no DFE service of its own.
     # DEV_PULL_FLAGS and DEV_FLAGS expand at use time: UI_FLAGS is filled below.
-    DEV_PULL_FLAGS = -f docker-compose.yml $(STORAGE_FLAGS) $(UI_FLAGS)
+    DEV_PULL_FLAGS = -f docker-compose.yml $(STORAGE_FLAGS) $(UI_FLAGS) $(LIVE_UI_FLAGS)
+    # `LIVE_UI=1` runs dfe-ui from the checkout, so there is no dfe-ui image to build.
+    LIVE_UI_SKIP := $(if $(strip $(LIVE_UI)),dfe-ui)
     ifeq ($(strip $(LOCAL)),)
-        DEV_BUILD := $(ACTIVE_SERVICES)
+        DEV_BUILD := $(filter-out $(LIVE_UI_SKIP),$(ACTIVE_SERVICES))
         DEV_FLAGS :=
         DEV_OVERLAY_ARG :=
     else
@@ -108,6 +110,9 @@ ifneq (,$(filter-out $(BOOTSTRAP_GOALS),$(or $(MAKECMDGOALS),help)))
                 $(error 'LOCAL' contains names not in the resolved stack: $(INVALID_LOCAL). Available: $(DFE_SERVICES))
             endif
         endif
+        ifneq ($(filter $(LIVE_UI_SKIP),$(LOCAL)),)
+            $(error LIVE_UI=1 runs dfe-ui from your checkout with `next dev`, so there is no dfe-ui image to build. Drop dfe-ui from LOCAL)
+        endif
         DEV_BUILD := $(LOCAL)
         # The local overlay takes the committed override's slot, keeping the
         # default chain's relative order so `LIVE=1` resolves the engine volumes
@@ -116,7 +121,7 @@ ifneq (,$(filter-out $(BOOTSTRAP_GOALS),$(or $(MAKECMDGOALS),help)))
         ifneq ($(strip $(LIVE)),)
             DEV_FLAGS += -f docker-compose.live.yml
         endif
-        DEV_FLAGS += $(STORAGE_FLAGS) $(UI_FLAGS)
+        DEV_FLAGS += $(STORAGE_FLAGS) $(UI_FLAGS) $(LIVE_UI_FLAGS)
         DEV_OVERLAY_ARG := --overlay $(LOCAL_OVERLAY)
     endif
 endif
@@ -280,6 +285,23 @@ ifeq ($(strip $(DFE_OTEL_RESOLVED))-$(strip $(DFE_CONTAINER_LOGS_ENABLED)),true-
     $(eval $(call chain_fragment,docker-compose.container-logs.yml))
 endif
 
+# Live console edits: `make dev LIVE_UI=1` runs dfe-ui as `next dev` over DFE_SRC_ROOT/dfe-ui (docker-compose.live-ui.yml). It rides the dev paths only, like LIVE=1, so the registry goals (ci, up, apply without DEV) never run a dev server. It chains after the container-logs fragment because it puts dfe-ui back on the default log driver.
+# The Node image comes from the checkout's own Dockerfile rather than a second pin here, read without a shell so a path with a quote in it stays a path.
+LIVE_UI_GOALS := dev dev-build apply apply-services
+ifneq ($(strip $(LIVE_UI)),)
+    LIVE_UI_DOCKERFILE := $(firstword $(wildcard $(call origin_value,DFE_SRC_ROOT)/dfe-ui/Dockerfile))
+    DFE_UI_NODE_IMAGE := $(if $(LIVE_UI_DOCKERFILE),$(firstword $(patsubst NODE_IMAGE=%,%,$(filter NODE_IMAGE=%,$(file < $(LIVE_UI_DOCKERFILE))))))
+    export DFE_UI_NODE_IMAGE
+    LIVE_UI_CHAIN := :docker-compose.live-ui.yml
+    LIVE_UI_FLAGS := -f docker-compose.live-ui.yml
+    # Refused here rather than at compose interpolation, which `make dev` reaches only after `down` has stopped the stack.
+    ifneq (,$(filter $(LIVE_UI_GOALS),$(MAKECMDGOALS)))
+        ifeq ($(strip $(DFE_UI_NODE_IMAGE)),)
+            $(error LIVE_UI=1 reads the Node image from DFE_SRC_ROOT/dfe-ui/Dockerfile, but $(if $(LIVE_UI_DOCKERFILE),$(LIVE_UI_DOCKERFILE) declares no ARG NODE_IMAGE,DFE_SRC_ROOT='$(call origin_value,DFE_SRC_ROOT)' holds no dfe-ui/Dockerfile). Set DFE_SRC_ROOT to the directory holding your dfe-ui checkout)
+        endif
+    endif
+endif
+
 # ---------------------------------------------------------------------------
 # Console TLS (opt-in)
 #
@@ -333,9 +355,9 @@ ifneq ($(PROXY_TLS_START)$(PROXY_NETWORK_REUSE),)
 endif
 
 ifneq ($(strip $(LIVE)),)
-    export COMPOSE_FILE := docker-compose.yml:docker-compose.override.yml:docker-compose.live.yml$(STORAGE_CHAIN)$(UI_CHAIN)
-else ifneq ($(strip $(STORAGE_CHAIN))$(strip $(UI_CHAIN)),)
-    export COMPOSE_FILE := docker-compose.yml:docker-compose.override.yml$(STORAGE_CHAIN)$(UI_CHAIN)
+    export COMPOSE_FILE := docker-compose.yml:docker-compose.override.yml:docker-compose.live.yml$(STORAGE_CHAIN)$(UI_CHAIN)$(LIVE_UI_CHAIN)
+else ifneq ($(strip $(STORAGE_CHAIN))$(strip $(UI_CHAIN))$(strip $(LIVE_UI_CHAIN)),)
+    export COMPOSE_FILE := docker-compose.yml:docker-compose.override.yml$(STORAGE_CHAIN)$(UI_CHAIN)$(LIVE_UI_CHAIN)
 endif
 
 # The gated infra UIs go to the resolver, so the engine's admin links name only
@@ -453,9 +475,9 @@ endif
 # which stay private until GA, so both are HyperI-internal until then; `make ci`
 # runs the same stack from the public images.
 .PHONY: dev
-dev: env-files dev-posture down storage-dirs ## Build local DFE images from source and start the dev stack (LOCAL="svc ..." builds only those; AUTH=real for a minted login), then print the access summary. HyperI-internal: clones private repos
+dev: env-files dev-posture down storage-dirs ## Build local DFE images from source and start the dev stack (LOCAL="svc ..." builds only those; AUTH=real for a minted login; LIVE_UI=1 runs the console as `next dev` from DFE_SRC_ROOT/dfe-ui), then print the access summary. HyperI-internal: clones private repos
 	docker compose $(DEV_PULL_FLAGS) $(PROFILE_FLAGS) pull
-	python3 scripts/build_dev_images.py $(DEV_OVERLAY_ARG) $(DEV_BUILD)
+	$(if $(strip $(DEV_BUILD)),python3 scripts/build_dev_images.py $(DEV_OVERLAY_ARG) $(DEV_BUILD))
 	docker compose $(DEV_FLAGS) $(PROFILE_FLAGS) up -d $(ACTIVE_SERVICES)
 	@$(MAKE) --no-print-directory post || { echo "post: SELF TEST FAILED -- the stack is up, but it did not prove it moves data. Run 'make post' for detail."; exit 1; }
 	@$(MAKE) --no-print-directory creds
@@ -463,7 +485,7 @@ dev: env-files dev-posture down storage-dirs ## Build local DFE images from sour
 .PHONY: dev-build
 dev-build: ## Build local DFE images from source (no start; honours LOCAL). HyperI-internal: clones private repos
 	docker compose $(DEV_PULL_FLAGS) $(PROFILE_FLAGS) pull
-	python3 scripts/build_dev_images.py $(DEV_OVERLAY_ARG) $(DEV_BUILD)
+	$(if $(strip $(DEV_BUILD)),python3 scripts/build_dev_images.py $(DEV_OVERLAY_ARG) $(DEV_BUILD))
 
 # ---------------------------------------------------------------------------
 # CI / registry images (skips docker-compose.override.yml)

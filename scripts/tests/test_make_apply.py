@@ -63,7 +63,16 @@ def checkout(tmp_path: Path) -> Path:
 
 def _dry_run(*, cwd: Path, args: list[str]) -> list[list[str]]:
     """The command lines one goal prints under -n, each split as the shell would."""
-    dropped = ("MAKEFLAGS", "MAKELEVEL", "MFLAGS")
+    dropped = (
+        "DEV",
+        "LIVE",
+        "LIVE_UI",
+        "LOCAL",
+        "MAKEFLAGS",
+        "MAKELEVEL",
+        "MFLAGS",
+        "SERVICES",
+    )
     environment = {
         key: value
         for key, value in os.environ.items()

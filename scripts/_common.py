@@ -101,6 +101,7 @@ ENV_DIR = REPO_ROOT / "env"
 ENV_TEMPLATE_DIR = REPO_ROOT / "env.example"
 COMPOSE_FILE = REPO_ROOT / "docker-compose.yml"
 COMPOSE_LIVE_FILE = REPO_ROOT / "docker-compose.live.yml"
+COMPOSE_LIVE_UI_FILE = REPO_ROOT / "docker-compose.live-ui.yml"
 # Generated per run by `make dev LOCAL=...`, never committed.
 COMPOSE_LOCAL_FILE = REPO_ROOT / "docker-compose.local.yml"
 COMPOSE_OVERRIDE_FILE = REPO_ROOT / "docker-compose.override.yml"
