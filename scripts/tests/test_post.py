@@ -805,8 +805,6 @@ def _hunt_stack(monkeypatch: pytest.MonkeyPatch, **kwargs) -> _HuntStack:
     monkeypatch.setattr(post, "http_post", stack.ingest)
     monkeypatch.setattr(post, "ch_query", stack.query)
     monkeypatch.setattr(post, "ch_int", stack.count)
-    for name in ("DFE_POST_LOGIN_USER", "DFE_POST_LOGIN_PASSWORD"):
-        monkeypatch.delenv(name, raising=False)
     monkeypatch.setenv(post.ADMIN_PASSWORD_KEY, "a-password")
     return stack
 
@@ -1087,16 +1085,16 @@ def test_the_routing_table_is_dropped_once_its_source_is_gone(
     deletes, statements = _stub_routed_removal(monkeypatch, lambda: status)
 
     post._remove_routed_source(
-        base="http://engine/api/v1", database="dfe", name="postroute1a2b3c4d", token="t"
+        base="http://engine/api/v1", database="dfe", name="postroute", token="t"
     )
 
     assert deletes == [
         (
-            "http://engine/api/v1/sources/postroute1a2b3c4d",
+            "http://engine/api/v1/sources/postroute",
             post.ROUTING_DELETE_TIMEOUT_SECONDS,
         )
     ]
-    assert statements == ["DROP TABLE IF EXISTS dfe.postroute1a2b3c4d SYNC"]
+    assert statements == ["DROP TABLE IF EXISTS dfe.postroute SYNC"]
 
 
 def test_the_routing_table_stays_while_its_source_remains(
@@ -1105,16 +1103,14 @@ def test_the_routing_table_stays_while_its_source_remains(
     _, statements = _stub_routed_removal(monkeypatch, lambda: 500)
 
     post._remove_routed_source(
-        base="http://engine/api/v1", database="dfe", name="postroute1a2b3c4d", token="t"
+        base="http://engine/api/v1", database="dfe", name="postroute", token="t"
     )
 
     assert statements == []
-    assert "dfe.postroute1a2b3c4d is kept while its source remains" in (
-        capsys.readouterr().err
-    )
+    assert "dfe.postroute is kept while its source remains" in (capsys.readouterr().err)
 
 
-@pytest.mark.parametrize("name", ["main", "postroute", "postroute1a2b3c4d; x"])
+@pytest.mark.parametrize("name", ["main", "postroute1a2b3c4d", "postroute; x"])
 def test_a_table_this_claim_did_not_name_is_never_dropped(
     monkeypatch: pytest.MonkeyPatch, name: str
 ) -> None:
@@ -1136,7 +1132,7 @@ def test_a_source_delete_with_no_answer_keeps_the_table_and_does_not_raise(
     _, statements = _stub_routed_removal(monkeypatch, _unanswered)
 
     post._remove_routed_source(
-        base="http://engine/api/v1", database="dfe", name="postroute1a2b3c4d", token="t"
+        base="http://engine/api/v1", database="dfe", name="postroute", token="t"
     )
 
     assert statements == []

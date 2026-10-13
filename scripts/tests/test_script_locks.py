@@ -48,8 +48,21 @@ def _normalised(name: str) -> str:
 SCRIPTS = sorted(path for path in SCRIPTS_DIR.glob("*.py") if _metadata(path))
 
 
-def test_the_e2e_and_flow_scripts_declare_their_packages() -> None:
-    assert [path.name for path in SCRIPTS] == ["test_e2e.py", "test_flows.py"]
+def test_the_seed_e2e_and_flow_scripts_declare_their_packages() -> None:
+    assert [path.name for path in SCRIPTS] == [
+        "seed.py",
+        "test_e2e.py",
+        "test_flows.py",
+    ]
+
+
+def test_the_unit_tests_parse_yaml_with_the_seed_scripts_pin() -> None:
+    makefile = (REPO_ROOT / "Makefile").read_text(encoding="utf-8")
+    pinned = re.search(pattern=r"(?m)^PYYAML_VERSION := (\S+)$", string=makefile)
+    declared = _metadata(path=SCRIPTS_DIR / "seed.py")["dependencies"]
+
+    assert pinned, "Makefile sets no PYYAML_VERSION"
+    assert f"pyyaml=={pinned.group(1)}" in declared
 
 
 @pytest.mark.parametrize("script", SCRIPTS, ids=lambda path: path.name)

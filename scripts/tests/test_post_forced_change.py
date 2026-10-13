@@ -90,10 +90,9 @@ def issued(dotenv: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     """A .env holding the issued admin password, 0600, and nothing else steering POST."""
     dotenv.write_text(_ENV, encoding="utf-8", newline="\n")
     dotenv.chmod(0o600)
-    for name in ("DFE_POST_LOGIN_USER", "DFE_POST_LOGIN_PASSWORD"):
-        monkeypatch.delenv(name, raising=False)
     monkeypatch.setenv("DFE_AUTH_LOCAL_ADMIN_NAME", "admin")
     monkeypatch.setenv(post.ADMIN_PASSWORD_KEY, _ISSUED)
+    monkeypatch.setattr(post, "_setup_status", _setup_unread)
     return dotenv
 
 
@@ -110,6 +109,21 @@ def _recorded(path: Path, key: str = post.ADMIN_PASSWORD_KEY) -> str:
         if line.startswith(f"{key}=")
     ]
     return values[-1]
+
+
+def _hunt_services() -> list[str]:
+    """A resolved profile holding every service the hunt claim needs."""
+    return list(post.HUNT_SERVICES)
+
+
+def _setup_retired(*, base: str) -> dict:
+    """The setup-status of an engine whose bootstrap admin is retired."""
+    return {"admin_retired": True}
+
+
+def _setup_unread(*, base: str) -> dict:
+    """The setup-status POST gets when it cannot read one, so no test reaches a running engine."""
+    return {}
 
 
 def test_an_engine_without_the_flag_is_logged_into_as_it_is(
@@ -340,22 +354,6 @@ def test_a_change_that_leaves_the_flag_set_fails(
     assert _recorded(issued) == engine.password
 
 
-def test_a_post_login_password_is_written_back_to_its_own_key(
-    issued: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """The key the login read from is the one the next run reads from."""
-    monkeypatch.setenv("DFE_POST_LOGIN_PASSWORD", "post-only-password-value")
-    engine = _serve(
-        monkeypatch, _Engine(password="post-only-password-value", sends_flag=True)
-    )
-
-    login = post._login(_BASE)
-
-    assert login.fault == ""
-    assert _recorded(issued, "DFE_POST_LOGIN_PASSWORD") == engine.password
-    assert _recorded(issued) == _ISSUED
-
-
 def test_an_existing_access_summary_is_rewritten(
     issued: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -427,3 +425,41 @@ def test_the_hunt_claim_reports_a_failed_change_as_its_fault(
 
     assert claim == post.Claim(asserted=True, failed=1)
     assert "FAIL  'admin' must replace the password" in capsys.readouterr().err
+
+
+def test_a_failed_change_still_fails_the_hunt_claim_once_the_admin_is_retired(
+    issued: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    # The login answered 200, so the fault is the change's and retirement cannot excuse it.
+    _serve(
+        monkeypatch,
+        _Engine(password=_ISSUED, sends_flag=True, change_status=500, change_body={}),
+    )
+    monkeypatch.setattr(post, "_resolved_services", _hunt_services)
+    monkeypatch.setattr(post, "_setup_status", _setup_retired)
+
+    claim = post._verify_hunt(
+        database="dfe", ingest_url="http://ingest/ingest", marker="m", table="main"
+    )
+
+    assert claim == post.Claim(asserted=True, failed=1)
+    assert "FAIL  'admin' must replace the password" in capsys.readouterr().err
+
+
+def test_a_refused_login_skips_the_hunt_claim_once_the_admin_is_retired(
+    issued: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    _serve(monkeypatch, _Engine(password="not-the-env-password", sends_flag=True))
+    monkeypatch.setattr(post, "_resolved_services", _hunt_services)
+    monkeypatch.setattr(post, "_setup_status", _setup_retired)
+
+    claim = post._verify_hunt(
+        database="dfe", ingest_url="http://ingest/ingest", marker="m", table="main"
+    )
+
+    assert claim == post.SKIPPED
+    assert "SKIP  the bootstrap admin is retired" in capsys.readouterr().err

@@ -1,0 +1,20 @@
+# Project:   dfe-docker
+# File:      config/seed/sources/syslog.yaml
+# Purpose:   Starter receiver source for syslog records, routed to it by the receiver
+# Language:  YAML
+#
+# License:   BUSL-1.1
+# Copyright: (c) 2026 HYPERI PTY LIMITED
+
+source: syslog
+display_name: Syslog
+match:
+  field: _source
+  operator: equals
+  value: syslog
+header:
+  type: common-header/timeseries
+  version: 1.0.1
+schema:
+  meta_schema: meta/syslog
+  meta_schema_version: 1.0.0

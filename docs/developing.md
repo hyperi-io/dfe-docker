@@ -93,7 +93,7 @@ exists as the operator-facing name for the same start.
 first-run setup is incomplete, so an operator who lands there with no password is
 one command from having one.
 
-The two accounts are durable in different ways, deliberately. The engine issues `admin` from `.env` with a forced change at first login, which `make post` makes and records back in `.env`. A new value there is a rotation. The last issued value, or the account's current password, re-issues nothing. `breakglass` is hashed into the engine's deploy repo on its first boot and the variable is ignored from then on, so it still works when the engine, the UI and `.env` are all gone. `make creds` says where its password lives rather than printing it.
+The two accounts are durable in different ways, deliberately. The engine issues `admin` from `.env` with a forced change at first login, which `make post` makes and records back in `.env`. A new value there is a rotation. The last issued value, or the account's current password, re-issues nothing. `breakglass` is hashed into the engine's deploy repo on its first boot and the variable is ignored from then on, so it still works when the engine, the UI and `.env` are all gone. `make creds` says where its password lives rather than printing it. Once the setup wizard has retired `admin`, `make post` skips the checks that log in and still proves the rest.
 
 The engine **refuses to start** on an empty or `changeme`
 `DFE_AUTH_LOCAL_ADMIN_PASSWORD` unless `DFE_ENV` names a dev posture. `make
@@ -283,6 +283,25 @@ A name in `SERVICES` that is not part of the resolved stack is a hard error, not
 silent no-op. Adding a config to a profile that does not exist on disk is caught
 too -- `resolve_profile.py` validates every `config_path` before writing
 `.profile.mk`.
+
+## Seeding a starter set
+
+`make sources`, `make rules` and `make hunts` create a starter set of detection content on a running stack through the engine API, from the request bodies in `config/seed/`. `make hunts` also creates the rules, because the engine refuses a hunt whose rule does not exist. Nothing else creates another target's objects: a rule or hunt over a source that is not deployed is accepted and reads nothing until `make sources` deploys it.
+
+| Target | What it creates |
+|---|---|
+| `make sources` | `aws-cloudtrail`, `aws-guardduty` and `aws-securityhub`, each polled by its own dfe-fetcher instance, and `syslog`, which takes any record sent to the receiver with `_source: syslog`. Each lands in `dfe.<source>` |
+| `make rules` | `aws-guardduty-high-severity`, matching a GuardDuty finding rated 7 or above |
+| `make hunts` | That rule, and the hunt `aws-guardduty-high-severity`, running it every five minutes into `dfe.detection` |
+| `make events` | Two fake GuardDuty findings from `config/seed/events/`, rated 8.0 and 2.0, so the hunt's next run detects the first and leaves the second |
+
+`make events` posts its records to dfe-receiver tagged with the source each file is named for, and the receiver routes them over the stack's own transport, Kafka or gRPC. It waits until the source's table holds them and fails if they do not arrive, so it needs the source deployed by `make sources`, dfe-receiver in the profile and an engine that renders the apps' config, as the `slim` and `single` profiles do. It sends the records again on every run and needs no login. The hunt that finds them runs in dfe-hunt-runner.
+
+A run of the other three creates only what the engine lacks and leaves an object it already holds as it is, so editing a seed file changes nothing on a stack that has the object. Delete the object through the console or the API and the next run creates it from the file. A source is deployed as it is created, which creates its table, and a source the engine holds undeployed is deployed. `make sources` ends by asking the engine to bring every app in step with the sources, which retries a deploy whose apps did not take it.
+
+`make sources`, `make rules` and `make hunts` log in as `admin` with `DFE_AUTH_LOCAL_ADMIN_PASSWORD` from `.env`, as `make post` does, and replace a password the engine issued the same way. Once the setup wizard has retired `admin`, they ask at the terminal for an account that can write sources, rules and hunts. They ask once per run and store the login nowhere; without a terminal they stop. An account still on the password it was issued has to change it in the console first.
+
+Each fetcher source runs in a container of its own, which the engine declares rather than starts. The deploy prints the command it needs, such as `recreate required: make apply SERVICES=dfe-fetcher-aws-guardduty`; add `DEV=1` on a `make dev` stack. The fetchers read `AWS_ACCESS_KEY_ID` and `AWS_SECRET_ACCESS_KEY` from `env/fetcher.env` and cannot fetch until both are set. Compose reads that file only when it creates a container, so set the keys before `make apply`, or run it again after setting them.
 
 ## Proving the pipeline works
 
