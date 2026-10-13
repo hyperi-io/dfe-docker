@@ -36,6 +36,7 @@ from __future__ import annotations
 
 import argparse
 import os
+import shlex
 import subprocess
 import sys
 from pathlib import Path
@@ -45,10 +46,10 @@ from _pipeline import env_or
 
 PROJECT_DIR = Path(__file__).resolve().parent.parent
 # Container names are daemon-wide and DFE_CONTAINER_PREFIX moves them, so the
-# archiver and every app the runner restarts are reached through compose.
+# archiver is reached through compose.
 ARCHIVER_SERVICE = "dfe-archiver"
-# The runner appends the compose service key the engine names to this prefix.
-RESTART_EXEC = "docker compose --profile * restart --no-deps"
+# The runner appends the hinted service as $1; $0 is the checkout make runs in.
+APPLY_SCRIPT = 'exec make -C "$0" --no-print-directory apply SERVICES="$1"'
 RUNNER_PATH = Path("scripts") / "acceptance" / "source" / "run.py"
 # The cases that push a corpus, and the checkout the runner reads it out of.
 # One repo for all three: they feed the same corpus and the elastic case takes
@@ -131,6 +132,20 @@ def _runner_python(flag: str | None) -> str:
             "interpreter with --python or DFE_ACCEPTANCE_PYTHON"
         )
     return python
+
+
+def restart_exec(*, project_dir: Path = PROJECT_DIR) -> str:
+    """The prefix the runner appends a hinted service to, running that hint's own command.
+
+    dfe-engine's restart and recreate hints both name ``make apply
+    SERVICES=<service>``. That target re-resolves the stack before it starts
+    anything, so it creates a per-source container the engine has only just
+    declared, and it recreates rather than restarts, so a changed env file reaches
+    the container. A plain ``docker compose restart`` does neither: the new
+    service is in a fragment only make chains, and Compose answers "no such
+    service".
+    """
+    return shlex.join(["sh", "-c", APPLY_SCRIPT, str(project_dir)])
 
 
 def _archive_exec() -> list[str]:
@@ -330,7 +345,7 @@ def main(argv: list[str] | None = None) -> int:
     runner += _archive_exec()
     # No controller here restarts an app after a config write, which is why the
     # flag is passed at all.
-    runner += ["--restart-exec", RESTART_EXEC]
+    runner += ["--restart-exec", restart_exec()]
     runner += [arg for arg in runner_args if arg != "--"]
 
     _print(msg=f"case {args.case}, console {ui_url}, runner from {infra}")
