@@ -1109,8 +1109,9 @@ def restore_compose(restore, command):
 
 # ------------------------------------------------------------------------------
 # Restore Profiles
-# - The profiles a restore's services belong to, read from the files they came
-#   from, or None and compose's error when those files do not resolve
+# - The restore narrowed to the services the files it came from still define,
+#   and the profiles those belong to, read from those files
+# - The restore as given, None and compose's error when the files do not resolve
 # ------------------------------------------------------------------------------
 def restore_profiles(restore):
     config = restore_compose(restore, restore.config())
@@ -1119,8 +1120,9 @@ def restore_profiles(restore):
     except ValueError:
         model = None
     if model is None:
-        return None, config.stderr.strip()
-    return _stack_state.profiles_of(model, restore.services), ""
+        return restore, None, config.stderr.strip()
+    narrowed = _stack_state.still_defined(restore, model)
+    return narrowed, _stack_state.profiles_of(model, narrowed.services), ""
 
 
 # ------------------------------------------------------------------------------
@@ -1131,11 +1133,12 @@ def restore_profiles(restore):
 #   files move on, and any `up` recreates it on theirs, so the end of the run is
 #   held to these
 # - A service whose files cannot be read is held to its container instead
+# - Only the services the files still define, the ones put_back starts
 # ------------------------------------------------------------------------------
 def expected_hashes(found):
     expected = {}
-    for restore in _stack_state.restores(found, exists=os.path.exists):
-        profiles, problem = restore_profiles(restore)
+    for found_restore in _stack_state.restores(found, exists=os.path.exists):
+        restore, profiles, problem = restore_profiles(found_restore)
         if profiles is not None:
             hashed = restore_compose(restore, restore.hashes(profiles))
             if hashed.returncode == 0:
@@ -1163,12 +1166,16 @@ def expected_hashes(found):
 #   that was running, or had run to completion, started again from the compose
 #   files, project and environment it was started with, and checked against the
 #   config hash those gave it when the run found it
+# - A service those files no longer define stays down, as a deleted source's
+#   instance does once its fragment is gone
 # ------------------------------------------------------------------------------
 def put_back(ctx, found, expected):
     print()
     stack_down()
 
-    for restore in _stack_state.restores(found, exists=os.path.exists):
+    left_out = set()
+    for found_restore in _stack_state.restores(found, exists=os.path.exists):
+        restore, profiles, problem = restore_profiles(found_restore)
         LOGGER.info(
             f"Starting the {len(restore.services)} service(s) this run found, from "
             f"{len(restore.config_files)} compose file(s)..."
@@ -1177,7 +1184,12 @@ def put_back(ctx, found, expected):
             LOGGER.warning(
                 f"    Left out, as they no longer exist: {', '.join(restore.missing)}"
             )
-        profiles, problem = restore_profiles(restore)
+        if restore.undefined:
+            LOGGER.warning(
+                "    Left out, as its files no longer define it: "
+                f"{', '.join(restore.undefined)}"
+            )
+            left_out.update(restore.undefined)
         if profiles is None:
             mark_fail(
                 ctx,
@@ -1185,13 +1197,17 @@ def put_back(ctx, found, expected):
                 f"not resolve the files they came from: {problem}",
             )
             continue
+        # An `up` naming no service starts every service its files define.
+        if not (restore.services):
+            continue
         result = restore_compose(restore, restore.command(profiles))
         if result.returncode != 0:
             detail = (result.stderr or result.stdout or "").strip()
             mark_fail(ctx, f"the services this run found did not start again: {detail}")
 
+    restored = [container for container in found if container.service not in left_out]
     deadline = time.monotonic() + RESTORE_TIMEOUT_SECONDS
-    for container in found:
+    for container in restored:
         if container.restored:
             wait_settled(container, deadline)
 
@@ -1199,10 +1215,10 @@ def put_back(ctx, found, expected):
     problems = (
         ["the project could not be read back"]
         if (after is None)
-        else _stack_state.differences(found, after, expected)
+        else _stack_state.differences(found, after, expected, left_out)
     )
-    running = sum(1 for container in found if container.running)
-    completed = sum(1 for container in found if container.run_to_completion)
+    running = sum(1 for container in restored if container.running)
+    completed = sum(1 for container in restored if container.run_to_completion)
     if problems:
         mark_fail(ctx, f"the stack is not as this run found it: {'; '.join(problems)}")
     elif running or completed:
@@ -1211,6 +1227,11 @@ def put_back(ctx, found, expected):
             f"the stack is as this run found it: {running} service(s) running and "
             f"{completed} one-shot(s) completed, each on the config its files gave "
             "when the run started",
+        )
+    elif left_out:
+        mark_pass(
+            ctx,
+            "this run found only services their files no longer define, and leaves none",
         )
     else:
         mark_pass(ctx, "this run found no stack running and leaves none")

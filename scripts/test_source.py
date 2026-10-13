@@ -30,6 +30,11 @@ What this repo owns is the wiring: which ports the stack publishes, which
 container the archive assertion runs inside, and where this deployment's admin
 login comes from. The Kubernetes lane reads those from the cluster; here they
 come from ``.env``, which is this deployment's own record of them.
+
+It owns the Compose side of the walk's cleanup too. The runner deletes the
+sources it created, and nothing here removes a deleted source's container on
+its own, so the wrapper runs ``make apply`` with no services once the runner
+returns, pass or fail.
 """
 
 from __future__ import annotations
@@ -146,6 +151,38 @@ def restart_exec(*, project_dir: Path = PROJECT_DIR) -> str:
     service".
     """
     return shlex.join(["sh", "-c", APPLY_SCRIPT, str(project_dir)])
+
+
+def prune_command(*, project_dir: Path = PROJECT_DIR) -> list[str]:
+    """``make apply`` with no services, which removes deleted sources' containers and starts nothing."""
+    return ["make", "-C", str(project_dir), "--no-print-directory", "apply"]
+
+
+def walk(
+    runner: list[str], env: dict[str, str], *, project_dir: Path = PROJECT_DIR
+) -> int:
+    """Run the source walk, then remove the containers of the sources it deleted.
+
+    A source the walk creates gets a container of its own, its transform or its
+    fetcher, which the engine stops declaring when the walk deletes the source.
+    A delete names no command, so that container keeps running until an apply
+    removes it, and the next run that reads the stack finds it.
+
+    Returns:
+        The walk's exit code, or the prune's when the walk passed.
+    """
+    try:
+        walked = subprocess.run(runner, env=env, check=False).returncode
+    finally:
+        pruned = subprocess.run(
+            prune_command(project_dir=project_dir), env=env, check=False
+        ).returncode
+    if pruned != 0:
+        _print(
+            msg=f"`make apply` exited {pruned}, so a source the walk deleted may "
+            "still have a container running"
+        )
+    return walked or pruned
 
 
 def _archive_exec() -> list[str]:
@@ -349,9 +386,7 @@ def main(argv: list[str] | None = None) -> int:
     runner += [arg for arg in runner_args if arg != "--"]
 
     _print(msg=f"case {args.case}, console {ui_url}, runner from {infra}")
-    return subprocess.run(
-        runner, env=_suite_env(host=host, engine_url=engine_url)
-    ).returncode
+    return walk(runner, _suite_env(host=host, engine_url=engine_url))
 
 
 if __name__ == "__main__":

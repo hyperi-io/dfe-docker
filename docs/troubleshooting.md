@@ -22,7 +22,8 @@ like something else entirely, so read them before you go deep.
 `docker compose ps` (or `make ps`) is the first call. It shows which containers
 exist and their health, but only for the profile resolved from `.env` -- see the
 first known issue below, because a stray container from a previous profile will
-not show up there while still holding its ports.
+not show up there while still holding its ports. `make ps` also warns about a
+per-source container whose source was deleted, which `make apply` removes.
 
 Health endpoints, straight from the host. Every DFE service serves `/livez`,
 `/readyz` and `/metrics` and nothing else -- the retired `/health*` paths 404, so

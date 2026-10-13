@@ -31,6 +31,8 @@ project, still running against a config directory the engine has removed.
 ``--prune`` is how ``make apply`` takes those away. It removes only containers
 this generator labelled, never every orphan: a service that a file outside the
 apply chain declares is an orphan to that chain too, and is not ours to stop.
+A delete names no command, so ``make ps`` runs ``--stale``, which names those
+containers and removes nothing.
 """
 
 import argparse
@@ -275,17 +277,50 @@ def _docker(args: list[str]) -> subprocess.CompletedProcess[str]:
     )
 
 
+def _list_project(compose_args: list[str]) -> subprocess.CompletedProcess[str]:
+    """Every container of the compose project, as ``stale_containers`` reads them."""
+    # The services that left the fragment are orphans now, so ps must list them.
+    template = f'{{{{.ID}}}}\t{{{{.Service}}}}\t{{{{.Label "{INSTANCE_LABEL}"}}}}'
+    return _docker(
+        ["compose", *compose_args, "ps", "--all", "--orphans", "--format", template]
+    )
+
+
+def stale_warning(stale: dict[str, str]) -> str:
+    """What an operator is told about the containers ``stale`` names, empty for none."""
+    if not stale:
+        return ""
+    services = ", ".join(sorted(set(stale.values())))
+    return (
+        f"WARNING: {services} still has a container, but dfe-engine no longer "
+        "declares it, as happens when its source is deleted. Run `make apply` "
+        "to remove it"
+    )
+
+
+def report(compose_args: list[str], *, keep: set[str]) -> int:
+    """Warn about every instance container whose service left the fragment, changing nothing.
+
+    Takes the arguments ``prune`` does, so it names what ``make apply`` would
+    remove. Returns an exit code, which is 0 whether or not it warned.
+    """
+    listing = _list_project(compose_args)
+    if listing.returncode != 0:
+        _print(msg=f"cannot list this stack's containers:\n{listing.stderr.strip()}")
+        return listing.returncode
+    warning = stale_warning(stale_containers(listing.stdout, keep=keep))
+    if warning:
+        _print(msg=warning)
+    return 0
+
+
 def prune(compose_args: list[str], *, keep: set[str]) -> int:
     """Stop and remove every instance container whose service left the fragment.
 
     ``compose_args`` are the file and profile flags the apply passes to its own
     ``up``, so the listing is of the same compose project. Returns an exit code.
     """
-    # The services that left the fragment are orphans now, so ps must list them.
-    template = f'{{{{.ID}}}}\t{{{{.Service}}}}\t{{{{.Label "{INSTANCE_LABEL}"}}}}'
-    listing = _docker(
-        ["compose", *compose_args, "ps", "--all", "--orphans", "--format", template]
-    )
+    listing = _list_project(compose_args)
     if listing.returncode != 0:
         _print(msg=f"cannot list this stack's containers:\n{listing.stderr.strip()}")
         return listing.returncode
@@ -320,6 +355,12 @@ def main() -> int:
         "declares; compose flags follow `--`",
     )
     parser.add_argument(
+        "--stale",
+        action="store_true",
+        help="warn about the instance containers --prune would remove, and change "
+        "nothing; compose flags follow `--`",
+    )
+    parser.add_argument(
         "compose_args",
         nargs="*",
         help="the -f and --profile flags of the compose call being applied",
@@ -328,6 +369,8 @@ def main() -> int:
 
     if args.prune:
         return prune(args.compose_args, keep=fragment_services())
+    if args.stale:
+        return report(args.compose_args, keep=fragment_services())
 
     found = declared()
     unknown = unknown_apps(found)

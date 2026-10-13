@@ -22,6 +22,7 @@ stops anything, for the hash the same files and environment give each service,
 and judges what comes back against that.
 """
 
+import dataclasses
 from collections import defaultdict
 from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass
@@ -109,6 +110,8 @@ class Restore:
         missing: Compose files the services were started from that no longer exist,
             left out of the command, and the config hash check judges what that
             changed.
+        undefined: Services the remaining files no longer define, left out of the
+            command because compose refuses a whole `up` that names one.
     """
 
     project: str
@@ -117,6 +120,7 @@ class Restore:
     environment_files: tuple[str, ...]
     services: tuple[str, ...]
     missing: tuple[str, ...] = ()
+    undefined: tuple[str, ...] = ()
 
     def compose(self) -> list[str]:
         """`docker compose` on the project, directory and files the services came from."""
@@ -153,6 +157,24 @@ def _profile_flags(profiles: Iterable[str]) -> list[str]:
     return [
         part for profile in sorted(set(profiles)) for part in ("--profile", profile)
     ]
+
+
+def still_defined(restore: Restore, model: Mapping) -> Restore:
+    """The restore with only the services `docker compose config` JSON still defines.
+
+    A per-source instance outlives its source when nothing prunes it, and the
+    fragment that declared it is removed with the source. It shares its `up`
+    with every service started from the same files, so naming it would keep
+    those down as well.
+    """
+    known = model.get("services") or {}
+    return dataclasses.replace(
+        restore,
+        services=tuple(service for service in restore.services if service in known),
+        undefined=tuple(
+            service for service in restore.services if service not in known
+        ),
+    )
 
 
 def profiles_of(model: Mapping, services: Iterable[str]) -> set[str]:
@@ -231,6 +253,7 @@ def differences(
     before: Iterable[Container],
     after: Iterable[Container],
     expected: Mapping[str, str] | None = None,
+    left_out: Iterable[str] = (),
 ) -> list[str]:
     """How the project differs from how it was found, empty when it does not.
 
@@ -243,6 +266,8 @@ def differences(
         after: The containers the project holds now.
         expected: The config hash each service's files gave when the run found
             it. A service it leaves out is held to its found container's hash.
+        left_out: Services the restore did not start because their files no
+            longer define them, so none is held to its found container.
 
     Returns:
         One line per difference.
@@ -250,10 +275,11 @@ def differences(
     if expected is None:
         expected = {}
     before = list(before)
+    skipped = set(left_out)
     now = {container.service: container for container in after}
     problems = []
     for was in before:
-        if not (was.restored):
+        if not (was.restored) or was.service in skipped:
             continue
         current = now.get(was.service)
         reference = expected.get(was.service, was.config_hash)

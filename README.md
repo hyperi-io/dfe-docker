@@ -202,7 +202,8 @@ In `dev` mode, they build from each repo's own Dockerfile (not the shared Rust b
 | `make ci`          | Pull and start infra and registry DFE images. Prints no credentials -- `make up` is the same start plus `make creds` |
 | `make ci-pull`     | Pull infra and registry DFE images (no start)                      |
 | `make infra`       | Start infrastructure services                                      |
-| `make ps`          | Show running containers                                            |
+| `make apply`       | Create or recreate the per-source services the engine's response names (`SERVICES="..."`). After deleting a source, run it with no `SERVICES` to stop that source's transform |
+| `make ps`          | Show running containers, and warn about a deleted source's container still running |
 | `make down`        | Stop and remove containers across ALL profiles (keeps volumes; ignores `SERVICES`) |
 | `make clean`       | Stop and remove all containers and volumes across every profile    |
 | `make help`        | Show the help message                                              |

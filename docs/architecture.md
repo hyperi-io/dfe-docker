@@ -318,6 +318,9 @@ Three deliberate asymmetries:
 - **An operator applies a new source.** Both tiers run a fetcher and a transform
   per source. On Kubernetes Argo creates the new Deployment; here the engine
   declares the instance and reports `make apply`, which starts it.
+  After deleting a source, run `make apply` with no `SERVICES` to stop its
+  transform: the delete names no command, and the container runs until an
+  apply or a restart removes it. `make ps` warns about any it finds.
 - **No authentication.** Compose runs god-mode. Envoy fronts both tiers, but its
   OIDC filters stay unconfigured here, because Docker mode can never assume an
   issuer exists. An OIDC issuer (the engine as provider, or an external IdP)
