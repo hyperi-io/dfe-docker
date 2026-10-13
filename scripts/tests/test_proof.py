@@ -31,7 +31,6 @@ def steps(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> dict:
         "ran": [],
         "outcome": {},
         "work": None,
-        "applied": tmp_path / ".dfe-stack-applied",
         "proven": tmp_path / ".dfe-proof-passed",
     }
     work = tmp_path / "work"
@@ -57,21 +56,28 @@ def steps(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> dict:
     monkeypatch.setattr(proof, "source_step", fake_source_step)
     monkeypatch.setattr(proof, "PROJECT_DIR", tmp_path)
     monkeypatch.setattr(proof, "ENV_FILE", tmp_path / ".env")
-    monkeypatch.setattr(proof, "APPLIED_MARKER", state["applied"])
     monkeypatch.setattr(proof, "PROVEN_MARKER", state["proven"])
     monkeypatch.delenv("DFE_PROOF_SKIP", raising=False)
     monkeypatch.delenv("DFE_PROOF_FORCE", raising=False)
+    monkeypatch.delenv("DFE_STACK_VERSION", raising=False)
+
+    def pin(version: str) -> None:
+        (tmp_path / ".env").write_text(
+            f"DFE_STACK_VERSION={version}\n", encoding="utf-8"
+        )
+
+    state["pin"] = pin
     return state
 
 
-def test_a_pass_marks_the_applied_version_proven(steps: dict) -> None:
-    steps["applied"].write_text("2.2.1\n", encoding="utf-8")
+def test_a_pass_marks_the_pinned_version_proven(steps: dict) -> None:
+    steps["pin"]("2.2.1")
     assert proof.main() == 0
     assert steps["proven"].read_text(encoding="utf-8") == "2.2.1\n"
 
 
 def test_a_proven_version_is_not_run_again(steps: dict) -> None:
-    steps["applied"].write_text("2.2.1\n", encoding="utf-8")
+    steps["pin"]("2.2.1")
     steps["proven"].write_text("2.2.1\n", encoding="utf-8")
     assert proof.main() == 0
     assert steps["ran"] == []
@@ -79,7 +85,7 @@ def test_a_proven_version_is_not_run_again(steps: dict) -> None:
 
 
 def test_a_new_version_runs_although_an_older_one_is_proven(steps: dict) -> None:
-    steps["applied"].write_text("2.2.2\n", encoding="utf-8")
+    steps["pin"]("2.2.2")
     steps["proven"].write_text("2.2.1\n", encoding="utf-8")
     assert proof.main() == 0
     assert steps["ran"] == ["e2e", "restore", "source"]
@@ -87,7 +93,7 @@ def test_a_new_version_runs_although_an_older_one_is_proven(steps: dict) -> None
 
 
 def test_a_failure_leaves_the_version_unproven(steps: dict) -> None:
-    steps["applied"].write_text("2.2.2\n", encoding="utf-8")
+    steps["pin"]("2.2.2")
     steps["proven"].write_text("2.2.1\n", encoding="utf-8")
     steps["outcome"]["source"] = False
     assert proof.main() == 1
@@ -97,7 +103,7 @@ def test_a_failure_leaves_the_version_unproven(steps: dict) -> None:
 def test_force_runs_a_proven_version(
     steps: dict, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    steps["applied"].write_text("2.2.1\n", encoding="utf-8")
+    steps["pin"]("2.2.1")
     steps["proven"].write_text("2.2.1\n", encoding="utf-8")
     monkeypatch.setenv("DFE_PROOF_FORCE", "1")
     assert proof.main() == 0
@@ -107,17 +113,26 @@ def test_force_runs_a_proven_version(
 def test_a_partial_run_never_marks_proven(
     steps: dict, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    steps["applied"].write_text("2.2.1\n", encoding="utf-8")
+    steps["pin"]("2.2.1")
     monkeypatch.setenv("DFE_PROOF_SKIP", "e2e")
     assert proof.main() == 0
     assert not steps["proven"].exists()
 
 
-def test_no_applied_marker_always_runs_and_marks_nothing(steps: dict) -> None:
+def test_no_pinned_version_always_runs_and_marks_nothing(steps: dict) -> None:
     steps["proven"].write_text("2.2.1\n", encoding="utf-8")
     assert proof.main() == 0
     assert steps["ran"] == ["e2e", "restore", "source"]
     assert steps["proven"].read_text(encoding="utf-8") == "2.2.1\n"
+
+
+def test_a_pass_marks_the_version_env_pins_not_the_daemons_last_apply(
+    steps: dict, tmp_path: Path
+) -> None:
+    steps["pin"]("2.2.1-rc.8")
+    (tmp_path / ".dfe-stack-applied").write_text("2.2.1\n", encoding="utf-8")
+    assert proof.main() == 0
+    assert steps["proven"].read_text(encoding="utf-8") == "2.2.1-rc.8\n"
 
 
 def test_all_steps_pass(steps: dict) -> None:
@@ -172,12 +187,13 @@ def test_work_dir_removed_when_a_step_raises(
     assert not steps["work"].exists()
 
 
-def test_infra_ref_prefers_the_applied_stack_tag(
+def test_infra_ref_prefers_the_pinned_stack_tag(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    marker = tmp_path / ".dfe-stack-applied"
-    marker.write_text("2.2.1-rc.6\n", encoding="utf-8")
-    monkeypatch.setattr(proof, "APPLIED_MARKER", marker)
+    env_file = tmp_path / ".env"
+    env_file.write_text("DFE_STACK_VERSION=2.2.1-rc.6\n", encoding="utf-8")
+    monkeypatch.setattr(proof, "ENV_FILE", env_file)
+    monkeypatch.delenv("DFE_STACK_VERSION", raising=False)
     monkeypatch.delenv("DFE_PROOF_INFRA_REF", raising=False)
     monkeypatch.setattr(proof, "remote_has_ref", lambda repo, ref: True)
     assert proof.infra_ref("repo") == "2.2.1-rc.6"
