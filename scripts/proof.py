@@ -23,11 +23,12 @@ Everything it creates lives in one temporary directory that is deleted at the
 end, pass or fail: the checkouts, the virtualenv and every screenshot. Nothing
 accumulates between runs, so a host can run this on a timer indefinitely.
 
-Each stack version is proven once. A full pass writes the version from
-.dfe-stack-applied to .dfe-proof-passed, and a later run on the same version
-exits 0 without touching the stack, so a timer that fires with nothing new does
-not take the standing stack away. A failed version runs again on the next fire.
-A checkout with no .dfe-stack-applied always runs.
+Each stack version is proven once. A full pass writes the version .env pins
+(DFE_STACK_VERSION, what `make stack` last wrote) to .dfe-proof-passed, and a
+later run on the same version exits 0 without touching the stack, so a timer
+that fires with nothing new does not take the standing stack away. A failed
+version runs again on the next fire. A checkout with no pinned version always
+runs.
 
 One run at a time. The proof holds the checkout's stack lock (.dfe-stack.lock,
 shared with the daemon updater) for its whole run, so an update tick that fires
@@ -43,8 +44,8 @@ chrome``); this script never downloads one.
 
 Environment:
     DFE_PROOF_INFRA_REPO   dfe-infra clone URL (default: the public repo)
-    DFE_PROOF_INFRA_REF    branch or tag; default is the version in
-                           .dfe-stack-applied when that tag exists, else the
+    DFE_PROOF_INFRA_REF    branch or tag; default is the pinned
+                           DFE_STACK_VERSION when that tag exists, else the
                            default branch
     DFE_PROOF_ENGINE_REPO  dfe-engine clone URL (default: the public repo)
     DFE_PROOF_ENGINE_REF   branch or tag; default is the tag in DFE_ENGINE_VERSION
@@ -79,7 +80,6 @@ import _stack_lock
 
 PROJECT_DIR = Path(__file__).resolve().parent.parent
 ENV_FILE = PROJECT_DIR / ".env"
-APPLIED_MARKER = PROJECT_DIR / ".dfe-stack-applied"
 PROVEN_MARKER = PROJECT_DIR / ".dfe-proof-passed"
 TRUTHY = {"1", "true", "yes", "on"}
 DEFAULT_INFRA_REPO = "https://github.com/hyperi-io/dfe-infra.git"
@@ -113,15 +113,35 @@ def remote_has_ref(repo: str, ref: str) -> bool:
     return probe.returncode == 0
 
 
+def pinned_value(var: str) -> str:
+    """A pin `make stack` wrote: the environment's value, else .env's."""
+    pinned = os.environ.get(var, "").strip()
+    if not pinned and ENV_FILE.is_file():
+        values = _common._parse_dotenv(
+            text=ENV_FILE.read_text(encoding="utf-8", errors="replace")
+        )
+        pinned = values.get(var, "").strip()
+    return pinned
+
+
+def stack_version() -> str:
+    """The stack version the running stack is pinned to.
+
+    Read from DFE_STACK_VERSION, not .dfe-stack-applied: only the update daemon
+    writes that file, so after a manual `make stack VERSION=X` it still names the
+    daemon's last apply, and a pass would be recorded against the wrong version.
+    """
+    return pinned_value("DFE_STACK_VERSION")
+
+
 def infra_ref(repo: str) -> str:
     """The dfe-infra ref matching the running stack, so the runner is the one it shipped with."""
     explicit = os.environ.get("DFE_PROOF_INFRA_REF", "").strip()
     if explicit:
         return explicit
-    if APPLIED_MARKER.is_file():
-        applied = APPLIED_MARKER.read_text(encoding="utf-8").strip()
-        if applied and remote_has_ref(repo, f"refs/tags/{applied}"):
-            return applied
+    version = stack_version()
+    if version and remote_has_ref(repo, f"refs/tags/{version}"):
+        return version
     return ""
 
 
@@ -130,13 +150,7 @@ def pinned_ref(repo: str, *, name: str, version_var: str, override_var: str) -> 
     explicit = os.environ.get(override_var, "").strip()
     if explicit:
         return explicit
-    pinned = os.environ.get(version_var, "").strip()
-    if not pinned and ENV_FILE.is_file():
-        values = _common._parse_dotenv(
-            text=ENV_FILE.read_text(encoding="utf-8", errors="replace")
-        )
-        pinned = values.get(version_var, "").strip()
-    tag = pinned.partition("@")[0]
+    tag = pinned_value(version_var).partition("@")[0]
     if not tag:
         return ""
     if remote_has_ref(repo, f"refs/tags/{tag}"):
@@ -265,10 +279,10 @@ def run_proof() -> int:
     skip = {
         s.strip() for s in os.environ.get("DFE_PROOF_SKIP", "").split(",") if s.strip()
     }
-    applied = read_marker(APPLIED_MARKER)
+    version = stack_version()
     force = os.environ.get("DFE_PROOF_FORCE", "").strip().lower() in TRUTHY
-    if applied and not skip and not force and read_marker(PROVEN_MARKER) == applied:
-        log(f"SKIP {applied} is already proven; DFE_PROOF_FORCE=1 runs it again")
+    if version and not skip and not force and read_marker(PROVEN_MARKER) == version:
+        log(f"SKIP {version} is already proven; DFE_PROOF_FORCE=1 runs it again")
         return 0
     results: dict[str, bool] = {}
     work = Path(tempfile.mkdtemp(prefix="dfe-proof-"))
@@ -294,8 +308,8 @@ def run_proof() -> int:
     )
     log(f"RESULT {summary or 'nothing ran'}")
     passed = bool(results) and all(results.values())
-    if passed and applied and not skip:
-        PROVEN_MARKER.write_text(f"{applied}\n", encoding="utf-8", newline="\n")
+    if passed and version and not skip:
+        PROVEN_MARKER.write_text(f"{version}\n", encoding="utf-8", newline="\n")
     return 0 if passed else 1
 
 
