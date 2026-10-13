@@ -229,6 +229,13 @@ SERVICE_TO_CONFIG_VAR = {
     "dfe-transform-vector": "DFE_TRANSFORM_VECTOR_CONFIG",
     "dfe-transform-vrl": "DFE_TRANSFORM_VRL_CONFIG",
 }
+# The base the engine renders a per-source transform's instances over, on a grpc
+# tier that runs no resident copy of the app: compose defaults these variables to
+# the bus config, which would hand every instance a broker the tier does not run.
+DIRECT_INSTANCE_BASE = {
+    "dfe-transform-vector": "transform-vector/grpc.yaml",
+    "dfe-transform-vrl": "transform-vrl/grpc.yaml",
+}
 
 # The engine is the Compose stand-in for the ConfigMap an app's chart renders on
 # Kubernetes: it merges each instance's values overlay over the committed config
@@ -704,6 +711,11 @@ def main(argv: Sequence[str] = ()) -> int:
         for service_name, service_config in services.items():
             var_name = SERVICE_TO_CONFIG_VAR[service_name]
             lines.append(f"export {var_name} := {service_config['config_path']}")
+        if transport == "grpc":
+            for service_name, base in DIRECT_INSTANCE_BASE.items():
+                if service_name not in services:
+                    var_name = SERVICE_TO_CONFIG_VAR[service_name]
+                    lines.append(f"export {var_name} := {base}")
 
         # Emitted unconditionally, empty when the engine is not the writer here:
         # a line that vanishes with its own value would make the included file

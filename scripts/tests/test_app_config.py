@@ -27,7 +27,7 @@ from pathlib import Path
 import pytest
 
 import resolve_profile
-from _common import COMPOSE_FILE, PROJECTED_PROFILES
+from _common import COMPOSE_FILE, CONFIG_DIR, PROJECTED_PROFILES
 
 
 def _compose_service_block(service: str) -> str:
@@ -119,6 +119,43 @@ def test_an_app_the_tier_does_not_run_is_given_no_rendered_path(
     values = _resolved("slim", tmp_path, monkeypatch)
 
     assert values["DFE_TRANSFORM_VRL_CONFIG_FILE"] == ""
+
+
+@pytest.mark.parametrize(
+    "var,base",
+    [
+        ("DFE_TRANSFORM_VRL_CONFIG", "transform-vrl/grpc.yaml"),
+        ("DFE_TRANSFORM_VECTOR_CONFIG", "transform-vector/grpc.yaml"),
+    ],
+)
+def test_the_slim_tier_bases_a_per_source_transform_on_the_direct_transport(
+    var: str, base: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # The engine merges each instance's overlay over this base, so a broker left
+    # in it reaches the rendered config of a tier that runs no broker.
+    values = _resolved("slim", tmp_path, monkeypatch)
+
+    assert values[var] == base
+    text = (CONFIG_DIR / base).read_text(encoding="utf-8")
+    assert "kafka" not in text
+    assert "transport: direct" in text
+
+
+def test_a_kafka_tier_keeps_the_transform_base_it_names(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    values = _resolved("single", tmp_path, monkeypatch)
+
+    assert values["DFE_TRANSFORM_VRL_CONFIG"] == "transform-vrl/kafka.yaml"
+    assert "DFE_TRANSFORM_VECTOR_CONFIG" not in values
+
+
+def test_a_direct_profile_running_the_transform_keeps_its_own_config(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    values = _resolved("grpc-receiver-transform-vrl", tmp_path, monkeypatch)
+
+    assert values["DFE_TRANSFORM_VRL_CONFIG"] == "transform-vrl/grpc.yaml"
 
 
 def test_the_single_tier_hands_both_transforms_the_engine_rendered_config(
