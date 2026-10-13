@@ -428,8 +428,11 @@ attaches a transform, deploys it, feeds it real data and reads the rows back,
 driving a browser to do it. The runner is dfe-infra's
 (`scripts/acceptance/source/run.py`), the same one `dfe-ops acceptance --suite
 source` calls for Kubernetes; `scripts/test_source.py` supplies what this repo
-owns -- the published ports, the archiver container, and the admin login from
-`.env`. `SOURCE_ARGS` reaches the runner untouched (`--keep`, `--per-module`,
+owns -- the published ports, the archiver container, `make apply` for each
+service the engine says must restart (which is what creates the source's own
+transform container; run `make test-source DEV=1` against a `make dev` stack so
+that apply keeps the local images), and the admin login from `.env`.
+`SOURCE_ARGS` reaches the runner untouched (`--keep`, `--per-module`,
 `--headed`).
 
 Beyond a running stack it needs `DFE_INFRA_DIR` (the runner), `DFE_ENGINE_REPO`
