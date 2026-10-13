@@ -253,6 +253,8 @@ def engine_pin(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Path:
     monkeypatch.setattr(proof, "ENV_FILE", env_file)
     monkeypatch.delenv("DFE_PROOF_ENGINE_REF", raising=False)
     monkeypatch.delenv("DFE_ENGINE_VERSION", raising=False)
+    monkeypatch.delenv("DFE_PROOF_TRANSFORM_VRL_REF", raising=False)
+    monkeypatch.delenv("DFE_TRANSFORM_VRL_VERSION", raising=False)
     monkeypatch.setattr(proof, "remote_has_ref", lambda repo, ref: True)
     return env_file
 
@@ -292,11 +294,28 @@ def test_engine_ref_is_the_default_branch_with_no_pin(engine_pin: Path) -> None:
     assert proof.engine_ref("repo") == ""
 
 
-def test_the_source_walk_clones_dfe_engine_at_the_pinned_tag(
+def test_transform_vrl_ref_is_its_pinned_tag(engine_pin: Path) -> None:
+    engine_pin.write_text(
+        f"DFE_TRANSFORM_VRL_VERSION=v1.1.33@sha256:{'b' * 64}\n", encoding="utf-8"
+    )
+    assert proof.transform_vrl_ref("repo") == "v1.1.33"
+
+
+def test_transform_vrl_ref_override_wins(
+    engine_pin: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    engine_pin.write_text("DFE_TRANSFORM_VRL_VERSION=v1.1.33\n", encoding="utf-8")
+    monkeypatch.setenv("DFE_PROOF_TRANSFORM_VRL_REF", "my-branch")
+    assert proof.transform_vrl_ref("repo") == "my-branch"
+
+
+def test_the_source_walk_clones_its_repos_at_the_pinned_tags(
     engine_pin: Path, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     engine_pin.write_text(
-        f"DFE_ENGINE_VERSION=v1.22.16@sha256:{'a' * 64}\n", encoding="utf-8"
+        f"DFE_ENGINE_VERSION=v1.22.16@sha256:{'a' * 64}\n"
+        f"DFE_TRANSFORM_VRL_VERSION=v1.1.33@sha256:{'b' * 64}\n",
+        encoding="utf-8",
     )
     cloned: dict[str, str] = {}
     monkeypatch.setattr(proof.shutil, "which", lambda name: "/usr/bin/chrome")
@@ -305,6 +324,14 @@ def test_the_source_walk_clones_dfe_engine_at_the_pinned_tag(
     )
     monkeypatch.setattr(proof, "infra_ref", lambda repo: "2.2.1")
     monkeypatch.setattr(proof, "acceptance_python", lambda infra, venv: "python")
-    monkeypatch.setattr(proof, "run_step", lambda name, argv, env: True)
+    seen: dict[str, str] = {}
+    monkeypatch.setattr(
+        proof, "run_step", lambda name, argv, env: seen.update(env) or True
+    )
     assert proof.source_step(tmp_path, {}) is True
-    assert cloned == {"dfe-infra": "2.2.1", "dfe-engine": "v1.22.16"}
+    assert cloned == {
+        "dfe-infra": "2.2.1",
+        "dfe-engine": "v1.22.16",
+        "dfe-transform-vrl": "v1.1.33",
+    }
+    assert seen["DFE_TRANSFORM_VRL_REPO"] == str(tmp_path / "dfe-transform-vrl")

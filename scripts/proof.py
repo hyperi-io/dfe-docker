@@ -50,6 +50,11 @@ Environment:
     DFE_PROOF_ENGINE_REF   branch or tag; default is the tag in DFE_ENGINE_VERSION
                            (the environment, else .env) when that tag exists, else
                            the default branch
+    DFE_PROOF_TRANSFORM_VRL_REPO  dfe-transform-vrl clone URL (default: the
+                           public repo); the source walk reads its pipeline and
+                           corpus
+    DFE_PROOF_TRANSFORM_VRL_REF   branch or tag; default is the tag in
+                           DFE_TRANSFORM_VRL_VERSION, resolved as for dfe-engine
     DFE_PROOF_SKIP         comma-separated steps to skip: e2e, source (a
                            partial run never marks a version proven)
     DFE_PROOF_FORCE        1 to run a version that is already proven
@@ -79,6 +84,7 @@ PROVEN_MARKER = PROJECT_DIR / ".dfe-proof-passed"
 TRUTHY = {"1", "true", "yes", "on"}
 DEFAULT_INFRA_REPO = "https://github.com/hyperi-io/dfe-infra.git"
 DEFAULT_ENGINE_REPO = "https://github.com/hyperi-io/dfe-engine.git"
+DEFAULT_TRANSFORM_VRL_REPO = "https://github.com/hyperi-io/dfe-transform-vrl.git"
 ACCEPTANCE_REQUIREMENTS = Path("scripts") / "acceptance" / "requirements.txt"
 CHROME_NAMES = ("google-chrome", "google-chrome-stable", "chrome")
 
@@ -119,24 +125,44 @@ def infra_ref(repo: str) -> str:
     return ""
 
 
-def engine_ref(repo: str) -> str:
-    """The dfe-engine ref matching the running stack, so the walk tests that version."""
-    explicit = os.environ.get("DFE_PROOF_ENGINE_REF", "").strip()
+def pinned_ref(repo: str, *, name: str, version_var: str, override_var: str) -> str:
+    """The ref of `name` matching the running stack: the override, else the pinned tag, else the default branch."""
+    explicit = os.environ.get(override_var, "").strip()
     if explicit:
         return explicit
-    pinned = os.environ.get("DFE_ENGINE_VERSION", "").strip()
+    pinned = os.environ.get(version_var, "").strip()
     if not pinned and ENV_FILE.is_file():
         values = _common._parse_dotenv(
             text=ENV_FILE.read_text(encoding="utf-8", errors="replace")
         )
-        pinned = values.get("DFE_ENGINE_VERSION", "").strip()
+        pinned = values.get(version_var, "").strip()
     tag = pinned.partition("@")[0]
     if not tag:
         return ""
     if remote_has_ref(repo, f"refs/tags/{tag}"):
         return tag
-    log(f"WARN dfe-engine has no tag {tag}; testing its default branch instead")
+    log(f"WARN {name} has no tag {tag}; testing its default branch instead")
     return ""
+
+
+def engine_ref(repo: str) -> str:
+    """The dfe-engine ref matching the running stack, so the walk tests that version."""
+    return pinned_ref(
+        repo,
+        name="dfe-engine",
+        version_var="DFE_ENGINE_VERSION",
+        override_var="DFE_PROOF_ENGINE_REF",
+    )
+
+
+def transform_vrl_ref(repo: str) -> str:
+    """The dfe-transform-vrl ref matching the running stack: the source walk reads its pipeline and corpus."""
+    return pinned_ref(
+        repo,
+        name="dfe-transform-vrl",
+        version_var="DFE_TRANSFORM_VRL_VERSION",
+        override_var="DFE_PROOF_TRANSFORM_VRL_REF",
+    )
 
 
 def env_owner_problem() -> str | None:
@@ -194,9 +220,13 @@ def source_step(work: Path, env: dict[str, str]) -> bool:
         return False
     infra_repo = os.environ.get("DFE_PROOF_INFRA_REPO", DEFAULT_INFRA_REPO)
     engine_repo = os.environ.get("DFE_PROOF_ENGINE_REPO", DEFAULT_ENGINE_REPO)
+    vrl_repo = os.environ.get(
+        "DFE_PROOF_TRANSFORM_VRL_REPO", DEFAULT_TRANSFORM_VRL_REPO
+    )
     try:
         clone(infra_repo, infra_ref(infra_repo), work / "dfe-infra")
         clone(engine_repo, engine_ref(engine_repo), work / "dfe-engine")
+        clone(vrl_repo, transform_vrl_ref(vrl_repo), work / "dfe-transform-vrl")
         python = acceptance_python(work / "dfe-infra", work / "venv")
     except (subprocess.CalledProcessError, RuntimeError) as exc:
         log(f"FAIL source setup: {exc}")
@@ -205,6 +235,7 @@ def source_step(work: Path, env: dict[str, str]) -> bool:
         **env,
         "DFE_INFRA_DIR": str(work / "dfe-infra"),
         "DFE_ENGINE_REPO": str(work / "dfe-engine"),
+        "DFE_TRANSFORM_VRL_REPO": str(work / "dfe-transform-vrl"),
         "DFE_ACCEPTANCE_PYTHON": python,
         "SOURCE_ARGS": f"--shots-dir {work / 'source-shots'}",
     }
