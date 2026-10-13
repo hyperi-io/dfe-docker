@@ -46,15 +46,29 @@ docs/superpowers/
 
 # Local working files (not committed)
 .claude/
-hyperi-ai/
+.codex/
+.cursor/
+.gemini/
+.superpowers/
+.playwright-mcp/
 .mcp.json
+.hyperi-ai
+.worktrees/
+.kube/
+.secrets/
+.env.*
+!.env*.example
+hyperi-ai/
 STATE.md
 CLAUDE.md
 TODO.md
 .ai-version
+.benchmarks/
 
 # Per-service env files: env/
 env/
+# Local stash of the per-service env files.
+.env-dir-stashed/
 
 # Predecessor CI clone and an inert submodule declaration, both untracked and
 # left in the tree. Ignored so `git add -A` cannot pull a dead CI system (100+
