@@ -365,3 +365,21 @@ def test_a_listing_that_fails_removes_nothing(monkeypatch: pytest.MonkeyPatch) -
 
     assert instances.prune(COMPOSE_ARGS, keep=set()) == 1
     assert docker.changed == []
+
+
+def test_the_warning_names_a_deleted_sources_container_and_the_removal() -> None:
+    stale = instances.stale_containers(_PROJECT, keep={"dfe-transform-vrl-cisco-ios"})
+
+    warning = instances.stale_warning(stale)
+
+    assert "dfe-transform-vrl-cisco-meraki" in warning
+    assert "dfe-transform-vrl-cisco-ios" not in warning
+    assert "`make apply`" in warning
+
+
+def test_no_warning_while_every_instance_is_declared() -> None:
+    keep = {"dfe-transform-vrl-cisco-ios", "dfe-transform-vrl-cisco-meraki"}
+
+    assert (
+        instances.stale_warning(instances.stale_containers(_PROJECT, keep=keep)) == ""
+    )

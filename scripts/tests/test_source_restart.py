@@ -1,25 +1,31 @@
 #  Project:      dfe-docker
 #  File:         tests/test_source_restart.py
-#  Purpose:      Prove the restart prefix the source runner is handed runs the
-#                command dfe-engine's hints name, against a copy of the Makefile
+#  Purpose:      Prove the restart prefix the source runner is handed, and the
+#                prune after it, run the make goals they name, against a copy
+#                of the Makefile
 #  Language:     Python
 #
 #  License:      BUSL-1.1
 #  Copyright:    (c) 2026 HYPERI PTY LIMITED
 
-"""The restart prefix scripts/test_source.py hands dfe-infra's source runner.
+"""The make goals scripts/test_source.py runs around dfe-infra's source runner.
 
-The runner splits the prefix, appends the compose service an engine hint names,
-and runs the result. Those hints name ``make apply SERVICES=<service>``, the one
-command that creates a per-source container the engine has only just declared,
-so the prefix is run here exactly as the runner runs it, with make dry-running
-against a copy of the Makefile and a stand-in resolver that has declared one.
+The runner splits the restart prefix, appends the compose service an engine
+hint names, and runs the result. Those hints name ``make apply
+SERVICES=<service>``, the one command that creates a per-source container the
+engine has only just declared, so the prefix is run here exactly as the runner
+runs it, with make dry-running against a copy of the Makefile and a stand-in
+resolver that has declared one.
+
+The runner deletes the sources it created, and a delete names no command, so
+the wrapper runs a bare ``make apply`` after it, which removes their containers.
 """
 
 import os
 import shlex
 import shutil
 import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -65,10 +71,10 @@ def checkout(tmp_path: Path) -> Path:
     return root
 
 
-def _as_the_runner(prefix: str, service: str, *, cwd: Path) -> list[list[str]]:
-    """Run the prefix as dfe-infra's runner does, and return the lines make printed.
+def _dry_run_environment() -> dict[str, str]:
+    """This shell's environment less what changes make's output, with every make dry-running.
 
-    MAKEFLAGS=n dry-runs every make the prefix starts, the sub-make included.
+    MAKEFLAGS=n dry-runs every make started under it, the sub-make included.
     """
     environment = {
         key: value
@@ -76,6 +82,12 @@ def _as_the_runner(prefix: str, service: str, *, cwd: Path) -> list[list[str]]:
         if not key.startswith("DFE_") and key not in _DROPPED
     }
     environment["MAKEFLAGS"] = "n"
+    return environment
+
+
+def _as_the_runner(prefix: str, service: str, *, cwd: Path) -> list[list[str]]:
+    """Run the prefix as dfe-infra's runner does, and return the lines make printed."""
+    environment = _dry_run_environment()
     result = subprocess.run(
         [*shlex.split(prefix), service],
         cwd=cwd,
@@ -119,3 +131,49 @@ def test_the_restart_prefix_recreates_the_hinted_service_through_make_apply(
     assert "--force-recreate" in up
     # The fragment declaring the per-source services, which only make chains.
     assert "docker-compose.instances.yml" in up
+
+
+_PRUNE = ["python3", "scripts/instances.py", "--prune"]
+_WALKED = "source-walk-returned"
+
+
+def _runner(status: int) -> list[str]:
+    """A stand-in source walk that announces it ran and exits with ``status``."""
+    return [sys.executable, "-c", f"print({_WALKED!r}); raise SystemExit({status})"]
+
+
+@pytest.mark.parametrize("status", [0, 3], ids=["walk-passed", "walk-failed"])
+def test_a_bare_apply_prunes_after_the_walk_whatever_it_returned(
+    checkout: Path, capfd: pytest.CaptureFixture[str], status: int
+) -> None:
+    returned = test_source.walk(
+        _runner(status), _dry_run_environment(), project_dir=checkout
+    )
+
+    printed = [
+        shlex.split(line)
+        for line in capfd.readouterr().out.splitlines()
+        if line.strip()
+    ]
+    assert returned == status
+    walked = printed.index([_WALKED])
+    pruned = next(
+        n for n, tokens in enumerate(printed) if tokens[: len(_PRUNE)] == _PRUNE
+    )
+    assert walked < pruned
+    # An up naming no service would recreate the whole stack.
+    assert [tokens for tokens in printed if tokens[:2] == ["docker", "compose"]] == []
+
+
+@pytest.mark.parametrize(
+    ("status", "expected"), [(0, 2), (3, 3)], ids=["walk-passed", "walk-failed"]
+)
+def test_a_prune_that_fails_fails_a_walk_that_passed(
+    tmp_path: Path, status: int, expected: int
+) -> None:
+    # No Makefile here, so make exits 2.
+    returned = test_source.walk(
+        _runner(status), _dry_run_environment(), project_dir=tmp_path
+    )
+
+    assert returned == expected

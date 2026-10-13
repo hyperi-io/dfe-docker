@@ -156,6 +156,23 @@ def test_a_bare_apply_prunes_against_the_profile_it_re_resolves(
     assert "docker-compose.instances.yml" in prune
 
 
+def test_ps_checks_for_deleted_sources_against_the_project_apply_prunes(
+    checkout: Path,
+) -> None:
+    def args_after(lines: list[list[str]], script: list[str]) -> list[str]:
+        line = lines[_index(lines, starts=script)]
+        return line[line.index("--") + 1 :]
+
+    listed = _dry_run(cwd=checkout, args=["ps"])
+    applied = _dry_run(cwd=checkout, args=["apply"])
+
+    _index(listed, starts=["docker", "compose", "ps"])
+    stale = ["python3", "scripts/instances.py", "--stale"]
+    assert args_after(listed, stale) == args_after(
+        applied, ["python3", *_PRUNE.split()]
+    )
+
+
 @pytest.mark.parametrize("goal", ["ci", "dev", "infra"])
 def test_a_start_goal_mints_env_before_its_first_compose_call(
     checkout: Path, goal: str

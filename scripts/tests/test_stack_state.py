@@ -142,6 +142,65 @@ def test_a_compose_file_that_is_gone_is_left_out_and_named() -> None:
     assert "/opt/dfe/docker-compose.tls.yml" not in restore.command()
 
 
+# A deleted source's transform and the receiver, both created while the
+# instances fragment declared that transform. Deleting the source empties the
+# engine's index, and the next profile resolution removes the fragment.
+_INSTANCES = "/opt/dfe/docker-compose.instances.yml"
+_WITH_INSTANCES = f"/opt/dfe/docker-compose.yml,{_INSTANCES}"
+_ORPHAN = "dfe-transform-vrl-fb0c4e9a17"
+_WITHOUT_INSTANCES = {"services": {"dfe-receiver": {"profiles": ["dfe"]}}}
+
+
+def _orphaned_restore() -> tuple[list[_stack_state.Container], _stack_state.Restore]:
+    found = _stack_state.containers(
+        [
+            _document("dfe-receiver", files=_WITH_INSTANCES),
+            _document(_ORPHAN, files=_WITH_INSTANCES),
+        ]
+    )
+    [restore] = _stack_state.restores(found, exists=lambda path: path != _INSTANCES)
+    return found, _stack_state.still_defined(restore, _WITHOUT_INSTANCES)
+
+
+def test_a_service_its_files_no_longer_define_is_left_out_of_the_up() -> None:
+    # Compose refuses a whole `up` that names one, which kept the receiver down.
+    _, restore = _orphaned_restore()
+
+    profiles = _stack_state.profiles_of(_WITHOUT_INSTANCES, restore.services)
+
+    assert restore.command(profiles)[-3:] == ["up", "-d", "dfe-receiver"]
+    assert restore.undefined == (_ORPHAN,)
+
+
+def test_a_service_left_out_of_the_up_is_not_reported_missing() -> None:
+    found, restore = _orphaned_restore()
+    after = _stack_state.containers(
+        [_document("dfe-receiver", files="/opt/dfe/docker-compose.yml")]
+    )
+
+    assert _stack_state.differences(found, after, {}, restore.undefined) == []
+
+
+def test_a_restore_whose_files_define_none_of_its_services_names_none() -> None:
+    [restore] = _stack_state.restores(
+        _stack_state.containers([_document(_ORPHAN, files=_WITH_INSTANCES)]),
+        exists=lambda path: path != _INSTANCES,
+    )
+
+    narrowed = _stack_state.still_defined(restore, _WITHOUT_INSTANCES)
+
+    assert narrowed.services == ()
+    assert narrowed.undefined == (_ORPHAN,)
+
+
+def test_a_service_the_files_still_define_is_held_to_the_restore() -> None:
+    found = _stack_state.containers([_document("dfe-receiver"), _document(_ORPHAN)])
+
+    problems = _stack_state.differences(found, [], {}, (_ORPHAN,))
+
+    assert problems == ["'dfe-receiver' has no container"]
+
+
 def test_services_started_from_different_files_get_one_up_each() -> None:
     found = _stack_state.containers(
         [

@@ -737,9 +737,11 @@ post: ## Prove the RUNNING stack moves data end to end (DFE_POST_ENABLED=false t
 # Lifecycle
 # ---------------------------------------------------------------------------
 
+# `docker compose ps` lists a deleted source's container like any other, so the check names it as left behind.
 .PHONY: ps
-ps: ## Show running containers
+ps: ## Show running containers, and warn about a deleted source's container still running (`make apply` removes it)
 	docker compose ps
+	@python3 scripts/instances.py --stale -- $(APPLY_FLAGS) $(PROFILE_FLAGS)
 
 # Tears down across EVERY profile, not just the active one. It used to pass only
 # the active profile's services, which meant switching profiles left the previous
