@@ -234,8 +234,11 @@ proxies as well as the UIs. A gated door is still a door.
 
 Four limits, none of them cosmetic:
 
-- **It gates page access only.** Neither UI learns who signed in, and neither
-  gains a session, roles or an audit trail of its own.
+- **It gates page access only.** Kafbat never learns who signed in. HyperDX
+  learns it only with `DFE_HYPERDX_AUTH_MODE=header-dev`, which signs in the user
+  the proxy names in `X-Forwarded-Email`. In the default `oidc-proxy` mode
+  HyperDX ignores those headers and identifies callers by the engine token.
+  Neither UI gains roles or an audit trail from the proxy.
 - **It does not contain the HyperDX credential leak.** `NEXT_PUBLIC_*` is inlined
   into the client bundle, so anyone who passes the group check still reads
   `CLICKHOUSE_PASSWORD` out of the JavaScript.
