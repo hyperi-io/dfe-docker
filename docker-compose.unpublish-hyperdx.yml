@@ -13,8 +13,8 @@
 # Both ports go together: they are one UI across two origins, and the API answers
 # the same questions the app does.
 #
-# The ports sit on dfe-hyperdx-proxy, not on hyperdx: HyperDX takes its identity
-# from the headers that proxy injects, so it is never published directly.
+# The ports sit on dfe-hyperdx-proxy, not on hyperdx, because that proxy strips
+# from every caller the identity headers a header-dev HyperDX would trust.
 
 services:
   dfe-hyperdx-proxy:

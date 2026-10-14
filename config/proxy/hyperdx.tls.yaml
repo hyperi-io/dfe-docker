@@ -13,16 +13,15 @@
 # END TLS
 # Project:   dfe-docker
 # File:      config/proxy/hyperdx.yaml
-# Purpose:   Identity-injecting reverse proxy in front of HyperDX
+# Purpose:   HyperDX's published edge, which strips caller-supplied identity
 # Language:  Envoy static config
 #
 # License:   BUSL-1.1
 # Copyright: (c) 2026 HYPERI PTY LIMITED
 #
-# HyperDX runs in DFE_AUTH_MODE=oidc-proxy and identifies a caller by the engine
-# token it carries, so this proxy injects nothing: its job is to hold both HyperDX
-# origins on one service, which is what the infra exposure dials and the `auth`
-# profile's oauth2-proxy attach to.
+# HyperDX runs in DFE_AUTH_MODE=oidc-proxy and identifies a caller by the engine token it carries, so this proxy injects nothing. It holds both HyperDX origins on one service for the infra exposure dials, and strips from every caller the headers a header-dev HyperDX would sign them in from.
+#
+# With the `auth` profile armed this proxy is unpublished and oauth2-proxy is the edge instead. It reaches hyperdx directly, so the identity it sets after its group check is the one HyperDX reads.
 #
 # Two origins, one UI:
 #    :8090  the app     -> hyperdx:8090
@@ -49,7 +48,7 @@ static_resources:
       address:
         socket_address: { address: 0.0.0.0, port_value: 8090 }
       # BEGIN TLS
-      # Browsers arrive over TLS while the engine's admin-link probe (the probe_url resolve_profile.py hands it) and the oauth2-proxy upstream send plain HTTP on the compose network, so the inspector picks a chain per connection on the one port.
+      # Browsers arrive over TLS while the engine's admin-link probe (the probe_url resolve_profile.py hands it) sends plain HTTP on the compose network, so the inspector picks a chain per connection on the one port.
       listener_filters:
         - name: envoy.filters.listener.tls_inspector
           typed_config:
@@ -107,6 +106,12 @@ static_resources:
                   virtual_hosts:
                     - name: hyperdx
                       domains: ["*"]
+                      # A header-dev HyperDX signs in whoever these name, so no caller may send them.
+                      request_headers_to_remove:
+                        - X-Forwarded-Email
+                        - X-Forwarded-Groups
+                        - X-OIDC-Subject
+                        - X-OIDC-Groups
                       routes:
                         - match: { prefix: / }
                           route: { cluster: hyperdx }
@@ -132,6 +137,12 @@ static_resources:
                   virtual_hosts:
                     - name: hyperdx
                       domains: ["*"]
+                      # A header-dev HyperDX signs in whoever these name, so no caller may send them.
+                      request_headers_to_remove:
+                        - X-Forwarded-Email
+                        - X-Forwarded-Groups
+                        - X-OIDC-Subject
+                        - X-OIDC-Groups
                       routes:
                         - match: { prefix: / }
                           route: { cluster: hyperdx }
@@ -139,7 +150,7 @@ static_resources:
       address:
         socket_address: { address: 0.0.0.0, port_value: 8000 }
       # BEGIN TLS
-      # Same split as the app listener, for `make post` and the oauth2-proxy upstream on the compose network.
+      # Same split as the app listener, for `make post` on the compose network.
       listener_filters:
         - name: envoy.filters.listener.tls_inspector
           typed_config:
@@ -166,6 +177,12 @@ static_resources:
                   virtual_hosts:
                     - name: hyperdx
                       domains: ["*"]
+                      # A header-dev HyperDX signs in whoever these name, so no caller may send them.
+                      request_headers_to_remove:
+                        - X-Forwarded-Email
+                        - X-Forwarded-Groups
+                        - X-OIDC-Subject
+                        - X-OIDC-Groups
                       routes:
                         - match: { prefix: / }
                           route: { cluster: hyperdx-api }
@@ -186,6 +203,12 @@ static_resources:
                   virtual_hosts:
                     - name: hyperdx
                       domains: ["*"]
+                      # A header-dev HyperDX signs in whoever these name, so no caller may send them.
+                      request_headers_to_remove:
+                        - X-Forwarded-Email
+                        - X-Forwarded-Groups
+                        - X-OIDC-Subject
+                        - X-OIDC-Groups
                       routes:
                         - match: { prefix: / }
                           route: { cluster: hyperdx-api }

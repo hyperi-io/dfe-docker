@@ -1700,10 +1700,10 @@ services:
       - ${DFE_UI_BIND_HOST:-127.0.0.1}:${DFE_HYPERDX_APP_PORT:-8090}:4180
     environment:
       <<: *oauth2-proxy-env
-      # dfe-hyperdx-proxy, not hyperdx: HyperDX takes its identity from the headers
-      # that proxy injects, so a gate in front of anything else reaches it
-      # unidentified.
-      OAUTH2_PROXY_UPSTREAMS: http://dfe-hyperdx-proxy:8090
+      # hyperdx itself, not dfe-hyperdx-proxy: this proxy replaces the caller's
+      # X-Forwarded-Email and -Groups with the signed-in user's, which a header-dev
+      # HyperDX reads and dfe-hyperdx-proxy strips. check_compose.py holds it here.
+      OAUTH2_PROXY_UPSTREAMS: http://hyperdx:8090
       OAUTH2_PROXY_REDIRECT_URL: ${DFE_OAUTH2_PROXY_EXTERNAL_ORIGIN:-${DFE_EXTERNAL_ORIGIN:-http://localhost}}:${DFE_HYPERDX_APP_PORT:-8090}/oauth2/callback
     depends_on:
       hyperdx:
@@ -1727,7 +1727,8 @@ services:
       - ${DFE_UI_BIND_HOST:-127.0.0.1}:${DFE_HYPERDX_API_PORT:-8000}:4180
     environment:
       <<: *oauth2-proxy-env
-      OAUTH2_PROXY_UPSTREAMS: http://dfe-hyperdx-proxy:8000
+      # hyperdx itself, for the reason the app proxy above gives.
+      OAUTH2_PROXY_UPSTREAMS: http://hyperdx:8000
       OAUTH2_PROXY_REDIRECT_URL: ${DFE_OAUTH2_PROXY_EXTERNAL_ORIGIN:-${DFE_EXTERNAL_ORIGIN:-http://localhost}}:${DFE_HYPERDX_API_PORT:-8000}/oauth2/callback
       # Host header and every upstream response header pass through untouched
       # (--pass-host-header defaults true), so HyperDX's own CORS headers reach

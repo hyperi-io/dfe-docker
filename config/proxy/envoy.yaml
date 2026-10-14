@@ -10,6 +10,7 @@
 # relative base URL (/api/v1/...), so UI and engine must answer on ONE
 # origin. This proxy provides that origin:
 #    /api/v1/*  -> dfe-engine:8000  (config/schema API)
+#    /metrics   -> 404 from the proxy (dfe-ui's unauthenticated scrape)
 #    everything else (UI, /_next, NextAuth /api/auth/*) -> dfe-ui:3000
 #
 # Envoy replaces nginx as THE entrypoint across the product (same proxy the
@@ -53,6 +54,9 @@ static_resources:
                 stat_prefix: ingress
                 # Sets X-Forwarded-For / X-Forwarded-Proto from the real peer.
                 use_remote_address: true
+                # Routes match, and backends receive, the canonical path, so an escaped or doubled-slash spelling of /metrics cannot slip past its 404.
+                normalize_path: true
+                merge_slashes: true
                 upgrade_configs:
                   - upgrade_type: websocket
                 http_filters:
@@ -81,6 +85,10 @@ static_resources:
                           direct_response:
                             status: 200
                             body: { inline_string: "ok\n" }
+                        # dfe-ui serves its Prometheus scrape unauthenticated and a scraper reads the container directly, so the edge answers 404 for it and everything under it.
+                        - match: { path_separated_prefix: /metrics, case_sensitive: false }
+                          direct_response:
+                            status: 404
                         - match: { prefix: /api/v1/ }
                           route: { cluster: dfe-engine }
                         - match: { prefix: / }
@@ -108,6 +116,12 @@ static_resources:
                   virtual_hosts:
                     - name: hyperdx
                       domains: ["*"]
+                      # A header-dev HyperDX signs in whoever these name, and nothing on this origin verifies them.
+                      request_headers_to_remove:
+                        - X-Forwarded-Email
+                        - X-Forwarded-Groups
+                        - X-OIDC-Subject
+                        - X-OIDC-Groups
                       # OVERWRITE: browsers intersect multiple CSP headers. The
                       # variable carries the whole space-separated source list,
                       # which docker-compose.yml builds from the UI's origins.
