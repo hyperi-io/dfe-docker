@@ -1,15 +1,14 @@
 # Project:   dfe-docker
 # File:      config/proxy/hyperdx.yaml
-# Purpose:   Identity-injecting reverse proxy in front of HyperDX
+# Purpose:   HyperDX's published edge, which strips caller-supplied identity
 # Language:  Envoy static config
 #
 # License:   BUSL-1.1
 # Copyright: (c) 2026 HYPERI PTY LIMITED
 #
-# HyperDX runs in DFE_AUTH_MODE=oidc-proxy and identifies a caller by the engine
-# token it carries, so this proxy injects nothing: its job is to hold both HyperDX
-# origins on one service, which is what the infra exposure dials and the `auth`
-# profile's oauth2-proxy attach to.
+# HyperDX runs in DFE_AUTH_MODE=oidc-proxy and identifies a caller by the engine token it carries, so this proxy injects nothing. It holds both HyperDX origins on one service for the infra exposure dials, and strips from every caller the headers a header-dev HyperDX would sign them in from.
+#
+# With the `auth` profile armed this proxy is unpublished and oauth2-proxy is the edge instead. It reaches hyperdx directly, so the identity it sets after its group check is the one HyperDX reads.
 #
 # Two origins, one UI:
 #    :8090  the app     -> hyperdx:8090
@@ -56,6 +55,12 @@ static_resources:
                   virtual_hosts:
                     - name: hyperdx
                       domains: ["*"]
+                      # A header-dev HyperDX signs in whoever these name, so no caller may send them.
+                      request_headers_to_remove:
+                        - X-Forwarded-Email
+                        - X-Forwarded-Groups
+                        - X-OIDC-Subject
+                        - X-OIDC-Groups
                       routes:
                         - match: { prefix: / }
                           route: { cluster: hyperdx }
@@ -78,6 +83,12 @@ static_resources:
                   virtual_hosts:
                     - name: hyperdx
                       domains: ["*"]
+                      # A header-dev HyperDX signs in whoever these name, so no caller may send them.
+                      request_headers_to_remove:
+                        - X-Forwarded-Email
+                        - X-Forwarded-Groups
+                        - X-OIDC-Subject
+                        - X-OIDC-Groups
                       routes:
                         - match: { prefix: / }
                           route: { cluster: hyperdx-api }

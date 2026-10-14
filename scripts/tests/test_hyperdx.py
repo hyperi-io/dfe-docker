@@ -22,8 +22,6 @@ Read the way compose reads it: the `.profile.mk` values resolve_profile writes f
 a profile, expanded over the `${NAME:-default}` forms docker-compose.yml uses.
 """
 
-from __future__ import annotations
-
 import json
 import re
 from pathlib import Path
@@ -65,10 +63,16 @@ _EXTERNAL_CLICKHOUSE = {
     "CLICKHOUSE_EXTERNAL_HTTP_PORT": "8443",
 }
 
-# The identity a proxy used to stamp on every HyperDX request. `oidc-proxy`
-# ignores it, so one left anywhere reads as an identity that still works.
-_RETIRED_IDENTITY = ("DFE_HYPERDX_IDENTITY_", "X-OIDC-Subject", "X-OIDC-Groups")
-_PROXY_CONFIGS = ("config/proxy/envoy.yaml", "config/proxy/hyperdx.yaml")
+# The dials for the fixed identity a proxy used to stamp on every HyperDX request.
+# `oidc-proxy` ignores it, so one left anywhere reads as an identity that still
+# works. check_compose holds the proxies to adding no identity header at all.
+_RETIRED_IDENTITY = "DFE_HYPERDX_IDENTITY_"
+_PROXY_CONFIGS = (
+    "config/proxy/envoy.yaml",
+    "config/proxy/envoy.tls.yaml",
+    "config/proxy/hyperdx.yaml",
+    "config/proxy/hyperdx.tls.yaml",
+)
 
 
 def _service_environment(*, service: str) -> dict[str, str]:
@@ -338,5 +342,6 @@ def test_nothing_stamps_an_identity_hyperdx_no_longer_reads() -> None:
     texts[COMPOSE_FILE.name] = COMPOSE_FILE.read_text(encoding="utf-8")
 
     for name, text in sorted(texts.items()):
-        for retired in _RETIRED_IDENTITY:
-            assert retired not in text, f"{name} still carries {retired}"
+        assert _RETIRED_IDENTITY not in text, (
+            f"{name} still carries {_RETIRED_IDENTITY}"
+        )

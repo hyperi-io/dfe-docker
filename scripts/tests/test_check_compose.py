@@ -20,12 +20,23 @@ actually looks at.
 import re
 from pathlib import Path
 
+import pytest
+
 import check_compose
 import init
 import instances
-from _common import COMPOSE_FILE
+from _common import COMPOSE_FILE, REPO_ROOT
 
 _FRAGMENTS = "-f docker-compose.yml -f docker-compose.override.yml"
+_PROXY_DIR = REPO_ROOT / "config" / "proxy"
+# One strip list as the configs write it, at the indentation of a virtual host's keys.
+_STRIP_LIST = (
+    "                      request_headers_to_remove:\n"
+    "                        - X-Forwarded-Email\n"
+    "                        - X-Forwarded-Groups\n"
+    "                        - X-OIDC-Subject\n"
+    "                        - X-OIDC-Groups\n"
+)
 
 # A service key in docker-compose.yml: two spaces in, alone on its line.
 _SERVICE_KEY_RE = re.compile(r"^  ([A-Za-z0-9._-]+):$", re.MULTILINE)
@@ -402,6 +413,147 @@ def test_a_service_the_engine_does_not_render_reads_no_custom_file():
 
         assert len(failures) == 1
         assert f"env/{name}, which dfe-engine never writes for it" in failures[0]
+
+
+def _proxy_text(name: str) -> str:
+    return (_PROXY_DIR / name).read_text(encoding="utf-8")
+
+
+def _gated(*, app: str, api: str) -> dict:
+    return {
+        "services": {
+            "oauth2-proxy-hyperdx": {"environment": {"OAUTH2_PROXY_UPSTREAMS": app}},
+            "oauth2-proxy-hyperdx-api": {
+                "environment": {"OAUTH2_PROXY_UPSTREAMS": api}
+            },
+        }
+    }
+
+
+@pytest.mark.parametrize(
+    ("name", "hosts"),
+    [
+        ("hyperdx.yaml", 2),
+        ("hyperdx.tls.yaml", 4),
+        ("envoy.yaml", 1),
+        ("envoy.tls.yaml", 1),
+    ],
+)
+def test_every_route_to_hyperdx_strips_caller_supplied_identity(
+    hosts: int, name: str
+) -> None:
+    """Both HyperDX origins on every chain, and dfe-proxy's embed, which skips dfe-hyperdx-proxy."""
+    failures, made = check_compose._identity_strip_failures(
+        label=name, text=_proxy_text(name)
+    )
+
+    assert failures == []
+    assert made == hosts
+
+
+def test_a_route_to_hyperdx_missing_one_header_fails():
+    """The fork's default email header is the one a header-dev HyperDX reads with no setting."""
+    original = _proxy_text("hyperdx.yaml")
+    text = original.replace("                        - X-Forwarded-Email\n", "", 1)
+
+    failures, _ = check_compose._identity_strip_failures(
+        label="hyperdx.yaml", text=text
+    )
+
+    assert text != original
+    assert len(failures) == 1
+    assert failures[0].startswith("hyperdx.yaml hyperdx-app/hyperdx: ")
+    assert "['x-forwarded-email']" in failures[0]
+
+
+def test_a_tls_chain_that_drops_the_strip_fails_while_its_plain_twin_keeps_it():
+    original = _proxy_text("hyperdx.tls.yaml")
+    text = original.replace(_STRIP_LIST, "", 1)
+
+    failures, made = check_compose._identity_strip_failures(
+        label="hyperdx.tls.yaml", text=text
+    )
+
+    assert text != original
+    assert made == 4
+    assert len(failures) == 1
+    assert failures[0].startswith("hyperdx.tls.yaml hyperdx-app/hyperdx: ")
+
+
+def test_a_proxy_that_stamps_an_identity_fails_even_while_it_strips():
+    """Strip then add is the fixed-operator stamping the engine-issued token replaced."""
+    original = _proxy_text("envoy.yaml")
+    stamp = (
+        "                      request_headers_to_add:\n"
+        "                        - header:\n"
+        "                            key: X-Forwarded-Email\n"
+        '                            value: "admin@dfe.local"\n'
+    )
+    text = original.replace(_STRIP_LIST, _STRIP_LIST + stamp, 1)
+
+    failures, _ = check_compose._identity_strip_failures(label="envoy.yaml", text=text)
+
+    assert text != original
+    assert failures == [
+        "envoy.yaml hyperdx-embed/hyperdx: adds ['x-forwarded-email'], an identity no "
+        "proxy in this stack asserts"
+    ]
+
+
+def test_a_config_that_routes_nothing_to_hyperdx_fails_rather_than_passing():
+    text = _proxy_text("hyperdx.yaml").replace(
+        "address: hyperdx,", "address: elsewhere,"
+    )
+
+    failures, made = check_compose._identity_strip_failures(
+        label="hyperdx.yaml", text=text
+    )
+
+    assert made == 0
+    assert failures == [
+        "hyperdx.yaml: no virtual host routes to HyperDX, so nothing was checked"
+    ]
+
+
+def test_a_strip_list_written_another_way_is_refused_rather_than_read_as_empty():
+    original = _proxy_text("hyperdx.yaml")
+    text = original.replace(
+        _STRIP_LIST,
+        "                      request_headers_to_remove: [X-Forwarded-Email]\n",
+        1,
+    )
+
+    assert text != original
+    with pytest.raises(ValueError, match="request_headers_to_remove must be a block"):
+        check_compose._identity_strip_failures(label="hyperdx.yaml", text=text)
+
+
+def test_hyperdx_gates_that_reach_hyperdx_directly_pass():
+    config = _gated(app="http://hyperdx:8090", api="http://hyperdx:8000")
+
+    assert check_compose._gate_upstream_mismatches(config=config) == []
+
+
+def test_a_hyperdx_gate_routed_through_dfe_hyperdx_proxy_fails():
+    """dfe-hyperdx-proxy strips the identity oauth2-proxy sets, so header-dev loses its login."""
+    config = _gated(app="http://dfe-hyperdx-proxy:8090", api="http://hyperdx:8000")
+
+    failures = check_compose._gate_upstream_mismatches(config=config)
+
+    assert len(failures) == 1
+    assert failures[0].startswith(
+        "oauth2-proxy-hyperdx: OAUTH2_PROXY_UPSTREAMS='http://dfe-hyperdx-proxy:8090', "
+        "want 'http://hyperdx:8090'"
+    )
+
+
+def test_a_hyperdx_gate_missing_from_the_stack_fails_rather_than_passing():
+    config = _gated(app="http://hyperdx:8090", api="http://hyperdx:8000")
+    del config["services"]["oauth2-proxy-hyperdx-api"]
+
+    assert check_compose._gate_upstream_mismatches(config=config) == [
+        "oauth2-proxy-hyperdx-api: gates HyperDX but is not in the stack"
+    ]
 
 
 def test_a_service_that_queues_and_waits_passes_and_json_file_is_not_checked():

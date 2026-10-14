@@ -60,6 +60,9 @@ Beyond resolution, these semantic assertions ride along.
 - The opt-in auth profile must gate without holes: no stack needs an OIDC setting
   to resolve, an armed profile moves every infra-UI origin behind a proxy, and
   the infra kill switch takes the proxies down with the UIs. See `_AUTH_PROXIES`.
+- Only the auth profile's oauth2-proxy may hand HyperDX an identity: it reaches
+  HyperDX directly, and every proxy route to HyperDX strips the identity headers
+  from its callers. See `_hyperdx_identity_failures`.
 - The committed override must repoint every service that runs a buildable
   component's image, consumers included, or `make dev` runs two builds of one
   component. See `_override_coverage_failures`.
@@ -104,6 +107,7 @@ import sys
 import tempfile
 from pathlib import Path
 
+import _envoy
 import instances
 import proxy_tls
 from _common import (
@@ -187,7 +191,7 @@ _RETIRED_HEALTH_PATHS = ("/healthz", "/health/live", "/health/ready", "/health/s
 _UI_EXPOSURE: dict[str, tuple[str, str]] = {
     "dfe-engine": ("product", "docker-compose.unpublish-engine-api.yml"),
     "dfe-proxy": ("product", "docker-compose.unpublish-dfe-ui.yml"),
-    # HyperDX is published by the proxy that injects its identity headers, never
+    # HyperDX is published by the proxy that strips caller-supplied identity, never
     # by the hyperdx container itself.
     "dfe-hyperdx-proxy": ("infra", "docker-compose.unpublish-hyperdx.yml"),
     "kafka-ui": ("infra", "docker-compose.unpublish-kafbat.yml"),
@@ -229,6 +233,22 @@ _AUTH_ENV = {
     "DFE_OIDC_CLIENT_SECRET": "compose-check",
     "DFE_OAUTH2_PROXY_COOKIE_SECRET": "0123456789abcdef0123456789abcdef",  # gitleaks:allow
 }
+
+# The identity headers a header-dev HyperDX signs a caller in from: its own defaults, which oauth2-proxy sets after its group check, and the X-OIDC pair the Kubernetes edge sets. No caller may send any of them to HyperDX itself.
+_FORGEABLE_IDENTITY = (
+    "X-Forwarded-Email",
+    "X-Forwarded-Groups",
+    "X-OIDC-Subject",
+    "X-OIDC-Groups",
+)
+# The service whose endpoints a HyperDX route reaches, whatever the proxy names its cluster.
+_HYPERDX_HOST = "hyperdx"
+# With the auth profile armed oauth2-proxy is HyperDX's edge, and it replaces the caller's identity headers with the signed-in user's, so it reaches HyperDX directly: through dfe-hyperdx-proxy those headers are stripped.
+_HYPERDX_GATE_UPSTREAMS = {
+    "oauth2-proxy-hyperdx": "http://hyperdx:8090",
+    "oauth2-proxy-hyperdx-api": "http://hyperdx:8000",
+}
+_UPSTREAMS_KEY = "OAUTH2_PROXY_UPSTREAMS"
 
 # Every overlay fragment the Makefile chains, read back out of its own
 # `chain_fragment` calls, so a fragment added there needs no edit here.
@@ -758,6 +778,91 @@ def _auth_exposure_failures(*, env: dict[str, str]) -> tuple[list[str], int]:
                     f"{proxy}: still publishes with the infra class killed -- "
                     "the kill switch covers the proxy as well as the UI"
                 )
+    return failures, made
+
+
+def _gate_upstream_mismatches(*, config: dict) -> list[str]:
+    """Return one message per HyperDX gate that does not reach HyperDX directly."""
+    services = config.get("services", {})
+    failures = []
+    for name, want in sorted(_HYPERDX_GATE_UPSTREAMS.items()):
+        if name not in services:
+            failures.append(f"{name}: gates HyperDX but is not in the stack")
+            continue
+        got = ((services[name].get("environment")) or ({})).get(_UPSTREAMS_KEY)
+        if got != want:
+            failures.append(
+                f"{name}: {_UPSTREAMS_KEY}={got!r}, want {want!r}. A hop through "
+                "dfe-hyperdx-proxy strips the signed-in user's identity headers "
+                "before a header-dev HyperDX reads them"
+            )
+    return failures
+
+
+def _identity_strip_failures(*, label: str, text: str) -> tuple[list[str], int]:
+    """Return (messages, virtual hosts checked) for one proxy config's identity handling.
+
+    Every virtual host that routes to HyperDX must strip each of `_FORGEABLE_IDENTITY`, and no virtual host may add one. A config with no route to HyperDX at all fails rather than passing unchecked.
+
+    Raises:
+        ValueError: The config strays outside the block style `_envoy` reads.
+    """
+    hyperdx_clusters = {
+        name
+        for name, addresses in _envoy.cluster_hosts(text=text).items()
+        if _HYPERDX_HOST in addresses
+    }
+    want = {header.lower() for header in _FORGEABLE_IDENTITY}
+    failures = []
+    made = 0
+    for manager in _envoy.connection_managers(text=text):
+        for host in manager.virtual_hosts:
+            where = f"{label} {manager.listener}/{host.name}"
+            stamped = sorted(want & {header.lower() for header in host.added})
+            if stamped:
+                failures.append(
+                    f"{where}: adds {stamped}, an identity no proxy in this stack asserts"
+                )
+            if not (any(route.cluster in hyperdx_clusters for route in host.routes)):
+                continue
+            made += 1
+            missing = sorted(want - {header.lower() for header in host.removed})
+            if missing:
+                failures.append(
+                    f"{where}: routes to HyperDX without stripping {missing}, so a "
+                    "caller can sign in to a header-dev HyperDX as anyone"
+                )
+    if made == 0:
+        failures.append(
+            f"{label}: no virtual host routes to HyperDX, so nothing was checked"
+        )
+    return failures, made
+
+
+def _hyperdx_identity_failures(*, env: dict[str, str]) -> tuple[list[str], int]:
+    """Return (messages, assertions made) for who may hand HyperDX an identity.
+
+    Both halves of one rule: the auth profile's oauth2-proxy reaches HyperDX directly, so the identity it sets arrives, and every proxy config that routes to HyperDX, plain and TLS, strips that identity from its own callers.
+    """
+    on = _config_json(
+        env={**env, **_AUTH_ENV},
+        files=[COMPOSE_FILE.name, *_AUTH_DIRECT_FRAGMENTS],
+        extra_profiles=(_AUTH_PROFILE,),
+    )
+    if on is None:
+        return ([f"the {_AUTH_PROFILE} profile path did not resolve"], 0)
+    failures = _gate_upstream_mismatches(config=on)
+    made = len(_HYPERDX_GATE_UPSTREAMS)
+    for configs in _TLS_PROXY_CONFIGS.values():
+        for relative in configs:
+            text = (REPO_ROOT / relative).read_text(encoding="utf-8")
+            try:
+                found, checked = _identity_strip_failures(label=relative, text=text)
+            except ValueError as error:
+                failures.append(f"{relative}: {error}")
+                continue
+            failures.extend(found)
+            made += checked
     return failures, made
 
 
@@ -1982,6 +2087,17 @@ def main() -> int:
     _print(
         msg=f"No stack needs an OIDC setting, and the {_AUTH_PROFILE} profile moves every "
         f"infra UI behind a proxy the kill switch still covers ({auth_made} assertions)"
+    )
+
+    identity_failures, identity_made = _hyperdx_identity_failures(env=env)
+    for message in identity_failures:
+        _print(msg=f"FAIL {message}")
+    if identity_failures:
+        return 1
+    _print(
+        msg=f"The {_AUTH_PROFILE} profile's oauth2-proxy reaches HyperDX directly, and every "
+        "route to HyperDX strips caller-supplied identity, plain and TLS "
+        f"({identity_made} assertions)"
     )
 
     fragment_failures, fragment_made = _dev_path_fragment_failures()
