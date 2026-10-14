@@ -14,7 +14,7 @@
 # so that when hyperi-ci grows the container/compose gating it is currently
 # missing, this collapses into a `uses:` line rather than a rewrite.
 #
-# The runner image is named (ubuntu-24.04) rather than ubuntu-latest, so a move
+# The runner image is named (ubuntu-26.04) rather than ubuntu-latest, so a move
 # of that label cannot swap the tools these jobs run on.
 #
 # Renovate automerges patch and digest updates in this repo "when CI passes", and
@@ -53,7 +53,7 @@ env:
 jobs:
   compose:
     name: Compose
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -135,7 +135,7 @@ jobs:
   # cross-repo drift guard takes.
   profile-projection-precondition:
     name: profile projection (can this run check it)
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     outputs:
       can_check: ${{ steps.gate.outputs.can_check }}
     steps:
@@ -163,7 +163,7 @@ jobs:
     name: Profile projection
     needs: profile-projection-precondition
     if: needs.profile-projection-precondition.outputs.can_check == 'true'
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -204,7 +204,7 @@ jobs:
 
   dockerfile:
     name: Dockerfile
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
