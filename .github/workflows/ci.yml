@@ -14,7 +14,7 @@
 # so that when hyperi-ci grows the container/compose gating it is currently
 # missing, this collapses into a `uses:` line rather than a rewrite.
 #
-# The runner image is named (ubuntu-24.04) rather than ubuntu-latest, so a move
+# The runner image is named (ubuntu-26.04) rather than ubuntu-latest, so a move
 # of that label cannot swap the tools these jobs run on.
 #
 # Renovate automerges patch and digest updates in this repo "when CI passes", and
