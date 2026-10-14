@@ -1669,8 +1669,9 @@ services:
   # their ports -- same port numbers, a gate in front. Turn the infra class off
   # and the PROXIES go dark with the UIs: a gated door is still a door.
   #
-  # It gates PAGE ACCESS ONLY. Neither UI learns who signed in, and neither has
-  # a session of its own. docs/operating.md#gating-the-infra-uis-with-oidc
+  # It gates PAGE ACCESS ONLY. Kafbat never learns who signed in; HyperDX does
+  # only in header-dev mode, from the X-Forwarded-Email this proxy sets.
+  # docs/operating.md#gating-the-infra-uis-with-oidc
   # ===========================================================================
 
   oauth2-proxy-kafbat:
