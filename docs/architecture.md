@@ -266,11 +266,7 @@ converged. Every service that reads one waits on
 pending-schema and dead-letters them, which reads as data loss and is really start
 ordering.
 
-`dfe-schemas` rides inside the engine image, so there is no separate schema pin
-here and a schema change is a `dfe-engine` release. The only file the ClickHouse
-service mounts is `clickhouse/default-user.xml`; a DDL file or a topic-creating
-step appearing in this repo is wrong by construction, and
-`scripts/tests/test_engine_only_schema_control.py` fails the build on one.
+`dfe-schemas` rides inside the engine image, so there is no separate schema pin here and a schema change is a `dfe-engine` release. The ClickHouse service mounts only server settings from `clickhouse/`; a DDL file or a topic-creating step appearing in this repo is wrong by construction and `scripts/tests/test_engine_only_schema_control.py` fails the build on one.
 
 ## The Kafka backend is swappable
 

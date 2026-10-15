@@ -65,6 +65,7 @@ _SYSTEM_LOG_TTL = {
     "metric_log": "event_date + INTERVAL 7 DAY DELETE",
     "part_log": "event_date + INTERVAL 7 DAY DELETE",
     "query_log": "event_date + INTERVAL 30 DAY DELETE",
+    "query_views_log": "event_date + INTERVAL 7 DAY DELETE",
     # HyperDX's clickhouse_system source reads it, so it stays on.
     "text_log": "event_date + INTERVAL 7 DAY DELETE",
 }
