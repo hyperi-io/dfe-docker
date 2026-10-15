@@ -8,7 +8,7 @@
 
 """The console TLS prechecks, driven through make itself.
 
-Most of them are parse-time `$(error)`s, reachable from a copy of the Makefile in a directory of its own as in test_origin_guard.py. The auth refusal runs in the .profile.mk recipe once the resolver has written this run's answer, so the copy gets a stub resolver that writes the footprint a test asks for. It also gets the real helper the Makefile runs while it parses, a real throwaway certificate pair and a stub `docker` that reports the networks a test writes, so no daemon decides an answer.
+Most of them are parse-time `$(error)`s, reachable from a copy of the Makefile in a directory of its own as in test_origin_guard.py. The auth refusal runs in the .tmp/profile.mk recipe once the resolver has written this run's answer, so the copy gets a stub resolver that writes the footprint a test asks for. It also gets the real helper the Makefile runs while it parses, a real throwaway certificate pair and a stub `docker` that reports the networks a test writes, so no daemon decides an answer.
 """
 
 import json
@@ -115,9 +115,10 @@ else:
 _STUB_RESOLVER = """\
 from pathlib import Path
 
-target = Path(".profile.mk")
+target = Path(".tmp/profile.mk")
 text = "export DFE_AUTH_RESOLVED := {auth}\\n"
 if (not (target.exists())) or (target.read_text(encoding="utf-8") != text):
+    target.parent.mkdir(exist_ok=True, parents=True)
     target.write_text(text, encoding="utf-8")
 """
 
@@ -361,7 +362,8 @@ def test_the_auth_profile_stops_the_start(goal: str, makefile: Path) -> None:
 def test_the_auth_refusal_reads_this_runs_resolution_not_the_last(
     makefile: Path,
 ) -> None:
-    (makefile / ".profile.mk").write_text(
+    (makefile / ".tmp").mkdir()
+    (makefile / ".tmp" / "profile.mk").write_text(
         "export DFE_AUTH_RESOLVED := true\n", encoding="utf-8", newline="\n"
     )
 

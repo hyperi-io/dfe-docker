@@ -40,7 +40,7 @@ INSTANCE = "dfe-transform-vrl-fb018cfd8b"
 _RESOLVER = f'''\
 from pathlib import Path
 
-target = Path(".profile.mk")
+target = Path(".tmp/profile.mk")
 content = """\\
 export PROFILE_FLAGS := --profile clickhouse --profile dfe
 export DFE_SERVICES := dfe-loader dfe-receiver {INSTANCE}
@@ -49,6 +49,7 @@ export DFE_AUTH_RESOLVED := false
 export DFE_OTEL_RESOLVED := false
 """
 if not target.is_file() or target.read_text(encoding="utf-8") != content:
+    target.parent.mkdir(exist_ok=True, parents=True)
     target.write_text(content, encoding="utf-8")
 '''
 
@@ -130,7 +131,7 @@ def test_the_restart_prefix_recreates_the_hinted_service_through_make_apply(
     # A recreate is what takes a changed env file; a restart keeps the old one.
     assert "--force-recreate" in up
     # The fragment declaring the per-source services, which only make chains.
-    assert "docker-compose.instances.yml" in up
+    assert ".tmp/docker-compose.instances.yml" in up
 
 
 _PRUNE = ["python3", "scripts/instances.py", "--prune"]

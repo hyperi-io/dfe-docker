@@ -25,7 +25,7 @@ from _common import COMPOSE_FILE, REPO_ROOT
 
 FETCHER = "dfe-fetcher"
 VRL = "dfe-transform-vrl"
-COMPOSE_ARGS = ["-f", "docker-compose.yml", "-f", "docker-compose.instances.yml"]
+COMPOSE_ARGS = ["-f", "docker-compose.yml", "-f", ".tmp/docker-compose.instances.yml"]
 
 
 def _index(env_dir: Path, service: str, *names: str) -> None:
@@ -150,6 +150,15 @@ def test_the_fragment_is_removed_when_the_last_source_goes(tmp_path: Path) -> No
 
     assert instances.write({}, path=target) is False
     assert not target.exists()
+
+
+def test_the_fragment_is_written_after_its_directory_was_deleted(
+    tmp_path: Path,
+) -> None:
+    target = tmp_path / ".tmp" / "docker-compose.instances.yml"
+
+    assert instances.write(instances={FETCHER: ["okta-audit"]}, path=target) is True
+    assert instances.fragment_services(path=target) == {f"{FETCHER}-okta-audit"}
 
 
 @pytest.mark.parametrize("service", sorted(instances.SERVICE_CONFIG_FILE))

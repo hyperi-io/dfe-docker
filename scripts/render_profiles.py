@@ -38,7 +38,10 @@ import subprocess
 import sys
 from pathlib import Path
 
-from _common import PROJECTED_PROFILES, SERVICE_PROFILES_FILE, _print, _rel_path
+# Bytecode for the repo modules imported below goes to .tmp/pycache, as it does under make.
+sys.pycache_prefix = str(Path(__file__).resolve().parent.parent / ".tmp" / "pycache")
+
+from _common import PROJECTED_PROFILES, SERVICE_PROFILES_FILE, _print, _rel_path  # noqa: E402
 
 # Order is the order they are written in.
 PROJECTED = PROJECTED_PROFILES

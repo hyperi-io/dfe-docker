@@ -46,8 +46,11 @@ import subprocess
 import sys
 from pathlib import Path
 
-from _common import _load_dotenv, _print, _published_url
-from _pipeline import env_or
+# Bytecode for the repo modules imported below goes to .tmp/pycache, as it does under make.
+sys.pycache_prefix = str(Path(__file__).resolve().parent.parent / ".tmp" / "pycache")
+
+from _common import _load_dotenv, _print, _published_url  # noqa: E402
+from _pipeline import env_or  # noqa: E402
 
 PROJECT_DIR = Path(__file__).resolve().parent.parent
 # Container names are daemon-wide and DFE_CONTAINER_PREFIX moves them, so the

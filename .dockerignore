@@ -36,7 +36,6 @@ certs/
 .idea/
 
 # Local build and runtime state
-.profile.mk
 .tmp/
 tmp/
 **/target/

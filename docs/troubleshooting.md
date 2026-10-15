@@ -71,13 +71,7 @@ These are real and open. Each one has a symptom that misleads.
 --remove-orphans`, so it tears down every profile and keeps volumes. Switching
 profiles no longer strands anything.
 
-It used to be profile-scoped, and if you are on an older checkout it still is:
-switch from a receiver-based profile to a fetcher-based one and the old receiver
-keeps running, keeps answering on `:8080`, and keeps its ports. The misleading
-part is that the stray is wired to a pipeline that is no longer running, so
-anything probing ports rather than asking the profile finds it and reports a
-data-path failure that is really a stale container. That is why
-`scripts/post.py` resolves its ingest edge from `.profile.mk` instead of probing.
+It used to be profile-scoped, and if you are on an older checkout it still is: switch from a receiver-based profile to a fetcher-based one and the old receiver keeps running, keeps answering on `:8080`, and keeps its ports. The misleading part is that the stray is wired to a pipeline that is no longer running, so anything probing ports rather than asking the profile finds it and reports a data-path failure that is really a stale container. That is why `scripts/post.py` resolves its ingest edge from `.tmp/profile.mk` instead of probing.
 
 If you suspect strays, `docker ps` and compare uptimes -- a container minutes
 older than the rest is the giveaway.

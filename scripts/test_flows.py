@@ -43,8 +43,11 @@ from pathlib import Path
 
 import yaml
 
-from _common import _load_dotenv
-from _pipeline import env_or
+# Bytecode for the repo modules imported below goes to .tmp/pycache, as it does under make.
+sys.pycache_prefix = str(Path(__file__).resolve().parent.parent / ".tmp" / "pycache")
+
+from _common import _load_dotenv  # noqa: E402
+from _pipeline import env_or  # noqa: E402
 
 PROJECT_DIR = Path(__file__).resolve().parent.parent
 SERVICE_PROFILES_FILE = PROJECT_DIR / "service_profiles.yaml"

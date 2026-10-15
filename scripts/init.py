@@ -34,7 +34,10 @@ import string
 import sys
 from pathlib import Path
 
-from _common import (
+# Bytecode for the repo modules imported below goes to .tmp/pycache, as it does under make.
+sys.pycache_prefix = str(Path(__file__).resolve().parent.parent / ".tmp" / "pycache")
+
+from _common import (  # noqa: E402
     DOTENV_FILE,
     DOTENV_MODE,
     DOTENV_TEMPLATE,

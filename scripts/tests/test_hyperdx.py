@@ -18,8 +18,7 @@ ClickHouse leaves every HyperDX query aimed at a container that is not running.
 Its session signing key comes from `make init`, or the fork signs with a key
 published upstream; so does its token encryption key, in a format it parses.
 
-Read the way compose reads it: the `.profile.mk` values resolve_profile writes for
-a profile, expanded over the `${NAME:-default}` forms docker-compose.yml uses.
+Read the way compose reads it: the `.tmp/profile.mk` values resolve_profile writes for a profile, expanded over the `${NAME:-default}` forms docker-compose.yml uses.
 """
 
 import json
@@ -120,7 +119,8 @@ def _exports(
     **environment: str,
 ) -> dict[str, str]:
     """Return the make exports resolve_profile writes for one profile."""
-    monkeypatch.setattr(resolve_profile, "PROFILE_MK", tmp_path / ".profile.mk")
+    written = tmp_path / ".tmp" / "profile.mk"
+    monkeypatch.setattr(resolve_profile, "PROFILE_MK", written)
     # Set before deleting, so teardown also removes what .env loads during the run.
     for key in _FOOTPRINT_KEYS:
         monkeypatch.setenv(key, "")
@@ -132,7 +132,7 @@ def _exports(
     assert resolve_profile.main() == 0
 
     values: dict[str, str] = {}
-    for line in (tmp_path / ".profile.mk").read_text(encoding="utf-8").splitlines():
+    for line in written.read_text(encoding="utf-8").splitlines():
         name, _, value = line.partition(":=")
         values[name.replace("export", "").strip()] = value.strip()
     return values

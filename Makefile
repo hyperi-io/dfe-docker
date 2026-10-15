@@ -7,6 +7,7 @@
 # Copyright: (c) 2026 HYPERI PTY LIMITED
 
 .DEFAULT_GOAL := help
+export PYTHONPYCACHEPREFIX := $(CURDIR)/.tmp/pycache
 
 # Read only when present, because make builds a missing include before any goal
 # and `make help` must not mint secrets. Goals that need .env depend on it.
@@ -56,16 +57,12 @@ BOOTSTRAP_GOALS := init env-files creds dev-posture help stack dial modes down c
 
 # Resolve the active profile only when a goal actually needs the compose stack
 ifneq (,$(filter-out $(BOOTSTRAP_GOALS),$(or $(MAKECMDGOALS),help)))
-    include .profile.mk
+    include .tmp/profile.mk
     SERVICES ?=
     ifeq ($(strip $(SERVICES)),)
         ACTIVE_SERVICES := $(DFE_SERVICES)
     else
-        # On a fresh checkout make parses once before .profile.mk exists, then
-        # remakes it and parses again; the name check only means anything on
-        # the second pass, when DFE_SERVICES is populated. `apply` skips it: it
-        # names instances declared since .profile.mk was last written, so the
-        # make it starts checks them against the re-resolved list instead.
+        # On a fresh checkout make parses once before .tmp/profile.mk exists, then remakes it and parses again; the name check only means anything on the second pass, when DFE_SERVICES is populated. `apply` skips it: it names instances declared since .tmp/profile.mk was last written, so the make it starts checks them against the re-resolved list instead.
         ifneq ($(strip $(DFE_SERVICES)),)
             ifeq ($(filter apply,$(MAKECMDGOALS)),)
                 INVALID_SERVICES := $(filter-out $(DFE_SERVICES),$(SERVICES))
@@ -144,11 +141,7 @@ endif
 # INFRA-class UI at once and beats their individual flags. dfe-ui and the engine
 # API are PRODUCT class and answer only to their own.
 #
-# Below the profile block because DFE_AUTH_RESOLVED comes from .profile.mk, so
-# the profile key and the env var can never disagree about whether the auth
-# proxies are in play. The bootstrap goals skip that include and read it empty,
-# which is the auth-off branch -- the safe direction for a target that only
-# stops a stack or checks a file.
+# Below the profile block because DFE_AUTH_RESOLVED comes from .tmp/profile.mk, so the profile key and the env var can never disagree about whether the auth proxies are in play. The bootstrap goals skip that include and read it empty, which is the auth-off branch -- the safe direction for a target that only stops a stack or checks a file.
 # ---------------------------------------------------------------------------
 DFE_BIND_SCOPE ?= localhost
 ifeq ($(strip $(DFE_BIND_SCOPE)),localhost)
@@ -285,7 +278,7 @@ endif
 # with the profile (scripts/instances.py). Empty for the bootstrap goals, which
 # reads as off -- the safe direction for a target that only stops a stack.
 ifeq ($(strip $(DFE_INSTANCES_RESOLVED)),true)
-    $(eval $(call chain_fragment,docker-compose.instances.yml))
+    $(eval $(call chain_fragment,.tmp/docker-compose.instances.yml))
 endif
 
 # Container stdout to the collector. Off wherever the collector is, because the
@@ -344,7 +337,7 @@ ifeq ($(strip $(DFE_PROXY_TLS)),true)
     $(eval $(call chain_fragment,docker-compose.tls.yml))
 endif
 
-# Only the start goals need the certificate, for the reason ORIGIN_GOALS gives. The auth refusal is in the .profile.mk recipe instead, because it reads DFE_AUTH_RESOLVED and this pass may still hold the previous run's.
+# Only the start goals need the certificate, for the reason ORIGIN_GOALS gives. The auth refusal is in the .tmp/profile.mk recipe instead, because it reads DFE_AUTH_RESOLVED and this pass may still hold the previous run's.
 PROXY_TLS_START := $(and $(filter true,$(strip $(DFE_PROXY_TLS))),$(filter $(ORIGIN_GOALS),$(or $(MAKECMDGOALS),help)))
 ifneq ($(PROXY_TLS_START),)
     ifeq ($(filter https://%,$(call origin_value,DFE_EXTERNAL_ORIGIN)),)
@@ -381,7 +374,7 @@ endif
 # what the host publishes.
 #
 # Console TLS refuses the auth profile here, after the resolver has written this run's answer: the oauth2-proxy ports serve no TLS, so an https origin gives them callbacks they cannot answer.
-.profile.mk: FORCE
+.tmp/profile.mk: FORCE
 	@python3 scripts/resolve_profile.py $(if $(KAFBAT_GATED),--unpublished kafbat) $(if $(HYPERDX_GATED),--unpublished hyperdx)
 ifneq ($(PROXY_TLS_START),)
 	@if grep -qx 'export DFE_AUTH_RESOLVED := true' $@; then echo "DFE_PROXY_TLS=true cannot start with the auth profile: oauth2-proxy serves no TLS here, so the https callbacks it registers with the IdP never answer. Set DFE_AUTH_ENABLED=false (or drop auth from the profile) to keep TLS. Set DFE_PROXY_TLS=false to keep the auth profile" >&2; exit 1; fi
@@ -529,9 +522,7 @@ endif
 apply: env-files storage-dirs ## Create or recreate the named services after a config write, removing the containers of deleted sources (SERVICES="svc ..."; DEV=1 for a `make dev` stack), the command dfe-engine's hints name. With no SERVICES it only removes, for after a source is deleted
 	@$(MAKE) --no-print-directory apply-services
 
-# A second make, because it reads the .profile.mk this one just re-resolved and
-# so checks SERVICES against the instances the engine has declared. A source the
-# engine deleted has left that fragment, so its container is removed first.
+# A second make, because it reads the .tmp/profile.mk this one just re-resolved and so checks SERVICES against the instances the engine has declared. A source the engine deleted has left that fragment, so its container is removed first.
 .PHONY: apply-services
 apply-services:
 	@python3 scripts/instances.py --prune -- $(APPLY_FLAGS) $(PROFILE_FLAGS)
