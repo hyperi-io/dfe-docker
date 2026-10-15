@@ -200,7 +200,6 @@ def test_only_the_services_that_push_their_own_metrics_are_expected() -> None:
 
 def test_an_instance_make_apply_has_not_created_is_not_expected() -> None:
     services = [
-        "dfe-fetcher",
         "dfe-fetcher-aws-cloudtrail",
         "dfe-fetcher-aws-guardduty",
         "dfe-loader",
@@ -210,7 +209,7 @@ def test_an_instance_make_apply_has_not_created_is_not_expected() -> None:
         services=services, unapplied={"dfe-fetcher-aws-guardduty"}
     )
 
-    assert expected == ["dfe-fetcher", "dfe-fetcher-aws-cloudtrail", "dfe-loader"]
+    assert expected == ["dfe-fetcher-aws-cloudtrail", "dfe-loader"]
 
 
 def test_the_per_service_read_covers_the_metrics_tables_and_not_traces(

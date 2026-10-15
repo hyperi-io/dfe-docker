@@ -34,7 +34,7 @@ table and the UI classes.
 
 | Variable                                         | Use                                                                                  | Default                                                             |
 |--------------------------------------------------|--------------------------------------------------------------------------------------|---------------------------------------------------------------------|
-| `DFE_INGRESS_BIND_HOST`                          | Interface the receiver and fetcher ingest ports bind                                 | `0.0.0.0`                                                           |
+| `DFE_INGRESS_BIND_HOST`                          | Interface the receiver ingest ports bind                                             | `0.0.0.0`                                                           |
 | `DFE_BIND_HOST`                                  | Interface the datastore, broker, metrics and internal gRPC ports bind                | `127.0.0.1`                                                         |
 | `DFE_BIND_SCOPE`                                 | Where every web UI publishes (`localhost`\|`all`); `make` resolves it to `DFE_UI_BIND_HOST`, and `all` requires `DFE_EXTERNAL_ORIGIN` | `localhost`                            |
 | `DFE_INFRA_UIS_EXTERNAL`                         | Kill switch -- `false` unpublishes every infra-class UI and beats their own flags    | `true`                                                              |
@@ -165,9 +165,7 @@ other profile may require an issuer.
 | `AWS_ACCESS_KEY_ID`                              | AWS access key. Goes in `env/fetcher.env`, NOT `.env` -- the fetcher config reads it via `env:`  | -                                    |
 | `AWS_SECRET_ACCESS_KEY`                          | AWS secret key. Same file as above                                                   | -                                                                   |
 
-The AWS **region** is not an environment variable: it is a literal in
-`config/fetcher/aws-*.yaml` (`region: us-west-2`), because only the two
-credential fields are `env:`-interpolated. Change it there.
+The AWS **region** is not an environment variable: it is a literal in each source's fetcher config (`region: us-west-2` in `config/seed/sources/aws-*.yaml`), because only the two credential fields are `env:`-interpolated.
 
 ### DFE Loader
 
@@ -242,6 +240,7 @@ it is a second deployment of the one component, not a component of its own.
 
 | Variable                                         | Use                                                                                  | Default                                                             |
 |--------------------------------------------------|--------------------------------------------------------------------------------------|---------------------------------------------------------------------|
+| `DFE_KAFKA_BOOTSTRAP_SERVERS`                    | The broker dfe-engine creates topics on and every dfe-fetcher produces to; set it for an external broker | `kafka:9092`, the in-stack broker                                   |
 | `KAFKA_BACKEND`                                  | Kafka backend for `kafka` transport profiles                                         | `redpanda`                                                          |
 | `KAFKA_PLAINTEXT_HOST_PORT`                      | Kafka plaintext host port (host-facing)                                              | `19092`                                                             |
 | `KAFKA_PLAINTEXT_PORT`                           | Host publish of the broker's in-network listener; services in the stack dial `kafka:9092` whatever it says | `9092`                                                              |

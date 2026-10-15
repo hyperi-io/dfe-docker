@@ -10,10 +10,7 @@ tiers of the same name. Kubernetes is the master: the shape lives in dfe-infra's
 from it. Editing that block by hand is drift -- CI fails and the next render
 overwrites it.
 
-**Hand-crafted.** Every other profile (`kafka-full`, `grpc-receiver`,
-`kafka-filebeat`, ...) is a fine-grained data-plane shape with no Kubernetes
-counterpart, and nothing generates them. They are yours to add, change and
-delete.
+**Hand-crafted.** Every other profile (`kafka-receiver`, `grpc-receiver`, `kafka-filebeat`, ...) is a fine-grained data-plane shape with no Kubernetes counterpart, and nothing generates them. They are yours to add, change and delete.
 
 ## Which profile runs what
 
@@ -21,35 +18,27 @@ delete.
 source's own with the bundled filebeat program. `idle` is one instance started
 with a config that gives it no work.
 
-| Profile                           | Transport | dfe-archiver | dfe-fetcher | dfe-loader | dfe-receiver | dfe-transform-vrl | dfe-transform-vector | dfe-transform-elastic |
-|-----------------------------------|-----------|:------------:|:-----------:|:----------:|:------------:|:-----------------:|:--------------------:|:---------------------:|
-| `slim` (projected)                | gRPC      |              |             |     X      |      X       |                   |                      |                       |
-| `single` (projected)              | Kafka     |     idle     |     idle    |     X      |      X       |       idle        |                      |         idle          |
-| `kafka-fetcher`                   | Kafka     |              |      X      |     X      |              |                   |                      |                       |
-| `kafka-full`                      | Kafka     |      X       |      X      |     X      |      X       |                   |                      |                       |
-| `kafka-full-transform-vrl`        | Kafka     |              |      X      |     X      |      X       |         X         |                      |                       |
-| `kafka-full-transform-elastic`    | Kafka     |              |      X      |     X      |      X       |                   |                      |           X           |
-| `kafka-minimal`                   | Kafka     |              |             |     X      |              |                   |                      |                       |
-| `kafka-receiver`                  | Kafka     |              |             |     X      |      X       |                   |                      |                       |
-| `kafka-receiver-archiver`         | Kafka     |      X       |             |     X      |      X       |                   |                      |                       |
-| `kafka-receiver-transform-vector` | Kafka     |              |             |     X      |      X       |                   |           X          |                       |
-| `kafka-filebeat`                  | Kafka     |              |             |     X      |      X       |        X2         |                      |                       |
-| `kafka-filebeat-vector`           | Kafka     |              |             |     X      |      X       |                   |          X2          |                       |
-| `kafka-elastic-cisco-ios`         | Kafka     |              |             |     X      |      X       |                   |                      |           X           |
-| `grpc-fetcher`                    | gRPC      |              |      X      |     X      |              |                   |                      |                       |
-| `grpc-full`                       | gRPC      |              |      X      |     X      |      X       |                   |                      |                       |
-| `grpc-minimal`                    | gRPC      |              |             |     X      |              |                   |                      |                       |
-| `grpc-receiver`                   | gRPC      |              |             |     X      |      X       |                   |                      |                       |
+| Profile                           | Transport | dfe-archiver | dfe-loader | dfe-receiver | dfe-transform-vrl | dfe-transform-vector | dfe-transform-elastic |
+|-----------------------------------|-----------|:------------:|:----------:|:------------:|:-----------------:|:--------------------:|:---------------------:|
+| `slim` (projected)                | gRPC      |              |     X      |      X       |                   |                      |                       |
+| `single` (projected)              | Kafka     |     idle     |     X      |      X       |       idle        |                      |         idle          |
+| `kafka-full-transform-vrl`        | Kafka     |              |     X      |      X       |         X         |                      |                       |
+| `kafka-full-transform-elastic`    | Kafka     |              |     X      |      X       |                   |                      |           X           |
+| `kafka-minimal`                   | Kafka     |              |     X      |              |                   |                      |                       |
+| `kafka-receiver`                  | Kafka     |              |     X      |      X       |                   |                      |                       |
+| `kafka-receiver-archiver`         | Kafka     |      X       |     X      |      X       |                   |                      |                       |
+| `kafka-receiver-transform-vector` | Kafka     |              |     X      |      X       |                   |           X          |                       |
+| `kafka-filebeat`                  | Kafka     |              |     X      |      X       |        X2         |                      |                       |
+| `kafka-filebeat-vector`           | Kafka     |              |     X      |      X       |                   |          X2          |                       |
+| `kafka-elastic-cisco-ios`         | Kafka     |              |     X      |      X       |                   |                      |           X           |
+| `grpc-minimal`                    | gRPC      |              |     X      |              |                   |                      |                       |
+| `grpc-receiver`                   | gRPC      |              |     X      |      X       |                   |                      |                       |
 
-Both projected profiles run the core data path -- the receiver and the loader --
-plus the engine, the UI and HyperDX from the `core` and `hyperdx` footprint keys.
-`slim` runs nothing else. `single` adds one archiver, one fetcher, one
-transform-vrl and one transform-elastic, each started with a config that gives
-it no work: they are Ready,
-serve health and metrics, open no broker connection and hold `pipeline_idle` at
-1. `make post` asserts that on every start.
+Both projected profiles run the core data path (the receiver and the loader) plus the engine, the UI and HyperDX from the `core` and `hyperdx` footprint keys. `slim` runs nothing else. `single` adds one archiver, one transform-vrl and one transform-elastic, each started with a config that gives it no work: they are Ready, serve health and metrics, open no broker connection and hold `pipeline_idle` at 1. `make post` asserts that on every start.
 
 **One per source, as on Kubernetes.** The fetcher and the transforms run one instance per source. dfe-engine writes each source's config into its own directory and its name into `env/<app>.instances`, and `scripts/instances.py` turns each name into a service in `.tmp/docker-compose.instances.yml`, which `make apply` starts.
+
+**`fetcher_enabled: true` runs the fetchers.** No profile names dfe-fetcher as a service. A profile with this key runs one fetcher per source instead. `make sources` seeds the sources a fetcher polls only there and skips them elsewhere. Only `slim` and `single` may set it, because each fetcher reads the config dfe-engine renders for its source; `resolve_profile.py` refuses it on any other profile. Today it is `single` alone.
 
 ## Why the two tiers are projected
 
@@ -82,6 +71,7 @@ App token and no secret.
 | `hyperdx` | `hyperdx` is default in `apps.yaml` |
 | `kafbat` | `kafbat.enabled`, and only on the `kafka` transport |
 | `otel` | the tier deploys the collector (every Kubernetes profile does) |
+| `fetcher_enabled` | `dfe-fetcher` is default in `apps.yaml` for `docker-<mode>` |
 | `services[]` | every other app `apps.yaml` makes default in `docker-<mode>` |
 | `services[].config_path` | `<app>/<transport>.yaml` under `config/` |
 

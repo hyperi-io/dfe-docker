@@ -27,6 +27,8 @@ here probes for a sibling directory it was not told about.
 
 The block is delimited by the BEGIN/END markers below. Everything outside them
 is left byte-for-byte alone.
+
+A dfe-fetcher service in a rendered tier is written as that profile's `fetcher_enabled: true` instead, because Compose runs the fetcher once per source and never as a profile's service.
 """
 
 from __future__ import annotations
@@ -41,10 +43,21 @@ from pathlib import Path
 # Bytecode for the repo modules imported below goes to .tmp/pycache, as it does under make.
 sys.pycache_prefix = str(Path(__file__).resolve().parent.parent / ".tmp" / "pycache")
 
-from _common import PROJECTED_PROFILES, SERVICE_PROFILES_FILE, _print, _rel_path  # noqa: E402
+from _common import (  # noqa: E402
+    FETCHER_ENABLED_KEY,
+    FETCHER_SERVICE,
+    PROJECTED_PROFILES,
+    SERVICE_PROFILES_FILE,
+    _print,
+    _rel_path,
+)
 
 # Order is the order they are written in.
 PROJECTED = PROJECTED_PROFILES
+
+# The renderer's indents: a profile's own keys and each entry under its services.
+PROFILE_KEY_INDENT = "    "
+SERVICE_INDENT = "      "
 
 BEGIN = "  # BEGIN projected profiles -- rendered by `make render-profiles`\n"
 END = "  # END projected profiles\n"
@@ -57,6 +70,24 @@ BANNER = (
 
 class RenderError(Exception):
     """Raised when the projection cannot be rendered or the block is missing."""
+
+
+def _fetcher_as_key(*, rendered: str) -> str:
+    """One rendered profile with its dfe-fetcher service entry replaced by `fetcher_enabled: true` ahead of its services."""
+    lines = rendered.splitlines(keepends=True)
+    entry = f"{SERVICE_INDENT}{FETCHER_SERVICE}:\n"
+    if entry not in lines:
+        return rendered
+    start = lines.index(entry)
+    end = start + 1
+    while end < len(lines) and lines[end].startswith(f"{SERVICE_INDENT} "):
+        end += 1
+    del lines[start:end]
+    lines.insert(
+        lines.index(f"{PROFILE_KEY_INDENT}services:\n"),
+        f"{PROFILE_KEY_INDENT}{FETCHER_ENABLED_KEY}: true\n",
+    )
+    return "".join(lines)
 
 
 def _infra_dir() -> Path:
@@ -99,7 +130,10 @@ def _render(infra_dir: Path, mode: str) -> str:
 
 def projected_block(infra_dir: Path) -> str:
     """The whole delimited block, markers included."""
-    body = "\n".join(_render(infra_dir, mode).rstrip("\n") for mode in PROJECTED)
+    body = "\n".join(
+        _fetcher_as_key(rendered=_render(infra_dir, mode)).rstrip("\n")
+        for mode in PROJECTED
+    )
     return f"{BEGIN}{BANNER}{body}\n{END}"
 
 

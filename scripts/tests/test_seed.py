@@ -77,12 +77,12 @@ class RefusalCase(TypedDict):
 
 
 class SkipReasonCase(TypedDict):
-    """One seed object, the stack's services and why the seeder leaves the object alone."""
+    """One seed object, whether the profile runs per-source fetchers and why the seeder leaves the object alone."""
 
     body: dict
     expected: str
+    fetcher_enabled: bool
     kind: str
-    services: list[str]
 
 
 _ADMIN_401 = "refused; DFE_AUTH_LOCAL_ADMIN_PASSWORD in .env is not the bootstrap admin's current password, so set it to that and run this again"
@@ -90,7 +90,7 @@ _ADMIN_UNSET = (
     "refused; set DFE_AUTH_LOCAL_ADMIN_PASSWORD in .env, which `make init` generates"
 )
 _FETCHER_BODY = {"fetcher": {"source_type": "aws"}, "source": "aws-guardduty"}
-_NO_FETCHER = "this profile runs no dfe-fetcher to poll it"
+_NO_FETCHER = "this profile sets no fetcher_enabled: true, so no dfe-fetcher polls it"
 _PROMPTED_401 = "refused; log in as an account that can write sources, rules and hunts, with its current password"
 _RECEIVER_BODY = {"match": {"field": "_source"}, "source": "syslog"}
 
@@ -152,28 +152,21 @@ SKIP_REASON_CASES = [
     SkipReasonCase(
         body=_FETCHER_BODY,
         expected=_NO_FETCHER,
+        fetcher_enabled=False,
         kind="sources",
-        services=["dfe-loader", "dfe-receiver"],
     ),
     SkipReasonCase(
-        body=_FETCHER_BODY, expected=_NO_FETCHER, kind="sources", services=[]
+        body=_FETCHER_BODY, expected="", fetcher_enabled=True, kind="sources"
     ),
     SkipReasonCase(
-        body=_FETCHER_BODY,
-        expected=_NO_FETCHER,
-        kind="sources",
-        services=["dfe-fetcher-aws-guardduty"],
+        body=_RECEIVER_BODY, expected="", fetcher_enabled=False, kind="sources"
     ),
     SkipReasonCase(
-        body=_FETCHER_BODY,
-        expected="",
-        kind="sources",
-        services=["dfe-fetcher", "dfe-receiver"],
+        body=_RECEIVER_BODY, expected="", fetcher_enabled=True, kind="sources"
     ),
     SkipReasonCase(
-        body=_RECEIVER_BODY, expected="", kind="sources", services=["dfe-receiver"]
+        body=_FETCHER_BODY, expected="", fetcher_enabled=False, kind="rules"
     ),
-    SkipReasonCase(body=_FETCHER_BODY, expected="", kind="rules", services=[]),
 ]
 
 
@@ -372,7 +365,7 @@ class TestSendEvents:
     ) -> None:
         failed = seed._send_events(
             events=[("aws-guardduty", [{"Id": "a"}])],
-            services=["dfe-receiver"],
+            fetcher_enabled=False,
             sources={"aws-guardduty": _FETCHER_BODY},
         )
 
@@ -386,7 +379,9 @@ class TestSkipReason:
     @pytest.mark.parametrize("case", SKIP_REASON_CASES)
     def test_matches_expected(self, case: SkipReasonCase) -> None:
         reason = seed._skip_reason(
-            body=case["body"], kind=case["kind"], services=case["services"]
+            body=case["body"],
+            fetcher_enabled=case["fetcher_enabled"],
+            kind=case["kind"],
         )
 
         assert reason == case["expected"]

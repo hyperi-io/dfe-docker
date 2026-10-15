@@ -58,7 +58,6 @@ flowchart LR
 
     subgraph ingress["DFE_INGRESS_BIND_HOST -- default 0.0.0.0"]
         recv["dfe-receiver :6000 :8080"]
-        fetch["dfe-fetcher :8082"]
     end
 
     subgraph uis["DFE_UI_BIND_HOST -- DFE_BIND_SCOPE, default 127.0.0.1"]
@@ -73,14 +72,13 @@ flowchart LR
     end
 
     user --> recv
-    user --> fetch
     user --> proxy
     proxy -->|proxies /api/v1 paths| engine
     hdx -.->|HyperDX queries for the browser| ch
 
     classDef open fill:#D55E00,color:#ffffff,stroke:#000000
     classDef loop fill:#0072B2,color:#ffffff,stroke:#000000
-    class recv,fetch open
+    class recv open
     class proxy,engine,kafbat,hdx,ch loop
 ```
 
@@ -112,7 +110,7 @@ Three variables, chosen by who the port is for.
 
 | Variable | Default | Audience |
 |---|---|---|
-| `DFE_INGRESS_BIND_HOST` | `0.0.0.0` | What users push to: receiver and fetcher ingest |
+| `DFE_INGRESS_BIND_HOST` | `0.0.0.0` | What users push to: receiver ingest |
 | `DFE_UI_BIND_HOST` | `127.0.0.1` | Every web UI. Derived from `DFE_BIND_SCOPE`, not set by hand |
 | `DFE_BIND_HOST` | `127.0.0.1` | What operators reach: datastores, broker, metrics, internal gRPC |
 
@@ -465,11 +463,7 @@ hold: that the stack's own telemetry is landing fresh in the `dfe.otel_*` tables
 That is the pair the Kubernetes bootstrap smoke asserts as CORE 1 and CORE 2 --
 the two pipelines a complete deployment has to move.
 
-On a profile that starts an app with no work -- the archiver, fetcher and
-transform-vrl `single` carries -- it makes a third: each of them is ready AND
-reports `pipeline_idle` 1. A container that crash-looped on the idle config fails
-the first half, and one that is quietly archiving, polling or consuming fails the
-second.
+On a profile that starts an app with no work (the archiver, transform-vrl and transform-elastic `single` carries) it makes a third: each of them is ready AND reports `pipeline_idle` 1. A container that crash-looped on the idle config fails the first half; one that is quietly archiving or consuming fails the second.
 
 What it does not prove: anything about tables other than the target, about
 profiles you are not running, or about throughput. Three rows is deliberate -- a

@@ -22,7 +22,7 @@ from _common import COMPOSE_FILE, REPO_ROOT
 MANIFEST_PUSH_PORT = 6000
 
 _LOADER_CONFIG = REPO_ROOT / "config" / "loader" / "grpc.yaml"
-_SENDER_DIRS = (REPO_ROOT / "config", REPO_ROOT / "tests" / "e2e" / "config")
+_SENDER_DIR = REPO_ROOT / "config"
 
 
 def _loader_listen_port() -> int:
@@ -34,13 +34,12 @@ def _loader_listen_port() -> int:
 
 def _dialled_loader_ports() -> list[tuple[str, int]]:
     dialled: list[tuple[str, int]] = []
-    for directory in _SENDER_DIRS:
-        for path in sorted(directory.rglob("*.yaml")):
-            body = path.read_text(encoding="utf-8")
-            name = str(path.relative_to(REPO_ROOT))
-            dialled.extend(
-                (name, int(port)) for port in re.findall(r"dfe-loader:(\d+)", body)
-            )
+    for path in sorted(_SENDER_DIR.rglob("*.yaml")):
+        body = path.read_text(encoding="utf-8")
+        name = str(path.relative_to(REPO_ROOT))
+        dialled.extend(
+            (name, int(port)) for port in re.findall(r"dfe-loader:(\d+)", body)
+        )
     return dialled
 
 
