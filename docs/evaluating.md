@@ -42,23 +42,15 @@ works - you have already seen the thing you came to see.
 
 ## Seeing your own data go through
 
-Send an event. **Which port depends on your profile**, because not every profile
-runs a receiver - the shipped default (`kafka-fetcher`) does not:
+Send an event to dfe-receiver. The shipped default (`slim`) runs one, as does every profile except the loader-only `kafka-minimal` and `grpc-minimal`:
 
 ```bash
-# Default profile (kafka-fetcher): the fetcher is the ingest edge.
-curl -X POST http://localhost:8082/ingest/main \
-  -H 'Content-Type: application/json' \
-  -d '{"_source":"main","message":"hello dfe"}'
-
-# Any profile that runs dfe-receiver (grpc-receiver, kafka-receiver, ...).
 curl -X POST http://localhost:8080/ingest \
   -H 'Content-Type: application/json' \
   -d '{"_source":"main","message":"hello dfe"}'
 ```
 
-`make post` works this out for you from the resolved profile, so if you are not
-sure which you have, run that instead.
+`make post` reads the resolved profile and skips on one with no receiver, so if you are not sure which you have, run that instead.
 
 Then look for it. `make init` gave ClickHouse's `default` user a generated
 password, so the read needs it -- and a password on a command line is read back

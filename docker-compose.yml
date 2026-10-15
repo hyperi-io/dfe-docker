@@ -43,7 +43,7 @@
 #
 # Quick start:
 #   make dev                         # Uses active_profile from service_profiles.yaml
-#   DFE_PROFILE=grpc-full make dev   # Override profile
+#   DFE_PROFILE=grpc-receiver make dev   # Override profile
 #   KAFKA_BACKEND=apache make dev    # Override Kafka backend
 #
 # Dev build from source (requires docker-compose.override.yml - auto-loaded):
@@ -137,6 +137,11 @@ x-oauth2-proxy-env: &oauth2-proxy-env
   OAUTH2_PROXY_COOKIE_SECURE: ${DFE_OAUTH2_PROXY_COOKIE_SECURE:-false}
   OAUTH2_PROXY_HTTP_ADDRESS: 0.0.0.0:4180
   OAUTH2_PROXY_SKIP_PROVIDER_BUTTON: "true"
+
+# =============================================================================
+# Where the DFE apps reach Kafka: the in-stack broker unless .env names another in DFE_KAFKA_BOOTSTRAP_SERVERS, the variable resolve_profile.py also hands dfe-engine to create topics on.
+# =============================================================================
+x-kafka-brokers: &kafka-brokers ${DFE_KAFKA_BOOTSTRAP_SERVERS:-kafka:9092}
 
 services:
 
@@ -605,6 +610,7 @@ services:
 
   # ===========================================================================
   # dfe-fetcher
+  # No profile starts this service: each per-source instance scripts/instances.py generates extends it and names its own rendered config.
   # ===========================================================================
 
   dfe-fetcher:
@@ -632,23 +638,20 @@ services:
       DFE_FETCHER_VERSION_CHECK__SEND_INSTANCE_ID: ${DFE_VERSION_CHECK_SEND_INSTANCE_ID:-true}
       # One directory per fetcher service; scripts/instances.py sets each instance's.
       DFE_FETCHER_CURSOR__DIRECTORY: /var/lib/dfe-fetcher/dfe-fetcher
+      # The broker the fetcher produces to, because the config the engine renders names none.
+      DFE_FETCHER_KAFKA_BROKERS: *kafka-brokers
     depends_on:
       dfe-loader:
         condition: service_healthy
         required: false
-      # The writer of the rendered config below, so it must have written before
-      # this container reads. `required: false` for the tiers that run no engine.
+      # The writer of the rendered config, so it must have written before this container reads. `required: false` for the tiers that run no engine.
       dfe-engine:
         condition: service_healthy
         required: false
       dlq-init:
         condition: service_completed_successfully
         required: false
-    # The engine renders this app's config from the sources on the tiers that run
-    # it; everywhere else the committed file below is what it reads.
-    command: ["--config", "${DFE_FETCHER_CONFIG_FILE:-/etc/dfe/fetcher.yaml}"]
     volumes:
-      - ./config/${DFE_FETCHER_CONFIG:-fetcher/kafka.yaml}:/etc/dfe/fetcher.yaml:ro
       - dfe-app-config:/etc/dfe/apps:ro
       - dlq-spool:/var/spool/dfe
       - fetcher-cursors:/var/lib/dfe-fetcher
@@ -1265,7 +1268,6 @@ services:
       # is merged over it, so the broker, the warehouse credentials and the spool
       # stay with the deployment rather than being written into the deploy repo.
       - ./config/${DFE_ARCHIVER_CONFIG:-archiver/kafka.yaml}:/app/app-config-base/dfe-archiver.yaml:ro
-      - ./config/${DFE_FETCHER_CONFIG:-fetcher/kafka.yaml}:/app/app-config-base/dfe-fetcher.yaml:ro
       - ./config/${DFE_LOADER_CONFIG:-loader/kafka.yaml}:/app/app-config-base/dfe-loader.yaml:ro
       - ./config/${DFE_RECEIVER_CONFIG:-receiver/kafka.yaml}:/app/app-config-base/dfe-receiver.yaml:ro
       - ./config/${DFE_TRANSFORM_ELASTIC_CONFIG:-transform-elastic/kafka.yaml}:/app/app-config-base/dfe-transform-elastic.yaml:ro

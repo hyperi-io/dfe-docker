@@ -18,7 +18,7 @@
 
 The hunts target also creates the rules, because the engine refuses a hunt whose rule does not exist. Nothing else is created for a target: a rule over a source that is not deployed yet is accepted and reads nothing until it is. A hunt whose table does not exist yet is not created, because the hunt runner fails on every run of it.
 
-Each sources, rules or hunts file is the body the engine's create route takes, named for the object it creates. An object the engine already holds is left as it is, so a re-run creates only what is missing; the one exception is a held source that was never deployed, which is deployed. A source polled by dfe-fetcher is skipped on a profile that runs no dfe-fetcher. The sources end with a request for the engine to bring every app in step with them, which retries a deploy whose apps did not follow. A restart the engine asks for is printed, not run: `make apply` on a `make dev` stack needs DEV=1, which this script cannot know.
+Each sources, rules or hunts file is the body the engine's create route takes, named for the object it creates. An object the engine already holds is left as it is, so a re-run creates only what is missing; the one exception is a held source that was never deployed, which is deployed. A source polled by dfe-fetcher is skipped on a profile without `fetcher_enabled: true`. The sources end with a request for the engine to bring every app in step with them, which retries a deploy whose apps did not follow. A restart the engine asks for is printed, not run: `make apply` on a `make dev` stack needs DEV=1, which this script cannot know.
 
 Each events file is a list of records for the source it is named for. They go to dfe-receiver, which routes them by `_source` over whichever transport the stack runs, and the run waits until the source's table holds them. Events for a source the profile cannot run are skipped. Every run sends them again, and needs no login.
 
@@ -48,6 +48,9 @@ import yaml
 sys.pycache_prefix = str(Path(__file__).resolve().parent.parent / ".tmp" / "pycache")
 
 from _common import (  # noqa: E402
+    FETCHER_ENABLED_KEY,
+    FETCHER_RESOLVED_VAR,
+    FETCHER_SERVICE,
     REPO_ROOT,
     _load_dotenv,
     _print,
@@ -89,8 +92,6 @@ DEPLOY_TIMEOUT_SECONDS = 90
 EVENTS = "events"
 # Every engine call the seeder makes can fail in one of these ways without the engine answering.
 ENGINE_FAULTS = (ApiUnreachable, OSError, subprocess.TimeoutExpired)
-# The app that polls a source carrying a `fetcher` stanza, one instance per source.
-FETCHER_SERVICE = "dfe-fetcher"
 KINDS = {
     "hunts": Kind(key="name", noun="hunt", route="/hunts"),
     "rules": Kind(key="name", noun="rule", route="/rules"),
@@ -365,16 +366,16 @@ def _row_count(*, source: str) -> int | None:
 def _seed_kind(
     *,
     base: str,
+    fetcher_enabled: bool,
     kind: str,
     objects: list[tuple[str, dict]],
-    services: list[str],
     token: str,
 ) -> int:
     """Create every object of one kind the engine lacks and this stack can run, and return how many failed."""
     failed = 0
     for name, body in objects:
         try:
-            reason = _skip_reason(body=body, kind=kind, services=services)
+            reason = _skip_reason(body=body, fetcher_enabled=fetcher_enabled, kind=kind)
             if reason:
                 _print(msg=f"SKIP {KINDS[kind].noun} {name!r}: {reason}")
                 continue
@@ -420,14 +421,16 @@ def _send(*, records: list[dict], source: str) -> None:
 def _send_events(
     *,
     events: list[tuple[str, list[dict]]],
-    services: list[str],
+    fetcher_enabled: bool,
     sources: dict[str, dict],
 ) -> int:
     """Send every events file's records whose source this stack can run, and return 1 at the first that cannot be sent or seen to land."""
     try:
         for source, records in events:
             reason = _skip_reason(
-                body=sources.get(source, {}), kind="sources", services=services
+                body=sources.get(source, {}),
+                fetcher_enabled=fetcher_enabled,
+                kind="sources",
             )
             if reason:
                 _print(msg=f"SKIP events for source {source!r}: {reason}")
@@ -445,10 +448,10 @@ def _send_events(
     return 0
 
 
-def _skip_reason(*, body: dict, kind: str, services: list[str]) -> str:
+def _skip_reason(*, body: dict, fetcher_enabled: bool, kind: str) -> str:
     """Why this profile cannot run one object, or an empty string when it can."""
-    if kind == "sources" and body.get("fetcher") and FETCHER_SERVICE not in services:
-        return f"this profile runs no {FETCHER_SERVICE} to poll it"
+    if kind == "sources" and body.get("fetcher") and not (fetcher_enabled):
+        return f"this profile sets no {FETCHER_ENABLED_KEY}: true, so no {FETCHER_SERVICE} polls it"
     return ""
 
 
@@ -494,13 +497,13 @@ def main() -> int:
     )
     kinds = TARGETS[parser.parse_args().target]
     _load_dotenv()
-    services = _resolved_services()
-    if not (services):
+    if not (_resolved_services()):
         _print(
             msg="FAIL the profile is not resolved, so which services run is unknown; "
             "run this through make, which writes .tmp/profile.mk"
         )
         return 1
+    fetcher_enabled = _profile_mk_value(key=FETCHER_RESOLVED_VAR) == ["true"]
 
     if EVENTS in kinds:
         try:
@@ -509,7 +512,9 @@ def main() -> int:
         except SeedError as error:
             _print(msg=f"FAIL {error}")
             return 1
-        return _send_events(events=events, services=services, sources=dict(sources))
+        return _send_events(
+            events=events, fetcher_enabled=fetcher_enabled, sources=dict(sources)
+        )
 
     try:
         objects = {
@@ -531,9 +536,9 @@ def main() -> int:
     for kind, kind_objects in objects.items():
         if _seed_kind(
             base=base,
+            fetcher_enabled=fetcher_enabled,
             kind=kind,
             objects=kind_objects,
-            services=services,
             token=token,
         ):
             return 1

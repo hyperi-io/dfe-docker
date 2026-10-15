@@ -46,6 +46,9 @@ from _common import (  # noqa: E402
     CONFIG_DIR,
     EXTERNAL_ORIGIN_KEY,
     FALSY,
+    FETCHER_ENABLED_KEY,
+    FETCHER_RESOLVED_VAR,
+    FETCHER_SERVICE,
     PROFILE_MK,
     PROJECTED_PROFILES,
     SERVICE_CONFIG_FILE,
@@ -222,7 +225,6 @@ SERVICE_KAFKA_OPTIONS = {
 }
 SERVICE_TO_CONFIG_VAR = {
     "dfe-archiver": "DFE_ARCHIVER_CONFIG",
-    "dfe-fetcher": "DFE_FETCHER_CONFIG",
     "dfe-loader": "DFE_LOADER_CONFIG",
     "dfe-receiver": "DFE_RECEIVER_CONFIG",
     "dfe-transform-e2e-elastic-cisco-ios": "DFE_TRANSFORM_ELASTIC_CISCO_IOS_CONFIG",
@@ -269,9 +271,9 @@ ENGINE_CATALOGUE_FILE_VAR = "DFE_ENGINE_CATALOGUE_FILE"
 ENGINE_CATALOGUE_FILE = "catalogue/sources.yaml"
 # A per-source transform instance is a service of its own here, because a
 # profile has to be able to run one without the other.
+# dfe-fetcher is absent: a profile runs it once per source with `fetcher_enabled: true`, never as a service of its own.
 SERVICES = [
     "dfe-archiver",
-    "dfe-fetcher",
     "dfe-loader",
     "dfe-receiver",
     "dfe-transform-e2e-elastic-cisco-ios",
@@ -372,6 +374,31 @@ def _footprint(*, profile: dict[str, object], profile_name: str) -> dict[str, bo
     return resolved
 
 
+def _fetcher_enabled(
+    *, profile: dict[str, object], profile_name: str, renders: bool
+) -> bool:
+    """Whether this profile runs one dfe-fetcher per source, which only a tier whose app config dfe-engine renders can declare.
+
+    A projected tier with its core footprint switched off renders nothing, so it resolves to false there rather than failing.
+    """
+    declared = profile.get(FETCHER_ENABLED_KEY, "false")
+    if not (isinstance(declared, str)) or (
+        declared.strip().lower() not in ("false", "true")
+    ):
+        raise _ProfileError(
+            header=profile_name,
+            msg=f"{FETCHER_ENABLED_KEY!r} must be true or false",
+        )
+    if declared.strip().lower() == "false":
+        return False
+    if profile_name not in PROJECTED_PROFILES:
+        raise _ProfileError(
+            header=profile_name,
+            msg=f"{FETCHER_ENABLED_KEY}: true needs dfe-engine to render each source's fetcher config, which it does only on {', '.join(PROJECTED_PROFILES)}. Remove the key from this profile",
+        )
+    return renders
+
+
 def _parse_yaml(*, text: str) -> dict[str, object]:
     """Parse a minimal YAML subset into nested dicts with string values."""
     root = {}
@@ -430,7 +457,7 @@ def _resolve_profile(
 
     # A typo like `cor: true` would otherwise resolve to the default and start a
     # footprint nobody asked for, silently.
-    known_keys = {"transport", "services"} | set(FOOTPRINT_KEYS)
+    known_keys = {"transport", "services", FETCHER_ENABLED_KEY} | set(FOOTPRINT_KEYS)
     unknown = sorted(set(profile) - known_keys)
     if unknown:
         raise _ProfileError(
@@ -450,6 +477,11 @@ def _resolve_profile(
         raise _ProfileError(header=active_profile, msg="Undefined services")
 
     for service_name, service_config in services.items():
+        if service_name == FETCHER_SERVICE:
+            raise _ProfileError(
+                header=active_profile,
+                msg=f"{FETCHER_SERVICE} runs one container per source, never as a profile's service. Set {FETCHER_ENABLED_KEY}: true instead",
+            )
         if service_name not in SERVICES:
             raise _ProfileError(
                 header=active_profile,
@@ -582,6 +614,11 @@ def main(argv: Sequence[str] = ()) -> int:
         # decides whether its instance index is this deployment's or a leftover.
         renders = (active_profile in PROJECTED_PROFILES) and footprint["core"]
         instance_services = _instance_services(profile=active_profile, renders=renders)
+        fetcher_enabled = _fetcher_enabled(
+            profile=data[PROFILE_LIST_YAML_FIELD][active_profile],
+            profile_name=active_profile,
+            renders=renders,
+        )
 
         # ClickHouse stays out of this list -- it starts via its compose profile
         # and the depends_on of whatever needs it. DFE_SERVICES is also what
@@ -757,6 +794,10 @@ def main(argv: Sequence[str] = ()) -> int:
         # unconditionally, for the reason the keys above are.
         lines.append(
             f"export DFE_INSTANCES_RESOLVED := {'true' if instance_services else 'false'}"
+        )
+        # Whether `make sources` seeds the sources a dfe-fetcher polls. Emitted unconditionally, for the reason the keys above are.
+        lines.append(
+            f"export {FETCHER_RESOLVED_VAR} := {'true' if fetcher_enabled else 'false'}"
         )
 
         new_content = "\n".join(lines) + "\n"

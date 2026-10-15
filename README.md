@@ -142,7 +142,7 @@ For `kafka` transport profiles, the Kafka backend is selected via `KAFKA_BACKEND
 
 ```bash
 make dev                         # Uses active_profile from service_profiles.yaml
-DFE_PROFILE=grpc-full make dev   # Override profile
+DFE_PROFILE=grpc-receiver make dev   # Override profile
 KAFKA_BACKEND=apache make dev    # Override Kafka backend
 DFE_HYPERDX_ENABLED=1 make dev   # Also start the HyperDX observability stack
 DFE_OTEL_ENABLED=1 make dev      # Also start the self-monitoring collector
@@ -225,7 +225,7 @@ row lands in the ClickHouse table. It is transport-agnostic - each test selects 
 the direct-gRPC paths. Run a subset by name:
 
 ```
-make test-e2e E2E_TESTS="simple-receiver-to-loader-grpc simple-fetcher-to-loader"
+make test-e2e E2E_TESTS="simple-receiver-to-loader-grpc simple-receiver-to-loader-kafka"
 ```
 
 ### Power-on self test
@@ -241,11 +241,7 @@ DFE_POST_ENABLED=false make ci   # opt out
 
 It is opt-**out**. A self test you have to remember to run is not a self test.
 
-Transport-agnostic: it posts to the ingest edge and reads ClickHouse, so it
-behaves identically on the Kafka and kafka-less (gRPC) profiles. The edge it uses
-comes from the resolved profile - receiver when the profile has one, otherwise
-fetcher. On a profile with no ingest component at all (loader-only) it skips with
-a stated reason rather than failing: there is nothing to prove end to end.
+Transport-agnostic: it posts to the ingest edge and reads ClickHouse, so it behaves identically on the Kafka and kafka-less (gRPC) profiles. The edge it uses is the resolved profile's receiver. On a profile with no receiver (loader-only) it skips with a stated reason rather than failing: there is nothing to prove end to end.
 
 Two things it deliberately is not. It is not a Docker `HEALTHCHECK` - that runs
 inside one container with no view of the others, and repeats forever, so it would
@@ -279,7 +275,7 @@ always-on dev daemon) that clashes. Two clean ways to run without the clash:
 - Or run the gRPC-only tests, which need no broker at all:
 
   ```
-  make test-e2e E2E_TESTS="simple-receiver-to-loader-grpc simple-fetcher-to-loader"
+  make test-e2e E2E_TESTS="simple-receiver-to-loader-grpc rules-and-hunts"
   ```
 
 ## Configuration

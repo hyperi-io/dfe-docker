@@ -10,8 +10,8 @@
 #
 #  Usage:
 #    ./scripts/test-e2e.py                                       # Run all tests from config
-#    ./scripts/test-e2e.py kafka-full                            # Run specific test by name
-#    ./scripts/test-e2e.py kafka-full grpc-full                  # Run multiple named tests
+#    ./scripts/test-e2e.py kafka-outage                          # Run specific test by name
+#    ./scripts/test-e2e.py kafka-outage loader-kill-grpc         # Run multiple named tests
 #    ./scripts/test-e2e.py --outages                             # Run the outage tests instead
 #    TEST_CONFIG=tests/e2e/e2e-tests.yaml ./scripts/test-e2e.py  # Custom config
 #    LOG_LEVEL=debug ./scripts/test-e2e.py                       # Verbose service logs
@@ -117,7 +117,6 @@ SERVICE_PROFILES_FILE = Path(__file__).resolve().parent.parent / "service_profil
 
 SERVICE_CONFIG_MOUNTS = {
     "dfe-archiver": "/etc/dfe/archiver.yaml",
-    "dfe-fetcher": "/etc/dfe/fetcher.yaml",
     "dfe-loader": "/etc/dfe/loader.yaml",
     "dfe-receiver": "/etc/dfe-receiver/config.yaml",
     "dfe-transform-e2e-elastic-cisco-ios": "/etc/dfe-transform-elastic/config.yaml",
@@ -213,17 +212,9 @@ DFE_ARCHIVER_HEALTH_URL = env_or(
     "DFE_ARCHIVER_HEALTH_URL",
     f"http://localhost:{env_or('DFE_ARCHIVER_PROMETHEUS_PORT', '9093')}/readyz",
 )
-DFE_FETCHER_HEALTH_URL = env_or(
-    "DFE_FETCHER_HEALTH_URL",
-    f"http://localhost:{env_or('DFE_FETCHER_PROMETHEUS_PORT', '9094')}/readyz",
-)
 DFE_ENGINE_HEALTH_URL = env_or(
     "DFE_ENGINE_HEALTH_URL",
     f"http://localhost:{env_or('DFE_ENGINE_PORT', '8003')}/readyz",
-)
-DFE_FETCHER_INGEST_URL = env_or(
-    "DFE_FETCHER_INGEST_URL",
-    f"http://localhost:{env_or('DFE_FETCHER_INGEST_PORT', '8082')}/ingest",
 )
 DFE_RECEIVER_INGEST_URL = env_or(
     "DFE_RECEIVER_INGEST_URL",
@@ -1326,7 +1317,6 @@ def wait_for_stack(services):
     """Wait for ClickHouse (always) and each DFE service in `services` to be healthy."""
     health_map = {
         "dfe-archiver": ("dfe-archiver", DFE_ARCHIVER_HEALTH_URL),
-        "dfe-fetcher": ("dfe-fetcher", DFE_FETCHER_HEALTH_URL),
         "dfe-loader": ("dfe-loader", DFE_LOADER_HEALTH_URL),
         "dfe-receiver": ("dfe-receiver", DFE_RECEIVER_HEALTH_URL),
     }
@@ -3508,16 +3498,8 @@ def run_test(ctx, mode, test, persistent_services):
         stack_down(keep_services=persistent_services or None)
         return
 
-    has_fetcher = "dfe-fetcher" in test.services
-    has_receiver = "dfe-receiver" in test.services
-    ingest_service = (
-        "dfe-fetcher" if (has_fetcher and not (has_receiver)) else "dfe-receiver"
-    )
-    ingest_url = (
-        f"{DFE_FETCHER_INGEST_URL}/{test.table}"
-        if (ingest_service == "dfe-fetcher")
-        else DFE_RECEIVER_INGEST_URL
-    )
+    ingest_service = "dfe-receiver"
+    ingest_url = DFE_RECEIVER_INGEST_URL
     if test.outage:
         run_outage(ctx, test, effective_services, ingest_url, ingest_service)
     elif test.detection:

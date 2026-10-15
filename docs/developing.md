@@ -254,7 +254,7 @@ e2e suite pins by name. Which profile runs what, and how the rendering works:
 or a ClickHouse cluster.
 
 ```bash
-DFE_PROFILE=grpc-full make dev        # override the profile
+DFE_PROFILE=grpc-receiver make dev    # override the profile
 KAFKA_BACKEND=apache make dev         # Apache Kafka instead of Redpanda
 DFE_CORE_ENABLED=false make dev       # skip engine, UI and proxy
 DFE_CLICKHOUSE_ENABLED=false make dev # no warehouse container (external instance)
@@ -286,7 +286,7 @@ A name in `SERVICES` that is not part of the resolved stack is a hard error, not
 
 | Target | What it creates |
 |---|---|
-| `make sources` | `aws-cloudtrail`, `aws-guardduty` and `aws-securityhub`, each polled by its own dfe-fetcher instance, and `syslog`, which takes any record sent to the receiver with `_source: syslog`. Each lands in `dfe.<source>`. A profile without dfe-fetcher, such as `slim`, gets `syslog` alone |
+| `make sources` | `aws-cloudtrail`, `aws-guardduty` and `aws-securityhub` (each polled by its own dfe-fetcher instance) and `syslog`, which takes any record sent to the receiver with `_source: syslog`. Each lands in `dfe.<source>`. A profile without [`fetcher_enabled: true`](profiles.md#which-profile-runs-what), such as `slim`, gets `syslog` alone |
 | `make rules` | `aws-guardduty-high-severity`, matching a GuardDuty finding rated 7 or above |
 | `make hunts` | That rule, and the hunt `aws-guardduty-high-severity` once `dfe.aws-guardduty` exists, running it every five minutes into `dfe.detection` |
 | `make events` | Two fake GuardDuty findings from `config/seed/events/`, rated 8.0 and 2.0, so the hunt's next run detects the first and leaves the second |
@@ -307,10 +307,7 @@ does not move data.
 
 ### Power-on self test -- runs whether you ask or not
 
-`make dev` and `make ci` finish by running `scripts/post.py`. It injects three
-marked events at the ingest edge of the **resolved profile** (receiver if the
-profile has one, otherwise fetcher) and waits for those exact rows in
-`dfe.main`.
+`make dev` and `make ci` finish by running `scripts/post.py`. It injects three marked events into the receiver of the **resolved profile** and waits for those exact rows in `dfe.main`.
 
 ```bash
 make post                        # against an already-running stack
@@ -330,7 +327,7 @@ unverifiable, which is not the same as passing.
 
 ```bash
 make test-e2e
-make test-e2e E2E_TESTS="simple-receiver-to-loader-grpc simple-fetcher-to-loader"
+make test-e2e E2E_TESTS="simple-receiver-to-loader-grpc simple-receiver-to-loader-kafka"
 ```
 
 `tests/e2e/e2e-tests.yaml` is the definition. A `global:` block sets the data file
@@ -509,7 +506,7 @@ run outside the containers. If you would rather avoid the broker altogether, the
 gRPC tests need none:
 
 ```bash
-make test-e2e E2E_TESTS="simple-receiver-to-loader-grpc simple-fetcher-to-loader"
+make test-e2e E2E_TESTS="simple-receiver-to-loader-grpc rules-and-hunts"
 ```
 
 The same reasoning applies to ClickHouse (`CLICKHOUSE_HTTP_PORT`,
@@ -525,23 +522,13 @@ suite chains onto every `up`, one that re-prefixes each `container_name`.
 
 ## Sharp edges
 
-**`make down` tears down every profile, not just the active one.** It runs
-`docker compose -f docker-compose.yml --profile "*" down --remove-orphans`, and
-keeps volumes. That is a change: it used to be profile-scoped, so switching from
-`kafka-receiver` to `kafka-fetcher` left the old receiver running and answering on
-`:8080`. That stray is exactly why the self test asks the resolved profile what
-should be there instead of probing ports.
+**`make down` tears down every profile, not just the active one.** It runs `docker compose -f docker-compose.yml --profile "*" down --remove-orphans` and keeps volumes. That is a change: it used to be profile-scoped, so switching from `kafka-receiver` to `kafka-minimal` left the old receiver running and answering on `:8080`. That stray is exactly why the self test asks the resolved profile what should be there instead of probing ports.
 
 The consequence to know: because `make dev` and `make ci` depend on `down`, a
 `make dev SERVICES="dfe-loader"` no longer restarts just that service on top of a
 running stack -- everything is stopped first.
 
-**`.env` shadows a command-line environment variable through make.** The Makefile
-does `-include .env`, and GNU make re-exports a variable that came from the
-environment using the *makefile's* value. So with `DFE_PROFILE` set in `.env`,
-`DFE_PROFILE=grpc-full make dev` silently uses the `.env` value. Verified on this
-repo's shape with a minimal reproduction. If an override appears to do nothing,
-check `.env` first; comment the key out there, or use `make -e`.
+**`.env` shadows a command-line environment variable through make.** The Makefile does `-include .env`, and GNU make re-exports a variable that came from the environment using the *makefile's* value. So with `DFE_PROFILE` set in `.env`, `DFE_PROFILE=grpc-receiver make dev` silently uses the `.env` value. Verified on this repo's shape with a minimal reproduction. If an override appears to do nothing, check `.env` first; comment the key out there, or use `make -e`.
 
 **Compose `environment:` beats `env/<service>.env`.** A key listed in a service's
 `environment:` block in `docker-compose.yml` wins over the same key in the

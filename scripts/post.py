@@ -293,7 +293,6 @@ HUNT_EVENTS = {
 # and the app evaluates it; this reads the answer the app publishes.
 IDLE_APPS: dict[str, tuple[str, str]] = {
     "dfe-archiver": ("archiver/kafka.yaml", "9093"),
-    "dfe-fetcher": ("fetcher/kafka.yaml", "9094"),
     "dfe-transform-elastic": ("transform-elastic/kafka.yaml", "9099"),
     "dfe-transform-vrl": ("transform-vrl/kafka.yaml", "9096"),
 }
@@ -727,9 +726,6 @@ def _ingest_target(*, table: str) -> tuple[str, str]:
     really a stale container. (`make down` used to be profile-scoped, which made
     strays routine; it now sweeps every profile, but a stray can still arrive from
     an older checkout or something started by hand.) Ask the profile.
-
-    Order matters: the receiver is the front door when the profile has one. The
-    fetcher is the fallback, and its ingest path is per-table.
     """
     bind = os.environ.get("DFE_POST_HOST", "localhost")
     services = _resolved_services()
@@ -752,16 +748,6 @@ def _ingest_target(*, table: str) -> tuple[str, str]:
                 f"within {READY_TIMEOUT_SECONDS:.0f}s"
             )
         return "dfe-receiver", f"http://{bind}:{port}/ingest"
-
-    if "dfe-fetcher" in services:
-        port = os.environ.get("DFE_FETCHER_INGEST_PORT", "8082")
-        metrics = os.environ.get("DFE_FETCHER_PROMETHEUS_PORT", "9094")
-        if not (_wait_ready(f"http://{bind}:{metrics}/readyz")):
-            raise IngestNotReady(
-                "dfe-fetcher is in the active profile but never became ready "
-                f"within {READY_TIMEOUT_SECONDS:.0f}s"
-            )
-        return "dfe-fetcher", f"http://{bind}:{port}/ingest/{table}"
 
     raise NoIngestComponent(
         f"active profile has no ingest component (services: {', '.join(services)})"

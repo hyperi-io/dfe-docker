@@ -77,9 +77,7 @@ and consumes `main_load`.
 
 ## What each tier runs, and what starts with nothing to do
 
-`slim` is the core data path alone: receiver, loader, engine, UI and HyperDX.
-`single` adds the broker and three more apps -- one archiver, one fetcher, one
-transform-vrl -- each started from a config that gives it no work.
+`slim` is the core data path alone: receiver, loader, engine, UI and HyperDX. `single` adds the broker and three more apps (one archiver, one transform-vrl and one transform-elastic), each started from a config that gives it no work.
 
 An idle app is Ready, serves health and metrics, opens no broker connection and
 holds `pipeline_idle` at 1, so being deployed unconfigured costs a container and
@@ -104,6 +102,8 @@ spool -- and the overlay wins wherever the two name the same key, so nothing
 deployment-specific is written into the deploy repo. `resolve_profile.py` turns
 this on for the projected tiers only: every other profile ships the config it
 exists to exercise.
+
+dfe-fetcher has no committed file: the overlay is its whole config; its broker comes from `DFE_KAFKA_BOOTSTRAP_SERVERS` in its environment.
 
 Nothing restarts a container. A change the running app cannot take in place is
 reported by the API as `restart required: make apply SERVICES=<app>`, and one

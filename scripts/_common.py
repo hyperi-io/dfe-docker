@@ -59,6 +59,11 @@ LOOPBACK_ORIGINS = frozenset(
 # a hand-crafted data-plane shape that ships its own config and must keep it.
 PROJECTED_PROFILES = ("slim", "single")
 
+# dfe-fetcher runs one container per source and never as a profile's service. A profile that runs them says so with the key, which resolve_profile.py writes to .tmp/profile.mk as the variable.
+FETCHER_SERVICE = "dfe-fetcher"
+FETCHER_ENABLED_KEY = "fetcher_enabled"
+FETCHER_RESOLVED_VAR = "DFE_FETCHER_RESOLVED"
+
 # The config file each app reads, by the manifest's `consumes.config`. Shared,
 # because the resident service reads it at <mount>/<app>/ and a per-source
 # instance at <mount>/<app>/<instance>/, and the two must name the same file.
@@ -77,7 +82,6 @@ SERVICE_CONFIG_FILE = {
 # committed file and the file NAME in the rendered path is SERVICE_CONFIG_FILE.
 SERVICE_TO_RENDERED_CONFIG_VAR = {
     "dfe-archiver": "DFE_ARCHIVER_CONFIG_FILE",
-    "dfe-fetcher": "DFE_FETCHER_CONFIG_FILE",
     "dfe-loader": "DFE_LOADER_CONFIG_FILE",
     "dfe-receiver": "DFE_RECEIVER_CONFIG_FILE",
     "dfe-transform-elastic": "DFE_TRANSFORM_ELASTIC_CONFIG_FILE",
