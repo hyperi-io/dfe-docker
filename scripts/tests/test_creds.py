@@ -270,6 +270,13 @@ def test_per_provider_overrides_are_named_not_printed() -> None:
             {"DFE_BIND_SCOPE": "all", "DFE_EXTERNAL_ORIGIN": "http://127.0.0.1"},
             "http://localhost:3000",
         ),
+        ({"DFE_EXTERNAL_ORIGIN": "http://[::1]"}, "http://127.0.0.1:3000"),
+        ({"DFE_EXTERNAL_ORIGIN": "https://[::1]"}, "http://127.0.0.1:3000"),
+        ({"DFE_EXTERNAL_ORIGIN": "http://0.0.0.0"}, "http://127.0.0.1:3000"),
+        (
+            {"DFE_BIND_SCOPE": "all", "DFE_EXTERNAL_ORIGIN": "https://0.0.0.0"},
+            "http://localhost:3000",
+        ),
         (
             {"DFE_BIND_SCOPE": "all", "DFE_EXTERNAL_ORIGIN": "http://dfe.example.test"},
             "http://dfe.example.test:3000",

@@ -174,9 +174,9 @@ E2E_GOALS := test-e2e test-resilience
 ifeq ($(strip $(DFE_PROXY_TLS)),true)
     ORIGIN_GOALS += $(E2E_GOALS)
 endif
-# Origins a browser on another machine cannot use; scripts/_common.py keeps the
-# same set for the helpers that read the key.
-LOOPBACK_ORIGINS := http://localhost https://localhost http://127.0.0.1 https://127.0.0.1
+# Origins a browser on another machine cannot use, the wildcard bind address included.
+# scripts/_common.py keeps the same set for the helpers that read the key.
+LOOPBACK_ORIGINS := http://localhost https://localhost http://127.0.0.1 https://127.0.0.1 http://[::1] https://[::1] http://0.0.0.0 https://0.0.0.0
 ifeq ($(strip $(DFE_BIND_SCOPE)),all)
     ifneq (,$(filter $(ORIGIN_GOALS),$(or $(MAKECMDGOALS),help)))
         ORIGIN_UNUSABLE := $(if $(strip $(DFE_EXTERNAL_ORIGIN)),$(filter $(strip $(DFE_EXTERNAL_ORIGIN)),$(LOOPBACK_ORIGINS)),unset)
@@ -186,12 +186,21 @@ ifeq ($(strip $(DFE_BIND_SCOPE)),all)
     endif
 endif
 
-# Compose appends `:<port>` to each of these (next-auth's NEXTAUTH_URL, HyperDX's FRONTEND_URL, the oauth2-proxy callbacks), so a value that already carries a port, a path or a query builds a URL no browser can parse: dfe-ui answers 500 on `https://host:3000:3000`. Each must be a scheme and a host only, on every stack and with TLS on or off.
+# Compose appends `:<port>` to each of these (next-auth's NEXTAUTH_URL, HyperDX's FRONTEND_URL, the oauth2-proxy callbacks), so a value that already carries a port, a path or a query builds a URL no browser can parse: dfe-ui answers 500 on `https://host:3000:3000`. DFE_EXTERNAL_ORIGIN and DFE_HYPERDX_APP_URL also feed dfe-proxy's frame-ancestors source list, where a `;` in the value starts a new directive. Each must be a scheme and a host only, on every stack and with TLS on or off.
 APPENDED_ORIGINS := DFE_EXTERNAL_ORIGIN DFE_HYPERDX_APP_URL DFE_OAUTH2_PROXY_EXTERNAL_ORIGIN
 # The value without the surrounding quotes compose strips and make keeps.
 origin_value = $(patsubst "%",%,$(patsubst '%',%,$(strip $($(1)))))
 # What follows the scheme.
 origin_rest = $(patsubst https://%,%,$(patsubst http://%,%,$(call origin_value,$(1))))
+# The characters a host is made of: letters, digits, dot, hyphen and underscore in a name or an IPv4 address, hex digits, colon and dot inside the brackets of an IPv6 one.
+ORIGIN_NAME_CHARS := a b c d e f g h i j k l m n o p q r s t u v w x y z A B C D E F G H I J K L M N O P Q R S T U V W X Y Z 0 1 2 3 4 5 6 7 8 9 . - _
+ORIGIN_V6_CHARS := a b c d e f A B C D E F 0 1 2 3 4 5 6 7 8 9 : .
+# The text with every character in the list removed, so what is left is what the list does not allow.
+origin_strip = $(if $(2),$(call origin_strip,$(subst $(firstword $(2)),,$(1)),$(wordlist 2,$(words $(2)),$(2))),$(1))
+# The characters of one host that no host holds, empty when it is all host. A bracketed host must hold a colon, as every IPv6 address does.
+origin_bad = $(if $(filter [%],$(1)),$(if $(findstring :,$(1)),$(call origin_strip,$(patsubst [%],%,$(1)),$(ORIGIN_V6_CHARS)),$(1)),$(call origin_strip,$(1),$(ORIGIN_NAME_CHARS)))
+# The same for everything after the scheme, once the checks for a path, a query and a port have passed.
+origin_stray = $(call origin_bad,$(call origin_rest,$(1)))
 # What is wrong with one origin, empty when it is a scheme and a host or unset. A bracketed IPv6 host keeps its colons.
 origin_fault = $(if $(call origin_value,$(1)),$(strip \
     $(if $(word 2,$(call origin_value,$(1))),contains a space,\
@@ -199,17 +208,21 @@ origin_fault = $(if $(call origin_value,$(1)),$(strip \
     $(if $(call origin_rest,$(1)),\
     $(if $(findstring /,$(call origin_rest,$(1))),carries a path (a trailing slash counts),\
     $(if $(findstring ?,$(call origin_rest,$(1))),carries a query,\
-    $(if $(and $(findstring :,$(call origin_rest,$(1))),$(if $(filter [%],$(call origin_rest,$(1))),,colon)),carries a port))),\
+    $(if $(and $(findstring :,$(call origin_rest,$(1))),$(if $(filter [%],$(call origin_rest,$(1))),,colon)),carries a port,\
+    $(if $(call origin_stray,$(1)),carries characters a host cannot hold: `$(call origin_stray,$(1))`)))),\
     names no host),\
     has no http:// or https:// scheme))))
 # The host the value names, a bracketed IPv6 one whole.
 origin_host = $(if $(filter [%,$(call origin_rest,$(1))),$(firstword $(subst ], ,$(call origin_rest,$(1))))],$(firstword $(subst /, ,$(subst ?, ,$(subst :, ,$(call origin_rest,$(1)))))))
-# The scheme and host the value meant: its own scheme, else https under console TLS and http without.
-origin_fix = $(if $(filter http://%,$(call origin_value,$(1))),http,$(if $(or $(filter https://%,$(call origin_value,$(1))),$(filter true,$(strip $(DFE_PROXY_TLS)))),https,http))://$(or $(call origin_host,$(1)),<the host browsers use>)
+# The scheme and host the value meant: its own scheme, else https under console TLS and http without. A host with a character no host holds is not repeated back.
+origin_fix = $(if $(filter http://%,$(call origin_value,$(1))),http,$(if $(or $(filter https://%,$(call origin_value,$(1))),$(filter true,$(strip $(DFE_PROXY_TLS)))),https,http))://$(or $(if $(call origin_bad,$(call origin_host,$(1))),,$(call origin_host,$(1))),<the host browsers use>)
 ifneq (,$(filter $(ORIGIN_GOALS),$(or $(MAKECMDGOALS),help)))
     ORIGIN_MALFORMED := $(firstword $(foreach key,$(APPENDED_ORIGINS),$(if $(call origin_fault,$(key)),$(key))))
+    # Why a fault matters: a port or path breaks the URLs compose builds, a stray character can rewrite the frame-ancestors policy dfe-proxy builds from the same value.
+    ORIGIN_WHY_PORT = compose appends the port itself (DFE_UI_PORT for the console), so this value builds $(call origin_value,$(ORIGIN_MALFORMED)):$(or $(strip $(DFE_UI_PORT)),3000) and the console answers 500
+    ORIGIN_WHY_STRAY = compose writes it into URLs and into dfe-proxy's frame-ancestors source list, where a `;` starts a new directive, so a character no host holds can rewrite the policy
     ifneq ($(ORIGIN_MALFORMED),)
-        $(error $(ORIGIN_MALFORMED)='$(call origin_value,$(ORIGIN_MALFORMED))' $(call origin_fault,$(ORIGIN_MALFORMED)). It must be a scheme and a host only, no port: compose appends the port itself (DFE_UI_PORT for the console), so this value builds $(call origin_value,$(ORIGIN_MALFORMED)):$(or $(strip $(DFE_UI_PORT)),3000) and the console answers 500. Set $(ORIGIN_MALFORMED)=$(call origin_fix,$(ORIGIN_MALFORMED)))
+        $(error $(ORIGIN_MALFORMED)='$(call origin_value,$(ORIGIN_MALFORMED))' $(call origin_fault,$(ORIGIN_MALFORMED)). It must be a scheme and a host only, no port: $(if $(findstring carries characters,$(call origin_fault,$(ORIGIN_MALFORMED))),$(ORIGIN_WHY_STRAY),$(ORIGIN_WHY_PORT)). Set $(ORIGIN_MALFORMED)=$(call origin_fix,$(ORIGIN_MALFORMED)))
     endif
 endif
 
