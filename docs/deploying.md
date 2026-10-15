@@ -20,9 +20,8 @@ Running the thing day to day is [operating.md](operating.md).
 A repeatable deploy turns ONE file. `deployment.example.yaml` is the template;
 copy it to `deployment.yaml` (gitignored, never committed) and populate it. That
 copy is the SSoT for the deploy -- registry, pinned version, service footprint,
-host exposure, the broker, and where the pull credential comes from -- and `make
-dial` renders its docker-vm slice into `.env`. A redeploy is a dial edit, not a
-hunt through `.env`:
+host exposure and the broker -- and `make dial` renders its docker-vm slice into
+`.env`. A redeploy is a dial edit, not a hunt through `.env`:
 
 ```bash
 make dial && make stack && make ci
@@ -30,23 +29,15 @@ make dial && make stack && make ci
 
 `make dial` writes the deploy-controlled keys over the `.env` that `make init`
 generated, `make stack` pins the certified image set from the dial's
-`version.pin`, and `make ci` pulls and starts it. Both `stack` and `ci` depend
-on `make login`, so registry auth happens on the way through.
+`version.pin`, and `make ci` pulls and starts it. Both read the registry
+anonymously, so neither needs a login.
 
 Two properties keep the file safe to hand around. **Secrets are references,
-never values** -- `secrets.backend` and `secrets.ref` name WHERE the GHCR pull
-credential lives (OpenBao by default), and whoever deploys resolves it. On a
-lone box you set `DFE_GHCR_USERNAME` and `DFE_GHCR_TOKEN` in `.env` by hand; in
-the estate a thin caller reads them from the backend and injects them, so the
-dial itself carries no token. **Estate endpoints stay blank** -- an empty
+never values** -- `secrets.backend` and `secrets.ref` name WHERE the deployment's
+secrets live (OpenBao by default), and whoever deploys resolves them, so the dial
+itself carries no secret. **Estate endpoints stay blank** -- an empty
 `endpoints.clickhouse_host` means "use the in-stack container", and you set it
 (or let the caller inject it) only to point the engine at an external warehouse.
-
-`make login` authenticates docker and oras to `registry` from those two `.env`
-keys. `scripts/ghcr_login.py` pipes the token on stdin, so it never reaches a
-make variable or the process list, and it is a no-op when the keys are unset --
-a daemon that authed out of band is not re-authed -- which is why `stack` and
-`ci` depend on it unconditionally.
 
 This file is the docker-vm SLICE. The canonical superset -- docker-vm plus the
 Kubernetes and cloud dials, and the schema -- lives in dfe-infra, but a lone

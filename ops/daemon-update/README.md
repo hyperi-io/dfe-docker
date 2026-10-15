@@ -77,8 +77,8 @@ this flag.
 ## Install (parked - run on the dfe-docker VM as root)
 
 Prerequisites on the VM: docker, `oras`, python3; the service user in the
-`docker` group; a working `.env` (`make init` once); GHCR pull access for the
-private images (the compose stack already needs this).
+`docker` group; a working `.env` (`make init` once). The images and the stack
+manifest pull anonymously, so the VM needs no registry login.
 
 ```
 sudo DFE_DOCKER_DIR=/opt/dfe-docker DFE_UPDATE_USER=dfe ./install.sh

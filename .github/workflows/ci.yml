@@ -75,8 +75,8 @@ jobs:
       #
       # Resolves docker-compose.yml on both the registry and dev-override paths,
       # against both Kafka backends. Hermetic: it reads the mandatory keys out of
-      # the compose file and supplies placeholders, so it needs neither the
-      # private stack SSoT nor registry credentials.
+      # the compose file and supplies placeholders, so it reads neither the
+      # stack SSoT nor the registry.
       - name: Validate compose
         run: make check-compose
 

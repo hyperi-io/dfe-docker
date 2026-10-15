@@ -13,7 +13,7 @@ The deployment dial (``deployment.yaml``) is the single SSoT a deployment turns:
 one file the whole automation reads, authored by hand today and populated by the
 QA GUI wizard later. This renders the docker-vm SLICE of that dial into the flat
 .env docker compose consumes, so a redeploy is a dial edit plus
-``make dial && make login && make stack && make ci``.
+``make dial && make stack && make ci``.
 
 The canonical superset schema + example live in dfe-infra (the DeployContext
 owner). dfe-docker consumes the docker-vm subset so a lone clone deploys
@@ -23,8 +23,8 @@ setting untouched.
 
 Dependency-free (no PyYAML) - the scripts run under a plain ``python3`` on a bare
 deployment VM, and the dial's docker-vm slice is scalar/nested-map only. Secrets
-are never touched here: GHCR credentials come from the deployment's secrets
-backend via the operator's own tooling, not from this renderer.
+are never touched here: they come from the deployment's secrets backend via the
+operator's own tooling, not from this renderer.
 """
 
 from __future__ import annotations
