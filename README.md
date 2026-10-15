@@ -52,8 +52,7 @@ See [docs/architecture.md](docs/architecture.md).
   through it. Not needed if you render from a local dfe-infra checkout instead
   (`DFE_INFRA_DIR`).
 - [`gh`](https://cli.github.com), logged in - only for `DFE_STACK_REPIN_IMAGES=1`,
-  which reads each component's GitHub releases through it. Those repos are
-  private until GA, so it is a HyperI-internal option until then.
+  which reads each component's GitHub releases through it.
 
 ### Initialisation
 
