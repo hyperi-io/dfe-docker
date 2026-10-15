@@ -175,30 +175,39 @@ def test_an_exec_that_did_not_run_is_not_a_status(
         post._api_get_json(f"{post.HYPERDX_NETWORK_BASE}/sources")
 
 
-def test_only_the_services_that_push_their_own_metrics_are_expected(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    monkeypatch.setattr(
-        post,
-        "_resolved_services",
-        lambda: [
-            "dfe-engine",
-            "dfe-hunt-runner",
-            "dfe-loader",
-            "dfe-transform-e2e-vrl-filebeat",
-            "dfe-transform-vrl-filebeat",
-            "dfe-ui",
-            "hyperdx",
-            "otel-collector",
-        ],
-    )
+def test_only_the_services_that_push_their_own_metrics_are_expected() -> None:
+    services = [
+        "dfe-engine",
+        "dfe-hunt-runner",
+        "dfe-loader",
+        "dfe-transform-e2e-vrl-filebeat",
+        "dfe-transform-vrl-filebeat",
+        "dfe-ui",
+        "hyperdx",
+        "otel-collector",
+    ]
 
-    assert post._otel_expected_services() == [
+    assert post._otel_expected_services(services=services, unapplied=set()) == [
         "dfe-engine",
         "dfe-loader",
         "dfe-transform-e2e-vrl-filebeat",
         "dfe-transform-vrl-filebeat",
     ]
+
+
+def test_an_instance_make_apply_has_not_created_is_not_expected() -> None:
+    services = [
+        "dfe-fetcher",
+        "dfe-fetcher-aws-cloudtrail",
+        "dfe-fetcher-aws-guardduty",
+        "dfe-loader",
+    ]
+
+    expected = post._otel_expected_services(
+        services=services, unapplied={"dfe-fetcher-aws-guardduty"}
+    )
+
+    assert expected == ["dfe-fetcher", "dfe-fetcher-aws-cloudtrail", "dfe-loader"]
 
 
 def test_the_per_service_read_covers_the_metrics_tables_and_not_traces(

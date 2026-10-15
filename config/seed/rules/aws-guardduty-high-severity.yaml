@@ -7,7 +7,7 @@
 # Copyright: (c) 2026 HYPERI PTY LIMITED
 
 name: aws-guardduty-high-severity
-display_name: GuardDuty high severity finding
+display_name: GuardDuty High Severity Finding
 severity: high
 source: aws-guardduty
 source_type: raw

@@ -61,6 +61,39 @@ class DeployedCase(TypedDict):
     expected: bool
 
 
+class HuntTableCase(TypedDict):
+    """One hunt body and the database and table the seeder reads from it."""
+
+    body: dict
+    expected: tuple[str, str]
+
+
+class RefusalCase(TypedDict):
+    """One refused login and the fault the seeder reports for it."""
+
+    expected: str
+    prompted: bool
+    status: int
+
+
+class SkipReasonCase(TypedDict):
+    """One seed object, the stack's services and why the seeder leaves the object alone."""
+
+    body: dict
+    expected: str
+    kind: str
+    services: list[str]
+
+
+_ADMIN_401 = "refused; DFE_AUTH_LOCAL_ADMIN_PASSWORD in .env is not the bootstrap admin's current password, so set it to that and run this again"
+_ADMIN_UNSET = (
+    "refused; set DFE_AUTH_LOCAL_ADMIN_PASSWORD in .env, which `make init` generates"
+)
+_FETCHER_BODY = {"fetcher": {"source_type": "aws"}, "source": "aws-guardduty"}
+_NO_FETCHER = "this profile runs no dfe-fetcher to poll it"
+_PROMPTED_401 = "refused; log in as an account that can write sources, rules and hunts, with its current password"
+_RECEIVER_BODY = {"match": {"field": "_source"}, "source": "syslog"}
+
 ACTION_CASES = [
     ActionCase(expected="exists", status=200),
     ActionCase(expected="create", status=404),
@@ -93,6 +126,54 @@ DEPLOYED_CASES = [
     DeployedCase(body={}, expected=False),
     DeployedCase(body="not found", expected=False),
     DeployedCase(body=None, expected=False),
+]
+HUNT_TABLE_CASES = [
+    HuntTableCase(
+        body={"global_source_table_name": "dfe.aws-guardduty"},
+        expected=("dfe", "aws-guardduty"),
+    ),
+    HuntTableCase(
+        body={"global_source_table_name": "dfe.syslog"}, expected=("dfe", "syslog")
+    ),
+    HuntTableCase(
+        body={"global_source_table_name": "Data_2.a"}, expected=("Data_2", "a")
+    ),
+]
+REFUSAL_CASES = [
+    RefusalCase(expected=_PROMPTED_401, prompted=True, status=401),
+    RefusalCase(expected="refused", prompted=True, status=0),
+    RefusalCase(expected="refused", prompted=True, status=500),
+    RefusalCase(expected=_ADMIN_UNSET, prompted=False, status=0),
+    RefusalCase(expected="refused", prompted=False, status=200),
+    RefusalCase(expected=_ADMIN_401, prompted=False, status=401),
+    RefusalCase(expected="refused", prompted=False, status=503),
+]
+SKIP_REASON_CASES = [
+    SkipReasonCase(
+        body=_FETCHER_BODY,
+        expected=_NO_FETCHER,
+        kind="sources",
+        services=["dfe-loader", "dfe-receiver"],
+    ),
+    SkipReasonCase(
+        body=_FETCHER_BODY, expected=_NO_FETCHER, kind="sources", services=[]
+    ),
+    SkipReasonCase(
+        body=_FETCHER_BODY,
+        expected=_NO_FETCHER,
+        kind="sources",
+        services=["dfe-fetcher-aws-guardduty"],
+    ),
+    SkipReasonCase(
+        body=_FETCHER_BODY,
+        expected="",
+        kind="sources",
+        services=["dfe-fetcher", "dfe-receiver"],
+    ),
+    SkipReasonCase(
+        body=_RECEIVER_BODY, expected="", kind="sources", services=["dfe-receiver"]
+    ),
+    SkipReasonCase(body=_FETCHER_BODY, expected="", kind="rules", services=[]),
 ]
 
 
@@ -185,6 +266,36 @@ class TestEvents:
             seed._events(directory=tmp_path)
 
 
+class TestHuntTable:
+    @pytest.mark.parametrize("case", HUNT_TABLE_CASES)
+    def test_matches_expected(self, case: HuntTableCase) -> None:
+        assert seed._hunt_table(body=case["body"]) == case["expected"]
+
+    @pytest.mark.parametrize(
+        "value",
+        [
+            None,
+            5,
+            "",
+            "aws-guardduty",
+            "dfe.",
+            "dfe.Aws",
+            "dfe.aws-",
+            "dfe.aws_guardduty",
+            "dfe.`aws`",
+            "dfe.a.b",
+            "dfe.a' OR '1",
+        ],
+    )
+    def test_rejects_a_value_that_is_not_a_table(self, value: object) -> None:
+        with pytest.raises(seed.SeedError, match="not a <database>.<source> table"):
+            seed._hunt_table(body={"global_source_table_name": value})
+
+    def test_rejects_a_hunt_that_names_no_table(self) -> None:
+        with pytest.raises(seed.SeedError, match="not a <database>.<source> table"):
+            seed._hunt_table(body={})
+
+
 class TestObjects:
     def test_ignores_files_that_are_not_yaml(self, tmp_path: Path) -> None:
         _write(directory=tmp_path, name="a.json", text='{"name": "a"}')
@@ -239,6 +350,48 @@ class TestObjects:
             seed._objects(directory=tmp_path, key="name")
 
 
+class TestPromptedToken:
+    def test_refuses_without_a_terminal(self) -> None:
+        with pytest.raises(seed.SeedError, match="no terminal"):
+            seed._prompted_token(base="http://engine.invalid", terminal=False)
+
+
+class TestRefusal:
+    @pytest.mark.parametrize("case", REFUSAL_CASES)
+    def test_matches_expected(self, case: RefusalCase) -> None:
+        refusal = seed._refusal(
+            fault="refused", prompted=case["prompted"], status=case["status"]
+        )
+
+        assert refusal == case["expected"]
+
+
+class TestSendEvents:
+    def test_skips_the_events_of_a_source_the_profile_cannot_run(
+        self, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        failed = seed._send_events(
+            events=[("aws-guardduty", [{"Id": "a"}])],
+            services=["dfe-receiver"],
+            sources={"aws-guardduty": _FETCHER_BODY},
+        )
+
+        assert failed == 0
+        assert f"SKIP events for source 'aws-guardduty': {_NO_FETCHER}" in (
+            capsys.readouterr().err
+        )
+
+
+class TestSkipReason:
+    @pytest.mark.parametrize("case", SKIP_REASON_CASES)
+    def test_matches_expected(self, case: SkipReasonCase) -> None:
+        reason = seed._skip_reason(
+            body=case["body"], kind=case["kind"], services=case["services"]
+        )
+
+        assert reason == case["expected"]
+
+
 class TestTagged:
     def test_labels_the_record_with_its_source(self) -> None:
         body = seed._tagged(record={"Id": "a"}, source="aws-guardduty")
@@ -282,6 +435,11 @@ class TestSeedSet:
         tables = _landing_tables()
         for name, body in _seeded(kind="hunts"):
             assert body["global_source_table_name"] in tables, name
+
+    def test_every_hunt_names_its_table_in_the_form_the_seeder_checks(self) -> None:
+        for name, body in _seeded(kind="hunts"):
+            database, table = seed._hunt_table(body=body)
+            assert f"{database}.{table}" == body["global_source_table_name"], name
 
     def test_every_rule_reads_a_seeded_landing_table(self) -> None:
         tables = _landing_tables()

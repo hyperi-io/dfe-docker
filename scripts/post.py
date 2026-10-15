@@ -74,6 +74,7 @@ from pathlib import Path
 from urllib.parse import quote
 
 import _detection
+import instances
 from _common import (
     ACCESS_SUMMARY_FILE,
     DOTENV_FILE,
@@ -919,12 +920,12 @@ def _verify_self_monitoring() -> Claim:
     return Claim(asserted=True, failed=failed)
 
 
-def _otel_expected_services() -> list[str]:
-    """The resolved services whose own metrics have to be in the otel database."""
+def _otel_expected_services(*, services: list[str], unapplied: set[str]) -> list[str]:
+    """The services whose own metrics have to be in the otel database, less the instances `make apply` has not created."""
     return sorted(
         service
-        for service in _resolved_services()
-        if service.startswith(OTEL_PUSHER_PREFIXES)
+        for service in services
+        if service.startswith(OTEL_PUSHER_PREFIXES) and service not in unapplied
     )
 
 
@@ -939,13 +940,46 @@ def _otel_reporting_services(*, database: str) -> set[str]:
     return {line.strip() for line in raw.splitlines() if line.strip()}
 
 
+def _unapplied_instances(*, services: list[str]) -> set[str]:
+    """The per-source services among these that this compose project holds no container for, running or stopped."""
+    # An index a profile switch left behind names instances this profile does not run.
+    declared = set(instances.services(instances=instances.declared())) & set(services)
+    if not (declared):
+        return set()
+    # Without the container list none can be shown missing, so every instance stays expected.
+    try:
+        result = subprocess.run(
+            args=["docker", "compose", "ps", "--all", "--format", "{{.Service}}"],
+            capture_output=True,
+            check=False,
+            encoding="utf-8",
+            errors="replace",
+            text=True,
+            timeout=API_EXEC_MARGIN_SECONDS,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return set()
+    if result.returncode != 0:
+        return set()
+    return declared - set(result.stdout.split())
+
+
 def _verify_service_metrics(*, database: str) -> int:
     """Prove every service that pushes is in the otel database under its own name.
 
     Freshness alone passes on one service exporting, and the engine supplies a row
     immediately, so the apps' own export interval was never waited out.
     """
-    expected = _otel_expected_services()
+    services = _resolved_services()
+    unapplied = _unapplied_instances(services=services)
+    if unapplied:
+        names = " ".join(sorted(unapplied))
+        _print(
+            msg=f"      note: {', '.join(sorted(unapplied))} not created yet, so not "
+            f'expected here; `make apply SERVICES="{names}"` creates them, with DEV=1 '
+            "on a `make dev` stack"
+        )
+    expected = _otel_expected_services(services=services, unapplied=unapplied)
     if not (expected):
         _print(
             msg="      note: this profile runs no service that pushes its own metrics"
@@ -1780,12 +1814,6 @@ def _skip_retired(*, base: str, status: int, what: str) -> bool:
     return True
 
 
-def _wizard_rotated_admin_password(*, base: str) -> bool:
-    """True when the engine's setup-status says the wizard already rotated the break-glass password."""
-    initial = _setup_status(base=base).get("initial_setup") or {}
-    return "admin_password" in (initial.get("completed_steps") or [])
-
-
 def _verify_ui_query(*, database: str, marker: str, table: str) -> Claim:
     """Prove the console's query path returns THIS run's rows.
 
@@ -1807,27 +1835,16 @@ def _verify_ui_query(*, database: str, marker: str, table: str) -> Claim:
     if fault and _skip_retired(base=base, status=status, what="the query path"):
         return SKIPPED
     if status == 0:
-        if _wizard_rotated_admin_password(base=base):
-            _print(
-                msg="SKIP  the setup wizard rotated the break-glass password, so no "
-                "console credential lives in the env -- pass the current one on the "
-                "command line to prove the query path: "
-                "DFE_AUTH_LOCAL_ADMIN_PASSWORD=... python3 scripts/post.py"
-            )
-            return SKIPPED
         _print(msg="FAIL  DFE_AUTH_LOCAL_ADMIN_PASSWORD is unset -- run `make init`")
         return Claim(asserted=True, failed=1)
 
     _print(msg=f"Querying {database}.{table} through the engine API as {username!r}")
     if fault:
-        # An engine seeded before this password was generated holds the old one, and
-        # the setup wizard's last step rotates it: either way retrying cannot help.
+        # An engine seeded before this password was generated holds the old one, so retrying cannot help.
         _print(
             msg=f"FAIL  {fault} -- the console "
             "cannot authenticate, so nobody can read this data through dfe-ui. "
-            "If the setup wizard rotated the break-glass password, pass the current "
-            "one on the command line, where the shell env beats .env (make does not "
-            "pass it through): DFE_AUTH_LOCAL_ADMIN_PASSWORD=... python3 scripts/post.py"
+            f"Set {ADMIN_PASSWORD_KEY} in .env to {username!r}'s current password"
         )
         return Claim(asserted=True, failed=1)
 
@@ -1987,14 +2004,6 @@ def _verify_hunt(*, database: str, ingest_url: str, marker: str, table: str) -> 
     base = _engine_base()
     token, status, _, fault = _login(base)
     if fault and _skip_retired(base=base, status=status, what="the hunt path"):
-        return SKIPPED
-    if status == 0 and _wizard_rotated_admin_password(base=base):
-        _print(
-            msg="SKIP  the setup wizard rotated the break-glass password, so no "
-            "console credential lives in the env -- pass the current one on the "
-            "command line to prove the hunt path: "
-            "DFE_AUTH_LOCAL_ADMIN_PASSWORD=... python3 scripts/post.py"
-        )
         return SKIPPED
     if status == 0:
         _print(

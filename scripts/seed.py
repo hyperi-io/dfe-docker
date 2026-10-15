@@ -16,11 +16,11 @@
 
 """Create one part of the starter set in config/seed on the running stack, or send its fake events.
 
-The hunts target also creates the rules, because the engine refuses a hunt whose rule does not exist. Nothing else is created for a target: a rule or hunt over a source that is not deployed yet is accepted and reads nothing until it is.
+The hunts target also creates the rules, because the engine refuses a hunt whose rule does not exist. Nothing else is created for a target: a rule over a source that is not deployed yet is accepted and reads nothing until it is. A hunt whose table does not exist yet is not created, because the hunt runner fails on every run of it.
 
-Each sources, rules or hunts file is the body the engine's create route takes, named for the object it creates. An object the engine already holds is left as it is, so a re-run creates only what is missing; the one exception is a held source that was never deployed, which is deployed. The sources end with a request for the engine to bring every app in step with them, which retries a deploy whose apps did not follow. A restart the engine asks for is printed, not run: `make apply` on a `make dev` stack needs DEV=1, which this script cannot know.
+Each sources, rules or hunts file is the body the engine's create route takes, named for the object it creates. An object the engine already holds is left as it is, so a re-run creates only what is missing; the one exception is a held source that was never deployed, which is deployed. A source polled by dfe-fetcher is skipped on a profile that runs no dfe-fetcher. The sources end with a request for the engine to bring every app in step with them, which retries a deploy whose apps did not follow. A restart the engine asks for is printed, not run: `make apply` on a `make dev` stack needs DEV=1, which this script cannot know.
 
-Each events file is a list of records for the source it is named for. They go to dfe-receiver, which routes them by `_source` over whichever transport the stack runs, and the run waits until the source's table holds them. Every run sends them again, and needs no login.
+Each events file is a list of records for the source it is named for. They go to dfe-receiver, which routes them by `_source` over whichever transport the stack runs, and the run waits until the source's table holds them. Events for a source the profile cannot run are skipped. Every run sends them again, and needs no login.
 
 The other targets log in as the bootstrap admin with the password in .env. Once the engine has retired that admin, they ask at the terminal for an account that can write sources, rules and hunts, and keep that login only for the run.
 
@@ -43,10 +43,16 @@ from pathlib import Path
 from urllib.parse import quote
 
 import yaml
-
-from _common import REPO_ROOT, _load_dotenv, _print, _profile_mk_value
-from _pipeline import ch_int, http_post
+from _common import (
+    REPO_ROOT,
+    _load_dotenv,
+    _print,
+    _profile_mk_value,
+    _resolved_services,
+)
+from _pipeline import ch_int, escape_literal, http_post
 from post import (
+    ADMIN_PASSWORD_KEY,
     APP_CONFIG_DIR_KEY,
     TARGET_DB,
     ApiUnreachable,
@@ -79,6 +85,8 @@ DEPLOY_TIMEOUT_SECONDS = 90
 EVENTS = "events"
 # Every engine call the seeder makes can fail in one of these ways without the engine answering.
 ENGINE_FAULTS = (ApiUnreachable, OSError, subprocess.TimeoutExpired)
+# The app that polls a source carrying a `fetcher` stanza, one instance per source.
+FETCHER_SERVICE = "dfe-fetcher"
 KINDS = {
     "hunts": Kind(key="name", noun="hunt", route="/hunts"),
     "rules": Kind(key="name", noun="rule", route="/rules"),
@@ -89,6 +97,10 @@ LANDING_TIMEOUT_SECONDS = 60.0
 SEED_DIR = REPO_ROOT / "config" / "seed"
 # The engine's rule for a source name, which also keeps an events file's name safe to quote into SQL.
 SOURCE_NAME = re.compile(r"[a-z]([a-z0-9-]*[a-z0-9])?")
+# A hunt's `global_source_table_name`, the `<database>.<source>` table a source's deploy creates.
+HUNT_TABLE = re.compile(
+    rf"(?P<database>[A-Za-z_][A-Za-z0-9_]*)\.(?P<table>{SOURCE_NAME.pattern})"
+)
 # What each target seeds, in order; the engine refuses a hunt whose rule does not exist.
 TARGETS = {
     EVENTS: (EVENTS,),
@@ -181,6 +193,11 @@ def _ensure(*, base: str, body: dict, kind: str, name: str, token: str) -> None:
     action = _action(status=status)
     if action == "fault":
         raise SeedError(f"GET {path!r} returned HTTP {status}: {answer}")
+    if action == "create" and kind == "hunts":
+        missing = _missing_table(body=body)
+        if missing:
+            _print(msg=f"SKIP {KINDS[kind].noun} {name!r}: {missing}")
+            return
     if action == "create":
         _create(base=base, body=body, kind=kind, name=name, token=token)
         return
@@ -202,6 +219,28 @@ def _events(*, directory: Path) -> list[tuple[str, list[dict]]]:
             raise SeedError(f"{path.name!r} must hold a list of records")
         events.append((path.stem, records))
     return events
+
+
+def _hunt_table(*, body: dict) -> tuple[str, str]:
+    """The database and table one hunt reads."""
+    value = body.get("global_source_table_name")
+    found = HUNT_TABLE.fullmatch(string=value) if isinstance(value, str) else None
+    if not (found):
+        raise SeedError(
+            f"global_source_table_name {value!r} is not a <database>.<source> table"
+        )
+    return found["database"], found["table"]
+
+
+def _missing_table(*, body: dict) -> str:
+    """Why one hunt is not created yet because its table is missing, or an empty string when the table exists."""
+    database, table = _hunt_table(body=body)
+    if _table_exists(database=database, table=table):
+        return ""
+    return (
+        f"{f'{database}.{table}'!r} does not exist, so the hunt runner would fail on "
+        f"every run of it; `make sources` creates it on a profile that runs its source"
+    )
 
 
 def _objects(*, directory: Path, key: str) -> list[tuple[str, dict]]:
@@ -230,9 +269,9 @@ def _print_hints(*, answer: object) -> None:
         _print(msg=f"  {hint}")
 
 
-def _prompted_token(*, base: str) -> str:
+def _prompted_token(*, base: str, terminal: bool) -> str:
     """Log in as the account the person at the terminal names, on a stack whose bootstrap admin is retired."""
-    if not (sys.stdin.isatty()):
+    if not (terminal):
         raise SeedError(
             "the bootstrap admin is retired and there is no terminal to ask for "
             "another login on, so run this from a terminal"
@@ -250,7 +289,13 @@ def _prompted_token(*, base: str) -> str:
         base=base, password=password, username=username
     )
     if (status != 200) or not (token):
-        raise SeedError(f"login as {username!r} returned HTTP {status}")
+        raise SeedError(
+            _refusal(
+                fault=f"login as {username!r} returned HTTP {status}",
+                prompted=True,
+                status=status,
+            )
+        )
     if change_required:
         raise SeedError(
             f"{username!r} is still on the password it was issued; change it in the "
@@ -293,18 +338,42 @@ def _reconcile(*, base: str, token: str) -> None:
     _print_hints(answer=answer)
 
 
+def _refusal(*, fault: str, prompted: bool, status: int) -> str:
+    """A refused login's fault, with the account to use instead where this end can fix it."""
+    if prompted and status == 401:
+        step = "log in as an account that can write sources, rules and hunts, with its current password"
+    elif prompted:
+        step = ""
+    elif status == 0:
+        step = f"set {ADMIN_PASSWORD_KEY} in .env, which `make init` generates"
+    elif status == 401:
+        step = f"{ADMIN_PASSWORD_KEY} in .env is not the bootstrap admin's current password, so set it to that and run this again"
+    else:
+        step = ""
+    return f"{fault}; {step}" if step else fault
+
+
 def _row_count(*, source: str) -> int | None:
     """The rows in one source's table, or None when the table cannot be read."""
     return ch_int(sql=f"SELECT count() FROM {TARGET_DB}.`{source}`")
 
 
 def _seed_kind(
-    *, base: str, kind: str, objects: list[tuple[str, dict]], token: str
+    *,
+    base: str,
+    kind: str,
+    objects: list[tuple[str, dict]],
+    services: list[str],
+    token: str,
 ) -> int:
-    """Create every object of one kind the engine lacks, and return how many failed."""
+    """Create every object of one kind the engine lacks and this stack can run, and return how many failed."""
     failed = 0
     for name, body in objects:
         try:
+            reason = _skip_reason(body=body, kind=kind, services=services)
+            if reason:
+                _print(msg=f"SKIP {KINDS[kind].noun} {name!r}: {reason}")
+                continue
             _ensure(base=base, body=body, kind=kind, name=name, token=token)
         except (*ENGINE_FAULTS, SeedError) as error:
             _print(msg=f"FAIL {KINDS[kind].noun} {name!r}: {error}")
@@ -344,10 +413,21 @@ def _send(*, records: list[dict], source: str) -> None:
     _print(msg=f"sent {len(records)} event(s) to {TARGET_DB}.{source}")
 
 
-def _send_events(*, events: list[tuple[str, list[dict]]]) -> int:
-    """Send every events file's records, and return 1 at the first that cannot be sent or seen to land."""
+def _send_events(
+    *,
+    events: list[tuple[str, list[dict]]],
+    services: list[str],
+    sources: dict[str, dict],
+) -> int:
+    """Send every events file's records whose source this stack can run, and return 1 at the first that cannot be sent or seen to land."""
     try:
         for source, records in events:
+            reason = _skip_reason(
+                body=sources.get(source, {}), kind="sources", services=services
+            )
+            if reason:
+                _print(msg=f"SKIP events for source {source!r}: {reason}")
+                continue
             _send(records=records, source=source)
     except (
         http.client.HTTPException,
@@ -361,6 +441,27 @@ def _send_events(*, events: list[tuple[str, list[dict]]]) -> int:
     return 0
 
 
+def _skip_reason(*, body: dict, kind: str, services: list[str]) -> str:
+    """Why this profile cannot run one object, or an empty string when it can."""
+    if kind == "sources" and body.get("fetcher") and FETCHER_SERVICE not in services:
+        return f"this profile runs no {FETCHER_SERVICE} to poll it"
+    return ""
+
+
+def _table_exists(*, database: str, table: str) -> bool:
+    """Whether ClickHouse holds one table."""
+    count = ch_int(
+        sql=f"SELECT count() FROM system.tables WHERE database = "
+        f"'{escape_literal(value=database)}' AND name = '{escape_literal(value=table)}'"
+    )
+    if count is None:
+        raise SeedError(
+            f"ClickHouse cannot be read, so whether {f'{database}.{table}'!r} "
+            f"exists is unknown"
+        )
+    return count > 0
+
+
 def _tagged(*, record: dict, source: str) -> str:
     """The JSON body for one record, labelled with the source the receiver routes it to."""
     return json.dumps(obj={**record, "_source": source})
@@ -369,10 +470,12 @@ def _tagged(*, record: dict, source: str) -> str:
 def _token(*, base: str) -> str:
     """A token for the seed writes: the bootstrap admin's, or once it is retired, one for an account named at the terminal."""
     if _admin_retired(base=base):
-        return _prompted_token(base=base)
+        return _prompted_token(base=base, terminal=sys.stdin.isatty())
     login = _login(base=base)
     if login.fault:
-        raise SeedError(login.fault)
+        raise SeedError(
+            _refusal(fault=login.fault, prompted=False, status=login.status)
+        )
     return login.token
 
 
@@ -387,14 +490,22 @@ def main() -> int:
     )
     kinds = TARGETS[parser.parse_args().target]
     _load_dotenv()
+    services = _resolved_services()
+    if not (services):
+        _print(
+            msg="FAIL the profile is not resolved, so which services run is unknown; "
+            "run this through make, which writes .profile.mk"
+        )
+        return 1
 
     if EVENTS in kinds:
         try:
             events = _events(directory=SEED_DIR / EVENTS)
+            sources = _objects(directory=SEED_DIR / "sources", key=KINDS["sources"].key)
         except SeedError as error:
             _print(msg=f"FAIL {error}")
             return 1
-        return _send_events(events=events)
+        return _send_events(events=events, services=services, sources=dict(sources))
 
     try:
         objects = {
@@ -414,7 +525,13 @@ def main() -> int:
 
     # A hunt is refused while its rule is missing, so the run stops after the first kind that failed.
     for kind, kind_objects in objects.items():
-        if _seed_kind(base=base, kind=kind, objects=kind_objects, token=token):
+        if _seed_kind(
+            base=base,
+            kind=kind,
+            objects=kind_objects,
+            services=services,
+            token=token,
+        ):
             return 1
     return 0
 
