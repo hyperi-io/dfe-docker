@@ -31,7 +31,7 @@ import pytest
 
 import instances
 import resolve_profile
-from _common import COMPOSE_LOCAL_FILE, _required_compose_vars
+from _common import COMPOSE_LOCAL_FILE, PROFILE_MK, _required_compose_vars
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 
@@ -94,7 +94,7 @@ def _hyperdx(url: str) -> dict[str, str]:
 
 
 def _exports(*, path: Path) -> dict[str, str]:
-    """Return the make exports one .profile.mk carries."""
+    """Return the make exports one .tmp/profile.mk carries."""
     values: dict[str, str] = {}
     for line in path.read_text(encoding="utf-8").splitlines():
         name, _, value = line.partition(":=")
@@ -139,11 +139,13 @@ def _links(
     **environment: str,
 ) -> list[dict[str, str]]:
     """Return the admin links resolve_profile writes for one profile."""
-    written = tmp_path / ".profile.mk"
+    written = tmp_path / ".tmp" / "profile.mk"
     monkeypatch.setattr(resolve_profile, "PROFILE_MK", written)
     # A tier the engine renders nothing for removes the instances fragment.
     monkeypatch.setattr(
-        instances, "COMPOSE_INSTANCES_FILE", tmp_path / "docker-compose.instances.yml"
+        instances,
+        "COMPOSE_INSTANCES_FILE",
+        tmp_path / ".tmp" / "docker-compose.instances.yml",
     )
     # Set before deleting, so teardown also removes what .env loads during the run.
     for key in _RESOLUTION_KEYS:
@@ -364,7 +366,7 @@ _PLACEHOLDER = "0.0.0-admin-links-test"
 _FOREIGN_PREFIXES = ("DFE_", "KAFBAT_", "KAFKA_", "HYPERDX_", "CLICKHOUSE_", "COMPOSE_")
 _MAKE_STATE = ("MAKEFLAGS", "MAKELEVEL", "MFLAGS")
 # Written by a make run, so never copied from the checkout into the scratch one.
-_GENERATED = {instances.COMPOSE_INSTANCES_FILE.name, COMPOSE_LOCAL_FILE.name}
+_GENERATED = {COMPOSE_LOCAL_FILE.name}
 
 
 def _compose_renders() -> bool:
@@ -402,7 +404,7 @@ def checkout(tmp_path: Path) -> Path:
 
 
 def _through_make(*, cwd: Path, **settings: str) -> tuple[str, str]:
-    """Return (the .profile.mk value, the engine's DFE_ADMIN_LINKS) for one make run."""
+    """Return (the .tmp/profile.mk value, the engine's DFE_ADMIN_LINKS) for one make run."""
     environment = {
         key: value
         for key, value in os.environ.items()
@@ -424,7 +426,8 @@ def _through_make(*, cwd: Path, **settings: str) -> tuple[str, str]:
     )
     assert result.returncode == 0, result.stderr
     engine = json.loads(result.stdout)["services"]["dfe-engine"]["environment"]
-    resolved = _exports(path=cwd / ".profile.mk")[resolve_profile.ADMIN_LINKS_VAR]
+    written = cwd / PROFILE_MK.relative_to(REPO_ROOT)
+    resolved = _exports(path=written)[resolve_profile.ADMIN_LINKS_VAR]
     return resolved, engine["DFE_ADMIN_LINKS"]
 
 

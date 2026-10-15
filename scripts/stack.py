@@ -58,7 +58,10 @@ import sys
 import tempfile
 from pathlib import Path
 
-from _common import (
+# Bytecode for the repo modules imported below goes to .tmp/pycache, as it does under make.
+sys.pycache_prefix = str(Path(__file__).resolve().parent.parent / ".tmp" / "pycache")
+
+from _common import (  # noqa: E402
     COMPOSE_FILE,
     DOTENV_FILE,
     DOTENV_MODE,
@@ -68,7 +71,7 @@ from _common import (
     _rel_path,
     write_private,
 )
-from _registry import (
+from _registry import (  # noqa: E402
     DISCOVERY_WORDS,
     RegistryError,
     latest_release,
@@ -81,7 +84,7 @@ from _registry import (
 # the only place that mints the generated secrets. A plain copy here would produce
 # a .env whose secrets are still the sentinel placeholders, which starts but fails
 # `make post`.
-from init import _create_dotenv
+from init import _create_dotenv  # noqa: E402
 
 # A rendered pin line: KEY=value[  # annotation]. Keys are UPPER_SNAKE ending in
 # _VERSION; only such active (non-comment) lines from the fragment are merged.

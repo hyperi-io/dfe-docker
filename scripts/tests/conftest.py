@@ -34,6 +34,9 @@ SCRIPTS_DIR = Path(__file__).resolve().parent.parent
 if str(SCRIPTS_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPTS_DIR))
 
+# Bytecode for the scripts and tests imported from here on goes to .tmp/pycache, as it does under make.
+sys.pycache_prefix = str(SCRIPTS_DIR.parent / ".tmp" / "pycache")
+
 import _common  # noqa: E402
 import check_compose  # noqa: E402
 import creds  # noqa: E402
@@ -97,9 +100,12 @@ def generated_files_stay_in_tmp(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """Point the files `make` generates at tmp_path, so no test rewrites the checkout's copies."""
-    monkeypatch.setattr(resolve_profile, "PROFILE_MK", tmp_path / ".profile.mk")
+    # Under a .tmp/ that does not exist yet, as after an operator deletes it, so every writer is held to creating it.
+    monkeypatch.setattr(resolve_profile, "PROFILE_MK", tmp_path / ".tmp" / "profile.mk")
     monkeypatch.setattr(
-        instances, "COMPOSE_INSTANCES_FILE", tmp_path / "docker-compose.instances.yml"
+        instances,
+        "COMPOSE_INSTANCES_FILE",
+        tmp_path / ".tmp" / "docker-compose.instances.yml",
     )
 
 

@@ -35,7 +35,10 @@ import sys
 import tempfile
 from pathlib import Path
 
-from _common import RUST_BUILDER, _load_dotenv, _print
+# Bytecode for the repo modules imported below goes to .tmp/pycache, as it does under make.
+sys.pycache_prefix = str(Path(__file__).resolve().parent.parent / ".tmp" / "pycache")
+
+from _common import RUST_BUILDER, _load_dotenv, _print  # noqa: E402
 
 IMAGE_TAG = "local"
 # Compose services that run a component's image under another name; a local

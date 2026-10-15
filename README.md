@@ -308,7 +308,7 @@ dfe-docker stands the whole DFE suite up as one Docker Compose stack on a single
 | `docker-compose.{live,storage,container-logs,unpublish-*}.yml` | Opt-in overlays the Makefile chains onto `COMPOSE_FILE` |
 | `service_profiles.yaml` | Which DFE services start, the transport, and the config each one mounts. Ships `active_profile: slim` |
 | `Makefile` | Every entry point, plus the profile, overlay and UI-exposure resolution that decides which compose files a target passes |
-| `scripts/resolve_profile.py` | Reads `service_profiles.yaml` and writes the generated `.profile.mk` the Makefile includes |
+| `scripts/resolve_profile.py` | Reads `service_profiles.yaml` and writes the generated `.tmp/profile.mk` the Makefile includes |
 | `scripts/stack.py` | `make stack` - writes `tag@sha256` pins into `.env` from a local dfe-infra checkout (`DFE_INFRA_DIR`) or the signed OCI stack manifest |
 | `scripts/post.py` | The power-on self test `make dev` and `make ci` end with |
 | `scripts/test_e2e.py` + `tests/e2e/e2e-tests.yaml` | The declarative e2e suite, one stack per test |

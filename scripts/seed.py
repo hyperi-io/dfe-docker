@@ -43,15 +43,19 @@ from pathlib import Path
 from urllib.parse import quote
 
 import yaml
-from _common import (
+
+# Bytecode for the repo modules imported below goes to .tmp/pycache, as it does under make.
+sys.pycache_prefix = str(Path(__file__).resolve().parent.parent / ".tmp" / "pycache")
+
+from _common import (  # noqa: E402
     REPO_ROOT,
     _load_dotenv,
     _print,
     _profile_mk_value,
     _resolved_services,
 )
-from _pipeline import ch_int, escape_literal, http_post
-from post import (
+from _pipeline import ch_int, escape_literal, http_post  # noqa: E402
+from post import (  # noqa: E402
     ADMIN_PASSWORD_KEY,
     APP_CONFIG_DIR_KEY,
     TARGET_DB,
@@ -494,7 +498,7 @@ def main() -> int:
     if not (services):
         _print(
             msg="FAIL the profile is not resolved, so which services run is unknown; "
-            "run this through make, which writes .profile.mk"
+            "run this through make, which writes .tmp/profile.mk"
         )
         return 1
 

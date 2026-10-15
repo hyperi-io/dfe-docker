@@ -145,7 +145,7 @@ def test_a_compose_file_that_is_gone_is_left_out_and_named() -> None:
 # A deleted source's transform and the receiver, both created while the
 # instances fragment declared that transform. Deleting the source empties the
 # engine's index, and the next profile resolution removes the fragment.
-_INSTANCES = "/opt/dfe/docker-compose.instances.yml"
+_INSTANCES = "/opt/dfe/.tmp/docker-compose.instances.yml"
 _WITH_INSTANCES = f"/opt/dfe/docker-compose.yml,{_INSTANCES}"
 _ORPHAN = "dfe-transform-vrl-fb0c4e9a17"
 _WITHOUT_INSTANCES = {"services": {"dfe-receiver": {"profiles": ["dfe"]}}}

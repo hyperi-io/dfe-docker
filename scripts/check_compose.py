@@ -109,10 +109,13 @@ import tempfile
 from collections.abc import Callable
 from pathlib import Path
 
-import _envoy
-import instances
-import proxy_tls
-from _common import (
+# Bytecode for the repo modules imported below goes to .tmp/pycache, as it does under make.
+sys.pycache_prefix = str(Path(__file__).resolve().parent.parent / ".tmp" / "pycache")
+
+import _envoy  # noqa: E402
+import instances  # noqa: E402
+import proxy_tls  # noqa: E402
+from _common import (  # noqa: E402
     COMPOSE_FILE,
     COMPOSE_LIVE_FILE,
     COMPOSE_LIVE_UI_FILE,
@@ -134,14 +137,14 @@ from _common import (
     _required_compose_vars,
     _transform_topics,
 )
-from build_dev_images import (
+from build_dev_images import (  # noqa: E402
     IMPLICIT_CONSUMERS,
     buildable_components,
     local_image_services,
     overlay_text,
 )
-from init import _render_secrets
-from resolve_profile import _parse_yaml
+from init import _render_secrets  # noqa: E402
+from resolve_profile import _parse_yaml  # noqa: E402
 
 # The overlay `make dev LOCAL=...` generates, rendered for dfe-engine because it
 # is the component with IMAGE_CONSUMERS followers. Written under .tmp so compose
@@ -261,8 +264,7 @@ _CHAIN_FRAGMENT_RE = re.compile(r"chain_fragment,([^),]+)\)")
 # checkout every check-* target must run on.
 _COMPOSE_FILE_GOAL = "print-compose-file"
 _COMPOSE_FILE_PREFIX = "COMPOSE_FILE="
-# The dials that gate a fragment, set so every one chains. Two come from
-# .profile.mk, where only a make command-line variable beats the include.
+# The dials that gate a fragment, set so every one chains. The three `_RESOLVED` ones come from .tmp/profile.mk, where only a make command-line variable beats the include.
 _FRAGMENT_DIALS = {
     "DFE_AUTH_RESOLVED": "true",
     "DFE_INSTANCES_RESOLVED": "true",

@@ -8,12 +8,7 @@
 
 """The command lines `make apply` and the start goals print, in a copy of the Makefile.
 
-These goals include .profile.mk, which scripts/resolve_profile.py writes from the
-real profiles and the engine's instance index. A stand-in resolver writes a fixed
-one instead, so what is asserted is the Makefile's own wiring: apply removes the
-instance containers the fragment no longer declares before it recreates anything,
-against the same compose project, and a start goal on a checkout with no .env has
-it minted before its first compose call.
+These goals include .tmp/profile.mk, which scripts/resolve_profile.py writes from the real profiles and the engine's instance index. A stand-in resolver writes a fixed one instead, so what is asserted is the Makefile's own wiring: apply removes the instance containers the fragment no longer declares before it recreates anything, against the same compose project, and a start goal on a checkout with no .env has it minted before its first compose call.
 """
 
 import os
@@ -31,7 +26,7 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 _RESOLVER = '''\
 from pathlib import Path
 
-target = Path(".profile.mk")
+target = Path(".tmp/profile.mk")
 content = """\\
 export PROFILE_FLAGS := --profile clickhouse
 export DFE_SERVICES := dfe-loader dfe-transform-vrl-cisco-ios
@@ -40,6 +35,7 @@ export DFE_AUTH_RESOLVED := false
 export DFE_OTEL_RESOLVED := false
 """
 if not target.is_file() or target.read_text(encoding="utf-8") != content:
+    target.parent.mkdir(exist_ok=True, parents=True)
     target.write_text(content, encoding="utf-8")
 '''
 
@@ -142,7 +138,8 @@ def test_a_bare_apply_prunes_against_the_profile_it_re_resolves(
     checkout: Path,
 ) -> None:
     # Written before the engine declared any instance, so it chains no fragment.
-    (checkout / ".profile.mk").write_text(
+    (checkout / ".tmp").mkdir()
+    (checkout / ".tmp" / "profile.mk").write_text(
         "export PROFILE_FLAGS := --profile clickhouse\n"
         "export DFE_SERVICES := dfe-loader\n"
         "export DFE_INSTANCES_RESOLVED := false\n",
@@ -153,7 +150,7 @@ def test_a_bare_apply_prunes_against_the_profile_it_re_resolves(
     lines = _dry_run(cwd=checkout, args=["apply"])
 
     prune = lines[_index(lines, starts=["python3", *_PRUNE.split()])]
-    assert "docker-compose.instances.yml" in prune
+    assert ".tmp/docker-compose.instances.yml" in prune
 
 
 def test_ps_checks_for_deleted_sources_against_the_project_apply_prunes(

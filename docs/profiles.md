@@ -49,11 +49,7 @@ it no work: they are Ready,
 serve health and metrics, open no broker connection and hold `pipeline_idle` at
 1. `make post` asserts that on every start.
 
-**One per source, as on Kubernetes.** The fetcher and the transforms run one
-instance per source. dfe-engine writes each source's config into its own
-directory and its name into `env/<app>.instances`, and `scripts/instances.py`
-turns each name into a service in `docker-compose.instances.yml`, which
-`make apply` starts.
+**One per source, as on Kubernetes.** The fetcher and the transforms run one instance per source. dfe-engine writes each source's config into its own directory and its name into `env/<app>.instances`, and `scripts/instances.py` turns each name into a service in `.tmp/docker-compose.instances.yml`, which `make apply` starts.
 
 ## Why the two tiers are projected
 

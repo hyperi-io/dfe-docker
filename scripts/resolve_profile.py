@@ -9,7 +9,7 @@
 
 """Resolve DFE service profile from service_profiles.yaml.
 
-Reads service_profiles.yaml, resolves the active profile (overridable via DFE_PROFILE env var), validates config paths exist and writes to the .profile.mk file.
+Reads service_profiles.yaml, resolves the active profile (overridable via DFE_PROFILE env var), validates config paths exist and writes to the .tmp/profile.mk file.
 For kafka transport, KAFKA_BACKEND selects the backend (defaults to redpanda).
 
 A profile declares its whole FOOTPRINT, not just the data plane. The optional
@@ -38,8 +38,11 @@ from collections.abc import Collection, Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 
-import instances
-from _common import (
+# Bytecode for the repo modules imported below goes to .tmp/pycache, as it does under make.
+sys.pycache_prefix = str(Path(__file__).resolve().parent.parent / ".tmp" / "pycache")
+
+import instances  # noqa: E402
+from _common import (  # noqa: E402
     CONFIG_DIR,
     EXTERNAL_ORIGIN_KEY,
     FALSY,
@@ -52,7 +55,7 @@ from _common import (
     _print,
     _rel_path,
 )
-from build_dev_images import buildable_components
+from build_dev_images import buildable_components  # noqa: E402
 
 AUTH_ENABLED_ENV_VAR = "DFE_AUTH_ENABLED"
 # One proxy per infra-UI ORIGIN, not per UI: oauth2-proxy serves a single
@@ -520,7 +523,7 @@ def _admin_links(
 
 def _parse_args(argv: Sequence[str]) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Resolve the active service profile into .profile.mk."
+        description="Resolve the active service profile into .tmp/profile.mk."
     )
     parser.add_argument(
         "--unpublished",
@@ -571,7 +574,7 @@ def main(argv: Sequence[str] = ()) -> int:
                 profiles.append("kafka-ui")
                 kafka_ui_enabled = True
 
-        # Write to .profile.mk ($(shell) collapses newlines)
+        # Write to .tmp/profile.mk ($(shell) collapses newlines)
         lines = []
         profile_flags = " ".join(f"--profile {profile}" for profile in profiles)
         lines.append(f"export PROFILE_FLAGS := {profile_flags}")
@@ -761,6 +764,7 @@ def main(argv: Sequence[str] = ()) -> int:
             not (PROFILE_MK.exists())
             or PROFILE_MK.read_text(encoding="utf-8") != new_content
         ):
+            PROFILE_MK.parent.mkdir(exist_ok=True, parents=True)
             PROFILE_MK.write_text(new_content, encoding="utf-8")
     except _ProfileError as error:
         PROFILE_MK.unlink(missing_ok=True)

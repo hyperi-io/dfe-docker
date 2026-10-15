@@ -41,7 +41,10 @@ import subprocess
 import sys
 from pathlib import Path
 
-from _common import (
+# Bytecode for the repo modules imported below goes to .tmp/pycache, as it does under make.
+sys.pycache_prefix = str(Path(__file__).resolve().parent.parent / ".tmp" / "pycache")
+
+from _common import (  # noqa: E402
     COMPOSE_FILE,
     CUSTOM_ENV_SUFFIX,
     ENV_DIR,
@@ -51,7 +54,7 @@ from _common import (
     _rel_path,
 )
 
-COMPOSE_INSTANCES_FILE = REPO_ROOT / "docker-compose.instances.yml"
+COMPOSE_INSTANCES_FILE = REPO_ROOT / ".tmp" / "docker-compose.instances.yml"
 
 INDEX_SUFFIX = ".instances"
 """What dfe-engine names its index (appmgmt/appconfig.py INSTANCE_INDEX_SUFFIX)."""
@@ -225,6 +228,7 @@ def write(instances: dict[str, list[str]], *, path: Path | None = None) -> bool:
         return False
     content = fragment(instances, compose_file=COMPOSE_FILE.name)
     if not target.is_file() or target.read_text(encoding="utf-8") != content:
+        target.parent.mkdir(exist_ok=True, parents=True)
         target.write_text(content, encoding="utf-8", newline="\n")
     return True
 

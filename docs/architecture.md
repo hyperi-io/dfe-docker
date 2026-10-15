@@ -223,9 +223,7 @@ Every Push listener in the suite answers on 6000, and dfe-engine compiles each s
 
 ## Two independent selectors decide what runs
 
-Compose profiles select INFRASTRUCTURE. `service_profiles.yaml` selects DFE
-SERVICES. `scripts/resolve_profile.py` reads the second and derives the first,
-writing `.profile.mk` for the Makefile.
+Compose profiles select INFRASTRUCTURE. `service_profiles.yaml` selects DFE SERVICES. `scripts/resolve_profile.py` reads the second and derives the first, writing `.tmp/profile.mk` for the Makefile.
 
 ```mermaid
 flowchart TD
@@ -234,7 +232,7 @@ flowchart TD
 
     sp["service_profiles.yaml - active_profile, DFE_PROFILE overrides"]:::cfg
     resolve["scripts/resolve_profile.py"]:::cfg
-    mk[".profile.mk - PROFILE_FLAGS, DFE_SERVICES, config paths"]:::out
+    mk[".tmp/profile.mk - PROFILE_FLAGS, DFE_SERVICES, config paths"]:::out
     make["make dev / make ci"]:::out
 
     sp --> resolve

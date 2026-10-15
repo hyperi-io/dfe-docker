@@ -59,16 +59,19 @@ from urllib.error import HTTPError, URLError
 from urllib.parse import quote
 from urllib.request import Request, urlopen
 
-import _console_tls
-import _detection
-import _outage
-import _search_rule
-import _stack_state
-import post
-from _common import FALSY, _config_argument, _load_dotenv, _use_mounted_configs
-from _pipeline import MARKER_EXPRESSIONS  # noqa: F401 - re-exported for callers
-from _pipeline import ch_marker_count as _ch_marker_count
-from _pipeline import (
+# Bytecode for the repo modules imported below goes to .tmp/pycache, as it does under make.
+sys.pycache_prefix = str(Path(__file__).resolve().parent.parent / ".tmp" / "pycache")
+
+import _console_tls  # noqa: E402
+import _detection  # noqa: E402
+import _outage  # noqa: E402
+import _search_rule  # noqa: E402
+import _stack_state  # noqa: E402
+import post  # noqa: E402
+from _common import FALSY, _config_argument, _load_dotenv, _use_mounted_configs  # noqa: E402
+from _pipeline import MARKER_EXPRESSIONS  # noqa: E402, F401 - re-exported for callers
+from _pipeline import ch_marker_count as _ch_marker_count  # noqa: E402
+from _pipeline import (  # noqa: E402
     ch_int,
     clickhouse_url,
     env_or,
@@ -90,7 +93,7 @@ from _pipeline import (
 # ------------------------------------------------------------------------------
 PROJECT_DIR = Path(__file__).resolve().parent.parent
 RUN_ID = f"e2e-{datetime.now(timezone.utc).strftime('%Y%m%d%H%M%S')}"
-TMP_DIR = PROJECT_DIR / ".tmp"
+TMP_DIR = PROJECT_DIR / ".tmp" / "e2e" / RUN_ID
 
 # ------------------------------------------------------------------------------
 # Config Related
@@ -3613,14 +3616,9 @@ def run_suite(ctx, mode, tests, persistent_services):
 # - Removes any temporary files and databases created during the test run
 # ------------------------------------------------------------------------------
 def cleanup(clickhouse_config):
+    # Only this run's directory: the rest of `.tmp/` holds other tools' caches.
     if TMP_DIR.exists():
-        for path in TMP_DIR.iterdir():
-            # rmtree for directories: `.tmp/` is shared, and a cached Vector
-            # binary lives in `.tmp/vector/`. A bare unlink() raises
-            # IsADirectoryError here, which runs AFTER every test and would
-            # destroy the results summary and exit code of a complete run.
-            rmtree(path) if path.is_dir() else path.unlink()
-        TMP_DIR.rmdir()
+        rmtree(TMP_DIR)
     if clickhouse_config.get("drop_database", False):
         ch_query(f"DROP DATABASE IF EXISTS {RUN_ID.replace('-', '_')}")
 

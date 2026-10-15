@@ -278,10 +278,7 @@ not on a fresh stack.
 `make dev SERVICES="..."` no longer starts a subset on top of a running stack:
 `dev` depends on `down`, which now tears down every profile first.
 
-A name in `SERVICES` that is not part of the resolved stack is a hard error, not a
-silent no-op. Adding a config to a profile that does not exist on disk is caught
-too -- `resolve_profile.py` validates every `config_path` before writing
-`.profile.mk`.
+A name in `SERVICES` that is not part of the resolved stack is a hard error, not a silent no-op. Adding a config to a profile that does not exist on disk is caught too -- `resolve_profile.py` validates every `config_path` before writing `.tmp/profile.mk`.
 
 ## Seeding a starter set
 

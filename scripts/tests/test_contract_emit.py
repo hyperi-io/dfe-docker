@@ -75,7 +75,7 @@ def _resolved(
     profile: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> dict[str, str]:
     """Run the resolver for one profile and read back the assignments it wrote."""
-    written = tmp_path / ".profile.mk"
+    written = tmp_path / ".tmp" / "profile.mk"
     monkeypatch.setattr(resolve_profile, "PROFILE_MK", written)
     monkeypatch.setattr(resolve_profile, "_load_dotenv", lambda: None)
     monkeypatch.delenv(resolve_profile.ENGINE_CONTENT_DIR_VAR, raising=False)
