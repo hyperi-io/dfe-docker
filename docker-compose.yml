@@ -169,7 +169,6 @@ services:
       DFE_KEEPER_IDENTITY: dfe:${CLICKHOUSE_KEEPER_PASSWORD:?run 'make init' to mint CLICKHOUSE_KEEPER_PASSWORD}
     volumes:
       - clickhouse-data:/var/lib/clickhouse
-      - ./clickhouse/default-user.xml:/etc/clickhouse-server/users.d/default-custom.xml:ro
       # Server config, not users config: access_control_improvements is only read
       # from config.d.
       - ./clickhouse/server-custom.xml:/etc/clickhouse-server/config.d/dfe-custom.xml:ro
