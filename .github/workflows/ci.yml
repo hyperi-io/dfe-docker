@@ -108,12 +108,15 @@ jobs:
         run: make check-python RUFF=ruff
 
       # The credential helpers rewrite .env and decide whether a minted password
-      # reaches stdout, so they carry unit tests. Stdlib only, on a tmp_path .env:
+      # reaches stdout, so they carry unit tests. They run on a tmp_path .env:
       # nothing here starts a stack or touches the runner's own files.
       # pipx builds each venv on its own interpreter unless told otherwise, and
       # pytest runs the tests on whatever its venv holds.
+      # PyYAML is injected for the seed tests, which parse config/seed.
       - name: Install pytest
-        run: pipx install --python "${{ steps.python.outputs.python-path }}" "pytest==$(make -s print-pytest-version)"
+        run: |
+          pipx install --python "${{ steps.python.outputs.python-path }}" "pytest==$(make -s print-pytest-version)"
+          pipx inject pytest "pyyaml==$(make -s print-pyyaml-version)"
 
       - name: Tests
         run: make check-tests PYTEST=pytest

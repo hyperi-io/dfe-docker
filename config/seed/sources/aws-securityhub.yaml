@@ -1,0 +1,24 @@
+# Project:   dfe-docker
+# File:      config/seed/sources/aws-securityhub.yaml
+# Purpose:   Starter AWS Security Hub source, polled by its own dfe-fetcher instance
+# Language:  YAML
+#
+# License:   BUSL-1.1
+# Copyright: (c) 2026 HYPERI PTY LIMITED
+
+source: aws-securityhub
+display_name: AWS Security Hub
+fetcher:
+  source_type: aws
+  config:
+    access_key_id: env:AWS_ACCESS_KEY_ID
+    secret_access_key: env:AWS_SECRET_ACCESS_KEY
+    region: us-west-2
+    services:
+      - name: securityhub
+header:
+  type: common-header/timeseries
+  version: 1.0.1
+schema:
+  meta_schema: meta/aws/securityhub
+  meta_schema_version: 1.0.1

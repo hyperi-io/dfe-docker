@@ -64,7 +64,6 @@ import datetime
 import functools
 import json
 import os
-import re
 import stat
 import subprocess
 import sys
@@ -75,6 +74,7 @@ from pathlib import Path
 from urllib.parse import quote
 
 import _detection
+import instances
 from _common import (
     ACCESS_SUMMARY_FILE,
     DOTENV_FILE,
@@ -247,11 +247,8 @@ HYPERDX_NETWORK_BASE = "http://dfe-hyperdx-proxy:8000"
 # the request itself is given.
 API_EXEC_MARGIN_SECONDS = 10
 
-# Where the console password is read from, first match wins, and where a forced
-# change writes the new one back.
-POST_LOGIN_PASSWORD_KEY = "DFE_POST_LOGIN_PASSWORD"
+# Where the console password is read from, and where a forced change writes the new one back.
 ADMIN_PASSWORD_KEY = "DFE_AUTH_LOCAL_ADMIN_PASSWORD"
-PASSWORD_KEYS = (POST_LOGIN_PASSWORD_KEY, ADMIN_PASSWORD_KEY)
 # The owner's own password change, the one call the engine serves an account that
 # is still on the password it was issued.
 CHANGE_PASSWORD_PATH = "/auth/accounts/reset-password"
@@ -300,9 +297,8 @@ IDLE_GAUGE = "pipeline_idle"
 # router in place; nothing here waits on a deploy controller. The window is
 # built from those parts in `_routing_timeout_seconds`.
 ROUTING_SERVICES = ("dfe-engine", "dfe-receiver", "dfe-loader")
-ROUTING_SOURCE_PREFIX = "postroute"
-# The prefix and the last 8 hex digits of a `_run_id`.
-ROUTED_TABLE_NAME = re.compile(rf"{ROUTING_SOURCE_PREFIX}[0-9a-f]{{8}}")
+# One name for every run, so a run that dies before its cleanup leaves at most one set behind, which the next run removes first.
+ROUTING_SOURCE = "postroute"
 RECEIVER_CONFIG_POLL_SECONDS = 5.0
 ROUTING_INTERVAL_SECONDS = 3.0
 # The engine deletes a source's two topics before it answers, each delete allowed
@@ -924,12 +920,12 @@ def _verify_self_monitoring() -> Claim:
     return Claim(asserted=True, failed=failed)
 
 
-def _otel_expected_services() -> list[str]:
-    """The resolved services whose own metrics have to be in the otel database."""
+def _otel_expected_services(*, services: list[str], unapplied: set[str]) -> list[str]:
+    """The services whose own metrics have to be in the otel database, less the instances `make apply` has not created."""
     return sorted(
         service
-        for service in _resolved_services()
-        if service.startswith(OTEL_PUSHER_PREFIXES)
+        for service in services
+        if service.startswith(OTEL_PUSHER_PREFIXES) and service not in unapplied
     )
 
 
@@ -944,13 +940,46 @@ def _otel_reporting_services(*, database: str) -> set[str]:
     return {line.strip() for line in raw.splitlines() if line.strip()}
 
 
+def _unapplied_instances(*, services: list[str]) -> set[str]:
+    """The per-source services among these that this compose project holds no container for, running or stopped."""
+    # An index a profile switch left behind names instances this profile does not run.
+    declared = set(instances.services(instances=instances.declared())) & set(services)
+    if not (declared):
+        return set()
+    # Without the container list none can be shown missing, so every instance stays expected.
+    try:
+        result = subprocess.run(
+            args=["docker", "compose", "ps", "--all", "--format", "{{.Service}}"],
+            capture_output=True,
+            check=False,
+            encoding="utf-8",
+            errors="replace",
+            text=True,
+            timeout=API_EXEC_MARGIN_SECONDS,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return set()
+    if result.returncode != 0:
+        return set()
+    return declared - set(result.stdout.split())
+
+
 def _verify_service_metrics(*, database: str) -> int:
     """Prove every service that pushes is in the otel database under its own name.
 
     Freshness alone passes on one service exporting, and the engine supplies a row
     immediately, so the apps' own export interval was never waited out.
     """
-    expected = _otel_expected_services()
+    services = _resolved_services()
+    unapplied = _unapplied_instances(services=services)
+    if unapplied:
+        names = " ".join(sorted(unapplied))
+        _print(
+            msg=f"      note: {', '.join(sorted(unapplied))} not created yet, so not "
+            f'expected here; `make apply SERVICES="{names}"` creates them, with DEV=1 '
+            "on a `make dev` stack"
+        )
+    expected = _otel_expected_services(services=services, unapplied=unapplied)
     if not (expected):
         _print(
             msg="      note: this profile runs no service that pushes its own metrics"
@@ -1276,7 +1305,9 @@ def _verify_routing_applied(*, database: str) -> Claim:
         return SKIPPED
 
     base = _engine_base()
-    token, _, _, fault = _login(base)
+    token, status, _, fault = _login(base)
+    if fault and _skip_retired(base=base, status=status, what="the routing"):
+        return SKIPPED
     if fault:
         _print(
             msg=f"FAIL  {fault} -- this run cannot create the source it needs to "
@@ -1284,7 +1315,8 @@ def _verify_routing_applied(*, database: str) -> Claim:
         )
         return Claim(asserted=True, failed=1)
 
-    name = f"{ROUTING_SOURCE_PREFIX}{_run_id()[-8:]}"
+    name = ROUTING_SOURCE
+    _remove_routed_source(base=base, database=database, name=name, token=token)
     _print(msg=f"Creating source {name!r} and posting one event that matches its rule")
     fault = _create_routed_source(base=base, name=name, token=token)
     if fault:
@@ -1318,7 +1350,7 @@ def _remove_routed_source(*, base: str, database: str, name: str, token: str) ->
         _print(msg=f"      note: {database}.{name} is kept while its source remains")
         return
     # Only a name this claim makes, so the drop can never reach another table.
-    if not (ROUTED_TABLE_NAME.fullmatch(name)):
+    if name != ROUTING_SOURCE:
         return
     dropped, answer = ch_execute(
         f"DROP TABLE IF EXISTS {database}.{name} SYNC",
@@ -1416,7 +1448,12 @@ def _verify_hyperdx() -> Claim:
         )
         return SKIPPED
 
-    token, _, _, fault = _login(_engine_base())
+    engine_base = _engine_base()
+    token, status, _, fault = _login(engine_base)
+    if fault and _skip_retired(
+        base=engine_base, status=status, what="HyperDX's seeded state"
+    ):
+        return SKIPPED
     if fault:
         _print(
             msg=f"FAIL  {fault} -- HyperDX verifies that token, so this run cannot "
@@ -1519,19 +1556,10 @@ class Login(typing.NamedTuple):
     fault: str
 
 
-def _console_credential() -> tuple[str, str, str]:
-    """Return (username, the key the password came from, password) for POST's login."""
-    # DFE_POST_LOGIN_* names any account; the bootstrap admin is the fallback.
-    username = (
-        os.environ.get("DFE_POST_LOGIN_USER", "").strip()
-        or os.environ.get("DFE_AUTH_LOCAL_ADMIN_NAME", "admin").strip()
-        or "admin"
-    )
-    for key in PASSWORD_KEYS:
-        password = os.environ.get(key, "").strip()
-        if password:
-            return username, key, password
-    return username, ADMIN_PASSWORD_KEY, ""
+def _console_credential() -> tuple[str, str]:
+    """Return (username, password) for POST's login, which is the bootstrap admin's."""
+    username = os.environ.get("DFE_AUTH_LOCAL_ADMIN_NAME", "admin").strip() or "admin"
+    return username, os.environ.get(ADMIN_PASSWORD_KEY, "").strip()
 
 
 def _request_token(*, base: str, username: str, password: str) -> tuple[str, int, bool]:
@@ -1551,7 +1579,7 @@ def _request_token(*, base: str, username: str, password: str) -> tuple[str, int
 
 def _login(base: str) -> Login:
     """Log POST's console account in, replacing an issued password first if it has to."""
-    username, key, password = _console_credential()
+    username, password = _console_credential()
     if not (password):
         return Login("", 0, username, f"no password for {username!r} is set")
     token, status, change_required = _request_token(
@@ -1564,7 +1592,11 @@ def _login(base: str) -> Login:
     if not (change_required):
         return Login(token, status, username, "")
     return _replace_issued_password(
-        base=base, key=key, token=token, username=username, current=password
+        base=base,
+        current=password,
+        key=ADMIN_PASSWORD_KEY,
+        token=token,
+        username=username,
     )
 
 
@@ -1585,7 +1617,7 @@ def _dotenv_with(*, text: str, key: str, value: str) -> str:
     if not (found):
         lines.append("")
         lines.append(
-            "## Written by `make post` when the engine required a password change."
+            "## Written at login by `make post` or a seed target, when the engine required a password change."
         )
         lines.append(f"{key}={value}")
     return "\n".join(lines) + "\n"
@@ -1757,16 +1789,29 @@ def _ui_query_count(
     return None
 
 
-def _wizard_rotated_admin_password(*, base: str) -> bool:
-    """True when the engine's setup-status says the wizard already rotated the break-glass password."""
+def _admin_retired(*, base: str) -> bool:
+    """True when the engine's setup-status says the bootstrap admin POST logs in as is retired."""
+    return _setup_status(base=base).get("admin_retired") is True
+
+
+def _setup_status(*, base: str) -> dict:
+    """The engine's setup-status, or an empty dict when it cannot be read."""
     try:
         status = json.loads(_api_get(f"{base}/auth/setup-status"))
     except Exception:  # noqa: BLE001
+        return {}
+    return status if isinstance(status, dict) else {}
+
+
+def _skip_retired(*, base: str, status: int, what: str) -> bool:
+    """Print why a claim is skipped and return True when the login was refused because the bootstrap admin is retired."""
+    # A 200 logged in, so a fault after it is the claim's own and is never skipped.
+    if (status == 200) or not (_admin_retired(base=base)):
         return False
-    if not isinstance(status, dict):
-        return False
-    initial = status.get("initial_setup") or {}
-    return "admin_password" in (initial.get("completed_steps") or [])
+    _print(
+        msg=f"SKIP  the bootstrap admin is retired, so this run has no login to prove {what} with"
+    )
+    return True
 
 
 def _verify_ui_query(*, database: str, marker: str, table: str) -> Claim:
@@ -1787,27 +1832,19 @@ def _verify_ui_query(*, database: str, marker: str, table: str) -> Claim:
 
     base = _engine_base()
     token, status, username, fault = _login(base)
+    if fault and _skip_retired(base=base, status=status, what="the query path"):
+        return SKIPPED
     if status == 0:
-        if _wizard_rotated_admin_password(base=base):
-            _print(
-                msg="SKIP  the setup wizard rotated the break-glass password, so no "
-                "console credential lives in the env -- set DFE_POST_LOGIN_USER and "
-                "DFE_POST_LOGIN_PASSWORD to prove the query path"
-            )
-            return SKIPPED
         _print(msg="FAIL  DFE_AUTH_LOCAL_ADMIN_PASSWORD is unset -- run `make init`")
         return Claim(asserted=True, failed=1)
 
     _print(msg=f"Querying {database}.{table} through the engine API as {username!r}")
     if fault:
-        # An engine seeded before this password was generated holds the old one, and
-        # the setup wizard's last step rotates it: either way retrying cannot help.
+        # An engine seeded before this password was generated holds the old one, so retrying cannot help.
         _print(
             msg=f"FAIL  {fault} -- the console "
             "cannot authenticate, so nobody can read this data through dfe-ui. "
-            "If the setup wizard rotated the break-glass password, pass the current "
-            "one on the command line (shell env beats .env): "
-            "DFE_AUTH_LOCAL_ADMIN_PASSWORD=... make post"
+            f"Set {ADMIN_PASSWORD_KEY} in .env to {username!r}'s current password"
         )
         return Claim(asserted=True, failed=1)
 
@@ -1966,18 +2003,13 @@ def _verify_hunt(*, database: str, ingest_url: str, marker: str, table: str) -> 
 
     base = _engine_base()
     token, status, _, fault = _login(base)
-    if status == 0 and _wizard_rotated_admin_password(base=base):
-        _print(
-            msg="SKIP  the setup wizard rotated the break-glass password, so no "
-            "console credential lives in the env -- set DFE_POST_LOGIN_USER and "
-            "DFE_POST_LOGIN_PASSWORD to prove the hunt path"
-        )
+    if fault and _skip_retired(base=base, status=status, what="the hunt path"):
         return SKIPPED
     if status == 0:
         _print(
             msg="FAIL  no password for the console is available -- set "
-            "DFE_AUTH_LOCAL_ADMIN_PASSWORD (run `make init`) or DFE_POST_LOGIN_PASSWORD, "
-            "so this run can create the hunt it needs"
+            "DFE_AUTH_LOCAL_ADMIN_PASSWORD (run `make init`), so this run can create "
+            "the hunt it needs"
         )
         return Claim(asserted=True, failed=1)
     if fault:

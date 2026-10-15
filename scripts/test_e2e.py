@@ -3170,7 +3170,7 @@ def open_console(ctx, test):
         Path(shots) if shots else Path(tempfile.mkdtemp(prefix=f"{RUN_ID}-shots-"))
     )
     headed = os.environ.get(HEADED_ENV_VAR, "").strip().lower() not in FALSY
-    username, _, password = post._console_credential()
+    username, password = post._console_credential()
     pin = ""
     context = console_context()
     if context is not None:

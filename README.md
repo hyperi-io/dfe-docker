@@ -47,6 +47,7 @@ See [docs/architecture.md](docs/architecture.md).
 
 - Docker and Docker Compose v2
 - Python 3
+- [`uv`](https://docs.astral.sh/uv/) - only for the seed targets (`make sources`, `make rules`, `make hunts`, `make events`) and the e2e tests, which run their scripts through it.
 - [`oras`](https://oras.land) - `make stack` reads the signed OCI stack-manifest
   through it. Not needed if you render from a local dfe-infra checkout instead
   (`DFE_INFRA_DIR`).

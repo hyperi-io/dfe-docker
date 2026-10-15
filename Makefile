@@ -585,14 +585,20 @@ check-python: ## Lint the helper scripts (config in ruff.toml)
 	$(RUFF) format --check scripts/ ops/
 
 # Pinned for the same reason RUFF is, and installed the same way in CI
-# (PYTEST=pytest). Unit tests over the credential-handling helpers only: they
+# (PYTEST=pytest). Unit tests over the helper scripts: they
 # touch a tmp_path .env and start nothing, so they belong with the static checks.
 PYTEST_VERSION := 9.1.1
-PYTEST ?= uvx pytest@$(PYTEST_VERSION)
+# The seed tests parse config/seed with the PyYAML scripts/seed.py pins, and scripts/tests/test_script_locks.py holds the two pins equal.
+PYYAML_VERSION := 6.0.3
+PYTEST ?= uvx --with pyyaml==$(PYYAML_VERSION) pytest@$(PYTEST_VERSION)
 
 .PHONY: print-pytest-version
 print-pytest-version:
 	@echo $(PYTEST_VERSION)
+
+.PHONY: print-pyyaml-version
+print-pyyaml-version:
+	@echo $(PYYAML_VERSION)
 
 .PHONY: check-tests
 check-tests: ## Run the helper-script unit tests (scripts/tests)
@@ -609,6 +615,7 @@ print-uv-version:
 
 .PHONY: check-locks
 check-locks: ## Assert each inline-metadata script's lock matches its pins (relock with `uv lock --script <script>`)
+	$(LOCK_UV) lock --check --script scripts/seed.py
 	$(LOCK_UV) lock --check --script scripts/test_e2e.py
 	$(LOCK_UV) lock --check --script scripts/test_flows.py
 
@@ -732,6 +739,27 @@ proof: ## Unattended acceptance: test-e2e, restore the stack (make ci), then tes
 .PHONY: post
 post: ## Prove the RUNNING stack moves data end to end (DFE_POST_ENABLED=false to skip)
 	@python3 ./scripts/post.py
+
+# ---------------------------------------------------------------------------
+# Seed
+# The starter set in config/seed, created through the engine API on a RUNNING stack, and fake events for its hunt to find. hunts also creates the rules in the same seed.py run, because the engine refuses a hunt whose rule does not exist; one run means a login asked for at the terminal is asked for once. sources, rules and hunts create only what the engine lacks; events sends its records again on every run.
+# ---------------------------------------------------------------------------
+
+.PHONY: sources
+sources: ## Create the config/seed sources the running engine lacks, deploying each
+	@$(UV) run --locked --script ./scripts/seed.py sources
+
+.PHONY: rules
+rules: ## Create the config/seed rules the running engine lacks
+	@$(UV) run --locked --script ./scripts/seed.py rules
+
+.PHONY: hunts
+hunts: ## Create the config/seed rules and hunts the running engine lacks
+	@$(UV) run --locked --script ./scripts/seed.py hunts
+
+.PHONY: events
+events: ## Send the fake config/seed events through the receiver, after `make sources`, for the seeded hunt to find
+	@$(UV) run --locked --script ./scripts/seed.py events
 
 # ---------------------------------------------------------------------------
 # Lifecycle
