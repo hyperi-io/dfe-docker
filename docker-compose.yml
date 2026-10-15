@@ -1095,7 +1095,8 @@ services:
       # what an unset DFE_ENV should get: `make init` mints a password, so the
       # refusal only ever catches a stack that has no credential to speak of.
       # `make dev` writes DFE_ENV=dev for a tyre-kick that logs in on the shipped
-      # default until the stack replaces it. docs/operating.md#there-is-no-authentication
+      # default until the stack replaces it.
+      # docs/operating.md#only-the-console-authenticates----everything-else-is-bounded-by-that
       DFE_ENV: ${DFE_ENV:-production}
       # A Compose stack is one operator with no forge: a hunt or rule written at
       # production+team lands on a review branch nothing can merge, and the
@@ -1381,7 +1382,8 @@ services:
   #
   # THE product entrypoint. Its oauth2/jwt_authn filters chain in when dfe-engine
   # becomes the OIDC provider -- opt-in, scoped to this origin, and no profile may
-  # require an issuer to start. docs/operating.md#there-is-no-authentication
+  # require an issuer to start.
+  # docs/operating.md#only-the-console-authenticates----everything-else-is-bounded-by-that
   # ===========================================================================
 
   dfe-proxy:

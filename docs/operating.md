@@ -199,8 +199,8 @@ an opt-out has to arrive as a `!reset` fragment rather than an override. A raw
 `docker compose` outside `make` therefore publishes everything on loopback.
 
 Unpublishing leaves the container running and reachable on the compose network.
-It reduces the accidental surface; it is not access control, and the stack still
-authenticates nobody.
+It reduces the accidental surface; it is not access control, and only the console
+and HyperDX ask for a login.
 
 `make check-compose` asserts all of it: that every UI follows the scope on both
 addresses, that no ingest or backing-service port moves with it, and that each

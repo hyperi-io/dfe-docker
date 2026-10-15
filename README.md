@@ -27,12 +27,12 @@ can apply - read both if so.
 
 Two things worth knowing before you start, whichever you are:
 
-- **A default stack runs with no authentication.** That is deliberate - auth is
-  primarily a Kubernetes concern in DFE - so nothing here should be reachable by
-  people you have not met. The opt-in `auth` profile gates the infra UIs
-  (Kafbat, HyperDX) behind oauth2-proxy with a group check; the DFE UI and the
-  ingest path stay open. [operating.md](docs/operating.md) spells out exactly
-  what is exposed.
+- **Only the console and HyperDX authenticate.** The DFE UI and the engine API
+  behind it ask for the login `make creds` prints, and HyperDX verifies the
+  engine's token. Kafbat, the ingest ports and the metrics ports ask for none,
+  so nothing here should be reachable by people you have not met. The opt-in
+  `auth` profile gates Kafbat and HyperDX behind oauth2-proxy with a group
+  check. [operating.md](docs/operating.md) spells out exactly what is exposed.
 - **Compose is a supported production target for small environments**, not a toy.
   Kubernetes remains the primary path; this is the right answer for a single box,
   an edge site, or a partner deployment where a cluster is not justified.
@@ -123,10 +123,11 @@ no Compose-specific build.
 
 Three things to read before running this anywhere real:
 
-- **A default stack has no authentication.** Docker mode is god-mode by design,
-  and `dfe-proxy` on `:3000` reverse-proxies straight to the engine API. Put it
-  behind a VPN, a tunnel, a firewall, or an authenticating proxy - or arm the
-  opt-in `auth` profile, which covers the infra UIs but not the DFE UI itself.
+- **Only the console and HyperDX authenticate.** `dfe-proxy` on `:3000`
+  reverse-proxies straight to the engine API and adds no login of its own, so the
+  engine's login is the gate there. Put the stack behind a VPN, a tunnel, a
+  firewall, or an authenticating proxy - or arm the opt-in `auth` profile, which
+  covers the infra UIs but not the DFE UI itself.
 - **The defaults assume a laptop.** Port bindings, resource limits, Redpanda's
   developer mode and the generated secrets all want review.
 - **Redpanda is BSL, not OSS.** `KAFKA_BACKEND=apache` is the Apache-2.0 path.
