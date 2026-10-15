@@ -53,7 +53,7 @@ endif
 # any more (both sweep every profile), and requiring a resolvable profile to STOP
 # a stack is the same lockout the compose secret comments argue against -- set
 # DFE_PROFILE to something that does not exist and you could not tear down.
-BOOTSTRAP_GOALS := init env-files creds dev-posture help stack dial modes down clean limits check check-compose check-hardfail check-dockerfile check-docs check-locks check-proxy check-python check-tests
+BOOTSTRAP_GOALS := init env-files creds certs dev-posture help stack dial modes down clean limits check check-compose check-hardfail check-dockerfile check-docs check-locks check-proxy check-python check-tests
 
 # Resolve the active profile only when a goal actually needs the compose stack
 ifneq (,$(filter-out $(BOOTSTRAP_GOALS),$(or $(MAKECMDGOALS),help)))
@@ -325,10 +325,11 @@ ifneq ($(filter-out true false,$(strip $(DFE_PROXY_TLS)))$(word 2,$(DFE_PROXY_TL
     $(error DFE_PROXY_TLS must be `true` or `false`, got '$(strip $(DFE_PROXY_TLS))')
 endif
 
+# Set before the dial so `make certs` writes where a later DFE_PROXY_TLS=true start reads.
+DFE_PROXY_CERT_DIR ?= ./certs
 ifeq ($(strip $(DFE_PROXY_TLS)),true)
     # Private space outside Docker's stock pools (172.17-31/16, 192.168/20) and the fleet's 172.16.0.0/12 pool.
     DFE_NETWORK_SUBNET ?= 10.207.0.0/24
-    DFE_PROXY_CERT_DIR ?= ./certs
     export DFE_NETWORK_SUBNET
     export DFE_PROXY_CERT_DIR
     PROXY_NETWORK := $(shell python3 scripts/proxy_tls.py network '$(strip $(DFE_NETWORK_SUBNET))')
@@ -363,6 +364,10 @@ ifneq ($(PROXY_TLS_START)$(PROXY_NETWORK_REUSE),)
         $(error $(PROXY_TLS_PROBLEM))
     endif
 endif
+
+.PHONY: certs
+certs: ## Mint a console TLS certificate for DFE_EXTERNAL_ORIGIN's host, localhost and 127.0.0.1 into DFE_PROXY_CERT_DIR, with a single-use CA to trust once. Never replaces a file already there
+	@python3 scripts/proxy_tls.py mint --cert-dir '$(DFE_PROXY_CERT_DIR)' --host '$(or $(call origin_host,DFE_EXTERNAL_ORIGIN),localhost)'
 
 ifneq ($(strip $(LIVE)),)
     export COMPOSE_FILE := docker-compose.yml:docker-compose.override.yml:docker-compose.live.yml$(STORAGE_CHAIN)$(UI_CHAIN)$(LIVE_UI_CHAIN)

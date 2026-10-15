@@ -72,17 +72,17 @@ working on the box itself.
 
 `DFE_PROXY_TLS=true` serves the console (`DFE_UI_PORT`), the HyperDX embed (`DFE_HYPERDX_EMBED_PORT`) and both HyperDX origins (`DFE_HYPERDX_APP_PORT`, `DFE_HYPERDX_API_PORT`) over TLS 1.2 or 1.3 with one certificate. Key exchange prefers hybrid post-quantum X25519MLKEM768, then P-384; TLS 1.2 offers AEAD suites only, AES-256-GCM first. OIDC sign-in needs it on any hostname but `localhost`: outside a dev posture the engine marks its OIDC state and token cookies `Secure` and a browser drops a `Secure` cookie sent over plain http.
 
-Generate a P-384 key and a certificate whose subjectAltName covers every name browsers use. Both proxies run as the user who runs `make` under TLS, so keep the key `0600` and owned by that user:
+`make certs` mints the pair into `DFE_PROXY_CERT_DIR`: a P-384 `console.crt` and `0600` `console.key` for the host `DFE_EXTERNAL_ORIGIN` names plus `localhost` and `127.0.0.1`, and the `ca.crt` that signed them. It deletes the CA's private key once it has signed, so trusting `ca.crt` in the browser or OS trusts that one certificate and nothing else. It never replaces a file already there; to renew or change the hostname, delete the three files, run it again and trust the new `ca.crt`. Both proxies run as the user who runs `make` under TLS, so run it as that user.
 
-```bash
-mkdir -p certs
-openssl req -x509 -newkey ec -pkeyopt ec_paramgen_curve:P-384 -nodes -sha384 -days 365 \
-  -subj "/CN=dfe.example.com" -addext "subjectAltName=DNS:dfe.example.com" \
-  -keyout certs/console.key -out certs/console.crt
-chmod 600 certs/console.key
-```
+Each machine whose browser opens the console trusts `ca.crt` once, as a certificate authority. Copy `ca.crt` there and nothing else: `console.key` stays on the stack's host. The hostname must resolve on that machine too, through DNS or `/etc/hosts`.
 
-That certificate is self-signed, which suits an evaluation. A CA-issued one goes in the same two files, with the full chain in `console.crt`. Copy real files rather than linking them: a symlink, certbot's `live/` layout included, dangles inside the container, so `cp -L` the pair into place.
+- Firefox keeps its own trust store: Settings, Privacy & Security, View Certificates, the Authorities tab, Import, then tick "Trust this CA to identify websites".
+- Chrome and Edge: open Manage certificates in Settings and import `ca.crt` as a trusted authority. The menu names differ between versions and platforms.
+- macOS, which Safari uses: `sudo security add-trusted-cert -d -r trustRoot -k /Library/Keychains/System.keychain ca.crt`.
+- Windows, from an administrator prompt: `certutil -addstore -f Root ca.crt`.
+- Debian and Ubuntu system tools such as `curl`: copy it to `/usr/local/share/ca-certificates/dfe-local-ca.crt`, then run `sudo update-ca-certificates`.
+
+A CA-issued certificate goes in the same two files instead, with the full chain in `console.crt`. Copy real files rather than linking them: a symlink, certbot's `live/` layout included, dangles inside the container, so `cp -L` the pair into place.
 
 Set `DFE_EXTERNAL_ORIGIN=https://dfe.example.com` and make `DFE_HYPERDX_APP_URL` an `https://` origin too if you set it. Register the engine's callback with the IdP as `https://<hostname>:<DFE_UI_PORT>/api/v1/auth/oidc/<provider>/callback`, without the port when `DFE_UI_PORT` is 443.
 
@@ -96,7 +96,7 @@ Turning `DFE_PROXY_TLS` on or off on a running stack needs `make down` first, be
 
 `make test-e2e` and `make test-resilience` run under the dial too, with the same prechecks as a start. Each test's stack chains the fragments `make ci` does, so the exposure opt-outs and container logs apply to it as well. The suite probes the console at `https://<DFE_EXTERNAL_ORIGIN host>:<DFE_UI_PORT>` and verifies its certificate by chain and by name, never with verification off.
 
-A certificate from a public CA verifies against the system trust store. For a private CA, set `DFE_PROXY_CA_BUNDLE` to a PEM file holding the CA chain that signed `console.crt`. Chrome takes no CA bundle, so the browser steps are pinned to the public key of the certificate that check has just verified.
+A certificate from a public CA verifies against the system trust store. For a private CA, set `DFE_PROXY_CA_BUNDLE` to a PEM file holding the CA chain that signed `console.crt`; after `make certs` that is its `ca.crt`. Chrome takes no CA bundle, so the browser steps are pinned to the public key of the certificate that check has just verified.
 
 | Variable                                         | Use                                                                                  | Default                                                             |
 |--------------------------------------------------|--------------------------------------------------------------------------------------|---------------------------------------------------------------------|
