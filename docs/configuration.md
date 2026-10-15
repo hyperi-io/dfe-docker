@@ -45,7 +45,7 @@ table and the UI classes.
 
 ### External origin
 
-The scheme and host a browser reaches this box on: scheme and host only, no port and no trailing slash. Compose appends the port itself (`DFE_UI_PORT` for the console), so `make` refuses a value with a port, a path, a query or no scheme. The same holds for `DFE_HYPERDX_APP_URL` and `DFE_OAUTH2_PROXY_EXTERNAL_ORIGIN`. Four surfaces build absolute URLs
+The scheme and host a browser reaches this box on: scheme and host only, no port and no trailing slash. Compose appends the port itself (`DFE_UI_PORT` for the console), so `make` refuses a value with a port, a path, a query, no scheme or a character no host holds, such as `;`. The same holds for `DFE_HYPERDX_APP_URL` and `DFE_OAUTH2_PROXY_EXTERNAL_ORIGIN`. Four surfaces build absolute URLs
 from the origin, and each is wrong when it says `localhost` and the browser did not: the
 DFE UI's post-logout redirect, the oauth2-proxy callbacks registered with the
 IdP, HyperDX's link-backs into the DFE UI, and the `frame-ancestors` policy the

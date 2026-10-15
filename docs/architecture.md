@@ -321,10 +321,11 @@ Three deliberate asymmetries:
   After deleting a source, run `make apply` with no `SERVICES` to stop its
   transform: the delete names no command, and the container runs until an
   apply or a restart removes it. `make ps` warns about any it finds.
-- **No authentication.** Compose runs god-mode. Envoy fronts both tiers, but its
-  OIDC filters stay unconfigured here, because Docker mode can never assume an
-  issuer exists. An OIDC issuer (the engine as provider, or an external IdP)
-  would front the proxy origin only, leaving ingest, machine paths, metrics and
+- **No edge authentication.** Envoy fronts both tiers, but its OIDC filters stay
+  unconfigured here, because Docker mode can never assume an issuer exists. The
+  engine API still requires a login per route, which the proxy neither adds nor
+  removes. An OIDC issuer (the engine as provider, or an external IdP) would
+  front the proxy origin only, leaving ingest, machine paths, metrics and
   datastores untouched.
 - **Self-monitoring has fewer producers.** Same chain, fewer things pushing into
   it, and no container logs or node metrics -- those come from a daemonset on the

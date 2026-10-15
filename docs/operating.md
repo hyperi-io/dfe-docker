@@ -89,8 +89,8 @@ Two consequences survive the loopback defaults below.
 **The engine API is reachable from wherever the UI is, regardless of its own
 binding.** `dfe-proxy` reverse-proxies `/api/v1/*` straight through to the
 dfe-engine API on the Docker network (`config/proxy/envoy.yaml`). Unpublishing
-the engine's own `:8003` does not protect that API -- the same endpoints answer
-through the proxy, unauthenticated, to anyone who can reach `:3000`.
+the engine's own `:8003` does not take that API off `:3000`. The proxy adds no
+authentication, so the engine's own login protects it there as on `:8003`.
 
 **HyperDX asks the engine who you are.** It runs in `oidc-proxy` mode, as it does
 on Kubernetes: it verifies the engine's ES384 token against the engine's JWKS,
@@ -199,8 +199,8 @@ an opt-out has to arrive as a `!reset` fragment rather than an override. A raw
 `docker compose` outside `make` therefore publishes everything on loopback.
 
 Unpublishing leaves the container running and reachable on the compose network.
-It reduces the accidental surface; it is not access control, and the stack still
-authenticates nobody.
+It reduces the accidental surface; it is not access control, and only the console
+and HyperDX ask for a login.
 
 `make check-compose` asserts all of it: that every UI follows the scope on both
 addresses, that no ingest or backing-service port moves with it, and that each
@@ -232,16 +232,13 @@ groups claim or every sign-in is refused.
 The infra kill switch still wins: `DFE_INFRA_UIS_EXTERNAL=false` unpublishes the
 proxies as well as the UIs. A gated door is still a door.
 
-Four limits, none of them cosmetic:
+Three limits, none of them cosmetic:
 
 - **It gates page access only.** Kafbat never learns who signed in. HyperDX
   learns it only with `DFE_HYPERDX_AUTH_MODE=header-dev`, which signs in the user
   the proxy names in `X-Forwarded-Email`. In the default `oidc-proxy` mode
   HyperDX ignores those headers and identifies callers by the engine token.
   Neither UI gains roles or an audit trail from the proxy.
-- **It does not contain the HyperDX credential leak.** `NEXT_PUBLIC_*` is inlined
-  into the client bundle, so anyone who passes the group check still reads
-  `CLICKHOUSE_PASSWORD` out of the JavaScript.
 - **An expired session on the API origin fails opaquely.** A cross-origin XHR
   that gets a redirect to the IdP is blocked by the browser, so the app shows
   failed requests rather than a login prompt. Reload the app page to sign back

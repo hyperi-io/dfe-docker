@@ -38,12 +38,17 @@ FALSY = {"", "0", "false", "no", "off"}
 EXTERNAL_ORIGIN_KEY = "DFE_EXTERNAL_ORIGIN"
 # Console TLS: dfe-proxy's ports then answer https only while the engine's own port never serves TLS.
 PROXY_TLS_KEY = "DFE_PROXY_TLS"
+# The Makefile keeps the same list as LOOPBACK_ORIGINS, held equal by test_origin_guard.py.
 LOOPBACK_ORIGINS = frozenset(
     {
         "http://localhost",
         "https://localhost",
         "http://127.0.0.1",
         "https://127.0.0.1",
+        "http://[::1]",
+        "https://[::1]",
+        "http://0.0.0.0",
+        "https://0.0.0.0",
     }
 )
 
