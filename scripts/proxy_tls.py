@@ -1,33 +1,54 @@
 #!/usr/bin/env python3
 #  Project:      dfe-docker
 #  File:         scripts/proxy_tls.py
-#  Purpose:      Derive console TLS's network and refuse a start its certificate or network cannot carry
+#  Purpose:      Derive console TLS's network, mint its certificate and refuse a start its certificate or network cannot carry
 #  Language:     Python
 #
 #  License:      BUSL-1.1
 #  Copyright:    (c) 2026 HYPERI PTY LIMITED
 
-"""The console TLS checks the Makefile runs while it parses.
+"""The console TLS checks the Makefile runs while it parses, and the certificate `make certs` mints.
 
 `network SUBNET` prints dfe-proxy's reserved address and the range Docker allocates from. Under DFE_PROXY_TLS=true the engine believes X-Forwarded-Proto from dfe-proxy's address alone, so no other container may take that address: the proxy holds the subnet's last host and Docker allocates everything else, the gateway included, from the first half.
 
 `precheck` prints the first reason a start goal would fail and nothing when it would not. Make turns that line into its `$(error)`, so each reason names what to change.
 
+`mint` writes a private CA and the console certificate it signs, then deletes the CA's key, so trusting ca.crt trusts that one certificate and nothing it could sign later.
+
 Standalone and stdlib only, because the make guard tests copy it next to a lone Makefile.
 """
 
 import argparse
+import datetime
 import ipaddress
 import json
 import os
 import re
+import secrets
 import shutil
 import subprocess
 import sys
+import tempfile
 from pathlib import Path
 
+_CA = "ca.crt"
 _CERT = "console.crt"
+# A day inside Apple's 825-day ceiling for a TLS server certificate; the CA signs once, so it needs no longer.
+_DAYS = 824
+# X.509 caps a common name at 64 characters; the subjectAltName carries the full host.
+_MAX_CN = 64
+_HOSTNAME = re.compile(
+    r"(?!-)[A-Za-z0-9-]{1,63}(?<!-)(\.(?!-)[A-Za-z0-9-]{1,63}(?<!-))*"
+)
 _KEY = "console.key"
+_P384_KEY = (
+    "-newkey",
+    "ec",
+    "-pkeyopt",
+    "ec_paramgen_curve:P-384",
+    "-nodes",
+    "-sha384",
+)
 # Private (RFC 1918) space only, so the pinned network can never shadow a routable address.
 _PRIVATE = tuple(
     ipaddress.IPv4Network(block)
@@ -38,6 +59,17 @@ _MAX_PREFIX = 24
 _MIN_PREFIX = 16
 # Compose lowercases a project name, drops anything outside these and trims leading `_` and `-`; its default network is `<project>_default`.
 _PROJECT_DROP = re.compile(r"[^a-z0-9_-]")
+
+
+class MintError(Exception):
+    """Why `mint` wrote nothing."""
+
+
+def _cert_dir_form_problem(*, cert_dir: str) -> str:
+    """Return why compose could not mount cert_dir as a path; the empty string when it can."""
+    if not (cert_dir.startswith(("/", "./", "../"))):
+        return f"DFE_PROXY_CERT_DIR={cert_dir!r} must be a path starting with /, ./ or ../ because compose reads a bare name as a named volume"
+    return ""
 
 
 def _docker_networks() -> list[dict]:
@@ -83,6 +115,30 @@ def _ipv4_pools(*, network: dict) -> list[tuple[ipaddress.IPv4Network, str]]:
     return pools
 
 
+def _is_host(*, name: str) -> bool:
+    """Return whether name is an IP address or a DNS hostname a certificate can name, with nothing openssl would parse as syntax."""
+    try:
+        ipaddress.ip_address(name)
+    except ValueError:
+        return len(name) <= 253 and _HOSTNAME.fullmatch(name) is not None
+    # An IPv6 zone id may hold any character, newline and comma included.
+    return "%" not in name
+
+
+def _last_line(*, text: str) -> str:
+    """Return the last non-blank line of a tool's output; a placeholder when it printed nothing."""
+    return _first_line(text="\n".join(reversed(text.splitlines())))
+
+
+def _mint_step(*, args: list[str], what: str) -> None:
+    """Run one openssl command for `mint`, raising MintError with the last line of its output, where openssl puts the cause, when it fails."""
+    result = _run(args=args)
+    if result.returncode != 0:
+        raise MintError(
+            f"openssl could not mint {what}: {_last_line(text=result.stderr)}"
+        )
+
+
 def _run(*, args: list[str]) -> subprocess.CompletedProcess[str]:
     """Run one command without a terminal, capturing its output as text."""
     return subprocess.run(
@@ -96,11 +152,29 @@ def _run(*, args: list[str]) -> subprocess.CompletedProcess[str]:
     )
 
 
+def _serial() -> str:
+    """Return a random 128-bit certificate serial, so no two minted certificates share an issuer and serial."""
+    return f"0x{secrets.token_hex(16)}"
+
+
+def _subject_alt_names(*, host: str) -> list[str]:
+    """Return the subjectAltName entries for host, localhost and 127.0.0.1, each once."""
+    entries = []
+    for name in (host, "localhost", "127.0.0.1"):
+        try:
+            entry = f"IP:{ipaddress.ip_address(name)}"
+        except ValueError:
+            entry = f"DNS:{name.lower()}"
+        if entry not in entries:
+            entries.append(entry)
+    return entries
+
+
 def cert_problem(*, cert_dir: str) -> str:
     """Return why Envoy could not load the certificate pair in cert_dir; the empty string when it can."""
     setting = f"DFE_PROXY_CERT_DIR={cert_dir!r}"
-    if not (cert_dir.startswith(("/", "./", "../"))):
-        return f"{setting} must be a path starting with /, ./ or ../ because compose reads a bare name as a named volume"
+    if problem := _cert_dir_form_problem(cert_dir=cert_dir):
+        return problem
     if not (Path(cert_dir).is_dir()):
         return f"{setting} is not a directory. It must hold {_CERT} and {_KEY}"
     if not (os.access(cert_dir, os.X_OK)):
@@ -114,7 +188,7 @@ def cert_problem(*, cert_dir: str) -> str:
             if path.is_symlink():
                 return f"{shown} is a symlink, which dangles inside the container (certbot's live/ directory is all symlinks). Copy the file itself with `cp -L`"
             if not (path.is_file()):
-                return f"DFE_PROXY_TLS=true needs the {kind} {shown} and it is missing. Generate the pair as docs/configuration.md (Console TLS) shows. Set DFE_PROXY_TLS=false to start without TLS"
+                return f"DFE_PROXY_TLS=true needs the {kind} {shown} and it is missing. Run `make certs` to mint the pair, or copy a CA-issued one there (docs/configuration.md, Console TLS). Set DFE_PROXY_TLS=false to start without TLS"
         except OSError as error:
             return f"{shown} cannot be checked ({error.strerror}), so the start is refused rather than assumed safe"
         if not (os.access(path, os.R_OK)):
@@ -160,6 +234,128 @@ def derive(*, subnet: str) -> tuple[str, str]:
         )
     allocation = next(network.subnets(prefixlen_diff=1))
     return str(network.broadcast_address - 1), str(allocation)
+
+
+def mint(*, cert_dir: str, host: str) -> list[str]:
+    """Write console.crt, console.key and the ca.crt that signed them into cert_dir, delete the CA's key, and return the subjectAltName entries.
+
+    Raises MintError before writing anything when the host, the directory or a missing openssl rules it out, or when any of the three files exists, so a CA-issued pair or a CA a browser already trusts is never replaced.
+    """
+    bare = host[1:-1] if host.startswith("[") and host.endswith("]") else host
+    if not (_is_host(name=bare)):
+        raise MintError(
+            f"DFE_EXTERNAL_ORIGIN names the host {host!r}, which is not a hostname or an IP address a certificate can carry"
+        )
+    if problem := _cert_dir_form_problem(cert_dir=cert_dir):
+        raise MintError(problem)
+    if shutil.which("openssl") is None:
+        raise MintError(
+            "openssl is not on PATH, so make cannot mint the certificate. Install openssl"
+        )
+    directory = Path(cert_dir)
+    shown = cert_dir.rstrip("/")
+    if directory.exists() and not (directory.is_dir()):
+        raise MintError(f"DFE_PROXY_CERT_DIR={cert_dir!r} is a file, not a directory")
+    present = [name for name in (_CERT, _KEY, _CA) if os.path.lexists(directory / name)]
+    if present:
+        raise MintError(
+            f"{shown} already holds {', '.join(present)}. make certs never replaces them, because a CA-issued pair or a CA your browser trusts would be lost. To mint a fresh set, delete {_CERT}, {_KEY} and {_CA} there, run it again and trust the new {_CA}"
+        )
+    entries = _subject_alt_names(host=bare)
+    today = datetime.datetime.now(tz=datetime.UTC).date().isoformat()
+    # The random tag keeps a re-minted CA from sharing a subject with one a browser still trusts.
+    ca_name = f"DFE local CA {secrets.token_hex(3)} {today} {bare}"[:_MAX_CN]
+    leaf_name = bare if len(bare) <= _MAX_CN else "DFE console"
+    try:
+        directory.mkdir(exist_ok=True, mode=0o700, parents=True)
+        # The CA key stays outside cert_dir, which both proxies mount; the outputs stage inside it so they rename into place on one filesystem.
+        with (
+            tempfile.TemporaryDirectory() as secret,
+            tempfile.TemporaryDirectory(dir=directory) as scratch,
+        ):
+            work = Path(scratch)
+            ca_key = Path(secret) / "ca.key"
+            request = work / "console.csr"
+            extensions = work / "console.ext"
+            _mint_step(
+                args=[
+                    "openssl",
+                    "req",
+                    "-x509",
+                    *_P384_KEY,
+                    "-days",
+                    str(_DAYS),
+                    "-set_serial",
+                    _serial(),
+                    "-subj",
+                    f"/CN={ca_name}",
+                    "-addext",
+                    "basicConstraints=critical,CA:TRUE,pathlen:0",
+                    "-addext",
+                    "keyUsage=critical,keyCertSign,cRLSign",
+                    "-addext",
+                    "subjectKeyIdentifier=hash",
+                    "-keyout",
+                    str(ca_key),
+                    "-out",
+                    str(work / _CA),
+                ],
+                what="the CA",
+            )
+            _mint_step(
+                args=[
+                    "openssl",
+                    "req",
+                    "-new",
+                    *_P384_KEY,
+                    "-subj",
+                    f"/CN={leaf_name}",
+                    "-keyout",
+                    str(work / _KEY),
+                    "-out",
+                    str(request),
+                ],
+                what="the console key",
+            )
+            extensions.write_text(
+                "basicConstraints=critical,CA:FALSE\n"
+                "keyUsage=critical,digitalSignature\n"
+                "extendedKeyUsage=serverAuth\n"
+                f"subjectAltName={','.join(entries)}\n"
+                "subjectKeyIdentifier=hash\n"
+                "authorityKeyIdentifier=keyid\n",
+                encoding="utf-8",
+                newline="\n",
+            )
+            _mint_step(
+                args=[
+                    "openssl",
+                    "x509",
+                    "-req",
+                    "-in",
+                    str(request),
+                    "-CA",
+                    str(work / _CA),
+                    "-CAkey",
+                    str(ca_key),
+                    "-set_serial",
+                    _serial(),
+                    "-days",
+                    str(_DAYS),
+                    "-sha384",
+                    "-extfile",
+                    str(extensions),
+                    "-out",
+                    str(work / _CERT),
+                ],
+                what="the console certificate",
+            )
+            (work / _KEY).chmod(0o600)
+            for name in (_KEY, _CERT, _CA):
+                (work / name).replace(directory / name)
+    except OSError as error:
+        raise MintError(f"cannot write to {shown}: {error.strerror}") from error
+    return entries
 
 
 def network_problem(
@@ -217,12 +413,7 @@ def throwaway_pair(*, directory: Path) -> None:
             "openssl",
             "req",
             "-x509",
-            "-newkey",
-            "ec",
-            "-pkeyopt",
-            "ec_paramgen_curve:P-384",
-            "-nodes",
-            "-sha384",
+            *_P384_KEY,
             "-days",
             "1",
             "-subj",
@@ -255,7 +446,29 @@ def main() -> int:
     precheck.add_argument("--subnet", default="")
     precheck.add_argument("--tls", choices=("true", "false"), required=True)
     precheck.add_argument("--toggle", action="store_true")
+    minter = commands.add_parser(
+        "mint",
+        help="write a CA and the console certificate it signs, then delete the CA's key",
+    )
+    minter.add_argument("--cert-dir", required=True)
+    minter.add_argument("--host", required=True)
     args = parser.parse_args()
+
+    if args.command == "mint":
+        try:
+            entries = mint(cert_dir=args.cert_dir, host=args.host)
+        except MintError as error:
+            print(error, file=sys.stderr)
+            return 1
+        shown = args.cert_dir.rstrip("/")
+        names = ", ".join(entry.partition(":")[2] for entry in entries)
+        print(
+            f"Minted {shown}/{_CERT} and {shown}/{_KEY} for {names}, valid {_DAYS} days, signed by {shown}/{_CA}. The CA's key is deleted, so it signs nothing else."
+        )
+        print(
+            f"Trust {shown}/{_CA} once in your browser or OS, and set DFE_PROXY_CA_BUNDLE={shown}/{_CA} for make test-e2e. To renew, delete the three files and run make certs again."
+        )
+        return 0
 
     if args.command == "network":
         try:

@@ -583,3 +583,62 @@ def test_compose_gets_the_derived_network(
 
     assert result.returncode == 0, result.stderr
     assert result.stdout.strip() == expected
+
+
+@pytest.mark.parametrize(
+    ("origin", "names"),
+    [
+        (
+            "https://dfe.example.test",
+            "DNS:dfe.example.test, DNS:localhost, IP Address:127.0.0.1",
+        ),
+        (
+            "https://[::1]",
+            "IP Address:0:0:0:0:0:0:0:1, DNS:localhost, IP Address:127.0.0.1",
+        ),
+        ("", "DNS:localhost, IP Address:127.0.0.1"),
+    ],
+)
+def test_make_certs_names_the_origin_host(
+    makefile: Path, origin: str, names: str
+) -> None:
+    result = _make(
+        cwd=makefile,
+        dry_run=False,
+        goal="certs",
+        DFE_EXTERNAL_ORIGIN=origin,
+        DFE_PROXY_CERT_DIR="./minted",
+    )
+    san = subprocess.run(
+        [
+            "openssl",
+            "x509",
+            "-noout",
+            "-ext",
+            "subjectAltName",
+            "-in",
+            str(makefile / "minted" / "console.crt"),
+        ],
+        capture_output=True,
+        check=False,
+        encoding="utf-8",
+        errors="replace",
+        text=True,
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert names in san.stdout
+
+
+def test_make_certs_writes_where_a_tls_start_reads_with_the_dial_off(
+    makefile: Path,
+) -> None:
+    result = _make(
+        cwd=makefile,
+        dry_run=False,
+        goal="certs",
+        DFE_EXTERNAL_ORIGIN="https://dfe.example.test",
+    )
+
+    assert result.returncode != 0
+    assert "./certs already holds console.crt, console.key." in result.stderr

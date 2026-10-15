@@ -14,6 +14,8 @@ Docker gives a network's gateway its first host address and allocates containers
 import ipaddress
 import os
 import shutil
+import stat
+import subprocess
 from pathlib import Path
 
 import pytest
@@ -21,12 +23,20 @@ import pytest
 import proxy_tls
 
 _DEFAULT_SUBNET = "10.207.0.0/24"
+_HOST = "dfe.example.com"
 _VALID = [
     (_DEFAULT_SUBNET, "10.207.0.254", "10.207.0.0/25"),
     ("172.16.1.0/24", "172.16.1.254", "172.16.1.0/25"),
     ("10.20.0.0/16", "10.20.255.254", "10.20.0.0/17"),
     ("192.168.64.0/23", "192.168.65.254", "192.168.64.0/24"),
 ]
+
+
+def _extension(*, certificate: Path, name: str) -> str:
+    """Return one extension of a certificate as openssl prints it."""
+    return _openssl(
+        args=["x509", "-noout", "-ext", name, "-in", str(certificate)]
+    ).stdout
 
 
 def _network(*, name: str, project: str = "", pools: list[tuple[str, str]]) -> dict:
@@ -43,6 +53,26 @@ def _network(*, name: str, project: str = "", pools: list[tuple[str, str]]) -> d
 def _no_openssl(name: str) -> None:
     """Stand in for shutil.which on a host without openssl."""
     return None
+
+
+def _openssl(*, args: list[str]) -> subprocess.CompletedProcess[str]:
+    """Run openssl with args and capture what it prints."""
+    return subprocess.run(
+        ["openssl", *args],
+        capture_output=True,
+        check=False,
+        encoding="utf-8",
+        errors="replace",
+        text=True,
+    )
+
+
+@pytest.fixture
+def minted(tmp_path: Path) -> Path:
+    """A directory `mint` has written a set into for _HOST."""
+    directory = tmp_path / "certs"
+    proxy_tls.mint(cert_dir=str(directory), host=_HOST)
+    return directory
 
 
 @pytest.fixture
@@ -262,6 +292,234 @@ def test_a_host_without_openssl_is_told_so(
     monkeypatch.setattr(proxy_tls.shutil, "which", _no_openssl)
 
     assert "openssl is not on PATH" in proxy_tls.cert_problem(cert_dir=str(pair))
+
+
+def test_a_minted_set_is_three_files_the_precheck_accepts(minted: Path) -> None:
+    assert sorted(path.name for path in minted.iterdir()) == [
+        "ca.crt",
+        "console.crt",
+        "console.key",
+    ]
+    assert proxy_tls.cert_problem(cert_dir=str(minted)) == ""
+    assert stat.S_IMODE((minted / "console.key").stat().st_mode) == 0o600
+
+
+def test_the_minted_certificate_verifies_strictly_against_its_ca(
+    minted: Path,
+) -> None:
+    result = _openssl(
+        args=[
+            "verify",
+            "-x509_strict",
+            "-CAfile",
+            str(minted / "ca.crt"),
+            str(minted / "console.crt"),
+        ]
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.endswith(": OK\n")
+
+
+def test_the_ca_signs_no_other_ca_and_the_certificate_only_serves(
+    minted: Path,
+) -> None:
+    assert "CA:TRUE, pathlen:0" in _extension(
+        certificate=minted / "ca.crt", name="basicConstraints"
+    )
+    assert "TLS Web Server Authentication" in _extension(
+        certificate=minted / "console.crt", name="extendedKeyUsage"
+    )
+
+
+@pytest.mark.parametrize(
+    ("host", "names"),
+    [
+        (_HOST, "DNS:dfe.example.com, DNS:localhost, IP Address:127.0.0.1"),
+        ("LOCALHOST", "DNS:localhost, IP Address:127.0.0.1"),
+        ("127.0.0.1", "IP Address:127.0.0.1, DNS:localhost"),
+        ("192.0.2.10", "IP Address:192.0.2.10, DNS:localhost, IP Address:127.0.0.1"),
+        ("[::1]", "IP Address:0:0:0:0:0:0:0:1, DNS:localhost, IP Address:127.0.0.1"),
+    ],
+)
+def test_the_certificate_names_the_host_then_localhost_and_loopback_once(
+    tmp_path: Path, host: str, names: str
+) -> None:
+    proxy_tls.mint(cert_dir=str(tmp_path), host=host)
+
+    assert names in _extension(
+        certificate=tmp_path / "console.crt", name="subjectAltName"
+    )
+
+
+@pytest.mark.parametrize("name", ["ca.crt", "console.crt", "console.key"])
+def test_an_existing_file_is_never_replaced(tmp_path: Path, name: str) -> None:
+    (tmp_path / name).write_text("keep\n", encoding="utf-8", newline="\n")
+
+    with pytest.raises(proxy_tls.MintError, match=f"already holds {name}"):
+        proxy_tls.mint(cert_dir=str(tmp_path), host=_HOST)
+
+    assert [path.name for path in tmp_path.iterdir()] == [name]
+    assert (tmp_path / name).read_text(encoding="utf-8") == "keep\n"
+
+
+@pytest.mark.parametrize(
+    "host",
+    [
+        "",
+        "a b",
+        "evil.example,DNS:*.example.com",
+        "*.example.com",
+        "x/y",
+        "a\nb",
+        "-lead.example",
+        f"{'a' * 64}.example",
+        "fe80::1%eth0",
+        "::1%x\nsubjectAltName=DNS:*.example.com",
+    ],
+)
+def test_a_host_a_certificate_cannot_carry_is_refused(
+    tmp_path: Path, host: str
+) -> None:
+    directory = tmp_path / "certs"
+
+    with pytest.raises(proxy_tls.MintError, match="not a hostname or an IP address"):
+        proxy_tls.mint(cert_dir=str(directory), host=host)
+
+    assert not (directory.exists())
+
+
+@pytest.mark.parametrize(
+    ("host", "common_name"),
+    [
+        (f"{'a' * 33}.example", f"{'a' * 33}.example"),
+        (f"{'a' * 56}.example", f"{'a' * 56}.example"),
+        (f"{'a' * 57}.example", "DFE console"),
+        (f"{'a' * 63}.{'b' * 63}.{'c' * 63}.{'d' * 53}.example", "DFE console"),
+    ],
+)
+def test_a_long_host_mints_and_the_san_carries_it_whole(
+    tmp_path: Path, host: str, common_name: str
+) -> None:
+    proxy_tls.mint(cert_dir=str(tmp_path), host=host)
+
+    certificate = tmp_path / "console.crt"
+    assert f"DNS:{host}" in _extension(certificate=certificate, name="subjectAltName")
+    assert (
+        _openssl(args=["x509", "-noout", "-subject", "-in", str(certificate)]).stdout
+        == f"subject=CN={common_name}\n"
+    )
+    assert (
+        _openssl(
+            args=[
+                "verify",
+                "-x509_strict",
+                "-CAfile",
+                str(tmp_path / "ca.crt"),
+                str(certificate),
+            ]
+        ).returncode
+        == 0
+    )
+
+
+def test_a_failed_mint_leaves_no_key_behind(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    def run_until_signing(*, args: list[str]) -> subprocess.CompletedProcess[str]:
+        if args[1] == "x509":
+            return subprocess.CompletedProcess(
+                args=args,
+                returncode=1,
+                stderr="config noise\nthe real cause\n",
+                stdout="",
+            )
+        return real_run(args=args)
+
+    real_run = proxy_tls._run
+    directory = tmp_path / "certs"
+    system_temp = tmp_path / "system-temp"
+    system_temp.mkdir()
+    monkeypatch.setattr(proxy_tls, "_run", run_until_signing)
+    monkeypatch.setattr(proxy_tls.tempfile, "tempdir", str(system_temp))
+
+    with pytest.raises(proxy_tls.MintError, match="the real cause$"):
+        proxy_tls.mint(cert_dir=str(directory), host=_HOST)
+
+    assert list(directory.iterdir()) == []
+    assert list(system_temp.iterdir()) == []
+
+
+def test_a_bare_cert_dir_is_refused() -> None:
+    with pytest.raises(proxy_tls.MintError, match="must be a path starting with"):
+        proxy_tls.mint(cert_dir="certs", host=_HOST)
+
+
+def test_a_cert_dir_that_is_a_file_is_refused(tmp_path: Path) -> None:
+    target = tmp_path / "certs"
+    target.write_text("", encoding="utf-8", newline="\n")
+
+    with pytest.raises(proxy_tls.MintError, match="is a file, not a directory"):
+        proxy_tls.mint(cert_dir=str(target), host=_HOST)
+
+
+@pytest.mark.skipif(
+    os.geteuid() == 0, reason="root writes into a 0500 directory, so nothing is shut"
+)
+def test_a_cert_dir_this_user_cannot_write_is_refused_not_raised(
+    tmp_path: Path,
+) -> None:
+    tmp_path.chmod(0o500)
+    try:
+        with pytest.raises(proxy_tls.MintError, match="cannot write to"):
+            proxy_tls.mint(cert_dir=str(tmp_path), host=_HOST)
+    finally:
+        tmp_path.chmod(0o700)
+
+
+def test_a_host_without_openssl_mints_nothing(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.setattr(proxy_tls.shutil, "which", _no_openssl)
+    directory = tmp_path / "certs"
+
+    with pytest.raises(proxy_tls.MintError, match="openssl is not on PATH"):
+        proxy_tls.mint(cert_dir=str(directory), host=_HOST)
+
+    assert not (directory.exists())
+
+
+def test_the_mint_command_says_what_to_trust(
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setattr(
+        "sys.argv",
+        ["proxy_tls.py", "mint", "--cert-dir", str(tmp_path), "--host", _HOST],
+    )
+
+    assert proxy_tls.main() == 0
+    captured = capsys.readouterr()
+    assert f"Trust {tmp_path}/ca.crt once" in captured.out
+    assert f"DFE_PROXY_CA_BUNDLE={tmp_path}/ca.crt" in captured.out
+    assert captured.err == ""
+
+
+def test_the_mint_command_refuses_on_stderr(
+    capsys: pytest.CaptureFixture[str],
+    minted: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        "sys.argv",
+        ["proxy_tls.py", "mint", "--cert-dir", str(minted), "--host", _HOST],
+    )
+
+    assert proxy_tls.main() == 1
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert "already holds" in captured.err
 
 
 def test_the_network_command_prints_the_address_then_the_range(
