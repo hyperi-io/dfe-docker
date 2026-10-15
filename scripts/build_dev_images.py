@@ -12,12 +12,9 @@
 Source acquisition goes via git, never an assumed local layout: each component
 repo is cloned/fetched into a managed cache (``DFE_SRC_CACHE``) from
 ``DFE_SRC_REMOTE`` at ``DFE_SRC_REF``, so a fresh machine only needs git
-credentials for the hyperi-io repos. ``DFE_SRC_ROOT`` is the explicit opt-in for
-building your own local checkouts (work in progress included) instead.
-
-This is a HyperI-internal developer path until GA: the component repos are
-private, so the default clone needs read access to them. The published images
-(`make stack` + `make ci`) pull anonymously.
+git. The hyperi-io repos are public, so the default clone needs no credential.
+``DFE_SRC_ROOT`` is the explicit opt-in for building your own local checkouts
+(work in progress included) instead.
 
 Each rust component is built in two phases:
 1. Compile the binary from the staged source via the shared docker/dfe-rust-builder.Dockerfile
@@ -362,7 +359,7 @@ def overlay_text(components: list[str]) -> str:
 def _parse_args(argv: list[str]) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description="Build <service>:local images from component source. "
-        "HyperI-internal until GA: the default clone reads private hyperi-io repos.",
+        "The default clone reads the public hyperi-io repos with no credential.",
     )
     parser.add_argument("services", nargs="+", help="compose service names to build")
     parser.add_argument(

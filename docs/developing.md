@@ -65,8 +65,7 @@ it as LATEST, and it is not a deploy.
 
 `DFE_STACK_REPIN_IMAGES=1` adds the development-currency step: every DFE image is
 repinned at the release its GitHub repo marks Latest (`rc`: the newest release of
-either kind), through a `gh` login that can read the component repos, which are
-private until GA. The pins still carry digests; the combination is one nobody
+either kind), through a `gh` login. The pins still carry digests, but the combination is one nobody
 certified.
 
 Skipping `make stack` is not a soft failure. Nearly every image pin uses

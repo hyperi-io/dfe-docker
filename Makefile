@@ -481,10 +481,10 @@ ifneq ($(strip $(DFE_DATA_ROOT)),)
 endif
 
 # `dev` and `dev-build` clone the component repos from github.com/hyperi-io,
-# which stay private until GA, so both are HyperI-internal until then; `make ci`
-# runs the same stack from the public images.
+# over public https with no token. `make ci` runs the same stack from the
+# published images.
 .PHONY: dev
-dev: env-files dev-posture down storage-dirs ## Build local DFE images from source and start the dev stack (LOCAL="svc ..." builds only those; AUTH=real for a minted login; LIVE_UI=1 runs the console as `next dev` from DFE_SRC_ROOT/dfe-ui), then print the access summary. HyperI-internal: clones private repos
+dev: env-files dev-posture down storage-dirs ## Build local DFE images from source and start the dev stack (LOCAL="svc ..." builds only those; AUTH=real for a minted login; LIVE_UI=1 runs the console as `next dev` from DFE_SRC_ROOT/dfe-ui), then print the access summary. Clones the public component repos
 	docker compose $(DEV_PULL_FLAGS) $(PROFILE_FLAGS) pull
 	$(if $(strip $(DEV_BUILD)),python3 scripts/build_dev_images.py $(DEV_OVERLAY_ARG) $(DEV_BUILD))
 	docker compose $(DEV_FLAGS) $(PROFILE_FLAGS) up -d $(ACTIVE_SERVICES)
@@ -492,7 +492,7 @@ dev: env-files dev-posture down storage-dirs ## Build local DFE images from sour
 	@$(MAKE) --no-print-directory creds
 
 .PHONY: dev-build
-dev-build: ## Build local DFE images from source (no start; honours LOCAL). HyperI-internal: clones private repos
+dev-build: ## Build local DFE images from source (no start; honours LOCAL). Clones the public component repos
 	docker compose $(DEV_PULL_FLAGS) $(PROFILE_FLAGS) pull
 	$(if $(strip $(DEV_BUILD)),python3 scripts/build_dev_images.py $(DEV_OVERLAY_ARG) $(DEV_BUILD))
 
