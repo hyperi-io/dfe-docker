@@ -20,7 +20,7 @@ come out the other. Everything else can wait.
 
 - Docker and Docker Compose v2
 - Python 3
-- Access to `ghcr.io/hyperi-io` (the images are private)
+- Network access to `ghcr.io/hyperi-io`, where the images are public and pull with no login
 
 ## Getting it running
 

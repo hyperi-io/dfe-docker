@@ -52,7 +52,7 @@ endif
 # any more (both sweep every profile), and requiring a resolvable profile to STOP
 # a stack is the same lockout the compose secret comments argue against -- set
 # DFE_PROFILE to something that does not exist and you could not tear down.
-BOOTSTRAP_GOALS := init env-files creds dev-posture help login stack dial modes down clean limits check check-compose check-hardfail check-dockerfile check-docs check-locks check-proxy check-python check-tests
+BOOTSTRAP_GOALS := init env-files creds dev-posture help stack dial modes down clean limits check check-compose check-hardfail check-dockerfile check-docs check-locks check-proxy check-python check-tests
 
 # Resolve the active profile only when a goal actually needs the compose stack
 ifneq (,$(filter-out $(BOOTSTRAP_GOALS),$(or $(MAKECMDGOALS),help)))
@@ -439,14 +439,6 @@ endif
 dev-posture: .env ## Put .env into the dev posture (DFE_ENV=dev, known admin password until the stack replaces it); AUTH=real mints one and writes a non-dev posture instead
 	@python3 scripts/dev_posture.py $(DEV_POSTURE_ARG)
 
-# GHCR auth for the private dfe-* images and the signed stack-manifest. A no-op
-# when DFE_GHCR_* are unset (a daemon authed out of band), so it is safe as an
-# unconditional prerequisite. The helper reads .env itself and pipes the token on
-# stdin -- it never reaches a make variable, so it stays out of the process list.
-.PHONY: login
-login: ## Authenticate docker + oras to the image registry from .env (DFE_GHCR_USERNAME/TOKEN)
-	@python3 scripts/ghcr_login.py
-
 # `make stack VERSION=X.Y.Z` pins the certified set. `make dial` writes the dial's
 # version.pin to DFE_STACK_VERSION in .env, so `make dial && make stack` pins
 # straight from the deployment dial. An explicit VERSION= on the command line wins.
@@ -458,7 +450,7 @@ login: ## Authenticate docker + oras to the image registry from .env (DFE_GHCR_U
 VERSION ?= $(DFE_STACK_VERSION)
 
 .PHONY: stack
-stack: .env login ## Pin image versions into .env from the DFE stack SSoT (VERSION=X.Y.Z[-rc.N], or latest|rc for the newest published stack)
+stack: .env ## Pin image versions into .env from the DFE stack SSoT (VERSION=X.Y.Z[-rc.N], or latest|rc for the newest published stack)
 	@python3 scripts/stack.py $(VERSION)
 
 # The deployment dial (deployment.yaml) is the single SSoT a deployment turns.
@@ -509,7 +501,7 @@ dev-build: ## Build local DFE images from source (no start; honours LOCAL). Hype
 # ---------------------------------------------------------------------------
 
 .PHONY: ci
-ci: login env-files down storage-dirs  ## Pull and start infra and registry DFE images. Prints no credentials -- run `make creds` for those
+ci: env-files down storage-dirs  ## Pull and start infra and registry DFE images. Prints no credentials -- run `make creds` for those
 	docker compose -f docker-compose.yml $(STORAGE_FLAGS) $(UI_FLAGS) $(PROFILE_FLAGS) pull
 	docker compose -f docker-compose.yml $(STORAGE_FLAGS) $(UI_FLAGS) $(PROFILE_FLAGS) pull $(ACTIVE_SERVICES)
 	docker compose -f docker-compose.yml $(STORAGE_FLAGS) $(UI_FLAGS) $(PROFILE_FLAGS) up -d $(ACTIVE_SERVICES)
@@ -549,7 +541,7 @@ ifneq ($(strip $(SERVICES)),)
 endif
 
 .PHONY: ci-pull
-ci-pull: login ## Pull infra and registry DFE images
+ci-pull: ## Pull infra and registry DFE images
 	docker compose -f docker-compose.yml $(PROFILE_FLAGS) pull
 	docker compose -f docker-compose.yml $(PROFILE_FLAGS) pull $(ACTIVE_SERVICES)
 

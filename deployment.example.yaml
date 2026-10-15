@@ -8,7 +8,7 @@
 
 ## THE DEPLOYMENT DIAL -- one config file the whole deployment reads. `make dial`
 ## renders the docker-vm keys below into .env, so a redeploy is a dial edit and
-## then `make dial && make login && make stack && make ci`. A QA GUI wizard will
+## then `make dial && make stack && make ci`. A QA GUI wizard will
 ## populate this same file later, so every field is a labelled dial with a
 ## default and its allowed values.
 ##
@@ -25,7 +25,7 @@
 ## (docker-vm | k8s -- the k8s substrate renders via dfe-infra into a DeployContext.)
 substrate: docker-vm
 
-## Image registry hosting the published dfe-* images.
+## Image registry hosting the published dfe-* images, pulled anonymously.
 registry: ghcr.io/hyperi-io
 
 ## Version dial: pin XOR track. Pinned is the default and the safe production
@@ -41,12 +41,12 @@ version:
   # allow_prerelease: "false"
 
 ## Secret backend + base path. REFERENCES only, never values. The operator's own
-## tooling resolves these from the backend and injects DFE_GHCR_USERNAME/TOKEN
-## into .env for `make login`; without such tooling, set those two by hand.
-## `make dial` never reads or writes a secret.
+## tooling resolves these from the backend and injects the secrets a deployment
+## sets (DFE_OIDC_CLIENT_SECRET below) into .env; without such tooling, set them by
+## hand. `make dial` never reads or writes a secret.
 secrets:
   backend: openbao          # openbao | aws-sm | file
-  ## Base path; ghcr-pull-secret lives under it. Which path is estate context.
+  ## Base path the secrets live under. Which path is estate context.
   ref: ""
 
 ## Service footprint. Left commented, service_profiles.yaml's active_profile is
@@ -103,7 +103,7 @@ docker:
   ## infra UI, gating on OIDC sign-in AND group membership. It needs an issuer,
   ## so it stays off until a deployment has one. The client SECRET is not a dial
   ## field -- the operator's own tooling injects DFE_OIDC_CLIENT_SECRET into .env
-  ## from the secrets backend, the same way it injects the GHCR token.
+  ## from the secrets backend.
   auth_enabled: "false"
   oidc_issuer_url: ""
   oidc_client_id: ""

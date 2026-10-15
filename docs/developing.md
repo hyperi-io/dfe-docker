@@ -482,8 +482,8 @@ that is a finding about the console rather than about the pipeline.
 | `make check-locks` | `uv lock --check` on each script that declares packages inline, so a pin moved without `uv lock --script <script>` fails here rather than mid-suite |
 
 `check-compose` is hermetic: it reads the mandatory `${VAR:?}` keys out of the
-compose file and substitutes placeholders, so it needs neither the stack SSoT nor
-registry credentials. It validates compose *structure*, not that any digest
+compose file and substitutes placeholders, so it reads neither the stack SSoT nor
+the registry. It validates compose *structure*, not that any digest
 resolves. It also refuses a `DFE_SERVICE_CPUS` under 2.0 on any service that gates
 on `/readyz` -- see [operating.md](operating.md#dfe_service_cpus-has-a-floor-of-20-and-it-is-not-about-speed)
 for why a lower ceiling takes health endpoints dark.
