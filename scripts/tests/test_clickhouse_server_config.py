@@ -35,10 +35,10 @@ from _common import COMPOSE_FILE, REPO_ROOT
 _SERVICE = "clickhouse"
 _CONFIG_D = "/etc/clickhouse-server/config.d"
 _DATA_DIR = "/var/lib/clickhouse/"
-_LOGGER_FILE = REPO_ROOT / "clickhouse" / "server-logger.xml"
-_SYSTEM_LOGS_FILE = REPO_ROOT / "clickhouse" / "system-logs.xml"
-_REPLICATION_FILE = REPO_ROOT / "clickhouse" / "replication.xml"
-_LISTEN_FILE = REPO_ROOT / "clickhouse" / "listen.xml"
+_LOGGER_FILE = REPO_ROOT / "config" / "clickhouse" / "server-logger.xml"
+_SYSTEM_LOGS_FILE = REPO_ROOT / "config" / "clickhouse" / "system-logs.xml"
+_REPLICATION_FILE = REPO_ROOT / "config" / "clickhouse" / "replication.xml"
+_LISTEN_FILE = REPO_ROOT / "config" / "clickhouse" / "listen.xml"
 # The image's file that opens every listener on every interface.
 _IMAGE_LISTEN_NAME = "docker_related_config.xml"
 _LOOPBACK = {"127.0.0.1", "::1"}
