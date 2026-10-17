@@ -673,8 +673,10 @@ services:
       - path: env/dfe-loader.custom.env
         required: false
     environment:
-      CLICKHOUSE_USERNAME: ${CLICKHOUSE_USERNAME:-default}
-      CLICKHOUSE_PASSWORD: ${CLICKHOUSE_PASSWORD:-}
+      # Its own user, not the admin account: dfe_loader inserts into the data
+      # database and reads its schema, nothing else. The engine names the user.
+      CLICKHOUSE_USERNAME: dfe_loader
+      CLICKHOUSE_PASSWORD: ${DFE_LOADER_CLICKHOUSE_PASSWORD:-}
       LOG_LEVEL: ${LOG_LEVEL:-info}
       LOG_FORMAT: ${LOG_FORMAT:-text}
       OTEL_EXPORTER_OTLP_ENDPOINT: ${DFE_OTEL_EXPORTER_ENDPOINT:-}
@@ -1187,9 +1189,13 @@ services:
       DFE_CLICKHOUSE_USERNAME: ${CLICKHOUSE_USERNAME:-default}
       DFE_CLICKHOUSE_PASSWORD: ${CLICKHOUSE_PASSWORD:-}
       DFE_CLICKHOUSE_SECURE: ${CLICKHOUSE_SECURE:-false}
-      # The password the engine gives dfe_hunt_runner: the same value the runner
-      # below connects with, minted by `make init`.
+      # The passwords the engine gives each app's own user: the same values each
+      # app below connects with, minted by `make init`. Only the engine holds the
+      # admin password above.
       DFE_CLICKHOUSE_HUNT_RUNNER_PASSWORD: ${DFE_HUNT_RUNNER_CLICKHOUSE_PASSWORD:-}
+      DFE_CLICKHOUSE_LOADER_PASSWORD: ${DFE_LOADER_CLICKHOUSE_PASSWORD:-}
+      DFE_CLICKHOUSE_QUERY_READER_PASSWORD: ${DFE_QUERY_READER_CLICKHOUSE_PASSWORD:-}
+      DFE_CLICKHOUSE_OTEL_WRITER_PASSWORD: ${DFE_OTEL_WRITER_CLICKHOUSE_PASSWORD:-}
       # Default TTL for every time-series table; 0 = none; a source or a
       # dfe-schemas TTL overrides it.
       DFE_CLICKHOUSE_DEFAULT_TTL_DAYS: ${DFE_CLICKHOUSE_DEFAULT_TTL_DAYS:-90}
@@ -1480,8 +1486,10 @@ services:
       # Container port whatever the host publish is, as for dfe-engine (#75).
       CLICKHOUSE_HOST: ${CLICKHOUSE_HOST:-clickhouse}
       CLICKHOUSE_PORT: ${CLICKHOUSE_EXTERNAL_NATIVE_PORT:-9000}
-      CLICKHOUSE_USERNAME: ${CLICKHOUSE_USERNAME:-default}
-      CLICKHOUSE_PASSWORD: ${CLICKHOUSE_PASSWORD:-}
+      # Its own user, not the admin account: dfe_otel_writer writes the otel
+      # tables and reads server health. The engine names the user.
+      CLICKHOUSE_USERNAME: dfe_otel_writer
+      CLICKHOUSE_PASSWORD: ${DFE_OTEL_WRITER_CLICKHOUSE_PASSWORD:-}
       DFE_OTEL_DATABASE: ${DFE_OTEL_DATABASE:-dfe}
       DFE_OTEL_COLLECTOR_LOG_LEVEL: ${DFE_OTEL_COLLECTOR_LOG_LEVEL:-warn}
     volumes:
@@ -1596,10 +1604,11 @@ services:
       # The name must be `platform`: the shipped dashboards reference their
       # connection by that name and are skipped for a team that has no match.
       # Only header-dev reads this: under oidc-proxy the fork asks dfe-engine for
-      # each team's connection, built from the same CLICKHOUSE_* keys.
+      # each team's connection. It reads as the platform reader the engine
+      # creates, never the admin account.
       # Host and port follow dfe-engine's, container port included (#75), and
       # resolve_profile.py turns CLICKHOUSE_SECURE into the https scheme.
-      DEFAULT_CONNECTIONS: '[{"name":"platform","host":"${DFE_CLICKHOUSE_RESOLVED_SCHEME:-http}://${CLICKHOUSE_HOST:-clickhouse}:${CLICKHOUSE_EXTERNAL_HTTP_PORT:-8123}","username":"${CLICKHOUSE_USERNAME:-default}","password":"${CLICKHOUSE_PASSWORD:-}"}]'
+      DEFAULT_CONNECTIONS: '[{"name":"platform","host":"${DFE_CLICKHOUSE_RESOLVED_SCHEME:-http}://${CLICKHOUSE_HOST:-clickhouse}:${CLICKHOUSE_EXTERNAL_HTTP_PORT:-8123}","username":"dfe_query_reader","password":"${DFE_QUERY_READER_CLICKHOUSE_PASSWORD:-}"}]'
       DEFAULT_SOURCES_FILE: /etc/hyperdx/default-sources.json
       # The engine is the issuer here as it is on Kubernetes: HyperDX verifies its
       # ES384 token against the engine's JWKS, taking it from a Bearer header or
