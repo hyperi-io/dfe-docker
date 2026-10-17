@@ -2756,11 +2756,16 @@ def await_hunt_pickup(ctx, test, token, hunt):
 
 # ------------------------------------------------------------------------------
 # Send Detection Events
-# - Both sets, each event labelled, until every one has landed in the table
+# - Both sets, each event labelled and carrying the hunt's tenant id, until every
+#   one has landed in the table
 # ------------------------------------------------------------------------------
-def send_detection_events(ctx, test, ingest_url, events):
+def send_detection_events(ctx, test, ingest_url, events, tenant):
     bodies = _detection.labelled_events(
-        marker=test.marker, test_name=test.name, source=test.table, events=events
+        marker=test.marker,
+        test_name=test.name,
+        source=test.table,
+        events=events,
+        org_id=tenant,
     )
     refused = []
     for label, body in bodies:
@@ -2938,9 +2943,29 @@ def remove_detection_objects(ctx, test, token, created):
 
 
 # ------------------------------------------------------------------------------
+# Ensure Detection Org
+# - The org the hunt runs for, and an org this run makes is removed after the hunt
+# ------------------------------------------------------------------------------
+def ensure_detection_org(ctx, test, token, created):
+    org = post._ensure_org(
+        base=post._engine_base(), token=token, name=DETECTION_CUSTOMER
+    )
+    if org.made:
+        created.insert(0, ("organisation", DETECTION_CUSTOMER))
+    if org.fault:
+        mark_fail(
+            ctx,
+            f"[{test.name}] organisation '{DETECTION_CUSTOMER}' could not be read or "
+            f"made: {org.fault}",
+        )
+        return None
+    return org
+
+
+# ------------------------------------------------------------------------------
 # Run Detection
-# - Rule, hunt, first window, events, a queued run, the verdict and the cleanup,
-#   each its own verdict line
+# - Org, rule, hunt, first window, events, a queued run, the verdict and the
+#   cleanup, each its own verdict line
 # ------------------------------------------------------------------------------
 def run_detection(ctx, test, ingest_url):
     if HUNT_RUNNER_SERVICE not in test.extra_services:
@@ -2977,6 +3002,9 @@ def run_detection(ctx, test, ingest_url):
     created = []
     landed = None
     try:
+        org = ensure_detection_org(ctx, test, login.token, created)
+        if org is None:
+            return
         if not (create_detection_rule(ctx, test, login.token, rule)):
             return
         created.insert(0, ("rule", rule))
@@ -2985,7 +3013,7 @@ def run_detection(ctx, test, ingest_url):
         created.insert(0, ("hunt", hunt))
 
         print()
-        landed = send_detection_events(ctx, test, ingest_url, events)
+        landed = send_detection_events(ctx, test, ingest_url, events, org.tenant)
         if landed is None:
             return
         last_load_ms = detection_last_load(test)
@@ -3034,23 +3062,8 @@ def run_detection(ctx, test, ingest_url):
 #   removes it after the hunt and the rule; one that already existed stays
 # ------------------------------------------------------------------------------
 def complete_setup(ctx, test, token, created):
-    org_path = f"/orgs/{quote(DETECTION_CUSTOMER)}"
-    status, org = engine_call("GET", org_path, token)
-    if status == 404:
-        request = {
-            "name": DETECTION_CUSTOMER,
-            "display_name": DETECTION_CUSTOMER.upper(),
-        }
-        made, _ = engine_call("POST", "/orgs", token, request)
-        if made == 201:
-            created.insert(0, ("organisation", DETECTION_CUSTOMER))
-        status, org = engine_call("GET", org_path, token)
-    if status != 200 or not (isinstance(org, dict)):
-        mark_fail(
-            ctx,
-            f"[{test.name}] organisation '{DETECTION_CUSTOMER}' could not be read or "
-            f"made: HTTP {status}: {org}",
-        )
+    org = ensure_detection_org(ctx, test, token, created)
+    if org is None:
         return None
 
     status, setup = engine_call("GET", "/auth/setup-status", token)
@@ -3076,10 +3089,10 @@ def complete_setup(ctx, test, token, created):
         return None
     mark_pass(
         ctx,
-        f"[{test.name}] setup complete, with organisation "
-        f"'{org.get('display_name') or DETECTION_CUSTOMER}' for the hunt to run for",
+        f"[{test.name}] setup complete, with organisation '{org.display_name}' "
+        f"(tenant id '{org.tenant}') for the hunt to run for",
     )
-    return org.get("display_name") or DETECTION_CUSTOMER
+    return org
 
 
 # ------------------------------------------------------------------------------
@@ -3227,11 +3240,11 @@ def run_search_detection(ctx, test, ingest_url, token):
     landed = None
     console = None
     try:
-        organisation = complete_setup(ctx, test, token, created)
-        if organisation is None or not (hyperdx_ready(ctx, test, token)):
+        org = complete_setup(ctx, test, token, created)
+        if org is None or not (hyperdx_ready(ctx, test, token)):
             return
         print()
-        if send_detection_events(ctx, test, ingest_url, seeds) is None:
+        if send_detection_events(ctx, test, ingest_url, seeds, org.tenant) is None:
             return
         console = open_console(ctx, test)
         if console is None:
@@ -3272,7 +3285,7 @@ def run_search_detection(ctx, test, ingest_url, token):
             return
 
         picks = [
-            _search_rule.HuntPick("Organisations", "", organisation),
+            _search_rule.HuntPick("Organisations", "", org.display_name),
             _search_rule.HuntPick("Source Table", "", test.table),
             _search_rule.HuntPick("Rules", rule.rule_id, stored["display_name"]),
         ]
@@ -3287,7 +3300,7 @@ def run_search_detection(ctx, test, ingest_url, token):
             return
 
         print()
-        landed = send_detection_events(ctx, test, ingest_url, events)
+        landed = send_detection_events(ctx, test, ingest_url, events, org.tenant)
         if landed is None:
             return
         last_load_ms = detection_last_load(test)
