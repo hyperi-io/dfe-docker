@@ -469,6 +469,19 @@ def test_a_pattern_subscriber_is_owed_a_commit_on_each_topic_it_reads(
     assert counts == {"main_load": 1, "vector_load": 1, "orphan_land": 1}
 
 
+def test_an_archiver_with_no_topics_is_owed_a_commit_on_each_topic_it_discovers(
+    tmp_path,
+) -> None:
+    archiver = tmp_path / "archiver" / "kafka.yaml"
+    archiver.parent.mkdir()
+    archiver.write_text("transport: kafka\n", encoding="utf-8")
+    topics = ["main_land", "main_load", "solo_load", "main_dlq", "__consumer_offsets"]
+
+    counts = _outage.expected_consumers(configs=[archiver], topics=topics)
+
+    assert counts == {"main_land": 1, "solo_load": 1}
+
+
 def test_a_topic_pattern_is_searched_not_anchored() -> None:
     assert _outage.pattern_subscriptions("land", ["main_land", "main_load"]) == {
         "main_land"
@@ -495,8 +508,8 @@ def test_the_broker_outage_owes_the_loader_a_commit_on_every_load_topic() -> Non
 
     assert counts == {
         "main_land": 2,
-        "vector_land": 1,
-        "cisco-ios_land": 1,
+        "vector_land": 2,
+        "cisco-ios_land": 2,
         "main_load": 1,
         "vector_load": 1,
         "cisco-ios_load": 1,

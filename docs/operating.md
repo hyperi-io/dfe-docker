@@ -463,7 +463,7 @@ hold: that the stack's own telemetry is landing fresh in the `dfe.otel_*` tables
 That is the pair the Kubernetes bootstrap smoke asserts as CORE 1 and CORE 2 --
 the two pipelines a complete deployment has to move.
 
-On a profile that starts an app with no work (the archiver, transform-vrl and transform-elastic `single` carries) it makes a third: each of them is ready AND reports `pipeline_idle` 1. A container that crash-looped on the idle config fails the first half; one that is quietly archiving or consuming fails the second.
+On a profile that starts an app with no work (the transform-vrl and transform-elastic `single` carries) it makes a third: each of them is ready AND reports `pipeline_idle` 1. A container that crash-looped on the idle config fails the first half; one that is quietly archiving or consuming fails the second.
 
 What it does not prove: anything about tables other than the target, about
 profiles you are not running, or about throughput. Three rows is deliberate -- a

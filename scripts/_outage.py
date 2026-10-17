@@ -64,6 +64,8 @@ METHODS = {
     ),
 }
 DEFAULT_METHOD = "stop"
+# scalo's default topic_exclude, which a dfe-archiver that discovers its topics keeps
+ARCHIVER_EXCLUDE = re.compile(r"^__|_dlq$")
 
 
 def config_problems(outage: Mapping, default_seconds: int) -> list[str]:
@@ -540,6 +542,16 @@ def pattern_subscriptions(regex: str, topics: Iterable[str]) -> set[str]:
     }
 
 
+def _archiver_subscriptions(*, topics: Iterable[str]) -> set[str]:
+    """The topics a dfe-archiver that names none discovers out of `topics`, archiving a source from `<base>_land` wherever `<base>_load` exists too."""
+    kept = {topic for topic in topics if not (ARCHIVER_EXCLUDE.search(topic))}
+    return {
+        topic
+        for topic in kept
+        if not (topic.endswith("_load") and f"{topic[: -len('_load')]}_land" in kept)
+    }
+
+
 def expected_consumers(
     configs: Iterable[Path], topics: Iterable[str] = ()
 ) -> Counter[str]:
@@ -547,6 +559,8 @@ def expected_consumers(
 
     A config that names no topics and subscribes by `topic_regex` counts on each
     of `topics` its pattern reads, so a pattern subscriber is owed a commit too.
+
+    A dfe-archiver config that names no topics counts on each of `topics` it discovers.
     """
     known = list(topics)
     counts: Counter[str] = Counter()
@@ -554,6 +568,8 @@ def expected_consumers(
         subscribed, _, regex = _config_topics(path=path)
         if not (subscribed) and regex:
             subscribed = pattern_subscriptions(regex, known)
+        elif not (subscribed) and path.parent.name == "archiver":
+            subscribed = _archiver_subscriptions(topics=known)
         counts.update(subscribed)
     return counts
 
