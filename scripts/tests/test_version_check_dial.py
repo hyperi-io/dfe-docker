@@ -22,10 +22,10 @@ import check_compose
 from _common import COMPOSE_FILE
 from test_engine_only_schema_control import _blocks
 
-ENABLED = "${VERSION_CHECK__ENABLED:-true}"
-SEND_INSTANCE_ID = "${VERSION_CHECK__SEND_INSTANCE_ID:-true}"
+ENABLED = "${DFE_VERSION_CHECK_ENABLED:-true}"
+SEND_INSTANCE_ID = "${DFE_VERSION_CHECK_SEND_INSTANCE_ID:-true}"
 # The only forms the dial may take in the compose file: it opts out and never defaults off.
-_DIAL_VALUE = re.compile(r"^\$\{VERSION_CHECK__(ENABLED|SEND_INSTANCE_ID):-true\}$")
+_DIAL_VALUE = re.compile(r"^\$\{DFE_VERSION_CHECK_(ENABLED|SEND_INSTANCE_ID):-true\}$")
 
 
 def _environment(block: list[str]) -> dict[str, str]:
@@ -85,3 +85,10 @@ def test_no_service_outside_the_list_carries_the_dial() -> None:
     }
 
     assert carriers == set(check_compose._VERSION_CHECK_PREFIXES)
+
+
+def test_the_unprefixed_dial_names_are_not_read_anywhere() -> None:
+    """One name each, no alias: a deployer sets DFE_VERSION_CHECK_*, nothing else."""
+    text = COMPOSE_FILE.read_text(encoding="utf-8")
+
+    assert "${VERSION_CHECK__" not in text

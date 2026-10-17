@@ -427,8 +427,8 @@ _DFE_OWNED_SERVICES = {
 
 # Each app reads the release-check dial under its own scalo prefix, and scalo-py reads it bare.
 # dfe-ui and the hunt runner start no check.
-_VERSION_CHECK_ENABLED_KEY = "VERSION_CHECK__ENABLED"
-_VERSION_CHECK_ID_KEY = "VERSION_CHECK__SEND_INSTANCE_ID"
+_VERSION_CHECK_ENABLED_KEY = "DFE_VERSION_CHECK_ENABLED"
+_VERSION_CHECK_ID_KEY = "DFE_VERSION_CHECK_SEND_INSTANCE_ID"
 _VERSION_CHECK_PREFIXES = {
     "dfe-archiver": "ARCHIVER_",
     "dfe-engine": "",

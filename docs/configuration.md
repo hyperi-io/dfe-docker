@@ -330,10 +330,10 @@ Every DFE app asks `releases.hyperi.io` at startup whether a newer version exist
 
 | Variable                                         | Use                                                                                  | Default                                                             |
 |--------------------------------------------------|--------------------------------------------------------------------------------------|---------------------------------------------------------------------|
-| `VERSION_CHECK__ENABLED`                         | `false` stops the check in every app, so none of them phones out                     | `true`                                                              |
-| `VERSION_CHECK__SEND_INSTANCE_ID`                | `false` keeps the check and sends no install id                                      | `true`                                                              |
+| `DFE_VERSION_CHECK_ENABLED`                      | `false` stops the check in every app, so none of them phones out                     | `true`                                                              |
+| `DFE_VERSION_CHECK_SEND_INSTANCE_ID`             | `false` keeps the check and sends no install id                                      | `true`                                                              |
 
-The names are scalo's own `version_check.enabled` and `version_check.send_instance_id` keys in the env form its cascade nests with. Each app reads them under its own prefix, so compose does the spelling: `DFE_LOADER_`, `DFE_RECEIVER_` and `DFE_FETCHER_` for those three, `ARCHIVER_` for the archiver (no `DFE_`), `DFE_TRANSFORM_` for vector and vrl, `DFE_TRANSFORM_ELASTIC_` for elastic, and no prefix for dfe-engine. dfe-ui and the hunt runner start no check. A compose `environment:` entry beats `env/<app>.env`, so set the dial in `.env`. The third-party images keep their own telemetry settings, which this dial does not reach.
+Compose maps them onto scalo's `version_check.enabled` and `version_check.send_instance_id` keys, in the env form scalo's cascade nests with. Each app reads those under its own prefix, so compose does the spelling: `DFE_LOADER_`, `DFE_RECEIVER_` and `DFE_FETCHER_` for those three, `ARCHIVER_` for the archiver (no `DFE_`), `DFE_TRANSFORM_` for vector and vrl, `DFE_TRANSFORM_ELASTIC_` for elastic, and no prefix for dfe-engine. dfe-ui and the hunt runner start no check. A compose `environment:` entry beats `env/<app>.env`, so set the dial in `.env`. The third-party images keep their own telemetry settings, which this dial does not reach.
 
 ## Self-monitoring (opt-in)
 
