@@ -17,21 +17,27 @@ docs/CLICKHOUSE-IDENTITY.md is the model, and its Kubernetes guard is
 scripts/tests/test_clickhouse_app_identity.py there.
 """
 
-from __future__ import annotations
-
+import re
 from pathlib import Path
 
 import pytest
 
 import init
 import post
-from test_engine_only_schema_control import _blocks
+from test_engine_only_schema_control import _blocks, _generated_blocks
 
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 COMPOSE = REPO_ROOT / "docker-compose.yml"
 
 # The server itself, and the one client that administers it.
 ADMIN_HOLDERS = {"clickhouse", "dfe-engine"}
+
+# A ClickHouse user variable set to the admin account's name, as a value or a fallback.
+ADMIN_USER_LITERAL = re.compile(
+    r"^\s*-?\s*[A-Z0-9_]*CLICKHOUSE_USER(?:NAME)?\s*[:=]\s*[\"']?"
+    r"(?:\$\{[A-Za-z0-9_]+:?-)?default\b",
+    re.MULTILINE,
+)
 
 # Each app's user, the .env key its password is minted under, and the service
 # whose definition carries the pair.
@@ -53,12 +59,26 @@ ENGINE_READS = {
 
 @pytest.fixture(scope="module")
 def services() -> dict[str, str]:
-    blocks = {
-        name: "\n".join(lines)
-        for name, lines in _blocks(COMPOSE.read_text(encoding="utf-8")).items()
+    committed = _blocks(COMPOSE.read_text(encoding="utf-8"))
+    assert len(committed) > 10, f"the compose reader found only {sorted(committed)}"
+    # The instances scripts/instances.py writes at run time hold to the same rule.
+    generated = _generated_blocks()
+    assert generated, "the instance generator rendered no service"
+    assert not committed.keys() & generated.keys(), (
+        "an instance would hide a committed service"
+    )
+    return {
+        name: "\n".join(lines) for name, lines in {**committed, **generated}.items()
     }
-    assert len(blocks) > 10, f"the compose reader found only {sorted(blocks)}"
-    return blocks
+
+
+def admin_user_holders(services: dict[str, str]) -> set[str]:
+    """Each service that connects as the admin user, by its variable or by name."""
+    return {
+        name
+        for name, block in services.items()
+        if "${CLICKHOUSE_USERNAME" in block or ADMIN_USER_LITERAL.search(block)
+    }
 
 
 def test_only_the_engine_takes_the_admin_password(services: dict[str, str]) -> None:
@@ -69,11 +89,25 @@ def test_only_the_engine_takes_the_admin_password(services: dict[str, str]) -> N
 
 
 def test_only_the_engine_takes_the_admin_user(services: dict[str, str]) -> None:
-    holders = {
-        name for name, block in services.items() if "${CLICKHOUSE_USERNAME" in block
-    }
+    holders = admin_user_holders(services)
     assert holders <= ADMIN_HOLDERS
     assert "dfe-engine" in holders
+
+
+@pytest.mark.parametrize(
+    "line",
+    [
+        "      CLICKHOUSE_USERNAME: default",
+        '      CLICKHOUSE_USER: "default"',
+        "      - DFE_CLICKHOUSE_USERNAME=default",
+        "      DFE_LOADER_CLICKHOUSE_USERNAME: ${SOME_USER:-default}",
+    ],
+)
+def test_an_app_naming_the_admin_user_outright_is_caught(
+    services: dict[str, str], line: str
+) -> None:
+    probe = {**services, "probe": f"    environment:\n{line}"}
+    assert "probe" in admin_user_holders(probe)
 
 
 @pytest.mark.parametrize("user", sorted(APP_USERS))
