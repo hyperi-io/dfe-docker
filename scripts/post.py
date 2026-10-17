@@ -292,7 +292,6 @@ HUNT_EVENTS = {
 # port compose publishes it on. dfe-infra apps.yaml declares the idle predicate
 # and the app evaluates it; this reads the answer the app publishes.
 IDLE_APPS: dict[str, tuple[str, str]] = {
-    "dfe-archiver": ("archiver/kafka.yaml", "9093"),
     "dfe-transform-elastic": ("transform-elastic/kafka.yaml", "9099"),
     "dfe-transform-vrl": ("transform-vrl/kafka.yaml", "9096"),
 }

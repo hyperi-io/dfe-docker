@@ -653,14 +653,13 @@ def main(argv: Sequence[str] = ()) -> int:
         lines.append(
             f"export DFE_TRANSPORT_BUS_PRESENT := {'true' if bus else 'false'}"
         )
-        # The engine creates a source's topics on the in-stack broker, which every
-        # kafka tier reaches by the `kafka` alias; .env names an external broker
-        # instead, and a direct tier hands the engine no broker at all.
+        # The in-stack broker unless .env names another. A direct tier exports it empty, so no app opens a Kafka client.
+        broker = ""
         if bus:
             broker = (
                 os.environ.get(ENGINE_BROKER_ENV_VAR, "").strip() or IN_STACK_BROKER
             )
-            lines.append(f"export {ENGINE_BROKER_ENV_VAR} := {broker}")
+        lines.append(f"export {ENGINE_BROKER_ENV_VAR} := {broker}")
 
         # The console version the engine reports. Emitted unconditionally, empty
         # when nothing is pinned, so the included file settles on every make pass.

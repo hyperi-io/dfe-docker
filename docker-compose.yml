@@ -139,9 +139,9 @@ x-oauth2-proxy-env: &oauth2-proxy-env
   OAUTH2_PROXY_SKIP_PROVIDER_BUTTON: "true"
 
 # =============================================================================
-# Where the DFE apps reach Kafka: the in-stack broker unless .env names another in DFE_KAFKA_BOOTSTRAP_SERVERS, the variable resolve_profile.py also hands dfe-engine to create topics on.
+# Where the DFE apps reach Kafka, as resolve_profile.py resolves DFE_KAFKA_BOOTSTRAP_SERVERS: empty on a profile without Kafka
 # =============================================================================
-x-kafka-brokers: &kafka-brokers ${DFE_KAFKA_BOOTSTRAP_SERVERS:-kafka:9092}
+x-kafka-brokers: &kafka-brokers ${DFE_KAFKA_BOOTSTRAP_SERVERS:-}
 
 services:
 
@@ -584,6 +584,7 @@ services:
       # The archiver's cascade prefix is ARCHIVER, not DFE_ARCHIVER.
       ARCHIVER_VERSION_CHECK__ENABLED: ${DFE_VERSION_CHECK_ENABLED:-true}
       ARCHIVER_VERSION_CHECK__SEND_INSTANCE_ID: ${DFE_VERSION_CHECK_SEND_INSTANCE_ID:-true}
+      KAFKA_BROKERS: *kafka-brokers
     depends_on:
       # The writer of the rendered config below, so it must have written before
       # this container reads. `required: false` for the tiers that run no engine.

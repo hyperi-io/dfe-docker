@@ -69,15 +69,11 @@ ingest components produce to a `*_land` topic derived from the event's `_source`
 and the loader consumes `topic_regex: .*_land`. On a `grpc-*` profile there is no
 broker -- the ingest components dial `dfe-loader:6000` directly.
 
-The three transforms are bus-only today: each reads a topic and writes a topic.
-`dfe-archiver` runs on either -- it consumes the landing topics on Kafka and
-answers a scalo Push listener on gRPC (`config/archiver/grpc.yaml`). With a
-transform in the profile the loader switches to `config/loader/kafka-load.yaml`
-and consumes `main_load`.
+The three transforms are bus-only today: each reads a topic and writes a topic. `dfe-archiver` archives each source from its landing topic on Kafka. Its gRPC config (`config/archiver/grpc.yaml`) listens on port 6000, but nothing on a direct tier sends records to it. With a transform in the profile the loader switches to `config/loader/kafka-load.yaml` and consumes `main_load`.
 
 ## What each tier runs, and what starts with nothing to do
 
-`slim` is the core data path alone: receiver, loader, engine, UI and HyperDX. `single` adds the broker and three more apps (one archiver, one transform-vrl and one transform-elastic), each started from a config that gives it no work.
+`slim` is the core data path alone: receiver, loader, engine, UI and HyperDX. `single` adds the broker, one archiver and two apps started from a config that gives them no work: one transform-vrl and one transform-elastic.
 
 An idle app is Ready, serves health and metrics, opens no broker connection and
 holds `pipeline_idle` at 1, so being deployed unconfigured costs a container and

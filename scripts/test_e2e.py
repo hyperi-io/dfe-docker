@@ -1726,7 +1726,9 @@ def archive_targets(test, services):
             config = yaml.safe_load(config_file) or {}
         topics = (config.get("kafka") or {}).get("topics") or []
         destination = str((config.get("archive") or {}).get("destination", ""))
-        if landing in topics and destination.startswith("file://"):
+        # An archiver that names no topics discovers every one, the landing topic included
+        reads_landing = (not (topics)) or (landing in topics)
+        if reads_landing and destination.startswith("file://"):
             targets[service] = destination[len("file://") :]
     return targets
 

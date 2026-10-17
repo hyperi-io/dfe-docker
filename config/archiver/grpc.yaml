@@ -1,21 +1,15 @@
 # Project:   dfe-docker
 # File:      config/archiver/grpc.yaml
-# Purpose:   dfe-archiver config - archives records pushed straight to it
+# Purpose:   Archives records pushed over gRPC
 # Language:  YAML
 #
 # License:   BUSL-1.1
 # Copyright: (c) 2026 HYPERI PTY LIMITED
-#
-# The brokerless shape: dfe-receiver fans a matched record out to dfe-loader
-# AND to the scalo Push listener here, so the archive works with no bus.
 
-transport: grpc
+archive:
+  destination: file:///var/data/archive
 
 grpc:
   listen: 0.0.0.0:6000
 
-# The compose stack mounts a named volume here (docker-compose.yml,
-# archiver-data). The app has no default destination: an archiver with nowhere
-# to write idles rather than filling a container's own filesystem.
-archive:
-  destination: file:///var/data/archive
+transport: grpc
