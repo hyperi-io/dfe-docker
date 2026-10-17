@@ -181,6 +181,7 @@ def test_only_the_services_that_push_their_own_metrics_are_expected() -> None:
         "dfe-hunt-runner",
         "dfe-loader",
         "dfe-transform-e2e-vrl-filebeat",
+        "dfe-transform-elastic",
         "dfe-transform-vrl-filebeat",
         "dfe-ui",
         "hyperdx",
@@ -189,8 +190,10 @@ def test_only_the_services_that_push_their_own_metrics_are_expected() -> None:
 
     assert post._otel_expected_services(services=services, unapplied=set()) == [
         "dfe-engine",
+        "dfe-hunt-runner",
         "dfe-loader",
         "dfe-transform-e2e-vrl-filebeat",
+        "dfe-transform-elastic",
         "dfe-transform-vrl-filebeat",
     ]
 
@@ -1145,3 +1148,148 @@ def test_a_source_delete_with_no_answer_keeps_the_table_and_does_not_raise(
     )
 
     assert statements == []
+
+
+_METRICS_BASE = "http://localhost:9099"
+
+
+def test_an_app_holding_pipeline_idle_at_one_has_no_idle_fault() -> None:
+    body = "# TYPE pipeline_idle gauge\npipeline_idle 1\n"
+
+    assert post._idle_fault(body=body, base=_METRICS_BASE) == ""
+
+
+def test_an_app_reporting_pipeline_idle_zero_is_working_anyway() -> None:
+    fault = post._idle_fault(body="pipeline_idle 0\n", base=_METRICS_BASE)
+
+    assert "pipeline_idle=0" in fault
+    assert "working anyway" in fault
+
+
+def test_an_app_serving_ready_and_no_idle_gauge_has_started_its_pipeline() -> None:
+    """Ready is not inert, and the app says so by serving the gauge a run loop sets."""
+    fault = post._idle_fault(body="pipeline_ready 1\n", base=_METRICS_BASE)
+
+    assert "pipeline_ready=1" in fault
+    assert "no pipeline_idle" in fault
+    assert "the idle gate never engaged" in fault
+    assert "cannot be read" not in fault
+
+
+def test_an_app_serving_neither_gauge_cannot_be_read() -> None:
+    body = "# TYPE records_received_total counter\nrecords_received_total 0\n"
+
+    fault = post._idle_fault(body=body, base=_METRICS_BASE)
+
+    assert "neither pipeline_idle nor pipeline_ready" in fault
+    assert "cannot be read" in fault
+
+
+def test_an_unreachable_app_cannot_be_read() -> None:
+    fault = post._idle_fault(body=None, base=_METRICS_BASE)
+
+    assert "serves no pipeline_idle" in fault
+    assert "cannot be read" in fault
+
+
+def test_one_idle_app_that_started_its_pipeline_fails_the_claim_and_says_why(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    bodies = {
+        "9093": "pipeline_idle 1\n",
+        "9094": "pipeline_idle 1\n",
+        "9099": "pipeline_ready 1\n",
+        "9096": "pipeline_idle 1\n",
+    }
+    monkeypatch.setattr(
+        post,
+        "_idle_apps",
+        lambda: [
+            ("dfe-archiver", "9093"),
+            ("dfe-fetcher", "9094"),
+            ("dfe-transform-elastic", "9099"),
+            ("dfe-transform-vrl", "9096"),
+        ],
+    )
+    monkeypatch.setattr(post, "_wait_ready", lambda url: True)
+    monkeypatch.setattr(
+        post, "http_get", lambda url, **kwargs: bodies[url.split(":")[2].split("/")[0]]
+    )
+
+    claim = post._verify_idle_apps()
+
+    err = capsys.readouterr().err
+    assert claim == post.Claim(asserted=True, failed=1)
+    assert (
+        "FAIL  dfe-transform-elastic reports pipeline_ready=1 and no pipeline_idle"
+        in err
+    )
+    assert "cannot be read" not in err
+    assert err.count("PASS") == 3
+
+
+def _reported(monkeypatch: pytest.MonkeyPatch, *, names: set[str]) -> list[str]:
+    """Answer the metric-name query with `names`, and keep the SQL it was asked."""
+    asked: list[str] = []
+
+    def _query(sql: str, **kwargs) -> str:
+        asked.append(sql)
+        return "\n".join(sorted(names))
+
+    monkeypatch.setattr(post, "ch_query", _query)
+    monkeypatch.setattr(post, "_resolved_services", lambda: ["dfe-hunt-runner"])
+    return asked
+
+
+def test_the_runner_is_asked_for_its_own_instruments_in_every_metrics_table(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    asked = _reported(monkeypatch, names=set(post.HUNT_RUNNER_METRICS))
+
+    found = post._otel_reported_metrics(
+        database="dfe", service="dfe-hunt-runner", names=post.HUNT_RUNNER_METRICS
+    )
+
+    assert found == set(post.HUNT_RUNNER_METRICS)
+    assert len(asked) == 1
+    for table in post.OTEL_METRICS_TABLES:
+        assert f"FROM dfe.{table} WHERE ServiceName = 'dfe-hunt-runner'" in asked[0]
+    for name in post.HUNT_RUNNER_METRICS:
+        assert f"'{name}'" in asked[0]
+
+
+def test_a_runner_reporting_both_instruments_holds_the_claim(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    _reported(monkeypatch, names=set(post.HUNT_RUNNER_METRICS))
+
+    assert post._verify_hunt_runner_metrics(database="dfe") == 0
+
+    assert "PASS  dfe-hunt-runner reports its own metrics" in capsys.readouterr().err
+
+
+def test_a_runner_missing_an_instrument_fails_and_names_it(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Chassis metrics under its name are not enough: the hunt instruments are the claim."""
+    clock = _Clock()
+    monkeypatch.setattr(_pipeline, "time", clock)
+    _reported(monkeypatch, names={"dfe_hunt_backlog"})
+
+    assert post._verify_hunt_runner_metrics(database="dfe") == 1
+
+    err = capsys.readouterr().err
+    assert "FAIL  nothing in dfe named dfe_hunt_tick_duration_seconds" in err
+    assert "dfe_hunt_backlog" not in err.split("FAIL")[1]
+
+
+def test_a_profile_without_the_runner_is_not_asked_for_its_metrics(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    asked = _reported(monkeypatch, names=set())
+    monkeypatch.setattr(post, "_resolved_services", lambda: ["dfe-loader"])
+
+    assert post._verify_hunt_runner_metrics(database="dfe") == 0
+
+    assert asked == []
+    assert "dfe-hunt-runner is not in the active profile" in capsys.readouterr().err

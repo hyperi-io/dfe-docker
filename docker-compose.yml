@@ -36,6 +36,11 @@
 # Every service declares deploy.resources.limits, in four tiers. `make limits` prints the resolved numbers;
 # docs/operating.md#resource-limits-four-tiers-ceilings-not-reservations explains the sizing.
 #
+# Every DFE app runs a release check at startup, ON unless .env says otherwise. DFE_VERSION_CHECK_ENABLED=false
+# turns it off in all of them and DFE_VERSION_CHECK_SEND_INSTANCE_ID=false keeps it without the install id.
+# Each app reads scalo's key under its own cascade prefix, so each service maps the one dial onto its spelling.
+# docs/configuration.md#release-check.
+#
 # Quick start:
 #   make dev                         # Uses active_profile from service_profiles.yaml
 #   DFE_PROFILE=grpc-full make dev   # Override profile
@@ -561,6 +566,9 @@ services:
       # Empty exports nothing -- scalo's own rule, and the stack default.
       OTEL_EXPORTER_OTLP_ENDPOINT: ${DFE_OTEL_EXPORTER_ENDPOINT:-}
       OTEL_SERVICE_NAME: dfe-archiver
+      # The archiver's cascade prefix is ARCHIVER, not DFE_ARCHIVER.
+      ARCHIVER_VERSION_CHECK__ENABLED: ${DFE_VERSION_CHECK_ENABLED:-true}
+      ARCHIVER_VERSION_CHECK__SEND_INSTANCE_ID: ${DFE_VERSION_CHECK_SEND_INSTANCE_ID:-true}
     depends_on:
       # The writer of the rendered config below, so it must have written before
       # this container reads. `required: false` for the tiers that run no engine.
@@ -610,6 +618,8 @@ services:
       LOG_FORMAT: ${LOG_FORMAT:-text}
       OTEL_EXPORTER_OTLP_ENDPOINT: ${DFE_OTEL_EXPORTER_ENDPOINT:-}
       OTEL_SERVICE_NAME: dfe-fetcher
+      DFE_FETCHER_VERSION_CHECK__ENABLED: ${DFE_VERSION_CHECK_ENABLED:-true}
+      DFE_FETCHER_VERSION_CHECK__SEND_INSTANCE_ID: ${DFE_VERSION_CHECK_SEND_INSTANCE_ID:-true}
       # One directory per fetcher service; scripts/instances.py sets each instance's.
       DFE_FETCHER_CURSOR__DIRECTORY: /var/lib/dfe-fetcher/dfe-fetcher
     depends_on:
@@ -669,6 +679,8 @@ services:
       LOG_FORMAT: ${LOG_FORMAT:-text}
       OTEL_EXPORTER_OTLP_ENDPOINT: ${DFE_OTEL_EXPORTER_ENDPOINT:-}
       OTEL_SERVICE_NAME: dfe-loader
+      DFE_LOADER_VERSION_CHECK__ENABLED: ${DFE_VERSION_CHECK_ENABLED:-true}
+      DFE_LOADER_VERSION_CHECK__SEND_INSTANCE_ID: ${DFE_VERSION_CHECK_SEND_INSTANCE_ID:-true}
     depends_on:
       clickhouse:
         condition: service_healthy
@@ -731,6 +743,8 @@ services:
       LOG_FORMAT: ${LOG_FORMAT:-text}
       OTEL_EXPORTER_OTLP_ENDPOINT: ${DFE_OTEL_EXPORTER_ENDPOINT:-}
       OTEL_SERVICE_NAME: dfe-receiver
+      DFE_RECEIVER_VERSION_CHECK__ENABLED: ${DFE_VERSION_CHECK_ENABLED:-true}
+      DFE_RECEIVER_VERSION_CHECK__SEND_INSTANCE_ID: ${DFE_VERSION_CHECK_SEND_INSTANCE_ID:-true}
     depends_on:
       dfe-loader:
         condition: service_healthy
@@ -791,6 +805,8 @@ services:
       LOG_FORMAT: ${LOG_FORMAT:-text}
       OTEL_EXPORTER_OTLP_ENDPOINT: ${DFE_OTEL_EXPORTER_ENDPOINT:-}
       OTEL_SERVICE_NAME: dfe-transform-elastic
+      DFE_TRANSFORM_ELASTIC_VERSION_CHECK__ENABLED: ${DFE_VERSION_CHECK_ENABLED:-true}
+      DFE_TRANSFORM_ELASTIC_VERSION_CHECK__SEND_INSTANCE_ID: ${DFE_VERSION_CHECK_SEND_INSTANCE_ID:-true}
     depends_on:
       # No dlq-init here: this service does not mount dlq-spool.
       # The writer of the rendered config, so it must have written before this
@@ -842,6 +858,8 @@ services:
       LOG_FORMAT: ${LOG_FORMAT:-text}
       OTEL_EXPORTER_OTLP_ENDPOINT: ${DFE_OTEL_EXPORTER_ENDPOINT:-}
       OTEL_SERVICE_NAME: dfe-transform-e2e-elastic-cisco-ios
+      DFE_TRANSFORM_ELASTIC_VERSION_CHECK__ENABLED: ${DFE_VERSION_CHECK_ENABLED:-true}
+      DFE_TRANSFORM_ELASTIC_VERSION_CHECK__SEND_INSTANCE_ID: ${DFE_VERSION_CHECK_SEND_INSTANCE_ID:-true}
     depends_on:
       # No dlq-init here: this service does not mount dlq-spool. dfe-engine
       # creates the topics it reads and writes, so it waits on that instead.
@@ -886,6 +904,9 @@ services:
       LOG_FORMAT: ${LOG_FORMAT:-text}
       OTEL_EXPORTER_OTLP_ENDPOINT: ${DFE_OTEL_EXPORTER_ENDPOINT:-}
       OTEL_SERVICE_NAME: dfe-transform-vector
+      # Vector and vrl share the prefix DFE_TRANSFORM, and elastic has its own.
+      DFE_TRANSFORM_VERSION_CHECK__ENABLED: ${DFE_VERSION_CHECK_ENABLED:-true}
+      DFE_TRANSFORM_VERSION_CHECK__SEND_INSTANCE_ID: ${DFE_VERSION_CHECK_SEND_INSTANCE_ID:-true}
     depends_on:
       # No dlq-init here: this service does not mount dlq-spool.
       # The writer of the rendered config below, and the topic authority:
@@ -949,6 +970,8 @@ services:
       LOG_FORMAT: ${LOG_FORMAT:-text}
       OTEL_EXPORTER_OTLP_ENDPOINT: ${DFE_OTEL_EXPORTER_ENDPOINT:-}
       OTEL_SERVICE_NAME: dfe-transform-e2e-vector-filebeat
+      DFE_TRANSFORM_VERSION_CHECK__ENABLED: ${DFE_VERSION_CHECK_ENABLED:-true}
+      DFE_TRANSFORM_VERSION_CHECK__SEND_INSTANCE_ID: ${DFE_VERSION_CHECK_SEND_INSTANCE_ID:-true}
     depends_on:
       # No dlq-init here: this service does not mount dlq-spool.
       # The topic authority: dfe-engine creates the declared topic set at its own
@@ -991,6 +1014,8 @@ services:
       LOG_FORMAT: ${LOG_FORMAT:-text}
       OTEL_EXPORTER_OTLP_ENDPOINT: ${DFE_OTEL_EXPORTER_ENDPOINT:-}
       OTEL_SERVICE_NAME: dfe-transform-vrl
+      DFE_TRANSFORM_VERSION_CHECK__ENABLED: ${DFE_VERSION_CHECK_ENABLED:-true}
+      DFE_TRANSFORM_VERSION_CHECK__SEND_INSTANCE_ID: ${DFE_VERSION_CHECK_SEND_INSTANCE_ID:-true}
     depends_on:
       # No dlq-init here: this service does not mount dlq-spool.
       # The writer of the rendered config below, so it must have written before
@@ -1044,6 +1069,8 @@ services:
       LOG_FORMAT: ${LOG_FORMAT:-text}
       OTEL_EXPORTER_OTLP_ENDPOINT: ${DFE_OTEL_EXPORTER_ENDPOINT:-}
       OTEL_SERVICE_NAME: dfe-transform-e2e-vrl-filebeat
+      DFE_TRANSFORM_VERSION_CHECK__ENABLED: ${DFE_VERSION_CHECK_ENABLED:-true}
+      DFE_TRANSFORM_VERSION_CHECK__SEND_INSTANCE_ID: ${DFE_VERSION_CHECK_SEND_INSTANCE_ID:-true}
     depends_on:
       # No dlq-init here: this service does not mount dlq-spool.
       # The topic authority: dfe-engine creates the declared topic set at its own
@@ -1204,6 +1231,9 @@ services:
       # scalo's CLI falls back to the prometheus backend, so the endpoint alone
       # exports nothing. `opentelemetry` is dual -- OTLP push AND /metrics.
       DFE_API_METRICS_BACKEND: ${DFE_ENGINE_METRICS_BACKEND:-prometheus}
+      # scalo-py reads the key bare, whatever the process prefix (DFE_API) is.
+      VERSION_CHECK__ENABLED: ${DFE_VERSION_CHECK_ENABLED:-true}
+      VERSION_CHECK__SEND_INSTANCE_ID: ${DFE_VERSION_CHECK_SEND_INSTANCE_ID:-true}
     volumes:
       - dfe-engine-config:${DFE_ENGINE_CONFIG_DIR:-/app/config}
       - dfe-engine-schemas:${DFE_ENGINE_SCHEMAS_DIR:-/app/schemas}

@@ -76,7 +76,7 @@ flowchart LR
     user --> fetch
     user --> proxy
     proxy -->|proxies /api/v1 paths| engine
-    hdx -.->|browser is given a CH connection| ch
+    hdx -.->|HyperDX queries for the browser| ch
 
     classDef open fill:#D55E00,color:#ffffff,stroke:#000000
     classDef loop fill:#0072B2,color:#ffffff,stroke:#000000
@@ -484,7 +484,8 @@ The other outcomes are as informative as the PASS:
 - **FAIL, no fresh rows** -- the tables exist and nothing recent is in them, so
   the services are not exporting. See below.
 - **FAIL, not inert** -- an app the tier started with no work reports
-  `pipeline_idle` 0, or serves no such gauge, so it cannot be said to be idle.
+  `pipeline_idle` 0, or serves `pipeline_ready` and no `pipeline_idle`: its pipeline
+  started, and ready is not inert.
 
 ## Self-monitoring
 

@@ -324,6 +324,17 @@ an operator saves a setting.
 
 The engine runs as its image's user, not yours, so the two meet on a group. `make init` (and every start target) makes `env/` group-writable and setgid, the engine container gets the checkout's group through `group_add` (`DFE_DEV_GID`, which the Makefile sets to `id -g`), and each custom file is written `0640` in that group. Compose run by anyone in that group reads it, and nobody else on the host does. A bare `docker compose` without make adds group `1000`. When the engine cannot give a file the directory's group, its log says so and names the fix.
 
+## Release check
+
+Every DFE app asks `releases.hyperi.io` at startup whether a newer version exists. It sends one POST of the product, its version, the OS, the architecture and a one-way install id, and a failure costs a warning line. It is on by default, and two lines in `.env` change that for every app at once.
+
+| Variable                                         | Use                                                                                  | Default                                                             |
+|--------------------------------------------------|--------------------------------------------------------------------------------------|---------------------------------------------------------------------|
+| `DFE_VERSION_CHECK_ENABLED`                      | `false` stops the check in every app, so none of them phones out                     | `true`                                                              |
+| `DFE_VERSION_CHECK_SEND_INSTANCE_ID`             | `false` keeps the check and sends no install id                                      | `true`                                                              |
+
+Compose maps them onto scalo's `version_check.enabled` and `version_check.send_instance_id` keys, in the env form scalo's cascade nests with. Each app reads those under its own prefix, so compose does the spelling: `DFE_LOADER_`, `DFE_RECEIVER_` and `DFE_FETCHER_` for those three, `ARCHIVER_` for the archiver (no `DFE_`), `DFE_TRANSFORM_` for vector and vrl, `DFE_TRANSFORM_ELASTIC_` for elastic, and no prefix for dfe-engine. dfe-ui and the hunt runner start no check. A compose `environment:` entry beats `env/<app>.env`, so set the dial in `.env`. The third-party images keep their own telemetry settings, which this dial does not reach.
+
 ## Self-monitoring (opt-in)
 
 Off by default. `DFE_OTEL_ENABLED=true` (or a profile declaring `otel: true`, as `single` does) starts a collector that takes the stack's own telemetry over OTLP and writes the `dfe.otel_*` tables, which HyperDX reads. Nothing is scraped, and the collector's OTLP ports stay on the Compose network. Full picture, including which services report today: [observability.md](observability.md).
