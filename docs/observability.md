@@ -125,6 +125,7 @@ edge -- data coming in from your estate, pointing the other way.
 |---|---|---|
 | the six Rust services | metrics and traces, when built against scalo >= 2.10.11 | scalo's `metrics` feature pulls `otel-metrics` and `otel-tracing`, so OTLP export is on by default (scalo-rs#30) |
 | dfe-engine | metrics and traces, once the profile sets the backend | scalo-py has an exporter, its CLI defaults the backend to prometheus (scalo-py#11) |
+| dfe-hunt-runner | metrics, as `dfe_hunt_*` | it has no listener to scrape, and scalo-py's default backend pushes on `OTEL_EXPORTER_OTLP_ENDPOINT` alone |
 | dfe-ui | no metrics | `@opentelemetry/api` only, no SDK. Serves `/metrics` on `:3000` |
 | every DFE service | LOGS, via Docker's log driver | nothing in the stack exports logs over OTLP, so stdout is shipped instead -- see below |
 
@@ -194,6 +195,8 @@ Node metrics are still not collected.
   `dfe-engine`, `dfe-loader` and `dfe-receiver` written since that container
   started. On the gRPC tier the loader logs at startup and is quiet after it, so
   a five-minute window can age its only lines out while the earlier claims run.
+  Every service that pushes has fresh metric rows under its own name, and the hunt
+  runner also reports `dfe_hunt_backlog` and `dfe_hunt_tick_duration_seconds`.
 - **Observability**, when HyperDX is running. Its API returns the six seeded
   sources and at least one provisioned dashboard, read through the proxy that
   gives it an identity.

@@ -15,8 +15,8 @@ has been written to carries no lag series, and as the diagnosis when they do not
 INGEST: uniquely-marked events put in at the ingest edge come out as those exact
 rows in ClickHouse. SELF-MONITORING: when the profile runs a collector, the
 stack's own telemetry is landing FRESH in the otel database, every service that
-pushes is in it under its own name, and each named service's stdout is landing
-under its own name. OBSERVABILITY: HyperDX holds the sources this deployment
+pushes is in it under its own name (the hunt runner with its own hunt metrics),
+and each named service's stdout is landing under its own name. OBSERVABILITY: HyperDX holds the sources this deployment
 seeds it and the dashboards the engine ships, read over the compose network
 through the proxy that fronts it. CONSOLE: those same marked rows read back
 through the engine query API that dfe-ui uses, so the data is not merely stored but
@@ -194,16 +194,17 @@ CONTAINER_LOG_SERVICES = ("dfe-engine", "dfe-loader", "dfe-receiver")
 # so a per-source instance (dfe-transform-vrl-filebeat) is covered by its app.
 # dfe-transform-e2e-vector-filebeat and dfe-transform-e2e-vrl-filebeat are static
 # extra instances named off that shape, so no app prefix covers them and each is
-# named in full. dfe-ui carries the OTel API and no SDK, and dfe-hunt-runner keeps
-# scalo-py's prometheus backend, so neither pushes.
+# named in full. dfe-ui carries the OTel API and no SDK, so it does not push.
 OTEL_PUSHER_PREFIXES = (
     "dfe-archiver",
     "dfe-engine",
     "dfe-fetcher",
+    "dfe-hunt-runner",
     "dfe-loader",
     "dfe-receiver",
     "dfe-transform-e2e-vector-filebeat",
     "dfe-transform-e2e-vrl-filebeat",
+    "dfe-transform-elastic",
     "dfe-transform-vector",
     "dfe-transform-vrl",
 )
@@ -217,6 +218,9 @@ OTEL_METRICS_TABLES = (
 # The Rust apps push on a 60s export interval, so this outlasts one whole interval
 # plus the stagger between a service starting and the check asking.
 OTEL_SERVICE_TIMEOUT_SECONDS = 180.0
+# The runner records these on every tick, due hunts or none. Its counters wait for a fire.
+HUNT_RUNNER_SERVICE = "dfe-hunt-runner"
+HUNT_RUNNER_METRICS = ("dfe_hunt_backlog", "dfe_hunt_tick_duration_seconds")
 
 # HyperDX assertion. The team is created by the first identified request, its
 # sources are seeded with it, and the dashboard provisioner runs on a one-minute
@@ -290,6 +294,8 @@ IDLE_APPS: dict[str, tuple[str, str]] = {
     "dfe-transform-vrl": ("transform-vrl/kafka.yaml", "9096"),
 }
 IDLE_GAUGE = "pipeline_idle"
+# Set by a run loop that has started, which an idle app never enters.
+READY_GAUGE = "pipeline_ready"
 
 # Routing assertion. A source created through the API compiles a receiver rule,
 # and on this target the engine renders that rule into the file the RUNNING
@@ -911,6 +917,7 @@ def _verify_self_monitoring() -> Claim:
     summary = ", ".join(f"{table}={count}" for table, count in sorted(landed.items()))
     _print(msg=f"PASS  self-telemetry is streaming into {database} ({summary})")
     failed = _verify_service_metrics(database=database)
+    failed += _verify_hunt_runner_metrics(database=database)
     if wants_logs:
         failed += _verify_container_logs(database=database)
     else:
@@ -1012,6 +1019,72 @@ def _verify_service_metrics(*, database: str) -> int:
     _print(
         msg=f"PASS  every pushing service is in {database} under its own name "
         f"({', '.join(expected)})"
+    )
+    return 0
+
+
+def _otel_reported_metrics(
+    *, database: str, service: str, names: tuple[str, ...]
+) -> set[str]:
+    """The metric names, of those asked for, with fresh rows under one ServiceName."""
+    listed = ", ".join(f"'{escape_literal(name)}'" for name in names)
+    union = " UNION ALL ".join(
+        f"SELECT DISTINCT MetricName FROM {database}.{table} "
+        f"WHERE ServiceName = '{escape_literal(service)}' "
+        f"AND MetricName IN ({listed}) "
+        f"AND TimeUnix > now() - INTERVAL {OTEL_FRESH_WINDOW_SECONDS} SECOND"
+        for table in OTEL_METRICS_TABLES
+    )
+    raw = ch_query(f"SELECT DISTINCT MetricName FROM ({union})")
+    return {line.strip() for line in raw.splitlines() if line.strip()}
+
+
+def _verify_hunt_runner_metrics(*, database: str) -> int:
+    """Prove the hunt runner's own instruments reach the otel database.
+
+    The per-service check passes on any row under the runner's name, and scalo's
+    chassis metrics alone would give it one. These are the instruments the runner
+    itself records, so a runner that reports its process and not its hunts fails here.
+    """
+    if HUNT_RUNNER_SERVICE not in set(_resolved_services()):
+        _print(
+            msg=f"      note: {HUNT_RUNNER_SERVICE} is not in the active profile, so its "
+            "metrics are not expected"
+        )
+        return 0
+
+    wanted = set(HUNT_RUNNER_METRICS)
+    _print(
+        msg=f"Waiting for {HUNT_RUNNER_SERVICE}'s own metrics in {database} "
+        f"({', '.join(HUNT_RUNNER_METRICS)})"
+    )
+
+    def _report(attempt, result):
+        _print(
+            msg=f"  attempt {attempt}: reported = {', '.join(sorted(result)) or 'none'}"
+        )
+
+    reported = poll_until(
+        lambda: _otel_reported_metrics(
+            database=database, service=HUNT_RUNNER_SERVICE, names=HUNT_RUNNER_METRICS
+        ),
+        timeout=OTEL_SERVICE_TIMEOUT_SECONDS,
+        interval=OTEL_INTERVAL_SECONDS,
+        done=lambda result: wanted.issubset(result),
+        on_attempt=_report,
+    )
+
+    missing = sorted(wanted - reported)
+    if missing:
+        _print(
+            msg=f"FAIL  nothing in {database} named {', '.join(missing)} under "
+            f"{HUNT_RUNNER_SERVICE} within {OTEL_SERVICE_TIMEOUT_SECONDS:.0f}s -- the "
+            "runner does not report its own hunt instruments to the collector"
+        )
+        return 1
+    _print(
+        msg=f"PASS  {HUNT_RUNNER_SERVICE} reports its own metrics in {database} "
+        f"({', '.join(HUNT_RUNNER_METRICS)})"
     )
     return 0
 
@@ -1233,24 +1306,49 @@ def _verify_idle_apps() -> Claim:
             failed += 1
             continue
         try:
-            idle = _metric_value(http_get(f"{base}/metrics", timeout=5), IDLE_GAUGE)
+            body = http_get(f"{base}/metrics", timeout=5)
         except Exception:  # noqa: BLE001 - unreachable and unreadable are one answer here
-            idle = None
-        if idle is None:
-            _print(
-                msg=f"FAIL  {service} serves no {IDLE_GAUGE} on {base}/metrics, so whether "
-                "it is inert cannot be read"
-            )
-            failed += 1
-        elif idle != 1:
-            _print(
-                msg=f"FAIL  {service} reports {IDLE_GAUGE}={idle:g} -- it was given a config "
-                "with no work and is working anyway"
-            )
+            body = None
+        fault = _idle_fault(body=body, base=base)
+        if fault:
+            _print(msg=f"FAIL  {service} {fault}")
             failed += 1
         else:
             _print(msg=f"PASS  {service} is ready and inert ({IDLE_GAUGE}=1)")
     return Claim(asserted=True, failed=failed)
+
+
+def _idle_fault(*, body: str | None, base: str) -> str:
+    """Why a /metrics scrape does not show an idle app, or '' when it does.
+
+    scalo's idle gate sets `pipeline_idle` only when it enters or leaves idle, so
+    an app that never idled serves no such gauge. One serving `pipeline_ready`
+    instead has started its run loop, which an idle app never enters: it is working,
+    and ready says nothing about inert.
+    """
+    if body is None:
+        return (
+            f"serves no {IDLE_GAUGE} on {base}/metrics, so whether it is inert cannot "
+            "be read"
+        )
+    idle = _metric_value(body, IDLE_GAUGE)
+    if idle == 1:
+        return ""
+    if idle is not None:
+        return (
+            f"reports {IDLE_GAUGE}={idle:g} -- it was given a config with no work and "
+            "is working anyway"
+        )
+    ready = _metric_value(body, READY_GAUGE)
+    if ready is not None:
+        return (
+            f"reports {READY_GAUGE}={ready:g} and no {IDLE_GAUGE} -- its pipeline "
+            "started on a config that gives it no work, so the idle gate never engaged"
+        )
+    return (
+        f"serves neither {IDLE_GAUGE} nor {READY_GAUGE} on {base}/metrics, so whether "
+        "it is inert cannot be read"
+    )
 
 
 def _create_routed_source(*, base: str, name: str, token: str) -> str:

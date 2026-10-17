@@ -87,6 +87,8 @@ Beyond resolution, these semantic assertions ride along.
   on in-network. See `_clickhouse_dial_failures`.
 - Every service the log-driver fragment ships must queue its lines and wait for
   the collector's ack. See `_log_driver_failures`.
+- The release-check dial must reach every app under that app's own prefix, and
+  resolve to `true` when .env sets nothing. See `_version_check_failures`.
 - Console TLS must change nothing until it is dialled on. Once on, it must move both proxies onto their TLS configs and the certificate and pin the network so the engine trusts dfe-proxy's address alone. See `_proxy_tls_mismatches`.
 - Every path a pinned image declares as a VOLUME must be mounted from a named
   volume or a bind. See `_IMAGE_VOLUMES`.
@@ -422,6 +424,36 @@ _DFE_OWNED_SERVICES = {
     "dfe-transform-vrl",
     "dfe-ui",
 }
+
+# Each app reads the release-check dial under its own scalo prefix, and scalo-py reads it bare.
+# dfe-ui and the hunt runner start no check.
+_VERSION_CHECK_ENABLED_KEY = "VERSION_CHECK__ENABLED"
+_VERSION_CHECK_ID_KEY = "VERSION_CHECK__SEND_INSTANCE_ID"
+_VERSION_CHECK_PREFIXES = {
+    "dfe-archiver": "ARCHIVER_",
+    "dfe-engine": "",
+    "dfe-fetcher": "DFE_FETCHER_",
+    "dfe-loader": "DFE_LOADER_",
+    "dfe-receiver": "DFE_RECEIVER_",
+    "dfe-transform-e2e-elastic-cisco-ios": "DFE_TRANSFORM_ELASTIC_",
+    "dfe-transform-e2e-vector-filebeat": "DFE_TRANSFORM_",
+    "dfe-transform-e2e-vrl-filebeat": "DFE_TRANSFORM_",
+    "dfe-transform-elastic": "DFE_TRANSFORM_ELASTIC_",
+    "dfe-transform-vector": "DFE_TRANSFORM_",
+    "dfe-transform-vrl": "DFE_TRANSFORM_",
+}
+_NO_VERSION_CHECK = {"dfe-ui"}
+# (label, dial values, what every app must resolve to). The defaults case is the one that matters: the dial opts out and never defaults off.
+_VERSION_CHECK_CASES: tuple[tuple[str, dict[str, str], tuple[str, str]], ...] = (
+    ("defaults", {}, ("true", "true")),
+    ("check off", {_VERSION_CHECK_ENABLED_KEY: "false"}, ("false", "true")),
+    ("instance id stripped", {_VERSION_CHECK_ID_KEY: "false"}, ("true", "false")),
+    (
+        "both set",
+        {_VERSION_CHECK_ENABLED_KEY: "false", _VERSION_CHECK_ID_KEY: "false"},
+        ("false", "false"),
+    ),
+)
 
 # The fragment the Makefile chains to ship container stdout to the collector, and
 # the driver options each shipped service needs, with what breaks without one.
@@ -1269,6 +1301,72 @@ def _container_log_failures(*, env: dict[str, str]) -> tuple[list[str], int]:
     return _log_driver_failures(config=config), len(shipped)
 
 
+def _version_check_mismatches(
+    *, config: dict, enabled: str, send_instance_id: str
+) -> list[str]:
+    """Return one message per app whose release-check keys differ from the two dial values."""
+    services = config.get("services", {})
+    failures = []
+    for name, prefix in sorted(_VERSION_CHECK_PREFIXES.items()):
+        if name not in services:
+            failures.append(f"{name}: runs the release check but is not in the stack")
+            continue
+        environment = services[name].get("environment") or {}
+        for suffix, want in (
+            ("ENABLED", enabled),
+            ("SEND_INSTANCE_ID", send_instance_id),
+        ):
+            key = f"{prefix}VERSION_CHECK__{suffix}"
+            got = str(environment.get(key) or "")
+            if got != want:
+                failures.append(f"{name}: {key}={got or 'unset'}, want {want}")
+    return failures
+
+
+def _version_check_coverage_failures() -> list[str]:
+    """Return one message per DFE app that nobody decided the release check for."""
+    decided = set(_VERSION_CHECK_PREFIXES) | _NO_VERSION_CHECK
+    return [
+        f"{name}: no release-check decision -- give it a prefix in "
+        "_VERSION_CHECK_PREFIXES or list it in _NO_VERSION_CHECK"
+        for name in sorted(_DFE_OWNED_SERVICES - decided)
+    ]
+
+
+def _version_check_failures(*, env: dict[str, str]) -> tuple[list[str], int]:
+    """Return (messages, assertions made) for the release-check dial.
+
+    The check phones out, so the dial must opt out and never default off: the
+    defaults case resolves every app to `true`, and each case after it moves only
+    what it names. The checkout's own .env is stripped of both keys, so it cannot
+    decide the answer.
+    """
+    failures = _version_check_coverage_failures()
+    made = len(_DFE_OWNED_SERVICES)
+    empty_env_file = _empty_env_file()
+    base = {
+        k: v
+        for k, v in env.items()
+        if k not in (_VERSION_CHECK_ENABLED_KEY, _VERSION_CHECK_ID_KEY)
+    }
+    for label, dials, (enabled, send_instance_id) in _VERSION_CHECK_CASES:
+        made += 1
+        config = _config_json(
+            env={**base, **dials}, files=[COMPOSE_FILE.name], env_file=empty_env_file
+        )
+        if config is None:
+            failures.append(f"the release-check case {label!r} did not resolve")
+            continue
+        made += 2 * len(_VERSION_CHECK_PREFIXES)
+        failures.extend(
+            f"{label}: {message}"
+            for message in _version_check_mismatches(
+                config=config, enabled=enabled, send_instance_id=send_instance_id
+            )
+        )
+    return failures, made
+
+
 def _proxy_tls_mismatches(*, config: dict, tls: dict[str, str] | None) -> list[str]:
     """Return one message per way the proxies, the network and the engine differ from the console TLS side they are on.
 
@@ -1985,6 +2083,16 @@ def main() -> int:
     _print(
         msg=f"All {log_made} service(s) on the fluentd driver queue their lines and "
         "wait for the collector's ack"
+    )
+
+    version_failures, version_made = _version_check_failures(env=env)
+    for message in version_failures:
+        _print(msg=f"FAIL {message}")
+    if version_failures:
+        return 1
+    _print(
+        msg="The release-check dial opts out and never defaults off: every app resolves "
+        f"to true unless .env says otherwise ({version_made} assertions)"
     )
 
     tls_failures, tls_made = _proxy_tls_failures(env=env)

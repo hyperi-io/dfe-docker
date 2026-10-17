@@ -568,3 +568,115 @@ def test_a_service_that_queues_and_waits_passes_and_json_file_is_not_checked():
     }
 
     assert check_compose._log_driver_failures(config=config) == []
+
+
+def _checking(*, enabled: str = "true", send_instance_id: str = "true") -> dict:
+    """A resolved model in which every release-check app carries the dial's two values."""
+    return {
+        "services": {
+            name: {
+                "environment": {
+                    f"{prefix}VERSION_CHECK__ENABLED": enabled,
+                    f"{prefix}VERSION_CHECK__SEND_INSTANCE_ID": send_instance_id,
+                }
+            }
+            for name, prefix in check_compose._VERSION_CHECK_PREFIXES.items()
+        }
+    }
+
+
+def test_every_app_carrying_the_dial_under_its_own_prefix_passes():
+    assert (
+        check_compose._version_check_mismatches(
+            config=_checking(), enabled="true", send_instance_id="true"
+        )
+        == []
+    )
+
+
+def test_an_app_that_defaults_the_check_off_fails():
+    config = _checking()
+    config["services"]["dfe-loader"]["environment"][
+        "DFE_LOADER_VERSION_CHECK__ENABLED"
+    ] = "false"
+
+    failures = check_compose._version_check_mismatches(
+        config=config, enabled="true", send_instance_id="true"
+    )
+
+    assert failures == [
+        "dfe-loader: DFE_LOADER_VERSION_CHECK__ENABLED=false, want true"
+    ]
+
+
+def test_the_archiver_is_read_under_its_short_prefix_not_dfe_archiver():
+    config = _checking()
+    environment = config["services"]["dfe-archiver"]["environment"]
+    environment["DFE_ARCHIVER_VERSION_CHECK__ENABLED"] = environment.pop(
+        "ARCHIVER_VERSION_CHECK__ENABLED"
+    )
+
+    failures = check_compose._version_check_mismatches(
+        config=config, enabled="true", send_instance_id="true"
+    )
+
+    assert failures == [
+        "dfe-archiver: ARCHIVER_VERSION_CHECK__ENABLED=unset, want true"
+    ]
+
+
+def test_the_engine_is_read_bare_and_elastic_under_its_own_prefix():
+    prefixes = check_compose._VERSION_CHECK_PREFIXES
+
+    assert prefixes["dfe-engine"] == ""
+    assert prefixes["dfe-transform-elastic"] == "DFE_TRANSFORM_ELASTIC_"
+    assert prefixes["dfe-transform-vrl"] == prefixes["dfe-transform-vector"]
+    assert prefixes["dfe-transform-vrl"] == "DFE_TRANSFORM_"
+
+
+def test_an_app_missing_from_the_stack_fails_the_release_check_rather_than_passing():
+    config = _checking()
+    del config["services"]["dfe-receiver"]
+
+    failures = check_compose._version_check_mismatches(
+        config=config, enabled="true", send_instance_id="true"
+    )
+
+    assert failures == ["dfe-receiver: runs the release check but is not in the stack"]
+
+
+def test_the_opted_out_case_wants_false_from_every_app():
+    config = _checking(enabled="false")
+
+    assert (
+        check_compose._version_check_mismatches(
+            config=config, enabled="false", send_instance_id="true"
+        )
+        == []
+    )
+    assert check_compose._version_check_mismatches(
+        config=config, enabled="true", send_instance_id="true"
+    )
+
+
+def test_the_first_release_check_case_is_the_default_and_it_is_on():
+    label, dials, wanted = check_compose._VERSION_CHECK_CASES[0]
+
+    assert (label, dials, wanted) == ("defaults", {}, ("true", "true"))
+
+
+def test_every_dfe_app_has_a_release_check_decision():
+    assert check_compose._version_check_coverage_failures() == []
+
+
+def test_a_new_dfe_app_nobody_decided_for_fails(monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.setattr(
+        check_compose,
+        "_DFE_OWNED_SERVICES",
+        {*check_compose._DFE_OWNED_SERVICES, "dfe-newcomer"},
+    )
+
+    failures = check_compose._version_check_coverage_failures()
+
+    assert len(failures) == 1
+    assert failures[0].startswith("dfe-newcomer: no release-check decision")
