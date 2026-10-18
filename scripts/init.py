@@ -49,7 +49,7 @@ from _common import (
 # enforces them: DFE_UI_NEXTAUTH_SECRET, HYPERDX_POSTGRES_PASSWORD,
 # HYPERDX_EXPRESS_SESSION_SECRET, HYPERDX_TOKEN_ENCRYPTION_KEY and each
 # DFE_<APP>_CLICKHOUSE_PASSWORD via its WEAK_SECRET_DEFAULTS service-map,
-# CLICKHOUSE_PASSWORD via its own external-CH check (its default is empty, not a
+# CLICKHOUSE_PASSWORD and CLICKHOUSE_KEEPER_PASSWORD via the external-CH check (empty default, not a
 # sentinel string), and DFE_AUTH_LOCAL_ADMIN_PASSWORD by logging in with it. Keep
 # them in step.
 #
@@ -90,6 +90,8 @@ _HEX_SECRETS = frozenset({"HYPERDX_TOKEN_ENCRYPTION_KEY"})
 # NextAuth, engine JWT and HyperDX session values are session-signing KEYS, so
 # they take the 256-bit tier.
 GENERATED_SECRETS = {
+    # Keeper's digest identity: a changed value locks the server out of its own znodes.
+    "CLICKHOUSE_KEEPER_PASSWORD": _LEN_CREDENTIAL,
     "CLICKHOUSE_PASSWORD": _LEN_CREDENTIAL,
     "DFE_AUTH_BREAKGLASS_PASSWORD": _LEN_CREDENTIAL,
     "DFE_AUTH_LOCAL_ADMIN_PASSWORD": _LEN_CREDENTIAL,

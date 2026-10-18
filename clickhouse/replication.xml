@@ -1,0 +1,38 @@
+<clickhouse>
+  <!-- A cluster of one for dfe-engine's Replicated DDL. Mirrors dfe-infra's single-node chart. -->
+  <keeper_server>
+    <tcp_port>9181</tcp_port>
+    <server_id>1</server_id>
+    <!-- In clickhouse-data with the tables, so the two are never lost apart. -->
+    <log_storage_path>/var/lib/clickhouse/coordination/log</log_storage_path>
+    <snapshot_storage_path>/var/lib/clickhouse/coordination/snapshots</snapshot_storage_path>
+    <!-- 9181 listens on every interface, so only the read-only words answer. -->
+    <four_letter_word_white_list>ruok,isro,mntr,srvr,stat</four_letter_word_white_list>
+    <raft_configuration>
+      <server><id>1</id><hostname>localhost</hostname><port>9234</port></server>
+    </raft_configuration>
+  </keeper_server>
+  <zookeeper>
+    <node><host>localhost</host><port>9181</port></node>
+    <!-- Every znode is created under it, so no other container can write a SQL user. -->
+    <identity from_env="DFE_KEEPER_IDENTITY"/>
+  </zookeeper>
+  <macros>
+    <cluster>dfe</cluster>
+    <shard>01</shard>
+    <replica>r1</replica>
+  </macros>
+  <remote_servers>
+    <dfe>
+      <shard>
+        <internal_replication>true</internal_replication>
+        <replica><host>localhost</host><port>9000</port></replica>
+      </shard>
+    </dfe>
+  </remote_servers>
+  <!-- Replaced, not appended: an appended replicated sits behind local_directory, which takes every CREATE ROLE. -->
+  <user_directories replace="replace">
+    <users_xml><path>users.xml</path></users_xml>
+    <replicated><zookeeper_path>/clickhouse/access/</zookeeper_path></replicated>
+  </user_directories>
+</clickhouse>

@@ -162,12 +162,17 @@ services:
       CLICKHOUSE_USER: ${CLICKHOUSE_USERNAME:-default}
       CLICKHOUSE_PASSWORD: ${CLICKHOUSE_PASSWORD:-}
       CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT: 1
+      # The embedded Keeper's digest identity, read by clickhouse/replication.xml.
+      DFE_KEEPER_IDENTITY: dfe:${CLICKHOUSE_KEEPER_PASSWORD:-}
     volumes:
       - clickhouse-data:/var/lib/clickhouse
       - ./clickhouse/default-user.xml:/etc/clickhouse-server/users.d/default-custom.xml:ro
       # Server config, not users config: access_control_improvements is only read
       # from config.d.
       - ./clickhouse/server-custom.xml:/etc/clickhouse-server/config.d/dfe-custom.xml:ro
+      # Embedded Keeper, the macros, a one-node cluster and SQL users in Keeper:
+      # what dfe-engine's Replicated DDL needs from a self-hosted server.
+      - ./clickhouse/replication.xml:/etc/clickhouse-server/config.d/dfe-replication.xml:ro
       # The image leaves the server log at trace and its system log tables with
       # no TTL, so an idle stack fills its own disk without these two.
       - ./clickhouse/server-logger.xml:/etc/clickhouse-server/config.d/dfe-logger.xml:ro

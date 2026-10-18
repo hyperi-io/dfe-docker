@@ -387,6 +387,13 @@ def _weak_secrets() -> list[tuple[str, str]]:
                     "<empty> -- full-admin ClickHouse with no password",
                 )
             )
+        if not (os.environ.get("CLICKHOUSE_KEEPER_PASSWORD", "").strip()):
+            weak.append(
+                (
+                    "CLICKHOUSE_KEEPER_PASSWORD",
+                    "<empty> -- Keeper's znodes, SQL users included, under a known identity",
+                )
+            )
     return weak
 
 
