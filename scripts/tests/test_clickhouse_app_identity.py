@@ -56,6 +56,9 @@ ENGINE_READS = {
     "dfe_query_reader": "DFE_CLICKHOUSE_QUERY_READER_PASSWORD",
 }
 
+# HyperDX takes dfe_query_reader from the connection dfe-engine hands it, so its own definition names no user
+ENGINE_HANDED_USERS = {"dfe_query_reader"}
+
 
 @pytest.fixture(scope="module")
 def services() -> dict[str, str]:
@@ -110,7 +113,7 @@ def test_an_app_naming_the_admin_user_outright_is_caught(
     assert "probe" in admin_user_holders(probe)
 
 
-@pytest.mark.parametrize("user", sorted(APP_USERS))
+@pytest.mark.parametrize("user", sorted(set(APP_USERS) - ENGINE_HANDED_USERS))
 def test_each_app_connects_as_its_own_user(services: dict[str, str], user: str) -> None:
     key, service = APP_USERS[user]
     block = services[service]

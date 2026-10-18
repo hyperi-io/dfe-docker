@@ -335,12 +335,6 @@ _CLICKHOUSE_DIALLERS: dict[str, tuple[str, str | None, str]] = {
     "otel-collector": ("CLICKHOUSE_HOST", None, "CLICKHOUSE_PORT"),
 }
 _CLICKHOUSE_SERVICE = "clickhouse"
-# HyperDX dials ClickHouse too, from the URL in the connection it seeds.
-_HYPERDX_SERVICE = "hyperdx"
-_HYPERDX_CONNECTIONS_KEY = "DEFAULT_CONNECTIONS"
-# What `make` exports from resolve_profile.py for CLICKHOUSE_SECURE; this check
-# runs without make, so a case sets it directly.
-_CLICKHOUSE_SCHEME_KEY = "DFE_CLICKHOUSE_RESOLVED_SCHEME"
 # Every key that moves a ClickHouse address, stripped before each case so the
 # checkout's own .env cannot decide the answer.
 _CLICKHOUSE_ADDRESS_KEYS = frozenset(
@@ -351,36 +345,32 @@ _CLICKHOUSE_ADDRESS_KEYS = frozenset(
         "CLICKHOUSE_EXTERNAL_HTTP_PORT",
         "CLICKHOUSE_EXTERNAL_NATIVE_PORT",
         "CLICKHOUSE_SECURE",
-        _CLICKHOUSE_SCHEME_KEY,
     }
 )
 _EXTERNAL_CLICKHOUSE = "clickhouse.example.invalid"
 # (label, environment, the (host, HTTP, native) every dialler must get, the host
-# ports the bundled container must publish, the URL HyperDX's connection must
-# name). The publish is asserted too, so a case that moved nothing cannot pass.
+# ports the bundled container must publish). The publish is asserted too, so a
+# case that moved nothing cannot pass.
 _CLICKHOUSE_DIAL_CASES: tuple[
-    tuple[str, dict[str, str], tuple[str, str, str], tuple[str, ...], str], ...
+    tuple[str, dict[str, str], tuple[str, str, str], tuple[str, ...]], ...
 ] = (
     (
         "defaults",
         {},
         ("clickhouse", "8123", "9000"),
         ("8123", "9000"),
-        "http://clickhouse:8123",
     ),
     (
         "host publish moved",
         {"CLICKHOUSE_HTTP_PORT": "18123", "CLICKHOUSE_NATIVE_PORT": "19000"},
         ("clickhouse", "8123", "9000"),
         ("18123", "19000"),
-        "http://clickhouse:8123",
     ),
     (
         "external host",
         {"CLICKHOUSE_HOST": _EXTERNAL_CLICKHOUSE},
         (_EXTERNAL_CLICKHOUSE, "8123", "9000"),
         ("8123", "9000"),
-        f"http://{_EXTERNAL_CLICKHOUSE}:8123",
     ),
     (
         "external host and ports",
@@ -393,7 +383,6 @@ _CLICKHOUSE_DIAL_CASES: tuple[
         },
         (_EXTERNAL_CLICKHOUSE, "8443", "9440"),
         ("18123", "19000"),
-        f"http://{_EXTERNAL_CLICKHOUSE}:8443",
     ),
     (
         "external host over TLS",
@@ -402,11 +391,9 @@ _CLICKHOUSE_DIAL_CASES: tuple[
             "CLICKHOUSE_EXTERNAL_HTTP_PORT": "8443",
             "CLICKHOUSE_EXTERNAL_NATIVE_PORT": "9440",
             "CLICKHOUSE_SECURE": "true",
-            _CLICKHOUSE_SCHEME_KEY: "https",
         },
         (_EXTERNAL_CLICKHOUSE, "8443", "9440"),
         ("8123", "9000"),
-        f"https://{_EXTERNAL_CLICKHOUSE}:8443",
     ),
 )
 
@@ -1154,30 +1141,6 @@ def _clickhouse_dial_mismatches(
     return failures
 
 
-def _hyperdx_connection_mismatches(*, config: dict, want: str) -> list[str]:
-    """Return a message unless HyperDX seeds exactly one connection, dialling `want`."""
-    services = config.get("services", {})
-    if _HYPERDX_SERVICE not in services:
-        return [f"{_HYPERDX_SERVICE}: dials ClickHouse but is not in the stack"]
-    environment = services[_HYPERDX_SERVICE].get("environment") or {}
-    raw = str(environment.get(_HYPERDX_CONNECTIONS_KEY) or "")
-    try:
-        connections = json.loads(raw)
-    except json.JSONDecodeError:
-        return [f"{_HYPERDX_SERVICE}: {_HYPERDX_CONNECTIONS_KEY} is not JSON: {raw!r}"]
-    if not (isinstance(connections, list)):
-        return [f"{_HYPERDX_SERVICE}: {_HYPERDX_CONNECTIONS_KEY} is not a list"]
-    hosts = [
-        str(connection.get("host") or "") if isinstance(connection, dict) else ""
-        for connection in connections
-    ]
-    if hosts != [want]:
-        return [
-            f"{_HYPERDX_SERVICE}: {_HYPERDX_CONNECTIONS_KEY} dials {hosts}, want [{want!r}]"
-        ]
-    return []
-
-
 def _clickhouse_dial_failures(*, env: dict[str, str]) -> tuple[list[str], int]:
     """Return (messages, assertions made) for the address the stack dials ClickHouse on.
 
@@ -1186,13 +1149,12 @@ def _clickhouse_dial_failures(*, env: dict[str, str]) -> tuple[list[str], int]:
     service dialling either in-network reaches a port nothing listens on as soon
     as a second stack moves the publish (#75). An external CLICKHOUSE_HOST is the
     one case whose port can differ, and CLICKHOUSE_EXTERNAL_*_PORT carries it.
-    HyperDX is held to the same address, as the URL its seeded connection names.
     """
     empty_env_file = _empty_env_file()
     base = {k: v for k, v in env.items() if k not in _CLICKHOUSE_ADDRESS_KEYS}
     failures: list[str] = []
     made = 0
-    for label, overrides, want, published, hyperdx_url in _CLICKHOUSE_DIAL_CASES:
+    for label, overrides, want, published in _CLICKHOUSE_DIAL_CASES:
         made += 1
         config = _config_json(
             env={**base, **overrides},
@@ -1202,16 +1164,10 @@ def _clickhouse_dial_failures(*, env: dict[str, str]) -> tuple[list[str], int]:
         if config is None:
             failures.append(f"the ClickHouse case {label!r} did not resolve")
             continue
-        made += len(_CLICKHOUSE_DIALLERS) + 1
+        made += len(_CLICKHOUSE_DIALLERS)
         failures.extend(
             f"{label}: {message}"
             for message in _clickhouse_dial_mismatches(config=config, want=want)
-        )
-        failures.extend(
-            f"{label}: {message}"
-            for message in _hyperdx_connection_mismatches(
-                config=config, want=hyperdx_url
-            )
         )
         got = tuple(
             port for _, port in _published(config=config, service=_CLICKHOUSE_SERVICE)
