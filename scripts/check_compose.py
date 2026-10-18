@@ -1500,12 +1500,15 @@ def _unmounted_image_volume_failures(*, config: dict) -> list[str]:
 
 
 def _image_volume_model(*, env: dict[str, str]) -> dict | None:
-    """Return the registry-path model with both Kafka backends resolved into it.
+    """Return the registry-path model with both Kafka backends and the auth profile resolved into it.
 
-    Each backend runs its own image with its own VOLUME paths.
+    Each backend runs its own image with its own VOLUME paths, and the auth profile
+    adds the oauth2-proxy services, which run an image of their own.
     """
     return _config_json(
-        env=env, files=[COMPOSE_FILE.name], extra_profiles=(_KAFKA_BACKENDS[1],)
+        env=env,
+        files=[COMPOSE_FILE.name],
+        extra_profiles=(_KAFKA_BACKENDS[1], _AUTH_PROFILE),
     )
 
 
