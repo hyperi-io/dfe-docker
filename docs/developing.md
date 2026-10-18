@@ -374,7 +374,7 @@ Two things about the runner worth knowing before you debug it:
   run.** Broker volumes outlive containers, so a `main_load` left by any
   transform run suppresses `main_land` for every non-transform loader
   thereafter. See
-  [troubleshooting.md](troubleshooting.md#configloaderkafka-loadyaml-consumes-a-topic-nothing-pre-creates).
+  [troubleshooting.md](troubleshooting.md#a-_load-topic-changes-what-the-loader-reads).
   Deleting it per run makes a run depend on the test definition, not on broker
   history.
 
