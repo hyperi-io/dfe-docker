@@ -1009,6 +1009,44 @@ def test_a_stack_without_the_runner_needs_no_runner_password(
     assert post._weak_secrets() == []
 
 
+# Each app's own ClickHouse password and the service that connects with it.
+_APP_PASSWORDS = {
+    "DFE_LOADER_CLICKHOUSE_PASSWORD": "dfe-loader",
+    "DFE_OTEL_WRITER_CLICKHOUSE_PASSWORD": "otel-collector",
+    "DFE_QUERY_READER_CLICKHOUSE_PASSWORD": "hyperdx",
+}
+
+
+def _only_this_app_password_in_play(
+    monkeypatch: pytest.MonkeyPatch, key: str, service: str
+) -> None:
+    """Every other secret the service's run checks is minted, so only `key` can fail."""
+    _only_the_runner_password_in_play(monkeypatch, ["dfe-engine", service])
+    for other in post.WEAK_SECRET_DEFAULTS:
+        monkeypatch.setenv(other, "aMintedOtherValue123")
+
+
+@pytest.mark.parametrize(("key", "service"), sorted(_APP_PASSWORDS.items()))
+def test_an_unset_app_password_fails_the_self_test(
+    monkeypatch: pytest.MonkeyPatch, key: str, service: str
+) -> None:
+    """Empty leaves the app's user on a password the engine mints and the app never sees."""
+    _only_this_app_password_in_play(monkeypatch, key, service)
+    monkeypatch.delenv(key, raising=False)
+
+    assert [name for name, _value in post._weak_secrets()] == [key]
+
+
+@pytest.mark.parametrize(("key", "service"), sorted(_APP_PASSWORDS.items()))
+def test_a_minted_app_password_passes(
+    monkeypatch: pytest.MonkeyPatch, key: str, service: str
+) -> None:
+    _only_this_app_password_in_play(monkeypatch, key, service)
+    monkeypatch.setenv(key, "aMintedAppValue123")
+
+    assert post._weak_secrets() == []
+
+
 # ClickHouse 26.3's answer to a lightweight DELETE on a table with a projection.
 _PROJECTION_REFUSAL = (
     "Code: 344. DB::Exception: DELETE query is not allowed for table dfe.main "
