@@ -9,7 +9,4 @@
 archive:
   destination: file:///var/data/archive
 
-grpc:
-  listen: 0.0.0.0:6000
-
 transport: grpc
