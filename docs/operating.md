@@ -367,10 +367,19 @@ skips it when `CLICKHOUSE_HOST` points at an external instance, because then the
 credential is the operator's, not the stack's. See the upgrade note below -- a
 generated password against an existing warehouse volume is a breaking change.
 
-`DFE_HUNT_RUNNER_CLICKHOUSE_PASSWORD` is the hunt runner's own ClickHouse user,
-`dfe_hunt_runner`. The engine creates that user on this password, with `SELECT`
-and `INSERT` on the data database and nothing else, and the runner connects with
-the same value instead of the admin account.
+Only dfe-engine connects with it. Every other service connects as its own user,
+which the engine creates on a password `make init` mints, and the service connects
+with the same value:
+
+| `.env` key | User | Service | Reaches |
+|---|---|---|---|
+| `DFE_HUNT_RUNNER_CLICKHOUSE_PASSWORD` | `dfe_hunt_runner` | dfe-hunt-runner | `SELECT` and `INSERT` on the data database |
+| `DFE_LOADER_CLICKHOUSE_PASSWORD` | `dfe_loader` | dfe-loader | `INSERT` on the data database, and its schema |
+| `DFE_OTEL_WRITER_CLICKHOUSE_PASSWORD` | `dfe_otel_writer` | otel-collector | `INSERT` on the otel tables, and server health |
+| `DFE_QUERY_READER_CLICKHOUSE_PASSWORD` | `dfe_query_reader` | HyperDX's seeded connection, under `header-dev` | `SELECT` on the data database |
+
+An existing `.env` takes the new keys on the next `make init`, and the engine
+creates each user on its next start.
 
 Never commit `.env`.
 

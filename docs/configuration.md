@@ -229,9 +229,12 @@ it is a second deployment of the one component, not a component of its own.
 | `CLICKHOUSE_EXTERNAL_NATIVE_PORT`                | Native port dfe-engine, dfe-hunt-runner and the collector dial on an external `CLICKHOUSE_HOST`; leave unset for the bundled container | `9000`                                                              |
 | `CLICKHOUSE_SECURE`                              | TLS to an external `CLICKHOUSE_HOST` for dfe-engine, dfe-hunt-runner and HyperDX's seeded connection (`https://`), on `true`, `1` or `yes`; the collector and the loader do not read it | `false`                                                             |
 | `CLICKHOUSE_DB`                                  | ClickHouse initialisation database                                                   | `default`                                                           |
-| `CLICKHOUSE_USERNAME`                            | ClickHouse username to connect with                                                  | `default`                                                           |
-| `CLICKHOUSE_PASSWORD`                            | ClickHouse password associated to user                                               | -                                                                   |
+| `CLICKHOUSE_USERNAME`                            | ClickHouse admin username, which only dfe-engine connects as                         | `default`                                                           |
+| `CLICKHOUSE_PASSWORD`                            | ClickHouse admin password, which only dfe-engine connects with                       | -                                                                   |
 | `DFE_HUNT_RUNNER_CLICKHOUSE_PASSWORD`            | Password of `dfe_hunt_runner`, the hunt runner's own ClickHouse user; the engine creates the user on it and the runner connects with it | generated                                                           |
+| `DFE_LOADER_CLICKHOUSE_PASSWORD`                 | Password of `dfe_loader`, the loader's own ClickHouse user, which the engine creates on it | generated                                                           |
+| `DFE_QUERY_READER_CLICKHOUSE_PASSWORD`           | Password of `dfe_query_reader`, the platform reader HyperDX's seeded connection uses, which the engine creates on it | generated                                                           |
+| `DFE_OTEL_WRITER_CLICKHOUSE_PASSWORD`            | Password of `dfe_otel_writer`, the collector's own ClickHouse user, which the engine creates on it | generated                                                           |
 | `DFE_CLICKHOUSE_DEFAULT_TTL_DAYS`                | Days every time-series table keeps rows, the OTel tables included; 0 disables the default TTL; a source or dfe-schemas TTL overrides it | `90`                                                                |
 
 ### Kafka - General
