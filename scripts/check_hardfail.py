@@ -17,7 +17,10 @@ actionable message rather than resolve to ``latest``.
 The generated SECRETS are deliberately not in that set -- Compose interpolates
 every service before profiles filter anything, so a ``:?`` on a secret would abort
 ``make down`` for an operator who never enabled the service it belongs to. They
-carry a loud sentinel default and ``make post`` fails on it instead.
+carry a loud sentinel default and ``make post`` fails on it instead. The one
+exception is ``CLICKHOUSE_KEEPER_PASSWORD``: a server started on its empty default
+locks itself out of Keeper once a real value lands, so it hard-fails like a pin and
+``make init`` is the fix the message names.
 
 That is a property, not a line of code, and properties rot quietly: one
 ``${VAR:-latest}`` slipped in during a refactor and the guarantee is gone with

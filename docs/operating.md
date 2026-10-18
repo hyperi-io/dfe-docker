@@ -381,6 +381,8 @@ with the same value:
 An existing `.env` takes the new keys on the next `make init`, and the engine
 creates each user on its next start.
 
+`CLICKHOUSE_KEEPER_PASSWORD` is the identity ClickHouse's embedded Keeper creates every znode under, so compose refuses to start without it and it is fixed for the life of `clickhouse-data`. Under any other value the server cannot read its own znodes and exits with code 231 at start, and putting the old value back in `.env` followed by `make ci` recovers it whole. If the old value is lost, stop ClickHouse, move `coordination/` in the volume aside (`docker compose run --rm --no-deps --entrypoint mv clickhouse /var/lib/clickhouse/coordination /var/lib/clickhouse/coordination.lost`), start it under the new value, and run `SYSTEM RESTORE DATABASE REPLICA <db>` for each Replicated database and `SYSTEM RESTORE REPLICA <db>.<table>` for each replicated table. The rows survive, and the engine re-creates its SQL users and roles on its next start.
+
 Never commit `.env`.
 
 ## Persistence: what survives, and what `make clean` destroys
