@@ -90,8 +90,7 @@ Beyond resolution, these semantic assertions ride along.
 - The release-check dial must reach every app under that app's own prefix, and
   resolve to `true` when .env sets nothing. See `_version_check_failures`.
 - Console TLS must change nothing until it is dialled on. Once on, it must move both proxies onto their TLS configs and the certificate and pin the network so the engine trusts dfe-proxy's address alone. See `_proxy_tls_mismatches`.
-- Every path a pinned image declares as a VOLUME must be mounted from a named
-  volume or a bind. See `_IMAGE_VOLUMES`.
+- Every path a pinned image declares as a VOLUME must be mounted from a named volume or a bind, and wherever the daemon holds the image, `_IMAGE_VOLUMES` must list exactly the paths it declares. See `_image_volume_drift`.
 - No committed service may carry a name a generated per-source instance can take.
   See `_instance_name_collisions`.
 - Every service dfe-engine renders, and every instance the generator declares,
@@ -107,6 +106,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+from collections.abc import Callable
 from pathlib import Path
 
 import _envoy
@@ -485,8 +485,8 @@ _TLS_USER = {"DFE_DEV_GID": "4343", "DFE_DEV_UID": "4242"}
 
 # The VOLUME paths each pinned image declares (`docker image inspect --format
 # '{{json .Config.Volumes}}'`), by service: one left unmounted gets an anonymous
-# volume per container that `make clean` cannot reach. A new pin that declares
-# another path is an edit here.
+# volume per container that `make clean` cannot reach. `_image_volume_drift`
+# measures it against each local image.
 _IMAGE_VOLUMES: dict[str, tuple[str, ...]] = {
     "clickhouse": ("/var/lib/clickhouse",),
     "hyperdx-ferretdb": ("/state",),
@@ -494,6 +494,10 @@ _IMAGE_VOLUMES: dict[str, tuple[str, ...]] = {
     "kafka-apache": ("/etc/kafka/secrets", "/mnt/shared/config", "/var/lib/kafka/data"),
     "kafka-redpanda": ("/var/lib/redpanda/data",),
 }
+# The VOLUME paths one image ref declares, or None when the daemon does not hold it.
+type _Inspect = Callable[[str], frozenset[str] | None]
+# A hung daemon must not hang the gate.
+_INSPECT_TIMEOUT_SECONDS = 30
 
 # A dfe-transform-vector pipeline declares its own enrichment tables, and the
 # service mounts the directory holding it rather than the file.
@@ -1495,19 +1499,123 @@ def _unmounted_image_volume_failures(*, config: dict) -> list[str]:
     return failures
 
 
-def _image_volume_failures(*, env: dict[str, str]) -> tuple[list[str], int]:
-    """Return (messages, paths checked) for the image VOLUME paths on the registry path.
+def _image_volume_model(*, env: dict[str, str]) -> dict | None:
+    """Return the registry-path model with both Kafka backends and the auth profile resolved into it.
 
-    Both Kafka backends are resolved into the one model, since each declares its
-    own paths.
+    Each backend runs its own image with its own VOLUME paths, and the auth profile
+    adds the oauth2-proxy services, which run an image of their own.
     """
-    config = _config_json(
-        env=env, files=[COMPOSE_FILE.name], extra_profiles=(_KAFKA_BACKENDS[1],)
+    return _config_json(
+        env=env,
+        files=[COMPOSE_FILE.name],
+        extra_profiles=(_KAFKA_BACKENDS[1], _AUTH_PROFILE),
     )
+
+
+def _image_volume_failures(*, env: dict[str, str]) -> tuple[list[str], int]:
+    """Return (messages, paths checked) for the image VOLUME paths on the registry path."""
+    config = _image_volume_model(env=env)
     if config is None:
         return (["the registry path did not resolve, so volume mounts are unknown"], 0)
     made = sum(len(paths) for paths in _IMAGE_VOLUMES.values())
     return _unmounted_image_volume_failures(config=config), made
+
+
+def _declared_volumes(image: str) -> frozenset[str] | None:
+    """Return the VOLUME paths a local image declares, or None when the daemon does not hold it.
+
+    The ref is inspected exactly as compose pulls it, digest included. Inspect
+    never pulls, so an image this host has not fetched stays unfetched.
+    """
+    result = subprocess.run(
+        ["docker", "image", "inspect", "--format", "{{json .Config.Volumes}}", image],
+        capture_output=True,
+        encoding="utf-8",
+        errors="replace",
+        text=True,
+        timeout=_INSPECT_TIMEOUT_SECONDS,
+    )
+    if result.returncode != 0:
+        return None
+    return frozenset(json.loads(result.stdout) or {})
+
+
+def _local_image_inspector() -> _Inspect | None:
+    """Return the inspector for this host's images, or None when no docker daemon answers.
+
+    The table is the offline gate, so a host with no binary or no daemon skips the
+    comparison rather than failing it.
+    """
+    if shutil.which("docker") is None:
+        return None
+    try:
+        probe = subprocess.run(
+            ["docker", "version", "--format", "{{.Server.Version}}"],
+            capture_output=True,
+            encoding="utf-8",
+            errors="replace",
+            text=True,
+            timeout=_INSPECT_TIMEOUT_SECONDS,
+        )
+    except subprocess.TimeoutExpired:
+        return None
+    return _declared_volumes if probe.returncode == 0 else None
+
+
+def _service_images(*, config: dict) -> dict[str, str]:
+    """Return {service: image ref} for every service in the model that names an image."""
+    return {
+        name: service["image"]
+        for name, service in config.get("services", {}).items()
+        if service.get("image")
+    }
+
+
+def _image_volume_drift(
+    *, images: dict[str, str], inspect: _Inspect | None
+) -> tuple[list[str], int, int]:
+    """Return (messages, services checked, services skipped) holding `_IMAGE_VOLUMES` to each local image.
+
+    A path the image declares and the table lacks fails, a service the table does
+    not name included, and so does a path the table lists that the image does not
+    declare. A service whose image the daemon does not hold is skipped, and with no
+    daemon (`inspect` None) every one is: pulling or asking a registry would turn an
+    offline gate into one that flakes on rate limits.
+    """
+    if inspect is None:
+        return [], 0, len(images)
+    declared_by_image: dict[str, frozenset[str] | None] = {}
+    failures = []
+    checked = 0
+    for name, image in sorted(images.items()):
+        if image not in declared_by_image:
+            declared_by_image[image] = inspect(image)
+        declared = declared_by_image[image]
+        if declared is None:
+            continue
+        checked += 1
+        listed = frozenset(_IMAGE_VOLUMES.get(name, ()))
+        failures.extend(
+            f"{name}: {image} declares VOLUME {path}, which _IMAGE_VOLUMES does not "
+            "list -- add it there so the mount check holds compose to it"
+            for path in sorted(declared - listed)
+        )
+        failures.extend(
+            f"{name}: _IMAGE_VOLUMES lists {path}, which {image} does not declare -- "
+            "drop the stale entry"
+            for path in sorted(listed - declared)
+        )
+    return failures, checked, len(images) - checked
+
+
+def _image_volume_drift_failures(
+    *, env: dict[str, str], inspect: _Inspect | None
+) -> tuple[list[str], int, int]:
+    """Return (messages, services checked, services skipped) for the images the registry path runs."""
+    config = _image_volume_model(env=env)
+    if config is None:
+        return (["the registry path did not resolve, so its images are unknown"], 0, 0)
+    return _image_volume_drift(images=_service_images(config=config), inspect=inspect)
 
 
 def _instance_name_collisions(*, services: dict) -> list[str]:
@@ -2115,6 +2223,26 @@ def main() -> int:
         msg=f"Every VOLUME path the pinned images declare is mounted from a named "
         f"volume or a bind ({volume_made} assertions)"
     )
+
+    inspector = _local_image_inspector()
+    drift_failures, drift_checked, drift_skipped = _image_volume_drift_failures(
+        env=env, inspect=inspector
+    )
+    for message in drift_failures:
+        _print(msg=f"FAIL {message}")
+    if drift_failures:
+        return 1
+    if inspector is None:
+        _print(
+            msg="No docker daemon answered, so none of the "
+            f"{drift_skipped} service image(s) was measured against _IMAGE_VOLUMES"
+        )
+    else:
+        _print(
+            msg="Every local image declares exactly the VOLUME paths _IMAGE_VOLUMES "
+            f"lists for its service ({drift_checked} service image(s) checked, "
+            f"{drift_skipped} not local and skipped)"
+        )
 
     name_failures, name_made = _instance_name_failures(env=env)
     for message in name_failures:
