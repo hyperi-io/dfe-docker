@@ -256,7 +256,7 @@ or a ClickHouse cluster.
 ```bash
 DFE_PROFILE=grpc-receiver make dev    # override the profile
 KAFKA_BACKEND=apache make dev         # Apache Kafka instead of Redpanda
-DFE_CORE_ENABLED=false make dev       # skip engine, UI and proxy
+DFE_CORE_ENABLED=false make dev       # skip engine, UI, proxy and HyperDX
 DFE_CLICKHOUSE_ENABLED=false make dev # no warehouse container (external instance)
 DFE_HYPERDX_ENABLED=1 make dev        # add the HyperDX observability stack
 make dev SERVICES="dfe-loader"        # start a subset of the resolved profile

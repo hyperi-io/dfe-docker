@@ -232,11 +232,7 @@ proxies as well as the UIs. A gated door is still a door.
 
 Three limits, none of them cosmetic:
 
-- **It gates page access only.** Kafbat never learns who signed in. HyperDX
-  learns it only with `DFE_HYPERDX_AUTH_MODE=header-dev`, which signs in the user
-  the proxy names in `X-Forwarded-Email`. In the default `oidc-proxy` mode
-  HyperDX ignores those headers and identifies callers by the engine token.
-  Neither UI gains roles or an audit trail from the proxy.
+- **It gates page access only.** Neither UI learns who signed in from the proxy: HyperDX identifies callers by the engine token. Neither gains roles or an audit trail from the proxy.
 - **An expired session on the API origin fails opaquely.** A cross-origin XHR
   that gets a redirect to the IdP is blocked by the browser, so the app shows
   failed requests rather than a login prompt. Reload the app page to sign back
@@ -374,7 +370,7 @@ with the same value:
 | `DFE_HUNT_RUNNER_CLICKHOUSE_PASSWORD` | `dfe_hunt_runner` | dfe-hunt-runner | `SELECT` and `INSERT` on the data database |
 | `DFE_LOADER_CLICKHOUSE_PASSWORD` | `dfe_loader` | dfe-loader | `INSERT` on the data database, and its schema |
 | `DFE_OTEL_WRITER_CLICKHOUSE_PASSWORD` | `dfe_otel_writer` | otel-collector | `INSERT` on the otel tables, and server health |
-| `DFE_QUERY_READER_CLICKHOUSE_PASSWORD` | `dfe_query_reader` | HyperDX's seeded connection, under `header-dev` | `SELECT` on the data database |
+| `DFE_QUERY_READER_CLICKHOUSE_PASSWORD` | `dfe_query_reader` | The platform connection dfe-engine hands HyperDX | `SELECT` on the data database |
 
 An existing `.env` takes the new keys on the next `make init`, and the engine
 creates each user on its next start.

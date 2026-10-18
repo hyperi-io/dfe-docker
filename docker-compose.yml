@@ -1610,24 +1610,8 @@ services:
       - path: env/hyperdx.env
         required: false
     environment:
-      # Seeded server-side onto each team as it is created (setupTeamDefaults), so
-      # connections, sources, dashboards and saved searches live in FerretDB and
-      # survive a browser change. Host resolves in-container -- queries go through
-      # HyperDX's own /clickhouse-proxy, so the credential never leaves the stack.
-      # The name must be `platform`: the shipped dashboards reference their
-      # connection by that name and are skipped for a team that has no match.
-      # Only header-dev reads this: under oidc-proxy the fork asks dfe-engine for
-      # each team's connection. It reads as the platform reader the engine
-      # creates, never the admin account.
-      # Host and port follow dfe-engine's, container port included (#75), and
-      # resolve_profile.py turns CLICKHOUSE_SECURE into the https scheme.
-      DEFAULT_CONNECTIONS: '[{"name":"platform","host":"${DFE_CLICKHOUSE_RESOLVED_SCHEME:-http}://${CLICKHOUSE_HOST:-clickhouse}:${CLICKHOUSE_EXTERNAL_HTTP_PORT:-8123}","username":"dfe_query_reader","password":"${DFE_QUERY_READER_CLICKHOUSE_PASSWORD:-}"}]'
-      DEFAULT_SOURCES_FILE: /etc/hyperdx/default-sources.json
-      # The engine is the issuer here as it is on Kubernetes: HyperDX verifies its
-      # ES384 token against the engine's JWKS, taking it from a Bearer header or
-      # the dfe_token cookie the console mirrors. DFE_HYPERDX_AUTH_MODE=header-dev
-      # runs it off request headers instead, for a stack with no engine.
-      DFE_AUTH_MODE: ${DFE_HYPERDX_AUTH_MODE:-oidc-proxy}
+      # The engine is the issuer here as it is on Kubernetes: HyperDX verifies its ES384 token against the engine's JWKS, taking it from a Bearer header or the dfe_token cookie the console mirrors, and asks the engine for each team's ClickHouse connection.
+      DFE_AUTH_MODE: oidc-proxy
       DFE_ENGINE_JWKS_URL: ${DFE_ENGINE_JWKS_URL:-http://dfe-engine:8000/.well-known/jwks.json}
       # The team a token carrying no group claim lands in.
       DFE_AUTH_DEFAULT_TEAM: ${DFE_HYPERDX_TEAM:-dfe}
@@ -1666,7 +1650,6 @@ services:
       TOKEN_ENCRYPTION_KEY: ${HYPERDX_TOKEN_ENCRYPTION_KEY:-}
       NEXT_PUBLIC_THEME: ${HYPERDX_THEME:-dfe}
     volumes:
-      - ./config/hyperdx/default-sources.json:/etc/hyperdx/default-sources.json:ro
       - hyperdx-dashboards:/etc/hyperdx/dashboards:ro
     depends_on:
       hyperdx-ferretdb:
@@ -1723,8 +1706,7 @@ services:
   # their ports -- same port numbers, a gate in front. Turn the infra class off
   # and the PROXIES go dark with the UIs: a gated door is still a door.
   #
-  # It gates PAGE ACCESS ONLY. Kafbat never learns who signed in; HyperDX does
-  # only in header-dev mode, from the X-Forwarded-Email this proxy sets.
+  # It gates PAGE ACCESS ONLY. Neither UI learns who signed in here: HyperDX identifies a caller by the engine token.
   # docs/operating.md#gating-the-infra-uis-with-oidc
   # ===========================================================================
 
