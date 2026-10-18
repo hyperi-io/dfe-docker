@@ -18,6 +18,7 @@ actually looks at.
 """
 
 import re
+import shutil
 from pathlib import Path
 
 import pytest
@@ -160,6 +161,160 @@ def test_a_listed_service_missing_from_the_stack_fails_rather_than_passing():
     failures = check_compose._unmounted_image_volume_failures(config=config)
 
     assert failures == ["kafka-apache: in _IMAGE_VOLUMES but not in the stack"]
+
+
+def _table_images() -> tuple[dict[str, str], dict[str, frozenset[str]]]:
+    """Every table service on a stand-in ref, and each ref declaring what the table lists."""
+    images = {name: f"{name}:pinned" for name in check_compose._IMAGE_VOLUMES}
+    declared = {
+        images[name]: frozenset(paths)
+        for name, paths in check_compose._IMAGE_VOLUMES.items()
+    }
+    return images, declared
+
+
+def test_local_images_declaring_exactly_the_table_pass():
+    images, declared = _table_images()
+    images["dfe-loader"] = "dfe-loader:pinned"
+    declared["dfe-loader:pinned"] = frozenset()
+
+    failures, checked, skipped = check_compose._image_volume_drift(
+        images=images, inspect=declared.get
+    )
+
+    assert failures == []
+    assert (checked, skipped) == (len(images), 0)
+
+
+def test_a_path_the_image_declares_and_the_table_lacks_fails():
+    images, declared = _table_images()
+    declared["hyperdx-ferretdb:pinned"] = frozenset({"/state", "/var/lib/ferretdb"})
+
+    failures, _, _ = check_compose._image_volume_drift(
+        images=images, inspect=declared.get
+    )
+
+    assert failures == [
+        "hyperdx-ferretdb: hyperdx-ferretdb:pinned declares VOLUME /var/lib/ferretdb, "
+        "which _IMAGE_VOLUMES does not list -- add it there so the mount check holds "
+        "compose to it"
+    ]
+
+
+def test_a_service_missing_from_the_table_whose_image_declares_a_volume_fails():
+    """The leak the table alone cannot see: a new service on an image with a VOLUME."""
+    failures, checked, _ = check_compose._image_volume_drift(
+        images={"dfe-newcomer": "newcomer:1"},
+        inspect={"newcomer:1": frozenset({"/data"})}.get,
+    )
+
+    assert checked == 1
+    assert len(failures) == 1
+    assert failures[0].startswith("dfe-newcomer: newcomer:1 declares VOLUME /data")
+
+
+def test_a_path_the_table_lists_and_the_image_does_not_declare_fails():
+    images, declared = _table_images()
+    declared["kafka-apache:pinned"] = frozenset({"/var/lib/kafka/data"})
+
+    failures, _, _ = check_compose._image_volume_drift(
+        images=images, inspect=declared.get
+    )
+
+    assert failures == [
+        f"kafka-apache: _IMAGE_VOLUMES lists {path}, which kafka-apache:pinned does "
+        "not declare -- drop the stale entry"
+        for path in ("/etc/kafka/secrets", "/mnt/shared/config")
+    ]
+
+
+def test_an_image_the_daemon_does_not_hold_is_skipped_not_failed():
+    images, declared = _table_images()
+    del declared["clickhouse:pinned"]
+
+    failures, checked, skipped = check_compose._image_volume_drift(
+        images=images, inspect=declared.get
+    )
+
+    assert failures == []
+    assert (checked, skipped) == (len(images) - 1, 1)
+
+
+def test_with_no_docker_daemon_every_image_is_skipped():
+    images, _ = _table_images()
+
+    assert check_compose._image_volume_drift(images=images, inspect=None) == (
+        [],
+        0,
+        len(images),
+    )
+
+
+def test_one_image_several_services_run_is_inspected_once():
+    asked: list[str] = []
+
+    def inspect(image: str) -> frozenset[str]:
+        asked.append(image)
+        return frozenset()
+
+    failures, checked, _ = check_compose._image_volume_drift(
+        images={"dfe-archiver": "archiver:1", "dfe-archiver-e2e": "archiver:1"},
+        inspect=inspect,
+    )
+
+    assert failures == []
+    assert checked == 2
+    assert asked == ["archiver:1"]
+
+
+def test_no_docker_on_the_path_skips_the_comparison(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("PATH", str(tmp_path))
+
+    assert check_compose._local_image_inspector() is None
+
+
+def test_a_docker_with_no_daemon_skips_the_comparison(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    if shutil.which("docker") is None:
+        pytest.skip("needs the docker binary, which is what reaches for the daemon")
+    monkeypatch.delenv("DOCKER_CONTEXT", raising=False)
+    monkeypatch.setenv("DOCKER_HOST", f"unix://{tmp_path / 'absent.sock'}")
+
+    assert check_compose._local_image_inspector() is None
+
+
+def test_an_image_the_daemon_does_not_hold_reads_as_not_local():
+    inspect = check_compose._local_image_inspector()
+    if inspect is None:
+        pytest.skip("no docker daemon answered, so no image can be inspected")
+
+    assert inspect("dfe-compose-check.invalid/absent:0.0.0") is None
+
+
+def test_every_local_table_image_declares_exactly_the_paths_the_table_lists():
+    """The table measured against the pinned images themselves, where this host holds one."""
+    inspect = check_compose._local_image_inspector()
+    if inspect is None:
+        pytest.skip("no docker daemon answered, so no image can be inspected")
+    env, _ = check_compose._check_env()
+    config = check_compose._image_volume_model(env=env)
+    assert config is not None, "the registry compose path did not resolve"
+    images = {
+        name: image
+        for name, image in check_compose._service_images(config=config).items()
+        if name in check_compose._IMAGE_VOLUMES
+    }
+
+    failures, checked, _ = check_compose._image_volume_drift(
+        images=images, inspect=inspect
+    )
+
+    if not checked:
+        pytest.skip("no image the table names is local, and this test pulls none")
+    assert failures == []
 
 
 def _dialling(*, host: str, http: str, native: str) -> dict:
