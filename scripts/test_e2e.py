@@ -532,7 +532,7 @@ def get_config(
 # Generate Temporary Loader Config
 # - Generates a temporary loader config file with the tests database and table
 # ------------------------------------------------------------------------------
-def generate_tmp_loader_config(loader_config, database, table):
+def generate_tmp_loader_config(loader_config, database, table, sources=()):
     TMP_DIR.mkdir(parents=True, exist_ok=True)
 
     with open(PROJECT_DIR / loader_config, encoding="utf-8") as config_file:
@@ -541,6 +541,10 @@ def generate_tmp_loader_config(loader_config, database, table):
     config.setdefault("clickhouse", {})["database"] = database
     config.setdefault("routing", {})["default_db"] = database
     config.setdefault("routing", {})["default_table"] = table
+    # A test's extra sources have no table of their own, so they land beside main
+    for source in sources:
+        if source != TARGET_TABLE:
+            config["routing"].setdefault("source_to_table", {})[source] = TARGET_TABLE
 
     generated_path = TMP_DIR / f"loader-{RUN_ID}-{table}.yaml"
     with open(generated_path, "w", encoding="utf-8", newline="\n") as generated_file:
@@ -3477,7 +3481,10 @@ def run_test(ctx, mode, test, persistent_services):
     effective_services = dict(test.services)
     if "dfe-loader" in effective_services:
         effective_services["dfe-loader"] = generate_tmp_loader_config(
-            effective_services["dfe-loader"], test.database, test.table
+            effective_services["dfe-loader"],
+            test.database,
+            test.table,
+            sources=test.outage.get("sources") or {},
         )
 
     # Start the stack (Kafka profiles: infra first, create topics, then full stack)

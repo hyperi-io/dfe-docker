@@ -197,7 +197,7 @@ profiles:
       dfe-archiver:
         config_path: archiver/kafka.yaml
       dfe-loader:
-        config_path: loader/kafka-resilience.yaml
+        config_path: loader/kafka.yaml
       dfe-receiver:
         config_path: receiver/kafka.yaml
       dfe-transform-e2e-elastic-cisco-ios:
