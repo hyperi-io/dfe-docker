@@ -693,6 +693,7 @@ services:
       # database and reads its schema, nothing else. The engine names the user.
       DFE_LOADER_CLICKHOUSE_PASSWORD: ${DFE_LOADER_CLICKHOUSE_PASSWORD:-}
       DFE_LOADER_CLICKHOUSE_USERNAME: dfe_loader
+      DFE_LOADER_KAFKA_BROKERS: *kafka-brokers
       LOG_LEVEL: ${LOG_LEVEL:-info}
       LOG_FORMAT: ${LOG_FORMAT:-text}
       OTEL_EXPORTER_OTLP_ENDPOINT: ${DFE_OTEL_EXPORTER_ENDPOINT:-}

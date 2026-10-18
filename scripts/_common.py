@@ -59,6 +59,9 @@ LOOPBACK_ORIGINS = frozenset(
 # a hand-crafted data-plane shape that ships its own config and must keep it.
 PROJECTED_PROFILES = ("slim", "single")
 
+# What a Kafka dfe-loader subscribes to when its config names no topics and no topic_regex (dfe-loader src/kafka/transport.rs LANDING_TOPIC_INCLUDE)
+LOADER_DEFAULT_TOPIC_REGEX = "_(land|load)$"
+
 # dfe-fetcher runs one container per source and never as a profile's service. A profile that runs them says so with the key, which resolve_profile.py writes to .tmp/profile.mk as the variable.
 FETCHER_SERVICE = "dfe-fetcher"
 FETCHER_ENABLED_KEY = "fetcher_enabled"
@@ -170,11 +173,14 @@ def _config_topics(*, path: Path) -> tuple[set[str], set[str], str]:
     them here too is what keeps such a config inside the wiring and topic-init
     checks rather than silently outside them. Named topics still win, exactly as
     they do in the app.
+
+    A Kafka dfe-loader config that names neither topics nor a topic_regex reads the loader's own default pattern, for the same reason.
     """
     subscribed: set[str] = set()
     produced: set[str] = set()
     regex = ""
     dfe_source = ""
+    transport = ""
     in_list = False
     for raw in path.read_text(encoding="utf-8", errors="replace").splitlines():
         line = raw.strip()
@@ -190,9 +196,18 @@ def _config_topics(*, path: Path) -> tuple[set[str], set[str], str]:
             regex = line.split(": ", 1)[1].strip().strip("\"'")
         elif line.startswith("dfe_source: "):
             dfe_source = line.split(": ", 1)[1].strip().strip("\"'")
+        elif line.startswith("transport: "):
+            transport = line.split(": ", 1)[1].strip().strip("\"'")
     if dfe_source:
         subscribed = subscribed or {f"{dfe_source}_land"}
         produced = produced or {f"{dfe_source}_load"}
+    if (
+        path.parent.name == "loader"
+        and transport != "grpc"
+        and not (subscribed)
+        and not (regex)
+    ):
+        regex = LOADER_DEFAULT_TOPIC_REGEX
     return subscribed, produced, regex
 
 

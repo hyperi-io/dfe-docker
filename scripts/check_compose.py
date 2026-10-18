@@ -1008,7 +1008,7 @@ def _transform_wiring_failures() -> tuple[list[str], int]:
             subscribed, written = _transform_topics(path=CONFIG_DIR / config_path)
             for topic in sorted(written):
                 made += 1
-                if topic in consumed or (pattern and re.fullmatch(pattern, topic)):
+                if topic in consumed or (pattern and re.search(pattern, topic)):
                     continue
                 failures.append(
                     f"{name}: {service} produces {topic} and no loader in the profile "
