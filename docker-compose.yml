@@ -687,10 +687,12 @@ services:
       - path: env/dfe-loader.custom.env
         required: false
     environment:
+      # The ClickHouse dfe-engine dials, container port included (#75)
+      DFE_LOADER_CLICKHOUSE_HOSTS: ${CLICKHOUSE_HOST:-clickhouse}:${CLICKHOUSE_EXTERNAL_HTTP_PORT:-8123}
       # Its own user, not the admin account: dfe_loader inserts into the data
       # database and reads its schema, nothing else. The engine names the user.
-      CLICKHOUSE_USERNAME: dfe_loader
-      CLICKHOUSE_PASSWORD: ${DFE_LOADER_CLICKHOUSE_PASSWORD:-}
+      DFE_LOADER_CLICKHOUSE_PASSWORD: ${DFE_LOADER_CLICKHOUSE_PASSWORD:-}
+      DFE_LOADER_CLICKHOUSE_USERNAME: dfe_loader
       LOG_LEVEL: ${LOG_LEVEL:-info}
       LOG_FORMAT: ${LOG_FORMAT:-text}
       OTEL_EXPORTER_OTLP_ENDPOINT: ${DFE_OTEL_EXPORTER_ENDPOINT:-}

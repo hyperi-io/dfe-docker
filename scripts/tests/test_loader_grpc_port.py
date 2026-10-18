@@ -9,7 +9,7 @@
 """Every committed sender dials the port dfe-loader's Push listener binds.
 
 dfe-engine compiles the receiver's loader destination from its app manifest, while
-the loader's bind comes from `config/loader/grpc.yaml`. A mismatch is silent: the
+the loader binds `config/loader/grpc.yaml`'s `grpc.listen`, else its own default. A mismatch is silent: the
 receiver answers HTTP 202 and drops every record into a closed port. A text read,
 because these tests run with no PyYAML.
 """
@@ -20,6 +20,8 @@ from _common import COMPOSE_FILE, REPO_ROOT
 
 # dfe-engine's appmgmt/apps.yaml declares dfe-loader `endpoints.push.port: 6000`.
 MANIFEST_PUSH_PORT = 6000
+# dfe-loader's GrpcConfig default listen, 0.0.0.0:6000 (src/config/kafka.rs)
+LOADER_DEFAULT_LISTEN_PORT = 6000
 
 _LOADER_CONFIG = REPO_ROOT / "config" / "loader" / "grpc.yaml"
 _SENDER_DIR = REPO_ROOT / "config"
@@ -28,8 +30,7 @@ _SENDER_DIR = REPO_ROOT / "config"
 def _loader_listen_port() -> int:
     body = _LOADER_CONFIG.read_text(encoding="utf-8")
     match = re.search(r"^\s+listen:\s*\S+:(\d+)\s*$", body, re.M)
-    assert match, f"{_LOADER_CONFIG} names no grpc listen address"
-    return int(match.group(1))
+    return int(match.group(1)) if match else LOADER_DEFAULT_LISTEN_PORT
 
 
 def _dialled_loader_ports() -> list[tuple[str, int]]:
