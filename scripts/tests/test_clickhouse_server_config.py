@@ -18,7 +18,8 @@ dfe-engine refuses a self-hosted server without Keeper, the {cluster}, {shard}
 and {replica} macros and a remote_servers cluster the {cluster} macro names, and
 it creates its SQL users and roles in the first writable access storage. A third
 overlay makes this server a cluster of one with all of those, the access storage
-in Keeper included.
+in Keeper included. A fourth takes the place of the image's own listener file, so
+Keeper, raft and interserver answer on loopback only.
 
 A text read of the compose file, as in test_hyperdx.py: these tests run with no
 PyYAML.
@@ -37,6 +38,12 @@ _DATA_DIR = "/var/lib/clickhouse/"
 _LOGGER_FILE = REPO_ROOT / "clickhouse" / "server-logger.xml"
 _SYSTEM_LOGS_FILE = REPO_ROOT / "clickhouse" / "system-logs.xml"
 _REPLICATION_FILE = REPO_ROOT / "clickhouse" / "replication.xml"
+_LISTEN_FILE = REPO_ROOT / "clickhouse" / "listen.xml"
+# The image's file that opens every listener on every interface.
+_IMAGE_LISTEN_NAME = "docker_related_config.xml"
+_LOOPBACK = {"127.0.0.1", "::1"}
+# What other containers dial: http and native.
+_CLIENT_PORTS = {"8123", "9000"}
 _KEEPER_PASSWORD = "CLICKHOUSE_KEEPER_PASSWORD"
 # The four-letter words that only read. The rest reset stats, move leadership or force recovery.
 _READ_ONLY_WORDS = {
@@ -169,18 +176,20 @@ def test_the_system_logs_overlay_names_no_other_table() -> None:
 def test_the_service_mounts_every_overlay_into_config_d() -> None:
     mounts = _config_d_mounts()
 
-    for path in (_LOGGER_FILE, _SYSTEM_LOGS_FILE, _REPLICATION_FILE):
+    for path in (_LOGGER_FILE, _SYSTEM_LOGS_FILE, _REPLICATION_FILE, _LISTEN_FILE):
         source = str(path.relative_to(REPO_ROOT))
         assert source in mounts, f"{_SERVICE} does not mount {source} into config.d"
         # config.d picks the parser by extension, so XML must land under .xml.
         assert mounts[source].endswith(".xml"), source
     assert len(set(mounts.values())) == len(mounts), "two overlays share a name"
+    # Under any other name the image's file still merges and reopens every interface.
+    assert mounts[str(_LISTEN_FILE.relative_to(REPO_ROOT))] == _IMAGE_LISTEN_NAME
 
 
 def _text(root: ElementTree.Element, path: str) -> str:
     """Return the stripped text at `path`, failing on a missing element."""
     element = root.find(path)
-    assert element is not None, f"{_REPLICATION_FILE.name} has no {path}"
+    assert element is not None, f"no {path}"
     return (element.text or "").strip()
 
 
@@ -198,16 +207,22 @@ def test_keeper_runs_embedded_and_keeps_its_data_with_the_tables() -> None:
 def test_the_server_reaches_its_own_keeper_under_a_generated_identity() -> None:
     root = _root(path=_REPLICATION_FILE)
     nodes = root.findall("zookeeper/node")
+    bound = {
+        (e.text or "").strip() for e in _root(path=_LISTEN_FILE).findall("listen_host")
+    }
 
-    assert [(_text(n, "host"), _text(n, "port")) for n in nodes] == [
-        ("localhost", _text(root, "keeper_server/tcp_port"))
-    ]
+    # A name such as localhost can resolve to ::1 alone, where Keeper does not listen.
+    assert len(nodes) == 1 and _text(nodes[0], "host") in bound, bound
+    assert _text(nodes[0], "port") == _text(root, "keeper_server/tcp_port")
     identity = root.find("zookeeper/identity")
     assert identity is not None, "Keeper's znodes would be open to every container"
+    # Without it the identity is written in clear to preprocessed_configs/config.xml.
+    assert identity.attrib.get("hide_in_preprocessed") == "1", identity.attrib
     env_name = identity.attrib.get("from_env", "")
     value = _service_environment(service=_SERVICE).get(env_name, "")
-    # The password half comes from the key `make init` mints, never a literal.
-    assert re.fullmatch(rf"\w+:\$\{{{_KEEPER_PASSWORD}(:-)?\}}", value), value
+    # The key `make init` mints, never a literal, and mandatory: a server started on
+    # an empty value exits 231 once a real one lands.
+    assert re.fullmatch(rf"\w+:\$\{{{_KEEPER_PASSWORD}:\?[^}}]+\}}", value), value
     assert _KEEPER_PASSWORD in init.GENERATED_SECRETS
 
 
@@ -228,9 +243,8 @@ def test_the_macros_name_a_cluster_of_this_one_server() -> None:
     assert cluster is not None, f"no remote_servers cluster named {macros['cluster']}"
     replicas = cluster.findall("shard/replica")
     assert len(cluster.findall("shard")) == 1
-    assert [(_text(r, "host"), _text(r, "port")) for r in replicas] == [
-        ("localhost", "9000")
-    ]
+    assert len(replicas) == 1 and _text(replicas[0], "host") in _LOOPBACK
+    assert _text(replicas[0], "port") == "9000"
 
 
 def test_sql_users_and_roles_land_in_keeper() -> None:
@@ -242,3 +256,24 @@ def test_sql_users_and_roles_land_in_keeper() -> None:
     assert [child.tag for child in directories] == ["users_xml", "replicated"]
     assert _text(directories, "users_xml/path") == "users.xml"
     assert _text(directories, "replicated/zookeeper_path")
+
+
+def test_keeper_raft_and_interserver_listen_on_loopback_only() -> None:
+    root = _root(path=_LISTEN_FILE)
+    hosts = {(e.text or "").strip() for e in root.findall("listen_host")}
+
+    # Keeper's client port binds listen_host and has no host setting of its own.
+    assert hosts and hosts <= _LOOPBACK, hosts
+    assert _text(root, "interserver_listen_host") in _LOOPBACK
+
+
+def test_only_the_client_protocols_listen_beyond_the_container() -> None:
+    root = _root(path=_LISTEN_FILE)
+    protocols = list(root.find("protocols"))
+
+    wide = {_text(p, "port") for p in protocols if _text(p, "host") not in _LOOPBACK}
+    assert wide == _CLIENT_PORTS, wide
+    # The image's own listeners for these ports would bind listen_host instead.
+    for port in ("http_port", "tcp_port"):
+        element = root.find(port)
+        assert element is not None and element.attrib == {"remove": "remove"}, port

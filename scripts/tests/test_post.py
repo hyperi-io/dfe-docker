@@ -977,11 +977,10 @@ _RUNNER_PASSWORD_KEY = "DFE_HUNT_RUNNER_CLICKHOUSE_PASSWORD"
 def _only_the_runner_password_in_play(
     monkeypatch: pytest.MonkeyPatch, services: list[str]
 ) -> None:
-    """The bundled ClickHouse with its admin and Keeper passwords set, and these services running."""
+    """The bundled ClickHouse with its admin password set, and these services running."""
     monkeypatch.setattr(post, "_resolved_services", lambda: services)
     monkeypatch.delenv("CLICKHOUSE_HOST", raising=False)
     monkeypatch.setenv("CLICKHOUSE_PASSWORD", "aMintedAdminValue123")
-    monkeypatch.setenv("CLICKHOUSE_KEEPER_PASSWORD", "aMintedKeeperValue123")
 
 
 def test_an_unset_hunt_runner_password_fails_the_self_test(
@@ -1006,28 +1005,6 @@ def test_a_stack_without_the_runner_needs_no_runner_password(
 ) -> None:
     _only_the_runner_password_in_play(monkeypatch, ["dfe-engine"])
     monkeypatch.delenv(_RUNNER_PASSWORD_KEY, raising=False)
-
-    assert post._weak_secrets() == []
-
-
-def test_an_unset_keeper_password_fails_the_self_test(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """Empty creates every znode, SQL users included, under the identity `dfe:`."""
-    _only_the_runner_password_in_play(monkeypatch, ["dfe-engine"])
-    monkeypatch.delenv("CLICKHOUSE_KEEPER_PASSWORD", raising=False)
-
-    assert [name for name, _value in post._weak_secrets()] == [
-        "CLICKHOUSE_KEEPER_PASSWORD"
-    ]
-
-
-def test_an_external_clickhouse_needs_no_keeper_password(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    _only_the_runner_password_in_play(monkeypatch, ["dfe-engine"])
-    monkeypatch.setenv("CLICKHOUSE_HOST", "clickhouse.example.com")
-    monkeypatch.delenv("CLICKHOUSE_KEEPER_PASSWORD", raising=False)
 
     assert post._weak_secrets() == []
 

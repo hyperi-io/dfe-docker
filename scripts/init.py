@@ -49,9 +49,9 @@ from _common import (
 # enforces them: DFE_UI_NEXTAUTH_SECRET, HYPERDX_POSTGRES_PASSWORD,
 # HYPERDX_EXPRESS_SESSION_SECRET, HYPERDX_TOKEN_ENCRYPTION_KEY and each
 # DFE_<APP>_CLICKHOUSE_PASSWORD via its WEAK_SECRET_DEFAULTS service-map,
-# CLICKHOUSE_PASSWORD and CLICKHOUSE_KEEPER_PASSWORD via the external-CH check (empty default, not a
+# CLICKHOUSE_PASSWORD via its own external-CH check (its default is empty, not a
 # sentinel string), and DFE_AUTH_LOCAL_ADMIN_PASSWORD by logging in with it. Keep
-# them in step.
+# them in step. CLICKHOUSE_KEEPER_PASSWORD is the one compose refuses to run without.
 #
 # Each DFE_<APP>_CLICKHOUSE_PASSWORD is one app's: the engine creates that
 # app's ClickHouse user on it and the app connects with it.

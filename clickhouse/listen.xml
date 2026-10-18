@@ -1,0 +1,13 @@
+<clickhouse>
+  <!-- Replaces the image's docker_related_config.xml, so only the protocols below leave loopback. -->
+  <listen_host>127.0.0.1</listen_host>
+  <listen_try>1</listen_try>
+  <!-- Raft and interserver: a cluster of one never dials either from outside. -->
+  <interserver_listen_host>127.0.0.1</interserver_listen_host>
+  <http_port remove="remove"/>
+  <tcp_port remove="remove"/>
+  <protocols>
+    <http><type>http</type><host>0.0.0.0</host><port>8123</port><description>http</description></http>
+    <tcp><type>tcp</type><host>0.0.0.0</host><port>9000</port><description>native protocol</description></tcp>
+  </protocols>
+</clickhouse>
