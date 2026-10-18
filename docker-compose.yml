@@ -150,6 +150,8 @@ services:
   clickhouse:
     image: clickhouse/clickhouse-server:${CLICKHOUSE_VERSION:?run 'make stack VERSION=X.Y.Z' to pin CLICKHOUSE_VERSION}
     container_name: ${DFE_CONTAINER_PREFIX:-}dfe-clickhouse
+    # Keeper registers the server by host name, and Docker's default is the container id, which every recreate changes.
+    hostname: clickhouse
     profiles: ["clickhouse"]
     restart: unless-stopped
     deploy: *limits-clickhouse
