@@ -69,7 +69,7 @@ a broken ingest pipeline cannot take the reporting on it down too.
 flowchart LR
     apps["DFE services"] -->|OTLP push :4317| col["otel-collector"]
     apps -->|stdout| drv["Docker log driver"]
-    drv -->|fluentforward :24224| col
+    drv -->|fluent_forward :24224| col
     chsrv[("ClickHouse<br/>system tables")] -->|sql_query pull| col
     col -->|self-telemetry :8888| col
     col -->|clickhouse exporter| ch[(`dfe.otel_*` tables)]
@@ -145,7 +145,7 @@ scraping estate nothing.
 
 Nothing in the stack exports logs over OTLP, so the lines a service writes to
 stdout reach ClickHouse a different way: Docker's own `fluentd` log driver sends
-them to the collector's `fluentforward` receiver, which turns the driver's tag
+them to the collector's `fluent_forward` receiver, which turns the driver's tag
 into `ServiceName` and writes `dfe.otel_logs`. Search them in HyperDX on the
 `otel_logs` source.
 
