@@ -11,14 +11,6 @@
 # filebeat-vector_load lands in dfe.`filebeat-vector` and main_load in
 # dfe.main.
 
-clickhouse:
-  hosts:
-    - clickhouse:8123
-  database: dfe
-  protocol: http
-  username: env:CLICKHOUSE_USERNAME
-  password: env:CLICKHOUSE_PASSWORD
-
 kafka:
   brokers:
     - kafka:9092

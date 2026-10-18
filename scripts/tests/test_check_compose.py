@@ -327,6 +327,9 @@ def _dialling(*, host: str, http: str, native: str) -> dict:
         "services": {
             "dfe-engine": {"environment": dict(engine_keys)},
             "dfe-hunt-runner": {"environment": dict(engine_keys)},
+            "dfe-loader": {
+                "environment": {"DFE_LOADER_CLICKHOUSE_HOSTS": f"{host}:{http}"}
+            },
             "otel-collector": {
                 "environment": {"CLICKHOUSE_HOST": host, "CLICKHOUSE_PORT": native}
             },
@@ -366,6 +369,21 @@ def test_the_collector_is_held_to_the_native_port_it_dials():
     )
 
     assert failures == ["otel-collector: CLICKHOUSE_PORT=19000, want 9000"]
+
+
+def test_a_loader_left_on_the_bundled_container_fails_an_external_host():
+    config = _dialling(host="ch.example.invalid", http="8443", native="9440")
+    config["services"]["dfe-loader"]["environment"]["DFE_LOADER_CLICKHOUSE_HOSTS"] = (
+        "clickhouse:8123"
+    )
+
+    failures = check_compose._clickhouse_dial_mismatches(
+        config=config, want=("ch.example.invalid", "8443", "9440")
+    )
+
+    assert failures == [
+        "dfe-loader: DFE_LOADER_CLICKHOUSE_HOSTS=clickhouse:8123, want ch.example.invalid:8443"
+    ]
 
 
 def test_a_dialler_missing_from_the_stack_fails_rather_than_passing():

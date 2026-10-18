@@ -334,6 +334,8 @@ _CLICKHOUSE_DIALLERS: dict[str, tuple[str, str | None, str]] = {
     ),
     "otel-collector": ("CLICKHOUSE_HOST", None, "CLICKHOUSE_PORT"),
 }
+# Each service that takes its ClickHouse address as one `host:HTTP port` key
+_CLICKHOUSE_HOST_PORT_DIALLERS = {"dfe-loader": "DFE_LOADER_CLICKHOUSE_HOSTS"}
 _CLICKHOUSE_SERVICE = "clickhouse"
 # Every key that moves a ClickHouse address, stripped before each case so the
 # checkout's own .env cannot decide the answer.
@@ -1138,6 +1140,14 @@ def _clickhouse_dial_mismatches(
             got = str(environment.get(key) or "")
             if got != expected:
                 failures.append(f"{name}: {key}={got or 'unset'}, want {expected}")
+    host, http_port, _ = want
+    for name, key in sorted(_CLICKHOUSE_HOST_PORT_DIALLERS.items()):
+        if name not in services:
+            failures.append(f"{name}: dials ClickHouse but is not in the stack")
+            continue
+        got = str((services[name].get("environment") or {}).get(key) or "")
+        if got != f"{host}:{http_port}":
+            failures.append(f"{name}: {key}={got or 'unset'}, want {host}:{http_port}")
     return failures
 
 
@@ -1164,7 +1174,7 @@ def _clickhouse_dial_failures(*, env: dict[str, str]) -> tuple[list[str], int]:
         if config is None:
             failures.append(f"the ClickHouse case {label!r} did not resolve")
             continue
-        made += len(_CLICKHOUSE_DIALLERS)
+        made += len(_CLICKHOUSE_DIALLERS) + len(_CLICKHOUSE_HOST_PORT_DIALLERS)
         failures.extend(
             f"{label}: {message}"
             for message in _clickhouse_dial_mismatches(config=config, want=want)

@@ -1,22 +1,9 @@
 # Project:   dfe-docker
 # File:      config/loader/grpc.yaml
-# Purpose:   dfe-loader config - gRPC transport server (used by the gRPC profiles)
+# Purpose:   Loads records pushed over gRPC
 # Language:  YAML
 #
 # License:   BUSL-1.1
 # Copyright: (c) 2026 HYPERI PTY LIMITED
 
-# gRPC transport: loader listens on :6000 for DFETransport/Push, the port dfe-engine compiles every sender's endpoint against.
-
 transport: grpc
-
-clickhouse:
-  hosts:
-    - clickhouse:8123
-  database: dfe
-  protocol: http
-  username: env:CLICKHOUSE_USERNAME
-  password: env:CLICKHOUSE_PASSWORD
-
-grpc:
-  listen: 0.0.0.0:6000
