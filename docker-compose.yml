@@ -150,7 +150,7 @@ services:
   clickhouse:
     image: clickhouse/clickhouse-server:${CLICKHOUSE_VERSION:?run 'make stack VERSION=X.Y.Z' to pin CLICKHOUSE_VERSION}
     container_name: ${DFE_CONTAINER_PREFIX:-}dfe-clickhouse
-    # Keeper registers the server by host name, and Docker's default is the container id, which every recreate changes.
+    # Docker's default, the container id, changes on every recreate: the Replicated database rewrites its host id, and the old one stays in /clickhouse/task_queue/replicas for the server to resolve.
     hostname: clickhouse
     profiles: ["clickhouse"]
     restart: unless-stopped

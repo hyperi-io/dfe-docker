@@ -244,8 +244,9 @@ def test_the_server_reaches_its_own_keeper_under_a_generated_identity() -> None:
 def test_the_server_keeps_its_host_name_across_a_recreate() -> None:
     hostname = _service_scalar(service=_SERVICE, key="hostname")
 
-    # Keeper registers the server by host name: on Docker's default, the container
-    # id, every recreate leaves the old name behind for the server to resolve.
+    # Docker's default, the container id, changes on every recreate: the Replicated
+    # database rewrites its host id, and the old one stays in
+    # /clickhouse/task_queue/replicas for the server to resolve.
     assert hostname, f"{_SERVICE} sets no hostname"
     assert "$" not in hostname, hostname
 
