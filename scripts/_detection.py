@@ -17,6 +17,10 @@ event it is, and the detection table names the row it matched by `matched_uuid`.
 The verdict joins the two: the hunt's detections have to be exactly the landed
 rows of the matching set, each once, under the rule and severity it was given.
 Talking to the engine, polling and reporting stay with the callers.
+
+A hunt runs for a registered org and reads only the rows whose `_org_id` is one of
+that org's tenant ids. The events name the tenant in `org_id`, the field the loader
+writes to `_org_id`, the same way a real source's events do.
 """
 
 from collections import Counter
@@ -32,6 +36,8 @@ HUNT_CRON = "* * * * *"
 SEVERITY = "high"
 # Each event's label rides in `_tags` beside the marker, which the landing schema keeps.
 LABEL_EXPRESSION = "toString(`_tags`.event)"
+# The event field dfe-loader writes to `_org_id`: its `routing.org_id_field` default.
+ORG_ID_FIELD = "org_id"
 
 POLL_SECONDS = 3.0
 # The runner beats at the top of every 15s poll, from its first one.
@@ -55,7 +61,12 @@ def set_labels(events: Mapping[str, Sequence[object]], kind: str) -> list[str]:
 
 
 def labelled_events(
-    *, marker: str, test_name: str, source: str, events: Mapping[str, Sequence[dict]]
+    *,
+    marker: str,
+    test_name: str,
+    source: str,
+    events: Mapping[str, Sequence[dict]],
+    org_id: str,
 ) -> list[tuple[str, str]]:
     """Return (label, request body) for every event, each stamped with the run marker.
 
@@ -64,6 +75,7 @@ def labelled_events(
         test_name: The test the events belong to.
         source: The `_source` the receiver routes them by.
         events: The events of each set, keyed MATCHING or OTHER.
+        org_id: The tenant id every event carries, one of the hunt's org's.
 
     Returns:
         One pair per event, in set order.
@@ -72,11 +84,29 @@ def labelled_events(
     for kind in sorted(events):
         for index, event in enumerate(events[kind]):
             label = event_label(kind, index)
-            tagged = {**event, "_tags": {"test_name": test_name, "event": label}}
+            tagged = {
+                **event,
+                ORG_ID_FIELD: org_id,
+                "_tags": {"test_name": test_name, "event": label},
+            }
             bodies.append(
                 (label, marked_event(marker=marker, source=source, extra=tagged))
             )
     return bodies
+
+
+def org_request(*, name: str) -> dict:
+    """The POST /orgs body for an org whose one tenant id is its own name."""
+    return {"name": name, "display_name": name.upper(), "org_ids": [name]}
+
+
+def org_tenant(org: Mapping) -> str:
+    """The tenant id an org's rows carry: its first `org_ids` entry, else its name.
+
+    The engine reads an org with no `org_ids` as the tenant of its own name.
+    """
+    declared = [i for i in org.get("org_ids") or [] if isinstance(i, str) and i]
+    return declared[0] if declared else str(org.get("name") or "")
 
 
 def _held(marker: str) -> str:

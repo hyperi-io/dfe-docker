@@ -149,6 +149,7 @@ def test_every_event_carries_the_run_marker_and_its_own_label() -> None:
             _detection.OTHER: [{"user_name": "alice"}],
             _detection.MATCHING: [{"user_name": "root"}, {"user_name": "root"}],
         },
+        org_id="e2e",
     )
 
     labels = [label for label, _ in bodies]
@@ -158,6 +159,43 @@ def test_every_event_carries_the_run_marker_and_its_own_label() -> None:
     assert {event["_tags"]["marker"] for event in decoded} == {"run-1"}
     assert {event["_source"] for event in decoded} == {"main"}
     assert [event["user_name"] for event in decoded] == ["root", "root", "alice"]
+
+
+def test_every_event_names_its_tenant_in_the_field_the_loader_reads() -> None:
+    """A hunt reads only its org's rows, and the loader stamps `_org_id` from `org_id`."""
+    bodies = _detection.labelled_events(
+        marker="m",
+        test_name="t",
+        source="main",
+        events={_detection.MATCHING: [{"org_id": "other"}], _detection.OTHER: [{}]},
+        org_id="e2e",
+    )
+
+    assert _detection.ORG_ID_FIELD == "org_id"
+    assert {json.loads(body)["org_id"] for _, body in bodies} == {"e2e"}
+
+
+def test_the_org_request_makes_its_name_its_one_tenant_id() -> None:
+    assert _detection.org_request(name="e2e") == {
+        "name": "e2e",
+        "display_name": "E2E",
+        "org_ids": ["e2e"],
+    }
+
+
+@pytest.mark.parametrize(
+    ("org", "tenant"),
+    [
+        ({"name": "e2e", "org_ids": ["acme", "acme-2"]}, "acme"),
+        ({"name": "e2e", "org_ids": []}, "e2e"),
+        ({"name": "e2e", "org_ids": ["", None]}, "e2e"),
+        ({"name": "e2e"}, "e2e"),
+    ],
+)
+def test_the_tenant_is_the_first_declared_id_else_the_org_name(
+    org: dict, tenant: str
+) -> None:
+    assert _detection.org_tenant(org) == tenant
 
 
 def test_the_rule_is_held_to_the_run_by_its_marker() -> None:
@@ -357,7 +395,7 @@ def test_each_sets_labels_are_the_ones_labelled_events_gives() -> None:
     labels = [
         label
         for label, _ in _detection.labelled_events(
-            marker="m", test_name="t", source="main", events=events
+            marker="m", test_name="t", source="main", events=events, org_id="e2e"
         )
     ]
 

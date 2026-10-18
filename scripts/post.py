@@ -23,7 +23,8 @@ through the engine query API that dfe-ui uses, so the data is not merely stored 
 reachable from the surface an operator works in. HUNTS: a hunt created through the
 API while the runner is already running is picked up without a restart, and a run
 queued through the API detects exactly the events its rule matches and none of its
-near misses. IDLE APPS: each app the tier starts with
+near misses, all carrying the tenant id of the org the hunt runs for. IDLE APPS:
+each app the tier starts with
 no work is serving and doing nothing, which is the whole point of starting it.
 ROUTING: where the engine renders this tier's app config, a source created
 through the API reaches the RUNNING receiver, and a record matching its rule
@@ -270,6 +271,7 @@ UI_QUERY_INTERVAL_SECONDS = 3.0
 # "created while the runner was already up" a claim worth making.
 HUNT_SERVICES = ("dfe-engine", "dfe-hunt-runner")
 HUNT_TARGET_TABLE = "detection"
+# The org the hunt runs for, made for the claim when the engine holds none.
 HUNT_CUSTOMER = "post"
 # Failed root logins are the detection, and each near miss breaks one half of it.
 HUNT_WHERE = (
@@ -1986,6 +1988,51 @@ def _create_hunt_rule(
     )
 
 
+class HuntOrg(typing.NamedTuple):
+    """The org a hunt runs for: the tenant id its events carry, or why there is none.
+
+    `made` says this call created the org, so the caller removes it afterwards and
+    leaves an org the engine already held where it was.
+    """
+
+    name: str
+    display_name: str
+    tenant: str
+    made: bool
+    fault: str
+
+
+def _ensure_org(*, base: str, token: str, name: str) -> HuntOrg:
+    """Read the org a hunt runs for, making it with its name as its tenant id when absent.
+
+    The engine refuses a hunt for an org it does not hold, and the runner reads only
+    the rows carrying one of the org's tenant ids.
+    """
+    url = f"{base}/orgs/{quote(name, safe='')}"
+    made = False
+    try:
+        status, org = _api_get_json(url, token=token, timeout=10)
+        if status == 404:
+            status, body = _api_post_json(
+                f"{base}/orgs", _detection.org_request(name=name), token=token
+            )
+            if status != 201:
+                return HuntOrg(
+                    name, "", "", False, f"POST /orgs returned HTTP {status}: {body}"
+                )
+            made = True
+            status, org = _api_get_json(url, token=token, timeout=10)
+    except ApiUnreachable as error:
+        return HuntOrg(name, "", "", made, f"the org API was unreachable: {error}")
+    if status != 200 or not (isinstance(org, dict)):
+        return HuntOrg(
+            name, "", "", made, f"GET /orgs/{name} returned HTTP {status}: {org}"
+        )
+    return HuntOrg(
+        name, str(org.get("display_name") or name), _detection.org_tenant(org), made, ""
+    )
+
+
 def _create_hunt(
     *, base: str, database: str, name: str, rule: str, table: str, token: str
 ) -> str:
@@ -2117,10 +2164,49 @@ def _verify_hunt(*, database: str, ingest_url: str, marker: str, table: str) -> 
     if not (_hunt_runner_alive(base=base, token=token)):
         return Claim(asserted=True, failed=1)
 
+    org = _ensure_org(base=base, token=token, name=HUNT_CUSTOMER)
+    try:
+        if org.fault:
+            _print(
+                msg=f"FAIL  {org.fault} -- the engine runs no hunt for an org it does "
+                "not hold"
+            )
+            return Claim(asserted=True, failed=1)
+        return _create_and_judge_hunt(
+            base=base,
+            database=database,
+            ingest_url=ingest_url,
+            marker=marker,
+            table=table,
+            tenant=org.tenant,
+            token=token,
+        )
+    finally:
+        if org.made:
+            _remove(
+                f"{base}/orgs/{quote(org.name, safe='')}",
+                kind="organisation",
+                name=org.name,
+                token=token,
+            )
+
+
+def _create_and_judge_hunt(
+    *,
+    base: str,
+    database: str,
+    ingest_url: str,
+    marker: str,
+    table: str,
+    tenant: str,
+    token: str,
+) -> Claim:
+    """Create the rule and the hunt for `tenant`'s events, judge a run, and remove both."""
     hunt_name = f"{marker}-hunt"
     rule_name = f"{marker}-rule"
     _print(
-        msg=f"Creating rule {rule_name!r} and hunt {hunt_name!r} over the hunt's own events"
+        msg=f"Creating rule {rule_name!r} and hunt {hunt_name!r} over the hunt's own "
+        f"events, which carry {_detection.ORG_ID_FIELD} {tenant!r}"
     )
 
     fault = _create_hunt_rule(
@@ -2155,6 +2241,7 @@ def _verify_hunt(*, database: str, ingest_url: str, marker: str, table: str) -> 
                 ingest_url=ingest_url,
                 rule=rule_name,
                 table=table,
+                tenant=tenant,
                 token=token,
             )
         finally:
@@ -2178,6 +2265,7 @@ def _await_hunt(
     ingest_url: str,
     rule: str,
     table: str,
+    tenant: str,
     token: str,
 ) -> int:
     """Wait for the runner to take up the new hunt, then judge a queued run of it."""
@@ -2217,7 +2305,7 @@ def _await_hunt(
     )
 
     landed = _send_hunt_events(
-        database=database, hunt=hunt, ingest_url=ingest_url, table=table
+        database=database, hunt=hunt, ingest_url=ingest_url, table=table, tenant=tenant
     )
     if landed is None:
         return 1
@@ -2247,11 +2335,11 @@ def _await_hunt(
 
 
 def _send_hunt_events(
-    *, database: str, hunt: str, ingest_url: str, table: str
+    *, database: str, hunt: str, ingest_url: str, table: str, tenant: str
 ) -> dict[str, list[str]] | None:
     """Send the hunt's labelled events and return their landed rows by label, or None."""
     bodies = _detection.labelled_events(
-        marker=hunt, test_name="post", source=table, events=HUNT_EVENTS
+        marker=hunt, test_name="post", source=table, events=HUNT_EVENTS, org_id=tenant
     )
     refused = []
     for label, body in bodies:
