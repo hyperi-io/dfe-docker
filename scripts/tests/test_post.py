@@ -720,7 +720,8 @@ class _HuntStack:
     The first window the runner commits ends half a second before the hunt's
     events load, so only a later window scans them: the queued run, or the
     scheduled fire a minute on. `detected` names the events the hunt writes a
-    detection for.
+    detection for. `orgs` are the orgs the engine already holds, and `org_status`
+    is what POST /orgs answers.
     """
 
     FIRST_WINDOW = int(_Clock.EPOCH)
@@ -735,12 +736,18 @@ class _HuntStack:
         running: bool = True,
         picks_up: bool = True,
         run_status: int = 202,
+        orgs: dict[str, dict] | None = None,
+        org_status: int = 201,
     ) -> None:
         self.clock = clock
         self.detected = detected
         self.running = running
         self.picks_up = picks_up
         self.run_status = run_status
+        self.orgs = dict(orgs or {})
+        self.org_status = org_status
+        self.org_requests: list[dict] = []
+        self.hunt_requests: list[dict] = []
         self.hunts: dict[str, int | None] = {}
         self.rules: list[dict] = []
         self.sent: list[dict] = []
@@ -762,6 +769,9 @@ class _HuntStack:
                 for name in self.hunts
             ]
             return 200, {"items": items}
+        if route.startswith("/orgs/"):
+            org = self.orgs.get(route.removeprefix("/orgs/"))
+            return (200, org) if org is not None else (404, {})
         name = route.removeprefix("/hunts/")
         return (200, {"name": name}) if name in self.hunts else (404, {})
 
@@ -769,11 +779,18 @@ class _HuntStack:
         route = url.removeprefix(post.ENGINE_NETWORK_BASE)
         if route == "/auth/login":
             return 200, {"access_token": "t"}
+        if route == "/orgs":
+            self.org_requests.append(payload)
+            if self.org_status != 201:
+                return self.org_status, {"detail": {"code": "conflict"}}
+            self.orgs[payload["name"]] = dict(payload)
+            return 201, payload
         if route == "/rules":
             self.rules.append(payload)
             stored = {"source_db": "dfe", "source_table": "main"}
             return 201, {"rule": stored, "sql_errors": []}
         if route == "/hunts":
+            self.hunt_requests.append(payload)
             self.hunts[payload["name"]] = self.FIRST_WINDOW if self.picks_up else None
             return 201, payload
         name = route.removeprefix("/hunts/").removesuffix("/run")
@@ -785,7 +802,11 @@ class _HuntStack:
         return 202, {"queued": True, "requested_fire": fire, "poll_seconds": 15.0}
 
     def delete(self, url: str, token: str = "", timeout: int = 10) -> int:
-        self.hunts.pop(url.rsplit("/", 1)[-1], None)
+        name = url.rsplit("/", 1)[-1]
+        if "/orgs/" in url:
+            self.orgs.pop(name, None)
+        else:
+            self.hunts.pop(name, None)
         return 204
 
     def ingest(self, url: str, body: str, *args, **kwargs) -> int:
@@ -836,6 +857,44 @@ def test_the_hunt_claim_holds_on_exactly_the_matching_event(
     assert len(stack.queued) == 1
     assert stack.hunts == {}
     assert "set by the queued run" in capsys.readouterr().err
+
+
+def test_the_hunt_runs_for_an_org_it_makes_and_removes(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The engine refuses a hunt for an org it does not hold."""
+    stack = _hunt_stack(monkeypatch, detected=["matching-000"])
+
+    assert _hunt_claim() == post.HELD
+    assert stack.org_requests == [post._detection.org_request(name=post.HUNT_CUSTOMER)]
+    assert [request["customers"] for request in stack.hunt_requests] == [
+        [post.HUNT_CUSTOMER]
+    ]
+    assert {event["org_id"] for event in stack.sent} == {post.HUNT_CUSTOMER}
+    assert stack.orgs == {}
+
+
+def test_an_org_the_engine_holds_is_read_for_its_tenant_and_left_in_place(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    held = {"post": {"name": "post", "display_name": "Post", "org_ids": ["acme"]}}
+    stack = _hunt_stack(monkeypatch, detected=["matching-000"], orgs=held)
+
+    assert _hunt_claim() == post.HELD
+    assert stack.org_requests == []
+    assert {event["org_id"] for event in stack.sent} == {"acme"}
+    assert stack.orgs == held
+
+
+def test_an_org_the_engine_will_not_make_fails_before_any_rule(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    stack = _hunt_stack(monkeypatch, detected=[], org_status=409)
+
+    assert _hunt_claim() == post.Claim(asserted=True, failed=1)
+    assert "POST /orgs returned HTTP 409" in capsys.readouterr().err
+    assert stack.rules == []
+    assert stack.hunt_requests == []
 
 
 def test_the_hunt_reads_only_its_own_events_not_the_ingest_rows(
