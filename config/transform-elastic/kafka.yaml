@@ -20,7 +20,7 @@
 # The sink is empty for the same reason, which also keeps it out of the topics
 # kafka-init creates: pre-creating `<base>_load` for a transform that produces
 # nothing drops `<base>_land` from every loader's auto-discovered subscription.
-# docs/troubleshooting.md#configloaderkafka-loadyaml-consumes-a-topic-nothing-pre-creates
+# docs/troubleshooting.md#a-_load-topic-changes-what-the-loader-reads
 
 pipeline_name: dfe-transform-elastic
 

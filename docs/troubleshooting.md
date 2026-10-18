@@ -97,16 +97,15 @@ KAFKA_BACKEND=apache make -e dev  # -e flips the precedence
 
 ...or edit `.env`, which is the durable answer.
 
-### `config/loader/kafka-load.yaml` consumes a topic nothing pre-creates
+### A `_load` topic changes what the loader reads
 
 ```mermaid
 flowchart LR
     recv["dfe-receiver"] --> land["main_land"]
-    land --> arch["dfe-archiver"]
     land --> vrl["dfe-transform-vrl"]
-    land -->|topic_regex .*_land| ldr1["dfe-loader<br/>loader/kafka.yaml"]
     vrl --> load["main_load"]
-    load -->|topic main_load| ldr2["dfe-loader<br/>loader/kafka-load.yaml"]
+    land -.->|until main_load exists| ldr["dfe-loader<br/>loader/kafka.yaml"]
+    load -->|once it exists| ldr
 
     classDef made fill:#009E73,color:#ffffff,stroke:#000000
     classDef notmade fill:#D55E00,color:#ffffff,stroke:#000000
@@ -114,17 +113,9 @@ flowchart LR
     class load notmade
 ```
 
-`dfe-engine` creates the bootstrap topic set `dfe-schemas` declares, which is
-`main_land` and the five DLQ topics. `config/loader/kafka-load.yaml` subscribes to
-`main_load`, which is produced by `config/transform-vrl/main.yaml`. That topic
-exists only if broker auto-creation makes it. The profiles affected are the ones
-that point the loader at `kafka-load.yaml`: `kafka-receiver-transform-vector` and
-`kafka-full-transform-vrl`.
+`config/loader/kafka.yaml` subscribes by `topic_regex: .*_(land|load)`, and scalo drops `<base>_land` from the subscription whenever `<base>_load` exists. `dfe-engine` creates the bootstrap topic set `dfe-schemas` declares, which is `main_land` and the five DLQ topics, so `main_load` exists only once a transform first produces to it.
 
-The topic names are literals in those YAML files, not env-interpolated. A single
-topic variable cannot work: the consumers name their topics in their own YAML, so
-setting it pre-creates a topic nobody consumes and stops pre-creating the one
-they do.
+On a profile that runs a transform, the loader therefore reads `main_land` until that first write, then switches to `main_load`, and the first records land twice: once raw, once transformed. Create the transform's `_load` topic before sending anything to avoid it. The e2e suite does, from each test's `expected_topics`.
 
 **Do not close this gap by adding `main_load` to the bootstrap topic set.**
 The loader auto-discovers topics and scalo suppresses `<base>_land` whenever
