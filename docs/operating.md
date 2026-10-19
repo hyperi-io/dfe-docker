@@ -506,7 +506,7 @@ profile (`single` has it) or `DFE_OTEL_ENABLED=true`.
 
 Every DFE app the profile runs pushes over OTLP, dfe-ui aside. Two things do
 scrape: the collector scrapes its own metrics on
-127.0.0.1:8888, and `sqlquery` reads ClickHouse. Nothing on this path sends
+127.0.0.1:8888, and `sql_query` reads ClickHouse. Nothing on this path sends
 logs -- there is no container-log collector, and the apps export metrics and
 traces only -- so `dfe.otel_logs` stays empty even though the collector has a
 logs pipeline wired. See [observability.md](observability.md), which also has

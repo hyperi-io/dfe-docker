@@ -36,7 +36,7 @@ receivers:
   # Server-side ClickHouse health, read from system tables rather than the :9363
   # Prometheus endpoint, which the stack's image does not expose. Mirrors the k8s
   # gateway so the DFE ClickHouse Health dashboard renders on both tiers.
-  sqlquery/clickhouse:
+  sql_query/clickhouse:
     driver: clickhouse
     datasource: "clickhouse://${env:CLICKHOUSE_USERNAME}:${env:CLICKHOUSE_PASSWORD}@${env:CLICKHOUSE_HOST}:${env:CLICKHOUSE_PORT}/${env:DFE_OTEL_DATABASE}"
     collection_interval: 30s
@@ -164,7 +164,7 @@ processors:
   batch:
     timeout: 5s
     send_batch_size: 1024
-  # sqlquery emits no service.name, so its metrics would land in the same
+  # sql_query emits no service.name, so its metrics would land in the same
   # unattributed bucket as anything else missing one.
   resource/clickhouse:
     attributes:
@@ -221,7 +221,7 @@ service:
     # Separate pipeline so the ClickHouse metrics can be tagged with their own
     # service.name without touching everything else on the otlp pipeline.
     metrics/clickhouse:
-      receivers: [sqlquery/clickhouse]
+      receivers: [sql_query/clickhouse]
       processors: [memory_limiter, resource/clickhouse, batch]
       exporters: [clickhouse]
     traces:
