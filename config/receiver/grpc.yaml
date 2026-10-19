@@ -1,24 +1,18 @@
 # Project:   dfe-docker
 # File:      config/receiver/grpc.yaml
-# Purpose:   dfe-receiver config - gRPC transport (used by the gRPC profiles)
+# Purpose:   Receives records and pushes them to dfe-loader over gRPC
 # Language:  YAML
 #
 # License:   BUSL-1.1
 # Copyright: (c) 2026 HYPERI PTY LIMITED
 
-# gRPC transport: receiver forwards events to dfe-loader via DFETransport/Push (:6000).
+destinations:
+  default: loader
 
-grpc:
-  enabled: true
+loader:
+  transport: grpc
 
 routing:
   source_rules:
     - field: _source
       mode: key_value_use
-
-destinations:
-  default: loader
-
-# No grpc_endpoint: the receiver's default loader address is dfe-loader:6000, and an overlay setting loader.grpc_endpoint overrides it.
-loader:
-  transport: grpc

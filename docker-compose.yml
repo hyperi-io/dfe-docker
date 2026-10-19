@@ -739,8 +739,7 @@ services:
     restart: unless-stopped
     deploy: *limits-service
     ports:
-      # 6000 (Vector protocol) and 8080 (HTTP) are the INGEST surfaces external
-      # clients push to, so they bind DFE_INGRESS_BIND_HOST. 9090 is operators.
+      # 6000 (Vector protocol, listening only with DFE_RECEIVER_GRPC__ENABLED=true) and 8080 (HTTP) are the ingest ports external clients push to, so they bind DFE_INGRESS_BIND_HOST. 9090 is for operators.
       # The loader's Push listener is also 6000 inside its container, published on 50051.
       - ${DFE_INGRESS_BIND_HOST:-0.0.0.0}:${DFE_RECEIVER_GRPC_PORT:-6000}:6000
       - ${DFE_INGRESS_BIND_HOST:-0.0.0.0}:${DFE_RECEIVER_HTTP_PORT:-8080}:8080
@@ -762,6 +761,7 @@ services:
       LOG_FORMAT: ${LOG_FORMAT:-text}
       OTEL_EXPORTER_OTLP_ENDPOINT: ${DFE_OTEL_EXPORTER_ENDPOINT:-}
       OTEL_SERVICE_NAME: dfe-receiver
+      DFE_RECEIVER_KAFKA_BROKERS: *kafka-brokers
       DFE_RECEIVER_VERSION_CHECK__ENABLED: ${DFE_VERSION_CHECK_ENABLED:-true}
       DFE_RECEIVER_VERSION_CHECK__SEND_INSTANCE_ID: ${DFE_VERSION_CHECK_SEND_INSTANCE_ID:-true}
     depends_on:

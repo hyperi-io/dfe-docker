@@ -1,14 +1,10 @@
 # Project:   dfe-docker
 # File:      config/receiver/kafka.yaml
-# Purpose:   dfe-receiver config - Kafka transport (used by the Kafka profiles)
+# Purpose:   Receives records onto Kafka, by their _source
 # Language:  YAML
 #
 # License:   BUSL-1.1
 # Copyright: (c) 2026 HYPERI PTY LIMITED
-
-kafka:
-  brokers:
-    - kafka:9092
 
 routing:
   source_rules:
