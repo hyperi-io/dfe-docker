@@ -282,14 +282,14 @@ A name in `SERVICES` that is not part of the resolved stack is a hard error, not
 
 ## Seeding a starter set
 
-`make sources`, `make rules` and `make hunts` create a starter set of detection content on a running stack through the engine API, from the request bodies in `config/seed/`. `make hunts` also creates the rules, because the engine refuses a hunt whose rule does not exist. A rule over an undeployed source reads nothing until its source is deployed. A hunt whose table does not exist yet is not created, because the hunt runner would fail on every run; `make hunts` creates it once `make sources` has made the table, on a profile that runs the source.
+`make sources`, `make rules` and `make hunts` create a starter set of detection content on a running stack through the engine API, from the request bodies in `resources/seed/`. `make hunts` also creates the rules, because the engine refuses a hunt whose rule does not exist. A rule over an undeployed source reads nothing until its source is deployed. A hunt whose table does not exist yet is not created, because the hunt runner would fail on every run. `make hunts` creates it once `make sources` has made the table, on a profile that runs the source.
 
 | Target | What it creates |
 |---|---|
 | `make sources` | `aws-cloudtrail`, `aws-guardduty` and `aws-securityhub` (each polled by its own dfe-fetcher instance) and `syslog`, which takes any record sent to the receiver with `_source: syslog`. Each lands in `dfe.<source>`. A profile without [`fetcher_enabled: true`](profiles.md#which-profile-runs-what), such as `slim`, gets `syslog` alone |
 | `make rules` | `aws-guardduty-high-severity`, matching a GuardDuty finding rated 7 or above |
 | `make hunts` | That rule, and the hunt `aws-guardduty-high-severity` once `dfe.aws-guardduty` exists, running it every five minutes into `dfe.detection` |
-| `make events` | Two fake GuardDuty findings from `config/seed/events/`, rated 8.0 and 2.0, so the hunt's next run detects the first and leaves the second |
+| `make events` | Two fake GuardDuty findings from `resources/seed/events/`, rated 8.0 and 2.0, so the hunt's next run detects the first and leaves the second |
 
 `make events` posts its records to dfe-receiver tagged with the source each file is named for, which routes them over the stack's transport, Kafka or gRPC. It waits until the source's table holds them and fails if they do not arrive, so it needs the source deployed by `make sources`, dfe-receiver and an engine that renders the apps' config. It skips the records of a source `make sources` skipped. It sends the records again on every run and needs no login. The hunt that finds them runs in dfe-hunt-runner.
 

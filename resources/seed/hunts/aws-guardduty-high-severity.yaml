@@ -1,5 +1,5 @@
 # Project:   dfe-docker
-# File:      config/seed/hunts/aws-guardduty-high-severity.yaml
+# File:      resources/seed/hunts/aws-guardduty-high-severity.yaml
 # Purpose:   Starter hunt running the GuardDuty high severity rule every five minutes
 # Language:  YAML
 #
