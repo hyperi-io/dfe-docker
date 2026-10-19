@@ -70,7 +70,7 @@ flowchart LR
     apps["DFE services"] -->|OTLP push :4317| col["otel-collector"]
     apps -->|stdout| drv["Docker log driver"]
     drv -->|fluentforward :24224| col
-    chsrv[("ClickHouse<br/>system tables")] -->|sqlquery pull| col
+    chsrv[("ClickHouse<br/>system tables")] -->|sql_query pull| col
     col -->|self-telemetry :8888| col
     col -->|clickhouse exporter| ch[(`dfe.otel_*` tables)]
     ch -.->|queries it| hdx["HyperDX"]
@@ -84,7 +84,7 @@ fork ships no OTLP receiver, so the collector's exporter writes the tables it
 queries. This is the same chain Kubernetes runs.
 
 Two of the collector's inputs are PULLS, not pushes, because their sources cannot
-push. `sqlquery` reads ClickHouse's own `system.metrics`, `system.events` and
+push. `sql_query` reads ClickHouse's own `system.metrics`, `system.events` and
 `system.parts` on a 30s interval -- the `:9363` Prometheus endpoint is not exposed
 by the stack's image, and these system tables are readable on any provider,
 managed ClickHouse included. The `prometheus` receiver scrapes the collector's own
