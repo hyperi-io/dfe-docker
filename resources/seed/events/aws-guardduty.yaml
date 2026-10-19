@@ -1,5 +1,5 @@
 # Project:   dfe-docker
-# File:      config/seed/events/aws-guardduty.yaml
+# File:      resources/seed/events/aws-guardduty.yaml
 # Purpose:   Fake GuardDuty findings, one the starter rule matches and one it must not
 # Language:  YAML
 #

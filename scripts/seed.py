@@ -1,7 +1,7 @@
 #!/usr/bin/env -S uv run --locked --script
 #  Project:      dfe-docker
 #  File:         scripts/seed.py
-#  Purpose:      Create the starter sources, rules and hunts in config/seed that the running engine lacks, and send its fake events
+#  Purpose:      Create the starter sources, rules and hunts in resources/seed that the running engine lacks, and send its fake events
 #  Language:     Python
 #
 #  License:      BUSL-1.1
@@ -14,7 +14,7 @@
 # ]
 # ///
 
-"""Create one part of the starter set in config/seed on the running stack, or send its fake events.
+"""Create one part of the starter set in resources/seed on the running stack, or send its fake events.
 
 The hunts target also creates the rules, because the engine refuses a hunt whose rule does not exist. Nothing else is created for a target: a rule over a source that is not deployed yet is accepted and reads nothing until it is. A hunt whose table does not exist yet is not created, because the hunt runner fails on every run of it.
 
@@ -99,7 +99,7 @@ KINDS = {
 }
 LANDING_INTERVAL_SECONDS = 3.0
 LANDING_TIMEOUT_SECONDS = 60.0
-SEED_DIR = REPO_ROOT / "config" / "seed"
+SEED_DIR = REPO_ROOT / "resources" / "seed"
 # The engine's rule for a source name, which also keeps an events file's name safe to quote into SQL.
 SOURCE_NAME = re.compile(r"[a-z]([a-z0-9-]*[a-z0-9])?")
 # A hunt's `global_source_table_name`, the `<database>.<source>` table a source's deploy creates.

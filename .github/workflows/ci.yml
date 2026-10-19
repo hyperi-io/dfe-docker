@@ -112,7 +112,7 @@ jobs:
       # nothing here starts a stack or touches the runner's own files.
       # pipx builds each venv on its own interpreter unless told otherwise, and
       # pytest runs the tests on whatever its venv holds.
-      # PyYAML is injected for the seed tests, which parse config/seed.
+      # PyYAML is injected for the seed tests, which parse resources/seed.
       - name: Install pytest
         run: |
           pipx install --python "${{ steps.python.outputs.python-path }}" "pytest==$(make -s print-pytest-version)"

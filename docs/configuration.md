@@ -165,7 +165,7 @@ other profile may require an issuer.
 | `AWS_ACCESS_KEY_ID`                              | AWS access key. Goes in `env/fetcher.env`, NOT `.env` -- the fetcher config reads it via `env:`  | -                                    |
 | `AWS_SECRET_ACCESS_KEY`                          | AWS secret key. Same file as above                                                   | -                                                                   |
 
-The AWS **region** is not an environment variable: it is a literal in each source's fetcher config (`region: us-west-2` in `config/seed/sources/aws-*.yaml`), because only the two credential fields are `env:`-interpolated.
+The AWS **region** is not an environment variable: it is a literal in each source's fetcher config (`region: us-west-2` in `resources/seed/sources/aws-*.yaml`), because only the two credential fields are `env:`-interpolated.
 
 ### DFE Loader
 

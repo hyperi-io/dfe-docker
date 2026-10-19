@@ -1,5 +1,5 @@
 # Project:   dfe-docker
-# File:      config/seed/rules/aws-guardduty-high-severity.yaml
+# File:      resources/seed/rules/aws-guardduty-high-severity.yaml
 # Purpose:   Starter rule matching GuardDuty findings rated high or critical
 # Language:  YAML
 #

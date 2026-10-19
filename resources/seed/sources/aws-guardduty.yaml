@@ -1,5 +1,5 @@
 # Project:   dfe-docker
-# File:      config/seed/sources/aws-guardduty.yaml
+# File:      resources/seed/sources/aws-guardduty.yaml
 # Purpose:   Starter AWS GuardDuty source, polled by its own dfe-fetcher instance
 # Language:  YAML
 #

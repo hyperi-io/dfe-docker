@@ -1,5 +1,5 @@
 # Project:   dfe-docker
-# File:      config/seed/sources/syslog.yaml
+# File:      resources/seed/sources/syslog.yaml
 # Purpose:   Starter receiver source for syslog records, routed to it by the receiver
 # Language:  YAML
 #
