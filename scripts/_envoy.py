@@ -1,6 +1,6 @@
 #  Project:      dfe-docker
 #  File:         _envoy.py
-#  Purpose:      Read connection managers, virtual hosts, routes and clusters out of the Envoy proxy configs
+#  Purpose:      Read connection managers, virtual hosts and routes out of the Envoy proxy configs
 #  Language:     Python
 #
 #  License:      BUSL-1.1
@@ -35,18 +35,10 @@ class Route:
 
 @dataclass(frozen=True, slots=True)
 class VirtualHost:
-    """One virtual host and the request headers it changes.
-
-    Attributes:
-        name: The virtual host's name.
-        added: Every request header key it adds, as written.
-        removed: Every request header name it removes, as written.
-        routes: Its routes, in match order.
-    """
+    """One virtual host, the request header keys it adds as written and its routes in match order."""
 
     name: str
     added: tuple[str, ...]
-    removed: tuple[str, ...]
     routes: tuple[Route, ...]
 
 
@@ -120,16 +112,6 @@ def _items(*, lines: list[str]) -> list[list[str]]:
     return items
 
 
-def _scalars(*, lines: list[str]) -> list[str]:
-    """Return the values of a block list of scalars."""
-    values = []
-    for item in _items(lines=lines):
-        if len(item) != 1:
-            raise ValueError(f"expected a scalar list item at {item[0].strip()!r}")
-        values.append(item[0].strip().strip('"'))
-    return values
-
-
 def _flow(*, value: str) -> dict[str, str]:
     """Return a flat `{ key: value, ... }` flow mapping as a dict."""
     if not (value.startswith("{") and value.endswith("}")):
@@ -173,6 +155,7 @@ def _route(*, lines: list[str]) -> Route:
 
 
 def _virtual_host(*, lines: list[str]) -> VirtualHost:
+    """Return one virtual host parsed from its block."""
     keys = _keys(lines=lines)
     added = []
     to_add = _block(keys=keys, key="request_headers_to_add")
@@ -180,8 +163,6 @@ def _virtual_host(*, lines: list[str]) -> VirtualHost:
         for item in _items(lines=to_add):
             header = _keys(lines=_block(keys=_keys(lines=item), key="header"))
             added.append(str(header.get("key", "")))
-    to_remove = _block(keys=keys, key="request_headers_to_remove")
-    removed = _scalars(lines=to_remove) if to_remove else []
     route_lines = _block(keys=keys, key="routes")
     routes = (
         [_route(lines=item) for item in _items(lines=route_lines)]
@@ -189,9 +170,8 @@ def _virtual_host(*, lines: list[str]) -> VirtualHost:
         else []
     )
     return VirtualHost(
-        name=str(keys.get("name", "")),
         added=tuple(added),
-        removed=tuple(removed),
+        name=str(keys.get("name", "")),
         routes=tuple(routes),
     )
 
@@ -245,29 +225,3 @@ def connection_managers(*, text: str) -> list[ConnectionManager]:
     ):
         managers.extend(_managers_on(listener=listener))
     return managers
-
-
-def cluster_hosts(*, text: str) -> dict[str, frozenset[str]]:
-    """Return each cluster's endpoint addresses by cluster name.
-
-    Args:
-        text: The config file's contents.
-
-    Returns:
-        The socket addresses each cluster's endpoints name.
-
-    Raises:
-        ValueError: The config strays outside the block style this module reads.
-    """
-    found = {}
-    for cluster in _items(
-        lines=_block(keys=_static_resources(text=text), key="clusters")
-    ):
-        name = str(_keys(lines=cluster).get("name", ""))
-        addresses = set()
-        for line in cluster:
-            key, _, value = line.strip().partition(":")
-            if key == "socket_address":
-                addresses.add(_flow(value=value.strip())["address"])
-        found[name] = frozenset(addresses)
-    return found
