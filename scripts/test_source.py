@@ -73,7 +73,7 @@ CORPUS_MARKER = Path("pipelines") / "filebeat" / "filebeat.vrl"
 def _infra_repo(flag: str | None) -> Path:
     """The dfe-infra checkout holding the runner, named explicitly.
 
-    Same explicit-local-only rule as ``make check-profiles``: nothing here probes
+    Same explicit-local-only rule as ``make stack``: nothing here probes
     for a sibling directory it was not told about.
     """
     candidate = flag or os.environ.get("DFE_INFRA_DIR")
