@@ -30,7 +30,7 @@ exist, and how a profile decides which of them run.
 | uv | `make sources`, `make rules`, `make hunts`, `make events`, `make test-e2e`, `make test-resilience` and `make test-flows` only. It installs the PyYAML and Playwright those scripts declare inline, hash-checked against the `<script>.lock` beside each |
 | ruff | `make check-python` only |
 | pytest | `make check-tests` only (`uvx` fetches the pin if you have it) |
-| git credentials for the hyperi-io repos (or `DFE_SRC_ROOT` checkouts) | `make dev` |
+| git, to clone the public hyperi-io repos (or `DFE_SRC_ROOT` checkouts) | `make dev` |
 
 ## First run
 
