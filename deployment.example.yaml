@@ -49,7 +49,7 @@ secrets:
   ## Base path the secrets live under. Which path is estate context.
   ref: ""
 
-## Service footprint. Left commented, service_profiles.yaml's active_profile is used. The value must be a profile key defined there: `slim` and `single` mirror the Kubernetes tiers of the same name, while the transport-shaped keys (kafka-receiver, grpc-receiver, ...) are the fine-grained data-plane shapes. There is no `scale`: Compose runs neither an HA broker nor a ClickHouse cluster. slim and single carry their own core/kafbat/otel footprint, and the flags below OVERRIDE it.
+## Service footprint. Left commented, service_profiles.yaml's active_profile is used. The value must be a profile key defined there: `slim` and `single` mirror the Kubernetes tiers of the same name, while the transport-shaped keys (kafka-receiver, grpc-receiver, ...) are the fine-grained data-plane shapes. There is no `scale`: Compose runs neither an HA broker nor a ClickHouse cluster. slim and single carry their own core/kafbat/otel footprint. The flags below OVERRIDE it.
 # profile: single
 
 ## docker-vm knobs. Each maps to one .env key; a blank/absent field leaves the

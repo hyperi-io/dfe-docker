@@ -317,7 +317,7 @@ def _load_dotenv() -> None:
 def _use_mounted_configs(*, environ: typing.MutableMapping[str, str]) -> None:
     """Blank every rendered-config variable, so each service reads its mounted file.
 
-    `make` exports the engine-rendered paths from `.tmp/profile.mk` to every recipe and `.env` can carry them too. Compose falls back to the committed mount on an empty value, and a set-but-empty variable also beats the one in `.env`.
+    `make` exports the engine-rendered paths from `.tmp/profile.mk` to every recipe and `.env` can carry them too. Compose falls back to the committed mount on an empty value. A set-but-empty variable also beats the one in `.env`.
     """
     for var in SERVICE_TO_RENDERED_CONFIG_VAR.values():
         environ[var] = ""

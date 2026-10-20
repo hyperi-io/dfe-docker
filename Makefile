@@ -589,7 +589,7 @@ check-python: ## Lint the helper scripts (config in ruff.toml)
 # (PYTEST=pytest). Unit tests over the helper scripts: they
 # touch a tmp_path .env and start nothing, so they belong with the static checks.
 PYTEST_VERSION := 9.1.1
-# The seed tests parse resources/seed with the PyYAML scripts/seed.py pins, and scripts/tests/test_script_locks.py holds the two pins equal.
+# The seed tests parse resources/seed with the PyYAML scripts/seed.py pins. scripts/tests/test_script_locks.py holds the two pins equal.
 PYYAML_VERSION := 6.0.3
 PYTEST ?= uvx --with pyyaml==$(PYYAML_VERSION) pytest@$(PYTEST_VERSION)
 
@@ -743,7 +743,7 @@ post: ## Prove the RUNNING stack moves data end to end (DFE_POST_ENABLED=false t
 
 # ---------------------------------------------------------------------------
 # Seed
-# The starter set in resources/seed, created through the engine API on a RUNNING stack, and fake events for its hunt to find. hunts also creates the rules in the same seed.py run, because the engine refuses a hunt whose rule does not exist. One run means a login asked for at the terminal is asked for once. sources, rules and hunts create only what the engine lacks, but events sends its records again on every run.
+# The starter set in resources/seed, created through the engine API on a RUNNING stack, plus fake events for its hunt to find. hunts also creates the rules in the same seed.py run, because the engine refuses a hunt whose rule does not exist. One run means a login asked for at the terminal is asked for once. sources, rules and hunts create only what the engine lacks, but events sends its records again on every run.
 # ---------------------------------------------------------------------------
 
 .PHONY: sources

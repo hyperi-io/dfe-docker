@@ -1,7 +1,7 @@
 #!/usr/bin/env -S uv run --locked --script
 #  Project:      dfe-docker
 #  File:         scripts/seed.py
-#  Purpose:      Create the starter sources, rules and hunts in resources/seed that the running engine lacks, and send its fake events
+#  Purpose:      Create the starter sources, rules and hunts in resources/seed that the running engine lacks and send its fake events
 #  Language:     Python
 #
 #  License:      BUSL-1.1
@@ -14,7 +14,7 @@
 # ]
 # ///
 
-"""Create one part of the starter set in resources/seed on the running stack, or send its fake events.
+"""Create one part of the starter set in resources/seed on the running stack or send its fake events.
 
 The hunts target also creates the rules, because the engine refuses a hunt whose rule does not exist. Nothing else is created for a target: a rule over a source that is not deployed yet is accepted and reads nothing until it is. A hunt whose table does not exist yet is not created, because the hunt runner fails on every run of it.
 
