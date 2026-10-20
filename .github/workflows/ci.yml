@@ -132,40 +132,9 @@ jobs:
 
   # The slim and single profiles are projections of the Kubernetes tiers of the
   # same name, so they go stale when those tiers move and nothing here notices.
-  # dfe-infra is PRIVATE, so the checkout reads it with a short-lived GitHub App
-  # token scoped to contents:read on that one repo; a run that cannot mint one
-  # reports SKIPPED rather than a pass, the same posture dfe-infra's own
-  # cross-repo drift guard takes.
-  profile-projection-precondition:
-    name: profile projection (can this run check it)
-    runs-on: ubuntu-26.04
-    outputs:
-      can_check: ${{ steps.gate.outputs.can_check }}
-    steps:
-      - name: Can this run reach dfe-infra
-        id: gate
-        env:
-          # A pull_request from a fork is handed no secrets at all, so a skip
-          # there is the event's doing rather than a gap in this repo.
-          EVENT_CARRIES_SECRETS: ${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository }}
-          HAS_APP_KEY: ${{ secrets.GH_APP_PRIVATE_KEY != '' && vars.GH_APP_CLIENT_ID != '' }}
-        run: |
-          if [[ "$HAS_APP_KEY" == "true" ]]; then
-            echo "can_check=true" >> "$GITHUB_OUTPUT"
-            echo "The CI app key is present -- the projection check runs."
-            exit 0
-          fi
-          echo "can_check=false" >> "$GITHUB_OUTPUT"
-          if [[ "$EVENT_CARRIES_SECRETS" == "true" ]]; then
-            echo "::notice::profile projection not checked -- this repo cannot use the GH_APP_PRIVATE_KEY org secret (or GH_APP_CLIENT_ID is unset), so no token for hyperi-io/dfe-infra can be minted. The check is skipped rather than reported as a pass."
-          else
-            echo "::notice::profile projection not checked -- a fork pull request is handed no secrets. The push to main checks the same commit."
-          fi
-
+  # dfe-infra is public, so the checkout below reads it with no credential.
   profile-projection:
     name: Profile projection
-    needs: profile-projection-precondition
-    if: needs.profile-projection-precondition.outputs.can_check == 'true'
     runs-on: ubuntu-26.04
     steps:
       - name: Checkout
@@ -179,21 +148,10 @@ jobs:
         with:
           python-version: ${{ env.PYTHON_VERSION }}
 
-      - name: Mint a read-only dfe-infra token
-        id: infra-token
-        uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
-        with:
-          client-id: ${{ vars.GH_APP_CLIENT_ID }}
-          private-key: ${{ secrets.GH_APP_PRIVATE_KEY }}
-          owner: ${{ github.repository_owner }}
-          repositories: dfe-infra
-          permission-contents: read
-
       - name: Checkout dfe-infra
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           repository: hyperi-io/dfe-infra
-          token: ${{ steps.infra-token.outputs.token }}
           path: .dfe-infra
           persist-credentials: false
 
