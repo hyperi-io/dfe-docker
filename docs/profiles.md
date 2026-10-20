@@ -72,8 +72,9 @@ reads them from:
 
 `DFE_INFRA_DIR` must be set explicitly -- nothing probes for a sibling checkout.
 Without it, `check-profiles` reports SKIPPED rather than passing: a check that
-cannot read the master cannot say the copy is current. CI checks out dfe-infra
-itself, and skips the same way when the run has no token for it.
+cannot read the master cannot say the copy is current. dfe-infra is public, so a
+plain clone reads it with no credential. CI checks it out with a GitHub App
+token, and skips the same way when the run has none.
 
 ## What the projection maps
 
