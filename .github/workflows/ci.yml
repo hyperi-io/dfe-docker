@@ -130,39 +130,6 @@ jobs:
       - name: Script locks
         run: make check-locks LOCK_UV=uv
 
-  # The slim and single profiles are projections of the Kubernetes tiers of the
-  # same name, so they go stale when those tiers move and nothing here notices.
-  # dfe-infra is public, so the checkout below reads it with no credential.
-  profile-projection:
-    name: Profile projection
-    runs-on: ubuntu-26.04
-    steps:
-      - name: Checkout
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-
-      # check-profiles is scripts/render_profiles.py.
-      - name: Set up Python
-        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
-        with:
-          python-version: ${{ env.PYTHON_VERSION }}
-
-      - name: Checkout dfe-infra
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          repository: hyperi-io/dfe-infra
-          path: .dfe-infra
-          persist-credentials: false
-
-      # dfe-infra's composition.py reads apps.yaml with ruamel.yaml; its own
-      # hash-pinned CI requirements are what that code is tested against.
-      - name: Install dfe-infra's pinned Python requirements
-        run: python3 -m pip install --quiet --require-hashes -r .dfe-infra/scripts/tests/requirements-ci.txt
-
-      - name: Projected profiles match the Kubernetes ones
-        run: make check-profiles DFE_INFRA_DIR="$PWD/.dfe-infra"
-
   dockerfile:
     name: Dockerfile
     runs-on: ubuntu-26.04

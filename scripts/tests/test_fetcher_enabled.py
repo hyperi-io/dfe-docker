@@ -1,6 +1,6 @@
 #  Project:      dfe-docker
 #  File:         tests/test_fetcher_enabled.py
-#  Purpose:      Assert how a profile's fetcher_enabled key is projected, validated and resolved
+#  Purpose:      Assert how a profile's fetcher_enabled key is validated and resolved
 #  Language:     Python
 #
 #  License:      BUSL-1.1
@@ -16,16 +16,8 @@ from typing import TypedDict
 
 import pytest
 
-import render_profiles
 import resolve_profile
 from _common import FETCHER_ENABLED_KEY, FETCHER_RESOLVED_VAR
-
-
-class FetcherAsKeyCase(TypedDict):
-    """One profile as dfe-infra renders it and as it is written into service_profiles.yaml."""
-
-    expected: str
-    rendered: str
 
 
 class FetcherEnabledCase(TypedDict):
@@ -52,60 +44,6 @@ class ResolvedExportCase(TypedDict):
     profile: str
 
 
-_SINGLE_RENDERED = """\
-  single:
-    transport: kafka
-    otel: true
-    services:
-      dfe-archiver:
-        config_path: archiver/kafka.yaml
-      dfe-fetcher:
-        config_path: fetcher/kafka.yaml
-      dfe-loader:
-        config_path: loader/kafka.yaml
-"""
-_SINGLE_WRITTEN = """\
-  single:
-    transport: kafka
-    otel: true
-    fetcher_enabled: true
-    services:
-      dfe-archiver:
-        config_path: archiver/kafka.yaml
-      dfe-loader:
-        config_path: loader/kafka.yaml
-"""
-_SLIM_RENDERED = """\
-  slim:
-    transport: grpc
-    services:
-      dfe-loader:
-        config_path: loader/grpc.yaml
-"""
-
-FETCHER_AS_KEY_CASES = [
-    FetcherAsKeyCase(expected=_SINGLE_WRITTEN, rendered=_SINGLE_RENDERED),
-    FetcherAsKeyCase(expected=_SLIM_RENDERED, rendered=_SLIM_RENDERED),
-    FetcherAsKeyCase(
-        expected=(
-            "  single:\n"
-            "    transport: kafka\n"
-            "    fetcher_enabled: true\n"
-            "    services:\n"
-            "      dfe-archiver:\n"
-            "        config_path: archiver/kafka.yaml\n"
-        ),
-        rendered=(
-            "  single:\n"
-            "    transport: kafka\n"
-            "    services:\n"
-            "      dfe-archiver:\n"
-            "        config_path: archiver/kafka.yaml\n"
-            "      dfe-fetcher:\n"
-            "        config_path: fetcher/kafka.yaml"
-        ),
-    ),
-]
 FETCHER_ENABLED_CASES = [
     FetcherEnabledCase(
         declared=None, expected=False, profile_name="kafka-receiver", renders=False
@@ -169,14 +107,6 @@ def _profile_mk(
     return values
 
 
-class TestFetcherAsKey:
-    @pytest.mark.parametrize("case", FETCHER_AS_KEY_CASES)
-    def test_matches_expected(self, case: FetcherAsKeyCase) -> None:
-        written = render_profiles._fetcher_as_key(rendered=case["rendered"])
-
-        assert written == case["expected"]
-
-
 class TestFetcherEnabled:
     @pytest.mark.parametrize("case", FETCHER_ENABLED_CASES)
     def test_matches_expected(self, case: FetcherEnabledCase) -> None:
@@ -200,22 +130,6 @@ class TestFetcherEnabled:
             resolve_profile._fetcher_enabled(
                 profile=profile, profile_name=case["profile_name"], renders=True
             )
-
-
-class TestProjectedBlock:
-    def test_writes_the_key_where_the_tier_renders_a_fetcher(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        def render(infra_dir: Path, mode: str) -> str:
-            return {"single": _SINGLE_RENDERED, "slim": _SLIM_RENDERED}[mode]
-
-        monkeypatch.setattr(render_profiles, "_render", render)
-
-        block = render_profiles.projected_block(infra_dir=Path("unused"))
-
-        assert f"{FETCHER_ENABLED_KEY}: true" in block
-        assert "dfe-fetcher" not in block
-        assert _SLIM_RENDERED.rstrip("\n") in block
 
 
 class TestResolveProfile:

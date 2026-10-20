@@ -246,12 +246,7 @@ Live mode needs a Linux host: on macOS the container's install would swap the na
 mounts. `active_profile` is the default; `DFE_PROFILE` overrides it for one
 invocation.
 
-`slim` and `single` are whole-stack shapes RENDERED from the Kubernetes tiers of
-the same name, so a change to either belongs in dfe-infra and comes back here
-through `make render-profiles`. The rest are fine-grained data-plane shapes the
-e2e suite pins by name. Which profile runs what, and how the rendering works:
-[profiles.md](profiles.md). There is no `scale`: Compose cannot run an HA broker
-or a ClickHouse cluster.
+`slim` and `single` are whole-stack shapes that share their names with the Kubernetes tiers. The rest are fine-grained data-plane shapes the e2e suite pins by name. Which profile runs what: [profiles.md](profiles.md). There is no `scale`: Compose cannot run an HA broker or a ClickHouse cluster.
 
 ```bash
 DFE_PROFILE=grpc-receiver make dev    # override the profile

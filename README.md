@@ -158,11 +158,7 @@ make dev LOCAL="dfe-engine dfe-ui"      # Build only these from source; the rest
 
 ### Application Profiles (service_profiles.yaml)
 
-`slim` and `single` share their names with the Kubernetes tiers and are rendered
-from them, so they are edited THERE and re-rendered here; every other profile is
-a hand-crafted data-plane shape you own. There is no `scale` - Compose cannot run
-an HA broker or a ClickHouse cluster. Which profile runs what, and how the two
-projected ones are re-rendered: [docs/profiles.md](docs/profiles.md).
+This repo owns every profile. `slim` and `single` share their names with the Kubernetes tiers, but there is no `scale` - Compose cannot run an HA broker or a ClickHouse cluster. Which profile runs what: [docs/profiles.md](docs/profiles.md).
 
 ### Infrastructure Profiles (docker-compose.yml)
 
@@ -330,11 +326,10 @@ make down        # stop and remove containers across EVERY profile
 
 `make check` is `check-compose check-hardfail check-dockerfile check-docs check-proxy check-python check-tests`, and CI runs each one through the same make target so the two cannot drift.
 
-Three ways a green run says less than it looks:
+Two ways a green run says less than it looks:
 
 - **`make check` starts nothing.** It resolves compose, lints the helpers and unit-tests them. `make dev`, `make ci`, `make post` and `make test-e2e` are the only things that prove the stack moves data, and CI runs none of them.
 - **`check-compose` validates compose STRUCTURE, not digests.** It substitutes placeholders for the mandatory keys so it reads neither the stack SSoT nor the registry, which means no particular pin is proved to resolve.
-- **`check-profiles` is not part of `make check`.** Locally with `DFE_INFRA_DIR` unset it prints `projection NOT checked (not a pass)` and exits 0. dfe-infra is public, so the CI Profile projection job checks it out with no App token and no secret, and runs the check on every pull request.
 
 `check-hardfail` does earn its pass. It resolves compose with a scrubbed environment and an empty `--env-file` so a developer's pinned `.env` cannot mask it, requires the run to fail on a missing pin, then reads every `image:` line and requires each to resolve to an `@sha256:` digest.
 
@@ -361,7 +356,6 @@ The suite graph in `dfe-infra/suite.yaml` records exactly one edge on this repo 
 | Repo | Direction | How they interact |
 |---|---|---|
 | dfe-infra | inbound, `derived-pins` | dfe-docker holds no copy of the pins. `scripts/stack.py` renders them at `make stack` time, from a local dfe-infra checkout when `DFE_INFRA_DIR` names one, else from the signed OCI stack manifest pulled with `oras`. `ops/daemon-update/self_update.py` is the second consumer of that manifest. The edge's declared check is "nothing" - there is no second copy that can drift, and the graph records the edge so the suite tooling knows to walk past it. Do not go hunting for a pin file here to update |
-| dfe-infra | inbound, not carried by the graph | `slim` and `single` are projections of the Kubernetes tiers of the same name. Edit `dfe-infra argocd/values/profile-<mode>.yaml`, then `make render-profiles` here, which needs `DFE_INFRA_DIR`. Every other profile in `service_profiles.yaml` is this repo's own |
 | dfe-receiver, dfe-fetcher, dfe-loader, dfe-archiver, dfe-transform-elastic, dfe-transform-vector, dfe-transform-vrl, dfe-engine, dfe-ui, dfe-hyperdx | inbound | This stack runs their published GHCR images at the digests `make stack` pins, and `make dev` builds the same components from source into local images. Nothing flows the other way |
 
 Nothing in the suite graph depends on dfe-docker, so a change here breaks a deployment rather than another repo's build. `dfe-transform-splack` and `dfe-transform-wasm` have repos but no service in this stack.

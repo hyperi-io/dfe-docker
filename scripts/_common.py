@@ -52,8 +52,8 @@ LOOPBACK_ORIGINS = frozenset(
     }
 )
 
-# The profiles that are PROJECTIONS of the Kubernetes tiers of the same name,
-# rendered by render_profiles.py. Their app set comes from dfe-infra apps.yaml
+# The profiles that are PROJECTIONS of the Kubernetes tiers of the same name.
+# Their app set comes from dfe-infra apps.yaml
 # `default_in` and every app in it idles until something configures it, so these
 # are also the tiers whose app config dfe-engine renders. Every other profile is
 # a hand-crafted data-plane shape that ships its own config and must keep it.
