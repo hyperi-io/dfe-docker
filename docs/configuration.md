@@ -194,7 +194,6 @@ The AWS **region** is not an environment variable: it is a literal in each sourc
 |--------------------------------------------------|--------------------------------------------------------------------------------------|---------------------------------------------------------------------|
 | `DFE_TRANSFORM_ELASTIC_VERSION`                  | Version of dfe-transform-elastic to use                                              | none -- `make stack` pins it; unset is a hard-fail                                                            |
 | `DFE_TRANSFORM_ELASTIC_PROMETHEUS_PORT`          | Transform Elastic Prometheus port                                                    | `9099`                                                              |
-| `DFE_TRANSFORM_ELASTIC_CISCO_IOS_PROMETHEUS_PORT` | Prometheus port of the cisco-ios instance -- it runs the same image, so it needs its own; 9100 is node_exporter's | `9089`                                                          |
 
 ### DFE Transform Vector
 
@@ -210,10 +209,6 @@ The AWS **region** is not an environment variable: it is a literal in each sourc
 |--------------------------------------------------|--------------------------------------------------------------------------------------|---------------------------------------------------------------------|
 | `DFE_TRANSFORM_VRL_VERSION`                      | Version of dfe-transform-vrl to use                                                  | none -- `make stack` pins it; unset is a hard-fail                                                            |
 | `DFE_TRANSFORM_VRL_PROMETHEUS_PORT`              | Transform VRL Prometheus port                                                        | `9096`                                                              |
-| `DFE_TRANSFORM_VRL_FILEBEAT_PROMETHEUS_PORT`     | Prometheus port of the filebeat instance -- it runs the same image, so it needs its own | `9097`                                                           |
-
-The filebeat instance takes its version from `DFE_TRANSFORM_VRL_VERSION` as well:
-it is a second deployment of the one component, not a component of its own.
 
 ### ClickHouse
 
@@ -240,7 +235,7 @@ it is a second deployment of the one component, not a component of its own.
 
 | Variable                                         | Use                                                                                  | Default                                                             |
 |--------------------------------------------------|--------------------------------------------------------------------------------------|---------------------------------------------------------------------|
-| `DFE_KAFKA_BOOTSTRAP_SERVERS`                    | The broker dfe-engine creates topics on, dfe-archiver reads from and every dfe-fetcher produces to; set it for an external broker | `kafka:9092`, the in-stack broker                                   |
+| `DFE_KAFKA_BOOTSTRAP_SERVERS`                    | The broker dfe-engine creates topics on and dfe-archiver, dfe-fetcher, dfe-loader, dfe-receiver, dfe-transform-elastic, dfe-transform-vector and dfe-transform-vrl read or write. Set it for an external broker | `kafka:9092`, the in-stack broker                                   |
 | `KAFKA_BACKEND`                                  | Kafka backend for `kafka` transport profiles                                         | `redpanda`                                                          |
 | `KAFKA_PLAINTEXT_HOST_PORT`                      | Kafka plaintext host port (host-facing)                                              | `19092`                                                             |
 | `KAFKA_PLAINTEXT_PORT`                           | Host publish of the broker's in-network listener; services in the stack dial `kafka:9092` whatever it says | `9092`                                                              |
@@ -312,7 +307,7 @@ A setting the app's own schema does not declare is written as an environment var
 
 A per-source instance such as `dfe-transform-vrl-<source>` reads its app's custom file and then its own, `env/dfe-transform-vrl-<source>.custom.env`, so a key set on one source reaches that source's container alone. `make apply SERVICES=dfe-transform-vrl-<source>` recreates it, the command the engine's response names.
 
-Only the engine writes `*.custom.env`, and only for a service it renders, so the static `dfe-transform-e2e-*` services read none. A key you set by hand goes in the operator's file. Earlier checkouts read `env/loader.custom.env` and its siblings, names the engine never wrote and nothing reads now: move any key you put there into `env/loader.env`.
+The engine alone writes `*.custom.env` and only for a service it renders. A key you set by hand goes in the operator's file. Earlier checkouts read `env/loader.custom.env` and its siblings, names the engine never wrote and nothing reads now: move any key you put there into `env/loader.env`.
 
 **A custom env write needs `docker compose up -d <service>`, not a restart.**
 Compose reads `env_file` when it creates a container, so `docker compose restart`
@@ -395,9 +390,7 @@ The same toggle points the engine at HyperDX: with it on, the engine receives `D
 | 8090  | hyperdx              | App UI             |
 | 8123  | ClickHouse           | HTTP API           |
 | 8686  | dfe-transform-vector | Vector API         |
-| 8687  | dfe-transform-e2e-vector-filebeat | Vector API |
 | 9000  | ClickHouse           | Native protocol    |
-| 9089  | dfe-transform-e2e-elastic-cisco-ios | Prometheus metrics |
 | 9090  | dfe-receiver         | Prometheus metrics |
 | 9091  | dfe-loader           | Prometheus metrics |
 | 9092  | Kafka (any backend)  | Plaintext          |
@@ -405,8 +398,6 @@ The same toggle points the engine at HyperDX: with it on, the engine receives `D
 | 9094  | dfe-fetcher          | Prometheus metrics |
 | 9095  | dfe-transform-vector | Prometheus metrics |
 | 9096  | dfe-transform-vrl    | Prometheus metrics |
-| 9097  | dfe-transform-e2e-vrl-filebeat | Prometheus metrics |
-| 9098  | dfe-transform-e2e-vector-filebeat | Prometheus metrics |
 | 9099  | dfe-transform-elastic | Prometheus metrics |
 | 13133 | otel-collector       | health_check       |
 | 19092 | Kafka (any backend)  | Plaintext host     |

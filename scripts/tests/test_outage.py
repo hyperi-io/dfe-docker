@@ -21,8 +21,6 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import pytest
 
 import _outage
-import resolve_profile
-from _common import CONFIG_DIR, SERVICE_PROFILES_FILE
 
 
 def test_a_record_marker_round_trips_to_its_sequence_number() -> None:
@@ -489,31 +487,6 @@ def test_a_topic_pattern_is_searched_not_anchored() -> None:
     assert _outage.pattern_subscriptions(
         "^strimzi\\.", ["strimzi.a", "x.strimzi.b"]
     ) == {"strimzi.a"}
-
-
-def test_the_broker_outage_owes_the_loader_a_commit_on_every_load_topic() -> None:
-    profiles = resolve_profile._parse_yaml(
-        text=SERVICE_PROFILES_FILE.read_text(encoding="utf-8")
-    )
-    services = profiles["profiles"]["kafka-resilience"]["services"]
-    configs = [CONFIG_DIR / service["config_path"] for service in services.values()]
-    # kafka-outage's expected_topics in tests/e2e/e2e-tests.yaml.
-    topics = [
-        f"{source}_{end}"
-        for source in ("main", "vector", "cisco-ios")
-        for end in ("land", "load")
-    ]
-
-    counts = _outage.expected_consumers(configs, topics)
-
-    assert counts == {
-        "main_land": 2,
-        "vector_land": 2,
-        "cisco-ios_land": 2,
-        "main_load": 1,
-        "vector_load": 1,
-        "cisco-ios_load": 1,
-    }
 
 
 # What `rpk topic describe <topic> -p` printed for a three-partition topic.

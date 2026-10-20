@@ -75,10 +75,6 @@ Beyond resolution, these semantic assertions ride along.
 - The builder's IMPLICIT_CONSUMERS must match the compose graph, or a `depends_on`
   edge added here silently stops `make dev` building an image the stack starts.
   See `_implicit_consumer_failures`.
-- Every profile's transform output topic must be read by that profile's loader,
-  and no two transforms may consume one topic. See `_transform_wiring_failures`.
-- Every enrichment table a transform config names must resolve to a file through
-  that service's own bind mounts. See `_enrichment_table_failures`.
 - The engine must never receive an empty or `changeme` admin password outside a
   dev posture, because it refuses to start on one. See `_credential_failures`.
 - Moving ClickHouse's host publish must not move the port any service dials it
@@ -118,7 +114,6 @@ from _common import (  # noqa: E402
     COMPOSE_LIVE_FILE,
     COMPOSE_LIVE_UI_FILE,
     COMPOSE_OVERRIDE_FILE,
-    CONFIG_DIR,
     CUSTOM_ENV_SUFFIX,
     DOTENV_FILE,
     DOTENV_TEMPLATE,
@@ -126,14 +121,10 @@ from _common import (  # noqa: E402
     ENV_TEMPLATE_DIR,
     REPO_ROOT,
     SERVICE_CONFIG_FILE,
-    SERVICE_PROFILES_FILE,
-    _config_enrichment_paths,
-    _config_topics,
     _dotenv_values,
     _parse_dotenv,
     _print,
     _required_compose_vars,
-    _transform_topics,
 )
 from build_dev_images import (  # noqa: E402
     IMPLICIT_CONSUMERS,
@@ -142,7 +133,6 @@ from build_dev_images import (  # noqa: E402
     overlay_text,
 )
 from init import _render_secrets  # noqa: E402
-from resolve_profile import _parse_yaml  # noqa: E402
 
 # The overlay `make dev LOCAL=...` generates, rendered for dfe-engine because it
 # is the component with IMAGE_CONSUMERS followers. Written under .tmp so compose
@@ -396,9 +386,6 @@ _DFE_OWNED_SERVICES = {
     "dfe-fetcher",
     "dfe-loader",
     "dfe-receiver",
-    "dfe-transform-e2e-elastic-cisco-ios",
-    "dfe-transform-e2e-vector-filebeat",
-    "dfe-transform-e2e-vrl-filebeat",
     "dfe-transform-elastic",
     "dfe-transform-vector",
     "dfe-transform-vrl",
@@ -415,9 +402,6 @@ _VERSION_CHECK_PREFIXES = {
     "dfe-fetcher": "DFE_FETCHER_",
     "dfe-loader": "DFE_LOADER_",
     "dfe-receiver": "DFE_RECEIVER_",
-    "dfe-transform-e2e-elastic-cisco-ios": "DFE_TRANSFORM_ELASTIC_",
-    "dfe-transform-e2e-vector-filebeat": "DFE_TRANSFORM_",
-    "dfe-transform-e2e-vrl-filebeat": "DFE_TRANSFORM_",
     "dfe-transform-elastic": "DFE_TRANSFORM_ELASTIC_",
     "dfe-transform-vector": "DFE_TRANSFORM_",
     "dfe-transform-vrl": "DFE_TRANSFORM_",
@@ -478,14 +462,6 @@ _IMAGE_VOLUMES: dict[str, tuple[str, ...]] = {
 type _Inspect = Callable[[str], frozenset[str] | None]
 # A hung daemon must not hang the gate.
 _INSPECT_TIMEOUT_SECONDS = 30
-
-# A dfe-transform-vector pipeline declares its own enrichment tables, and the
-# service mounts the directory holding it rather than the file.
-_TRANSFORM_FILE_SUFFIXES = (".yaml", ".yml")
-
-# Profile services whose config declares a Kafka sink topic somebody has to read.
-_TRANSFORM_PREFIX = "dfe-transform-"
-_LOADER_SERVICE = "dfe-loader"
 
 # The keys `_sentinel_model` writes into each env file it plants.
 _SENTINEL_LAST = "DFE_COMPOSE_CHECK_LAST_ENV_FILE"
@@ -905,134 +881,6 @@ def _paths() -> list[tuple[str, list[str]]]:
         ),
         ("local", [COMPOSE_FILE.name, str(_LOCAL_RENDER.relative_to(REPO_ROOT))]),
     ]
-
-
-def _transform_wiring_failures() -> tuple[list[str], int]:
-    """Return (messages, assertions made) for every profile's transform topics.
-
-    Two properties, both of them things a profile can get wrong while every
-    service still starts and reports healthy:
-
-    - a WORKING transform's output topic must be read by that profile's loader,
-      or the events reach a topic and stop there (dfe-docker#66);
-    - two transform instances in one profile must not consume the same topic,
-      because each event would then take whichever program won the partition.
-    """
-    data = _parse_yaml(
-        text=SERVICE_PROFILES_FILE.read_text(encoding="utf-8", errors="replace")
-    )
-    failures: list[str] = []
-    made = 0
-    for name, profile in sorted(data.get("profiles", {}).items()):
-        services = profile.get("services", {})
-        transforms = {}
-        for service, config in services.items():
-            if not (service.startswith(_TRANSFORM_PREFIX)):
-                continue
-            config_path = config.get("config_path")
-            if config_path is None:
-                failures.append(
-                    f"{name}: {service} declares no config_path -- its topics cannot "
-                    "be read, so nothing checks what it consumes or produces"
-                )
-                continue
-            transforms[service] = config_path
-        if not (transforms):
-            continue
-        loader = services.get(_LOADER_SERVICE, {}).get("config_path")
-        consumed, _, pattern = (
-            _config_topics(path=CONFIG_DIR / loader) if loader else (set(), set(), "")
-        )
-        seen: dict[str, str] = {}
-        for service, config_path in sorted(transforms.items()):
-            subscribed, written = _transform_topics(path=CONFIG_DIR / config_path)
-            for topic in sorted(written):
-                made += 1
-                if topic in consumed or (pattern and re.search(pattern, topic)):
-                    continue
-                failures.append(
-                    f"{name}: {service} produces {topic} and no loader in the profile "
-                    "consumes it -- events reach the topic and stop there"
-                )
-            for topic in sorted(subscribed):
-                made += 1
-                if topic in seen:
-                    failures.append(
-                        f"{name}: {service} and {seen[topic]} both consume {topic} -- "
-                        "an event would take whichever program won the partition"
-                    )
-                seen[topic] = service
-    return failures, made
-
-
-def _bind_host_path(*, binds: dict[str, Path], target: str) -> Path | None:
-    """Return the file on disk a container path resolves to, or None if nothing mounts it.
-
-    Longest mount first, so a nested mount wins over the directory containing it.
-    """
-    for mount, source in sorted(binds.items(), key=lambda item: -len(item[0])):
-        mount = mount.rstrip("/")
-        if target == mount:
-            return source
-        if target.startswith(f"{mount}/"):
-            return source / target[len(mount) + 1 :]
-    return None
-
-
-def _enrichment_table_failures(*, env: dict[str, str]) -> tuple[list[str], int]:
-    """Return (messages, assertions made) for the enrichment tables the transforms name.
-
-    An `enrichment_tables` entry names a CONTAINER path, and a transform that
-    cannot open one fails to compile its programs at startup -- a running-stack
-    failure compose resolution never sees. So each path is mapped back through the
-    service's own bind mounts and the file is required to exist on disk.
-
-    Every YAML the service mounts is read, files and mounted directories alike:
-    dfe-transform-vrl declares its tables in the service config, and
-    dfe-transform-vector declares them in the pipeline file inside its transforms
-    directory.
-    """
-    config = _config_json(env=env, files=[COMPOSE_FILE.name])
-    if config is None:
-        return (
-            ["the registry path did not resolve, so enrichment tables are unknown"],
-            0,
-        )
-    failures: list[str] = []
-    made = 0
-    for name, service in sorted(config.get("services", {}).items()):
-        if not (name.startswith(_TRANSFORM_PREFIX)):
-            continue
-        binds = {
-            volume["target"]: Path(volume["source"])
-            for volume in service.get("volumes") or []
-            if volume.get("type") == "bind" and volume.get("source")
-        }
-        mounted: set[Path] = set()
-        for path in binds.values():
-            if path.is_file():
-                mounted.add(path)
-            elif path.is_dir():
-                mounted |= {
-                    child
-                    for child in path.iterdir()
-                    if child.is_file() and child.suffix in _TRANSFORM_FILE_SUFFIXES
-                }
-        for source in sorted(mounted):
-            for target in sorted(_config_enrichment_paths(path=source)):
-                made += 1
-                host = _bind_host_path(binds=binds, target=target)
-                if host is None:
-                    failures.append(
-                        f"{name}: enrichment table {target} is under no bind mount -- "
-                        "the transform cannot open it and fails to compile its programs"
-                    )
-                elif not (host.is_file()):
-                    failures.append(
-                        f"{name}: enrichment table {target} maps to {host}, which is "
-                        "not a file -- the transform fails to compile its programs"
-                    )
-    return failures, made
 
 
 def _credential_fault(*, config: dict) -> str:
@@ -1540,8 +1388,7 @@ def _instance_name_collisions(*, services: dict) -> list[str]:
                 failures.append(
                     f"{name}: the {app} instance for a source named "
                     f"{name[len(app) + 1 :]!r} takes this name, and Compose merges the "
-                    "two -- rename it off the <app>-<source> shape, as the "
-                    "dfe-transform-e2e-* services are"
+                    "two -- rename it off the <app>-<source> shape"
                 )
     return failures
 
@@ -2050,26 +1897,6 @@ def main() -> int:
         f"on all {len(paths)} path(s)"
     )
     _print(msg="No healthcheck targets a retired health path")
-
-    wiring_failures, wiring_made = _transform_wiring_failures()
-    for message in wiring_failures:
-        _print(msg=f"FAIL {message}")
-    if wiring_failures:
-        return 1
-    _print(
-        msg="Every transform output topic is read by its profile's loader, and no two "
-        f"transforms in a profile consume the same topic ({wiring_made} assertions)"
-    )
-
-    table_failures, table_made = _enrichment_table_failures(env=env)
-    for message in table_failures:
-        _print(msg=f"FAIL {message}")
-    if table_failures:
-        return 1
-    _print(
-        msg="Every enrichment table a transform config names resolves to a file "
-        f"through that service's bind mounts ({table_made} assertions)"
-    )
 
     credential_failures, credential_made = _credential_failures(env=env)
     for message in credential_failures:

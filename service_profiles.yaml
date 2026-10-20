@@ -73,10 +73,6 @@ profiles:
         config_path: loader/kafka.yaml
       dfe-receiver:
         config_path: receiver/kafka.yaml
-      dfe-transform-elastic:
-        config_path: transform-elastic/kafka.yaml
-      dfe-transform-vrl:
-        config_path: transform-vrl/kafka.yaml
 
   kafka-minimal:
     transport: kafka
@@ -92,87 +88,6 @@ profiles:
       dfe-receiver:
         config_path: receiver/kafka.yaml
 
-  kafka-receiver-transform-vector:
-    transport: kafka
-    services:
-      dfe-loader:
-        config_path: loader/kafka.yaml
-      dfe-receiver:
-        config_path: receiver/kafka.yaml
-      dfe-transform-vector:
-        config_path: transform-vector/kafka.yaml
-
-  kafka-full-transform-vrl:
-    transport: kafka
-    services:
-      dfe-loader:
-        config_path: loader/kafka.yaml
-      dfe-receiver:
-        config_path: receiver/kafka.yaml
-      dfe-transform-vrl:
-        config_path: transform-vrl/main.yaml
-
-  # The same shape on dfe-transform-elastic, on the config a projected tier would give it. This app has no passthrough: an instance runs ONE compiled-in transform, so nothing here moves main_land to main_load and the loader reads the landing topic itself.
-  kafka-full-transform-elastic:
-    transport: kafka
-    services:
-      dfe-loader:
-        config_path: loader/kafka.yaml
-      dfe-receiver:
-        config_path: receiver/kafka.yaml
-      dfe-transform-elastic:
-        config_path: transform-elastic/kafka.yaml
-
-  # The per-source transform shape: two dfe-transform-vrl instances, one on the
-  # shared main_land and one on the filebeat source's own filebeat_land, with
-  # a loader consuming both output topics. A source with its own transform gets
-  # its own instance and its own table; adding a second means adding a service,
-  # not reconfiguring this one.
-  kafka-filebeat:
-    transport: kafka
-    services:
-      dfe-loader:
-        config_path: loader/kafka.yaml
-      dfe-receiver:
-        config_path: receiver/kafka.yaml
-      dfe-transform-vrl:
-        config_path: transform-vrl/main.yaml
-      dfe-transform-e2e-vrl-filebeat:
-        config_path: transform-vrl/filebeat.yaml
-
-  # The same per-source shape as kafka-filebeat, with dfe-transform-vector doing
-  # the transforming: the bundled filebeat VRL runs inside a Vector remap instead
-  # of the embedded VRL engine. Its own source name, topics and table, so a
-  # deployment can run this profile and kafka-filebeat side by side and compare
-  # what the two transform apps make of the same corpus.
-  kafka-filebeat-vector:
-    transport: kafka
-    services:
-      dfe-loader:
-        config_path: loader/kafka.yaml
-      dfe-receiver:
-        config_path: receiver/kafka.yaml
-      dfe-transform-vector:
-        config_path: transform-vector/kafka.yaml
-      dfe-transform-e2e-vector-filebeat:
-        config_path: transform-vector/filebeat.yaml
-
-  # The per-source shape on dfe-transform-elastic: the source is cisco-ios rather
-  # than filebeat because this app selects ONE compiled-in transform by name, and
-  # `filebeat.cisco_ios.default` is a data stream rather than an umbrella
-  # program. Its topics and its table are its own, disjoint from the two filebeat
-  # profiles. One transform instance, not two: there is no passthrough to pair it
-  # with, so the loader reads main_land directly through its topic_regex.
-  kafka-elastic-cisco-ios:
-    transport: kafka
-    services:
-      dfe-loader:
-        config_path: loader/kafka.yaml
-      dfe-receiver:
-        config_path: receiver/kafka.yaml
-      dfe-transform-e2e-elastic-cisco-ios:
-        config_path: transform-elastic/cisco-ios.yaml
-
   kafka-receiver-archiver:
     transport: kafka
     services:
@@ -182,25 +97,6 @@ profiles:
         config_path: loader/kafka.yaml
       dfe-receiver:
         config_path: receiver/kafka.yaml
-
-  # Every Kafka app with work to do, for the broker-outage e2e test: an idle app
-  # joins no consumer group, so it cannot show a consumer resuming. Each
-  # transform reads its own source's topic and the loader reads all three outputs.
-  kafka-resilience:
-    transport: kafka
-    services:
-      dfe-archiver:
-        config_path: archiver/kafka.yaml
-      dfe-loader:
-        config_path: loader/kafka.yaml
-      dfe-receiver:
-        config_path: receiver/kafka.yaml
-      dfe-transform-e2e-elastic-cisco-ios:
-        config_path: transform-elastic/cisco-ios.yaml
-      dfe-transform-vector:
-        config_path: transform-vector/resilience.yaml
-      dfe-transform-vrl:
-        config_path: transform-vrl/main.yaml
 
   grpc-minimal:
     transport: grpc
@@ -215,14 +111,3 @@ profiles:
         config_path: loader/grpc.yaml
       dfe-receiver:
         config_path: receiver/grpc.yaml
-
-  # A two-hop direct chain, receiver -> dfe-transform-vrl -> loader, all gRPC.
-  grpc-receiver-transform-vrl:
-    transport: grpc
-    services:
-      dfe-loader:
-        config_path: loader/grpc.yaml
-      dfe-receiver:
-        config_path: receiver/grpc-transform-vrl.yaml
-      dfe-transform-vrl:
-        config_path: transform-vrl/grpc.yaml

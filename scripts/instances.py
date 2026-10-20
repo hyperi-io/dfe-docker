@@ -254,8 +254,8 @@ def stale_containers(listing: str, *, keep: set[str]) -> dict[str, str]:
     """Container id -> service, for each labelled instance whose service is not in ``keep``.
 
     ``listing`` is ``docker compose ps`` output, one tab-separated id, service and
-    label per line. An unlabelled container is left alone whatever its name: a
-    committed static instance runs the same app, and one declared by a file
+    label per line. An unlabelled container is left alone whatever its name. The
+    app's committed service runs the same image and one declared by a file
     outside the apply chain is an orphan here too.
     """
     stale: dict[str, str] = {}

@@ -9,7 +9,7 @@
 
 """Power-on self test (POST) for a stack that is ALREADY running.
 
-Eight claims. SUBSCRIPTION: where the tier has a bus, the loader is fetching at
+Seven claims. SUBSCRIPTION: where the tier has a bus, the loader is fetching at
 least one topic -- asserted once the injected events land, because a topic nothing
 has been written to carries no lag series, and as the diagnosis when they do not.
 INGEST: uniquely-marked events put in at the ingest edge come out as those exact
@@ -23,12 +23,10 @@ through the engine query API that dfe-ui uses, so the data is not merely stored 
 reachable from the surface an operator works in. HUNTS: a hunt created through the
 API while the runner is already running is picked up without a restart, and a run
 queued through the API detects exactly the events its rule matches and none of its
-near misses, all carrying the tenant id of the org the hunt runs for. IDLE APPS:
-each app the tier starts with
-no work is serving and doing nothing, which is the whole point of starting it.
+near misses, all carrying the tenant id of the org the hunt runs for.
 ROUTING: where the engine renders this tier's app config, a source created
 through the API reaches the RUNNING receiver, and a record matching its rule
-lands in a table of its own. None of the eight is "the containers started" or
+lands in a table of its own. None of the seven is "the containers started" or
 "the ports answer".
 
 The INGEST claim is transport-agnostic by construction: it posts to the ingest
@@ -195,9 +193,7 @@ CONTAINER_LOG_SERVICES = ("dfe-engine", "dfe-loader", "dfe-receiver")
 
 # The services whose OWN metrics have to reach the otel database, as name prefixes
 # so a per-source instance (dfe-transform-vrl-filebeat) is covered by its app.
-# dfe-transform-e2e-vector-filebeat and dfe-transform-e2e-vrl-filebeat are static
-# extra instances named off that shape, so no app prefix covers them and each is
-# named in full. dfe-ui carries the OTel API and no SDK, so it does not push.
+# dfe-ui carries the OTel API and no SDK, so it does not push.
 OTEL_PUSHER_PREFIXES = (
     "dfe-archiver",
     "dfe-engine",
@@ -205,8 +201,6 @@ OTEL_PUSHER_PREFIXES = (
     "dfe-hunt-runner",
     "dfe-loader",
     "dfe-receiver",
-    "dfe-transform-e2e-vector-filebeat",
-    "dfe-transform-e2e-vrl-filebeat",
     "dfe-transform-elastic",
     "dfe-transform-vector",
     "dfe-transform-vrl",
@@ -287,17 +281,6 @@ HUNT_EVENTS = {
         {"event_type": "login_success", "user_name": "root"},
     ),
 }
-
-# Idle-app assertion: the config that gives each app no work, and the metrics
-# port compose publishes it on. dfe-infra apps.yaml declares the idle predicate
-# and the app evaluates it; this reads the answer the app publishes.
-IDLE_APPS: dict[str, tuple[str, str]] = {
-    "dfe-transform-elastic": ("transform-elastic/kafka.yaml", "9099"),
-    "dfe-transform-vrl": ("transform-vrl/kafka.yaml", "9096"),
-}
-IDLE_GAUGE = "pipeline_idle"
-# Set by a run loop that has started, which an idle app never enters.
-READY_GAUGE = "pipeline_ready"
 
 # Routing assertion. A source created through the API compiles a receiver rule,
 # and on this target the engine renders that rule into the file the RUNNING
@@ -1144,25 +1127,10 @@ def _verify_container_logs(*, database: str) -> int:
 def _service_var(service: str, suffix: str) -> str:
     """The .env / .tmp/profile.mk variable naming one service's setting.
 
-    Every per-service key follows it -- DFE_TRANSFORM_VRL_CONFIG,
+    Every per-service key follows it -- DFE_LOADER_CONFIG,
     DFE_ARCHIVER_PROMETHEUS_PORT -- so it is derived rather than tabulated.
     """
     return f"DFE_{service.removeprefix('dfe-').upper().replace('-', '_')}_{suffix}"
-
-
-def _metric_value(body: str, name: str) -> float | None:
-    """One unlabelled gauge out of a Prometheus exposition body, or None if absent."""
-    for line in body.splitlines():
-        if line.startswith("#"):
-            continue
-        key, _, value = line.partition(" ")
-        if key.split("{", 1)[0] != name:
-            continue
-        try:
-            return float(value)
-        except ValueError:
-            return None
-    return None
 
 
 def _metric_label_values(body: str, name: str, label: str) -> set[str]:
@@ -1247,99 +1215,6 @@ def _verify_loader_subscription() -> Claim:
         return Claim(asserted=True, failed=1)
     _print(msg=f"PASS  {LOADER_SERVICE} is fetching {', '.join(sorted(topics))}")
     return HELD
-
-
-def _idle_apps() -> list[tuple[str, str]]:
-    """The (service, metrics port) pairs this run started with an idle config.
-
-    Read off the resolved profile rather than the profile NAME: a data-plane
-    profile pointing the same app at a config that gives it work is not one of
-    these, and must not be asserted inert.
-    """
-    running = set(_resolved_services())
-    found: list[tuple[str, str]] = []
-    for service, (config, default_port) in sorted(IDLE_APPS.items()):
-        if service not in running:
-            continue
-        resolved = _profile_mk_value(key=_service_var(service, "CONFIG"))
-        if resolved[:1] != [config]:
-            continue
-        port = os.environ.get(_service_var(service, "PROMETHEUS_PORT"), "").strip()
-        found.append((service, port or default_port))
-    return found
-
-
-def _verify_idle_apps() -> Claim:
-    """Prove each app the tier starts with no work is serving and doing nothing.
-
-    Two-sided on purpose. A container that crash-looped on the idle config fails
-    the readiness half; one that is quietly archiving, polling or consuming fails
-    the gauge half, and neither shows up as a missing row anywhere else.
-    """
-    expected = _idle_apps()
-    if not expected:
-        _print(
-            msg="SKIP  this profile starts no app with an idle config -- nothing to prove"
-        )
-        return SKIPPED
-
-    bind = os.environ.get("DFE_POST_HOST", "localhost")
-    failed = 0
-    for service, port in expected:
-        base = f"http://{bind}:{port}"
-        _print(msg=f"Waiting for {service} to report {IDLE_GAUGE} at {base}")
-        if not (_wait_ready(f"{base}/readyz")):
-            _print(
-                msg=f"FAIL  {service} runs an idle config but never became ready within "
-                f"{READY_TIMEOUT_SECONDS:.0f}s -- it did not start on a config that gives "
-                "it no work"
-            )
-            failed += 1
-            continue
-        try:
-            body = http_get(f"{base}/metrics", timeout=5)
-        except Exception:  # noqa: BLE001 - unreachable and unreadable are one answer here
-            body = None
-        fault = _idle_fault(body=body, base=base)
-        if fault:
-            _print(msg=f"FAIL  {service} {fault}")
-            failed += 1
-        else:
-            _print(msg=f"PASS  {service} is ready and inert ({IDLE_GAUGE}=1)")
-    return Claim(asserted=True, failed=failed)
-
-
-def _idle_fault(*, body: str | None, base: str) -> str:
-    """Why a /metrics scrape does not show an idle app, or '' when it does.
-
-    scalo's idle gate sets `pipeline_idle` only when it enters or leaves idle, so
-    an app that never idled serves no such gauge. One serving `pipeline_ready`
-    instead has started its run loop, which an idle app never enters: it is working,
-    and ready says nothing about inert.
-    """
-    if body is None:
-        return (
-            f"serves no {IDLE_GAUGE} on {base}/metrics, so whether it is inert cannot "
-            "be read"
-        )
-    idle = _metric_value(body, IDLE_GAUGE)
-    if idle == 1:
-        return ""
-    if idle is not None:
-        return (
-            f"reports {IDLE_GAUGE}={idle:g} -- it was given a config with no work and "
-            "is working anyway"
-        )
-    ready = _metric_value(body, READY_GAUGE)
-    if ready is not None:
-        return (
-            f"reports {READY_GAUGE}={ready:g} and no {IDLE_GAUGE} -- its pipeline "
-            "started on a config that gives it no work, so the idle gate never engaged"
-        )
-    return (
-        f"serves neither {IDLE_GAUGE} nor {READY_GAUGE} on {base}/metrics, so whether "
-        "it is inert cannot be read"
-    )
 
 
 def _create_routed_source(*, base: str, name: str, token: str) -> str:
@@ -2519,7 +2394,6 @@ def main() -> int:
                 "ingest": SKIPPED,
                 "self-monitoring": _verify_self_monitoring(),
                 "observability": _verify_hyperdx(),
-                "idle apps": _verify_idle_apps(),
             }
         )
     except IngestNotReady as reason:
@@ -2600,7 +2474,6 @@ def main() -> int:
             "self-monitoring": _verify_self_monitoring(),
             "observability": _verify_hyperdx(),
             "console": _verify_ui_query(database=database, marker=marker, table=table),
-            "idle apps": _verify_idle_apps(),
             "routing": _verify_routing_applied(database=database),
         }
         # After the console claim, which reads these same rows back.

@@ -10,8 +10,8 @@
 #
 #  Usage:
 #    ./scripts/test-e2e.py                                       # Run all tests from config
-#    ./scripts/test-e2e.py kafka-outage                          # Run specific test by name
-#    ./scripts/test-e2e.py kafka-outage loader-kill-grpc         # Run multiple named tests
+#    ./scripts/test-e2e.py clickhouse-outage                     # Run specific test by name
+#    ./scripts/test-e2e.py clickhouse-outage loader-kill-grpc    # Run multiple named tests
 #    ./scripts/test-e2e.py --outages                             # Run the outage tests instead
 #    TEST_CONFIG=tests/e2e/e2e-tests.yaml ./scripts/test-e2e.py  # Custom config
 #    LOG_LEVEL=debug ./scripts/test-e2e.py                       # Verbose service logs
@@ -119,12 +119,6 @@ SERVICE_CONFIG_MOUNTS = {
     "dfe-archiver": "/etc/dfe/archiver.yaml",
     "dfe-loader": "/etc/dfe/loader.yaml",
     "dfe-receiver": "/etc/dfe-receiver/config.yaml",
-    "dfe-transform-e2e-elastic-cisco-ios": "/etc/dfe-transform-elastic/config.yaml",
-    "dfe-transform-e2e-vector-filebeat": "/etc/dfe-transform-vector/config.yaml",
-    "dfe-transform-e2e-vrl-filebeat": "/etc/dfe-transform-vrl/config.yaml",
-    "dfe-transform-elastic": "/etc/dfe-transform-elastic/config.yaml",
-    "dfe-transform-vector": "/etc/dfe-transform-vector/config.yaml",
-    "dfe-transform-vrl": "/etc/dfe-transform-vrl/config.yaml",
 }
 
 KNOWN_DFE_SERVICES = set(SERVICE_CONFIG_MOUNTS.keys())

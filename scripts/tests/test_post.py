@@ -180,7 +180,6 @@ def test_only_the_services_that_push_their_own_metrics_are_expected() -> None:
         "dfe-engine",
         "dfe-hunt-runner",
         "dfe-loader",
-        "dfe-transform-e2e-vrl-filebeat",
         "dfe-transform-elastic",
         "dfe-transform-vrl-filebeat",
         "dfe-ui",
@@ -192,7 +191,6 @@ def test_only_the_services_that_push_their_own_metrics_are_expected() -> None:
         "dfe-engine",
         "dfe-hunt-runner",
         "dfe-loader",
-        "dfe-transform-e2e-vrl-filebeat",
         "dfe-transform-elastic",
         "dfe-transform-vrl-filebeat",
     ]
@@ -279,7 +277,7 @@ def test_a_profile_that_can_prove_nothing_does_not_pass(
         raise post.NoIngestComponent("active profile has no ingest component")
 
     monkeypatch.setattr(post, "_ingest_target", _no_ingest)
-    for name in ("_verify_self_monitoring", "_verify_hyperdx", "_verify_idle_apps"):
+    for name in ("_verify_self_monitoring", "_verify_hyperdx"):
         monkeypatch.setattr(post, name, lambda: post.SKIPPED)
 
     assert post.main() == 1
@@ -608,7 +606,6 @@ def _stub_claims(monkeypatch: pytest.MonkeyPatch) -> list[str]:
         "_verify_self_monitoring",
         "_verify_hyperdx",
         "_verify_ui_query",
-        "_verify_idle_apps",
         "_verify_routing_applied",
     ):
         monkeypatch.setattr(post, name, _recorder(name))
@@ -1244,84 +1241,6 @@ def test_a_source_delete_with_no_answer_keeps_the_table_and_does_not_raise(
     )
 
     assert statements == []
-
-
-_METRICS_BASE = "http://localhost:9099"
-
-
-def test_an_app_holding_pipeline_idle_at_one_has_no_idle_fault() -> None:
-    body = "# TYPE pipeline_idle gauge\npipeline_idle 1\n"
-
-    assert post._idle_fault(body=body, base=_METRICS_BASE) == ""
-
-
-def test_an_app_reporting_pipeline_idle_zero_is_working_anyway() -> None:
-    fault = post._idle_fault(body="pipeline_idle 0\n", base=_METRICS_BASE)
-
-    assert "pipeline_idle=0" in fault
-    assert "working anyway" in fault
-
-
-def test_an_app_serving_ready_and_no_idle_gauge_has_started_its_pipeline() -> None:
-    """Ready is not inert, and the app says so by serving the gauge a run loop sets."""
-    fault = post._idle_fault(body="pipeline_ready 1\n", base=_METRICS_BASE)
-
-    assert "pipeline_ready=1" in fault
-    assert "no pipeline_idle" in fault
-    assert "the idle gate never engaged" in fault
-    assert "cannot be read" not in fault
-
-
-def test_an_app_serving_neither_gauge_cannot_be_read() -> None:
-    body = "# TYPE records_received_total counter\nrecords_received_total 0\n"
-
-    fault = post._idle_fault(body=body, base=_METRICS_BASE)
-
-    assert "neither pipeline_idle nor pipeline_ready" in fault
-    assert "cannot be read" in fault
-
-
-def test_an_unreachable_app_cannot_be_read() -> None:
-    fault = post._idle_fault(body=None, base=_METRICS_BASE)
-
-    assert "serves no pipeline_idle" in fault
-    assert "cannot be read" in fault
-
-
-def test_one_idle_app_that_started_its_pipeline_fails_the_claim_and_says_why(
-    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
-) -> None:
-    bodies = {
-        "9093": "pipeline_idle 1\n",
-        "9094": "pipeline_idle 1\n",
-        "9099": "pipeline_ready 1\n",
-        "9096": "pipeline_idle 1\n",
-    }
-    monkeypatch.setattr(
-        post,
-        "_idle_apps",
-        lambda: [
-            ("dfe-archiver", "9093"),
-            ("dfe-fetcher", "9094"),
-            ("dfe-transform-elastic", "9099"),
-            ("dfe-transform-vrl", "9096"),
-        ],
-    )
-    monkeypatch.setattr(post, "_wait_ready", lambda url: True)
-    monkeypatch.setattr(
-        post, "http_get", lambda url, **kwargs: bodies[url.split(":")[2].split("/")[0]]
-    )
-
-    claim = post._verify_idle_apps()
-
-    err = capsys.readouterr().err
-    assert claim == post.Claim(asserted=True, failed=1)
-    assert (
-        "FAIL  dfe-transform-elastic reports pipeline_ready=1 and no pipeline_idle"
-        in err
-    )
-    assert "cannot be read" not in err
-    assert err.count("PASS") == 3
 
 
 def _reported(monkeypatch: pytest.MonkeyPatch, *, names: set[str]) -> list[str]:
