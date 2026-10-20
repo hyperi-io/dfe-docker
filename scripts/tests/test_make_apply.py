@@ -8,7 +8,7 @@
 
 """The command lines `make apply` and the start goals print, in a copy of the Makefile.
 
-These goals include .tmp/profile.mk, which scripts/resolve_profile.py writes from the real profiles and the engine's instance index. A stand-in resolver writes a fixed one instead, so what is asserted is the Makefile's own wiring: apply removes the instance containers the fragment no longer declares before it recreates anything, against the same compose project, and a start goal on a checkout with no .env has it minted before its first compose call.
+These goals include .tmp/profile.mk, which scripts/resolve_profile.py writes from the real profiles and the engine's instance index. A stand-in resolver writes a fixed one instead, so what is asserted is the Makefile's own wiring: apply removes the instance containers the fragment no longer declares before it recreates anything, against the same compose project. A start goal on a checkout with no .env has it minted before its first compose call.
 """
 
 import os

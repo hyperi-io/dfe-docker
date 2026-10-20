@@ -113,9 +113,9 @@ flowchart LR
     class load notmade
 ```
 
-`config/loader/kafka.yaml` subscribes by `topic_regex: .*_(land|load)`, and scalo drops `<base>_land` from the subscription whenever `<base>_load` exists. `dfe-engine` creates the bootstrap topic set `dfe-schemas` declares, which is `main_land` and the five DLQ topics, so `main_load` exists only once a transform first produces to it.
+`config/loader/kafka.yaml` subscribes by `topic_regex: .*_(land|load)`. scalo drops `<base>_land` from the subscription whenever `<base>_load` exists. `dfe-engine` creates the bootstrap topic set `dfe-schemas` declares, which is `main_land` and the five DLQ topics, so `main_load` exists only once a transform first produces to it.
 
-On a profile that runs a transform, the loader therefore reads `main_land` until that first write, then switches to `main_load`, and the first records land twice: once raw, once transformed. Create the transform's `_load` topic before sending anything to avoid it. The e2e suite does, from each test's `expected_topics`.
+On a profile that runs a transform, the loader therefore reads `main_land` until that first write, then switches to `main_load`. The first records land twice: once raw, once transformed. Create the transform's `_load` topic before sending anything to avoid it. The e2e suite does, from each test's `expected_topics`.
 
 **Do not close this gap by adding `main_load` to the bootstrap topic set.**
 The loader auto-discovers topics and scalo suppresses `<base>_land` whenever

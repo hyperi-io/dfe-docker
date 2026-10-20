@@ -7,7 +7,7 @@
 #  License:      BUSL-1.1
 #  Copyright:    (c) 2026 HYPERI PTY LIMITED
 
-"""The console TLS checks the Makefile runs while it parses, and the certificate `make certs` mints.
+"""The console TLS checks the Makefile runs while it parses, plus the certificate `make certs` mints.
 
 `network SUBNET` prints dfe-proxy's reserved address and the range Docker allocates from. Under DFE_PROXY_TLS=true the engine believes X-Forwarded-Proto from dfe-proxy's address alone, so no other container may take that address: the proxy holds the subnet's last host and Docker allocates everything else, the gateway included, from the first half.
 
@@ -188,7 +188,7 @@ def cert_problem(*, cert_dir: str) -> str:
             if path.is_symlink():
                 return f"{shown} is a symlink, which dangles inside the container (certbot's live/ directory is all symlinks). Copy the file itself with `cp -L`"
             if not (path.is_file()):
-                return f"DFE_PROXY_TLS=true needs the {kind} {shown} and it is missing. Run `make certs` to mint the pair, or copy a CA-issued one there (docs/configuration.md, Console TLS). Set DFE_PROXY_TLS=false to start without TLS"
+                return f"DFE_PROXY_TLS=true needs the {kind} {shown} and it is missing. Run `make certs` to mint the pair or copy a CA-issued one there (docs/configuration.md, Console TLS). Set DFE_PROXY_TLS=false to start without TLS"
         except OSError as error:
             return f"{shown} cannot be checked ({error.strerror}), so the start is refused rather than assumed safe"
         if not (os.access(path, os.R_OK)):
@@ -237,9 +237,9 @@ def derive(*, subnet: str) -> tuple[str, str]:
 
 
 def mint(*, cert_dir: str, host: str) -> list[str]:
-    """Write console.crt, console.key and the ca.crt that signed them into cert_dir, delete the CA's key, and return the subjectAltName entries.
+    """Write console.crt, console.key and the ca.crt that signed them into cert_dir, delete the CA's key and return the subjectAltName entries.
 
-    Raises MintError before writing anything when the host, the directory or a missing openssl rules it out, or when any of the three files exists, so a CA-issued pair or a CA a browser already trusts is never replaced.
+    Raises MintError before writing anything when the host, the directory or a missing openssl rules it out or when any of the three files exists, so a CA-issued pair or a CA a browser already trusts is never replaced.
     """
     bare = host[1:-1] if host.startswith("[") and host.endswith("]") else host
     if not (_is_host(name=bare)):
@@ -466,7 +466,7 @@ def main() -> int:
             f"Minted {shown}/{_CERT} and {shown}/{_KEY} for {names}, valid {_DAYS} days, signed by {shown}/{_CA}. The CA's key is deleted, so it signs nothing else."
         )
         print(
-            f"Trust {shown}/{_CA} once in your browser or OS, and set DFE_PROXY_CA_BUNDLE={shown}/{_CA} for make test-e2e. To renew, delete the three files and run make certs again."
+            f"Trust {shown}/{_CA} once in your browser or OS, then set DFE_PROXY_CA_BUNDLE={shown}/{_CA} for make test-e2e. To renew, delete the three files and run make certs again."
         )
         return 0
 

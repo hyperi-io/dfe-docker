@@ -528,7 +528,7 @@ The consequence to know: because `make dev` and `make ci` depend on `down`, a
 `make dev SERVICES="dfe-loader"` no longer restarts just that service on top of a
 running stack -- everything is stopped first.
 
-**`.env` shadows a command-line environment variable through make.** The Makefile does `-include .env`, and GNU make re-exports a variable that came from the environment using the *makefile's* value. So with `DFE_PROFILE` set in `.env`, `DFE_PROFILE=grpc-receiver make dev` silently uses the `.env` value. Verified on this repo's shape with a minimal reproduction. If an override appears to do nothing, check `.env` first; comment the key out there, or use `make -e`.
+**`.env` shadows a command-line environment variable through make.** The Makefile does `-include .env`. GNU make re-exports a variable that came from the environment using the *makefile's* value. So with `DFE_PROFILE` set in `.env`, `DFE_PROFILE=grpc-receiver make dev` silently uses the `.env` value. Verified on this repo's shape with a minimal reproduction. If an override appears to do nothing, check `.env` first. Comment the key out there or use `make -e`.
 
 **Compose `environment:` beats `env/<service>.env`.** A key listed in a service's
 `environment:` block in `docker-compose.yml` wins over the same key in the
