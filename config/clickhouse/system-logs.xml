@@ -1,5 +1,5 @@
 <clickhouse>
-  <!-- The image sets no TTL on these; changing one renames the old table to <table>_0, which keeps its rows. -->
+  <!-- The image sets no TTL on these. Changing one renames the old table to <table>_0 with its rows -->
   <asynchronous_metric_log>
     <ttl>event_date + INTERVAL 7 DAY DELETE</ttl>
   </asynchronous_metric_log>
@@ -18,6 +18,6 @@
   <text_log>
     <ttl>event_date + INTERVAL 7 DAY DELETE</ttl>
   </text_log>
-  <!-- Nothing reads it. -->
+  <!-- Nothing reads it -->
   <trace_log remove="remove"/>
 </clickhouse>
