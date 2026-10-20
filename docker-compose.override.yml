@@ -20,11 +20,7 @@
 # only some components and keep the rest on the registry pins, `make dev
 # LOCAL="dfe-engine dfe-ui"` writes docker-compose.local.yml instead of this.
 #
-# A service that runs a component's image under another name (dlq-init,
-# dfe-hunt-runner, dfe-dashboards, and the per-source transform instances) is
-# repointed with it. The list is IMAGE_CONSUMERS in
-# scripts/build_dev_images.py and check-compose asserts this file covers all of
-# it.
+# A service that runs a component's image under another name (dlq-init, dfe-hunt-runner and dfe-dashboards) is repointed with it. The list is IMAGE_CONSUMERS in scripts/build_dev_images.py and check-compose asserts this file covers all of it.
 
 services:
   dfe-receiver:
@@ -45,19 +41,10 @@ services:
   dfe-transform-elastic:
     image: dfe-transform-elastic:local
 
-  dfe-transform-e2e-elastic-cisco-ios:
-    image: dfe-transform-elastic:local
-
   dfe-transform-vector:
     image: dfe-transform-vector:local
 
-  dfe-transform-e2e-vector-filebeat:
-    image: dfe-transform-vector:local
-
   dfe-transform-vrl:
-    image: dfe-transform-vrl:local
-
-  dfe-transform-e2e-vrl-filebeat:
     image: dfe-transform-vrl:local
 
   dfe-engine:

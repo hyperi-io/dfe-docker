@@ -79,7 +79,7 @@ tests:
       - main_land
       - simple_receiver_to_loader_kafka_with_archiver_land
 
-  # The complete single-node stack: receiver, transform, loader and archiver over Kafka, with the engine, UI and proxy in front. The HTTP checks assert the single-origin contract dfe-proxy exists for: UI and engine API on ONE origin. DFE_UI_URL is the console URL the suite resolves: localhost on DFE_UI_PORT or https at DFE_EXTERNAL_ORIGIN's host under console TLS.
+  # The complete single-node stack: receiver, loader and archiver over Kafka, with the engine, UI and proxy in front. The HTTP checks assert the single-origin contract dfe-proxy exists for: UI and engine API on ONE origin. DFE_UI_URL is the console URL the suite resolves: localhost on DFE_UI_PORT or https at DFE_EXTERNAL_ORIGIN's host under console TLS.
   - name: complete-single-node-stack
     profile: single
     expected_topics:
@@ -134,18 +134,6 @@ tests:
       service: dfe-loader
       seconds: 60
 
-  - name: loader-outage-grpc-transform-vrl
-    profile: grpc-receiver-transform-vrl
-    outage:
-      service: dfe-loader
-      seconds: 60
-
-  - name: transform-vrl-outage-grpc
-    profile: grpc-receiver-transform-vrl
-    outage:
-      service: dfe-transform-vrl
-      seconds: 60
-
   # A hop killed with SIGKILL mid-stream rather than stopped, so whatever it held
   # in memory gets no drain. Every record the receiver answered 2xx still has to
   # land, on the Kafka path and on the direct gRPC path. The load is dense enough
@@ -180,32 +168,3 @@ tests:
       seconds: 30
       workers: 16
       interval: 0.01
-
-  - name: transform-vrl-kill-grpc
-    profile: grpc-receiver-transform-vrl
-    outage:
-      service: dfe-transform-vrl
-      method: kill
-      seconds: 30
-      workers: 16
-      interval: 0.01
-
-  # The broker down under load with every Kafka app consuming. The vector and
-  # cisco-ios records keep dfe-transform-vector's and dfe-transform-elastic's
-  # own topics moving, so their groups have to catch up too.
-  - name: kafka-outage
-    profile: kafka-resilience
-    expected_topics:
-      - main_land
-      - main_load
-      - vector_land
-      - vector_load
-      - cisco-ios_land
-      - cisco-ios_load
-    outage:
-      service: kafka
-      seconds: 60
-      sources:
-        main: tests/e2e/data/events.jsonl
-        vector: tests/e2e/data/events.jsonl
-        cisco-ios: tests/e2e/data/cisco-ios.jsonl

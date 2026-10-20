@@ -46,9 +46,6 @@ IMAGE_TAG = "local"
 IMAGE_CONSUMERS: dict[str, tuple[str, ...]] = {
     "dfe-archiver": ("dlq-init",),
     "dfe-engine": ("dfe-dashboards", "dfe-hunt-runner"),
-    "dfe-transform-elastic": ("dfe-transform-e2e-elastic-cisco-ios",),
-    "dfe-transform-vector": ("dfe-transform-e2e-vector-filebeat",),
-    "dfe-transform-vrl": ("dfe-transform-e2e-vrl-filebeat",),
 }
 # The IMAGE_CONSUMERS a stack can start without their component, mapped to the
 # services whose `depends_on` starts them (hyperdx runs with the engine off).

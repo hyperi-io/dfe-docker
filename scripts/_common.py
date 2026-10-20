@@ -53,9 +53,8 @@ LOOPBACK_ORIGINS = frozenset(
 )
 
 # The profiles that are PROJECTIONS of the Kubernetes tiers of the same name.
-# Their app set comes from dfe-infra apps.yaml
-# `default_in` and every app in it idles until something configures it, so these
-# are also the tiers whose app config dfe-engine renders. Every other profile is
+# Their app set comes from dfe-infra apps.yaml `default_in`, so these are also
+# the tiers whose app config dfe-engine renders. Every other profile is
 # a hand-crafted data-plane shape that ships its own config and must keep it.
 PROJECTED_PROFILES = ("slim", "single")
 
@@ -87,9 +86,6 @@ SERVICE_TO_RENDERED_CONFIG_VAR = {
     "dfe-archiver": "DFE_ARCHIVER_CONFIG_FILE",
     "dfe-loader": "DFE_LOADER_CONFIG_FILE",
     "dfe-receiver": "DFE_RECEIVER_CONFIG_FILE",
-    "dfe-transform-elastic": "DFE_TRANSFORM_ELASTIC_CONFIG_FILE",
-    "dfe-transform-vector": "DFE_TRANSFORM_VECTOR_CONFIG_FILE",
-    "dfe-transform-vrl": "DFE_TRANSFORM_VRL_CONFIG_FILE",
 }
 
 # The suffix of the env file dfe-engine writes into env/ for one Compose service,
@@ -170,8 +166,8 @@ def _config_topics(*, path: Path) -> tuple[set[str], set[str], str]:
 
     A dfe-transform-vector config names one source instead of its topics, and the
     app derives ``<source>_land`` in and ``<source>_load`` out from it. Deriving
-    them here too is what keeps such a config inside the wiring and topic-init
-    checks rather than silently outside them. Named topics still win, exactly as
+    them here too is what keeps such a config inside the outage tests' consumer
+    counts rather than silently outside them. Named topics still win, exactly as
     they do in the app.
 
     A Kafka dfe-loader config that names neither topics nor a topic_regex reads the loader's own default pattern, for the same reason.
@@ -209,29 +205,6 @@ def _config_topics(*, path: Path) -> tuple[set[str], set[str], str]:
     ):
         regex = LOADER_DEFAULT_TOPIC_REGEX
     return subscribed, produced, regex
-
-
-def _config_enrichment_paths(*, path: Path) -> set[str]:
-    """Return the container paths a service config's `enrichment_tables` entries name.
-
-    The same deliberately small reader as `_config_topics`, for the same reason:
-    the callers run with no PyYAML. A config with no enrichment tables returns an
-    empty set.
-    """
-    paths: set[str] = set()
-    in_block = False
-    for raw in path.read_text(encoding="utf-8", errors="replace").splitlines():
-        line = raw.strip()
-        if not (line) or line.startswith("#"):
-            continue
-        if line == "enrichment_tables:":
-            in_block = True
-            continue
-        if in_block and not (raw.startswith((" ", "\t"))):
-            in_block = False
-        if in_block and (line.startswith("path: ") or line.startswith("- path: ")):
-            paths.add(line.split("path: ", 1)[1].strip().strip("\"'"))
-    return paths
 
 
 def _config_argument(*, args: typing.Sequence[str]) -> str | None:
@@ -411,15 +384,3 @@ def _required_compose_vars(*, files: tuple[Path, ...] = (COMPOSE_FILE,)) -> set[
     for path in files:
         found |= set(_REQUIRED_VAR_RE.findall(path.read_text(encoding="utf-8")))
     return found
-
-
-def _transform_topics(*, path: Path) -> tuple[set[str], set[str]]:
-    """Return the (subscribed, written) topics of one transform config.
-
-    A transform that subscribes to nothing is IDLE: it joins no consumer group and
-    produces nothing, so the sink it is still required to name is not a topic of
-    this deployment. The config reads the same either way, so the predicate is
-    shared rather than repeated at each caller.
-    """
-    subscribed, produced, _ = _config_topics(path=path)
-    return subscribed, produced if subscribed else set()

@@ -186,7 +186,7 @@ Node metrics are still not collected.
 
 ## What a passing self test proves
 
-`make post` makes up to eight claims, and each one the profile can make must hold:
+`make post` makes up to seven claims and each one the profile can make must hold:
 
 - **Ingest.** Three marked events posted at the profile's ingest edge come back
   as those exact rows in `dfe.main` inside 60s.
@@ -206,8 +206,6 @@ Node metrics are still not collected.
   matches and none of its near misses.
 - **Subscription**, where the tier has a bus. The loader is fetching at least one
   topic. It skips on the gRPC tiers.
-- **Idle apps.** Each app the tier starts with no work is serving and doing
-  nothing.
 - **Routing**, where the engine renders the tier's app config. A source created
   through the API reaches the running receiver, and a record matching its rule
   lands in a table of its own. The source is deleted afterwards and then that

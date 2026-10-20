@@ -794,9 +794,7 @@ services:
   # so it has nothing to mount beside its config -- no transforms directory and
   # no enrichment tables.
   #
-  # The single tier starts it idle: an empty `source.name` or `source.topics`
-  # parks it Ready with no consumer group, which is what lets a tier carry a
-  # transform ready for its first source rather than none until one is written.
+  # dfe-engine starts one instance per source, each extending this service.
   # ===========================================================================
 
   dfe-transform-elastic:
@@ -819,6 +817,7 @@ services:
       LOG_FORMAT: ${LOG_FORMAT:-text}
       OTEL_EXPORTER_OTLP_ENDPOINT: ${DFE_OTEL_EXPORTER_ENDPOINT:-}
       OTEL_SERVICE_NAME: dfe-transform-elastic
+      DFE_TRANSFORM_ELASTIC_SOURCE_BROKERS: *kafka-brokers
       DFE_TRANSFORM_ELASTIC_VERSION_CHECK__ENABLED: ${DFE_VERSION_CHECK_ENABLED:-true}
       DFE_TRANSFORM_ELASTIC_VERSION_CHECK__SEND_INSTANCE_ID: ${DFE_VERSION_CHECK_SEND_INSTANCE_ID:-true}
     depends_on:
@@ -828,60 +827,8 @@ services:
       dfe-engine:
         condition: service_healthy
         required: false
-    # The engine renders this app's config from the source it is given, on the
-    # tiers that run it; everywhere else the committed file below is what it
-    # reads. The path matches the image's own CMD.
-    command: ["--config", "${DFE_TRANSFORM_ELASTIC_CONFIG_FILE:-/etc/dfe-transform-elastic/config.yaml}"]
     volumes:
-      - ./config/${DFE_TRANSFORM_ELASTIC_CONFIG:-transform-elastic/kafka.yaml}:/etc/dfe-transform-elastic/config.yaml:ro
       - dfe-app-config:/etc/dfe/apps:ro
-    healthcheck:
-      test: ["CMD", "curl", "-sf", "http://localhost:9090/livez"]
-      interval: 10s
-      timeout: 3s
-      retries: 5
-
-  # ===========================================================================
-  # dfe-transform-e2e-elastic-cisco-ios
-  # A SECOND instance of the same image, for the cisco-ios source alone -- the
-  # per-source shape dfe-transform-e2e-vrl-filebeat carries on the VRL side. The
-  # receiver routes _source=cisco-ios to cisco-ios_land, this instance is the
-  # only consumer of it, and its output topic names the table dfe-loader writes.
-  #
-  # `source.name` in the config is the whole difference between two instances of
-  # this app: the transform is compiled in, so a second source adds a block like
-  # this one and nothing else.
-  #
-  # Named off the `<app>-<source>` shape because dfe-engine names a real
-  # per-source instance that way, and Compose merges two services sharing a name.
-  # ===========================================================================
-
-  dfe-transform-e2e-elastic-cisco-ios:
-    image: ${IMAGE_REGISTRY:-ghcr.io/hyperi-io}/dfe-transform-elastic:${DFE_TRANSFORM_ELASTIC_VERSION:?run 'make stack VERSION=X.Y.Z' to pin DFE_TRANSFORM_ELASTIC_VERSION}
-    container_name: ${DFE_CONTAINER_PREFIX:-}dfe-transform-e2e-elastic-cisco-ios
-    profiles: ["dfe"]
-    restart: unless-stopped
-    deploy: *limits-service
-    ports:
-      - ${DFE_BIND_HOST:-127.0.0.1}:${DFE_TRANSFORM_ELASTIC_CISCO_IOS_PROMETHEUS_PORT:-9089}:9090
-    env_file:
-      - path: env/transform-e2e-elastic-cisco-ios.env
-        required: false
-    environment:
-      LOG_LEVEL: ${LOG_LEVEL:-info}
-      LOG_FORMAT: ${LOG_FORMAT:-text}
-      OTEL_EXPORTER_OTLP_ENDPOINT: ${DFE_OTEL_EXPORTER_ENDPOINT:-}
-      OTEL_SERVICE_NAME: dfe-transform-e2e-elastic-cisco-ios
-      DFE_TRANSFORM_ELASTIC_VERSION_CHECK__ENABLED: ${DFE_VERSION_CHECK_ENABLED:-true}
-      DFE_TRANSFORM_ELASTIC_VERSION_CHECK__SEND_INSTANCE_ID: ${DFE_VERSION_CHECK_SEND_INSTANCE_ID:-true}
-    depends_on:
-      # No dlq-init here: this service does not mount dlq-spool. dfe-engine
-      # creates the topics it reads and writes, so it waits on that instead.
-      dfe-engine:
-        condition: service_healthy
-        required: false
-    volumes:
-      - ./config/${DFE_TRANSFORM_ELASTIC_CISCO_IOS_CONFIG:-transform-elastic/cisco-ios.yaml}:/etc/dfe-transform-elastic/config.yaml:ro
     healthcheck:
       test: ["CMD", "curl", "-sf", "http://localhost:9090/livez"]
       interval: 10s
@@ -895,6 +842,8 @@ services:
   # which the wrapper scrapes off the `prometheus_exporter` sink and merges into
   # the scalo registry (dfe-transform-vector#70). The sink still listens on 9598,
   # loopback-only inside the container, and is published nowhere.
+  #
+  # dfe-engine starts one instance per source, each extending this service.
   # ===========================================================================
 
   dfe-transform-vector:
@@ -918,29 +867,20 @@ services:
       LOG_FORMAT: ${LOG_FORMAT:-text}
       OTEL_EXPORTER_OTLP_ENDPOINT: ${DFE_OTEL_EXPORTER_ENDPOINT:-}
       OTEL_SERVICE_NAME: dfe-transform-vector
+      DFE_TRANSFORM_SINK_BROKERS: *kafka-brokers
+      DFE_TRANSFORM_SOURCE_BROKERS: *kafka-brokers
       # Vector and vrl share the prefix DFE_TRANSFORM, and elastic has its own.
       DFE_TRANSFORM_VERSION_CHECK__ENABLED: ${DFE_VERSION_CHECK_ENABLED:-true}
       DFE_TRANSFORM_VERSION_CHECK__SEND_INSTANCE_ID: ${DFE_VERSION_CHECK_SEND_INSTANCE_ID:-true}
     depends_on:
       # No dlq-init here: this service does not mount dlq-spool.
-      # The writer of the rendered config below, and the topic authority:
-      # dfe-engine creates the declared topic set at its own startup, so a
-      # transform started first subscribes to nothing. `required: false` for the
-      # tiers that run no engine.
+      # The writer of the rendered config and the topic authority: dfe-engine creates the declared topic set at its own startup, so a transform started first subscribes to nothing. `required: false` for the tiers that run no engine.
       dfe-engine:
         condition: service_healthy
         required: false
-    # The engine renders this app's config and its transform programs from the
-    # source it is given, on the tiers that run it; everywhere else the committed
-    # file below is what it reads.
-    command: ["--config", "${DFE_TRANSFORM_VECTOR_CONFIG_FILE:-/etc/dfe-transform-vector/config.yaml}"]
     volumes:
-      - ./config/${DFE_TRANSFORM_VECTOR_CONFIG:-transform-vector/kafka.yaml}:/etc/dfe-transform-vector/config.yaml:ro
-      # The bundled pipeline names its enrichment table by an absolute path
-      # (dfe-transform-vector pipelines/filebeat/README.md), so the table has to
-      # be mounted there whichever config the app reads. A pipeline that cannot
-      # open it fails `vector validate` with exit 78 and an empty stderr.
-      - ./config/transform-vrl/data:/etc/dfe-transform-vector/data:ro
+      # The bundled pipeline names its enrichment table by an absolute path (dfe-transform-vector pipelines/filebeat/README.md), so the table has to be mounted there. A pipeline that cannot open it fails `vector validate` with exit 78 and an empty stderr.
+      - ./resources/enrichment:/etc/dfe-transform-vector/data:ro
       - dfe-app-config:/etc/dfe/apps:ro
     healthcheck:
       test: ["CMD", "curl", "-sf", "http://localhost:9090/livez"]
@@ -949,63 +889,8 @@ services:
       retries: 5
 
   # ===========================================================================
-  # dfe-transform-e2e-vector-filebeat
-  # A SECOND instance of the same image, for the filebeat source alone -- the
-  # dfe-transform-vector half of the shape dfe-transform-e2e-vrl-filebeat carries
-  # below. The receiver routes _source=filebeat-vector to filebeat-vector_land,
-  # this instance is the only consumer of it, and its output topic names the
-  # table dfe-loader writes. The two transform apps stay on separate topics and
-  # separate tables, so one deployment can run both and compare them.
-  #
-  # The pipeline is pre-canned: the transforms directory holds the bundled
-  # filebeat program and the timezone table it looks up is mounted from the
-  # filebeat pipeline's own data directory, shared with the VRL instance rather
-  # than copied.
-  #
-  # Named off the `<app>-<source>` shape because dfe-engine names a real
-  # per-source instance that way, and Compose merges two services sharing a name.
-  # ===========================================================================
-
-  dfe-transform-e2e-vector-filebeat:
-    image: ${IMAGE_REGISTRY:-ghcr.io/hyperi-io}/dfe-transform-vector:${DFE_TRANSFORM_VECTOR_VERSION:?run 'make stack VERSION=X.Y.Z' to pin DFE_TRANSFORM_VECTOR_VERSION}
-    container_name: ${DFE_CONTAINER_PREFIX:-}dfe-transform-e2e-vector-filebeat
-    profiles: ["dfe"]
-    restart: unless-stopped
-    deploy: *limits-service
-    ports:
-      - ${DFE_BIND_HOST:-127.0.0.1}:${DFE_TRANSFORM_VECTOR_FILEBEAT_PROMETHEUS_PORT:-9098}:9090
-      - ${DFE_BIND_HOST:-127.0.0.1}:${DFE_TRANSFORM_VECTOR_FILEBEAT_API_PORT:-8687}:8686
-    # No custom env file: the engine writes one only for a service it renders.
-    env_file:
-      - path: env/transform-e2e-vector-filebeat.env
-        required: false
-    environment:
-      LOG_LEVEL: ${LOG_LEVEL:-info}
-      LOG_FORMAT: ${LOG_FORMAT:-text}
-      OTEL_EXPORTER_OTLP_ENDPOINT: ${DFE_OTEL_EXPORTER_ENDPOINT:-}
-      OTEL_SERVICE_NAME: dfe-transform-e2e-vector-filebeat
-      DFE_TRANSFORM_VERSION_CHECK__ENABLED: ${DFE_VERSION_CHECK_ENABLED:-true}
-      DFE_TRANSFORM_VERSION_CHECK__SEND_INSTANCE_ID: ${DFE_VERSION_CHECK_SEND_INSTANCE_ID:-true}
-    depends_on:
-      # No dlq-init here: this service does not mount dlq-spool.
-      # The topic authority: dfe-engine creates the declared topic set at its own
-      # startup, so a transform started first subscribes to nothing.
-      # `required: false` for the tiers that run no engine.
-      dfe-engine:
-        condition: service_healthy
-        required: false
-    volumes:
-      - ./config/${DFE_TRANSFORM_VECTOR_FILEBEAT_CONFIG:-transform-vector/filebeat.yaml}:/etc/dfe-transform-vector/config.yaml:ro
-      - ./resources/transforms/filebeat_transforms:/etc/dfe-transform-vector/transforms:ro
-      - ./config/transform-vrl/data:/etc/dfe-transform-vector/data:ro
-    healthcheck:
-      test: ["CMD", "curl", "-sf", "http://localhost:9090/livez"]
-      interval: 10s
-      timeout: 3s
-      retries: 5
-
-  # ===========================================================================
   # dfe-transform-vrl
+  # dfe-engine starts one instance per source, each extending this service. It uploads the enrichment tables its programs read.
   # ===========================================================================
 
   dfe-transform-vrl:
@@ -1028,76 +913,18 @@ services:
       LOG_FORMAT: ${LOG_FORMAT:-text}
       OTEL_EXPORTER_OTLP_ENDPOINT: ${DFE_OTEL_EXPORTER_ENDPOINT:-}
       OTEL_SERVICE_NAME: dfe-transform-vrl
+      DFE_TRANSFORM_SINK_BROKERS: *kafka-brokers
+      DFE_TRANSFORM_SOURCE_BROKERS: *kafka-brokers
       DFE_TRANSFORM_VERSION_CHECK__ENABLED: ${DFE_VERSION_CHECK_ENABLED:-true}
       DFE_TRANSFORM_VERSION_CHECK__SEND_INSTANCE_ID: ${DFE_VERSION_CHECK_SEND_INSTANCE_ID:-true}
     depends_on:
       # No dlq-init here: this service does not mount dlq-spool.
-      # The writer of the rendered config below, so it must have written before
-      # this container reads. `required: false` for the tiers that run no engine.
+      # The writer of the rendered config, so it must have written before this container reads. `required: false` for the tiers that run no engine.
       dfe-engine:
         condition: service_healthy
         required: false
-    # The engine renders this app's config, its programs and its enrichment
-    # tables from the source it is given, on the tiers that run it; everywhere
-    # else the committed files below are what it reads.
-    command: ["--config", "${DFE_TRANSFORM_VRL_CONFIG_FILE:-/etc/dfe-transform-vrl/config.yaml}"]
     volumes:
-      - ./config/${DFE_TRANSFORM_VRL_CONFIG:-transform-vrl/kafka.yaml}:/etc/dfe-transform-vrl/config.yaml:ro
-      - ./config/transform-vrl/transforms:/etc/dfe-transform-vrl/transforms:ro
       - dfe-app-config:/etc/dfe/apps:ro
-    healthcheck:
-      test: ["CMD", "curl", "-sf", "http://localhost:9090/livez"]
-      interval: 10s
-      timeout: 3s
-      retries: 5
-
-  # ===========================================================================
-  # dfe-transform-e2e-vrl-filebeat
-  # A SECOND instance of the same image, for the filebeat source alone. The
-  # Kubernetes tier deploys one transform per source and this is that shape on
-  # one box: the receiver routes _source=filebeat to filebeat_land, this
-  # instance is the only consumer of it, and its output topic names the table
-  # dfe-loader writes. Adding another source means another block like this
-  # one, its own config and its own program directory -- nothing here is shared
-  # with the passthrough instance except the image.
-  #
-  # Named off the `<app>-<source>` shape because dfe-engine names a real
-  # per-source instance that way, and Compose merges two services sharing a name.
-  # ===========================================================================
-
-  dfe-transform-e2e-vrl-filebeat:
-    image: ${IMAGE_REGISTRY:-ghcr.io/hyperi-io}/dfe-transform-vrl:${DFE_TRANSFORM_VRL_VERSION:?run 'make stack VERSION=X.Y.Z' to pin DFE_TRANSFORM_VRL_VERSION}
-    container_name: ${DFE_CONTAINER_PREFIX:-}dfe-transform-e2e-vrl-filebeat
-    profiles: ["dfe"]
-    restart: unless-stopped
-    deploy: *limits-service
-    ports:
-      - ${DFE_BIND_HOST:-127.0.0.1}:${DFE_TRANSFORM_VRL_FILEBEAT_PROMETHEUS_PORT:-9097}:9090
-    # An env file name is not a service name, so this keeps its and an operator's overrides still apply.
-    # No custom env file: the engine writes one only for a service it renders.
-    env_file:
-      - path: env/transform-vrl-filebeat.env
-        required: false
-    environment:
-      LOG_LEVEL: ${LOG_LEVEL:-info}
-      LOG_FORMAT: ${LOG_FORMAT:-text}
-      OTEL_EXPORTER_OTLP_ENDPOINT: ${DFE_OTEL_EXPORTER_ENDPOINT:-}
-      OTEL_SERVICE_NAME: dfe-transform-e2e-vrl-filebeat
-      DFE_TRANSFORM_VERSION_CHECK__ENABLED: ${DFE_VERSION_CHECK_ENABLED:-true}
-      DFE_TRANSFORM_VERSION_CHECK__SEND_INSTANCE_ID: ${DFE_VERSION_CHECK_SEND_INSTANCE_ID:-true}
-    depends_on:
-      # No dlq-init here: this service does not mount dlq-spool.
-      # The topic authority: dfe-engine creates the declared topic set at its own
-      # startup, so a transform started first subscribes to nothing.
-      # `required: false` for the tiers that run no engine.
-      dfe-engine:
-        condition: service_healthy
-        required: false
-    volumes:
-      - ./config/${DFE_TRANSFORM_VRL_FILEBEAT_CONFIG:-transform-vrl/filebeat.yaml}:/etc/dfe-transform-vrl/config.yaml:ro
-      - ./config/transform-vrl/transforms-filebeat:/etc/dfe-transform-vrl/transforms:ro
-      # Enrichment tables mount beside the program directory, never inside it.
-      - ./config/transform-vrl/data:/etc/dfe-transform-vrl/data:ro
     healthcheck:
       test: ["CMD", "curl", "-sf", "http://localhost:9090/livez"]
       interval: 10s
@@ -1269,9 +1096,6 @@ services:
       - ./config/${DFE_ARCHIVER_CONFIG:-archiver/kafka.yaml}:/app/app-config-base/dfe-archiver.yaml:ro
       - ./config/${DFE_LOADER_CONFIG:-loader/kafka.yaml}:/app/app-config-base/dfe-loader.yaml:ro
       - ./config/${DFE_RECEIVER_CONFIG:-receiver/kafka.yaml}:/app/app-config-base/dfe-receiver.yaml:ro
-      - ./config/${DFE_TRANSFORM_ELASTIC_CONFIG:-transform-elastic/kafka.yaml}:/app/app-config-base/dfe-transform-elastic.yaml:ro
-      - ./config/${DFE_TRANSFORM_VRL_CONFIG:-transform-vrl/kafka.yaml}:/app/app-config-base/dfe-transform-vrl.yaml:ro
-      - ./config/${DFE_TRANSFORM_VECTOR_CONFIG:-transform-vector/kafka.yaml}:/app/app-config-base/dfe-transform-vector.yaml:ro
     depends_on:
       clickhouse:
         condition: service_healthy

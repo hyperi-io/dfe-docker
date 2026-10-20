@@ -279,12 +279,12 @@ def test_a_hand_crafted_profile_hands_the_engine_no_contract_directory(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """Those tiers ship the config they exist to exercise, contract included."""
-    values = _resolved("kafka-filebeat", tmp_path, monkeypatch)
+    values = _resolved("kafka-receiver", tmp_path, monkeypatch)
 
     assert values[resolve_profile.ENGINE_CONTRACT_DIR_VAR] == ""
 
 
-@pytest.mark.parametrize("profile", [*PROJECTED_PROFILES, "kafka-filebeat"])
+@pytest.mark.parametrize("profile", [*PROJECTED_PROFILES, "kafka-receiver"])
 def test_the_contract_key_is_written_whatever_the_answer(
     profile: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

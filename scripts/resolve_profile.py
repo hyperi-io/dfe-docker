@@ -221,19 +221,6 @@ SERVICE_TO_CONFIG_VAR = {
     "dfe-archiver": "DFE_ARCHIVER_CONFIG",
     "dfe-loader": "DFE_LOADER_CONFIG",
     "dfe-receiver": "DFE_RECEIVER_CONFIG",
-    "dfe-transform-e2e-elastic-cisco-ios": "DFE_TRANSFORM_ELASTIC_CISCO_IOS_CONFIG",
-    "dfe-transform-e2e-vector-filebeat": "DFE_TRANSFORM_VECTOR_FILEBEAT_CONFIG",
-    "dfe-transform-e2e-vrl-filebeat": "DFE_TRANSFORM_VRL_FILEBEAT_CONFIG",
-    "dfe-transform-elastic": "DFE_TRANSFORM_ELASTIC_CONFIG",
-    "dfe-transform-vector": "DFE_TRANSFORM_VECTOR_CONFIG",
-    "dfe-transform-vrl": "DFE_TRANSFORM_VRL_CONFIG",
-}
-# The base the engine renders a per-source transform's instances over, on a grpc
-# tier that runs no resident copy of the app: compose defaults these variables to
-# the bus config, which would hand every instance a broker the tier does not run.
-DIRECT_INSTANCE_BASE = {
-    "dfe-transform-vector": "transform-vector/grpc.yaml",
-    "dfe-transform-vrl": "transform-vrl/grpc.yaml",
 }
 
 # The engine is the Compose stand-in for the ConfigMap an app's chart renders on
@@ -241,8 +228,7 @@ DIRECT_INSTANCE_BASE = {
 # above and writes the app's own config file into a volume the container mounts.
 # It runs on the PROJECTED tiers only -- the hand-crafted profiles ship a config
 # that says exactly what they exist to exercise, and a compile from the sources
-# would overwrite it. A second instance of one app (the -filebeat services) has
-# no overlay of its own, so it keeps its committed file either way.
+# would overwrite it.
 ENGINE_APP_CONFIG_DIR_VAR = "DFE_ENGINE_APP_CONFIG_DIR"
 ENGINE_APP_CONFIG_DIR = "/app/app-config"
 ENGINE_APP_CONFIG_BASE_DIR_VAR = "DFE_ENGINE_APP_CONFIG_BASE_DIR"
@@ -263,19 +249,12 @@ ENGINE_CONTRACT_SUBDIR = "contract"
 # volume, handed to the engine on the same tiers as the contract directory.
 ENGINE_CATALOGUE_FILE_VAR = "DFE_ENGINE_CATALOGUE_FILE"
 ENGINE_CATALOGUE_FILE = "catalogue/sources.yaml"
-# A per-source transform instance is a service of its own here, because a
-# profile has to be able to run one without the other.
-# dfe-fetcher is absent: a profile runs it once per source with `fetcher_enabled: true`, never as a service of its own.
+# The per-source apps are absent: dfe-engine starts one instance per source, never a profile.
+# A profile runs dfe-fetcher's with `fetcher_enabled: true`.
 SERVICES = [
     "dfe-archiver",
     "dfe-loader",
     "dfe-receiver",
-    "dfe-transform-e2e-elastic-cisco-ios",
-    "dfe-transform-e2e-vector-filebeat",
-    "dfe-transform-e2e-vrl-filebeat",
-    "dfe-transform-elastic",
-    "dfe-transform-vector",
-    "dfe-transform-vrl",
 ]
 
 TRANSPORT_TYPES = ["grpc", "kafka"]
@@ -740,11 +719,6 @@ def main(argv: Sequence[str] = ()) -> int:
         for service_name, service_config in services.items():
             var_name = SERVICE_TO_CONFIG_VAR[service_name]
             lines.append(f"export {var_name} := {service_config['config_path']}")
-        if transport == "grpc":
-            for service_name, base in DIRECT_INSTANCE_BASE.items():
-                if service_name not in services:
-                    var_name = SERVICE_TO_CONFIG_VAR[service_name]
-                    lines.append(f"export {var_name} := {base}")
 
         # Emitted unconditionally, empty when the engine is not the writer here:
         # a line that vanishes with its own value would make the included file

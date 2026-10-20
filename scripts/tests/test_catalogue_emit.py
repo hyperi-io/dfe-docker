@@ -247,12 +247,12 @@ def test_a_projected_tier_hands_the_engine_the_catalogue(
 def test_a_hand_crafted_profile_hands_the_engine_no_catalogue(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    values = _resolved("kafka-filebeat", tmp_path, monkeypatch)
+    values = _resolved("kafka-receiver", tmp_path, monkeypatch)
 
     assert values[resolve_profile.ENGINE_CATALOGUE_FILE_VAR] == ""
 
 
-@pytest.mark.parametrize("profile", [*PROJECTED_PROFILES, "kafka-filebeat"])
+@pytest.mark.parametrize("profile", [*PROJECTED_PROFILES, "kafka-receiver"])
 def test_the_catalogue_key_is_written_whatever_the_answer(
     profile: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

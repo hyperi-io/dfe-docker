@@ -9,8 +9,7 @@
 """Which tiers hand their app config to dfe-engine, and which keep their own.
 
 The projected tiers mirror the Kubernetes ones: their app set comes from
-apps.yaml and every app in it idles until something configures it, so the engine
-renders their config the way a chart renders a ConfigMap. Every other profile is
+apps.yaml, so the engine renders their config the way a chart renders a ConfigMap. Every other profile is
 a hand-crafted data-plane shape that ships the config it exists to exercise, and
 a compile from the sources would overwrite it -- which is what these assert.
 
@@ -27,7 +26,7 @@ from pathlib import Path
 import pytest
 
 import resolve_profile
-from _common import COMPOSE_FILE, CONFIG_DIR, PROJECTED_PROFILES
+from _common import COMPOSE_FILE, PROJECTED_PROFILES
 
 
 def _compose_service_block(service: str) -> str:
@@ -104,73 +103,24 @@ def test_a_projected_tier_has_the_engine_render_its_app_config(
 def test_a_hand_crafted_profile_keeps_its_committed_config(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    values = _resolved("kafka-filebeat", tmp_path, monkeypatch)
+    values = _resolved("kafka-receiver", tmp_path, monkeypatch)
 
     assert values["DFE_ENGINE_APP_CONFIG_DIR"] == ""
     assert values["DFE_RECEIVER_CONFIG_FILE"] == ""
-    assert values["DFE_TRANSFORM_VRL_CONFIG"] == "transform-vrl/main.yaml"
+    assert values["DFE_RECEIVER_CONFIG"] == "receiver/kafka.yaml"
 
 
 def test_an_app_the_tier_does_not_run_is_given_no_rendered_path(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    # The slim tier runs no transform, so a path into a directory the engine
+    # The slim tier runs no archiver, so a path into a directory the engine
     # renders nothing into would point the container at a file that never exists.
     values = _resolved("slim", tmp_path, monkeypatch)
 
-    assert values["DFE_TRANSFORM_VRL_CONFIG_FILE"] == ""
+    assert values["DFE_ARCHIVER_CONFIG_FILE"] == ""
 
 
-@pytest.mark.parametrize(
-    "var,base",
-    [
-        ("DFE_TRANSFORM_VRL_CONFIG", "transform-vrl/grpc.yaml"),
-        ("DFE_TRANSFORM_VECTOR_CONFIG", "transform-vector/grpc.yaml"),
-    ],
-)
-def test_the_slim_tier_bases_a_per_source_transform_on_the_direct_transport(
-    var: str, base: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    # The engine merges each instance's overlay over this base, so a broker left
-    # in it reaches the rendered config of a tier that runs no broker.
-    values = _resolved("slim", tmp_path, monkeypatch)
-
-    assert values[var] == base
-    text = (CONFIG_DIR / base).read_text(encoding="utf-8")
-    assert "kafka" not in text
-    assert "transport: direct" in text
-
-
-def test_a_kafka_tier_keeps_the_transform_base_it_names(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    values = _resolved("single", tmp_path, monkeypatch)
-
-    assert values["DFE_TRANSFORM_VRL_CONFIG"] == "transform-vrl/kafka.yaml"
-    assert "DFE_TRANSFORM_VECTOR_CONFIG" not in values
-
-
-def test_a_direct_profile_running_the_transform_keeps_its_own_config(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    values = _resolved("grpc-receiver-transform-vrl", tmp_path, monkeypatch)
-
-    assert values["DFE_TRANSFORM_VRL_CONFIG"] == "transform-vrl/grpc.yaml"
-
-
-def test_the_single_tier_hands_both_transforms_the_engine_rendered_config(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    # Both transforms are seeded idle on this tier and the engine renders each
-    # one's config, so each reads the rendered path rather than its committed file.
-    values = _resolved("single", tmp_path, monkeypatch)
-
-    for app in ("dfe-transform-elastic", "dfe-transform-vrl"):
-        var = f"{app.upper().replace('-', '_')}_CONFIG_FILE"
-        assert values[var] == f"{resolve_profile.APP_CONFIG_MOUNT}/{app}/config.yaml"
-
-
-@pytest.mark.parametrize("profile", [*PROJECTED_PROFILES, "kafka-filebeat"])
+@pytest.mark.parametrize("profile", [*PROJECTED_PROFILES, "kafka-receiver"])
 def test_every_app_config_key_is_written_whatever_the_answer(
     profile: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

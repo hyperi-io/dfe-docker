@@ -400,16 +400,10 @@ def test_a_committed_service_named_like_a_generated_instance_fails():
     assert "'filebeat'" in failures[0]
 
 
-def test_the_apps_and_their_e2e_instances_take_no_instance_name():
+def test_the_apps_themselves_take_no_instance_name():
     services = {
         name: {}
-        for name in (
-            "dfe-fetcher",
-            "dfe-loader",
-            "dfe-transform-e2e-vrl-filebeat",
-            "dfe-transform-vrl",
-            "kafka-ui",
-        )
+        for name in ("dfe-fetcher", "dfe-loader", "dfe-transform-vrl", "kafka-ui")
     }
 
     assert check_compose._instance_name_collisions(services=services) == []
@@ -498,14 +492,10 @@ def test_an_instance_with_no_file_of_its_own_fails():
 
 
 def test_a_service_the_engine_does_not_render_reads_no_custom_file():
-    """The engine writes nothing for a static e2e instance, under any name."""
-    for name in ("transform-vrl-filebeat.custom.env", "dfe-transform-vrl.custom.env"):
+    """The engine writes nothing for a service it does not render, under any name."""
+    for name in ("ui.custom.env", "dfe-ui.custom.env"):
         failures = check_compose._custom_env_mismatches(
-            services={
-                "dfe-transform-e2e-vrl-filebeat": _reads(
-                    "transform-vrl-filebeat.env", name
-                )
-            }
+            services={"dfe-ui": _reads("ui.env", name)}
         )
 
         assert len(failures) == 1
