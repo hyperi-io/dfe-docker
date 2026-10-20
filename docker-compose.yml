@@ -1001,7 +1001,7 @@ services:
         required: false
     volumes:
       - ./config/${DFE_TRANSFORM_VECTOR_FILEBEAT_CONFIG:-transform-vector/filebeat.yaml}:/etc/dfe-transform-vector/config.yaml:ro
-      - ./config/transform-vector/transforms-filebeat:/etc/dfe-transform-vector/transforms:ro
+      - ./resources/transforms/filebeat_transforms:/etc/dfe-transform-vector/transforms:ro
       - ./config/transform-vrl/data:/etc/dfe-transform-vector/data:ro
     healthcheck:
       test: ["CMD", "curl", "-sf", "http://localhost:9090/livez"]
