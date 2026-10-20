@@ -1,5 +1,5 @@
 <clickhouse>
-  <!-- Replaces the image's default of trace level and 10 x 1000M per file. -->
+  <!-- The image logs at trace level and keeps 10 files of 1000M -->
   <logger>
     <count>3</count>
     <level>information</level>

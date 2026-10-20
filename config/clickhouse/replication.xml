@@ -1,39 +1,36 @@
 <clickhouse>
-  <!-- A cluster of one for dfe-engine's Replicated DDL. Mirrors dfe-infra's single-node chart. -->
+  <!-- Makes this server a one-node cluster with its own Keeper, which dfe-engine's Replicated DDL needs -->
   <keeper_server>
-    <tcp_port>9181</tcp_port>
-    <server_id>1</server_id>
-    <!-- In clickhouse-data with the tables, so the two are never lost apart. -->
-    <log_storage_path>/var/lib/clickhouse/coordination/log</log_storage_path>
-    <snapshot_storage_path>/var/lib/clickhouse/coordination/snapshots</snapshot_storage_path>
-    <!-- listen.xml keeps 9181 on loopback. Even there, only the read-only words answer. -->
+    <!-- Only the four-letter commands that read state -->
     <four_letter_word_white_list>ruok,isro,mntr,srvr,stat</four_letter_word_white_list>
+    <!-- In the data volume, so Keeper's log stays with the tables -->
+    <log_storage_path>/var/lib/clickhouse/coordination/log</log_storage_path>
     <raft_configuration>
-      <server><id>1</id><hostname>127.0.0.1</hostname><port>9234</port></server>
+      <server><hostname>127.0.0.1</hostname><id>1</id><port>9234</port></server>
     </raft_configuration>
+    <server_id>1</server_id>
+    <tcp_port>9181</tcp_port>
   </keeper_server>
-  <zookeeper>
-    <!-- 127.0.0.1, not localhost: Keeper binds IPv4 loopback, and localhost can resolve to ::1 alone. -->
-    <node><host>127.0.0.1</host><port>9181</port></node>
-    <!-- Every znode is created under it. Hidden, or preprocessed_configs holds it in clear. -->
-    <identity from_env="DFE_KEEPER_IDENTITY" hide_in_preprocessed="1"/>
-  </zookeeper>
   <macros>
     <cluster>dfe</cluster>
-    <shard>01</shard>
     <replica>r1</replica>
+    <shard>01</shard>
   </macros>
   <remote_servers>
     <dfe>
       <shard>
-        <internal_replication>true</internal_replication>
         <replica><host>127.0.0.1</host><port>9000</port></replica>
       </shard>
     </dfe>
   </remote_servers>
-  <!-- Replaced, not appended: an appended replicated sits behind local_directory, which takes every role the engine creates. -->
+  <!-- Stores the users and roles dfe-engine creates in Keeper -->
   <user_directories replace="replace">
     <users_xml><path>users.xml</path></users_xml>
     <replicated><zookeeper_path>/clickhouse/access/</zookeeper_path></replicated>
   </user_directories>
+  <zookeeper>
+    <!-- The login every znode is created under, kept out of preprocessed_configs -->
+    <identity from_env="DFE_KEEPER_IDENTITY" hide_in_preprocessed="1"/>
+    <node><host>127.0.0.1</host><port>9181</port></node>
+  </zookeeper>
 </clickhouse>

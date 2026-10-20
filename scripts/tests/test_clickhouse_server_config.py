@@ -215,20 +215,17 @@ def test_keeper_runs_embedded_and_keeps_its_data_with_the_tables() -> None:
     assert _text(root, "keeper_server/server_id") == "1"
     servers = root.findall("keeper_server/raft_configuration/server")
     assert [_text(server, "id") for server in servers] == ["1"]
-    # Lose one without the other and every replicated table goes read-only.
-    for path in ("log_storage_path", "snapshot_storage_path"):
-        assert _text(root, f"keeper_server/{path}").startswith(_DATA_DIR), path
+    # Snapshots default to the data dir. Lose the log without them and every replicated table goes read-only.
+    assert _text(root, "keeper_server/log_storage_path").startswith(_DATA_DIR)
+    assert root.find("keeper_server/snapshot_storage_path") is None
 
 
 def test_the_server_reaches_its_own_keeper_under_a_generated_identity() -> None:
     root = _root(path=_REPLICATION_FILE)
     nodes = root.findall("zookeeper/node")
-    bound = {
-        (e.text or "").strip() for e in _root(path=_LISTEN_FILE).findall("listen_host")
-    }
 
-    # A name such as localhost can resolve to ::1 alone, where Keeper does not listen.
-    assert len(nodes) == 1 and _text(nodes[0], "host") in bound, bound
+    # Keeper's client port binds the image's loopback listen_host defaults.
+    assert len(nodes) == 1 and _text(nodes[0], "host") in _LOOPBACK
     assert _text(nodes[0], "port") == _text(root, "keeper_server/tcp_port")
     identity = root.find("zookeeper/identity")
     assert identity is not None, "Keeper's znodes would be open to every container"
@@ -286,10 +283,9 @@ def test_sql_users_and_roles_land_in_keeper() -> None:
 
 def test_keeper_raft_and_interserver_listen_on_loopback_only() -> None:
     root = _root(path=_LISTEN_FILE)
-    hosts = {(e.text or "").strip() for e in root.findall("listen_host")}
 
-    # Keeper's client port binds listen_host and has no host setting of its own.
-    assert hosts and hosts <= _LOOPBACK, hosts
+    # Keeper's client port binds listen_host, which the image's config.xml sets to ::1 and 127.0.0.1.
+    assert root.find("listen_host") is None
     assert _text(root, "interserver_listen_host") in _LOOPBACK
 
 
