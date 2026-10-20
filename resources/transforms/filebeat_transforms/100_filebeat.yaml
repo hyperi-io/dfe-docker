@@ -1,5 +1,5 @@
 # Project:   dfe-docker
-# File:      config/transform-vector/transforms-filebeat/100_filebeat.yaml
+# File:      resources/transforms/filebeat_transforms/100_filebeat.yaml
 # Purpose:   Vector transform file for the filebeat source - the bundled VRL as a remap
 # Language:  YAML
 #
