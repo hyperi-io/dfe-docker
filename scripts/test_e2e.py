@@ -921,42 +921,7 @@ def stack_up(mode, test, services):
             compose_files += ["-f", extra.strip()]
     compose_files += ["-f", override_file]
 
-    # Schema authority: dfe-engine provisions dfe.main and registers the schemas
-    # the loader pre-warms on startup. Bring it up with ClickHouse and gate on its
-    # health BEFORE the DFE services, so the loader caches the schema instead of
-    # holding every message pending-schema and dead-lettering it.
-    LOGGER.info("Preparing schema authority (ClickHouse + dfe-engine)...")
-    authority_up = (
-        ["docker", "compose"]
-        + compose_files
-        + [
-            "--profile",
-            "clickhouse",
-            "--profile",
-            SCHEMA_AUTHORITY_PROFILE,
-            "up",
-            "-d",
-            "clickhouse",
-            SCHEMA_AUTHORITY_SERVICE,
-        ]
-    )
-    authority_result = run_cmd(authority_up, capture=not (LOG_LEVEL == "DEBUG"))
-    if authority_result.returncode != 0:
-        filtered = filter_build_output(
-            authority_result.stderr or authority_result.stdout or ""
-        )
-        LOGGER.error(
-            f"Schema authority failed to start: {filtered if (filtered) else (authority_result.stderr or authority_result.stdout)}"
-        )
-        return None
-    if not (
-        wait_for_service(
-            "dfe-engine", DFE_ENGINE_HEALTH_URL, max_attempts=ENGINE_READY_ATTEMPTS
-        )
-    ):
-        return None
-
-    # Kafka profiles: bring up infra first, create topics, then start the full profile.
+    # Kafka first: dfe-engine on Kafka stays unready until the broker holds its dead-letter topics.
     # The loader fails on startup if no matching topics exist on the broker.
     has_kafka = KAFKA_BACKEND_PROFILE in test.compose_profiles
     if has_kafka and test.expected_topics:
@@ -1018,6 +983,38 @@ def stack_up(mode, test, services):
         clean_topics(test.expected_topics)
         if not (create_topics(test.expected_topics)):
             return None
+
+    # dfe-engine is healthy before the DFE services, or the loader dead-letters records it has no schema for yet
+    LOGGER.info("Preparing schema authority (ClickHouse + dfe-engine)...")
+    authority_up = (
+        ["docker", "compose"]
+        + compose_files
+        + [
+            "--profile",
+            "clickhouse",
+            "--profile",
+            SCHEMA_AUTHORITY_PROFILE,
+            "up",
+            "-d",
+            "clickhouse",
+            SCHEMA_AUTHORITY_SERVICE,
+        ]
+    )
+    authority_result = run_cmd(authority_up, capture=not (LOG_LEVEL == "DEBUG"))
+    if authority_result.returncode != 0:
+        filtered = filter_build_output(
+            authority_result.stderr or authority_result.stdout or ""
+        )
+        LOGGER.error(
+            f"Schema authority failed to start: {filtered if (filtered) else (authority_result.stderr or authority_result.stdout)}"
+        )
+        return None
+    if not (
+        wait_for_service(
+            "dfe-engine", DFE_ENGINE_HEALTH_URL, max_attempts=ENGINE_READY_ATTEMPTS
+        )
+    ):
+        return None
 
     base_cmd = ["docker", "compose"] + compose_files + compose_profile_flags(test=test)
     up_args = base_cmd + ["up", "-d"] + sorted(set(services) | set(test.extra_services))
@@ -4122,6 +4119,11 @@ def run_test(ctx, mode, test, persistent_services):
             sources=(test.outage.get("sources")) or ({}),
             table=test.table,
         )
+
+    # The apps reach Kafka through the compose anchor, which has to follow this test's transport rather than make's
+    os.environ[resolve_profile.ENGINE_BROKER_ENV_VAR] = (
+        resolve_profile.IN_STACK_BROKER if (test.transport == "kafka") else ""
+    )
 
     # Start the stack (Kafka profiles: infra first, create topics, then full stack)
     files = stack_up(mode=mode, services=effective_services, test=test)
