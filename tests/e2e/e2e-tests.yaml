@@ -215,6 +215,9 @@ tests:
   # The broker down under load with every Kafka app consuming, each transform included: the e2evector and e2eelastic records keep the vector and elastic instances' own topics moving, so their groups have to catch up too
   - name: kafka-outage
     profile: single-kafka
+    # The archiver commits only when it rolls a file, every 300s by default
+    config_overrides:
+      dfe-archiver: tests/e2e/configs/archiver-short-roll.yaml
     table: e2evrl
     sources:
       - *e2evrl
