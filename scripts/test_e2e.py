@@ -1202,22 +1202,24 @@ def restore_profiles(restore):
 # - A container keeps the hash it was created with after its .env or compose
 #   files move on, and any `up` recreates it on theirs, so the end of the run is
 #   held to these
-# - A service whose files cannot be read is held to its container instead
+# - Files that do not resolve end the run before anything stops
 # - Only the services the files still define, the ones put_back starts
 # ------------------------------------------------------------------------------
 def expected_hashes(found):
     expected = {}
     for found_restore in _stack_state.restores(found, exists=os.path.exists):
         restore, profiles, problem = restore_profiles(found_restore)
-        if profiles is not None:
-            hashed = restore_compose(restore, restore.hashes(profiles))
-            if hashed.returncode == 0:
-                expected |= _stack_state.config_hashes(hashed.stdout, restore.services)
-                continue
-            problem = (hashed.stderr or "").strip()
+        if profiles is None:
+            error(
+                msg=f"compose cannot resolve the files {', '.join(restore.services)} came from, so nothing was stopped. Run the suite with the make flags the stack was started with, such as LIVE_UI=1: {problem}"
+            )
+        hashed = restore_compose(restore, restore.hashes(profiles))
+        if hashed.returncode == 0:
+            expected |= _stack_state.config_hashes(hashed.stdout, restore.services)
+            continue
         LOGGER.warning(
             f"Could not read the config {', '.join(restore.services)} get from "
-            f"their files, so each is held to its running container: {problem}"
+            f"their files, so each is held to its running container: {(hashed.stderr or '').strip()}"
         )
     stale = _stack_state.stale(found, expected)
     if stale:
