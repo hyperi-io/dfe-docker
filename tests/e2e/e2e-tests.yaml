@@ -56,6 +56,8 @@
 global:
   data_file: tests/e2e/data/events.jsonl
   mode: ci
+  # Data-path tests skip the self-monitoring collector. A test that asserts on it sets otel: true
+  otel: false
   # Only ClickHouse persists between tests (schema + accumulated rows; the
   # count-delta verify baselines per test). Kafka, kafbat and the DFE services
   # recreate fresh each test so a test always runs its own config and a stale
@@ -65,23 +67,24 @@ global:
 
 tests:
   - name: simple-receiver-to-loader-grpc
-    profile: grpc-receiver
+    profile: slim-grpc
 
   - name: simple-receiver-to-loader-kafka
-    profile: kafka-receiver
+    profile: slim-kafka
     expected_topics:
       - main_land
       - simple_receiver_to_loader_kafka_land
 
   - name: simple-receiver-to-loader-kafka-with-archiver
-    profile: kafka-receiver-archiver
+    profile: single-kafka
     expected_topics:
       - main_land
       - simple_receiver_to_loader_kafka_with_archiver_land
 
   # The complete single-node stack: receiver, loader and archiver over Kafka, with the engine, UI and proxy in front. The HTTP checks assert the single-origin contract dfe-proxy exists for: UI and engine API on ONE origin. DFE_UI_URL is the console URL the suite resolves: localhost on DFE_UI_PORT or https at DFE_EXTERNAL_ORIGIN's host under console TLS.
   - name: complete-single-node-stack
-    profile: single
+    profile: single-kafka
+    otel: true
     expected_topics:
       - main_land
       - complete_single_node_stack_land
@@ -98,7 +101,7 @@ tests:
   # Failed root logins are the detection; a failure for another user, a root
   # success and an unrelated API event are the near misses it must leave alone.
   - name: rules-and-hunts
-    profile: grpc-receiver
+    profile: slim-grpc
     detection:
       where: "toString(_json.event_type) = 'login_failure' AND toString(_json.user_name) = 'root'"
       matching: tests/e2e/data/detection-matching.jsonl
@@ -108,7 +111,7 @@ tests:
   # panel narrowed to root, Create Rule, then a hunt added and triggered from the
   # console's form. Each filter alone lets a near miss through.
   - name: search-rule-hunt
-    profile: grpc-receiver
+    profile: slim-grpc
     detection:
       matching: tests/e2e/data/detection-matching.jsonl
       other: tests/e2e/data/detection-other.jsonl
@@ -121,7 +124,7 @@ tests:
   # ClickHouse down under load on the core data path: dfe-loader has to hold or
   # refuse what it cannot write, and deliver it once ClickHouse is back.
   - name: clickhouse-outage
-    profile: grpc-receiver
+    profile: slim-grpc
     outage:
       service: clickhouse
       seconds: 60
@@ -129,7 +132,7 @@ tests:
   # A direct gRPC destination pulled from under its sender and returned. Every
   # app upstream of the stopped one has to hold or refuse, never exit.
   - name: loader-outage-grpc
-    profile: grpc-receiver
+    profile: slim-grpc
     outage:
       service: dfe-loader
       seconds: 60
@@ -139,7 +142,7 @@ tests:
   # land, on the Kafka path and on the direct gRPC path. The load is dense enough
   # that the kill lands with records in flight; a kill that catches none fails.
   - name: loader-kill-kafka
-    profile: kafka-receiver
+    profile: slim-kafka
     expected_topics:
       - main_land
     outage:
@@ -150,7 +153,7 @@ tests:
       interval: 0.01
 
   - name: receiver-kill-kafka
-    profile: kafka-receiver
+    profile: slim-kafka
     expected_topics:
       - main_land
     outage:
@@ -161,7 +164,7 @@ tests:
       interval: 0.01
 
   - name: loader-kill-grpc
-    profile: grpc-receiver
+    profile: slim-grpc
     outage:
       service: dfe-loader
       method: kill

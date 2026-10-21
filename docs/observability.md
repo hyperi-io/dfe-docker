@@ -99,13 +99,13 @@ working on Kubernetes.
 nothing that does. Enabling push does not disable it: a Prometheus estate and a
 HyperDX estate are both served.
 
-## Turning self-monitoring on
+## Turning self-monitoring on and off
 
-Declare `otel: true` on a profile (`single` does) or set `DFE_OTEL_ENABLED=true`.
+Every profile declares `otel: true`. `DFE_OTEL_ENABLED=false` turns it off.
 
 | Variable | Default | Effect |
 |---|---|---|
-| `DFE_OTEL_ENABLED` | `false` | starts the bundled collector |
+| `DFE_OTEL_ENABLED` | unset, the profile decides | starts the bundled collector |
 | `DFE_OTEL_EXPORTER_ENDPOINT` | empty | where services push -- **empty exports nothing** |
 | `DFE_OTEL_DATABASE` | `dfe` | database the collector writes |
 | `DFE_OTEL_HEALTH_PORT` | `13133` | the `health_check` extension |

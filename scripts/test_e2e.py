@@ -331,7 +331,7 @@ class TestContext:
 # ------------------------------------------------------------------------------
 # Test Case
 # - Represents a single test case with required parameters and defaults
-#   - profile: service_profiles.yaml profile name (e.g. kafka-receiver)
+#   - profile: service_profiles.yaml profile name (e.g. slim-kafka)
 #   - compose_profiles: resolved compose profiles including infra (clickhouse, kafka backend profile, kafka-ui)
 #   - services: resolved {dfe-service: project-relative config path}
 #   - outage: {service, method, seconds, sources} for a test that stops or kills a
@@ -576,7 +576,7 @@ def load_services_yaml():
 #   - compose_profiles always includes 'clickhouse'; kafka backend profile + 'kafka-ui' when transport=kafka
 #   - services_dict maps {dfe-service: project-relative config path}
 # ------------------------------------------------------------------------------
-def resolve_services_profile(profile_name):
+def resolve_services_profile(profile_name, otel=None):
     data = load_services_yaml()
     profiles = data.get("profiles") or {}
     if profile_name not in profiles:
@@ -614,7 +614,11 @@ def resolve_services_profile(profile_name):
         and str(profile.get("kafbat", "true")).strip().lower() not in FALSY
     ):
         extra_services.append("kafka-ui")
-    if str(profile.get("otel", "false")).strip().lower() not in FALSY:
+    # The test's own `otel` key wins, then DFE_OTEL_ENABLED, then the profile's key
+    if otel is None:
+        env_otel = os.environ.get("DFE_OTEL_ENABLED", "").strip()
+        otel = env_otel or profile.get("otel", "false")
+    if str(otel).strip().lower() not in FALSY:
         compose_profiles.append(OTEL_PROFILE)
         extra_services.append(OTEL_SERVICE)
         # The harness drives compose directly, so it sets what resolve_profile.py
@@ -3357,7 +3361,9 @@ def resolve_test_case(test_config, global_config):
     test_name = get_config("name", test_config, global_config, required=True)
     profile_name = get_config("profile", test_config, global_config, required=True)
 
-    compose_profiles, services, extra_services = resolve_services_profile(profile_name)
+    compose_profiles, services, extra_services = resolve_services_profile(
+        profile_name, otel=get_config("otel", test_config, global_config)
+    )
 
     # Apply any per-test config overrides
     overrides = test_config.get("config_overrides") or {}

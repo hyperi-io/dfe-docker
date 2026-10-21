@@ -42,7 +42,7 @@ works - you have already seen the thing you came to see.
 
 ## Seeing your own data go through
 
-Send an event to dfe-receiver. The shipped default (`slim`) runs one, as does every profile except the loader-only `kafka-minimal` and `grpc-minimal`:
+Send an event to dfe-receiver, which every profile runs:
 
 ```bash
 curl -X POST http://localhost:8080/ingest \

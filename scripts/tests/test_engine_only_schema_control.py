@@ -325,7 +325,7 @@ def test_the_engine_waits_on_the_broker_it_creates_topics_on(
     It is also the only edge that STARTS one: a broker is in no profile's
     started set, so it comes up as somebody's dependency or not at all. The
     retired kafka-init one-shots used to carry that edge, and every reader
-    named one; when they went, the single tier came up with no broker.
+    named one. When they went, a Kafka profile came up with no broker.
     """
     depends = _depends_on(services["dfe-engine"])
     assert depends.get(broker) == "service_healthy", (

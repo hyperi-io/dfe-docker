@@ -50,8 +50,8 @@ _HYPERDX = {
     "probe_url": "http://dfe-hyperdx-proxy:8090",
 }
 
-# A profile per transport that declares no footprint key, so the env vars decide.
-_TRANSPORT_PROFILES = {"kafka": "kafka-minimal", "grpc": "grpc-minimal"}
+# A profile per transport. The matrix sets each footprint env var it varies and the env var wins over the profile's key.
+_TRANSPORT_PROFILES = {"kafka": "slim-kafka", "grpc": "slim-grpc"}
 
 # Placeholders for the settings an armed auth profile refuses to resolve without.
 _AUTH_SETTINGS = {
@@ -213,14 +213,19 @@ def test_a_ui_is_listed_exactly_where_it_runs_and_is_published(
 @pytest.mark.parametrize(
     ("profile", "want"),
     [
-        ("slim", [_hyperdx("http://localhost:8090")]),
+        ("slim-grpc", [_hyperdx("http://localhost:8090")]),
         (
-            "single",
+            "slim-kafka",
+            [_kafbat("http://localhost:8081"), _hyperdx("http://localhost:8090")],
+        ),
+        ("single-grpc", [_hyperdx("http://localhost:8090")]),
+        (
+            "single-kafka",
             [_kafbat("http://localhost:8081"), _hyperdx("http://localhost:8090")],
         ),
     ],
 )
-def test_the_projected_tiers_list_what_their_footprint_runs(
+def test_every_profile_lists_what_its_footprint_runs(
     dotenv: Path,
     monkeypatch: pytest.MonkeyPatch,
     profile: str,
@@ -237,7 +242,7 @@ def test_behind_the_auth_profile_both_links_take_the_proxy_origin(
     links = _links(
         monkeypatch=monkeypatch,
         tmp_path=tmp_path,
-        profile="kafka-minimal",
+        profile="slim-kafka",
         DFE_HYPERDX_ENABLED="true",
         DFE_EXTERNAL_ORIGIN=_ORIGIN,
         DFE_OAUTH2_PROXY_EXTERNAL_ORIGIN=_PROXY_ORIGIN,
@@ -258,7 +263,7 @@ def test_without_auth_hyperdx_takes_its_own_app_url(
     links = _links(
         monkeypatch=monkeypatch,
         tmp_path=tmp_path,
-        profile="kafka-minimal",
+        profile="slim-kafka",
         DFE_HYPERDX_ENABLED="true",
         DFE_EXTERNAL_ORIGIN=_ORIGIN,
         DFE_OAUTH2_PROXY_EXTERNAL_ORIGIN=_PROXY_ORIGIN,
@@ -277,7 +282,7 @@ def test_a_moved_host_port_moves_the_link_and_not_the_probe(
     links = _links(
         monkeypatch=monkeypatch,
         tmp_path=tmp_path,
-        profile="single",
+        profile="single-kafka",
         KAFBAT_PORT="18081",
         DFE_HYPERDX_APP_PORT="18090",
     )
@@ -294,7 +299,7 @@ def test_a_trailing_slash_on_the_origin_is_not_carried_into_the_url(
     links = _links(
         monkeypatch=monkeypatch,
         tmp_path=tmp_path,
-        profile="slim",
+        profile="slim-grpc",
         DFE_EXTERNAL_ORIGIN=f"{_ORIGIN}/",
     )
 
@@ -311,7 +316,7 @@ def test_the_origin_is_read_from_dotenv_where_an_operator_sets_it(
         newline="\n",
     )
 
-    links = _links(monkeypatch=monkeypatch, tmp_path=tmp_path, profile="slim")
+    links = _links(monkeypatch=monkeypatch, tmp_path=tmp_path, profile="slim-grpc")
 
     assert links == [_hyperdx(f"{_ORIGIN}:18090")]
 
@@ -324,7 +329,7 @@ def test_an_unpublished_name_the_resolver_does_not_know_is_refused(
         _links(
             monkeypatch=monkeypatch,
             tmp_path=tmp_path,
-            profile="single",
+            profile="single-kafka",
             unpublished=("kafka-ui",),
         )
 
@@ -432,7 +437,7 @@ def _through_make(*, cwd: Path, **settings: str) -> tuple[str, str]:
 
 
 _SINGLE_ALL = {
-    "DFE_PROFILE": "single",
+    "DFE_PROFILE": "single-kafka",
     "DFE_BIND_SCOPE": "all",
     "DFE_EXTERNAL_ORIGIN": _ORIGIN,
 }
@@ -465,13 +470,13 @@ _BOTH_ON_ORIGIN = [_kafbat(f"{_ORIGIN}:8081"), _hyperdx(f"{_ORIGIN}:8090")]
         ({**_SINGLE_ALL, **_AUTH_SETTINGS, "DFE_INFRA_UIS_EXTERNAL": "false"}, []),
     ],
     ids=[
-        "slim-default",
-        "single-scope-all",
-        "single-infra-killed",
-        "single-kafbat-unpublished",
-        "single-hyperdx-unpublished",
-        "single-auth",
-        "single-auth-infra-killed",
+        "default-slim-grpc",
+        "single-kafka-scope-all",
+        "single-kafka-infra-killed",
+        "single-kafka-kafbat-unpublished",
+        "single-kafka-hyperdx-unpublished",
+        "single-kafka-auth",
+        "single-kafka-auth-infra-killed",
     ],
 )
 def test_the_engine_receives_the_list_make_resolves_intact(

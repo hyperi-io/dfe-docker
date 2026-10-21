@@ -30,7 +30,7 @@ import pytest
 import check_compose
 import instances
 import resolve_profile
-from _common import CUSTOM_ENV_SUFFIX, ENV_DIR, PROJECTED_PROFILES, SERVICE_CONFIG_FILE
+from _common import CUSTOM_ENV_SUFFIX, ENV_DIR, RENDERED_PROFILES, SERVICE_CONFIG_FILE
 
 # Every app with a contract to emit. The two -filebeat services run one of these
 # images a second time, so they are deployments rather than apps and emit nothing.
@@ -266,8 +266,8 @@ def test_a_generated_instance_reads_its_apps_file_then_its_own(
     assert service["environment"][check_compose._SENTINEL_LAST] == own
 
 
-@pytest.mark.parametrize("profile", PROJECTED_PROFILES)
-def test_a_projected_tier_hands_the_engine_the_contract_directory(
+@pytest.mark.parametrize("profile", RENDERED_PROFILES)
+def test_every_profile_hands_the_engine_the_contract_directory(
     profile: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     values = _resolved(profile, tmp_path, monkeypatch)
@@ -275,21 +275,24 @@ def test_a_projected_tier_hands_the_engine_the_contract_directory(
     assert values[resolve_profile.ENGINE_CONTRACT_DIR_VAR] == _CONTRACT_ROOT
 
 
-def test_a_hand_crafted_profile_hands_the_engine_no_contract_directory(
+def test_a_profile_without_core_hands_the_engine_no_contract_directory(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Those tiers ship the config they exist to exercise, contract included."""
-    values = _resolved("kafka-receiver", tmp_path, monkeypatch)
+    """With core off nothing is rendered, so no app's contract is read either."""
+    monkeypatch.setitem(os.environ, "DFE_CORE_ENABLED", "false")
+    values = _resolved("slim-kafka", tmp_path, monkeypatch)
 
     assert values[resolve_profile.ENGINE_CONTRACT_DIR_VAR] == ""
 
 
-@pytest.mark.parametrize("profile", [*PROJECTED_PROFILES, "kafka-receiver"])
+@pytest.mark.parametrize("core", ["true", "false"])
+@pytest.mark.parametrize("profile", RENDERED_PROFILES)
 def test_the_contract_key_is_written_whatever_the_answer(
-    profile: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    core: str, profile: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     # A line that vanished with its own value would make the included makefile
     # re-settle on every pass, which restarts `make` forever.
+    monkeypatch.setitem(os.environ, "DFE_CORE_ENABLED", core)
     values = _resolved(profile, tmp_path, monkeypatch)
 
     assert resolve_profile.ENGINE_CONTRACT_DIR_VAR in values

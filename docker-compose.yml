@@ -43,7 +43,7 @@
 #
 # Quick start:
 #   make dev                         # Uses active_profile from service_profiles.yaml
-#   DFE_PROFILE=grpc-receiver make dev   # Override profile
+#   DFE_PROFILE=single-kafka make dev  # Override profile
 #   KAFKA_BACKEND=apache make dev    # Override Kafka backend
 #
 # Dev build from source (requires docker-compose.override.yml - auto-loaded):
@@ -982,8 +982,8 @@ services:
       # The console version /system/version reports. resolve_profile strips the
       # digest off the ui pin, because a container reference is not a version.
       DFE_UI_VERSION: ${DFE_UI_VERSION_TAG:-}
-      # The transport the tier's stages are bound to (resolve_profile exports it
-      # from the profile); the defaults are the slim tier's.
+      # The transport the tier's stages are bound to, which resolve_profile exports
+      # from the profile. The defaults are slim-grpc's.
       DFE_TRANSPORT_DEFAULT: ${DFE_TRANSPORT_DEFAULT:-direct}
       DFE_TRANSPORT_BUS_PRESENT: ${DFE_TRANSPORT_BUS_PRESENT:-false}
       # The broker the engine creates a source's topics on: the in-stack one on a

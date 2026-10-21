@@ -333,13 +333,13 @@ Every DFE app asks `releases.hyperi.io` at startup whether a newer version exist
 
 Compose maps them onto scalo's `version_check.enabled` and `version_check.send_instance_id` keys, in the env form scalo's cascade nests with. Each app reads those under its own prefix, so compose does the spelling: `DFE_LOADER_`, `DFE_RECEIVER_` and `DFE_FETCHER_` for those three, `ARCHIVER_` for the archiver (no `DFE_`), `DFE_TRANSFORM_` for vector and vrl, `DFE_TRANSFORM_ELASTIC_` for elastic, and no prefix for dfe-engine. dfe-ui and the hunt runner start no check. A compose `environment:` entry beats `env/<app>.env`, so set the dial in `.env`. The third-party images keep their own telemetry settings, which this dial does not reach.
 
-## Self-monitoring (opt-in)
+## Self-monitoring
 
-Off by default. `DFE_OTEL_ENABLED=true` (or a profile declaring `otel: true`, as `single` does) starts a collector that takes the stack's own telemetry over OTLP and writes the `dfe.otel_*` tables, which HyperDX reads. Nothing is scraped, and the collector's OTLP ports stay on the Compose network. Full picture, including which services report today: [observability.md](observability.md).
+Every profile declares `otel: true`, which starts a collector that takes the stack's own telemetry over OTLP and writes the `dfe.otel_*` tables HyperDX reads. `DFE_OTEL_ENABLED=false` turns it off. Nothing is scraped, and the collector's OTLP ports stay on the Compose network. Full picture, including which services report today: [observability.md](observability.md).
 
 | Variable                                         | Use                                                                                  | Default                                                             |
 |--------------------------------------------------|--------------------------------------------------------------------------------------|---------------------------------------------------------------------|
-| `DFE_OTEL_ENABLED`                               | Toggle to start the collector                                                        | `false`                                                             |
+| `DFE_OTEL_ENABLED`                               | Toggle to start the collector                                                        | unset, the profile decides                                          |
 | `DFE_OTEL_COLLECTOR_VERSION`                     | Version of otel/opentelemetry-collector-contrib                                      | none -- `make stack` pins it; unset is a hard-fail                  |
 | `DFE_OTEL_EXPORTER_ENDPOINT`                     | Where services push; empty exports nothing                                           | empty (the profile points it at the bundled collector)              |
 | `DFE_OTEL_DATABASE`                              | ClickHouse database the collector writes                                             | `dfe`                                                              |
@@ -350,9 +350,9 @@ Off by default. `DFE_OTEL_ENABLED=true` (or a profile declaring `otel: true`, as
 | `DFE_CONTAINER_LOG_ADDRESS`                      | Where the DOCKER DAEMON sends it                                                     | `tcp://127.0.0.1:24224`                                             |
 | `DFE_ENGINE_METRICS_BACKEND`                     | dfe-engine metrics backend; `opentelemetry` is dual (push + `/metrics`)              | `prometheus` (the profile sets `opentelemetry`)                     |
 
-## HyperDX (opt-in observability)
+## HyperDX
 
-Off by default. `DFE_HYPERDX_ENABLED=true` starts `hyperdx` (API + App), the `dfe-hyperdx-proxy` that fronts both origins, a one-shot `dfe-dashboards` that copies the engine's shipped dashboards into a volume, plus `hyperdx-ferretdb` and `hyperdx-postgres`, sharing the always-on ClickHouse.
+Every profile declares `hyperdx: true` and `DFE_HYPERDX_ENABLED=false` turns it off. It starts `hyperdx` (API + App), the `dfe-hyperdx-proxy` that fronts both origins, a one-shot `dfe-dashboards` that copies the engine's shipped dashboards into a volume, plus `hyperdx-ferretdb` and `hyperdx-postgres`, sharing the always-on ClickHouse.
 
 HyperDX runs in `oidc-proxy` mode, as it does on Kubernetes: it verifies the engine's ES384 token against the engine's JWKS. A caller carrying none is unauthenticated. Signing in to the console is what signs a browser in here: dfe-ui mirrors the session into a `dfe_token` cookie and cookies ignore ports. The engine identifies with a service token of its own, which is how a source added through the console reaches every HyperDX team. That token's team, `DFE_HYPERDX_TEAM`, holds no connection and no sources, because HyperDX seeds a team only from a person's login, never from the service token. Every other team gets its connection and sources on its members' first login, from the engine's answer for that member: `main` and `hunts` everywhere, plus the otel and `clickhouse_system` sources on a platform team. Each team also gets the shipped dashboards those sources can render. From hyperi-io/dfe-hyperdx#106 on, a login the engine gives no connection is retried on a later request.
 
@@ -360,7 +360,7 @@ The same toggle points the engine at HyperDX: with it on, the engine receives `D
 
 | Variable                                         | Use                                                                                  | Default                                                             |
 |--------------------------------------------------|--------------------------------------------------------------------------------------|---------------------------------------------------------------------|
-| `DFE_HYPERDX_ENABLED`                            | Toggle to start HyperDX + its proxy + FerretDB + Postgres. Ignored with `DFE_CORE_ENABLED=false`, since HyperDX signs callers in with the engine's token | `false`                                                             |
+| `DFE_HYPERDX_ENABLED`                            | Toggle to start HyperDX + its proxy + FerretDB + Postgres. Ignored with `DFE_CORE_ENABLED=false`, since HyperDX signs callers in with the engine's token | unset, the profile decides                                          |
 | `DFE_HYPERDX_VERSION`                            | Version of the dfe-hyperdx fork image to use                                         | pinned by `make stack` from the SSoT (fail-loud, like every image)  |
 | `DFE_HYPERDX_API_PORT`                           | HyperDX API host port, on `dfe-hyperdx-proxy`                                        | `8000`                                                              |
 | `DFE_HYPERDX_APP_PORT`                           | HyperDX App UI host port, on `dfe-hyperdx-proxy`                                     | `8090`                                                              |

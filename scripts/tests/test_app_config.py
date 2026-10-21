@@ -1,17 +1,14 @@
 #  Project:      dfe-docker
 #  File:         tests/test_app_config.py
-#  Purpose:      Assert only the projected tiers read the engine-rendered app config
+#  Purpose:      Assert every profile reads the engine-rendered app config while the core footprint runs
 #  Language:     Python
 #
 #  License:      BUSL-1.1
 #  Copyright:    (c) 2026 HYPERI PTY LIMITED
 
-"""Which tiers hand their app config to dfe-engine, and which keep their own.
+"""When a stack hands its app config to dfe-engine and when each app keeps its committed one.
 
-The projected tiers mirror the Kubernetes ones: their app set comes from
-apps.yaml, so the engine renders their config the way a chart renders a ConfigMap. Every other profile is
-a hand-crafted data-plane shape that ships the config it exists to exercise, and
-a compile from the sources would overwrite it -- which is what these assert.
+On every profile the engine renders the app config the way a chart renders a ConfigMap. With the core footprint off there is no engine to render it, so each app reads its committed file.
 
 Resolved by RUNNING the resolver, so what is pinned is the file a stack boots on
 rather than a restatement of the rule.
@@ -26,7 +23,7 @@ from pathlib import Path
 import pytest
 
 import resolve_profile
-from _common import COMPOSE_FILE, PROJECTED_PROFILES
+from _common import COMPOSE_FILE, RENDERED_PROFILES
 
 
 def _compose_service_block(service: str) -> str:
@@ -83,8 +80,8 @@ def _resolved(
     return values
 
 
-@pytest.mark.parametrize("profile", PROJECTED_PROFILES)
-def test_a_projected_tier_has_the_engine_render_its_app_config(
+@pytest.mark.parametrize("profile", RENDERED_PROFILES)
+def test_every_profile_has_the_engine_render_its_app_config(
     profile: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     values = _resolved(profile, tmp_path, monkeypatch)
@@ -100,10 +97,11 @@ def test_a_projected_tier_has_the_engine_render_its_app_config(
     )
 
 
-def test_a_hand_crafted_profile_keeps_its_committed_config(
+def test_a_profile_without_core_keeps_its_committed_config(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    values = _resolved("kafka-receiver", tmp_path, monkeypatch)
+    monkeypatch.setitem(os.environ, "DFE_CORE_ENABLED", "false")
+    values = _resolved("slim-kafka", tmp_path, monkeypatch)
 
     assert values["DFE_ENGINE_APP_CONFIG_DIR"] == ""
     assert values["DFE_RECEIVER_CONFIG_FILE"] == ""
@@ -113,19 +111,21 @@ def test_a_hand_crafted_profile_keeps_its_committed_config(
 def test_an_app_the_tier_does_not_run_is_given_no_rendered_path(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    # The slim tier runs no archiver, so a path into a directory the engine
+    # The slim profiles run no archiver, so a path into a directory the engine
     # renders nothing into would point the container at a file that never exists.
-    values = _resolved("slim", tmp_path, monkeypatch)
+    values = _resolved("slim-grpc", tmp_path, monkeypatch)
 
     assert values["DFE_ARCHIVER_CONFIG_FILE"] == ""
 
 
-@pytest.mark.parametrize("profile", [*PROJECTED_PROFILES, "kafka-receiver"])
+@pytest.mark.parametrize("core", ["true", "false"])
+@pytest.mark.parametrize("profile", RENDERED_PROFILES)
 def test_every_app_config_key_is_written_whatever_the_answer(
-    profile: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    core: str, profile: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     # A line that vanished with its own value would make the included makefile
     # re-settle on every pass, which restarts `make` forever.
+    monkeypatch.setitem(os.environ, "DFE_CORE_ENABLED", core)
     values = _resolved(profile, tmp_path, monkeypatch)
 
     expected = {

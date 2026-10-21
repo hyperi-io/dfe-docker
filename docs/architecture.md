@@ -71,14 +71,14 @@ broker -- the ingest components dial `dfe-loader:6000` directly.
 
 The three transforms are bus-only today: each reads a topic and writes a topic. `dfe-archiver` archives each source from its landing topic on Kafka. Its gRPC config (`config/archiver/grpc.yaml`) listens on port 6000, but nothing on a direct tier sends records to it. Once a transform writes `<base>_load`, the loader reads it instead of `<base>_land`, through the same `config/loader/kafka.yaml`: scalo drops `<base>_land` from its subscription once `<base>_load` exists.
 
-## What each tier runs
+## What each profile runs
 
-`slim` is the core data path alone: receiver, loader, engine, UI and HyperDX. `single` adds the broker and one archiver. Neither starts a transform until a source created through the engine binds one.
+`slim-*` is the core data path alone: receiver, loader, engine, UI and HyperDX. `single-*` adds one archiver and a fetcher per source. The `-kafka` profiles add the broker. None starts a transform until a source created through the engine binds one.
 
-## The engine renders each app's config on the projected tiers
+## The engine renders each app's config
 
 On Kubernetes an app's chart turns its values overlay into a ConfigMap the pod
-mounts. Compose runs no chart, so on `slim` and `single` dfe-engine does that
+mounts. Compose runs no chart, so dfe-engine does that
 step: it merges each instance's overlay over the committed
 `config/<app>/<transport>.yaml` and writes the app's config file, its programs
 and its enrichment tables into the `dfe-app-config` volume, one directory per
@@ -87,8 +87,7 @@ app. Every app mounts that volume read-only at `/etc/dfe/apps`.
 The committed file stays the DEPLOYMENT's -- brokers, warehouse credentials, the
 spool -- and the overlay wins wherever the two name the same key, so nothing
 deployment-specific is written into the deploy repo. `resolve_profile.py` turns
-this on for the projected tiers only: every other profile ships the config it
-exists to exercise.
+this on wherever the core footprint runs.
 
 dfe-fetcher and the three transforms have no committed file. The overlay is their whole config and their broker comes from `DFE_KAFKA_BOOTSTRAP_SERVERS` in their environment.
 

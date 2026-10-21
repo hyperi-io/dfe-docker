@@ -52,11 +52,8 @@ LOOPBACK_ORIGINS = frozenset(
     }
 )
 
-# The profiles that are PROJECTIONS of the Kubernetes tiers of the same name.
-# Their app set comes from dfe-infra apps.yaml `default_in`, so these are also
-# the tiers whose app config dfe-engine renders. Every other profile is
-# a hand-crafted data-plane shape that ships its own config and must keep it.
-PROJECTED_PROFILES = ("slim", "single")
+# Every service profile, each `<tier>-<transport>`. dfe-engine renders each one's app config and runs as `docker-<tier>`, the only tiers it knows.
+RENDERED_PROFILES = ("slim-grpc", "slim-kafka", "single-grpc", "single-kafka")
 
 # What a Kafka dfe-loader subscribes to when its config names no topics and no topic_regex (dfe-loader src/kafka/transport.rs LANDING_TOPIC_INCLUDE)
 LOADER_DEFAULT_TOPIC_REGEX = "_(land|load)$"

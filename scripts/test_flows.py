@@ -10,7 +10,7 @@
 #
 #  Usage:
 #    ./scripts/test_flows.py                        # the active profile's transport
-#    ./scripts/test_flows.py --profile single       # a named service_profiles.yaml profile
+#    ./scripts/test_flows.py --profile single-kafka # a named service_profiles.yaml profile
 #    ./scripts/test_flows.py --engine-repo ../dfe-engine
 #    DFE_ENGINE_REPO=../dfe-engine ./scripts/test_flows.py
 

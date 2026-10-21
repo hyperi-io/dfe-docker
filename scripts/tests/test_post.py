@@ -270,7 +270,7 @@ def test_one_failed_claim_fails_the_run() -> None:
 def test_a_profile_that_can_prove_nothing_does_not_pass(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """The grpc-minimal shape: no ingest component, every other claim skipped."""
+    """A stack with no ingest component and every other claim skipped."""
     _stub_main(monkeypatch)
 
     def _no_ingest(*, table):
