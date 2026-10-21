@@ -52,6 +52,8 @@
 # HyperDX search in the console, `search` in the search bar and `filter` picked in
 # the side panel, and the hunt is added and triggered from the console. It adds
 # HyperDX to the stack and needs Playwright and Chrome.
+#
+# A `sources` block makes each source through the dfe-engine API the way the console does, once the stack is healthy: a create, a deploy and an upload of each fixture its `files` lists by file set, from tests/e2e/ only. A source is created on the meta/syslog schema unless its `schema` names the settings its transform's output needs. The instance dfe-engine then declares for it, `dfe-transform-<engine>-<name>`, starts in the test's own compose project. The load waits until it is ready, on Kafka until its consumer group has joined as well. The profile has to run each named transform app per source. The receiver reads the config dfe-engine renders, which sends each source's `_source` label to its transform. A record whose label no source matches skips every transform, so `table` and each key of an outage's `sources` must name a source the test makes. On Kafka each source's `<name>_land` and `<name>_load` join `expected_topics` while its instance's consumer group joins the consumer checks. An outage `service` may name a source's instance. A program the table's source uploads sets `_tags.e2e_transform` to its engine's name on every record, which each row the test lands must carry. The sources are deleted after the test. Their tables keep the rows it wrote. Names are lowercase letters and digits, free of the `-` a ClickHouse identifier would need quoted.
 
 global:
   data_file: tests/e2e/data/events.jsonl
@@ -137,6 +139,32 @@ tests:
       service: dfe-loader
       seconds: 60
 
+  # The direct gRPC chain through the vrl transform dfe-engine starts for a source made through its API, with dfe-loader stopped under it
+  - name: loader-outage-grpc-transform-vrl
+    profile: single-grpc
+    table: e2evrl
+    sources:
+      - &e2evrl
+        files:
+          transforms:
+            - tests/e2e/programs/stamp_transformed.vrl
+        name: e2evrl
+        transform:
+          engine: vrl
+    outage:
+      service: dfe-loader
+      seconds: 60
+
+  # The same chain with the transform instance itself stopped mid-chain
+  - name: transform-vrl-outage-grpc
+    profile: single-grpc
+    table: e2evrl
+    sources:
+      - *e2evrl
+    outage:
+      service: dfe-transform-vrl-e2evrl
+      seconds: 60
+
   # A hop killed with SIGKILL mid-stream rather than stopped, so whatever it held
   # in memory gets no drain. Every record the receiver answered 2xx still has to
   # land, on the Kafka path and on the direct gRPC path. The load is dense enough
@@ -171,3 +199,41 @@ tests:
       seconds: 30
       workers: 16
       interval: 0.01
+
+  - name: transform-vrl-kill-grpc
+    profile: single-grpc
+    table: e2evrl
+    sources:
+      - *e2evrl
+    outage:
+      service: dfe-transform-vrl-e2evrl
+      method: kill
+      seconds: 30
+      workers: 16
+      interval: 0.01
+
+  # The broker down under load with every Kafka app consuming, each transform included: the e2evector and e2eelastic records keep the vector and elastic instances' own topics moving, so their groups have to catch up too
+  - name: kafka-outage
+    profile: single-kafka
+    table: e2evrl
+    sources:
+      - *e2evrl
+      - name: e2evector
+        transform:
+          engine: vector
+      # The ECS schema the elastic catalogue builds this variant's table on (dfe-engine appmgmt/apps.yaml `catalogue`)
+      - name: e2eelastic
+        schema:
+          additional_fields: additional/cisco_ios/log
+          derived_schema: derived/cisco_ios/log
+          meta_schema: meta/elastic/ecs
+        transform:
+          engine: elastic
+          variant: filebeat.cisco_ios.default
+    outage:
+      service: kafka
+      seconds: 60
+      sources:
+        e2evrl: tests/e2e/data/events.jsonl
+        e2evector: tests/e2e/data/events.jsonl
+        e2eelastic: tests/e2e/data/cisco-ios.jsonl

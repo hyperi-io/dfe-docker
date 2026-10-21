@@ -629,27 +629,62 @@ def group_lag_json(described: str) -> dict[str, dict[str, int]]:
     return lag
 
 
+def _group_rows(*, described: str) -> list[dict[str, str]]:
+    """The rows of `kafka-consumer-groups.sh --describe`, each keyed by the header above it."""
+    rows = []
+    columns = []
+    for line in described.splitlines():
+        cells = line.split()
+        if cells[:2] == ["GROUP", "TOPIC"]:
+            columns = cells
+        elif columns and len(cells) >= len(columns):
+            rows.append(dict(zip(columns, cells, strict=False)))
+    return rows
+
+
 def group_lag_table(described: str) -> dict[str, dict[str, int]]:
     """Map each consumer group to its lag per topic, from `kafka-consumer-groups.sh --describe`.
 
     Same rule as the rpk reader: a partition with no committed offset (`-`) is left out.
     """
     lag: dict[str, dict[str, int]] = {}
-    columns: list[str] = []
-    for line in described.splitlines():
-        cells = line.split()
-        if cells[:2] == ["GROUP", "TOPIC"]:
-            columns = cells
-            continue
-        if not columns or len(cells) < len(columns):
-            continue
-        row = dict(zip(columns, cells, strict=False))
+    for row in _group_rows(described=described):
         if not row.get("CURRENT-OFFSET", "-").isdigit():
             continue
         per_topic = lag.setdefault(row["GROUP"], {})
         behind = int(row["LAG"]) if row.get("LAG", "-").isdigit() else 0
         per_topic[row["TOPIC"]] = per_topic.get(row["TOPIC"], 0) + behind
     return lag
+
+
+def group_assignments_json(*, described: str) -> dict[str, set[str]]:
+    """Map each consumer group to the topics a live member holds, from `rpk group describe --format json`.
+
+    A partition names its member once the group has assigned it, committed or not, which is when a consumer that starts at the log end begins to read. Text that is not the JSON rpk prints raises ValueError.
+    """
+    groups = (json.loads(s=(described) or ("[]"))) or ([])
+    assigned = {}
+    for group in groups:
+        partitions = (group.get("partitions")) or ([])
+        assigned[str(group.get("group_name", ""))] = {
+            str(partition.get("topic", ""))
+            for partition in partitions
+            if partition.get("member_id")
+        }
+    return assigned
+
+
+def group_assignments_table(*, described: str) -> dict[str, set[str]]:
+    """Map each consumer group to the topics a live member holds, from `kafka-consumer-groups.sh --describe`.
+
+    The same rule as the rpk reader: a row whose CONSUMER-ID is `-` has no member.
+    """
+    assigned = {}
+    for row in _group_rows(described=described):
+        topics = assigned.setdefault(row["GROUP"], set())
+        if row.get("CONSUMER-ID", "-") != "-":
+            topics.add(row["TOPIC"])
+    return assigned
 
 
 def consumers_uncommitted(

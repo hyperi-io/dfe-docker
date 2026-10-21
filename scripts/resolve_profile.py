@@ -263,7 +263,7 @@ SERVICES = [
 TRANSPORT_TYPES = ["grpc", "kafka"]
 
 
-class _ProfileError(Exception):
+class ProfileError(Exception):
     """Raised when the active profile cannot be resolved or validated."""
 
     def __init__(self, *, header: str | None = None, msg: str) -> None:
@@ -302,7 +302,7 @@ def _validate_auth() -> None:
     detail += [
         f"- {name} is set to an empty value, which allows any group" for name in blank
     ]
-    raise _ProfileError(
+    raise ProfileError(
         header="auth",
         msg="The auth profile is armed but its OIDC settings are incomplete:\n"
         + "\n".join(detail)
@@ -352,7 +352,7 @@ def _instance_services(
     found = instances.declared()
     unknown = instances.unknown_apps(found)
     if unknown:
-        raise _ProfileError(
+        raise ProfileError(
             header=profile,
             msg=f"dfe-engine named instances of {', '.join(unknown)}, which this repo "
             "declares no compose service for. Add one, or every source bound to it is "
@@ -360,7 +360,7 @@ def _instance_services(
         )
     disabled = {app: names for app, names in found.items() if app not in enabled}
     if disabled:
-        raise _ProfileError(
+        raise ProfileError(
             header=profile,
             msg=_disabled_instances(found=disabled, transport=transport),
         )
@@ -375,7 +375,7 @@ def _footprint(*, profile: dict[str, object], profile_name: str) -> dict[str, bo
     for key, (env_var, default) in FOOTPRINT_KEYS.items():
         declared = profile.get(key)
         if declared is not None and not (isinstance(declared, str)):
-            raise _ProfileError(
+            raise ProfileError(
                 header=profile_name,
                 msg=f"Footprint key {key!r} must be true or false, not a block",
             )
@@ -386,62 +386,6 @@ def _footprint(*, profile: dict[str, object], profile_name: str) -> dict[str, bo
     # HyperDX signs callers in with dfe-engine's token, so without core nobody could sign in
     resolved["hyperdx"] = resolved["hyperdx"] and resolved["core"]
     return resolved
-
-
-def _per_source_apps(
-    *, profile: dict[str, object], profile_name: str, renders: bool, transport: str
-) -> list[str]:
-    """The apps this profile runs one container per source of, each reading the config dfe-engine renders for its source.
-
-    A profile with its core footprint switched off renders nothing, so it runs none there rather than failing.
-    """
-    enabled = []
-    for app, key in PER_SOURCE_APP_KEYS.items():
-        declared = profile.get(key, "false")
-        if not (isinstance(declared, str)) or (
-            declared.strip().lower() not in ("false", "true")
-        ):
-            raise _ProfileError(
-                header=profile_name, msg=f"{key!r} must be true or false"
-            )
-        if declared.strip().lower() == "false":
-            continue
-        if (app in KAFKA_ONLY_APPS) and (transport != "kafka"):
-            raise _ProfileError(
-                header=profile_name,
-                msg=f"{app} runs on the kafka transport only, so {key!r} cannot be true on a {transport} profile",
-            )
-        enabled.append(app)
-    return enabled if renders else []
-
-
-def _parse_yaml(*, text: str) -> dict[str, object]:
-    """Parse a minimal YAML subset into nested dicts with string values."""
-    root = {}
-    stack = [(root, -1)]
-
-    for line_num, raw_line in enumerate(text.splitlines(), 1):
-        line = raw_line.strip()
-        if not (line) or (line.isspace()) or (line.startswith("#")):
-            continue
-
-        indent = len(raw_line) - len(raw_line.lstrip())
-        while len(stack) > 1 and stack[-1][1] >= indent:
-            stack.pop()
-        parent = stack[-1][0]
-
-        if ": " in line:
-            key, value = line.split(": ", 1)
-            value = value.strip('"')
-            parent[key] = value
-        elif line.endswith(":"):
-            key = line[:-1]
-            child = {}
-            parent[key] = child
-            stack.append((child, indent))
-        else:
-            raise _ProfileError(msg=f"Line {line_num} cannot be parsed: {line!r}")
-    return root
 
 
 def _replacement(*, name: str) -> str | None:
@@ -466,19 +410,19 @@ def _resolve_profile(
         PROFILE_ACTIVE_YAML_FIELD, None
     )
     if not (active_profile):
-        raise _ProfileError(
+        raise ProfileError(
             msg=f"No active profile. Set {PROFILE_ACTIVE_YAML_FIELD!r} in {Path(SERVICE_PROFILES_FILE).name!r} or use the {PROFILE_ENV_VAR!r} environment variable"
         )
 
     profiles = data.get(PROFILE_LIST_YAML_FIELD)
     if not (profiles) or not (isinstance(profiles, dict)):
-        raise _ProfileError(
+        raise ProfileError(
             msg=f"{Path(SERVICE_PROFILES_FILE).name!r} missing {PROFILE_LIST_YAML_FIELD!r} section"
         )
 
     replacement = _replacement(name=active_profile)
     if replacement:
-        raise _ProfileError(
+        raise ProfileError(
             msg=f"Profile {active_profile!r} is retired. Set {PROFILE_ENV_VAR!r} or {PROFILE_ACTIVE_YAML_FIELD!r} to {replacement!r} instead"
         )
     if (active_profile not in RENDERED_PROFILES) or (active_profile not in profiles):
@@ -487,7 +431,7 @@ def _resolve_profile(
             for profile_name in RENDERED_PROFILES
             if profile_name in profiles
         ]
-        raise _ProfileError(
+        raise ProfileError(
             msg=f"Profile {active_profile!r} not found. Available profiles:\n{'\n'.join(available_profiles)}"
         )
 
@@ -501,49 +445,49 @@ def _resolve_profile(
     )
     unknown = sorted(set(profile) - known_keys)
     if unknown:
-        raise _ProfileError(
+        raise ProfileError(
             header=active_profile,
             msg=f"Unknown profile key(s) {', '.join(unknown)}. Known keys:\n{'\n'.join(f'- {key}' for key in sorted(known_keys))}",
         )
 
     transport = profile.get("transport", "")
     if transport not in TRANSPORT_TYPES:
-        raise _ProfileError(
+        raise ProfileError(
             header=active_profile,
             msg=f"Transport type {transport!r} unknown. Available transport types:\n{'\n'.join([f'- {transport_type}' for transport_type in TRANSPORT_TYPES])}",
         )
     named_transport = active_profile.partition("-")[2]
     if transport != named_transport:
-        raise _ProfileError(
+        raise ProfileError(
             header=active_profile,
             msg=f"Transport {transport!r} disagrees with the profile name, which says {named_transport!r}",
         )
 
     services = profile.get("services", {})
     if not (services):
-        raise _ProfileError(header=active_profile, msg="Undefined services")
+        raise ProfileError(header=active_profile, msg="Undefined services")
 
     for service_name, service_config in services.items():
         if service_name in PER_SOURCE_APP_KEYS:
-            raise _ProfileError(
+            raise ProfileError(
                 header=active_profile,
                 msg=f"{service_name} runs one container per source, never as a profile's service. Set {PER_SOURCE_APP_KEYS[service_name]}: true instead",
             )
         if service_name not in SERVICES:
-            raise _ProfileError(
+            raise ProfileError(
                 header=active_profile,
                 msg=f"Service {service_name!r} unknown. Available services:\n{'\n'.join([f'- {service}' for service in SERVICES])}",
             )
         if not (isinstance(service_config, dict)) or (
             PROFILE_SERVICE_CONFIG_YAML_FIELD not in service_config
         ):
-            raise _ProfileError(
+            raise ProfileError(
                 header=active_profile,
                 msg=f"Missing {PROFILE_SERVICE_CONFIG_YAML_FIELD!r} value for service {service_name!r}",
             )
         config_file = CONFIG_DIR / service_config[PROFILE_SERVICE_CONFIG_YAML_FIELD]
         if not (config_file.is_file()):
-            raise _ProfileError(
+            raise ProfileError(
                 header=active_profile,
                 msg=f"Config file {_rel_path(path=config_file)!r} not found.",
             )
@@ -621,17 +565,73 @@ def _parse_args(argv: Sequence[str]) -> argparse.Namespace:
     return parser.parse_args(list(argv))
 
 
+def parse_yaml(*, text: str) -> dict[str, object]:
+    """Parse a minimal YAML subset into nested dicts with string values."""
+    root = {}
+    stack = [(root, -1)]
+
+    for line_num, raw_line in enumerate(text.splitlines(), 1):
+        line = raw_line.strip()
+        if not (line) or (line.isspace()) or (line.startswith("#")):
+            continue
+
+        indent = len(raw_line) - len(raw_line.lstrip())
+        while len(stack) > 1 and stack[-1][1] >= indent:
+            stack.pop()
+        parent = stack[-1][0]
+
+        if ": " in line:
+            key, value = line.split(": ", 1)
+            value = value.strip('"')
+            parent[key] = value
+        elif line.endswith(":"):
+            key = line[:-1]
+            child = {}
+            parent[key] = child
+            stack.append((child, indent))
+        else:
+            raise ProfileError(msg=f"Line {line_num} cannot be parsed: {line!r}")
+    return root
+
+
+def per_source_apps(
+    *, profile: dict[str, object], profile_name: str, renders: bool, transport: str
+) -> list[str]:
+    """The apps this profile runs one container per source of, each reading the config dfe-engine renders for its source.
+
+    A profile with its core footprint switched off renders nothing, so it runs none there rather than failing.
+    """
+    enabled = []
+    for app, key in PER_SOURCE_APP_KEYS.items():
+        declared = profile.get(key, "false")
+        if not (isinstance(declared, str)) or (
+            declared.strip().lower() not in ("false", "true")
+        ):
+            raise ProfileError(
+                header=profile_name, msg=f"{key!r} must be true or false"
+            )
+        if declared.strip().lower() == "false":
+            continue
+        if (app in KAFKA_ONLY_APPS) and (transport != "kafka"):
+            raise ProfileError(
+                header=profile_name,
+                msg=f"{app} runs on the kafka transport only, so {key!r} cannot be true on a {transport} profile",
+            )
+        enabled.append(app)
+    return enabled if renders else []
+
+
 def main(argv: Sequence[str] = ()) -> int:
     args = _parse_args(argv)
     try:
         if not (SERVICE_PROFILES_FILE.is_file()):
-            raise _ProfileError(
+            raise ProfileError(
                 header=_rel_path(path=SERVICE_PROFILES_FILE),
                 msg=f"File not found at {_rel_path(path=SERVICE_PROFILES_FILE)!r}",
             )
 
         _load_dotenv()
-        data = _parse_yaml(
+        data = parse_yaml(
             text=SERVICE_PROFILES_FILE.read_text(encoding="utf-8", errors="replace")
         )
         active_profile, transport, services, footprint = _resolve_profile(data=data)
@@ -651,7 +651,7 @@ def main(argv: Sequence[str] = ()) -> int:
                 os.environ.get("KAFKA_BACKEND", SERVICE_KAFKA_DEFAULT).strip().lower()
             )
             if backend not in SERVICE_KAFKA_OPTIONS:
-                raise _ProfileError(
+                raise ProfileError(
                     msg=f"Kafka backend {backend!r} unknown. Available Kafka backends:\n{'\n'.join([f'- {option}' for option in SERVICE_KAFKA_OPTIONS])}",
                 )
             profiles.append(SERVICE_KAFKA_OPTIONS[backend])
@@ -667,14 +667,14 @@ def main(argv: Sequence[str] = ()) -> int:
         # Whether the ENGINE renders this tier's app config, which is also what
         # decides whether its instance index is this deployment's or a leftover.
         renders = footprint["core"]
-        per_source_apps = _per_source_apps(
+        source_apps = per_source_apps(
             profile=data[PROFILE_LIST_YAML_FIELD][active_profile],
             profile_name=active_profile,
             renders=renders,
             transport=transport,
         )
         instance_services = _instance_services(
-            enabled=per_source_apps,
+            enabled=source_apps,
             local=args.local,
             profile=active_profile,
             renders=renders,
@@ -844,7 +844,7 @@ def main(argv: Sequence[str] = ()) -> int:
             f"export DFE_INSTANCES_RESOLVED := {'true' if instance_services else 'false'}"
         )
         # The per-source apps this profile runs, which `make sources` seeds and `LOCAL=` may build, emitted unconditionally for the reason the keys above are
-        lines.append(f"export {PER_SOURCE_APPS_VAR} := {' '.join(per_source_apps)}")
+        lines.append(f"export {PER_SOURCE_APPS_VAR} := {' '.join(source_apps)}")
 
         new_content = "\n".join(lines) + "\n"
         if (
@@ -853,7 +853,7 @@ def main(argv: Sequence[str] = ()) -> int:
         ):
             PROFILE_MK.parent.mkdir(exist_ok=True, parents=True)
             PROFILE_MK.write_text(new_content, encoding="utf-8")
-    except _ProfileError as error:
+    except ProfileError as error:
         PROFILE_MK.unlink(missing_ok=True)
         _print(header=error.header, msg=error.msg)
         return 1

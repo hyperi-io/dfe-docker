@@ -177,7 +177,7 @@ class TestInstanceServices:
         _index(app=app, names=["okta-audit", "okta-system"])
         enabled = [other for other in PER_SOURCE_APP_KEYS if other != app]
 
-        with pytest.raises(resolve_profile._ProfileError) as refused:
+        with pytest.raises(resolve_profile.ProfileError) as refused:
             resolve_profile._instance_services(
                 enabled=enabled,
                 local=[],
@@ -196,7 +196,7 @@ class TestInstanceServices:
     ) -> None:
         _index(app=ELASTIC, names=["cisco-asa"])
 
-        with pytest.raises(resolve_profile._ProfileError) as refused:
+        with pytest.raises(resolve_profile.ProfileError) as refused:
             resolve_profile._instance_services(
                 enabled=[FETCHER, VECTOR, VRL],
                 local=[],
@@ -230,7 +230,7 @@ class TestInstanceServices:
 class TestPerSourceApps:
     @pytest.mark.parametrize("case", PER_SOURCE_APPS_CASES)
     def test_matches_expected(self, case: PerSourceAppsCase) -> None:
-        apps = resolve_profile._per_source_apps(
+        apps = resolve_profile.per_source_apps(
             profile={"transport": case["transport"], **case["declared"]},
             profile_name=f"single-{case['transport']}",
             renders=case["renders"],
@@ -241,8 +241,8 @@ class TestPerSourceApps:
 
     @pytest.mark.parametrize("case", PER_SOURCE_APPS_REFUSAL_CASES)
     def test_refuses(self, case: PerSourceAppsRefusalCase) -> None:
-        with pytest.raises(resolve_profile._ProfileError, match=case["message"]):
-            resolve_profile._per_source_apps(
+        with pytest.raises(resolve_profile.ProfileError, match=case["message"]):
+            resolve_profile.per_source_apps(
                 profile={"transport": case["transport"], **case["declared"]},
                 profile_name=f"single-{case['transport']}",
                 renders=True,
@@ -292,5 +292,5 @@ class TestResolveProfile:
             }
         }
 
-        with pytest.raises(resolve_profile._ProfileError, match=f"Set {key}: true"):
+        with pytest.raises(resolve_profile.ProfileError, match=f"Set {key}: true"):
             resolve_profile._resolve_profile(data=data)

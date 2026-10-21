@@ -36,6 +36,7 @@ import subprocess
 import sys
 import tempfile
 import time
+import typing
 
 try:
     import yaml
@@ -51,6 +52,7 @@ except ModuleNotFoundError:  # pragma: no cover - environment guard
     )
 
 from collections import Counter
+from collections.abc import Collection, Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
@@ -66,8 +68,12 @@ import _console_tls  # noqa: E402
 import _detection  # noqa: E402
 import _outage  # noqa: E402
 import _search_rule  # noqa: E402
+import _sources  # noqa: E402
 import _stack_state  # noqa: E402
+import instances  # noqa: E402
 import post  # noqa: E402
+import resolve_profile  # noqa: E402
+import seed  # noqa: E402
 from _common import FALSY, _config_argument, _load_dotenv, _use_mounted_configs  # noqa: E402
 from _pipeline import MARKER_EXPRESSIONS  # noqa: E402, F401 - re-exported for callers
 from _pipeline import ch_marker_count as _ch_marker_count  # noqa: E402
@@ -81,6 +87,7 @@ from _pipeline import (  # noqa: E402
     poll_until,
     post_all,
 )
+from build_dev_images import local_image_services  # noqa: E402
 
 
 # ==============================================================================
@@ -100,6 +107,8 @@ TMP_DIR = PROJECT_DIR / ".tmp" / "e2e" / RUN_ID
 # - Supported config values
 # ------------------------------------------------------------------------------
 MODES = ["dev", "ci"]
+# Chained in dev mode, where it repoints each committed service at its local build
+DEV_OVERRIDE_FILE = "docker-compose.override.yml"
 DEFAULTS = {
     "data_file": "tests/e2e/data/events.jsonl",
     "mode": "ci",
@@ -271,6 +280,18 @@ DETECTION_CUSTOMER = "e2e"
 DETECTION_LAND_TIMEOUT = 60
 
 # ------------------------------------------------------------------------------
+# Source Tests
+# - A `sources:` block makes each source through the dfe-engine API
+# ------------------------------------------------------------------------------
+# Only the engine knows where each source's records go, so the receiver reads its render
+SOURCE_RENDERED_SERVICES = ["dfe-receiver"]
+SOURCE_INDEX_TIMEOUT = 60
+SOURCE_READY_TIMEOUT = 180
+SOURCE_POLL_SECONDS = 3
+# Every DFE app answers readiness on this port inside its own container
+INSTANCE_READY_URL = "http://localhost:9090/readyz"
+
+# ------------------------------------------------------------------------------
 # Search Rule Tests
 # - A detection test whose `detection:` block carries `from_search` makes its rule
 #   the way an analyst does: a HyperDX search in the console, a side-panel filter
@@ -357,6 +378,24 @@ class TestCase:
     outage: dict = field(default_factory=dict)
     detection: dict = field(default_factory=dict)
     engine_environment: dict = field(default_factory=dict)
+    # Made through the engine API
+    sources: list[_sources.Source] = field(default_factory=list)
+    # Run on the config dfe-engine renders for them rather than one this test mounts
+    rendered_services: list[str] = field(default_factory=list)
+    transport: str = ""
+
+
+# ------------------------------------------------------------------------------
+# Source Run
+# ------------------------------------------------------------------------------
+@dataclass
+class SourceRun:
+    """What one test's sources left to undo, the COMPOSE_FILE they swapped included."""
+
+    compose_file: str | None = None
+    made: list[_sources.Source] = field(default_factory=list)
+    started: list[str] = field(default_factory=list)
+    swapped: bool = False
 
 
 # ------------------------------------------------------------------------------
@@ -526,7 +565,14 @@ def get_config(
 # Generate Temporary Loader Config
 # - Generates a temporary loader config file with the tests database and table
 # ------------------------------------------------------------------------------
-def generate_tmp_loader_config(loader_config, database, table, sources=()):
+def generate_tmp_loader_config(
+    *,
+    database: str,
+    loader_config: str,
+    own_tables: Collection[str] = (),
+    sources: Iterable[str] = (),
+    table: str,
+) -> str:
     TMP_DIR.mkdir(parents=True, exist_ok=True)
 
     with open(PROJECT_DIR / loader_config, encoding="utf-8") as config_file:
@@ -535,9 +581,9 @@ def generate_tmp_loader_config(loader_config, database, table, sources=()):
     config.setdefault("clickhouse", {})["database"] = database
     config.setdefault("routing", {})["default_db"] = database
     config.setdefault("routing", {})["default_table"] = table
-    # A test's extra sources have no table of their own, so they land beside main
+    # A test's extra sources land beside main, unless the engine deployed a table for one
     for source in sources:
-        if source != TARGET_TABLE:
+        if source != TARGET_TABLE and source not in own_tables:
             config["routing"].setdefault("source_to_table", {})[source] = TARGET_TABLE
 
     generated_path = TMP_DIR / f"loader-{RUN_ID}-{table}.yaml"
@@ -677,7 +723,13 @@ def parse_compose_services():
 # - Creates a temp docker-compose override file to mount test-specific configs
 #   services: dict {dfe-service-name: project-relative config path}
 # ------------------------------------------------------------------------------
-def generate_compose_override(services, engine_environment=None):
+def generate_compose_override(
+    *,
+    engine_environment: Mapping[str, str],
+    engine_volumes: Sequence[str],
+    rendered_services: Collection[str],
+    services: Mapping[str, str],
+) -> str:
     TMP_DIR.mkdir(parents=True, exist_ok=True)
     override_file = TMP_DIR / f"docker-compose.{RUN_ID}.e2e.yaml"
 
@@ -687,10 +739,14 @@ def generate_compose_override(services, engine_environment=None):
         content += (
             f"  {svc_name}:\n    volumes:\n      - ./{services[svc_name]}:{mount}:ro\n"
         )
-    if engine_environment:
-        content += f"  {SCHEMA_AUTHORITY_SERVICE}:\n    environment:\n"
-        for key, value in sorted(engine_environment.items()):
-            content += f"      {key}: {json.dumps(value)}\n"
+        if svc_name in rendered_services:
+            rendered = _sources.rendered_config(service=svc_name)
+            content += f"    command: {json.dumps(obj=['--config', rendered])}\n"
+    content += _sources.engine_override(
+        environment=engine_environment,
+        service=SCHEMA_AUTHORITY_SERVICE,
+        volumes=engine_volumes,
+    )
 
     override_file.write_text(content, encoding="utf-8", newline="\n")
     LOGGER.debug(f"Generated compose override: '{override_file}'")
@@ -822,8 +878,20 @@ def run_cmd(args, capture=False, cwd=None):
 
 
 # ------------------------------------------------------------------------------
+# Compose Profile Flags
+# - The `--profile` flags that enable each compose profile one test runs
+# ------------------------------------------------------------------------------
+def compose_profile_flags(*, test: TestCase) -> list[str]:
+    flags = []
+    for profile in test.compose_profiles:
+        flags += ["--profile", profile]
+    return flags
+
+
+# ------------------------------------------------------------------------------
 # Stack Up
 # - Starts the Docker stack with the appropriate compose files and profile
+# - Returns the `-f` arguments it started the stack from, None on a failure
 # ------------------------------------------------------------------------------
 def stack_up(mode, test, services):
     LOGGER.info("Starting stack...")
@@ -831,13 +899,22 @@ def stack_up(mode, test, services):
     for profile in test.compose_profiles:
         LOGGER.debug(f"  - {profile}")
 
-    override_file = generate_compose_override(services, test.engine_environment)
+    # The engine renders over the configs this test's profile commits, not make's
+    engine_volumes = (
+        _sources.engine_base_volumes(services=test.services) if (test.sources) else []
+    )
+    override_file = generate_compose_override(
+        engine_environment=test.engine_environment,
+        engine_volumes=engine_volumes,
+        rendered_services=test.rendered_services,
+        services=services,
+    )
 
     compose_files = ["-f", "docker-compose.yml"]
     if mode not in MODES:
         error(f"Unknown mode: '{mode}'. Supported modes: '{MODES}'")
-    elif mode == "dev" and (PROJECT_DIR / "docker-compose.override.yml").exists():
-        compose_files += ["-f", "docker-compose.override.yml"]
+    elif mode == "dev" and (PROJECT_DIR / DEV_OVERRIDE_FILE).exists():
+        compose_files += ["-f", DEV_OVERRIDE_FILE]
 
     for extra in os.environ.get(EXTRA_COMPOSE_FILES_ENV_VAR, "").split(os.pathsep):
         if extra.strip():
@@ -871,13 +948,13 @@ def stack_up(mode, test, services):
         LOGGER.error(
             f"Schema authority failed to start: {filtered if (filtered) else (authority_result.stderr or authority_result.stdout)}"
         )
-        return False
+        return None
     if not (
         wait_for_service(
             "dfe-engine", DFE_ENGINE_HEALTH_URL, max_attempts=ENGINE_READY_ATTEMPTS
         )
     ):
-        return False
+        return None
 
     # Kafka profiles: bring up infra first, create topics, then start the full profile.
     # The loader fails on startup if no matching topics exist on the broker.
@@ -906,7 +983,7 @@ def stack_up(mode, test, services):
             LOGGER.error(
                 f"'Kafka' infrastructure failed to start: {filtered if (filtered) else (infra_result.stderr or infra_result.stdout)}"
             )
-            return False
+            return None
 
         # Named services, never the whole profile: `--wait` counts an EXITED
         # container as a failure even on exit 0, and topic-init is a one-shot.
@@ -935,17 +1012,14 @@ def stack_up(mode, test, services):
             LOGGER.error(
                 f"'Kafka' broker not healthy within timeout{f': {detail}' if detail else ''}"
             )
-            return False
+            return None
         LOGGER.debug("'Kafka' is healthy")
 
         clean_topics(test.expected_topics)
         if not (create_topics(test.expected_topics)):
-            return False
+            return None
 
-    profile_flags = []
-    for profile in test.compose_profiles:
-        profile_flags += ["--profile", profile]
-    base_cmd = ["docker", "compose"] + compose_files + profile_flags
+    base_cmd = ["docker", "compose"] + compose_files + compose_profile_flags(test=test)
     up_args = base_cmd + ["up", "-d"] + sorted(set(services) | set(test.extra_services))
 
     up_result = run_cmd(up_args, capture=not (LOG_LEVEL == "DEBUG"))
@@ -954,8 +1028,8 @@ def stack_up(mode, test, services):
         LOGGER.error(
             f"Docker compose up failed: {filtered if (filtered) else (up_result.stderr or up_result.stdout)}"
         )
-        return False
-    return True
+        return None
+    return compose_files
 
 
 # ------------------------------------------------------------------------------
@@ -1337,14 +1411,16 @@ def wait_for_stack(services):
 
 # ------------------------------------------------------------------------------
 # Verify Config Mounts
-# - Each DFE service's process runs `--config` on the file this test mounts for
-#   it, read off `docker inspect`. The mount alone proves nothing: an inherited
-#   DFE_*_CONFIG_FILE runs the service on another file beside it.
+# - Each DFE service's process runs `--config` on the file this test mounts for it or the one dfe-engine renders for a service that reads its render, read off `docker inspect`. The mount alone proves nothing: an inherited DFE_*_CONFIG_FILE runs the service on another file beside it.
 # ------------------------------------------------------------------------------
 def verify_config_mounts(ctx, test):
     verified = True
     for service in sorted(test.services):
         want = SERVICE_CONFIG_MOUNTS[service]
+        what = "the file this test mounts"
+        if service in test.rendered_services:
+            want = _sources.rendered_config(service=service)
+            what = "the file dfe-engine renders for it"
         container = container_id(service)
         result = (
             run_cmd(["docker", "inspect", container], capture=True)
@@ -1366,7 +1442,7 @@ def verify_config_mounts(ctx, test):
             mark_fail(
                 ctx,
                 f"[{test.name}] '{service}' runs --config {got or 'nothing'}, not "
-                f"the file this test mounts at {want}",
+                f"{what} at {want!r}",
             )
             verified = False
     return verified
@@ -1972,6 +2048,14 @@ def on_kafka(test):
 
 
 # ------------------------------------------------------------------------------
+# Stack Services
+# - Every DFE service the test runs: its profile's, then each source's instance
+# ------------------------------------------------------------------------------
+def stack_services(*, test: TestCase) -> list[str]:
+    return sorted(set(test.services) | {source.instance for source in test.sources})
+
+
+# ------------------------------------------------------------------------------
 # Outage Records
 # - The records the load cycles through, per `_source`: the test's data file for
 #   its own table unless `outage.sources` names data files of its own
@@ -2003,6 +2087,38 @@ def landed_records(test):
 # - {group: {topic: lag}} from the broker, or None when it cannot say
 # ------------------------------------------------------------------------------
 def consumer_group_lag():
+    described = describe_groups()
+    if described is None:
+        return None
+    try:
+        if KAFKA_BACKEND == "apache":
+            return _outage.group_lag_table(described=described)
+        return _outage.group_lag_json(described=described)
+    except ValueError:
+        return None
+
+
+# ------------------------------------------------------------------------------
+# Group Assignments
+# - {group: {topic}} a live member holds, from the broker, None when it cannot say
+# ------------------------------------------------------------------------------
+def group_assignments() -> dict[str, set[str]] | None:
+    described = describe_groups()
+    if described is None:
+        return None
+    try:
+        if KAFKA_BACKEND == "apache":
+            return _outage.group_assignments_table(described=described)
+        return _outage.group_assignments_json(described=described)
+    except ValueError:
+        return None
+
+
+# ------------------------------------------------------------------------------
+# Describe Groups
+# - What the broker prints about every consumer group, None when it cannot say
+# ------------------------------------------------------------------------------
+def describe_groups() -> str | None:
     if KAFKA_BACKEND == "apache":
         command = _topic_exec_base() + [
             "/opt/kafka/bin/kafka-consumer-groups.sh",
@@ -2029,12 +2145,7 @@ def consumer_group_lag():
             f"Consumer group describe failed: {result.stderr or result.stdout}"
         )
         return None
-    try:
-        if KAFKA_BACKEND == "apache":
-            return _outage.group_lag_table(result.stdout or "")
-        return _outage.group_lag_json(result.stdout or "")
-    except ValueError:
-        return None
+    return (result.stdout) or ("")
 
 
 # ------------------------------------------------------------------------------
@@ -2078,9 +2189,8 @@ def topic_high_watermark(topic):
 #   rather than later as a consumer left behind.
 # ------------------------------------------------------------------------------
 def kafka_unreached(test, services):
-    expected = _outage.expected_consumers(
-        (PROJECT_DIR / path for path in services.values()), test.expected_topics
-    )
+    expected = expected_consumers(services=services, test=test)
+    bindings = _sources.bindings(sources=test.sources)
     landing = [topic for topic in test.expected_topics if topic.endswith("_land")]
 
     def _unreached():
@@ -2088,7 +2198,10 @@ def kafka_unreached(test, services):
         if lag is None:
             return ["the broker did not describe its consumer groups"]
         watermarks = {topic: topic_high_watermark(topic) for topic in landing}
-        return _outage.kafka_unreached(watermarks, lag, expected)
+        unreached = _outage.kafka_unreached(
+            expected=expected, lag=lag, watermarks=watermarks
+        )
+        return unreached + _sources.bindings_uncommitted(bindings=bindings, lag=lag)
 
     return poll_until(
         _unreached,
@@ -2099,6 +2212,18 @@ def kafka_unreached(test, services):
             lambda problems: "; ".join(problems) or "load reached Kafka"
         ),
     )
+
+
+# ------------------------------------------------------------------------------
+# Expected Consumers
+# - How many services subscribe to each topic: the profile's configs, then the transform instance dfe-engine binds to each source's landing topic
+# ------------------------------------------------------------------------------
+def expected_consumers(*, services: Mapping[str, str], test: TestCase) -> Counter[str]:
+    expected = _outage.expected_consumers(
+        configs=(PROJECT_DIR / path for path in services.values()),
+        topics=test.expected_topics,
+    )
+    return expected + _sources.binding_consumers(sources=test.sources)
 
 
 # ------------------------------------------------------------------------------
@@ -2319,19 +2444,21 @@ def verify_outage_landing(ctx, test, sent):
 #   test's topics is behind
 # ------------------------------------------------------------------------------
 def verify_consumers(ctx, test, services):
-    expected = _outage.expected_consumers(
-        (PROJECT_DIR / path for path in services.values()), test.expected_topics
-    )
+    expected = expected_consumers(services=services, test=test)
     if not (expected):
         mark_fail(ctx, f"[{test.name}] no service in the profile subscribes to a topic")
         return
     watched = set(expected) | set(test.expected_topics)
+    bindings = _sources.bindings(sources=test.sources)
 
     def _behind():
         lag = consumer_group_lag()
         if lag is None:
             return None
-        return _outage.consumers_behind(lag, expected, test.expected_topics)
+        behind = _outage.consumers_behind(
+            expected=expected, lag=lag, watched=test.expected_topics
+        )
+        return behind + _sources.bindings_uncommitted(bindings=bindings, lag=lag)
 
     def _render(problems):
         if problems is None:
@@ -2544,9 +2671,11 @@ def run_outage(ctx, test, services, ingest_url, ingest_service):
     # A killed Kafka consumer holds no request open, so what it caught is its lag.
     group = None
     killed_consumer = backing in services and backing != ingest_service
-    if not (method.drains) and on_kafka(test) and killed_consumer:
-        group = _outage.consumer_group(PROJECT_DIR / services[backing])
-    for service in sorted(test.services):
+    if not (method.drains) and on_kafka(test=test):
+        group = _sources.instance_group(service=backing, sources=test.sources)
+        if group is None and killed_consumer:
+            group = _outage.consumer_group(config=PROJECT_DIR / services[backing])
+    for service in stack_services(test=test):
         if not (wait_healthy(service, OUTAGE_READY_TIMEOUT)):
             mark_fail(
                 ctx,
@@ -2554,7 +2683,7 @@ def run_outage(ctx, test, services, ingest_url, ingest_service):
             )
             report_unready(service)
             return
-    survivors = sorted(service for service in test.services if service != backing)
+    survivors = [service for service in stack_services(test=test) if service != backing]
     before = {service: container_state(service) for service in survivors}
 
     since = time.time() - 1
@@ -2600,16 +2729,33 @@ def run_outage(ctx, test, services, ingest_url, ingest_service):
 # - One engine API request over the compose network, the way `make post` makes
 #   it, as (status, body) with status 0 and the reason when nothing answered
 # ------------------------------------------------------------------------------
-def engine_call(method, path, token, payload=None):
+def engine_call(
+    *,
+    method: str,
+    path: str,
+    payload: dict | None = None,
+    timeout: int | None = None,
+    token: str,
+) -> tuple[int, typing.Any]:
     url = f"{post._engine_base()}{path}"
+    # Each helper keeps its own default when the caller names no timeout
+    limit = {} if (timeout is None) else {"timeout": timeout}
     try:
         if method == "GET":
-            return post._api_get_json(url, token=token)
+            return post._api_get_json(token=token, url=url, **limit)
         if method == "POST":
-            return post._api_post_json(url, payload or {}, token=token)
-        return post._api_delete(url, token=token), ""
-    except post.ApiUnreachable as error:
+            return post._api_post_json(
+                payload=(payload) or ({}), token=token, url=url, **limit
+            )
+        if method == "PUT":
+            return post.api_put_json(
+                payload=(payload) or ({}), token=token, url=url, **limit
+            )
+        if method == "DELETE":
+            return post._api_delete(token=token, url=url, **limit), ""
+    except seed.ENGINE_FAULTS as error:
         return 0, str(error)
+    raise ValueError(f"engine_call has no method {method!r}")
 
 
 # ------------------------------------------------------------------------------
@@ -2617,7 +2763,9 @@ def engine_call(method, path, token, payload=None):
 # - This hunt's row off the hunts list, which carries its run state, or None
 # ------------------------------------------------------------------------------
 def hunt_row(token, hunt):
-    status, body = engine_call("GET", f"/hunts?search={quote(hunt)}", token)
+    status, body = engine_call(
+        method="GET", path=f"/hunts?search={quote(hunt)}", token=token
+    )
     return _detection.hunt_row(status=status, body=body, name=hunt)
 
 
@@ -2661,7 +2809,7 @@ def detection_last_load(test):
 # ------------------------------------------------------------------------------
 def runner_alive(ctx, test, token):
     def _running():
-        status, body = engine_call("GET", "/hunts/status", token)
+        status, body = engine_call(method="GET", path="/hunts/status", token=token)
         return _detection.runner_alive(status=status, body=body)
 
     if poll_until(
@@ -2693,7 +2841,9 @@ def create_detection_rule(ctx, test, token, rule):
         marker=test.marker,
         where=test.detection["where"],
     )
-    status, body = engine_call("POST", "/rules", token, request)
+    status, body = engine_call(
+        method="POST", path="/rules", payload=request, token=token
+    )
     source = f"{test.database}.{test.table}"
     fault = _detection.rule_fault(name=rule, status=status, body=body, source=source)
     if fault:
@@ -2716,7 +2866,9 @@ def create_detection_hunt(ctx, test, token, hunt, rule):
         source=f"{test.database}.{test.table}",
         target=f"{test.database}.{DETECTION_TABLE}",
     )
-    status, body = engine_call("POST", "/hunts", token, request)
+    status, body = engine_call(
+        method="POST", path="/hunts", payload=request, token=token
+    )
     if status != 201:
         mark_fail(ctx, f"[{test.name}] POST /hunts returned HTTP {status}: {body}")
         return False
@@ -2814,7 +2966,9 @@ def send_detection_events(ctx, test, ingest_url, events, tenant):
 def queue_detection_run(ctx, test, token, hunt, last_load_ms, trigger=None, by=None):
     time.sleep(_detection.queue_delay(last_load_ms=last_load_ms, now=time.time()))
     if trigger is None:
-        status, body = engine_call("POST", f"/hunts/{quote(hunt)}/run", token)
+        status, body = engine_call(
+            method="POST", path=f"/hunts/{quote(hunt)}/run", token=token
+        )
     else:
         status, body = trigger()
     by = by or f"POST /hunts/{hunt}/run"
@@ -2926,8 +3080,8 @@ def remove_detection_objects(ctx, test, token, created):
     left = []
     for kind, name in created:
         path = f"{DETECTION_OBJECT_PATHS[kind]}/{quote(name)}"
-        deleted, _ = engine_call("DELETE", path, token)
-        status, _ = engine_call("GET", path, token)
+        deleted, _ = engine_call(method="DELETE", path=path, token=token)
+        status, _ = engine_call(method="GET", path=path, token=token)
         if status != 404:
             left.append(f"{kind} '{name}' (DELETE {deleted}, then GET {status})")
     if left:
@@ -2973,19 +3127,8 @@ def run_detection(ctx, test, ingest_url):
         )
         return
 
-    # The engine container is new for every test, so no earlier lookup holds.
-    post._api_container.cache_clear()
-    try:
-        login = post._login(post._engine_base())
-    except post.ApiUnreachable as error:
-        mark_fail(ctx, f"[{test.name}] could not reach the engine API: {error}")
-        return
-    if login.fault:
-        mark_fail(
-            ctx,
-            f"[{test.name}] {login.fault} -- the rule and the hunt are made through "
-            "the engine API",
-        )
+    login = engine_login(ctx=ctx, purpose="make its rule and hunt", test=test)
+    if login is None:
         return
     if not (runner_alive(ctx, test, login.token)):
         return
@@ -3063,7 +3206,7 @@ def complete_setup(ctx, test, token, created):
     if org is None:
         return None
 
-    status, setup = engine_call("GET", "/auth/setup-status", token)
+    status, setup = engine_call(method="GET", path="/auth/setup-status", token=token)
     pending = ((setup or {}).get("initial_setup") or {}).get("pending_steps") or []
     if "first_user" in pending:
         # A real account nobody signs in as: the password is minted and dropped.
@@ -3072,10 +3215,14 @@ def complete_setup(ctx, test, token, created):
             "password": secrets.token_urlsafe(24),
             "name": "E2E Analyst",
         }
-        made, _ = engine_call("POST", "/auth/accounts", token, account)
+        made, _ = engine_call(
+            method="POST", path="/auth/accounts", payload=account, token=token
+        )
         if made in (200, 201):
             created.insert(0, ("account", SETUP_FIRST_USER))
-        status, setup = engine_call("GET", "/auth/setup-status", token)
+        status, setup = engine_call(
+            method="GET", path="/auth/setup-status", token=token
+        )
     initial = (setup or {}).get("initial_setup") or {}
     if status != 200 or initial.get("complete") is not True:
         mark_fail(
@@ -3138,7 +3285,9 @@ def seed_events(events):
 # - The rule the console made scans the searched table and carries every filter
 # ------------------------------------------------------------------------------
 def verify_search_rule(ctx, test, token, rule_id, fragments):
-    status, stored = engine_call("GET", f"/rules/{quote(rule_id)}", token)
+    status, stored = engine_call(
+        method="GET", path=f"/rules/{quote(rule_id)}", token=token
+    )
     if status != 200 or not (isinstance(stored, dict)):
         mark_fail(ctx, f"[{test.name}] GET /rules/{rule_id} returned HTTP {status}")
         return None
@@ -3348,6 +3497,429 @@ def run_search_detection(ctx, test, ingest_url, token):
 
 
 # ==============================================================================
+# Source Tests
+# - Sources made through the dfe-engine API the way the console makes them, each one's transform run in the instance the engine declares, then removed again
+# ==============================================================================
+
+
+# ------------------------------------------------------------------------------
+# Engine Login
+# - A login for the engine API, None once the failure is a verdict
+# ------------------------------------------------------------------------------
+def engine_login(
+    *, ctx: TestContext, purpose: str, test: TestCase
+) -> post.Login | None:
+    # The engine container is new for every test, so no earlier lookup holds
+    post.api_container.cache_clear()
+    try:
+        login = post.login(base=post.ENGINE_NETWORK_BASE)
+    except seed.ENGINE_FAULTS as error:
+        mark_fail(
+            ctx=ctx,
+            label=f"[{test.name}] could not reach the engine API to {purpose}: {error}",
+        )
+        return None
+    if login.fault:
+        mark_fail(
+            ctx=ctx,
+            label=f"[{test.name}] {login.fault}, so this test cannot {purpose}",
+        )
+        return None
+    return login
+
+
+# ------------------------------------------------------------------------------
+# Make Source
+# - One source the console's way: an earlier run's copy removed, the create, the deploy and an upload per fixture, each reply kept for its restart hints
+# ------------------------------------------------------------------------------
+def make_source(
+    *,
+    ctx: TestContext,
+    replies: list[object],
+    run: SourceRun,
+    source: _sources.Source,
+    test: TestCase,
+    token: str,
+) -> bool:
+    path = _sources.source_path(source=source)
+    removed, _ = engine_call(
+        method="DELETE",
+        path=path,
+        timeout=post.ROUTING_DELETE_TIMEOUT_SECONDS,
+        token=token,
+    )
+    if removed not in (200, 204, 404):
+        mark_fail(
+            ctx=ctx,
+            label=f"[{test.name}] DELETE {path!r} of an earlier run's copy returned "
+            f"HTTP {removed}",
+        )
+        return False
+    request = _sources.create_request(source=source)
+    status, body = engine_call(
+        method="POST", path="/sources", payload=request, token=token
+    )
+    if status != 201:
+        mark_fail(
+            ctx=ctx,
+            label=f"[{test.name}] POST /sources returned HTTP {status}: {body!r}",
+        )
+        return False
+    run.made.append(source)
+    replies.append(body)
+
+    deploy = _sources.deploy_path(source=source)
+    status, body = engine_call(
+        method="POST", path=deploy, timeout=seed.DEPLOY_TIMEOUT_SECONDS, token=token
+    )
+    fault = seed.deploy_fault(answer=body, status=status)
+    if not (fault) and body.get("apps_sync_error"):
+        fault = f"the apps could not follow the source: {body['apps_sync_error']!r}"
+    if fault:
+        mark_fail(ctx=ctx, label=f"[{test.name}] POST {deploy!r}: {fault}")
+        return False
+    replies.append(body)
+
+    uploads = _sources.upload_requests(project_dir=PROJECT_DIR, source=source)
+    for route, upload in uploads:
+        status, body = engine_call(
+            method="PUT", path=route, payload=upload, token=token
+        )
+        if status not in (200, 201):
+            mark_fail(
+                ctx=ctx,
+                label=f"[{test.name}] PUT {route!r} returned HTTP {status}: {body!r}",
+            )
+            return False
+        replies.append(body)
+    mark_pass(
+        ctx=ctx,
+        label=f"[{test.name}] made and deployed source {source.name!r} on "
+        f"{source.app!r}, {len(uploads)} file(s) uploaded",
+    )
+    return True
+
+
+# ------------------------------------------------------------------------------
+# Await Index
+# - Every source listed in dfe-engine's env/<app>.instances, which it writes as it renders the instance's config, as {app: [source]}, None once one is still missing
+# ------------------------------------------------------------------------------
+def await_index(*, ctx: TestContext, test: TestCase) -> dict[str, list[str]] | None:
+    def _complete(found: dict[str, list[str]]) -> bool:
+        return not (_sources.unindexed(found=found, sources=test.sources))
+
+    found = poll_until(
+        done=_complete,
+        interval=SOURCE_POLL_SECONDS,
+        predicate=functools.partial(_sources.indexed, sources=test.sources),
+        timeout=SOURCE_INDEX_TIMEOUT,
+    )
+    missing = _sources.unindexed(found=found, sources=test.sources)
+    if not (missing):
+        return found
+    mark_fail(
+        ctx=ctx,
+        label=f"[{test.name}] dfe-engine declared no {', '.join(missing)} in "
+        f"env/<app>{instances.INDEX_SUFFIX} within {SOURCE_INDEX_TIMEOUT}s",
+    )
+    return None
+
+
+# ------------------------------------------------------------------------------
+# Start Instances
+# - `make apply` for the engine's hints in this test's compose project, which bare compose calls then reach too, returning the services recreated or None on a failure
+# ------------------------------------------------------------------------------
+def start_instances(
+    *,
+    ctx: TestContext,
+    files: list[str],
+    found: dict[str, list[str]],
+    hinted: list[str],
+    run: SourceRun,
+    test: TestCase,
+) -> list[str] | None:
+    plan = _sources.restart_plan(
+        found=found,
+        hinted=hinted,
+        rendered_services=test.rendered_services,
+        transport=test.transport,
+    )
+    if plan.ignored:
+        LOGGER.info(
+            f"Restart hint(s) for {', '.join(plan.ignored)} left alone: this test runs "
+            "each on a config it mounts or not at all"
+        )
+    if plan.problems:
+        mark_fail(ctx=ctx, label=f"[{test.name}] {'; '.join(plan.problems)}")
+        return None
+
+    fragment = TMP_DIR / f"docker-compose.{RUN_ID}.{test.name}.instances.yml"
+    # `extends` reads the committed service, never the dev override's local image
+    images = (
+        local_image_services(components=sorted(found))
+        if (DEV_OVERRIDE_FILE in files)
+        else {}
+    )
+    instances.write(images=images, instances=found, path=fragment)
+    if not (run.swapped):
+        run.compose_file = os.environ.get("COMPOSE_FILE")
+        run.swapped = True
+    os.environ["COMPOSE_FILE"] = os.pathsep.join([*files[1::2], str(fragment)])
+    run.started = list(plan.started)
+
+    command = ["docker", "compose", *files, "-f", str(fragment)]
+    command += compose_profile_flags(test=test)
+    command += ["up", "-d", "--force-recreate", "--no-deps"]
+    command += sorted({*plan.started, *plan.recreated})
+    result = run_cmd(args=command, capture=not (LOG_LEVEL == "DEBUG"))
+    if result.returncode != 0:
+        detail = ((result.stderr) or (result.stdout) or ("")).strip()
+        mark_fail(
+            ctx=ctx,
+            label=f"[{test.name}] could not start {', '.join(plan.started)}: "
+            f"{detail!r}",
+        )
+        return None
+    on_render = (
+        f" then recreated {', '.join(plan.recreated)}" if (plan.recreated) else ""
+    )
+    mark_pass(
+        ctx=ctx,
+        label=f"[{test.name}] started {', '.join(plan.started)}{on_render}, as the "
+        "engine's hints ask",
+    )
+    return list(plan.recreated)
+
+
+# ------------------------------------------------------------------------------
+# Instance Ready
+# - One service answers readiness inside its own container, as no instance publishes a port
+# ------------------------------------------------------------------------------
+def instance_ready(*, service: str) -> bool:
+    result = run_cmd(
+        args=[
+            "docker",
+            "compose",
+            "exec",
+            "-T",
+            service,
+            "curl",
+            "-sf",
+            INSTANCE_READY_URL,
+        ],
+        capture=True,
+    )
+    return result.returncode == 0
+
+
+# ------------------------------------------------------------------------------
+# Instance Up
+# - One instance's container healthy, then answering readiness inside it
+# ------------------------------------------------------------------------------
+def instance_up(*, service: str) -> bool:
+    if not (wait_healthy(service=service, timeout=SOURCE_READY_TIMEOUT)):
+        return False
+    ready = poll_until(
+        interval=SOURCE_POLL_SECONDS,
+        predicate=functools.partial(instance_ready, service=service),
+        timeout=SOURCE_READY_TIMEOUT,
+    )
+    return bool(ready)
+
+
+# ------------------------------------------------------------------------------
+# Await Instances
+# - Each recreated service and instance ready, then on the bus each instance's group joined, as a transform's consumer starts at the log end
+# ------------------------------------------------------------------------------
+def await_instances(
+    *, ctx: TestContext, recreated: Sequence[str], test: TestCase
+) -> bool:
+    def _joined(problems: list[str]) -> bool:
+        return problems == []
+
+    def _render(problems: list[str]) -> str:
+        return ("; ".join(problems)) or ("every source's consumer group joined")
+
+    def _unjoined() -> list[str]:
+        assigned = group_assignments()
+        if assigned is None:
+            return ["the broker did not describe its consumer groups"]
+        return _sources.bindings_unassigned(assigned=assigned, bindings=bindings)
+
+    bindings = _sources.bindings(sources=test.sources)
+    if recreated and not (wait_for_stack(services=recreated)):
+        mark_fail(
+            ctx=ctx,
+            label=f"[{test.name}] {', '.join(recreated)} never became ready on "
+            "dfe-engine's render",
+        )
+        return False
+    for source in test.sources:
+        if not (instance_up(service=source.instance)):
+            mark_fail(
+                ctx=ctx,
+                label=f"[{test.name}] {source.instance!r} not ready within "
+                f"{SOURCE_READY_TIMEOUT}s",
+            )
+            report_unready(name=source.instance)
+            return False
+    names = ", ".join(source.instance for source in test.sources)
+    mark_pass(ctx=ctx, label=f"[{test.name}] {names} healthy and ready")
+    if test.transport != "kafka":
+        return True
+
+    problems = poll_until(
+        done=_joined,
+        interval=SOURCE_POLL_SECONDS,
+        on_attempt=report_changes(render=_render),
+        predicate=_unjoined,
+        timeout=SOURCE_READY_TIMEOUT,
+    )
+    if problems:
+        mark_fail(
+            ctx=ctx,
+            label=f"[{test.name}] not joined within {SOURCE_READY_TIMEOUT}s, so load "
+            f"sent now could be skipped: {'; '.join(problems)}",
+        )
+        return False
+    mark_pass(
+        ctx=ctx,
+        label=f"[{test.name}] {', '.join(sorted(bindings))} joined, each on its "
+        "landing topic",
+    )
+    return True
+
+
+# ------------------------------------------------------------------------------
+# Provision Sources
+# - Login, then each source made with its instance declared, started and ready
+# ------------------------------------------------------------------------------
+def provision_sources(
+    *, ctx: TestContext, files: list[str], run: SourceRun, test: TestCase
+) -> bool:
+    print()
+    LOGGER.info(f"Making {len(test.sources)} source(s) through the dfe-engine API...")
+    login = engine_login(ctx=ctx, purpose="make its sources", test=test)
+    if login is None:
+        return False
+    replies = []
+    for source in test.sources:
+        made = make_source(
+            ctx=ctx,
+            replies=replies,
+            run=run,
+            source=source,
+            test=test,
+            token=login.token,
+        )
+        if not (made):
+            return False
+    found = await_index(ctx=ctx, test=test)
+    if found is None:
+        return False
+    recreated = start_instances(
+        ctx=ctx,
+        files=files,
+        found=found,
+        hinted=_sources.hinted_services(replies=replies),
+        run=run,
+        test=test,
+    )
+    if recreated is None:
+        return False
+    return await_instances(ctx=ctx, recreated=recreated, test=test)
+
+
+# ------------------------------------------------------------------------------
+# Remove Sources
+# - Each instance removed, then each source deleted and proved gone from the index, so neither the next test nor the stack this run found starts it
+# ------------------------------------------------------------------------------
+def remove_sources(*, ctx: TestContext, run: SourceRun, test: TestCase) -> None:
+    def _gone(found: dict[str, list[str]]) -> bool:
+        return not (found)
+
+    stuck = []
+    for service in run.started:
+        result = compose_lifecycle(action=["rm", "--stop", "--force"], service=service)
+        if result.returncode != 0:
+            detail = ((result.stderr) or (result.stdout) or ("")).strip()
+            stuck.append(f"{service!r} ({detail!r})")
+    if run.swapped and run.compose_file is None:
+        os.environ.pop("COMPOSE_FILE", None)
+    elif run.swapped:
+        os.environ["COMPOSE_FILE"] = run.compose_file
+    if stuck:
+        mark_fail(
+            ctx=ctx,
+            label=f"[{test.name}] instance(s) not removed: {'; '.join(stuck)}",
+        )
+    if not (run.made):
+        return
+    made = ", ".join(source.name for source in run.made)
+    login = engine_login(ctx=ctx, purpose="remove its sources", test=test)
+    if login is None:
+        LOGGER.error(f"    Left on dfe-engine: {made}")
+        return
+
+    left = []
+    for source in reversed(run.made):
+        path = _sources.source_path(source=source)
+        deleted, _ = engine_call(
+            method="DELETE",
+            path=path,
+            timeout=post.ROUTING_DELETE_TIMEOUT_SECONDS,
+            token=login.token,
+        )
+        status, _ = engine_call(method="GET", path=path, token=login.token)
+        if status != 404:
+            left.append(f"source {source.name!r} (DELETE {deleted}, then GET {status})")
+    listed = poll_until(
+        done=_gone,
+        interval=SOURCE_POLL_SECONDS,
+        predicate=functools.partial(_sources.indexed, sources=run.made),
+        timeout=SOURCE_INDEX_TIMEOUT,
+    )
+    for app, names in sorted(listed.items()):
+        index = f"env/{app}{instances.INDEX_SUFFIX}"
+        left += [f"{name!r} still listed in {index!r}" for name in names]
+    if left:
+        mark_fail(ctx=ctx, label=f"[{test.name}] left on dfe-engine: {', '.join(left)}")
+    else:
+        mark_pass(
+            ctx=ctx,
+            label=f"[{test.name}] removed source(s) {made}, then dfe-engine declared "
+            "none of their instances",
+        )
+    LOGGER.info(f"The tables of {made} remain, holding rows tagged {test.marker!r}")
+
+
+# ------------------------------------------------------------------------------
+# Verify Transformed
+# - Every row this run landed in the test's table carries the `_tags` stamp the program its source uploads sets, which a record sent around the transform lacks
+# ------------------------------------------------------------------------------
+def verify_transformed(
+    *, ctx: TestContext, source: _sources.Source, test: TestCase
+) -> None:
+    counts = None
+    queries = _sources.stamp_queries(
+        database=test.database, marker=test.marker, source=source, table=test.table
+    )
+    for query in queries:
+        counts = _sources.stamp_counts(raw=ch_query(sql=query))
+        if counts and counts[0]:
+            break
+    problems = _sources.stamp_problems(counts=counts, source=source, table=test.table)
+    if problems:
+        mark_fail(ctx=ctx, label=f"[{test.name}] {'; '.join(problems)}")
+        return
+    mark_pass(
+        ctx=ctx,
+        label=f"[{test.name}] all {counts[0]} rows of this run in {test.table!r} "
+        f"carry the stamp {source.instance!r} sets",
+    )
+
+
+# ==============================================================================
 # Test Functions
 # - Functions for resolving test cases from config and running the test flow
 # ==============================================================================
@@ -3406,6 +3978,65 @@ def resolve_test_case(test_config, global_config):
                     f"[{test_name}] detection '{kind}' names no data file that exists"
                 )
 
+    transport = "kafka" if (KAFKA_BACKEND_PROFILE in compose_profiles) else "grpc"
+    expected_topics = get_config(
+        global_config=global_config,
+        is_list=True,
+        path="expected_topics",
+        test_config=test_config,
+    )
+    table = get_config(
+        default_value=TARGET_TABLE,
+        global_config=global_config,
+        path="table",
+        test_config=test_config,
+    ).replace("-", "_")
+    sources, problems = _sources.parse(
+        project_dir=PROJECT_DIR, raw=test_config.get("sources")
+    )
+    if problems:
+        error(msg=f"[{test_name}] {'; '.join(problems)}")
+    rendered_services = []
+    if sources:
+        try:
+            enabled = _sources.enabled_apps(
+                profile_name=profile_name,
+                text=SERVICE_PROFILES_FILE.read_text(encoding="utf-8"),
+            )
+        except resolve_profile.ProfileError as refused:
+            error(msg=f"[{test_name}] {refused.msg}")
+        for source in sources:
+            reason = seed.skip_reason(
+                body=_sources.create_request(source=source),
+                kind="sources",
+                per_source_apps=enabled,
+            )
+            if reason:
+                error(
+                    msg=f"[{test_name}] profile {profile_name!r} cannot run source "
+                    f"{source.name!r}: {reason}"
+                )
+        problems = _sources.target_problems(
+            outage_sources=(outage.get("sources")) or ({}),
+            sources=sources,
+            table=table,
+        )
+        if outage:
+            problems += _sources.outage_problems(
+                service=outage["service"], sources=sources
+            )
+        if problems:
+            error(msg=f"[{test_name}] {'; '.join(problems)}")
+        engine_environment |= _sources.engine_environment(
+            profile_name=profile_name, transport=transport
+        )
+        rendered_services = [
+            service for service in SOURCE_RENDERED_SERVICES if service in services
+        ]
+        expected_topics = _sources.merged_topics(
+            expected_topics=expected_topics, sources=sources, transport=transport
+        )
+
     return TestCase(
         name=test_name,
         profile=profile_name,
@@ -3415,12 +4046,8 @@ def resolve_test_case(test_config, global_config):
         database=get_config(
             "database", test_config, global_config, default_value=TARGET_DB
         ).replace("-", "_"),
-        table=get_config(
-            "table", test_config, global_config, default_value=TARGET_TABLE
-        ).replace("-", "_"),
-        expected_topics=get_config(
-            "expected_topics", test_config, global_config, is_list=True
-        ),
+        table=table,
+        expected_topics=expected_topics,
         extra_services=extra_services,
         expected_http=get_config(
             "expected_http", test_config, global_config, is_list=True
@@ -3429,6 +4056,9 @@ def resolve_test_case(test_config, global_config):
         outage=outage,
         detection=detection,
         engine_environment=engine_environment,
+        sources=sources,
+        rendered_services=rendered_services,
+        transport=transport,
     )
 
 
@@ -3469,6 +4099,9 @@ def run_test(ctx, mode, test, persistent_services):
         )
     elif test.detection:
         print(f"  - Detection: rule where {test.detection['where']}")
+    for source in test.sources:
+        variant = f" ({source.variant!r})" if (source.variant) else ""
+        print(f"  - Source: {source.name!r}, run by {source.instance!r}{variant}")
     for svc_name in sorted(test.services):
         print(f"  - {svc_name} Config: {test.services[svc_name]}")
     if test.database != RUN_ID.replace("-", "_"):
@@ -3481,14 +4114,16 @@ def run_test(ctx, mode, test, persistent_services):
     effective_services = dict(test.services)
     if "dfe-loader" in effective_services:
         effective_services["dfe-loader"] = generate_tmp_loader_config(
-            effective_services["dfe-loader"],
-            test.database,
-            test.table,
-            sources=test.outage.get("sources") or {},
+            database=test.database,
+            loader_config=effective_services["dfe-loader"],
+            own_tables={source.name for source in test.sources},
+            sources=(test.outage.get("sources")) or ({}),
+            table=test.table,
         )
 
     # Start the stack (Kafka profiles: infra first, create topics, then full stack)
-    if not (stack_up(mode, test, effective_services)):
+    files = stack_up(mode=mode, services=effective_services, test=test)
+    if files is None:
         mark_fail(ctx, f"[{test.name}] Stack failed to start")
         stack_down(keep_services=persistent_services or None)
         return
@@ -3507,6 +4142,34 @@ def run_test(ctx, mode, test, persistent_services):
         stack_down(keep_services=persistent_services or None)
         return
 
+    run = SourceRun()
+    try:
+        if not (test.sources) or (
+            provision_sources(ctx=ctx, files=files, run=run, test=test)
+        ):
+            run_checks(ctx=ctx, effective_services=effective_services, test=test)
+    finally:
+        if test.sources:
+            print()
+            remove_sources(ctx=ctx, run=run, test=test)
+
+    # Dump container logs for debugging purposes, then tear down the stack if configured to do so
+    dump_logs()
+    print()
+    if stack_is_up():
+        stack_down(keep_services=(persistent_services) or (None))
+
+    # Print footer for test separation in logs
+    print("------------------------------------------------------------")
+
+
+# ------------------------------------------------------------------------------
+# Run Checks
+# - The test's own flow on a healthy stack: an outage, a detection or a send, then the stamp, topic, HTTP and self-monitoring checks it owes
+# ------------------------------------------------------------------------------
+def run_checks(
+    *, ctx: TestContext, effective_services: dict[str, str], test: TestCase
+) -> None:
     ingest_service = "dfe-receiver"
     ingest_url = DFE_RECEIVER_INGEST_URL
     if test.outage:
@@ -3549,6 +4212,12 @@ def run_test(ctx, mode, test, persistent_services):
             print()
             verify_archive(ctx, test.name, archive_baselines)
 
+    # A program the table's source uploads stamps every record it runs on
+    stamping = _sources.stamping_source(sources=test.sources, table=test.table)
+    if stamping is not None:
+        print()
+        verify_transformed(ctx=ctx, source=stamping, test=test)
+
     # If the test runs Kafka and expected topics are defined, verify the topics exist
     if KAFKA_BACKEND_PROFILE in test.compose_profiles and test.expected_topics:
         print()
@@ -3561,15 +4230,6 @@ def run_test(ctx, mode, test, persistent_services):
     if OTEL_SERVICE in test.extra_services:
         print()
         verify_self_monitoring(ctx, test.name)
-
-    # Dump container logs for debugging purposes, then tear down the stack if configured to do so
-    dump_logs()
-    print()
-    if stack_is_up():
-        stack_down(keep_services=persistent_services or None)
-
-    # Print footer for test separation in logs
-    print("------------------------------------------------------------")
 
 
 # ------------------------------------------------------------------------------
@@ -3588,8 +4248,11 @@ def run_suite(ctx, mode, tests, persistent_services):
             print()
             stack_down(persistent_services)
 
-        # Build only the DFE services the selected tests actually need.
-        build_images(mode, {service for test in tests for service in test.services})
+        # Build only the DFE services the selected tests need, each source's app among them
+        needed = set()
+        for test in tests:
+            needed |= set(test.services) | {source.app for source in test.sources}
+        build_images(dfe_services=needed, mode=mode)
 
         for test in tests:
             run_test(ctx, mode, test, persistent_services)

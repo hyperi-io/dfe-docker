@@ -52,6 +52,7 @@ from _common import (  # noqa: E402
     PER_SOURCE_APP_KEYS,
     PER_SOURCE_APPS_VAR,
     REPO_ROOT,
+    SOURCE_NAME,
     TRANSFORM_APP_PREFIX,
     _load_dotenv,
     _print,
@@ -71,8 +72,8 @@ from post import (  # noqa: E402
     _api_post_json,
     _engine_base,
     _ingest_target,
-    _login,
     _request_token,
+    login,
 )
 
 
@@ -101,8 +102,6 @@ KINDS = {
 LANDING_INTERVAL_SECONDS = 3.0
 LANDING_TIMEOUT_SECONDS = 60.0
 SEED_DIR = REPO_ROOT / "resources" / "seed"
-# The engine's rule for a source name, which also keeps an events file's name safe to quote into SQL.
-SOURCE_NAME = re.compile(r"[a-z]([a-z0-9-]*[a-z0-9])?")
 # A hunt's `global_source_table_name`, the `<database>.<source>` table a source's deploy creates.
 HUNT_TABLE = re.compile(
     rf"(?P<database>[A-Za-z_][A-Za-z0-9_]*)\.(?P<table>{SOURCE_NAME.pattern})"
@@ -160,7 +159,7 @@ def _deploy(*, base: str, name: str, token: str) -> None:
         payload={}, timeout=DEPLOY_TIMEOUT_SECONDS, token=token, url=f"{base}{path}"
     )
     _print_hints(answer=answer)
-    fault = _deploy_fault(answer=answer, status=status)
+    fault = deploy_fault(answer=answer, status=status)
     if fault:
         raise SeedError(fault)
     _print(msg=f"deployed source {name!r}")
@@ -169,22 +168,6 @@ def _deploy(*, base: str, name: str, token: str) -> None:
             msg=f"  the apps did not take it ({answer['apps_sync_error']}); the "
             f"reconcile that ends this run retries it"
         )
-
-
-def _deploy_fault(*, answer: object, status: int) -> str:
-    """Why a deploy answer leaves its source not live, or an empty string when it is live."""
-    if (
-        (status != 200)
-        or not (isinstance(answer, dict))
-        or (answer.get("applied") is not True)
-    ):
-        return f"the deploy answered HTTP {status}: {answer}"
-    if answer.get("topics_failed"):
-        return (
-            f"the deploy could not create topics {answer['topics_failed']}, so the "
-            f"source has nowhere to land"
-        )
-    return ""
 
 
 def _deployed(*, body: object) -> bool:
@@ -216,6 +199,7 @@ def _events(*, directory: Path) -> list[tuple[str, list[dict]]]:
     """Read every events file in directory, in name order, as (source, records)."""
     events = []
     for path in sorted(directory.glob(pattern="*.yaml")):
+        # The engine's own rule, which also keeps the name safe to quote into SQL
         if not (SOURCE_NAME.fullmatch(string=path.stem)):
             raise SeedError(f"{path.name!r} is not named for a valid source")
         records = _read(path=path)
@@ -376,7 +360,7 @@ def _seed_kind(
     failed = 0
     for name, body in objects:
         try:
-            reason = _skip_reason(body=body, kind=kind, per_source_apps=per_source_apps)
+            reason = skip_reason(body=body, kind=kind, per_source_apps=per_source_apps)
             if reason:
                 _print(msg=f"SKIP {KINDS[kind].noun} {name!r}: {reason}")
                 continue
@@ -428,7 +412,7 @@ def _send_events(
     """Send every events file's records whose source this stack can run, and return 1 at the first that cannot be sent or seen to land."""
     try:
         for source, records in events:
-            reason = _skip_reason(
+            reason = skip_reason(
                 body=sources.get(source, {}),
                 kind="sources",
                 per_source_apps=per_source_apps,
@@ -447,21 +431,6 @@ def _send_events(
         _print(msg=f"FAIL {error}")
         return 1
     return 0
-
-
-def _skip_reason(*, body: dict, kind: str, per_source_apps: list[str]) -> str:
-    """Why this profile cannot run one object, or an empty string when it can."""
-    if kind != "sources":
-        return ""
-    for app in _source_apps(body=body):
-        if app not in per_source_apps:
-            key = PER_SOURCE_APP_KEYS.get(app)
-            return (
-                f"this profile sets no {key}: true, so no {app} runs it"
-                if key
-                else f"no profile runs {app}"
-            )
-    return ""
 
 
 def _source_apps(*, body: dict) -> list[str]:
@@ -498,12 +467,43 @@ def _token(*, base: str) -> str:
     """A token for the seed writes: the bootstrap admin's, or once it is retired, one for an account named at the terminal."""
     if _admin_retired(base=base):
         return _prompted_token(base=base, terminal=sys.stdin.isatty())
-    login = _login(base=base)
-    if login.fault:
+    signed_in = login(base=base)
+    if signed_in.fault:
         raise SeedError(
-            _refusal(fault=login.fault, prompted=False, status=login.status)
+            _refusal(fault=signed_in.fault, prompted=False, status=signed_in.status)
         )
-    return login.token
+    return signed_in.token
+
+
+def deploy_fault(*, answer: object, status: int) -> str:
+    """Why a deploy answer leaves its source not live, empty when it is live."""
+    if (
+        (status != 200)
+        or not (isinstance(answer, dict))
+        or (answer.get("applied") is not True)
+    ):
+        return f"the deploy answered HTTP {status}: {answer!r}"
+    if answer.get("topics_failed"):
+        return (
+            f"the deploy could not create topics {answer['topics_failed']}, so the "
+            f"source has nowhere to land"
+        )
+    return ""
+
+
+def skip_reason(*, body: dict, kind: str, per_source_apps: list[str]) -> str:
+    """Why this profile cannot run one object, empty when it can."""
+    if kind != "sources":
+        return ""
+    for app in _source_apps(body=body):
+        if app not in per_source_apps:
+            key = PER_SOURCE_APP_KEYS.get(app)
+            return (
+                f"this profile sets no {key}: true, so no {app} runs it"
+                if (key)
+                else f"no profile runs {app}"
+            )
+    return ""
 
 
 def main() -> int:

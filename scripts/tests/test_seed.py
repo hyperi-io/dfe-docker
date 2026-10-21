@@ -258,7 +258,7 @@ class TestAction:
 class TestDeployFault:
     @pytest.mark.parametrize("case", DEPLOY_FAULT_CASES)
     def test_matches_expected(self, case: DeployFaultCase) -> None:
-        fault = seed._deploy_fault(answer=case["answer"], status=case["status"])
+        fault = seed.deploy_fault(answer=case["answer"], status=case["status"])
 
         assert (fault == "") is case["live"], fault
 
@@ -416,7 +416,7 @@ class TestSendEvents:
 class TestSkipReason:
     @pytest.mark.parametrize("case", SKIP_REASON_CASES)
     def test_matches_expected(self, case: SkipReasonCase) -> None:
-        reason = seed._skip_reason(
+        reason = seed.skip_reason(
             body=case["body"],
             kind=case["kind"],
             per_source_apps=case["per_source_apps"],
