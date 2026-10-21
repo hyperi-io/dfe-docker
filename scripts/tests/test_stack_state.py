@@ -330,3 +330,57 @@ def test_stale_names_only_restored_services_their_files_have_moved_past() -> Non
     assert _stack_state.stale(found, expected) == [
         "'dfe-engine' runs config hash aaaa, its files give bbbb"
     ]
+
+
+_SINGLE_GRPC_ENGINE = {
+    "DFE_PROFILE": "docker-single",
+    "DFE_TRANSPORT_DEFAULT": "direct",
+}
+
+
+@pytest.mark.parametrize(
+    ("engine_environment", "environ"),
+    [
+        (
+            _SINGLE_GRPC_ENGINE,
+            {"DFE_STACK_PROFILE": "docker-single", "DFE_TRANSPORT_DEFAULT": "direct"},
+        ),
+        ({"DFE_PROFILE": "docker-slim", "DFE_TRANSPORT_DEFAULT": "direct"}, {}),
+        ({}, {"DFE_STACK_PROFILE": "docker-single", "DFE_TRANSPORT_DEFAULT": "bus"}),
+    ],
+    ids=["same-profile", "compose-defaults", "no-engine"],
+)
+def test_a_run_that_keeps_the_stack_on_its_profile_is_no_change(
+    engine_environment: dict, environ: dict
+) -> None:
+    assert (
+        _stack_state.profile_change(
+            engine_environment=engine_environment, environ=environ
+        )
+        == ""
+    )
+
+
+@pytest.mark.parametrize(
+    ("environ", "given"),
+    [
+        (
+            {"DFE_STACK_PROFILE": "docker-single", "DFE_TRANSPORT_DEFAULT": "bus"},
+            "single-kafka",
+        ),
+        (
+            {"DFE_STACK_PROFILE": "docker-slim", "DFE_TRANSPORT_DEFAULT": "direct"},
+            "slim-grpc",
+        ),
+    ],
+    ids=["other-transport", "other-tier"],
+)
+def test_a_run_that_would_move_the_stack_names_the_profile_to_rerun_with(
+    environ: dict, given: str
+) -> None:
+    assert _stack_state.profile_change(
+        engine_environment=_SINGLE_GRPC_ENGINE, environ=environ
+    ) == (
+        f"the stack runs profile 'single-grpc' but these make flags give {given!r}. "
+        "Rerun with DFE_PROFILE=single-grpc"
+    )
