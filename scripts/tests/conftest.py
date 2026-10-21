@@ -99,7 +99,7 @@ def chmod_watch() -> Iterator[ChmodWatch]:
 def generated_files_stay_in_tmp(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Point the files `make` generates at tmp_path, so no test rewrites the checkout's copies."""
+    """Point the files `make` generates at tmp_path, so no test rewrites the checkout's copies or reads the instances this checkout's engine declared."""
     # Under a .tmp/ that does not exist yet, as after an operator deletes it, so every writer is held to creating it.
     monkeypatch.setattr(resolve_profile, "PROFILE_MK", tmp_path / ".tmp" / "profile.mk")
     monkeypatch.setattr(
@@ -107,6 +107,7 @@ def generated_files_stay_in_tmp(
         "COMPOSE_INSTANCES_FILE",
         tmp_path / ".tmp" / "docker-compose.instances.yml",
     )
+    monkeypatch.setattr(instances, "ENV_DIR", tmp_path / "env")
 
 
 @pytest.fixture

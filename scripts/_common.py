@@ -58,10 +58,17 @@ RENDERED_PROFILES = ("slim-grpc", "slim-kafka", "single-grpc", "single-kafka")
 # What a Kafka dfe-loader subscribes to when its config names no topics and no topic_regex (dfe-loader src/kafka/transport.rs LANDING_TOPIC_INCLUDE)
 LOADER_DEFAULT_TOPIC_REGEX = "_(land|load)$"
 
-# dfe-fetcher runs one container per source and never as a profile's service. A profile that runs them says so with the key, which resolve_profile.py writes to .tmp/profile.mk as the variable.
+# Each app dfe-engine starts one container per source of, never as a profile's service, with the profile key that runs it and the variable resolve_profile.py writes the enabled apps to
 FETCHER_SERVICE = "dfe-fetcher"
-FETCHER_ENABLED_KEY = "fetcher_enabled"
-FETCHER_RESOLVED_VAR = "DFE_FETCHER_RESOLVED"
+PER_SOURCE_APP_KEYS = {
+    FETCHER_SERVICE: "fetcher_enabled",
+    "dfe-transform-elastic": "transform_elastic_enabled",
+    "dfe-transform-vector": "transform_vector_enabled",
+    "dfe-transform-vrl": "transform_vrl_enabled",
+}
+PER_SOURCE_APPS_VAR = "DFE_PER_SOURCE_APPS"
+# A source's `transform.engine` runs the app this prefix names (dfe-engine appmgmt/catalogue.py TRANSFORM_SERVICE_PREFIX)
+TRANSFORM_APP_PREFIX = "dfe-transform-"
 
 # The config file each app reads, by the manifest's `consumes.config`. Shared,
 # because the resident service reads it at <mount>/<app>/ and a per-source

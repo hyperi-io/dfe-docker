@@ -21,6 +21,8 @@ a profile that declares none behaves exactly as it did before the keys existed.
 oauth2-proxies it starts need an OIDC issuer, and no dfe-docker profile may
 require one to exist.
 
+The ``*_enabled`` keys in ``PER_SOURCE_APP_KEYS`` say which apps dfe-engine may start one container per source of. An instance index naming any other app fails the resolve rather than starting an app the profile does not run.
+
 The matching env var wins over the profile key, because ``.env`` is what a deploy
 writes (via the deployment dial) while the profile is the committed shape -- the
 same precedence ``DFE_PROFILE`` already has over ``active_profile``.
@@ -46,9 +48,8 @@ from _common import (  # noqa: E402
     CONFIG_DIR,
     EXTERNAL_ORIGIN_KEY,
     FALSY,
-    FETCHER_ENABLED_KEY,
-    FETCHER_RESOLVED_VAR,
-    FETCHER_SERVICE,
+    PER_SOURCE_APP_KEYS,
+    PER_SOURCE_APPS_VAR,
     PROFILE_MK,
     RENDERED_PROFILES,
     SERVICE_CONFIG_FILE,
@@ -58,7 +59,7 @@ from _common import (  # noqa: E402
     _print,
     _rel_path,
 )
-from build_dev_images import buildable_components  # noqa: E402
+from build_dev_images import buildable_components, local_image_services  # noqa: E402
 
 AUTH_ENABLED_ENV_VAR = "DFE_AUTH_ENABLED"
 # One proxy per infra-UI ORIGIN, not per UI: oauth2-proxy serves a single
@@ -249,8 +250,10 @@ ENGINE_CONTRACT_SUBDIR = "contract"
 # volume, handed to the engine on the same tiers as the contract directory.
 ENGINE_CATALOGUE_FILE_VAR = "DFE_ENGINE_CATALOGUE_FILE"
 ENGINE_CATALOGUE_FILE = "catalogue/sources.yaml"
+# The per-source apps that read and write topics only, so a grpc profile cannot run them
+KAFKA_ONLY_APPS = ("dfe-transform-elastic",)
 # The per-source apps are absent: dfe-engine starts one instance per source, never a profile.
-# A profile runs dfe-fetcher's with `fetcher_enabled: true`.
+# A profile runs each one's with its PER_SOURCE_APP_KEYS key set true.
 SERVICES = [
     "dfe-archiver",
     "dfe-loader",
@@ -307,12 +310,41 @@ def _validate_auth() -> None:
     )
 
 
-def _instance_services(*, profile: str, renders: bool) -> list[str]:
+def _disabled_instances(*, found: Mapping[str, Sequence[str]], transport: str) -> str:
+    """Name each app the index declares instances of and the profile does not run, with the key that runs it."""
+    lines = []
+    for app, names in sorted(found.items()):
+        key = PER_SOURCE_APP_KEYS.get(app)
+        if (app in KAFKA_ONLY_APPS) and (transport != "kafka"):
+            fix = "it runs on the kafka transport only"
+        elif key:
+            fix = f"set {key}: true"
+        else:
+            fix = "no profile key runs it per source"
+        lines.append(f"- {app} (sources {', '.join(names)}): {fix}")
+    return (
+        "dfe-engine declared instances of apps this profile does not run:\n"
+        + "\n".join(lines)
+        + "\nSet the key on the profile or delete those sources through dfe-engine. "
+        f"It lists them in {instances.ENV_DIR.name}/<app>{instances.INDEX_SUFFIX}"
+    )
+
+
+def _instance_services(
+    *,
+    enabled: Collection[str],
+    local: Collection[str],
+    profile: str,
+    renders: bool,
+    transport: str,
+) -> list[str]:
     """The per-source containers this tier declares, writing their compose fragment.
 
     Only where the engine renders the app config: anywhere else the index is a
     leftover from a tier this checkout ran earlier, and declaring containers off
     it would start apps this profile does not run.
+
+    An instance of an app in `local` runs that app's local image, because `extends` reads the committed service and never the overlay that repoints it.
     """
     if not renders:
         instances.write({})
@@ -326,7 +358,14 @@ def _instance_services(*, profile: str, renders: bool) -> list[str]:
             "declares no compose service for. Add one, or every source bound to it is "
             "stored and never run",
         )
-    instances.write(found)
+    disabled = {app: names for app, names in found.items() if app not in enabled}
+    if disabled:
+        raise _ProfileError(
+            header=profile,
+            msg=_disabled_instances(found=disabled, transport=transport),
+        )
+    images = local_image_services([app for app in found if app in local])
+    instances.write(found, images=images)
     return instances.services(found)
 
 
@@ -349,24 +388,31 @@ def _footprint(*, profile: dict[str, object], profile_name: str) -> dict[str, bo
     return resolved
 
 
-def _fetcher_enabled(
-    *, profile: dict[str, object], profile_name: str, renders: bool
-) -> bool:
-    """Whether this profile runs one dfe-fetcher per source, each reading the config dfe-engine renders for it.
+def _per_source_apps(
+    *, profile: dict[str, object], profile_name: str, renders: bool, transport: str
+) -> list[str]:
+    """The apps this profile runs one container per source of, each reading the config dfe-engine renders for its source.
 
-    A profile with its core footprint switched off renders nothing, so it resolves to false there rather than failing.
+    A profile with its core footprint switched off renders nothing, so it runs none there rather than failing.
     """
-    declared = profile.get(FETCHER_ENABLED_KEY, "false")
-    if not (isinstance(declared, str)) or (
-        declared.strip().lower() not in ("false", "true")
-    ):
-        raise _ProfileError(
-            header=profile_name,
-            msg=f"{FETCHER_ENABLED_KEY!r} must be true or false",
-        )
-    if declared.strip().lower() == "false":
-        return False
-    return renders
+    enabled = []
+    for app, key in PER_SOURCE_APP_KEYS.items():
+        declared = profile.get(key, "false")
+        if not (isinstance(declared, str)) or (
+            declared.strip().lower() not in ("false", "true")
+        ):
+            raise _ProfileError(
+                header=profile_name, msg=f"{key!r} must be true or false"
+            )
+        if declared.strip().lower() == "false":
+            continue
+        if (app in KAFKA_ONLY_APPS) and (transport != "kafka"):
+            raise _ProfileError(
+                header=profile_name,
+                msg=f"{app} runs on the kafka transport only, so {key!r} cannot be true on a {transport} profile",
+            )
+        enabled.append(app)
+    return enabled if renders else []
 
 
 def _parse_yaml(*, text: str) -> dict[str, object]:
@@ -450,7 +496,9 @@ def _resolve_profile(
 
     # A typo like `cor: true` would otherwise resolve to the default and start a
     # footprint nobody asked for, silently.
-    known_keys = {"transport", "services", FETCHER_ENABLED_KEY} | set(FOOTPRINT_KEYS)
+    known_keys = {"transport", "services", *PER_SOURCE_APP_KEYS.values()} | set(
+        FOOTPRINT_KEYS
+    )
     unknown = sorted(set(profile) - known_keys)
     if unknown:
         raise _ProfileError(
@@ -476,10 +524,10 @@ def _resolve_profile(
         raise _ProfileError(header=active_profile, msg="Undefined services")
 
     for service_name, service_config in services.items():
-        if service_name == FETCHER_SERVICE:
+        if service_name in PER_SOURCE_APP_KEYS:
             raise _ProfileError(
                 header=active_profile,
-                msg=f"{FETCHER_SERVICE} runs one container per source, never as a profile's service. Set {FETCHER_ENABLED_KEY}: true instead",
+                msg=f"{service_name} runs one container per source, never as a profile's service. Set {PER_SOURCE_APP_KEYS[service_name]}: true instead",
             )
         if service_name not in SERVICES:
             raise _ProfileError(
@@ -563,6 +611,13 @@ def _parse_args(argv: Sequence[str]) -> argparse.Namespace:
         default=[],
         help="an infra UI the exposure dials take off the host (repeatable)",
     )
+    parser.add_argument(
+        "--local",
+        action="append",
+        default=[],
+        help="a component `make dev LOCAL=...` builds, whose per-source instances "
+        "then run its local image (repeatable)",
+    )
     return parser.parse_args(list(argv))
 
 
@@ -612,11 +667,18 @@ def main(argv: Sequence[str] = ()) -> int:
         # Whether the ENGINE renders this tier's app config, which is also what
         # decides whether its instance index is this deployment's or a leftover.
         renders = footprint["core"]
-        instance_services = _instance_services(profile=active_profile, renders=renders)
-        fetcher_enabled = _fetcher_enabled(
+        per_source_apps = _per_source_apps(
             profile=data[PROFILE_LIST_YAML_FIELD][active_profile],
             profile_name=active_profile,
             renders=renders,
+            transport=transport,
+        )
+        instance_services = _instance_services(
+            enabled=per_source_apps,
+            local=args.local,
+            profile=active_profile,
+            renders=renders,
+            transport=transport,
         )
 
         # ClickHouse stays out of this list -- it starts via its compose profile
@@ -781,10 +843,8 @@ def main(argv: Sequence[str] = ()) -> int:
         lines.append(
             f"export DFE_INSTANCES_RESOLVED := {'true' if instance_services else 'false'}"
         )
-        # Whether `make sources` seeds the sources a dfe-fetcher polls. Emitted unconditionally, for the reason the keys above are.
-        lines.append(
-            f"export {FETCHER_RESOLVED_VAR} := {'true' if fetcher_enabled else 'false'}"
-        )
+        # The per-source apps this profile runs, which `make sources` seeds and `LOCAL=` may build, emitted unconditionally for the reason the keys above are
+        lines.append(f"export {PER_SOURCE_APPS_VAR} := {' '.join(per_source_apps)}")
 
         new_content = "\n".join(lines) + "\n"
         if (
