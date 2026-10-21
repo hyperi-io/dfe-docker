@@ -414,7 +414,7 @@ refusal such as 503 passes, silence fails), every accepted record landed, and on
 every consumer group is back at zero lag. They stop services, so they never run
 in `make post` either.
 
-An outage's `method` is `stop` by default, a graceful stop that lets the service drain what it holds. `method: kill` sends SIGKILL, and a crash gets no drain, so a record the service held in memory survives only if its acknowledgement was held until the next hop had it. The `*-kill-*` tests kill the loader and the receiver on the Kafka path and the loader on the direct gRPC path. They pass only when every record answered 2xx lands, duplicates counted but allowed. Where the killed service is the receiver itself, a request in flight while it is down may go unanswered, and silence outside that window still fails.
+An outage's `method` is `stop` by default, a graceful stop that lets the service drain what it holds. `method: kill` sends SIGKILL, and a crash gets no drain, so a record the service held in memory survives only if its acknowledgement was held until the next hop had it. The `*-kill-*` tests kill the loader and receiver on Kafka and the loader and vrl transform on direct gRPC. They pass only when every record answered 2xx lands, duplicates counted but allowed. Where the killed service is the receiver itself, a request in flight while it is down may go unanswered, and silence outside that window still fails.
 
 A kill that catches nothing in flight proves nothing about a crash, so a kill test fails on it. For the receiver or a gRPC hop that means no request out at the instant the container exited. For a Kafka consumer it means nothing its group had left uncommitted just before the kill. The kill tests raise the load with `workers` and `interval` (the default is 4 workers each waiting 0.5 s) so that a kill lands with records in flight.
 
@@ -427,7 +427,7 @@ DFE_INFRA_DIR=../dfe-infra make test-source SOURCE_ARGS="--case elastic"
 DFE_INFRA_DIR=../dfe-infra make test-source SOURCE_ARGS="--case vector"
 ```
 
-Neither harness above adds a source. This one creates one in the console,
+Above, sources come through the API. This one creates one in the console,
 attaches a transform, deploys it, feeds it real data and reads the rows back,
 driving a browser to do it. The runner is dfe-infra's
 (`scripts/acceptance/source/run.py`), the same one `dfe-ops acceptance --suite

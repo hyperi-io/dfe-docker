@@ -67,7 +67,7 @@ def test_a_request_over_the_network_carries_the_method_body_and_token(
         return _completed(stdout='200\n{"access_token": "t"}')
 
     monkeypatch.setattr(post.subprocess, "run", _run)
-    post._api_container.cache_clear()
+    post.api_container.cache_clear()
 
     status, body = post._api_post_json(
         f"{post.ENGINE_NETWORK_BASE}/auth/login",
@@ -97,7 +97,7 @@ def test_neither_the_password_nor_the_token_reaches_the_exec_argv(
         return _completed(stdout="200\n{}")
 
     monkeypatch.setattr(post.subprocess, "run", _run)
-    post._api_container.cache_clear()
+    post.api_container.cache_clear()
 
     post._api_post_json(
         f"{post.ENGINE_NETWORK_BASE}/auth/login",
@@ -124,7 +124,7 @@ def test_the_exec_addresses_the_container_compose_names_not_the_service(
         return _completed(stdout="200\n{}")
 
     monkeypatch.setattr(post.subprocess, "run", _run)
-    post._api_container.cache_clear()
+    post.api_container.cache_clear()
 
     post._api_post_json(f"{post.ENGINE_NETWORK_BASE}/auth/login", {})
 
@@ -142,7 +142,7 @@ def test_no_container_for_this_project_is_reported_not_guessed(
         "run",
         lambda args, **kwargs: _completed(stdout="", stderr="no such service"),
     )
-    post._api_container.cache_clear()
+    post.api_container.cache_clear()
 
     with pytest.raises(post.ApiUnreachable, match="no running"):
         post._api_post_json(f"{post.ENGINE_NETWORK_BASE}/auth/login", {})
@@ -444,7 +444,7 @@ def _engine_answers(
 
     monkeypatch.setattr(post.subprocess, "run", _run)
     monkeypatch.setattr(post, "http_get_json", _no_host_port)
-    post._api_container.cache_clear()
+    post.api_container.cache_clear()
     monkeypatch.setattr(post, "_resolved_services", lambda: [post.ENGINE_SERVICE])
     monkeypatch.setattr(post, "SCHEMA_TIMEOUT_SECONDS", 0.0)
     return asked
@@ -486,7 +486,7 @@ def test_an_engine_container_not_up_yet_reads_as_not_answering(
         post.subprocess, "run", lambda args, **kwargs: _completed(stdout="")
     )
     monkeypatch.setattr(post, "http_get_json", _no_host_port)
-    post._api_container.cache_clear()
+    post.api_container.cache_clear()
 
     assert post._schema_state() is None
 
@@ -552,7 +552,7 @@ def test_an_engine_that_never_answers_fails_rather_than_skips(
 
     monkeypatch.setattr(post.subprocess, "run", _refused)
     monkeypatch.setattr(post, "http_get_json", _no_host_port)
-    post._api_container.cache_clear()
+    post.api_container.cache_clear()
     monkeypatch.setattr(post, "_resolved_services", lambda: [post.ENGINE_SERVICE])
     monkeypatch.setattr(post, "SCHEMA_TIMEOUT_SECONDS", 0.0)
 

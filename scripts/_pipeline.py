@@ -129,6 +129,21 @@ def _decoded(raw: str) -> typing.Any:
         return raw
 
 
+def _json_call(
+    *, method: str, payload: dict, timeout: int, token: str, url: str
+) -> tuple[int, typing.Any]:
+    """Send a JSON body by one method and return (status, decoded body)."""
+    status, raw = _request(
+        content_type="application/json",
+        data=json.dumps(obj=payload).encode(),
+        method=method,
+        timeout=timeout,
+        token=token,
+        url=url,
+    )
+    return status, _decoded(raw=raw)
+
+
 def http_get_json(
     url: str, token: str = "", timeout: int = 30
 ) -> tuple[int, typing.Any]:
@@ -144,15 +159,18 @@ def http_post_json(
     timeout: int = 30,
 ) -> tuple[int, typing.Any]:
     """POST JSON and return (status, decoded body), for callers that need the body."""
-    status, raw = _request(
-        method="POST",
-        url=url,
-        content_type="application/json",
-        data=json.dumps(payload).encode(),
-        timeout=timeout,
-        token=token,
+    return _json_call(
+        method="POST", payload=payload, timeout=timeout, token=token, url=url
     )
-    return status, _decoded(raw)
+
+
+def http_put_json(
+    *, payload: dict, timeout: int = 30, token: str = "", url: str
+) -> tuple[int, typing.Any]:
+    """PUT JSON and return (status, decoded body), for callers that need the body."""
+    return _json_call(
+        method="PUT", payload=payload, timeout=timeout, token=token, url=url
+    )
 
 
 def http_post(

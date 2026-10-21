@@ -69,6 +69,9 @@ PER_SOURCE_APP_KEYS = {
 PER_SOURCE_APPS_VAR = "DFE_PER_SOURCE_APPS"
 # A source's `transform.engine` runs the app this prefix names (dfe-engine appmgmt/catalogue.py TRANSFORM_SERVICE_PREFIX)
 TRANSFORM_APP_PREFIX = "dfe-transform-"
+# dfe-engine's rule for a source name (source/models.py _SOURCE_PATTERN and _SOURCE_MAX_LENGTH), which a per-source instance is named after
+SOURCE_NAME = re.compile(r"[a-z]([a-z0-9-]*[a-z0-9])?")
+SOURCE_NAME_MAX_LENGTH = 40
 
 # The config file each app reads, by the manifest's `consumes.config`. Shared,
 # because the resident service reads it at <mount>/<app>/ and a per-source

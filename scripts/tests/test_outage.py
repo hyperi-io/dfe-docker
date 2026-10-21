@@ -611,6 +611,59 @@ def test_no_groups_reads_as_no_lag() -> None:
     assert _outage.group_lag_json("[]") == {}
 
 
+# A group that has joined and been assigned its topic, before any commit
+_RPK_JOINED = (
+    '[{"group_name":"dfe-transform-vrl-e2evrl","state":"Stable","members":1,'
+    '"partitions":[{"partition":0,"current_offset":-1,"log_end_offset":0,"lag":0,'
+    '"topic":"e2evrl_land","member_id":"rdkafka-5c1f","client_id":"rdkafka",'
+    '"host":"/172.18.0.9"}]}]'
+)
+
+
+def test_rpk_names_a_joined_group_before_it_commits() -> None:
+    assert _outage.group_assignments_json(described=_RPK_JOINED) == {
+        "dfe-transform-vrl-e2evrl": {"e2evrl_land"}
+    }
+    assert _outage.group_lag_json(described=_RPK_JOINED) == {
+        "dfe-transform-vrl-e2evrl": {}
+    }
+
+
+def test_rpk_holds_no_topic_for_a_partition_no_member_has() -> None:
+    assert _outage.group_assignments_json(described=_RPK_DESCRIBE) == {
+        "probe-group": set()
+    }
+    assert _outage.group_assignments_json(described=_NEVER_COMMITTED) == {
+        "dfe-transform-vrl": set()
+    }
+
+
+def test_rpk_assignments_refuse_text_that_is_not_its_json() -> None:
+    with pytest.raises(ValueError):
+        _outage.group_assignments_json(described="GROUP  TOPIC")
+
+
+def test_apache_names_a_joined_group_by_its_consumer_id() -> None:
+    joined = _APACHE_DESCRIBE.replace(
+        "probe_land      1          0               0               0               -",
+        "probe_land      1          -               0               -               consumer-1-ab12",
+    )
+
+    assert _outage.group_assignments_table(described=joined) == {
+        "probe-group": {"probe_land"}
+    }
+    assert _outage.group_assignments_table(described=_APACHE_DESCRIBE) == {
+        "probe-group": set()
+    }
+
+
+def test_apache_rows_shorter_than_the_header_hold_no_topic() -> None:
+    described = "GROUP TOPIC PARTITION CONSUMER-ID\nprobe-group probe_land 0\n"
+
+    assert _outage.group_assignments_table(described=described) == {}
+    assert _outage.group_lag_table(described=described) == {}
+
+
 def test_consumers_are_behind_until_each_topic_has_its_groups_at_zero() -> None:
     expected = {"main_land": 2, "main_load": 1}
 

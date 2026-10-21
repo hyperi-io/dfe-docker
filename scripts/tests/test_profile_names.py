@@ -101,13 +101,13 @@ class TestResolveProfile:
             }
         }
 
-        with pytest.raises(resolve_profile._ProfileError, match=case["message"]):
+        with pytest.raises(resolve_profile.ProfileError, match=case["message"]):
             resolve_profile._resolve_profile(data=data)
 
 
 class TestServiceProfiles:
     def test_defines_every_rendered_profile_and_no_other(self) -> None:
-        data = resolve_profile._parse_yaml(
+        data = resolve_profile.parse_yaml(
             text=SERVICE_PROFILES_FILE.read_text(encoding="utf-8")
         )
 

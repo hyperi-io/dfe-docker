@@ -102,6 +102,7 @@ from _pipeline import (  # noqa: E402
     http_get_json,
     http_post,
     http_post_json,
+    http_put_json,
     marked_event,
     otel_fresh_counts,
     poll_until,
@@ -420,32 +421,6 @@ def _over_network(url: str) -> bool:
 
 
 @functools.cache
-def _api_container() -> str:
-    """The container running API_EXEC_SERVICE in THIS compose project.
-
-    Container names are daemon-wide, so exec'ing a bare service name reaches
-    whichever stack on the host happens to own it -- and succeeds, against the
-    wrong deployment's credentials. Compose knows which container is ours.
-    """
-    result = subprocess.run(
-        ["docker", "compose", "ps", "--quiet", API_EXEC_SERVICE],
-        capture_output=True,
-        check=False,
-        text=True,
-        encoding="utf-8",
-        errors="replace",
-        timeout=API_EXEC_MARGIN_SECONDS,
-    )
-    ids = result.stdout.split()
-    if result.returncode != 0 or not ids:
-        raise ApiUnreachable(
-            f"no running {API_EXEC_SERVICE} in this compose project: "
-            f"{result.stderr.strip() or 'docker compose ps named no container'}"
-        )
-    return ids[0]
-
-
-@functools.cache
 def _container_name(service: str) -> str:
     """This project's container NAME for one compose service.
 
@@ -524,7 +499,7 @@ def _exec_request(
             "exec",
             "-e",
             API_REQUEST_KEY,
-            _api_container(),
+            api_container(),
             "python",
             "-c",
             _EXEC_REQUEST_SCRIPT,
@@ -1269,7 +1244,7 @@ def _verify_routing_applied(*, database: str) -> Claim:
         return SKIPPED
 
     base = _engine_base()
-    token, status, _, fault = _login(base)
+    token, status, _, fault = login(base=base)
     if fault and _skip_retired(base=base, status=status, what="the routing"):
         return SKIPPED
     if fault:
@@ -1413,7 +1388,7 @@ def _verify_hyperdx() -> Claim:
         return SKIPPED
 
     engine_base = _engine_base()
-    token, status, _, fault = _login(engine_base)
+    token, status, _, fault = login(base=engine_base)
     if fault and _skip_retired(
         base=engine_base, status=status, what="HyperDX's seeded state"
     ):
@@ -1539,29 +1514,6 @@ def _request_token(*, base: str, username: str, password: str) -> tuple[str, int
         return "", status, False
     token = body.get("access_token", "")
     return token, status, body.get("password_change_required") is True
-
-
-def _login(base: str) -> Login:
-    """Log POST's console account in, replacing an issued password first if it has to."""
-    username, password = _console_credential()
-    if not (password):
-        return Login("", 0, username, f"no password for {username!r} is set")
-    token, status, change_required = _request_token(
-        base=base, username=username, password=password
-    )
-    if status != 200 or not (token):
-        return Login(
-            "", status, username, f"login as {username!r} returned HTTP {status}"
-        )
-    if not (change_required):
-        return Login(token, status, username, "")
-    return _replace_issued_password(
-        base=base,
-        current=password,
-        key=ADMIN_PASSWORD_KEY,
-        token=token,
-        username=username,
-    )
 
 
 def _dotenv_with(*, text: str, key: str, value: str) -> str:
@@ -1795,7 +1747,7 @@ def _verify_ui_query(*, database: str, marker: str, table: str) -> Claim:
         return SKIPPED
 
     base = _engine_base()
-    token, status, username, fault = _login(base)
+    token, status, username, fault = login(base=base)
     if fault and _skip_retired(base=base, status=status, what="the query path"):
         return SKIPPED
     if status == 0:
@@ -2011,7 +1963,7 @@ def _verify_hunt(*, database: str, ingest_url: str, marker: str, table: str) -> 
         return SKIPPED
 
     base = _engine_base()
-    token, status, _, fault = _login(base)
+    token, status, _, fault = login(base=base)
     if fault and _skip_retired(base=base, status=status, what="the hunt path"):
         return SKIPPED
     if status == 0:
@@ -2353,6 +2305,73 @@ def _report_claims(*, claims: dict[str, Claim]) -> int:
         )
         return 1
     return 1 if sum(claim.failed for claim in claims.values()) else 0
+
+
+@functools.cache
+def api_container() -> str:
+    """The container running API_EXEC_SERVICE in THIS compose project.
+
+    Container names are daemon-wide, so exec'ing a bare service name reaches whichever stack on the host happens to own it, succeeding against the wrong deployment's credentials. Compose knows which container is ours.
+    """
+    result = subprocess.run(
+        ["docker", "compose", "ps", "--quiet", API_EXEC_SERVICE],
+        capture_output=True,
+        check=False,
+        encoding="utf-8",
+        errors="replace",
+        text=True,
+        timeout=API_EXEC_MARGIN_SECONDS,
+    )
+    ids = result.stdout.split()
+    if (result.returncode != 0) or not (ids):
+        detail = (result.stderr.strip()) or ("docker compose ps named no container")
+        raise ApiUnreachable(
+            f"no running {API_EXEC_SERVICE!r} in this compose project: {detail}"
+        )
+    return ids[0]
+
+
+def api_put_json(
+    *, payload: dict, timeout: int = 30, token: str = "", url: str
+) -> tuple[int, typing.Any]:
+    """PUT JSON and return (status, decoded body), over whichever transport reaches it."""
+    if not (_over_network(url=url)):
+        return http_put_json(payload=payload, timeout=timeout, token=token, url=url)
+    status, body = _exec_request(
+        method="PUT", payload=payload, timeout=timeout, token=token, url=url
+    )
+    return status, _decoded(raw=body)
+
+
+def login(base: str) -> Login:
+    """Log POST's console account in, replacing an issued password first if it has to."""
+    username, password = _console_credential()
+    if not (password):
+        return Login(
+            fault=f"no password for {username!r} is set",
+            status=0,
+            token="",
+            username=username,
+        )
+    token, status, change_required = _request_token(
+        base=base, password=password, username=username
+    )
+    if (status != 200) or not (token):
+        return Login(
+            fault=f"login as {username!r} returned HTTP {status}",
+            status=status,
+            token="",
+            username=username,
+        )
+    if not (change_required):
+        return Login(fault="", status=status, token=token, username=username)
+    return _replace_issued_password(
+        base=base,
+        current=password,
+        key=ADMIN_PASSWORD_KEY,
+        token=token,
+        username=username,
+    )
 
 
 def main() -> int:
