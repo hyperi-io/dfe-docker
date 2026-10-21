@@ -8,7 +8,7 @@
 
 """A profile runs dfe-fetcher once per source by declaring `fetcher_enabled: true`, never by naming the fetcher as a service.
 
-Only a tier whose app config dfe-engine renders can run one, because each instance reads the config the engine writes for its source.
+Each instance reads the config dfe-engine writes for its source, so a profile with the core footprint off runs none.
 """
 
 from pathlib import Path
@@ -46,43 +46,39 @@ class ResolvedExportCase(TypedDict):
 
 FETCHER_ENABLED_CASES = [
     FetcherEnabledCase(
-        declared=None, expected=False, profile_name="kafka-receiver", renders=False
+        declared=None, expected=False, profile_name="slim-kafka", renders=False
     ),
     FetcherEnabledCase(
-        declared="false", expected=False, profile_name="kafka-receiver", renders=False
+        declared="false", expected=False, profile_name="slim-kafka", renders=False
     ),
     FetcherEnabledCase(
-        declared="true", expected=True, profile_name="single", renders=True
+        declared="true", expected=True, profile_name="single-kafka", renders=True
     ),
     FetcherEnabledCase(
-        declared="True", expected=True, profile_name="single", renders=True
+        declared="True", expected=True, profile_name="single-kafka", renders=True
     ),
     FetcherEnabledCase(
-        declared="true", expected=False, profile_name="single", renders=False
+        declared="true", expected=False, profile_name="single-kafka", renders=False
     ),
     FetcherEnabledCase(
-        declared="false", expected=False, profile_name="single", renders=True
+        declared="false", expected=False, profile_name="single-kafka", renders=True
     ),
 ]
 FETCHER_ENABLED_REFUSAL_CASES = [
     FetcherEnabledRefusalCase(
-        declared="true",
-        message="it does only on slim, single",
-        profile_name="kafka-receiver",
-    ),
-    FetcherEnabledRefusalCase(
-        declared="yes", message="must be true or false", profile_name="single"
+        declared="yes", message="must be true or false", profile_name="single-kafka"
     ),
     FetcherEnabledRefusalCase(
         declared={"enabled": "true"},
         message="must be true or false",
-        profile_name="single",
+        profile_name="single-kafka",
     ),
 ]
 RESOLVED_EXPORT_CASES = [
-    ResolvedExportCase(expected="false", profile="kafka-receiver"),
-    ResolvedExportCase(expected="true", profile="single"),
-    ResolvedExportCase(expected="false", profile="slim"),
+    ResolvedExportCase(expected="false", profile="slim-grpc"),
+    ResolvedExportCase(expected="false", profile="slim-kafka"),
+    ResolvedExportCase(expected="true", profile="single-grpc"),
+    ResolvedExportCase(expected="true", profile="single-kafka"),
 ]
 
 
@@ -149,10 +145,10 @@ class TestResolveProfile:
     def test_refuses_dfe_fetcher_as_a_service(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        monkeypatch.setenv("DFE_PROFILE", "fetching")
+        monkeypatch.setenv("DFE_PROFILE", "single-kafka")
         data = {
             "profiles": {
-                "fetching": {
+                "single-kafka": {
                     "services": {"dfe-fetcher": {"config_path": "loader/kafka.yaml"}},
                     "transport": "kafka",
                 }

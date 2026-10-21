@@ -136,16 +136,16 @@ All three, in full, plus what an upgrade does to an existing stack:
 
 ## Service Profiles
 
-Service selection is controlled by `service_profiles.yaml` at the repo root. Each profile declares a transport mode, which DFE services to start, and optionally its whole footprint - the `clickhouse`, `core`, `kafbat`, `hyperdx` and `otel` keys. The `active_profile` field is used to define the profile set and can be overridden with the `DFE_PROFILE` env var; it ships as `slim`, the Compose default, the way a Kubernetes deploy defaults to `scale`. The matching `.env` flags (`DFE_CLICKHOUSE_ENABLED`, `DFE_CORE_ENABLED`, `KAFBAT_ENABLED`, `DFE_HYPERDX_ENABLED`, `DFE_OTEL_ENABLED`) override the profile's keys.
+Service selection is controlled by `service_profiles.yaml` at the repo root. Each profile declares a transport mode, which DFE services to start, and optionally its whole footprint - the `clickhouse`, `core`, `kafbat`, `hyperdx` and `otel` keys. The `active_profile` field is used to define the profile set and can be overridden with the `DFE_PROFILE` env var. It ships as `slim-grpc`. The matching `.env` flags (`DFE_CLICKHOUSE_ENABLED`, `DFE_CORE_ENABLED`, `KAFBAT_ENABLED`, `DFE_HYPERDX_ENABLED`, `DFE_OTEL_ENABLED`) override the profile's keys.
 
 For `kafka` transport profiles, the Kafka backend is selected via `KAFKA_BACKEND` (default `redpanda`).
 
 ```bash
-make dev                         # Uses active_profile from service_profiles.yaml
-DFE_PROFILE=grpc-receiver make dev   # Override profile
-KAFKA_BACKEND=apache make dev    # Override Kafka backend
-DFE_HYPERDX_ENABLED=1 make dev   # Also start the HyperDX observability stack
-DFE_OTEL_ENABLED=1 make dev      # Also start the self-monitoring collector
+make dev                           # Uses active_profile from service_profiles.yaml
+DFE_PROFILE=single-kafka make dev  # Override profile
+KAFKA_BACKEND=apache make dev      # Override Kafka backend
+DFE_HYPERDX_ENABLED=false make dev # Skip the HyperDX observability stack
+DFE_OTEL_ENABLED=false make dev    # Skip the self-monitoring collector
 ```
 
 To start only a subset of the resolved profile for a single invocation, pass `SERVICES` (space-separated). It also works with `make ci`. An empty `SERVICES` (the default) starts the whole profile; a name that is not part of the resolved stack is a hard error.
@@ -158,7 +158,7 @@ make dev LOCAL="dfe-engine dfe-ui"      # Build only these from source; the rest
 
 ### Application Profiles (service_profiles.yaml)
 
-This repo owns every profile. `slim` and `single` share their names with the Kubernetes tiers, but there is no `scale` - Compose cannot run an HA broker or a ClickHouse cluster. Which profile runs what: [docs/profiles.md](docs/profiles.md).
+This repo owns every profile: `slim-grpc`, `slim-kafka`, `single-grpc` and `single-kafka`. Each is `<tier>-<transport>` and dfe-engine runs as `docker-<tier>`. There is no `scale` tier - Compose cannot run an HA broker or a ClickHouse cluster. Which profile runs what: [docs/profiles.md](docs/profiles.md).
 
 ### Infrastructure Profiles (docker-compose.yml)
 
@@ -251,7 +251,7 @@ exist, is my topic there) belongs in the scalo deployment contract, not here.
 The DFE stack ships two default "it is working" e2e tests: (1) the core data path
 and (2) self-monitoring - the stack's own telemetry landing in the
 `dfe.otel_*` tables. Both run here. Test (2) needs a profile that declares
-`otel`, which `single` does, and `make post` makes the same pair of claims
+`otel`, which every profile does. `make post` makes the same pair of claims
 against an already-running stack. See
 [observability.md](docs/observability.md) for which services report.
 
@@ -299,7 +299,7 @@ dfe-docker stands the whole DFE suite up as one Docker Compose stack on a single
 | `docker-compose.yml` | Every service and every infrastructure profile. The one file `make ci` names explicitly |
 | `docker-compose.override.yml` | Auto-loaded by `docker compose`, so `make dev` builds from source; `make ci` passes `-f docker-compose.yml` to skip it |
 | `docker-compose.{live,storage,container-logs,unpublish-*}.yml` | Opt-in overlays the Makefile chains onto `COMPOSE_FILE` |
-| `service_profiles.yaml` | Which DFE services start, the transport, and the config each one mounts. Ships `active_profile: slim` |
+| `service_profiles.yaml` | Which DFE services start, the transport, and the config each one mounts. Ships `active_profile: slim-grpc` |
 | `Makefile` | Every entry point, plus the profile, overlay and UI-exposure resolution that decides which compose files a target passes |
 | `scripts/resolve_profile.py` | Reads `service_profiles.yaml` and writes the generated `.tmp/profile.mk` the Makefile includes |
 | `scripts/stack.py` | `make stack` - writes `tag@sha256` pins into `.env` from a local dfe-infra checkout (`DFE_INFRA_DIR`) or the signed OCI stack manifest |
@@ -339,7 +339,7 @@ Two ways a green run says less than it looks:
 |---|---|---|
 | Leave containers running when you are finished | `make down`, on every host you touched, the same session | `down` sweeps every profile rather than the active one, because passing only the active profile's services left the previous profile's containers up - still holding host ports and still answering health probes for a pipeline that was no longer wired (`Makefile`, the `down` target) |
 | Assume the deployment target is idle | Check what is already running before you start anything | The docker definition-of-done target carries a long-lived stack refreshed on a 6-hourly systemd timer (`ops/daemon-update/`), not a box you get to yourself |
-| Assume events go through Kafka | Read the profile's `transport` first | `slim`, the shipped `active_profile`, is `transport: grpc`: the receiver dials `dfe-loader:6000` directly and no broker starts. `single` is the Kafka one. The core data path is otherwise identical, and `post` and `test-e2e` assert the same landing row either way |
+| Assume events go through Kafka | Read the profile's `transport` first | `slim-grpc`, the shipped `active_profile`, is `transport: grpc`: the receiver dials `dfe-loader:6000` directly and no broker starts. The `-kafka` profiles start one. The core data path is otherwise identical, and `post` and `test-e2e` assert the same landing row either way |
 | Add a DDL file or a topic-creating step here | Change the schema in dfe-engine | dfe-engine ships the schemas in its own image and reports healthy only once it has applied them. `scripts/tests/test_engine_only_schema_control.py` fails the build on one (#118) |
 | Give an external ClickHouse's port through `CLICKHOUSE_HTTP_PORT` or `CLICKHOUSE_NATIVE_PORT` | Set `CLICKHOUSE_EXTERNAL_HTTP_PORT` and `CLICKHOUSE_EXTERNAL_NATIVE_PORT` | The first pair is the bundled container's host publish and nothing else, so it is safe to move for a second stack; services on the network dial 8123/9000 unless the EXTERNAL pair says otherwise (#75) |
 | Move the loader's `grpc.listen` off 6000, or confuse it with the receiver's 6000 | Keep the loader on container port 6000, published on host port 50051 | dfe-engine compiles every sender's loader endpoint as `dfe-loader:6000`, so a loader listening anywhere else drops every record behind an HTTP 202 with nothing logged. The receiver's 6000 is the external Vector protocol and binds `DFE_INGRESS_BIND_HOST` (`0.0.0.0`). The loader's is the internal `DfeTransport/Push` and binds `DFE_BIND_HOST` (`127.0.0.1`). `scripts/tests/test_loader_grpc_port.py` fails the build on a mismatch |

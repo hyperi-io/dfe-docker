@@ -10,7 +10,7 @@
 # Presence = enabled: if a service is listed, it starts. If absent, it does not.
 #
 # Active profile is overridden by DFE_PROFILE env var:
-#   DFE_PROFILE=grpc-receiver make dev
+#   DFE_PROFILE=single-kafka make dev
 #
 # config_path is relative to the config/ directory.
 #
@@ -32,20 +32,14 @@
 # overrides the key, because .env is what a deploy writes and the profile is the
 # committed shape.
 #
-# NAMING: `slim` and `single` are the shared vocabulary with the Kubernetes tier
-# (dfe-infra argocd/values/profile-*.yaml), so one deployment dial reads the same
-# on both. There is no `scale` here: Compose cannot run an HA broker or a
-# ClickHouse cluster. Every profile below is single-node, so the axis that
-# carries information is how COMPLETE the stack is, not the node count.
-# The transport-shaped names below `single` are the fine-grained data-plane
-# shapes; the e2e suite pins them by name.
+# NAMING: every profile is <tier>-<transport>. dfe-engine runs as docker-<tier>,
+# and single adds the archiver and one dfe-fetcher per source to slim.
+# resolve_profile.py refuses any other name.
 
-active_profile: slim
+active_profile: slim-grpc
 
 profiles:
-  # Mirrors the Kubernetes slim tier: grpc transport, no broker, the warehouse,
-  # self-monitoring, and the apps apps.yaml makes default there.
-  slim:
+  slim-grpc:
     transport: grpc
     clickhouse: true
     core: true
@@ -56,9 +50,36 @@ profiles:
         config_path: loader/grpc.yaml
       dfe-receiver:
         config_path: receiver/grpc.yaml
-  # Mirrors the Kubernetes single tier: kafka transport, the warehouse,
-  # self-monitoring, and the apps apps.yaml makes default there.
-  single:
+
+  slim-kafka:
+    transport: kafka
+    clickhouse: true
+    core: true
+    hyperdx: true
+    kafbat: true
+    otel: true
+    services:
+      dfe-loader:
+        config_path: loader/kafka.yaml
+      dfe-receiver:
+        config_path: receiver/kafka.yaml
+
+  single-grpc:
+    transport: grpc
+    clickhouse: true
+    core: true
+    hyperdx: true
+    otel: true
+    fetcher_enabled: true
+    services:
+      dfe-archiver:
+        config_path: archiver/grpc.yaml
+      dfe-loader:
+        config_path: loader/grpc.yaml
+      dfe-receiver:
+        config_path: receiver/grpc.yaml
+
+  single-kafka:
     transport: kafka
     clickhouse: true
     core: true
@@ -73,41 +94,3 @@ profiles:
         config_path: loader/kafka.yaml
       dfe-receiver:
         config_path: receiver/kafka.yaml
-
-  kafka-minimal:
-    transport: kafka
-    services:
-      dfe-loader:
-        config_path: loader/kafka.yaml
-
-  kafka-receiver:
-    transport: kafka
-    services:
-      dfe-loader:
-        config_path: loader/kafka.yaml
-      dfe-receiver:
-        config_path: receiver/kafka.yaml
-
-  kafka-receiver-archiver:
-    transport: kafka
-    services:
-      dfe-archiver:
-        config_path: archiver/kafka.yaml
-      dfe-loader:
-        config_path: loader/kafka.yaml
-      dfe-receiver:
-        config_path: receiver/kafka.yaml
-
-  grpc-minimal:
-    transport: grpc
-    services:
-      dfe-loader:
-        config_path: loader/grpc.yaml
-  
-  grpc-receiver:
-    transport: grpc
-    services:
-      dfe-loader:
-        config_path: loader/grpc.yaml
-      dfe-receiver:
-        config_path: receiver/grpc.yaml

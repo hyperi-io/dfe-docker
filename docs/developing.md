@@ -246,14 +246,14 @@ Live mode needs a Linux host: on macOS the container's install would swap the na
 mounts. `active_profile` is the default; `DFE_PROFILE` overrides it for one
 invocation.
 
-`slim` and `single` are whole-stack shapes that share their names with the Kubernetes tiers. The rest are fine-grained data-plane shapes the e2e suite pins by name. Which profile runs what: [profiles.md](profiles.md). There is no `scale`: Compose cannot run an HA broker or a ClickHouse cluster.
+Every profile is a whole stack named `<tier>-<transport>`: `slim` runs the core data path, `single` adds the archiver and the fetchers, over `grpc` or `kafka`. Which profile runs what: [profiles.md](profiles.md). There is no `scale` tier: Compose cannot run an HA broker or a ClickHouse cluster.
 
 ```bash
-DFE_PROFILE=grpc-receiver make dev    # override the profile
+DFE_PROFILE=single-kafka make dev     # override the profile
 KAFKA_BACKEND=apache make dev         # Apache Kafka instead of Redpanda
 DFE_CORE_ENABLED=false make dev       # skip engine, UI, proxy and HyperDX
 DFE_CLICKHOUSE_ENABLED=false make dev # no warehouse container (external instance)
-DFE_HYPERDX_ENABLED=1 make dev        # add the HyperDX observability stack
+DFE_HYPERDX_ENABLED=false make dev    # skip the HyperDX observability stack
 make dev SERVICES="dfe-loader"        # start a subset of the resolved profile
 ```
 
@@ -281,7 +281,7 @@ A name in `SERVICES` that is not part of the resolved stack is a hard error, not
 
 | Target | What it creates |
 |---|---|
-| `make sources` | `aws-cloudtrail`, `aws-guardduty` and `aws-securityhub` (each polled by its own dfe-fetcher instance) and `syslog`, which takes any record sent to the receiver with `_source: syslog`. Each lands in `dfe.<source>`. A profile without [`fetcher_enabled: true`](profiles.md#which-profile-runs-what), such as `slim`, gets `syslog` alone |
+| `make sources` | `aws-cloudtrail`, `aws-guardduty` and `aws-securityhub` (each polled by its own dfe-fetcher instance) and `syslog`, which takes any record sent to the receiver with `_source: syslog`. Each lands in `dfe.<source>`. A profile without [`fetcher_enabled: true`](profiles.md#which-profile-runs-what), such as `slim-grpc`, gets `syslog` alone |
 | `make rules` | `aws-guardduty-high-severity`, matching a GuardDuty finding rated 7 or above |
 | `make hunts` | That rule, and the hunt `aws-guardduty-high-severity` once `dfe.aws-guardduty` exists, running it every five minutes into `dfe.detection` |
 | `make events` | Two fake GuardDuty findings from `resources/seed/events/`, rated 8.0 and 2.0, so the hunt's next run detects the first and leaves the second |
@@ -341,10 +341,7 @@ The delta alone would pass on somebody else's rows; the marker alone would not
 notice a partial load. A marker column it cannot locate is reported, never
 silently treated as a pass.
 
-A profile declaring `otel` adds a third assertion -- the stack's own telemetry
-landing fresh in the `dfe.otel_*` tables -- and `expected_http` adds a fourth, a
-status and optional body check per URL. `single` uses both, which is what makes
-`complete-single-node-stack` a whole-stack test rather than a data-path one.
+Every profile declares `otel`, which adds a third assertion: the stack's own telemetry landing fresh in the `dfe.otel_*` tables. `expected_http` adds a fourth, a status and optional body check per URL. It makes `complete-single-node-stack` a whole-stack test rather than a data-path one.
 
 An archiver that subscribes to the test's landing topic and archives to a
 `file://` destination must also write a file there during the test, new or grown
@@ -517,13 +514,13 @@ suite chains onto every `up`, one that re-prefixes each `container_name`.
 
 ## Sharp edges
 
-**`make down` tears down every profile, not just the active one.** It runs `docker compose -f docker-compose.yml --profile "*" down --remove-orphans` and keeps volumes. That is a change: it used to be profile-scoped, so switching from `kafka-receiver` to `kafka-minimal` left the old receiver running and answering on `:8080`. That stray is exactly why the self test asks the resolved profile what should be there instead of probing ports.
+**`make down` tears down every profile, not just the active one.** It runs `docker compose -f docker-compose.yml --profile "*" down --remove-orphans` and keeps volumes. That is a change: it used to be profile-scoped, so switching from `single-kafka` to `slim-kafka` left the archiver running. That stray is exactly why the self test asks the resolved profile what should be there instead of probing ports.
 
 The consequence to know: because `make dev` and `make ci` depend on `down`, a
 `make dev SERVICES="dfe-loader"` no longer restarts just that service on top of a
 running stack -- everything is stopped first.
 
-**`.env` shadows a command-line environment variable through make.** The Makefile does `-include .env`. GNU make re-exports a variable that came from the environment using the *makefile's* value. So with `DFE_PROFILE` set in `.env`, `DFE_PROFILE=grpc-receiver make dev` silently uses the `.env` value. Verified on this repo's shape with a minimal reproduction. If an override appears to do nothing, check `.env` first. Comment the key out there or use `make -e`.
+**`.env` shadows a command-line environment variable through make.** The Makefile does `-include .env`. GNU make re-exports a variable that came from the environment using the *makefile's* value. So with `DFE_PROFILE` set in `.env`, `DFE_PROFILE=single-kafka make dev` silently uses the `.env` value. Verified on this repo's shape with a minimal reproduction. If an override appears to do nothing, check `.env` first. Comment the key out there or use `make -e`.
 
 **Compose `environment:` beats `env/<service>.env`.** A key listed in a service's
 `environment:` block in `docker-compose.yml` wins over the same key in the

@@ -50,7 +50,7 @@ from _common import (  # noqa: E402
     FETCHER_RESOLVED_VAR,
     FETCHER_SERVICE,
     PROFILE_MK,
-    PROJECTED_PROFILES,
+    RENDERED_PROFILES,
     SERVICE_CONFIG_FILE,
     SERVICE_PROFILES_FILE,
     SERVICE_TO_RENDERED_CONFIG_VAR,
@@ -211,6 +211,8 @@ PROFILE_ENV_VAR = "DFE_PROFILE"
 PROFILE_ACTIVE_YAML_FIELD = "active_profile"
 PROFILE_LIST_YAML_FIELD = "profiles"
 PROFILE_SERVICE_CONFIG_YAML_FIELD = "config_path"
+# The transport each retired bare tier name ran, so its refusal names the profile that replaces it
+RETIRED_TIER_TRANSPORTS = {"single": "kafka", "slim": "grpc"}
 
 SERVICE_KAFKA_DEFAULT = "redpanda"
 SERVICE_KAFKA_OPTIONS = {
@@ -226,9 +228,7 @@ SERVICE_TO_CONFIG_VAR = {
 # The engine is the Compose stand-in for the ConfigMap an app's chart renders on
 # Kubernetes: it merges each instance's values overlay over the committed config
 # above and writes the app's own config file into a volume the container mounts.
-# It runs on the PROJECTED tiers only -- the hand-crafted profiles ship a config
-# that says exactly what they exist to exercise, and a compile from the sources
-# would overwrite it.
+# It runs on every profile while the core footprint does.
 ENGINE_APP_CONFIG_DIR_VAR = "DFE_ENGINE_APP_CONFIG_DIR"
 ENGINE_APP_CONFIG_DIR = "/app/app-config"
 ENGINE_APP_CONFIG_BASE_DIR_VAR = "DFE_ENGINE_APP_CONFIG_BASE_DIR"
@@ -352,9 +352,9 @@ def _footprint(*, profile: dict[str, object], profile_name: str) -> dict[str, bo
 def _fetcher_enabled(
     *, profile: dict[str, object], profile_name: str, renders: bool
 ) -> bool:
-    """Whether this profile runs one dfe-fetcher per source, which only a tier whose app config dfe-engine renders can declare.
+    """Whether this profile runs one dfe-fetcher per source, each reading the config dfe-engine renders for it.
 
-    A projected tier with its core footprint switched off renders nothing, so it resolves to false there rather than failing.
+    A profile with its core footprint switched off renders nothing, so it resolves to false there rather than failing.
     """
     declared = profile.get(FETCHER_ENABLED_KEY, "false")
     if not (isinstance(declared, str)) or (
@@ -366,11 +366,6 @@ def _fetcher_enabled(
         )
     if declared.strip().lower() == "false":
         return False
-    if profile_name not in PROJECTED_PROFILES:
-        raise _ProfileError(
-            header=profile_name,
-            msg=f"{FETCHER_ENABLED_KEY}: true needs dfe-engine to render each source's fetcher config, which it does only on {', '.join(PROJECTED_PROFILES)}. Remove the key from this profile",
-        )
     return renders
 
 
@@ -403,6 +398,20 @@ def _parse_yaml(*, text: str) -> dict[str, object]:
     return root
 
 
+def _replacement(*, name: str) -> str | None:
+    """Return the profile that replaces a retired name, else None.
+
+    A bare tier ran the transport RETIRED_TIER_TRANSPORTS names. A name led by a transport ran that transport's slim data path. One that also named the archiver ran its single stack.
+    """
+    if name in RETIRED_TIER_TRANSPORTS:
+        return f"{name}-{RETIRED_TIER_TRANSPORTS[name]}"
+    words = name.split("-")
+    if words[0] not in TRANSPORT_TYPES:
+        return None
+    tier = "single" if "archiver" in words else "slim"
+    return f"{tier}-{words[0]}"
+
+
 def _resolve_profile(
     *, data: dict[str, object]
 ) -> tuple[str, str, dict[str, object], dict[str, bool]]:
@@ -421,8 +430,17 @@ def _resolve_profile(
             msg=f"{Path(SERVICE_PROFILES_FILE).name!r} missing {PROFILE_LIST_YAML_FIELD!r} section"
         )
 
-    if active_profile not in profiles:
-        available_profiles = [f"- {profile_name}" for profile_name in profiles.keys()]
+    replacement = _replacement(name=active_profile)
+    if replacement:
+        raise _ProfileError(
+            msg=f"Profile {active_profile!r} is retired. Set {PROFILE_ENV_VAR!r} or {PROFILE_ACTIVE_YAML_FIELD!r} to {replacement!r} instead"
+        )
+    if (active_profile not in RENDERED_PROFILES) or (active_profile not in profiles):
+        available_profiles = [
+            f"- {profile_name}"
+            for profile_name in RENDERED_PROFILES
+            if profile_name in profiles
+        ]
         raise _ProfileError(
             msg=f"Profile {active_profile!r} not found. Available profiles:\n{'\n'.join(available_profiles)}"
         )
@@ -445,6 +463,12 @@ def _resolve_profile(
         raise _ProfileError(
             header=active_profile,
             msg=f"Transport type {transport!r} unknown. Available transport types:\n{'\n'.join([f'- {transport_type}' for transport_type in TRANSPORT_TYPES])}",
+        )
+    named_transport = active_profile.partition("-")[2]
+    if transport != named_transport:
+        raise _ProfileError(
+            header=active_profile,
+            msg=f"Transport {transport!r} disagrees with the profile name, which says {named_transport!r}",
         )
 
     services = profile.get("services", {})
@@ -587,7 +611,7 @@ def main(argv: Sequence[str] = ()) -> int:
         lines.append(f"export PROFILE_FLAGS := {profile_flags}")
         # Whether the ENGINE renders this tier's app config, which is also what
         # decides whether its instance index is this deployment's or a leftover.
-        renders = (active_profile in PROJECTED_PROFILES) and footprint["core"]
+        renders = footprint["core"]
         instance_services = _instance_services(profile=active_profile, renders=renders)
         fetcher_enabled = _fetcher_enabled(
             profile=data[PROFILE_LIST_YAML_FIELD][active_profile],
@@ -616,10 +640,9 @@ def main(argv: Sequence[str] = ()) -> int:
                 service_list.extend(AUTH_HYPERDX_SERVICES)
         lines.append(f"export DFE_SERVICES := {' '.join(service_list)}")
 
-        # The manifest's name for this Compose tier (dfe-infra apps.yaml says
-        # docker-slim, docker-single), which the engine seeds its default app
-        # instances from and reports as its deployment profile.
-        lines.append(f"export DFE_STACK_PROFILE := docker-{active_profile}")
+        # dfe-engine's name for the tier, docker-slim or docker-single, which it seeds its default app instances from and reports as its deployment profile
+        tier = active_profile.partition("-")[0]
+        lines.append(f"export DFE_STACK_PROFILE := docker-{tier}")
 
         # The one transport this tier binds its stages to, in the engine's own
         # vocabulary: it refuses a source on the other one at save.

@@ -32,7 +32,7 @@ import pytest
 
 import check_compose
 import resolve_profile
-from _common import PROJECTED_PROFILES
+from _common import RENDERED_PROFILES
 
 _APP = "dfe-transform-elastic"
 _EMITTER = f"catalogue-{_APP}"
@@ -228,15 +228,15 @@ def test_the_engine_reads_the_file_the_one_shot_wrote(
     assert _CONTENT_MOUNT in {volume["target"] for volume in engine["volumes"]}
 
 
-def test_a_tier_that_projects_nothing_leaves_the_engine_no_catalogue() -> None:
+def test_a_stack_that_renders_nothing_leaves_the_engine_no_catalogue() -> None:
     """The resolver's EMPTY has to survive: `${VAR-...}`, never `${VAR:-...}`."""
     services = _model(**{resolve_profile.ENGINE_CATALOGUE_FILE_VAR: ""})
 
     assert services[_ENGINE_SERVICE]["environment"]["DFE_SOURCE_CATALOGUE_FILE"] == ""
 
 
-@pytest.mark.parametrize("profile", PROJECTED_PROFILES)
-def test_a_projected_tier_hands_the_engine_the_catalogue(
+@pytest.mark.parametrize("profile", RENDERED_PROFILES)
+def test_every_profile_hands_the_engine_the_catalogue(
     profile: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     values = _resolved(profile, tmp_path, monkeypatch)
@@ -244,20 +244,23 @@ def test_a_projected_tier_hands_the_engine_the_catalogue(
     assert values[resolve_profile.ENGINE_CATALOGUE_FILE_VAR] == _CATALOGUE_FILE
 
 
-def test_a_hand_crafted_profile_hands_the_engine_no_catalogue(
+def test_a_profile_without_core_hands_the_engine_no_catalogue(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    values = _resolved("kafka-receiver", tmp_path, monkeypatch)
+    monkeypatch.setitem(os.environ, "DFE_CORE_ENABLED", "false")
+    values = _resolved("slim-kafka", tmp_path, monkeypatch)
 
     assert values[resolve_profile.ENGINE_CATALOGUE_FILE_VAR] == ""
 
 
-@pytest.mark.parametrize("profile", [*PROJECTED_PROFILES, "kafka-receiver"])
+@pytest.mark.parametrize("core", ["true", "false"])
+@pytest.mark.parametrize("profile", RENDERED_PROFILES)
 def test_the_catalogue_key_is_written_whatever_the_answer(
-    profile: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    core: str, profile: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     # A line that vanished with its own value would make the included makefile
     # re-settle on every pass, which restarts `make` forever.
+    monkeypatch.setitem(os.environ, "DFE_CORE_ENABLED", core)
     values = _resolved(profile, tmp_path, monkeypatch)
 
     assert resolve_profile.ENGINE_CATALOGUE_FILE_VAR in values

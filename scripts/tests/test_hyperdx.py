@@ -26,7 +26,7 @@ import pytest
 import init
 import post
 import resolve_profile
-from _common import COMPOSE_FILE, REPO_ROOT
+from _common import COMPOSE_FILE, RENDERED_PROFILES, REPO_ROOT
 
 _ENGINE_SERVICE = "dfe-engine"
 _HYPERDX_SERVICE = "hyperdx"
@@ -135,8 +135,8 @@ def _engine_hyperdx(*, exports: dict[str, str]) -> tuple[str, str]:
     )
 
 
-@pytest.mark.parametrize("profile", ["single", "slim"])
-def test_a_tier_that_runs_hyperdx_points_the_engine_at_it(
+@pytest.mark.parametrize("profile", RENDERED_PROFILES)
+def test_every_profile_points_the_engine_at_its_hyperdx(
     dotenv: Path, monkeypatch: pytest.MonkeyPatch, profile: str, tmp_path: Path
 ) -> None:
     exports = _exports(monkeypatch=monkeypatch, profile=profile, tmp_path=tmp_path)
@@ -144,29 +144,22 @@ def test_a_tier_that_runs_hyperdx_points_the_engine_at_it(
     assert _engine_hyperdx(exports=exports) == ("true", _IN_STACK_HYPERDX)
 
 
-def test_a_tier_without_hyperdx_leaves_the_engine_holding_nothing(
-    dotenv: Path, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-) -> None:
-    exports = _exports(
-        monkeypatch=monkeypatch, profile="kafka-minimal", tmp_path=tmp_path
-    )
-
-    assert _engine_hyperdx(exports=exports) == ("false", "")
-
-
 def test_the_operator_toggle_moves_the_engine_with_the_containers(
     dotenv: Path, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    """One DFE_HYPERDX_ENABLED, whether it comes from the profile or from .env."""
+    """One DFE_HYPERDX_ENABLED, whether it comes from the profile or from .env.
+
+    Switched off, the engine is left holding nothing.
+    """
     exports = _exports(
         monkeypatch=monkeypatch,
-        profile="kafka-minimal",
+        profile="slim-kafka",
         tmp_path=tmp_path,
-        DFE_HYPERDX_ENABLED="true",
+        DFE_HYPERDX_ENABLED="false",
     )
 
-    assert _HYPERDX_SERVICE in exports["DFE_SERVICES"].split()
-    assert _engine_hyperdx(exports=exports) == ("true", _IN_STACK_HYPERDX)
+    assert _HYPERDX_SERVICE not in exports["DFE_SERVICES"].split()
+    assert _engine_hyperdx(exports=exports) == ("false", "")
 
 
 def test_hyperdx_does_not_start_without_core(
@@ -174,7 +167,7 @@ def test_hyperdx_does_not_start_without_core(
 ) -> None:
     exports = _exports(
         monkeypatch=monkeypatch,
-        profile="single",
+        profile="single-kafka",
         tmp_path=tmp_path,
         DFE_CORE_ENABLED="false",
         DFE_HYPERDX_ENABLED="true",
@@ -190,7 +183,7 @@ def test_an_external_hyperdx_is_the_one_the_engine_is_given(
     external = "http://observability.example.test:8000"
     exports = _exports(
         monkeypatch=monkeypatch,
-        profile="single",
+        profile="single-kafka",
         tmp_path=tmp_path,
         DFE_HYPERDX_BASE_URL=external,
     )
