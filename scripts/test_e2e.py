@@ -1140,6 +1140,36 @@ def project_containers():
 
 
 # ------------------------------------------------------------------------------
+# Running Engine Environment
+# - The running dfe-engine's environment, empty when none runs
+# ------------------------------------------------------------------------------
+def running_engine_environment() -> dict[str, str]:
+    listed = run_cmd(
+        [
+            "docker",
+            "compose",
+            "--profile",
+            "*",
+            "ps",
+            "--quiet",
+            SCHEMA_AUTHORITY_SERVICE,
+        ],
+        capture=True,
+    )
+    ids = (listed.stdout or "").split()
+    if (listed.returncode != 0) or (not (ids)):
+        return {}
+    inspected = run_cmd(
+        ["docker", "inspect", "--format", "{{json .Config.Env}}", ids[0]], capture=True
+    )
+    try:
+        pairs = json.loads(inspected.stdout or "[]")
+    except ValueError:
+        return {}
+    return dict(pair.partition("=")[::2] for pair in pairs)
+
+
+# ------------------------------------------------------------------------------
 # Wait Settled
 # - Polls until one service is back as it was found: running and healthy, or a
 #   one-shot that has finished, or the deadline passes
@@ -4245,6 +4275,11 @@ def run_suite(ctx, mode, tests, persistent_services):
     found = project_containers()
     if found is None:
         error("the running stack could not be read, so nothing was stopped")
+    change = _stack_state.profile_change(
+        engine_environment=running_engine_environment(), environ=FOUND_ENVIRON
+    )
+    if change:
+        error(msg=f"Nothing was stopped: {change}")
     expected = expected_hashes(found)
     signal.signal(signal.SIGTERM, lambda signum, frame: sys.exit(128 + signum))
     try:

@@ -35,6 +35,12 @@ ENVIRONMENT_FILE_LABEL = "com.docker.compose.project.environment_file"
 CONFIG_HASH_LABEL = "com.docker.compose.config-hash"
 ONEOFF_LABEL = "com.docker.compose.oneoff"
 
+# The tier and transport dfe-engine runs with, the variable make exports each from and compose's default
+_ENGINE_SETTINGS = (
+    ("DFE_PROFILE", "DFE_STACK_PROFILE", "docker-slim"),
+    ("DFE_TRANSPORT_DEFAULT", "DFE_TRANSPORT_DEFAULT", "direct"),
+)
+
 
 @dataclass(frozen=True, slots=True)
 class Container:
@@ -159,6 +165,13 @@ def _profile_flags(profiles: Iterable[str]) -> list[str]:
     ]
 
 
+def _profile_name(*, settings: Mapping[str, str]) -> str:
+    """The service profile a dfe-engine tier and transport belong to, such as single-grpc."""
+    tier = settings["DFE_PROFILE"].removeprefix("docker-")
+    transport = "kafka" if (settings["DFE_TRANSPORT_DEFAULT"] == "bus") else "grpc"
+    return f"{tier}-{transport}"
+
+
 def still_defined(restore: Restore, model: Mapping) -> Restore:
     """The restore with only the services `docker compose config` JSON still defines.
 
@@ -216,6 +229,23 @@ def stale(found: Iterable[Container], expected: Mapping[str, str]) -> list[str]:
         and container.service in expected
         and expected[container.service] != container.config_hash
     ]
+
+
+def profile_change(
+    *, engine_environment: Mapping[str, str], environ: Mapping[str, str]
+) -> str:
+    """Why starting the stack again from `environ` would move it to another profile, empty when it would not or no dfe-engine runs."""
+    if not (engine_environment):
+        return ""
+    running = {key: engine_environment.get(key, "") for key, _, _ in _ENGINE_SETTINGS}
+    wanted = {
+        key: (environ.get(exported)) or (default)
+        for key, exported, default in _ENGINE_SETTINGS
+    }
+    if running == wanted:
+        return ""
+    found = _profile_name(settings=running)
+    return f"the stack runs profile {found!r} but these make flags give {_profile_name(settings=wanted)!r}. Rerun with DFE_PROFILE={found}"
 
 
 def restores(
