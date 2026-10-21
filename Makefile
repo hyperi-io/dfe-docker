@@ -101,10 +101,11 @@ ifneq (,$(filter-out $(BOOTSTRAP_GOALS),$(or $(MAKECMDGOALS),help)))
                 $(error 'LOCAL' contains names this repo cannot build from source: $(UNBUILDABLE_LOCAL). Buildable: $(DFE_BUILDABLE_SERVICES))
             endif
         endif
+        # DFE_SERVICES names a per-source app's instances and never the app, so the apps the profile runs per source are named beside it
         ifneq ($(strip $(DFE_SERVICES)),)
-            INVALID_LOCAL := $(filter-out $(DFE_SERVICES),$(LOCAL))
+            INVALID_LOCAL := $(filter-out $(DFE_SERVICES) $(DFE_PER_SOURCE_APPS),$(LOCAL))
             ifneq ($(INVALID_LOCAL),)
-                $(error 'LOCAL' contains names not in the resolved stack: $(INVALID_LOCAL). Available: $(DFE_SERVICES))
+                $(error 'LOCAL' contains names not in the resolved stack: $(INVALID_LOCAL). Available: $(DFE_SERVICES) $(DFE_PER_SOURCE_APPS))
             endif
         endif
         ifneq ($(filter $(LIVE_UI_SKIP),$(LOCAL)),)
@@ -376,11 +377,11 @@ else ifneq ($(strip $(STORAGE_CHAIN))$(strip $(UI_CHAIN))$(strip $(LIVE_UI_CHAIN
 endif
 
 # The gated infra UIs go to the resolver, so the engine's admin links name only
-# what the host publishes.
+# what the host publishes. LOCAL goes too, because the overlay never reaches an instance's `extends`.
 #
 # Console TLS refuses the auth profile here, after the resolver has written this run's answer: the oauth2-proxy ports serve no TLS, so an https origin gives them callbacks they cannot answer.
 .tmp/profile.mk: FORCE
-	@python3 scripts/resolve_profile.py $(if $(KAFBAT_GATED),--unpublished kafbat) $(if $(HYPERDX_GATED),--unpublished hyperdx)
+	@python3 scripts/resolve_profile.py $(if $(KAFBAT_GATED),--unpublished kafbat) $(if $(HYPERDX_GATED),--unpublished hyperdx) $(foreach app,$(LOCAL),--local $(app))
 ifneq ($(PROXY_TLS_START),)
 	@if grep -qx 'export DFE_AUTH_RESOLVED := true' $@; then echo "DFE_PROXY_TLS=true cannot start with the auth profile: oauth2-proxy serves no TLS here, so the https callbacks it registers with the IdP never answer. Set DFE_AUTH_ENABLED=false (or drop auth from the profile) to keep TLS. Set DFE_PROXY_TLS=false to keep the auth profile" >&2; exit 1; fi
 endif

@@ -99,6 +99,26 @@ def test_each_service_reads_the_custom_env_file_the_engine_names_for_it() -> Non
         ) in text
 
 
+def test_an_instance_of_an_app_given_an_image_runs_that_image() -> None:
+    # extends reads the committed service, so a LOCAL overlay never reaches an instance
+    text = instances.fragment(
+        {FETCHER: ["okta-audit"], VRL: ["cisco-ios"]},
+        images={VRL: f"{VRL}:local"},
+    )
+
+    assert (
+        f"  {VRL}-cisco-ios:\n    extends:\n      file: docker-compose.yml\n"
+        f"      service: {VRL}\n    image: {VRL}:local\n"
+    ) in text
+    assert text.count("    image: ") == 1
+
+
+def test_an_instance_given_no_image_keeps_the_committed_one() -> None:
+    text = instances.fragment({FETCHER: ["okta-audit"]})
+
+    assert "    image: " not in text
+
+
 def test_no_instance_publishes_a_host_port() -> None:
     # N containers cannot share one host port, and nothing outside the stack
     # addresses an instance directly.

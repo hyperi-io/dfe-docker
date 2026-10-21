@@ -77,20 +77,35 @@ class RefusalCase(TypedDict):
 
 
 class SkipReasonCase(TypedDict):
-    """One seed object, whether the profile runs per-source fetchers and why the seeder leaves the object alone."""
+    """One seed object, the per-source apps the profile runs and why the seeder leaves the object alone."""
 
     body: dict
     expected: str
-    fetcher_enabled: bool
     kind: str
+    per_source_apps: list[str]
 
 
 _ADMIN_401 = "refused; DFE_AUTH_LOCAL_ADMIN_PASSWORD in .env is not the bootstrap admin's current password, so set it to that and run this again"
 _ADMIN_UNSET = (
     "refused; set DFE_AUTH_LOCAL_ADMIN_PASSWORD in .env, which `make init` generates"
 )
+_FETCHER = "dfe-fetcher"
 _FETCHER_BODY = {"fetcher": {"source_type": "aws"}, "source": "aws-guardduty"}
-_NO_FETCHER = "this profile sets no fetcher_enabled: true, so no dfe-fetcher polls it"
+_FETCHER_VRL_BODY = {
+    "fetcher": {"source_type": "okta"},
+    "source": "okta-audit",
+    "transform": {"engine": "vrl"},
+}
+_NO_FETCHER = "this profile sets no fetcher_enabled: true, so no dfe-fetcher runs it"
+_NO_VRL = (
+    "this profile sets no transform_vrl_enabled: true, so no dfe-transform-vrl runs it"
+)
+_VRL = "dfe-transform-vrl"
+_VRL_BODY = {
+    "match": {"field": "_source"},
+    "source": "filebeat",
+    "transform": {"engine": "vrl"},
+}
 _PROMPTED_401 = "refused; log in as an account that can write sources, rules and hunts, with its current password"
 _RECEIVER_BODY = {"match": {"field": "_source"}, "source": "syslog"}
 
@@ -150,22 +165,45 @@ REFUSAL_CASES = [
 ]
 SKIP_REASON_CASES = [
     SkipReasonCase(
-        body=_FETCHER_BODY,
-        expected=_NO_FETCHER,
-        fetcher_enabled=False,
+        body=_FETCHER_BODY, expected=_NO_FETCHER, kind="sources", per_source_apps=[]
+    ),
+    SkipReasonCase(
+        body=_FETCHER_BODY, expected="", kind="sources", per_source_apps=[_FETCHER]
+    ),
+    SkipReasonCase(
+        body=_RECEIVER_BODY, expected="", kind="sources", per_source_apps=[]
+    ),
+    SkipReasonCase(
+        body=_RECEIVER_BODY, expected="", kind="sources", per_source_apps=[_FETCHER]
+    ),
+    SkipReasonCase(body=_FETCHER_BODY, expected="", kind="rules", per_source_apps=[]),
+    SkipReasonCase(
+        body=_VRL_BODY, expected=_NO_VRL, kind="sources", per_source_apps=[_FETCHER]
+    ),
+    SkipReasonCase(body=_VRL_BODY, expected="", kind="sources", per_source_apps=[_VRL]),
+    SkipReasonCase(
+        body=_FETCHER_VRL_BODY,
+        expected=_NO_VRL,
         kind="sources",
+        per_source_apps=[_FETCHER],
     ),
     SkipReasonCase(
-        body=_FETCHER_BODY, expected="", fetcher_enabled=True, kind="sources"
+        body=_FETCHER_VRL_BODY,
+        expected=_NO_FETCHER,
+        kind="sources",
+        per_source_apps=[_VRL],
     ),
     SkipReasonCase(
-        body=_RECEIVER_BODY, expected="", fetcher_enabled=False, kind="sources"
+        body=_FETCHER_VRL_BODY,
+        expected="",
+        kind="sources",
+        per_source_apps=[_FETCHER, _VRL],
     ),
     SkipReasonCase(
-        body=_RECEIVER_BODY, expected="", fetcher_enabled=True, kind="sources"
-    ),
-    SkipReasonCase(
-        body=_FETCHER_BODY, expected="", fetcher_enabled=False, kind="rules"
+        body={"source": "wasm", "transform": {"engine": "wasm"}},
+        expected="no profile runs dfe-transform-wasm",
+        kind="sources",
+        per_source_apps=[_FETCHER, _VRL],
     ),
 ]
 
@@ -365,7 +403,7 @@ class TestSendEvents:
     ) -> None:
         failed = seed._send_events(
             events=[("aws-guardduty", [{"Id": "a"}])],
-            fetcher_enabled=False,
+            per_source_apps=[],
             sources={"aws-guardduty": _FETCHER_BODY},
         )
 
@@ -380,8 +418,8 @@ class TestSkipReason:
     def test_matches_expected(self, case: SkipReasonCase) -> None:
         reason = seed._skip_reason(
             body=case["body"],
-            fetcher_enabled=case["fetcher_enabled"],
             kind=case["kind"],
+            per_source_apps=case["per_source_apps"],
         )
 
         assert reason == case["expected"]

@@ -25,6 +25,8 @@ must differ per instance is written out.
 A deployment with no source of a given kind has an empty index and gets no
 service, which is how a fresh stack starts with none of these apps running.
 
+``extends`` reads the app's service from the committed file alone, so an overlay that repoints it at a local build never reaches an instance. An instance of an app ``make dev LOCAL=...`` builds carries that image itself.
+
 A source deleted through the engine leaves the index, so its service leaves the
 fragment, and Compose no longer knows its container: it is an orphan of the
 project, still running against a config directory the engine has removed.
@@ -39,6 +41,7 @@ import argparse
 import re
 import subprocess
 import sys
+from collections.abc import Mapping
 from pathlib import Path
 
 # Bytecode for the repo modules imported below goes to .tmp/pycache, as it does under make.
@@ -133,7 +136,9 @@ def service_name(service: str, instance: str) -> str:
     return f"{service}-{instance}"
 
 
-def _service_block(service: str, instance: str, compose_file: str) -> list[str]:
+def _service_block(
+    service: str, instance: str, compose_file: str, *, image: str = ""
+) -> list[str]:
     """One generated service: what differs from the app's committed definition.
 
     Ports are dropped rather than offset. The app publishes an operator port and
@@ -143,6 +148,8 @@ def _service_block(service: str, instance: str, compose_file: str) -> list[str]:
 
     ``extends`` appends this env file after the app's own, so a custom key the
     engine writes for the instance beats one it wrote for the app.
+
+    An empty ``image`` keeps the committed service's.
     """
     name = service_name(service, instance)
     config = f"{APP_CONFIG_MOUNT}/{service}/{instance}/{SERVICE_CONFIG_FILE[service]}"
@@ -151,6 +158,10 @@ def _service_block(service: str, instance: str, compose_file: str) -> list[str]:
         "    extends:",
         f"      file: {compose_file}",
         f"      service: {service}",
+    ]
+    if image:
+        lines.append(f"    image: {image}")
+    lines += [
         f"    container_name: ${{DFE_CONTAINER_PREFIX:-}}{name}",
         "    labels:",
         f"      {INSTANCE_LABEL}: {service}",
@@ -176,13 +187,18 @@ def _service_block(service: str, instance: str, compose_file: str) -> list[str]:
 
 
 def fragment(
-    instances: dict[str, list[str]], *, compose_file: str = "docker-compose.yml"
+    instances: dict[str, list[str]],
+    *,
+    compose_file: str = "docker-compose.yml",
+    images: Mapping[str, str] | None = None,
 ) -> str:
-    """The whole compose fragment for the instances given."""
+    """The whole compose fragment for the instances given, each app in ``images`` on the image it maps to."""
     lines = [HEADER.rstrip("\n"), "services:"]
     for service in sorted(instances):
         for instance in instances[service]:
-            lines += _service_block(service, instance, compose_file)
+            lines += _service_block(
+                service, instance, compose_file, image=(images or {}).get(service, "")
+            )
     return "\n".join(lines).rstrip("\n") + "\n"
 
 
@@ -215,7 +231,12 @@ def unknown_apps(
     return sorted(s for s in instances if not extendable(s, compose_file=compose_file))
 
 
-def write(instances: dict[str, list[str]], *, path: Path | None = None) -> bool:
+def write(
+    instances: dict[str, list[str]],
+    *,
+    images: Mapping[str, str] | None = None,
+    path: Path | None = None,
+) -> bool:
     """Write the fragment, or remove it when the deployment has no instance.
 
     Returns whether a fragment is in place, which is what decides whether the
@@ -226,7 +247,7 @@ def write(instances: dict[str, list[str]], *, path: Path | None = None) -> bool:
     if not instances:
         target.unlink(missing_ok=True)
         return False
-    content = fragment(instances, compose_file=COMPOSE_FILE.name)
+    content = fragment(instances, compose_file=COMPOSE_FILE.name, images=images)
     if not target.is_file() or target.read_text(encoding="utf-8") != content:
         target.parent.mkdir(exist_ok=True, parents=True)
         target.write_text(content, encoding="utf-8", newline="\n")

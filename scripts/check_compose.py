@@ -67,6 +67,7 @@ Beyond resolution, these semantic assertions ride along.
 - The overlay `make dev LOCAL=...` generates must put the named component and its
   image consumers on `:local` and leave every other service on its registry pin.
   See `_local_overlay_failures`.
+- A generated per-source instance of a LOCAL app must run its `:local` image, which `extends` alone never gives it. See `_local_instance_failures`.
 - That overlay must describe THIS run: a build that builds nothing removes it
   rather than leaving the previous run's. See `_overlay_staleness_failures`.
 - `make dev LOCAL=...` names its compose files explicitly instead of riding
@@ -119,6 +120,7 @@ from _common import (  # noqa: E402
     DOTENV_TEMPLATE,
     ENV_DIR,
     ENV_TEMPLATE_DIR,
+    PER_SOURCE_APP_KEYS,
     REPO_ROOT,
     SERVICE_CONFIG_FILE,
     _dotenv_values,
@@ -138,6 +140,8 @@ from init import _render_secrets  # noqa: E402
 # is the component with IMAGE_CONSUMERS followers. Written under .tmp so compose
 # resolves it relative to the repo like the shipped files.
 _LOCAL_SAMPLE = ["dfe-engine"]
+# The per-source app a LOCAL build names when its generated instances are checked
+_LOCAL_INSTANCE_SAMPLE = ["dfe-fetcher"]
 _LOCAL_RENDER = REPO_ROOT / ".tmp" / "compose-check-local.yml"
 # A stack service the builder cannot build, for the overlay staleness assertion.
 _UNBUILDABLE_SAMPLE = "kafka-ui"
@@ -1589,6 +1593,41 @@ def _local_overlay_failures(*, env: dict[str, str]) -> tuple[list[str], int]:
     return failures, made
 
 
+def _local_instance_failures(*, env: dict[str, str]) -> tuple[list[str], int]:
+    """Return (messages, assertions made) for the image each generated instance runs beside a LOCAL build.
+
+    `extends` reads the committed service and never the LOCAL overlay, so the generator writes the local image into each instance of a LOCAL app. That instance must resolve to `:local` and every other app's instance to its app's registry pin.
+    """
+    probes = {
+        app: ["compose-check"]
+        for app in sorted(PER_SOURCE_APP_KEYS)
+        if instances.extendable(app)
+    }
+    images = local_image_services(_LOCAL_INSTANCE_SAMPLE)
+    config = _config_json(
+        env=env,
+        files=[COMPOSE_FILE.name],
+        fragment=instances.fragment(probes, images=images),
+    )
+    if config is None:
+        return (
+            ["the registry path with a generated LOCAL instance did not resolve"],
+            0,
+        )
+    services = config.get("services", {})
+    failures = []
+    for app, names in sorted(probes.items()):
+        want = images.get(app) or services.get(app, {}).get("image", "")
+        for name in (instances.service_name(app, instance) for instance in names):
+            got = services.get(name, {}).get("image", "")
+            if got != want:
+                failures.append(
+                    f"{name}: runs {got or 'no image'}, not {want}, beside a LOCAL "
+                    f"build of {', '.join(_LOCAL_INSTANCE_SAMPLE)}"
+                )
+    return failures, len(probes)
+
+
 def _overlay_staleness_failures() -> tuple[list[str], int]:
     """Return (messages, assertions made) for the overlay always describing THIS run.
 
@@ -2018,6 +2057,16 @@ def main() -> int:
     _print(
         msg=f"The generated LOCAL overlay puts {', '.join(_LOCAL_SAMPLE)} and its "
         f"consumers on :local and everything else on its pin ({local_made} assertions)"
+    )
+
+    instance_failures, instance_made = _local_instance_failures(env=env)
+    for message in instance_failures:
+        _print(msg=f"FAIL {message}")
+    if instance_failures:
+        return 1
+    _print(
+        msg=f"A LOCAL build of {', '.join(_LOCAL_INSTANCE_SAMPLE)} puts its generated "
+        f"instance on :local and every other app's on its pin ({instance_made} assertions)"
     )
 
     stale_failures, stale_made = _overlay_staleness_failures()
