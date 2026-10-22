@@ -28,7 +28,7 @@ _DEPENDS_ON_RE = re.compile(r"^    depends_on:$")
 _DEPENDENCY_RE = re.compile(r"^      (?:- )?([A-Za-z0-9._-]+):?$")
 _REGISTRY_IMAGE_RE = re.compile(r"^\$\{IMAGE_REGISTRY:-[^}]*\}/([a-z0-9-]+):")
 # One-shots that emit an artefact of the PINNED release (docs/developing.md).
-_PINNED_ONE_SHOT_RE = re.compile(r"^(catalogue|contract)-")
+_PINNED_ONE_SHOT_RE = re.compile(r"^contract-")
 
 
 def _services(path: Path) -> dict[str, dict[str, object]]:

@@ -169,7 +169,7 @@ A service that runs a component's image under another name follows it:
 engine image. The map is `IMAGE_CONSUMERS` in `scripts/build_dev_images.py`, and
 `make check-compose` asserts the override covers all of it.
 
-The `contract-<app>` and `catalogue-<app>` one-shots are the deliberate
+The `contract-<app>` one-shots are the deliberate
 exception: they emit an artefact of the PINNED release and stay on the registry
 pin while a local build runs beside them, because moving them onto `:local` would
 make a core-only profile compile the Rust components to emit a few files.
