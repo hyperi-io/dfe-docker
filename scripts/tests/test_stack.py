@@ -13,11 +13,12 @@ It runs end to end here with nothing on PATH but a stand-in `oras` -- no `gh`, n
 The opt-in repin (`DFE_STACK_REPIN_IMAGES=1`) repins the DFE images on top of that stack. Which keys that covers is DERIVED from docker-compose.yml rather than listed, so the test runs against the real compose file: a service added to the stack has to turn up here without anyone editing a list, and a third-party image must never turn up at all -- floating ClickHouse or Kafka is the thing this mode is not.
 
 The repin itself is asserted against fixed releases and digests, so what is pinned is the shape of the line written into `.env` and the source each version comes from, not GitHub's or GHCR's current contents.
+
+`--print KEY` is how `make check-proxy` finds the Envoy on a checkout with no `.env`, so it runs on the same stand-in `oras` and must leave `.env` as it found it.
 """
 
-from __future__ import annotations
-
 import json
+import re
 import shutil
 import sys
 from pathlib import Path
@@ -316,3 +317,71 @@ def test_an_explicit_version_never_repins(
     monkeypatch.setattr(sys, "argv", ["stack.py", "2.2.0-rc.13"])
 
     assert stack.main() == 0
+
+
+def test_print_writes_one_pin_value_and_leaves_env_alone(
+    anonymous_oras: Path,
+    capsys: pytest.CaptureFixture[str],
+    dotenv: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        name="argv",
+        target=sys,
+        value=["stack.py", "--print", "DFE_ENGINE_VERSION", "2.2.0-rc.13"],
+    )
+
+    assert stack.main() == 0
+
+    assert capsys.readouterr().out == f"v1.22.8@sha256:{'a' * 64}\n"
+    log = anonymous_oras.read_text(encoding="utf-8")
+    calls = [json.loads(s=line) for line in log.splitlines()]
+    assert [call[-1] for call in calls] == [
+        f"{_registry.DEFAULT_MANIFEST_REPO}:2.2.0-rc.13"
+    ]
+    assert dotenv.read_text(encoding="utf-8") == "HTTP_PORT=8080\n"
+
+
+def test_print_with_no_version_reads_the_stack_the_example_dial_pins(
+    anonymous_oras: Path,
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    dial = tmp_path / "deployment.example.yaml"
+    dial.write_text(data="version:\n  pin: 2.1.0  # certified\n", encoding="utf-8")
+    monkeypatch.setattr(name="DEPLOYMENT_DIAL_TEMPLATE", target=stack, value=dial)
+    monkeypatch.setattr(
+        name="argv", target=sys, value=["stack.py", "--print", "CLICKHOUSE_VERSION"]
+    )
+
+    assert stack.main() == 0
+
+    assert capsys.readouterr().out == f"25.8@sha256:{'b' * 64}\n"
+    log = anonymous_oras.read_text(encoding="utf-8")
+    calls = [json.loads(s=line) for line in log.splitlines()]
+    assert [call[-1] for call in calls] == [f"{_registry.DEFAULT_MANIFEST_REPO}:2.1.0"]
+
+
+def test_print_refuses_a_key_the_stack_does_not_pin(
+    anonymous_oras: Path,
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        name="argv",
+        target=sys,
+        value=["stack.py", "--print", "DFE_PROXY_VERSION", "2.2.0-rc.13"],
+    )
+
+    assert stack.main() == 1
+
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert "pins no 'DFE_PROXY_VERSION'" in captured.err
+
+
+def test_the_committed_dial_pins_a_stack_version() -> None:
+    assert re.fullmatch(
+        pattern=r"\d+\.\d+\.\d+(-[0-9A-Za-z.]+)?", string=stack._dial_pin()
+    )

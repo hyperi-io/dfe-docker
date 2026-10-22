@@ -467,7 +467,7 @@ still passes.
 pinned pytest through `uvx` and `check-locks` the pinned uv, so those want a
 network the first time. The rest need none.
 
-`check-proxy` pulls the pinned Envoy image the same way and mints a throwaway P-384 certificate with the host's `openssl` for the TLS variants.
+`check-proxy` validates on the Envoy in `DFE_PROXY_VERSION`. With that unset it asks `scripts/stack.py --print DFE_PROXY_VERSION` for the one the stack at `VERSION` pins, falling back to `deployment.example.yaml`'s `version.pin`. That lookup reads the stack manifest anonymously through `oras`. The check mints a throwaway P-384 certificate with the host's `openssl` for the TLS variants.
 
 ## Port collisions on a shared dev host
 

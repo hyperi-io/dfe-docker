@@ -577,7 +577,7 @@ infra: .env storage-dirs ## Start infrastructure services
 # hadolint image while check-tests resolves the pinned pytest, so those two want
 # a network the first time; the rest need none.
 #
-# check-proxy pulls the pinned Envoy image the same way and needs openssl on the host for its throwaway certificate.
+# check-proxy reads the stack SSoT, anonymously through oras, when DFE_PROXY_VERSION is unset, then pulls that Envoy and needs openssl on the host for its throwaway certificate.
 # ---------------------------------------------------------------------------
 
 .PHONY: check
@@ -671,19 +671,23 @@ check-dockerfile: ## Lint the dev builder Dockerfile (hadolint gates on error se
 
 # Validate mode loads every listener, cluster and TLS context, so a config that would crash-loop either proxy fails here instead.
 #
-# The Envoy version tracks services.envoy-proxy in dfe-infra's versions.yaml, the pin `make stack` writes to DFE_PROXY_VERSION. The digest is that file's services-digests.envoy-proxy, the manifest-list digest, so move both together.
+# The Envoy is the one the stack runs: DFE_PROXY_VERSION when set, else the pin scripts/stack.py reads from the stack manifest at VERSION, which falls back to deployment.example.yaml's version.pin.
 #
 # The TLS variants read their certificate at validation, so a throwaway P-384 pair is minted into a scratch directory. Envoy runs as the make user, as both proxies do under TLS, because the image's own user cannot read a 0600 key.
-ENVOY_IMAGE := envoyproxy/envoy:v1.39.0@sha256:d59f7f5fa10cff6d5892b6c5e7df5c9297ddfb2c3683e33fbfb82da24de4fa66
+ENVOY_REPO := envoyproxy/envoy
+# Run in the recipe, since $(shell) drops the exit status and a failed lookup would validate on an empty tag
+PROXY_VERSION_COMMAND = $(if $(strip $(DFE_PROXY_VERSION)),echo '$(strip $(DFE_PROXY_VERSION))',python3 scripts/stack.py --print DFE_PROXY_VERSION $(VERSION))
 PROXY_CHECK_DIR := .tmp/check-proxy
 PROXY_CONFIGS := envoy hyperdx envoy.tls hyperdx.tls
 
 .PHONY: check-proxy
-check-proxy: ## Validate the Envoy proxy configs, plain and TLS, on the pinned Envoy
+check-proxy: ## Validate the Envoy proxy configs, plain and TLS, on the Envoy the stack runs
 	@rm -rf $(PROXY_CHECK_DIR) && mkdir -p $(PROXY_CHECK_DIR)
 	@openssl req -x509 -newkey ec -pkeyopt ec_paramgen_curve:P-384 -nodes -days 1 -subj /CN=check-proxy -keyout $(PROXY_CHECK_DIR)/console.key -out $(PROXY_CHECK_DIR)/console.crt 2>/dev/null
-	@status=0; for config in $(PROXY_CONFIGS); do \
-		if out=$$(docker run --rm --user $(DFE_DEV_UID):$(DFE_DEV_GID) -v "$(CURDIR)/config/proxy/$$config.yaml:/etc/envoy/envoy.yaml:ro" -v "$(CURDIR)/$(PROXY_CHECK_DIR):/etc/envoy/certs:ro" $(ENVOY_IMAGE) envoy --mode validate -c /etc/envoy/envoy.yaml --log-level error 2>&1); then \
+	@version=$$($(PROXY_VERSION_COMMAND)) || { rm -rf $(PROXY_CHECK_DIR); exit 1; }; \
+	echo "Envoy $(ENVOY_REPO):$$version"; \
+	status=0; for config in $(PROXY_CONFIGS); do \
+		if out=$$(docker run --rm --user $(DFE_DEV_UID):$(DFE_DEV_GID) -v "$(CURDIR)/config/proxy/$$config.yaml:/etc/envoy/envoy.yaml:ro" -v "$(CURDIR)/$(PROXY_CHECK_DIR):/etc/envoy/certs:ro" "$(ENVOY_REPO):$$version" envoy --mode validate -c /etc/envoy/envoy.yaml --log-level error 2>&1); then \
 			echo "OK   config/proxy/$$config.yaml"; \
 		else \
 			status=1; echo "FAIL config/proxy/$$config.yaml"; echo "$$out"; \
