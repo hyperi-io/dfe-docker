@@ -1592,7 +1592,7 @@ services:
   # HyperDX's document store: PostgreSQL with the DocumentDB extensions and the
   # Mongo-wire gateway HyperDX talks to, in one container.
   hyperdx-documentdb:
-    image: ghcr.io/documentdb/documentdb/documentdb-local:${HYPERDX_DOCUMENTDB_VERSION:?run 'make stack VERSION=X.Y.Z' to pin HYPERDX_DOCUMENTDB_VERSION}
+    image: ghcr.io/documentdb/documentdb/documentdb-local:${HYPERDX_DOCUMENTDB_VERSION:-pg18-1.0.0@sha256:03aef53ed72cd3007236f8ce1b4ef7a0c958dbbce1519074b85d8a3e10be89a5}
     container_name: ${DFE_CONTAINER_PREFIX:-}dfe-hyperdx-documentdb
     profiles: ["hyperdx"]
     restart: unless-stopped
