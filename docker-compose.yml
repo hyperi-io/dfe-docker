@@ -777,6 +777,15 @@ services:
       - ./config/${DFE_RECEIVER_CONFIG:-receiver/kafka.yaml}:/etc/dfe-receiver/config.yaml:ro
       - dfe-app-config:/etc/dfe/apps:ro
       - dlq-spool:/var/spool/dfe
+      # The one directory of the engine's secrets the receiver reads: the bearer
+      # tokens the engine writes per listener, which each listener's file:
+      # secret_source names. A directory, so a rewrite reaches the running receiver.
+      - type: volume
+        source: dfe-engine-config
+        target: /var/run/secrets/dfe/ingest-bearer-tokens
+        read_only: true
+        volume:
+          subpath: .secrets/ingest/bearer-tokens
       # Uncomment to enable TLS on gRPC inbound (:6000):
       # - ./certs/dev/receiver.crt:/etc/ssl/receiver.crt:ro
       # - ./certs/dev/receiver.key:/etc/ssl/receiver.key:ro
