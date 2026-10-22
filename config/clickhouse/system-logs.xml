@@ -1,6 +1,14 @@
+<!--
+  Project:   dfe-docker
+  File:      config/clickhouse/system-logs.xml
+  Purpose:   Ages out ClickHouse's own log tables, which the image keeps forever
+  Language:  XML
+
+  License:   BUSL-1.1
+  Copyright: (c) 2026 HYPERI PTY LIMITED
+-->
 <clickhouse>
-  <!-- The image sets no TTL on these -->
-  <!-- Changing one renames the old table to <table>_0 with its rows -->
+  <!-- Changing a TTL renames the old table to <table>_0 with its rows -->
   <asynchronous_metric_log>
     <ttl>event_date + INTERVAL 7 DAY DELETE</ttl>
   </asynchronous_metric_log>
@@ -19,6 +27,7 @@
   <text_log>
     <ttl>event_date + INTERVAL 7 DAY DELETE</ttl>
   </text_log>
+
   <!-- Nothing reads it -->
   <trace_log remove="remove"/>
 </clickhouse>

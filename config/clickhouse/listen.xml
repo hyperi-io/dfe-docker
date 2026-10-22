@@ -1,14 +1,35 @@
+<!--
+  Project:   dfe-docker
+  File:      config/clickhouse/listen.xml
+  Purpose:   Replaces the image's docker_related_config.xml so only the client ports listen beyond loopback
+  Language:  XML
+
+  License:   BUSL-1.1
+  Copyright: (c) 2026 HYPERI PTY LIMITED
+-->
 <clickhouse>
-  <!-- Mounted over the image's docker_related_config.xml, so Keeper, raft and interserver stay on loopback -->
-  <!-- Clients connect through the protocols block instead -->
+  <!-- Replaced by the http entry in the protocols block -->
   <http_port remove="remove"/>
-  <!-- Without this, raft listens on every interface -->
+
+  <!-- Keeps replication traffic on loopback -->
   <interserver_listen_host>127.0.0.1</interserver_listen_host>
-  <!-- The ports other containers connect to -->
-  <!-- IPv4 only, because :: fails in Docker -->
+
+  <!-- The ports other containers connect to, on IPv4 because :: fails in Docker -->
   <protocols>
-    <http><description>http</description><host>0.0.0.0</host><port>8123</port><type>http</type></http>
-    <tcp><description>native protocol</description><host>0.0.0.0</host><port>9000</port><type>tcp</type></tcp>
+    <http>
+      <description>http</description>
+      <host>0.0.0.0</host>
+      <port>8123</port>
+      <type>http</type>
+    </http>
+    <tcp>
+      <description>native protocol</description>
+      <host>0.0.0.0</host>
+      <port>9000</port>
+      <type>tcp</type>
+    </tcp>
   </protocols>
+
+  <!-- Replaced by the tcp entry in the protocols block -->
   <tcp_port remove="remove"/>
 </clickhouse>
