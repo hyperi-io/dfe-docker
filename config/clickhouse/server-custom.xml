@@ -1,7 +1,6 @@
 <clickhouse>
-  <!-- Pins the image's config.xml value so the system-database grant never depends on the image, while select_from_information_schema_requires_grant stays at that file's true -->
+  <!-- Pins the image's value so the system-database grant never depends on the image -->
   <access_control_improvements>
     <select_from_system_db_requires_grant>true</select_from_system_db_requires_grant>
   </access_control_improvements>
-  <custom_settings_prefixes>SQL_</custom_settings_prefixes>
 </clickhouse>

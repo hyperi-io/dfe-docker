@@ -34,7 +34,8 @@ from _common import COMPOSE_FILE, REPO_ROOT
 
 _SERVICE = "clickhouse"
 _CONFIG_D = "/etc/clickhouse-server/config.d"
-_DATA_DIR = "/var/lib/clickhouse/"
+# Where existing volumes hold Keeper's log, not the image default coordination/logs
+_KEEPER_LOG_DIR = "/var/lib/clickhouse/coordination/log"
 _LOGGER_FILE = REPO_ROOT / "config" / "clickhouse" / "server-logger.xml"
 _SYSTEM_LOGS_FILE = REPO_ROOT / "config" / "clickhouse" / "system-logs.xml"
 _REPLICATION_FILE = REPO_ROOT / "config" / "clickhouse" / "replication.xml"
@@ -209,14 +210,14 @@ def _text(root: ElementTree.Element, path: str) -> str:
     return (element.text or "").strip()
 
 
-def test_keeper_runs_embedded_and_keeps_its_data_with_the_tables() -> None:
+def test_keeper_runs_embedded_on_the_log_path_existing_volumes_hold() -> None:
     root = _root(path=_REPLICATION_FILE)
 
     assert _text(root, "keeper_server/server_id") == "1"
     servers = root.findall("keeper_server/raft_configuration/server")
     assert [_text(server, "id") for server in servers] == ["1"]
-    # Snapshots default to the data dir. Lose the log without them and every replicated table goes read-only
-    assert _text(root, "keeper_server/log_storage_path").startswith(_DATA_DIR)
+    assert _text(root, "keeper_server/log_storage_path") == _KEEPER_LOG_DIR
+    # Snapshots stay at the image default inside the data volume
     assert root.find("keeper_server/snapshot_storage_path") is None
 
 

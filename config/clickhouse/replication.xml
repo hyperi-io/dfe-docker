@@ -3,7 +3,7 @@
   <keeper_server>
     <!-- Only the four-letter commands that read state -->
     <four_letter_word_white_list>ruok,isro,mntr,srvr,stat</four_letter_word_white_list>
-    <!-- In the data volume, so Keeper's log stays with the tables -->
+    <!-- Existing volumes hold Keeper's log here rather than at the image default, coordination/logs -->
     <log_storage_path>/var/lib/clickhouse/coordination/log</log_storage_path>
     <raft_configuration>
       <server><hostname>127.0.0.1</hostname><id>1</id><port>9234</port></server>
