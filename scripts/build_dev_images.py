@@ -46,7 +46,7 @@ IMAGE_TAG = "local"
 # build must repoint all of them or the stack runs two builds of one component.
 IMAGE_CONSUMERS: dict[str, tuple[str, ...]] = {
     "dfe-archiver": ("dlq-init",),
-    "dfe-engine": ("dfe-dashboards", "dfe-hunt-runner"),
+    "dfe-engine": ("bearer-tokens-init", "dfe-dashboards", "dfe-hunt-runner"),
 }
 # The IMAGE_CONSUMERS a stack can start without their component, mapped to the
 # services whose `depends_on` starts them (hyperdx runs with the engine off).
@@ -54,6 +54,7 @@ IMAGE_CONSUMERS: dict[str, tuple[str, ...]] = {
 # so a build of the profile's own services alone leaves them on a tag nothing
 # produced.
 IMPLICIT_CONSUMERS: dict[str, tuple[str, ...]] = {
+    "bearer-tokens-init": ("dfe-receiver",),
     "dfe-dashboards": ("hyperdx",),
     "dlq-init": ("dfe-archiver", "dfe-fetcher", "dfe-loader", "dfe-receiver"),
 }

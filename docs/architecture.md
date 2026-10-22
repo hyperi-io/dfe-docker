@@ -177,7 +177,7 @@ flowchart TD
 | `kafka-redpanda` | `kafka-redpanda` |
 | `kafka-apache` | `kafka-apache` |
 | `kafka-ui` | `kafka-ui` (Kafbat) |
-| `dfe` | `dlq-init`, archiver, fetcher, loader, receiver, every transform instance |
+| `dfe` | `dlq-init`, `bearer-tokens-init`, archiver, fetcher, loader, receiver, every transform instance |
 | `core` | `dfe-engine`, `dfe-ui`, `dfe-proxy` |
 | `hyperdx` | `hyperdx`, `hyperdx-ferretdb`, `hyperdx-postgres` |
 | `otel` | `otel-collector` |
