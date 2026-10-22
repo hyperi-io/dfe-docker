@@ -48,7 +48,6 @@ _ENGINE_PATHS = {
     "DFE_DEPLOYMENT_APP_CONFIG_BASE_DIR": "/app/app-config-base",
     "DFE_DEPLOYMENT_APP_CONFIG_DIR": "/app/app-config",
     "DFE_DEPLOYMENT_APP_CONFIG_MOUNT": "/etc/dfe/apps",
-    "DFE_SOURCE_CATALOGUE_FILE": "/app/content/catalogue/sources.yaml",
 }
 
 
