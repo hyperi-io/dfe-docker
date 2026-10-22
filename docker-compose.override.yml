@@ -20,7 +20,7 @@
 # only some components and keep the rest on the registry pins, `make dev
 # LOCAL="dfe-engine dfe-ui"` writes docker-compose.local.yml instead of this.
 #
-# A service that runs a component's image under another name (dlq-init, bearer-tokens-init, dfe-hunt-runner and dfe-dashboards) is repointed with it. The list is IMAGE_CONSUMERS in scripts/build_dev_images.py and check-compose asserts this file covers all of it.
+# A service that runs a component's image under another name (dlq-init, bearer-tokens-init, dfe-hunt-runner, dfe-dashboards and hyperdx-documentdb-tls) is repointed with it. The list is IMAGE_CONSUMERS in scripts/build_dev_images.py and check-compose asserts this file covers all of it.
 #
 # dfe-fetcher and the transforms run as per-source instances, which extend docker-compose.yml and never read this file, so scripts/resolve_profile.py writes their local image into each instance instead.
 
@@ -47,6 +47,9 @@ services:
     image: dfe-engine:local
 
   bearer-tokens-init:
+    image: dfe-engine:local
+
+  hyperdx-documentdb-tls:
     image: dfe-engine:local
 
   dfe-ui:

@@ -179,7 +179,7 @@ flowchart TD
 | `kafka-ui` | `kafka-ui` (Kafbat) |
 | `dfe` | `dlq-init`, `bearer-tokens-init`, archiver, fetcher, loader, receiver, every transform instance |
 | `core` | `dfe-engine`, `dfe-ui`, `dfe-proxy` |
-| `hyperdx` | `hyperdx`, `hyperdx-ferretdb`, `hyperdx-postgres` |
+| `hyperdx` | `hyperdx`, `hyperdx-documentdb`, `hyperdx-documentdb-tls` |
 | `otel` | `otel-collector` |
 
 A profile declares its whole footprint through the optional `clickhouse`, `core`,

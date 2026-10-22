@@ -1386,49 +1386,91 @@ services:
       - hyperdx-dashboards:/etc/hyperdx/dashboards
     restart: "no"
 
-  hyperdx-postgres:
-    image: ghcr.io/ferretdb/postgres-documentdb:${HYPERDX_POSTGRES_VERSION:?run 'make stack VERSION=X.Y.Z' to pin HYPERDX_POSTGRES_VERSION}
-    container_name: ${DFE_CONTAINER_PREFIX:-}dfe-hyperdx-postgres
+  # The CA and the certificate hyperdx-documentdb serves, so HyperDX verifies the
+  # gateway rather than trusting whatever answers. Minted once into their own
+  # volume. The engine image is here only for its openssl.
+  hyperdx-documentdb-tls:
+    image: ${IMAGE_REGISTRY:-ghcr.io/hyperi-io}/dfe-engine:${DFE_ENGINE_VERSION:?run 'make stack VERSION=X.Y.Z' to pin DFE_ENGINE_VERSION}
+    container_name: ${DFE_CONTAINER_PREFIX:-}dfe-hyperdx-documentdb-tls
     profiles: ["hyperdx"]
-    restart: unless-stopped
-    deploy: *limits-service
-    environment:
-      POSTGRES_DB: postgres
-      POSTGRES_USER: ${HYPERDX_POSTGRES_USER:-hyperdx}
-      # `make init` generates this. Not a `:?` hard-fail -- see NEXTAUTH_SECRET.
-      POSTGRES_PASSWORD: ${HYPERDX_POSTGRES_PASSWORD:-hyperdx}
+    deploy: *limits-sidecar
+    # Root because an empty named volume lands root-owned at a path no image creates.
+    user: "0:0"
+    entrypoint: ["/bin/sh", "-c"]
+    # A LIST with one element, for the reason dlq-init's command gives. A pair
+    # with 30 days left is kept, so a restart never moves the CA under HyperDX.
+    # The CA key is discarded: a pair that needs replacing gets a new CA with it.
+    # Modes are set on every run, so a run cut short is repaired by the next.
+    command:
+      - |
+        set -eu
+        umask 077
+        cd /tls
+        if ! { [ -s ca/ca.crt ] && [ -s server/tls.key ] && [ -s server/tls.crt ] \
+            && openssl x509 -checkend 2592000 -noout -in server/tls.crt >/dev/null; }; then
+          rm -rf ca server ca.key ca.srl server.csr server.ext
+          mkdir ca server
+          openssl req -x509 -newkey ec -pkeyopt ec_paramgen_curve:P-384 -nodes -sha384 -days 3650 \
+            -subj /CN=dfe-hyperdx-documentdb-ca \
+            -addext basicConstraints=critical,CA:TRUE -addext keyUsage=critical,keyCertSign,cRLSign \
+            -keyout ca.key -out ca/ca.crt
+          openssl req -new -newkey ec -pkeyopt ec_paramgen_curve:P-384 -nodes -sha384 \
+            -subj /CN=hyperdx-documentdb -keyout server/tls.key -out server.csr
+          printf '%s\n' basicConstraints=critical,CA:FALSE keyUsage=critical,digitalSignature \
+            extendedKeyUsage=serverAuth subjectAltName=DNS:hyperdx-documentdb > server.ext
+          openssl x509 -req -in server.csr -CA ca/ca.crt -CAkey ca.key -CAcreateserial -CAserial ca.srl \
+            -days 3650 -sha384 -extfile server.ext -out server/tls.crt
+          rm -f ca.key ca.srl server.csr server.ext
+        fi
+        # HyperDX (uid 1000) reads the CA, and documentdb-local (uid 1000) the pair.
+        chmod 0755 ca
+        chmod 0644 ca/ca.crt
+        chown -R 1000:1000 server
     volumes:
-      - hyperdx-pg-data:/var/lib/postgresql/data
-    healthcheck:
-      # -d names the real database: without it libpq dials one named after the user.
-      test: ["CMD-SHELL", "pg_isready -U ${HYPERDX_POSTGRES_USER:-hyperdx} -d postgres"]
-      interval: 5s
-      timeout: 3s
-      retries: 10
+      - hyperdx-documentdb-tls:/tls
+    restart: "no"
 
-  hyperdx-ferretdb:
-    image: ghcr.io/ferretdb/ferretdb:${HYPERDX_FERRETDB_VERSION:?run 'make stack VERSION=X.Y.Z' to pin HYPERDX_FERRETDB_VERSION}
-    container_name: ${DFE_CONTAINER_PREFIX:-}dfe-hyperdx-ferretdb
+  # HyperDX's document store: PostgreSQL with the DocumentDB extensions and the
+  # Mongo-wire gateway HyperDX talks to, in one container.
+  hyperdx-documentdb:
+    image: ghcr.io/documentdb/documentdb/documentdb-local:${HYPERDX_DOCUMENTDB_VERSION:?run 'make stack VERSION=X.Y.Z' to pin HYPERDX_DOCUMENTDB_VERSION}
+    container_name: ${DFE_CONTAINER_PREFIX:-}dfe-hyperdx-documentdb
     profiles: ["hyperdx"]
     restart: unless-stopped
+    # The image exposes no PostgreSQL memory settings, so initdb's 128MB
+    # shared_buffers, 4MB work_mem and 100 connections run inside this limit.
     deploy: *limits-service
     environment:
-      FERRETDB_POSTGRESQL_URL: postgres://${HYPERDX_POSTGRES_USER:-hyperdx}:${HYPERDX_POSTGRES_PASSWORD:-hyperdx}@hyperdx-postgres:5432/postgres
+      USERNAME: ${HYPERDX_POSTGRES_USER:-hyperdx}
+      # `make init` generates this. Not a `:?` hard-fail -- see NEXTAUTH_SECRET.
+      PASSWORD: ${HYPERDX_POSTGRES_PASSWORD:-hyperdx}
+      # The gateway refuses plain connections and serves the minted certificate.
+      TLS_MODE: requireTLS
+      CERT_PATH: /etc/documentdb/tls/tls.crt
+      KEY_FILE: /etc/documentdb/tls/tls.key
+      # On by default upstream: it reports to a third party at start and hourly.
+      DOCUMENTDB_USAGE_TELEMETRY: "false"
     volumes:
-      # The image's VOLUME: FerretDB's instance UUID and telemetry choice
-      # (state.json). Named, so a restart keeps them and `make clean` removes them.
-      - hyperdx-ferretdb-state:/state
+      # The image's VOLUME. A fresh volume takes the cluster the image ships
+      # pre-initialised, so the first start skips initdb.
+      - hyperdx-documentdb-data:/data
+      - type: volume
+        source: hyperdx-documentdb-tls
+        target: /etc/documentdb/tls
+        read_only: true
+        volume:
+          subpath: server
     depends_on:
-      hyperdx-postgres:
-        condition: service_healthy
+      hyperdx-documentdb-tls:
+        condition: service_completed_successfully
     healthcheck:
-      # Distroless, so no CMD-SHELL and no HTTP probe. `ping` dials the wire
-      # listener. The image declares this too -- we only retune its 60s/1-retry
-      # timings, which are far too slow to gate startup on.
-      test: ["CMD", "/ferretdb", "ping"]
+      # The image's own probe: startup finished, PostgreSQL answering and a TLS
+      # handshake on the gateway. We only retune its 30s interval and 600s start
+      # period, which are far too slow to gate startup on.
+      test: ["CMD", "/usr/local/bin/documentdb-healthcheck"]
       interval: 5s
-      timeout: 3s
-      start_period: 10s
+      timeout: 10s
+      start_period: 60s
       retries: 10
 
   hyperdx:
@@ -1478,8 +1520,9 @@ services:
       # UI (served by dfe-proxy on DFE_UI_PORT), not the HyperDX origin. Matches
       # the k8s hyperdx chart. next-runtime-env reads it per request.
       NEXT_PUBLIC_DFE_UI_BASE_URL: ${DFE_HYPERDX_APP_URL:-${DFE_EXTERNAL_ORIGIN:-http://localhost}}:${DFE_UI_PORT:-3000}
-      # HyperDX talks Mongo wire protocol; FerretDB serves it over Postgres.
-      MONGO_URI: mongodb://${HYPERDX_POSTGRES_USER:-hyperdx}:${HYPERDX_POSTGRES_PASSWORD:-hyperdx}@hyperdx-ferretdb:27017/hyperdx?authSource=admin
+      # HyperDX talks Mongo wire protocol to DocumentDB's gateway, over TLS checked
+      # against the minted CA and with a SCRAM-SHA-256 login.
+      MONGO_URI: mongodb://${HYPERDX_POSTGRES_USER:-hyperdx}:${HYPERDX_POSTGRES_PASSWORD:-hyperdx}@hyperdx-documentdb:10260/hyperdx?tls=true&tlsCAFile=/etc/dfe/documentdb-ca/ca.crt&authMechanism=SCRAM-SHA-256
       # Unset, HyperDX signs sessions with a key published upstream, so `make init`
       # generates one. Not a `:?` hard-fail -- see NEXTAUTH_SECRET.
       EXPRESS_SESSION_SECRET: ${HYPERDX_EXPRESS_SESSION_SECRET:-RUN-make-init-TO-GENERATE-A-REAL-SECRET}
@@ -1490,8 +1533,15 @@ services:
       NEXT_PUBLIC_THEME: ${HYPERDX_THEME:-dfe}
     volumes:
       - hyperdx-dashboards:/etc/hyperdx/dashboards:ro
+      # The CA alone, never the gateway's key beside it.
+      - type: volume
+        source: hyperdx-documentdb-tls
+        target: /etc/dfe/documentdb-ca
+        read_only: true
+        volume:
+          subpath: ca
     depends_on:
-      hyperdx-ferretdb:
+      hyperdx-documentdb:
         condition: service_healthy
       clickhouse:
         condition: service_healthy
@@ -1632,5 +1682,5 @@ volumes:
   # data-plane container has any business reading.
   dfe-app-config:
   hyperdx-dashboards:
-  hyperdx-pg-data:
-  hyperdx-ferretdb-state:
+  hyperdx-documentdb-data:
+  hyperdx-documentdb-tls:

@@ -33,6 +33,6 @@ volumes:
   dfe-engine-schemas:
     driver: local
     driver_opts: {type: none, o: bind, device: "${DFE_DATA_ROOT}/engine-schemas"}
-  hyperdx-pg-data:
+  hyperdx-documentdb-data:
     driver: local
-    driver_opts: {type: none, o: bind, device: "${DFE_DATA_ROOT}/hyperdx-pg"}
+    driver_opts: {type: none, o: bind, device: "${DFE_DATA_ROOT}/hyperdx-documentdb"}

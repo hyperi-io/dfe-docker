@@ -351,7 +351,9 @@ Every profile declares `otel: true`, which starts a collector that takes the sta
 
 ## HyperDX
 
-Every profile declares `hyperdx: true` and `DFE_HYPERDX_ENABLED=false` turns it off. It starts `hyperdx` (API + App), the `dfe-hyperdx-proxy` that fronts both origins, a one-shot `dfe-dashboards` that copies the engine's shipped dashboards into a volume, plus `hyperdx-ferretdb` and `hyperdx-postgres`, sharing the always-on ClickHouse.
+Every profile declares `hyperdx: true` and `DFE_HYPERDX_ENABLED=false` turns it off. It starts `hyperdx` (API + App), the `dfe-hyperdx-proxy` that fronts both origins, a one-shot `dfe-dashboards` that copies the engine's shipped dashboards into a volume, plus `hyperdx-documentdb`, sharing the always-on ClickHouse.
+
+`hyperdx-documentdb` is PostgreSQL with the DocumentDB extensions and the Mongo-wire gateway HyperDX talks to, in one container, with its usage telemetry to a third party switched off. The gateway serves TLS only, on a certificate the one-shot `hyperdx-documentdb-tls` mints into a volume on first start and renews once it has 30 days left. HyperDX gets only the CA that signed it, verifies the gateway against it and logs in with SCRAM-SHA-256.
 
 HyperDX runs in `oidc-proxy` mode, as it does on Kubernetes: it verifies the engine's ES384 token against the engine's JWKS. A caller carrying none is unauthenticated. Signing in to the console is what signs a browser in here: dfe-ui mirrors the session into a `dfe_token` cookie and cookies ignore ports. The engine identifies with a service token of its own, which is how a source added through the console reaches every HyperDX team. That token's team, `DFE_HYPERDX_TEAM`, holds no connection and no sources, because HyperDX seeds a team only from a person's login, never from the service token. Every other team gets its connection and sources on its members' first login, from the engine's answer for that member: `main` and `hunts` everywhere, plus the otel and `clickhouse_system` sources on a platform team. Each team also gets the shipped dashboards those sources can render. From hyperi-io/dfe-hyperdx#106 on, a login the engine gives no connection is retried on a later request.
 
@@ -359,7 +361,7 @@ The same toggle points the engine at HyperDX: with it on, the engine receives `D
 
 | Variable                                         | Use                                                                                  | Default                                                             |
 |--------------------------------------------------|--------------------------------------------------------------------------------------|---------------------------------------------------------------------|
-| `DFE_HYPERDX_ENABLED`                            | Toggle to start HyperDX + its proxy + FerretDB + Postgres. Ignored with `DFE_CORE_ENABLED=false`, since HyperDX signs callers in with the engine's token | unset, the profile decides                                          |
+| `DFE_HYPERDX_ENABLED`                            | Toggle to start HyperDX + its proxy + DocumentDB. Ignored with `DFE_CORE_ENABLED=false`, since HyperDX signs callers in with the engine's token | unset, the profile decides                                          |
 | `DFE_HYPERDX_VERSION`                            | Version of the dfe-hyperdx fork image to use                                         | pinned by `make stack` from the SSoT (fail-loud, like every image)  |
 | `DFE_HYPERDX_API_PORT`                           | HyperDX API host port, on `dfe-hyperdx-proxy`                                        | `8000`                                                              |
 | `DFE_HYPERDX_APP_PORT`                           | HyperDX App UI host port, on `dfe-hyperdx-proxy`                                     | `8090`                                                              |
@@ -368,12 +370,11 @@ The same toggle points the engine at HyperDX: with it on, the engine receives `D
 | `DFE_HYPERDX_TEAM`                               | Team name when the token carries no group claim                                      | `dfe`                                                               |
 | `DFE_HYPERDX_USAGE_STATS_ENABLED`                | `true` sends upstream HyperDX's usage stats to `in-otel.hyperdx.io`, a third party   | `false`                                                             |
 | `HYPERDX_THEME`                                  | UI theme (NEXT_PUBLIC_THEME)                                                         | `dfe`                                                               |
-| `HYPERDX_POSTGRES_USER`                          | FerretDB/Postgres user                                                               | `hyperdx`                                                           |
-| `HYPERDX_POSTGRES_PASSWORD`                      | FerretDB/Postgres password                                                           | `hyperdx`                                                           |
+| `HYPERDX_POSTGRES_USER`                          | DocumentDB login HyperDX uses, a PostgreSQL role inside DocumentDB                   | `hyperdx`                                                           |
+| `HYPERDX_POSTGRES_PASSWORD`                      | Password for that login                                                              | `hyperdx`                                                           |
 | `HYPERDX_EXPRESS_SESSION_SECRET`                 | Signs HyperDX's session cookie (`EXPRESS_SESSION_SECRET`)                            | generated by `make init`; sentinel otherwise, which `make post` fails |
 | `HYPERDX_TOKEN_ENCRYPTION_KEY`                   | Encrypts the third-party tokens HyperDX stores (`TOKEN_ENCRYPTION_KEY`), 64 hex chars | generated by `make init`; empty (plain text) otherwise, which `make post` fails |
-| `HYPERDX_FERRETDB_VERSION`                       | FerretDB image version                                                               | none -- `make stack` pins it from the DFE stack SSoT; unset is a hard-fail                |
-| `HYPERDX_POSTGRES_VERSION`                       | Postgres/DocumentDB image version                                                    | none -- `make stack` pins it from the DFE stack SSoT; unset is a hard-fail                |
+| `HYPERDX_DOCUMENTDB_VERSION`                     | `documentdb-local` image version                                                     | none -- `make stack` pins it from the DFE stack SSoT, and unset is a hard-fail            |
 
 ## Default Ports
 

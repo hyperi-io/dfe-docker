@@ -121,8 +121,8 @@ HYPERDX_SERVICES = [
     "dfe-dashboards",
     "dfe-hyperdx-proxy",
     "hyperdx",
-    "hyperdx-ferretdb",
-    "hyperdx-postgres",
+    "hyperdx-documentdb",
+    "hyperdx-documentdb-tls",
 ]
 
 OTEL_ENABLED_ENV_VAR = "DFE_OTEL_ENABLED"

@@ -304,8 +304,8 @@ HYPERDX_SERVICES = [
     "dfe-dashboards",
     "dfe-hyperdx-proxy",
     "hyperdx",
-    "hyperdx-ferretdb",
-    "hyperdx-postgres",
+    "hyperdx-documentdb",
+    "hyperdx-documentdb-tls",
 ]
 HYPERDX_ENGINE_ENVIRONMENT = {
     "DFE_HYPERDX_ENABLED": "true",
