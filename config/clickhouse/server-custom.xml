@@ -1,5 +1,14 @@
+<!--
+  Project:   dfe-docker
+  File:      config/clickhouse/server-custom.xml
+  Purpose:   Requires a grant to read the system database
+  Language:  XML
+
+  License:   BUSL-1.1
+  Copyright: (c) 2026 HYPERI PTY LIMITED
+-->
 <clickhouse>
-  <!-- Pins the image's value so the system-database grant never depends on the image -->
+  <!-- The image sets this too, pinned here so tenant isolation never depends on the image -->
   <access_control_improvements>
     <select_from_system_db_requires_grant>true</select_from_system_db_requires_grant>
   </access_control_improvements>
