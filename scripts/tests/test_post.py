@@ -868,7 +868,7 @@ def test_the_hunt_runs_for_an_org_it_makes_and_removes(
     assert [request["customers"] for request in stack.hunt_requests] == [
         [post.HUNT_CUSTOMER]
     ]
-    assert {event["org_id"] for event in stack.sent} == {post.HUNT_CUSTOMER}
+    assert {event["_org_id"] for event in stack.sent} == {post.HUNT_CUSTOMER}
     assert stack.orgs == {}
 
 
@@ -880,7 +880,7 @@ def test_an_org_the_engine_holds_is_read_for_its_tenant_and_left_in_place(
 
     assert _hunt_claim() == post.HELD
     assert stack.org_requests == []
-    assert {event["org_id"] for event in stack.sent} == {"acme"}
+    assert {event["_org_id"] for event in stack.sent} == {"acme"}
     assert stack.orgs == held
 
 

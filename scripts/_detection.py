@@ -19,8 +19,8 @@ rows of the matching set, each once, under the rule and severity it was given.
 Talking to the engine, polling and reporting stay with the callers.
 
 A hunt runs for a registered org and reads only the rows whose `_org_id` is one of
-that org's tenant ids. The events name the tenant in `org_id`, the field the loader
-writes to `_org_id`, the same way a real source's events do.
+that org's tenant ids. The events name the tenant in `_org_id`, which the receiver
+keeps under `routing.source_org_id: allow` for an org its HTTP listener is bound to.
 """
 
 from collections import Counter
@@ -36,8 +36,8 @@ HUNT_CRON = "* * * * *"
 SEVERITY = "high"
 # Each event's label rides in `_tags` beside the marker, which the landing schema keeps.
 LABEL_EXPRESSION = "toString(`_tags`.event)"
-# The event field dfe-loader writes to `_org_id`: its `routing.org_id_field` default.
-ORG_ID_FIELD = "org_id"
+# The tenant field: the receiver binds it and dfe-loader reads it alone.
+ORG_ID_FIELD = "_org_id"
 
 POLL_SECONDS = 3.0
 # The runner beats at the top of every 15s poll, from its first one.

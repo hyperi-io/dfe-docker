@@ -971,6 +971,10 @@ services:
       # from the profile. The defaults are slim-grpc's.
       DFE_TRANSPORT_DEFAULT: ${DFE_TRANSPORT_DEFAULT:-direct}
       DFE_TRANSPORT_BUS_PRESENT: ${DFE_TRANSPORT_BUS_PRESENT:-false}
+      # The receiver's routing.source_org_id where the engine renders its config.
+      # allow keeps the `_org_id` the detection tests and `make post` send, as the
+      # committed receiver configs do. disallow strips every sender's.
+      DFE_INGEST_SOURCE_ORG_ID: ${DFE_INGEST_SOURCE_ORG_ID:-allow}
       # The broker the engine creates a source's topics on: the in-stack one on a
       # kafka tier unless .env names another, and nothing on a direct tier.
       DFE_KAFKA_BOOTSTRAP_SERVERS: ${DFE_KAFKA_BOOTSTRAP_SERVERS:-}
