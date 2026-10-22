@@ -77,28 +77,13 @@ The three transforms are bus-only today: each reads a topic and writes a topic. 
 
 ## The engine renders each app's config
 
-On Kubernetes an app's chart turns its values overlay into a ConfigMap the pod
-mounts. Compose runs no chart, so dfe-engine does that
-step: it merges each instance's overlay over the committed
-`config/<app>/<transport>.yaml` and writes the app's config file, its programs
-and its enrichment tables into the `dfe-app-config` volume, one directory per
-app. Every app mounts that volume read-only at `/etc/dfe/apps`.
+On Kubernetes an app's chart turns its values overlay into a ConfigMap the pod mounts. Compose runs no chart, so dfe-engine does that step: it merges each instance's overlay over the committed `config/<app>/<transport>.yaml` and writes the app's config file, its programs and its enrichment tables into the `dfe-app-config` volume, one directory per app. Every app mounts that volume read-only at `/etc/dfe/apps`.
 
-The committed file stays the DEPLOYMENT's -- brokers, warehouse credentials, the
-spool -- and the overlay wins wherever the two name the same key, so nothing
-deployment-specific is written into the deploy repo. `resolve_profile.py` turns
-this on wherever the core footprint runs.
+The committed file stays the DEPLOYMENT's (brokers, warehouse credentials, the spool) and the overlay wins wherever the two name the same key, so nothing deployment-specific is written into the deploy repo. `resolve_profile.py` turns this on wherever the core footprint runs.
 
 dfe-fetcher and the three transforms have no committed file. The overlay is their whole config and their broker comes from `DFE_KAFKA_BOOTSTRAP_SERVERS` in their environment.
 
-Nothing restarts a container. A change the running app cannot take in place is
-reported by the API as `restart required: make apply SERVICES=<app>`, and one
-to its env file as `recreate required:` with the same command; `make apply`
-creates a per-source container the engine has only just declared and recreates
-one that exists, and removes the container of a source the engine has deleted
--- found by the `dfe.instance-of` label only generated services carry. A delete
-names no command, so `make apply` with no `SERVICES` does that removal alone and
-starts nothing.
+Nothing restarts a container. A change the running app cannot take in place is reported by the API as `restart required: make apply SERVICES=<app>` and one to its env file as `recreate required:` with the same command. `make apply` creates a per-source container the engine has only just declared, recreates one that exists and removes the container of a source the engine has deleted, which it finds by the `dfe.instance-of` label only generated services carry. A delete names no command, so `make apply` with no `SERVICES` does that removal alone and starts nothing.
 
 ## A source with its own transform gets its own instance
 
@@ -109,10 +94,7 @@ definition -- input topic, program directory and output topic all carry the name
 
 The source and its transform are created through the engine, as the console does it. dfe-engine renders the instance's config into `dfe-app-config` and `make apply` starts a service that extends the committed `dfe-transform-vrl`, `dfe-transform-vector` or `dfe-transform-elastic`. Those committed services carry the broker env and nothing of a source's own. dfe-transform-vector also mounts `resources/enrichment/` at `/etc/dfe-transform-vector/data`, where its bundled filebeat pipeline reads `timezones.csv`. `make test-source` drives the filebeat, Vector and Elastic cases end to end.
 
-dfe-transform-vector's one port carries everything. The wrapper scrapes Vector's `internal_metrics` off
-its `prometheus_exporter` on loopback and registers the samples on scalo's own
-recorder (dfe-transform-vector#70), so `vector_*` reads on the published port AND
-rides the OTLP push into the otel database. The exporter's 9598 is not published.
+dfe-transform-vector's one port carries everything. The wrapper scrapes Vector's `internal_metrics` off its `prometheus_exporter` on loopback and registers the samples on scalo's own recorder (dfe-transform-vector#70), so `vector_*` reads on the published port AND rides the OTLP push into the otel database. The exporter's 9598 is not published.
 
 dfe-engine creates a transform's table and nothing here provisions it. Create the source before sending it data: a loader that meets rows for a table it has no schema for buffers them, then dead-letters them.
 
@@ -215,7 +197,7 @@ converged. Every service that reads one waits on
 pending-schema and dead-letters them, which reads as data loss and is really start
 ordering.
 
-`dfe-schemas` rides inside the engine image, so there is no separate schema pin here and a schema change is a `dfe-engine` release. The ClickHouse service mounts only server settings from `config/clickhouse/`; a DDL file or a topic-creating step appearing in this repo is wrong by construction and `scripts/tests/test_engine_only_schema_control.py` fails the build on one.
+`dfe-schemas` rides inside the engine image, so there is no separate schema pin here and a schema change is a `dfe-engine` release. The ClickHouse service mounts only server settings from `config/clickhouse/`. A DDL file or a topic-creating step appearing in this repo is wrong by construction and `scripts/tests/test_engine_only_schema_control.py` fails the build on one.
 
 ## The Kafka backend is swappable
 

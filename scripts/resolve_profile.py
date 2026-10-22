@@ -40,7 +40,7 @@ from collections.abc import Collection, Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 
-# Bytecode for the repo modules imported below goes to .tmp/pycache, as it does under make.
+# Bytecode for the repo modules imported below goes to .tmp/pycache, as it does under make
 sys.pycache_prefix = str(Path(__file__).resolve().parent.parent / ".tmp" / "pycache")
 
 import instances  # noqa: E402
@@ -713,7 +713,7 @@ def main(argv: Sequence[str] = ()) -> int:
         lines.append(
             f"export DFE_TRANSPORT_BUS_PRESENT := {'true' if bus else 'false'}"
         )
-        # The in-stack broker unless .env names another. A direct tier exports it empty, so no app opens a Kafka client.
+        # The in-stack broker unless .env names another. A direct tier exports it empty, so no app opens a Kafka client
         broker = ""
         if bus:
             broker = (

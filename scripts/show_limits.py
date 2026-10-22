@@ -30,7 +30,7 @@ import subprocess
 import sys
 from pathlib import Path
 
-# Bytecode for the repo modules imported below goes to .tmp/pycache, as it does under make.
+# Bytecode for the repo modules imported below goes to .tmp/pycache, as it does under make
 sys.pycache_prefix = str(Path(__file__).resolve().parent.parent / ".tmp" / "pycache")
 
 from _common import (  # noqa: E402
@@ -110,11 +110,11 @@ def _active_view() -> tuple[list[str], set[str] | None, str]:
     profiles = _resolved_profiles()
     services = _resolved_services()
     if not (profiles or services):
-        # No .tmp/profile.mk yet (fresh checkout, a deleted .tmp/ or before any make target resolved it).
+        # No .tmp/profile.mk yet (fresh checkout, a deleted .tmp/ or before any make target resolved it)
         return (
             ["clickhouse", "dfe", "core", "hyperdx", "kafka-ui", *_MUTUALLY_EXCLUSIVE],
             None,
-            "EVERY profile -- no .tmp/profile.mk yet, so this is a ceiling, not your stack",
+            "EVERY profile (no .tmp/profile.mk yet), so this is a ceiling and not your stack",
         )
 
     return [*profiles, "dfe", "core"], set(services), "the resolved profile"

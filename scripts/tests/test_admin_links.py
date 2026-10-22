@@ -50,7 +50,7 @@ _HYPERDX = {
     "probe_url": "http://dfe-hyperdx-proxy:8090",
 }
 
-# A profile per transport. The matrix sets each footprint env var it varies and the env var wins over the profile's key.
+# A profile per transport. The matrix sets each footprint env var it varies and the env var wins over the profile's key
 _TRANSPORT_PROFILES = {"kafka": "slim-kafka", "grpc": "slim-grpc"}
 
 # Placeholders for the settings an armed auth profile refuses to resolve without.

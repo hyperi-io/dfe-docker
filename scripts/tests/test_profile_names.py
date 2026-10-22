@@ -65,17 +65,12 @@ STACK_PROFILE_CASES = [
 ]
 
 
-def _no_dotenv() -> None:
-    """Stand in for resolve_profile's .env load, so the developer's .env changes nothing here."""
-
-
 def _profile_mk(
     *, monkeypatch: pytest.MonkeyPatch, profile: str, tmp_path: Path
 ) -> dict[str, str]:
     """Run the resolver for one committed profile and read back the assignments it wrote."""
     written = tmp_path / ".tmp" / "profile.mk"
     monkeypatch.setattr(resolve_profile, "PROFILE_MK", written)
-    monkeypatch.setattr(resolve_profile, "_load_dotenv", _no_dotenv)
     monkeypatch.setenv("DFE_PROFILE", profile)
     assert resolve_profile.main() == 0
     values = {}
@@ -115,6 +110,8 @@ class TestServiceProfiles:
 
 
 class TestStackProfile:
+    # The resolver loads a throwaway .env, so the developer's own changes nothing here
+    @pytest.mark.usefixtures("dotenv")
     @pytest.mark.parametrize("case", STACK_PROFILE_CASES)
     def test_matches_expected(
         self,

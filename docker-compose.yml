@@ -634,13 +634,13 @@ services:
       DFE_FETCHER_VERSION_CHECK__SEND_INSTANCE_ID: ${DFE_VERSION_CHECK_SEND_INSTANCE_ID:-true}
       # One directory per fetcher service; scripts/instances.py sets each instance's.
       DFE_FETCHER_CURSOR__DIRECTORY: /var/lib/dfe-fetcher/dfe-fetcher
-      # The broker the fetcher produces to, because the config the engine renders names none.
+      # The broker the fetcher produces to, because the config the engine renders names none
       DFE_FETCHER_KAFKA_BROKERS: *kafka-brokers
     depends_on:
       dfe-loader:
         condition: service_healthy
         required: false
-      # The writer of the rendered config, so it must have written before this container reads. `required: false` for the tiers that run no engine.
+      # The writer of the rendered config, so it must have written before this container reads. `required: false` for the tiers that run no engine
       dfe-engine:
         condition: service_healthy
         required: false
@@ -879,7 +879,7 @@ services:
         condition: service_healthy
         required: false
     volumes:
-      # The bundled pipeline names its enrichment table by an absolute path (dfe-transform-vector pipelines/filebeat/README.md), so the table has to be mounted there. A pipeline that cannot open it fails `vector validate` with exit 78 and an empty stderr.
+      # The bundled pipeline names its enrichment table by an absolute path (dfe-transform-vector pipelines/filebeat/README.md), so the table has to be mounted there. A pipeline that cannot open it fails `vector validate` with exit 78 and an empty stderr
       - ./resources/enrichment:/etc/dfe-transform-vector/data:ro
       - dfe-app-config:/etc/dfe/apps:ro
     healthcheck:
@@ -1432,7 +1432,7 @@ services:
       - path: env/hyperdx.env
         required: false
     environment:
-      # The engine is the issuer here as it is on Kubernetes: HyperDX verifies its ES384 token against the engine's JWKS, taking it from a Bearer header or the dfe_token cookie the console mirrors. It asks the engine for each team's ClickHouse connection.
+      # The engine is the issuer here as it is on Kubernetes: HyperDX verifies its ES384 token against the engine's JWKS, taking it from a Bearer header or the dfe_token cookie the console mirrors. It asks the engine for each team's ClickHouse connection
       DFE_AUTH_MODE: oidc-proxy
       DFE_ENGINE_JWKS_URL: ${DFE_ENGINE_JWKS_URL:-http://dfe-engine:8000/.well-known/jwks.json}
       # The team a token carrying no group claim lands in.

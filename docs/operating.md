@@ -375,6 +375,10 @@ with the same value:
 An existing `.env` takes the new keys on the next `make init`, and the engine
 creates each user on its next start.
 
+`CLICKHOUSE_KEEPER_PASSWORD` is the identity ClickHouse's embedded Keeper creates every znode under, so compose refuses to start without it and it is fixed for the life of `clickhouse-data`. Under any other value the server cannot read its own znodes and exits with code 231 at start. Putting the old value back in `.env` followed by `make ci` recovers it whole.
+
+If the old value is lost, stop ClickHouse, move `coordination/` in the volume aside (`docker compose run --rm --no-deps --entrypoint mv clickhouse /var/lib/clickhouse/coordination /var/lib/clickhouse/coordination.lost`) and start it under the new value. Then run `SYSTEM RESTORE DATABASE REPLICA <db>` for each Replicated database and `SYSTEM RESTORE REPLICA <db>.<table>` for each replicated table. The rows survive and the engine re-creates its SQL users and roles on its next start.
+
 Never commit `.env`.
 
 ## Persistence: what survives, and what `make clean` destroys
@@ -483,9 +487,7 @@ The other outcomes are as informative as the PASS:
 
 ## Self-monitoring
 
-The stack's own telemetry goes out over OTLP to a collector, which writes the
-`dfe.otel_*` tables that HyperDX reads. Every profile declares `otel: true`.
-`DFE_OTEL_ENABLED=false` turns it off.
+The stack's own telemetry goes out over OTLP to a collector, which writes the `dfe.otel_*` tables that HyperDX reads. Every profile declares `otel: true`. `DFE_OTEL_ENABLED=false` turns it off.
 
 Every DFE app the profile runs pushes metrics and traces over OTLP, dfe-ui aside. Two things are pulled instead: the collector scrapes its own metrics on 127.0.0.1:8888 and `sql_query` reads ClickHouse. Container stdout reaches `dfe.otel_logs` through Docker's fluentd log driver and the collector's `fluent_forward` receiver, unless `DFE_CONTAINER_LOGS_ENABLED=false`. See [observability.md](observability.md), which also has the dials, what each component does and why `/metrics` still exists.
 

@@ -62,7 +62,7 @@ ifneq (,$(filter-out $(BOOTSTRAP_GOALS),$(or $(MAKECMDGOALS),help)))
     ifeq ($(strip $(SERVICES)),)
         ACTIVE_SERVICES := $(DFE_SERVICES)
     else
-        # On a fresh checkout make parses once before .tmp/profile.mk exists, then remakes it and parses again; the name check only means anything on the second pass, when DFE_SERVICES is populated. `apply` skips it: it names instances declared since .tmp/profile.mk was last written, so the make it starts checks them against the re-resolved list instead.
+        # On a fresh checkout make parses once before .tmp/profile.mk exists, then remakes it and parses again, so the name check only means anything on the second pass, when DFE_SERVICES is populated. `apply` skips it: it names instances declared since .tmp/profile.mk was last written, so the make it starts checks them against the re-resolved list instead
         ifneq ($(strip $(DFE_SERVICES)),)
             ifeq ($(filter apply,$(MAKECMDGOALS)),)
                 INVALID_SERVICES := $(filter-out $(DFE_SERVICES),$(SERVICES))
@@ -142,7 +142,7 @@ endif
 # INFRA-class UI at once and beats their individual flags. dfe-ui and the engine
 # API are PRODUCT class and answer only to their own.
 #
-# Below the profile block because DFE_AUTH_RESOLVED comes from .tmp/profile.mk, so the profile key and the env var can never disagree about whether the auth proxies are in play. The bootstrap goals skip that include and read it empty, which is the auth-off branch -- the safe direction for a target that only stops a stack or checks a file.
+# Below the profile block because DFE_AUTH_RESOLVED comes from .tmp/profile.mk, so the profile key and the env var can never disagree about whether the auth proxies are in play. The bootstrap goals skip that include and read it empty, which is the auth-off branch, the safe direction for a target that only stops a stack or checks a file.
 # ---------------------------------------------------------------------------
 DFE_BIND_SCOPE ?= localhost
 ifeq ($(strip $(DFE_BIND_SCOPE)),localhost)
@@ -326,7 +326,7 @@ ifneq ($(filter-out true false,$(strip $(DFE_PROXY_TLS)))$(word 2,$(DFE_PROXY_TL
     $(error DFE_PROXY_TLS must be `true` or `false`, got '$(strip $(DFE_PROXY_TLS))')
 endif
 
-# Set before the dial so `make certs` writes where a later DFE_PROXY_TLS=true start reads.
+# Set before the dial so `make certs` writes where a later DFE_PROXY_TLS=true start reads
 DFE_PROXY_CERT_DIR ?= ./certs
 ifeq ($(strip $(DFE_PROXY_TLS)),true)
     # Private space outside Docker's stock pools (172.17-31/16, 192.168/20) and the fleet's 172.16.0.0/12 pool.
@@ -339,7 +339,7 @@ ifeq ($(strip $(DFE_PROXY_TLS)),true)
     $(eval $(call chain_fragment,docker-compose.tls.yml))
 endif
 
-# Only the start goals need the certificate, for the reason ORIGIN_GOALS gives. The auth refusal is in the .tmp/profile.mk recipe instead, because it reads DFE_AUTH_RESOLVED and this pass may still hold the previous run's.
+# Only the start goals need the certificate, for the reason ORIGIN_GOALS gives. The auth refusal is in the .tmp/profile.mk recipe instead, because it reads DFE_AUTH_RESOLVED and this pass may still hold the previous run's
 PROXY_TLS_START := $(and $(filter true,$(strip $(DFE_PROXY_TLS))),$(filter $(ORIGIN_GOALS),$(or $(MAKECMDGOALS),help)))
 ifneq ($(PROXY_TLS_START),)
     ifeq ($(filter https://%,$(call origin_value,DFE_EXTERNAL_ORIGIN)),)
@@ -366,8 +366,10 @@ ifneq ($(PROXY_TLS_START)$(PROXY_NETWORK_REUSE),)
     endif
 endif
 
+# The host goes into a quoted shell argument, so one holding a character no host holds is refused before the shell sees it
 .PHONY: certs
 certs: ## Mint a console TLS certificate for DFE_EXTERNAL_ORIGIN's host, localhost and 127.0.0.1 into DFE_PROXY_CERT_DIR, with a single-use CA to trust once. Never replaces a file already there
+	@$(if $(call origin_bad,$(call origin_host,DFE_EXTERNAL_ORIGIN)),$(error DFE_EXTERNAL_ORIGIN='$(call origin_value,DFE_EXTERNAL_ORIGIN)' carries characters a host cannot hold: `$(call origin_bad,$(call origin_host,DFE_EXTERNAL_ORIGIN))`. Set DFE_EXTERNAL_ORIGIN=$(call origin_fix,DFE_EXTERNAL_ORIGIN)))
 	@python3 scripts/proxy_tls.py mint --cert-dir '$(DFE_PROXY_CERT_DIR)' --host '$(or $(call origin_host,DFE_EXTERNAL_ORIGIN),localhost)'
 
 ifneq ($(strip $(LIVE)),)
@@ -528,7 +530,7 @@ endif
 apply: env-files storage-dirs ## Create or recreate the named services after a config write, removing the containers of deleted sources (SERVICES="svc ..."; DEV=1 for a `make dev` stack), the command dfe-engine's hints name. With no SERVICES it only removes, for after a source is deleted
 	@$(MAKE) --no-print-directory apply-services
 
-# A second make, because it reads the .tmp/profile.mk this one just re-resolved and so checks SERVICES against the instances the engine has declared. A source the engine deleted has left that fragment, so its container is removed first.
+# A second make, because it reads the .tmp/profile.mk this one just re-resolved and so checks SERVICES against the instances the engine has declared. A source the engine deleted has left that fragment, so its container is removed first
 .PHONY: apply-services
 apply-services:
 	@python3 scripts/instances.py --prune -- $(APPLY_FLAGS) $(PROFILE_FLAGS)
@@ -590,7 +592,7 @@ check-python: ## Lint the helper scripts (config in ruff.toml)
 # (PYTEST=pytest). Unit tests over the helper scripts: they
 # touch a tmp_path .env and start nothing, so they belong with the static checks.
 PYTEST_VERSION := 9.1.1
-# The seed tests parse resources/seed with the PyYAML scripts/seed.py pins. scripts/tests/test_script_locks.py holds the two pins equal.
+# The seed tests parse resources/seed with the PyYAML scripts/seed.py pins. scripts/tests/test_script_locks.py holds the two pins equal
 PYYAML_VERSION := 6.0.3
 PYTEST ?= uvx --with pyyaml==$(PYYAML_VERSION) pytest@$(PYTEST_VERSION)
 

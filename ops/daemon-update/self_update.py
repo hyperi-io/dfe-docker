@@ -75,7 +75,7 @@ from pathlib import Path
 # the floor below ranks versions the same way the discovery does.
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "scripts"))
 
-# Bytecode for the repo modules imported below goes to .tmp/pycache, as it does under make.
+# Bytecode for the repo modules imported below goes to .tmp/pycache, as it does under make
 sys.pycache_prefix = str(Path(__file__).resolve().parents[2] / ".tmp" / "pycache")
 
 import _stack_lock  # noqa: E402
