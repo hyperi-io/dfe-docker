@@ -74,10 +74,9 @@ def _model(**overrides: str) -> dict[str, dict]:
 def _resolved(
     profile: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> dict[str, str]:
-    """Run the resolver for one profile and read back the assignments it wrote."""
+    """Run the resolver for one profile and read back the assignments it wrote, its caller holding the `dotenv` fixture so the developer's .env changes nothing."""
     written = tmp_path / ".tmp" / "profile.mk"
     monkeypatch.setattr(resolve_profile, "PROFILE_MK", written)
-    monkeypatch.setattr(resolve_profile, "_load_dotenv", lambda: None)
     monkeypatch.delenv(resolve_profile.ENGINE_CONTENT_DIR_VAR, raising=False)
     monkeypatch.setitem(os.environ, "DFE_PROFILE", profile)
     assert resolve_profile.main() == 0
@@ -266,6 +265,7 @@ def test_a_generated_instance_reads_its_apps_file_then_its_own(
     assert service["environment"][check_compose._SENTINEL_LAST] == own
 
 
+@pytest.mark.usefixtures("dotenv")
 @pytest.mark.parametrize("profile", RENDERED_PROFILES)
 def test_every_profile_hands_the_engine_the_contract_directory(
     profile: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -275,6 +275,7 @@ def test_every_profile_hands_the_engine_the_contract_directory(
     assert values[resolve_profile.ENGINE_CONTRACT_DIR_VAR] == _CONTRACT_ROOT
 
 
+@pytest.mark.usefixtures("dotenv")
 def test_a_profile_without_core_hands_the_engine_no_contract_directory(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -285,6 +286,7 @@ def test_a_profile_without_core_hands_the_engine_no_contract_directory(
     assert values[resolve_profile.ENGINE_CONTRACT_DIR_VAR] == ""
 
 
+@pytest.mark.usefixtures("dotenv")
 @pytest.mark.parametrize("core", ["true", "false"])
 @pytest.mark.parametrize("profile", RENDERED_PROFILES)
 def test_the_contract_key_is_written_whatever_the_answer(

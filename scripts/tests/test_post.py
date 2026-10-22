@@ -267,6 +267,7 @@ def test_one_failed_claim_fails_the_run() -> None:
     assert post._report_claims(claims=claims) == 1
 
 
+@pytest.mark.usefixtures("dotenv")
 def test_a_profile_that_can_prove_nothing_does_not_pass(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -283,6 +284,7 @@ def test_a_profile_that_can_prove_nothing_does_not_pass(
     assert post.main() == 1
 
 
+@pytest.mark.usefixtures("dotenv")
 def test_the_subscription_is_asked_once_the_events_have_landed(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -305,6 +307,7 @@ def test_the_subscription_is_asked_once_the_events_have_landed(
     assert calls.index("http_post") < calls.index("_verify_loader_subscription")
 
 
+@pytest.mark.usefixtures("dotenv")
 def test_events_that_never_land_ask_the_subscription_why(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -574,9 +577,8 @@ def _completed(*, code: int = 0, stdout: str = "", stderr: str = "") -> _Complet
 
 
 def _stub_main(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Let main() run without a stack, a .env or the developer's own environment."""
+    """Let main() run without a stack or the developer's own environment, its caller holding the `dotenv` fixture so their .env is never read."""
     monkeypatch.delenv("DFE_POST_ENABLED", raising=False)
-    monkeypatch.setattr(post, "_load_dotenv", lambda: None)
     monkeypatch.setattr(post, "_weak_secrets", list)
     monkeypatch.setattr(post, "_cleanup", lambda *args: None)
     # Unstubbed, this polls the engine's /readyz for 300s against whatever the
@@ -1146,6 +1148,7 @@ def test_no_marked_row_means_nothing_is_deleted(
     assert clickhouse.statements == []
 
 
+@pytest.mark.usefixtures("dotenv")
 def test_the_rows_are_deleted_after_the_console_reads_them_back(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

@@ -394,7 +394,18 @@ _needs_compose = pytest.mark.skipif(
 def checkout(tmp_path: Path) -> Path:
     """A copy of what make and compose read, with no .env and no resolved profile."""
     shutil.copy(REPO_ROOT / "Makefile", tmp_path / "Makefile")
-    shutil.copy(REPO_ROOT / "service_profiles.yaml", tmp_path / "service_profiles.yaml")
+    # The committed profiles, so an active_profile edited in the checkout does not move the default case
+    committed = subprocess.run(
+        args=["git", "-C", str(REPO_ROOT), "show", "HEAD:service_profiles.yaml"],
+        capture_output=True,
+        check=True,
+        encoding="utf-8",
+        errors="replace",
+        text=True,
+    )
+    (tmp_path / "service_profiles.yaml").write_text(
+        data=committed.stdout, encoding="utf-8", newline="\n"
+    )
     for compose in REPO_ROOT.glob("docker-compose*.yml"):
         if compose.name not in _GENERATED:
             shutil.copy(compose, tmp_path / compose.name)

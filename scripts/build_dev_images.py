@@ -23,6 +23,7 @@ Self-contained components (dfe-ui) build straight from their own Dockerfile.
 Result image tag: <service>:local, consumed by docker-compose.override.yml
 (every component) or by the overlay ``--overlay`` writes (only the components
 built this run, so the rest of the stack stays on the pinned registry images).
+A per-source app's instances read neither, so scripts/resolve_profile.py writes the image into each one.
 """
 
 from __future__ import annotations
@@ -257,6 +258,14 @@ def _package_command(*, context: Path, dockerfile: Path, service: str) -> list[s
     ]
 
 
+def _record(*, built: list[str], path: Path) -> None:
+    """Write the overlay for what was built where `make apply` reads it back, or delete it when nothing was."""
+    if not (built):
+        path.unlink(missing_ok=True)
+        return
+    path.write_text(data=overlay_text(components=built), encoding="utf-8", newline="\n")
+
+
 def _resolve_ref(*, checkout: Path, ref: str, service: str) -> str:
     """Resolve ref to a commit SHA, preferring the remote branch of that name."""
     for candidate in (f"origin/{ref}", ref):
@@ -343,6 +352,19 @@ def local_image_services(components: list[str]) -> dict[str, str]:
     return services
 
 
+def overlay_components(*, path: Path) -> list[str]:
+    """The components an overlay this script wrote puts on their local image, none when there is no overlay."""
+    if not (path.is_file()):
+        return []
+    suffix = f":{IMAGE_TAG}"
+    components = set()
+    for line in path.read_text(encoding="utf-8").splitlines():
+        key, _, value = line.strip().partition(": ")
+        if key == "image" and value.endswith(suffix):
+            components.add(value.removesuffix(suffix))
+    return sorted(components)
+
+
 def overlay_text(components: list[str]) -> str:
     """The compose fragment that repoints the given components' services at :local."""
     lines = [
@@ -368,6 +390,13 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
         default=None,
         help="write a compose overlay repointing ONLY the built components (and the "
         "services that share their image) at :local",
+    )
+    parser.add_argument(
+        "--record",
+        default=None,
+        help="write the same overlay for what this run builds without narrowing the "
+        "build to it, so `make apply` keeps a per-source instance on its local image",
+        type=Path,
     )
     return parser.parse_args(argv)
 
@@ -408,6 +437,9 @@ def main() -> int:
                     "runs its image and the stack starts that",
                 )
                 targets.append(component)
+        # Gone before anything builds, so a failed build leaves no record of images it never made
+        if args.record is not None:
+            args.record.unlink(missing_ok=True)
         built = []
         for service in targets:
             if (service in RUST_COMPONENTS) or (service in SELF_CONTAINED_COMPONENTS):
@@ -418,6 +450,8 @@ def main() -> int:
                     header=service,
                     msg="SKIPPING - Not a locally buildable DFE component",
                 )
+        if args.record is not None:
+            _record(built=built, path=args.record)
         # Settled before the empty check, because the caller's next compose
         # command names this file whether or not anything was built.
         overlay_status = (

@@ -292,7 +292,7 @@ A run of the other three creates only what the engine lacks and leaves an object
 
 `make sources`, `make rules` and `make hunts` log in as `admin` with `DFE_AUTH_LOCAL_ADMIN_PASSWORD` from `.env`, as `make post` does, and replace a password the engine issued the same way. Once the setup wizard has retired `admin`, they ask at the terminal for an account that can write sources, rules and hunts. They ask once per run and store the login nowhere; without a terminal they stop. An account still on the password it was issued has to change it in the console first.
 
-Each fetcher source runs in its own container, which the engine declares but does not start. The deploy prints the command it needs, such as `recreate required: make apply SERVICES=dfe-fetcher-aws-guardduty`; add `DEV=1` on a `make dev` stack. Until then `make post` leaves the instance out of its metrics check. The fetchers read `AWS_ACCESS_KEY_ID` and `AWS_SECRET_ACCESS_KEY` from `env/fetcher.env` and cannot fetch until both are set. Compose reads that file only when it creates a container, so set the keys before `make apply`, or run it again after setting them.
+Each fetcher source runs in its own container, which the engine declares but does not start. The deploy prints the command it needs, such as `recreate required: make apply SERVICES=dfe-fetcher-aws-guardduty`. Until then `make post` leaves the instance out of its metrics check. The fetchers read `AWS_ACCESS_KEY_ID` and `AWS_SECRET_ACCESS_KEY` from `env/fetcher.env` and cannot fetch until both are set. Compose reads that file only when it creates a container, so set the keys before `make apply`, or run it again after setting them.
 
 ## Proving the pipeline works
 
@@ -506,7 +506,7 @@ The consequence to know: because `make dev` and `make ci` depend on `down`, a
 `make dev SERVICES="dfe-loader"` no longer restarts just that service on top of a
 running stack -- everything is stopped first.
 
-**`.env` shadows a command-line environment variable through make.** The Makefile does `-include .env`. GNU make re-exports a variable that came from the environment using the *makefile's* value. So with `DFE_PROFILE` set in `.env`, `DFE_PROFILE=single-kafka make dev` silently uses the `.env` value. Verified on this repo's shape with a minimal reproduction. If an override appears to do nothing, check `.env` first. Comment the key out there or use `make -e`.
+**`.env` shadows a command-line environment variable through make.** The Makefile does `-include .env`. GNU make re-exports a variable that came from the environment using the *makefile's* value. So with `DFE_PROFILE` set in `.env`, `DFE_PROFILE=single-kafka make dev` silently uses the `.env` value. If an override appears to do nothing, check `.env` first. Comment the key out there or use `make -e`.
 
 **Compose `environment:` beats `env/<service>.env`.** A key listed in a service's
 `environment:` block in `docker-compose.yml` wins over the same key in the

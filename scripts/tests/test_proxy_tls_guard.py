@@ -133,8 +133,28 @@ print-tls-env:
 def _make(
     *, cwd: Path, dry_run: bool = True, goal: str, **overrides: str
 ) -> subprocess.CompletedProcess[str]:
-    """Run one goal with the stub docker first on PATH and every DFE_* key, the project name and any outer make's flags dropped, then the overrides applied."""
-    dropped = ("COMPOSE_PROJECT_NAME", "MAKEFLAGS", "MAKELEVEL", "MFLAGS")
+    """Run one goal with the stub docker first on PATH, then the overrides applied.
+
+    Every DFE_* key, the project name, an outer make's flags and everything it exports to its children are dropped, so a `make check-tests` run passes on none of its own chain.
+    """
+    dropped = (
+        "CLICKHOUSE_HOST",
+        "CLICKHOUSE_HTTP_PORT",
+        "CLICKHOUSE_PASSWORD",
+        "CLICKHOUSE_URL",
+        "CLICKHOUSE_USERNAME",
+        "COMPOSE_FILE",
+        "COMPOSE_PROJECT_NAME",
+        "DEV",
+        "LIVE",
+        "LIVE_UI",
+        "LOCAL",
+        "MAKEFLAGS",
+        "MAKELEVEL",
+        "MFLAGS",
+        "PYTHONPYCACHEPREFIX",
+        "SERVICES",
+    )
     environment = {
         key: value
         for key, value in os.environ.items()

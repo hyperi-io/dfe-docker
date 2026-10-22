@@ -41,6 +41,18 @@ ENGINES = tuple(
         if app.startswith(TRANSFORM_APP_PREFIX)
     )
 )
+# The dfe-engine setting each tier variable resolve_profile.py exports reaches (docker-compose.yml dfe-engine `environment`)
+ENGINE_SETTINGS = {
+    resolve_profile.APP_CONFIG_MOUNT_VAR: "DFE_DEPLOYMENT_APP_CONFIG_MOUNT",
+    resolve_profile.ENGINE_APP_CONFIG_BASE_DIR_VAR: "DFE_DEPLOYMENT_APP_CONFIG_BASE_DIR",
+    resolve_profile.ENGINE_APP_CONFIG_DIR_VAR: "DFE_DEPLOYMENT_APP_CONFIG_DIR",
+    resolve_profile.ENGINE_BROKER_ENV_VAR: "DFE_KAFKA_BOOTSTRAP_SERVERS",
+    resolve_profile.ENGINE_CATALOGUE_FILE_VAR: "DFE_SOURCE_CATALOGUE_FILE",
+    resolve_profile.ENGINE_CONTRACT_DIR_VAR: "DFE_APP_CONTRACT_DIR",
+    resolve_profile.STACK_PROFILE_VAR: "DFE_PROFILE",
+    resolve_profile.TRANSPORT_BUS_PRESENT_VAR: "DFE_TRANSPORT_BUS_PRESENT",
+    resolve_profile.TRANSPORT_DEFAULT_VAR: "DFE_TRANSPORT_DEFAULT",
+}
 # Where a source's upload fixtures live, relative to the repo root
 FIXTURE_DIR = Path("tests") / "e2e"
 # The service each engine restart hint names (dfe-engine appmgmt/appconfig.py APPLY_COMMAND)
@@ -280,23 +292,18 @@ def engine_base_volumes(*, services: Mapping[str, str]) -> list[str]:
 
 
 def engine_environment(*, profile_name: str, transport: str) -> dict[str, str]:
-    """What dfe-engine is told about one test's tier, as resolve_profile.py exports it through make.
+    """What dfe-engine is told about one test's tier, as resolve_profile.py exports it through make with the engine rendering app config and the in-stack broker.
 
     Keyed by the engine container's own variable, so a compose override sets it for one test only.
     """
-    bus = transport == "kafka"
-    content = resolve_profile.ENGINE_CONTENT_DIR
-    return {
-        "DFE_APP_CONTRACT_DIR": f"{content}/{resolve_profile.ENGINE_CONTRACT_SUBDIR}",
-        "DFE_DEPLOYMENT_APP_CONFIG_BASE_DIR": resolve_profile.ENGINE_APP_CONFIG_BASE_DIR,
-        "DFE_DEPLOYMENT_APP_CONFIG_DIR": resolve_profile.ENGINE_APP_CONFIG_DIR,
-        "DFE_DEPLOYMENT_APP_CONFIG_MOUNT": resolve_profile.APP_CONFIG_MOUNT,
-        "DFE_KAFKA_BOOTSTRAP_SERVERS": kafka_bootstrap(transport=transport),
-        "DFE_PROFILE": f"docker-{profile_name.partition('-')[0]}",
-        "DFE_SOURCE_CATALOGUE_FILE": f"{content}/{resolve_profile.ENGINE_CATALOGUE_FILE}",
-        "DFE_TRANSPORT_BUS_PRESENT": "true" if bus else "false",
-        "DFE_TRANSPORT_DEFAULT": "bus" if bus else "direct",
-    }
+    tier = resolve_profile.engine_tier(
+        configured_broker="",
+        content_dir=resolve_profile.ENGINE_CONTENT_DIR,
+        profile_name=profile_name,
+        renders=True,
+        transport=transport,
+    )
+    return {ENGINE_SETTINGS[name]: value for name, value in tier.items()}
 
 
 def engine_override(
@@ -347,7 +354,7 @@ def instance_group(*, service: str, sources: Sequence[Source]) -> str | None:
 
 def kafka_bootstrap(*, transport: str) -> str:
     """The broker a test's apps and dfe-engine are pointed at, the in-stack one on the bus and none on direct gRPC."""
-    return resolve_profile.IN_STACK_BROKER if (transport == "kafka") else ""
+    return resolve_profile.tier_broker(configured="", transport=transport)
 
 
 def merged_topics(

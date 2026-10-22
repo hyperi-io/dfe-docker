@@ -89,9 +89,10 @@ ifneq (,$(filter-out $(BOOTSTRAP_GOALS),$(or $(MAKECMDGOALS),help)))
     # `LIVE_UI=1` runs dfe-ui from the checkout, so there is no dfe-ui image to build.
     LIVE_UI_SKIP := $(if $(strip $(LIVE_UI)),dfe-ui)
     ifeq ($(strip $(LOCAL)),)
-        DEV_BUILD := $(filter-out $(LIVE_UI_SKIP),$(ACTIVE_SERVICES))
+        # DFE_SERVICES names a per-source app's instances and never the app, so the apps the profile runs per source are built beside it. The build records what it made in the overlay file, which `make apply` reads to keep an instance on its local image
+        DEV_BUILD := $(filter-out $(LIVE_UI_SKIP),$(ACTIVE_SERVICES)) $(DFE_PER_SOURCE_APPS)
         DEV_FLAGS :=
-        DEV_OVERLAY_ARG :=
+        DEV_OVERLAY_ARG := --record $(LOCAL_OVERLAY)
     else
         # Validated against the buildable set rather than the resolved stack: a
         # name the builder skips builds nothing and leaves nothing to overlay.
@@ -328,6 +329,8 @@ endif
 
 # Set before the dial so `make certs` writes where a later DFE_PROXY_TLS=true start reads
 DFE_PROXY_CERT_DIR ?= ./certs
+# The directory goes into a quoted shell argument, so one holding a quote is refused before the shell sees it
+CERT_DIR_REFUSAL = $(if $(findstring ',$(DFE_PROXY_CERT_DIR)),$(error DFE_PROXY_CERT_DIR='$(DFE_PROXY_CERT_DIR)' holds a single quote, which ends the quoted shell argument it is passed in. Set DFE_PROXY_CERT_DIR to a path without one))
 ifeq ($(strip $(DFE_PROXY_TLS)),true)
     # Private space outside Docker's stock pools (172.17-31/16, 192.168/20) and the fleet's 172.16.0.0/12 pool.
     DFE_NETWORK_SUBNET ?= 10.207.0.0/24
@@ -360,6 +363,7 @@ PROXY_PROJECT := $(or $(strip $(COMPOSE_PROJECT_NAME)),$(notdir $(CURDIR)))
 # The certificate pair, the subnet and the network as Docker holds it now; the helper prints the first problem and nothing when there is none.
 # A helper that exits non-zero printed no problem because it checked nothing, so that exit becomes the problem and the start is refused.
 ifneq ($(PROXY_TLS_START)$(PROXY_NETWORK_REUSE),)
+    $(CERT_DIR_REFUSAL)
     PROXY_TLS_PROBLEM := $(shell python3 scripts/proxy_tls.py precheck $(if $(PROXY_TLS_START),--certs --overlap) $(if $(PROXY_NETWORK_REUSE),--toggle) --cert-dir '$(DFE_PROXY_CERT_DIR)' --project '$(PROXY_PROJECT)' --subnet '$(strip $(DFE_NETWORK_SUBNET))' --tls $(if $(filter true,$(strip $(DFE_PROXY_TLS))),true,false) || echo "scripts/proxy_tls.py precheck failed before it could check the console TLS setup, so the start is refused rather than assumed safe. Its error is printed above")
     ifneq ($(strip $(PROXY_TLS_PROBLEM)),)
         $(error $(PROXY_TLS_PROBLEM))
@@ -370,6 +374,7 @@ endif
 .PHONY: certs
 certs: ## Mint a console TLS certificate for DFE_EXTERNAL_ORIGIN's host, localhost and 127.0.0.1 into DFE_PROXY_CERT_DIR, with a single-use CA to trust once. Never replaces a file already there
 	@$(if $(call origin_bad,$(call origin_host,DFE_EXTERNAL_ORIGIN)),$(error DFE_EXTERNAL_ORIGIN='$(call origin_value,DFE_EXTERNAL_ORIGIN)' carries characters a host cannot hold: `$(call origin_bad,$(call origin_host,DFE_EXTERNAL_ORIGIN))`. Set DFE_EXTERNAL_ORIGIN=$(call origin_fix,DFE_EXTERNAL_ORIGIN)))
+	@$(CERT_DIR_REFUSAL)
 	@python3 scripts/proxy_tls.py mint --cert-dir '$(DFE_PROXY_CERT_DIR)' --host '$(or $(call origin_host,DFE_EXTERNAL_ORIGIN),localhost)'
 
 ifneq ($(strip $(LIVE)),)
@@ -379,11 +384,18 @@ else ifneq ($(strip $(STORAGE_CHAIN))$(strip $(UI_CHAIN))$(strip $(LIVE_UI_CHAIN
 endif
 
 # The gated infra UIs go to the resolver, so the engine's admin links name only
-# what the host publishes. LOCAL goes too, because the overlay never reaches an instance's `extends`.
+# what the host publishes. The per-source apps built locally go too, because the overlay never reaches an instance's `extends`: what LOCAL names, else every one the profile runs on `make dev`, else what the last dev build recorded on any goal but `make ci`.
 #
 # Console TLS refuses the auth profile here, after the resolver has written this run's answer: the oauth2-proxy ports serve no TLS, so an https origin gives them callbacks they cannot answer.
+ifneq ($(strip $(LOCAL)),)
+    RESOLVE_LOCAL_ARGS = $(foreach app,$(LOCAL),--local $(app))
+else ifneq ($(filter dev dev-build,$(MAKECMDGOALS)),)
+    RESOLVE_LOCAL_ARGS = --local-per-source
+else ifeq ($(filter ci,$(MAKECMDGOALS)),)
+    RESOLVE_LOCAL_ARGS = --local-overlay $(LOCAL_OVERLAY)
+endif
 .tmp/profile.mk: FORCE
-	@python3 scripts/resolve_profile.py $(if $(KAFBAT_GATED),--unpublished kafbat) $(if $(HYPERDX_GATED),--unpublished hyperdx) $(foreach app,$(LOCAL),--local $(app))
+	@python3 scripts/resolve_profile.py $(if $(KAFBAT_GATED),--unpublished kafbat) $(if $(HYPERDX_GATED),--unpublished hyperdx) $(RESOLVE_LOCAL_ARGS)
 ifneq ($(PROXY_TLS_START),)
 	@if grep -qx 'export DFE_AUTH_RESOLVED := true' $@; then echo "DFE_PROXY_TLS=true cannot start with the auth profile: oauth2-proxy serves no TLS here, so the https callbacks it registers with the IdP never answer. Set DFE_AUTH_ENABLED=false (or drop auth from the profile) to keep TLS. Set DFE_PROXY_TLS=false to keep the auth profile" >&2; exit 1; fi
 endif
@@ -501,8 +513,10 @@ dev-build: ## Build local DFE images from source (no start; honours LOCAL). Clon
 # CI / registry images (skips docker-compose.override.yml)
 # ---------------------------------------------------------------------------
 
+# A registry stack runs no local image, so the record of the last dev build goes, or `make apply` would put an instance back on it.
 .PHONY: ci
 ci: env-files down storage-dirs  ## Pull and start infra and registry DFE images. Prints no credentials -- run `make creds` for those
+	@rm -f $(LOCAL_OVERLAY)
 	docker compose -f docker-compose.yml $(STORAGE_FLAGS) $(UI_FLAGS) $(PROFILE_FLAGS) pull
 	docker compose -f docker-compose.yml $(STORAGE_FLAGS) $(UI_FLAGS) $(PROFILE_FLAGS) pull $(ACTIVE_SERVICES)
 	docker compose -f docker-compose.yml $(STORAGE_FLAGS) $(UI_FLAGS) $(PROFILE_FLAGS) up -d $(ACTIVE_SERVICES)
@@ -770,9 +784,11 @@ ps: ## Show running containers, and warn about a deleted source's container stil
 down: ## Stop and remove containers across all profiles (keeps volumes)
 	docker compose -f docker-compose.yml --profile "*" down --remove-orphans
 
+# The engine's volume goes with its sources, so the instance indexes it wrote into env/ go too.
 .PHONY: clean
-clean: ## Stop and remove all containers and volumes across every profile
+clean: ## Stop and remove all containers and volumes across every profile, and dfe-engine's per-source instance indexes
 	docker compose -f docker-compose.yml --profile "*" down -v --remove-orphans
+	rm -f env/*.instances
 
 # ---------------------------------------------------------------------------
 # Help

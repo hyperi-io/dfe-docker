@@ -57,7 +57,7 @@ flowchart LR
     user(["Anyone who can route to the box"])
 
     subgraph ingress["DFE_INGRESS_BIND_HOST -- default 0.0.0.0"]
-        recv["dfe-receiver :6000 :8080"]
+        recv["dfe-receiver :8080"]
     end
 
     subgraph uis["DFE_UI_BIND_HOST -- DFE_BIND_SCOPE, default 127.0.0.1"]
@@ -119,25 +119,20 @@ Per-port, as published in `docker-compose.yml`:
 | Host port | Service | Binds | Purpose |
 |---|---|---|---|
 | 3000 | dfe-proxy | ui | UI, plus `/api/v1/*` to the engine |
-| 6000 | dfe-receiver | ingress | Vector protocol ingest |
 | 8080 | dfe-receiver | ingress | HTTP ingest |
-| 8082 | dfe-fetcher | ingress | HTTP ingest |
 | 8090 | dfe-hyperdx-proxy | ui | HyperDX app UI |
 | 8000 | dfe-hyperdx-proxy | ui | HyperDX API |
 | 8003 | dfe-engine | ui | Config and schema API (container `:8000`) |
 | 8081 | kafka-ui | ui | Kafbat UI (container `:8080`) |
 | 8123 / 9000 | clickhouse | operator | HTTP and native protocol |
 | 9092 / 19092 | kafka (either backend) | operator | Plaintext listeners |
-| 8686 | dfe-transform-vector | operator | Vector API |
 | 9090 | dfe-receiver | operator | Metrics and health |
 | 9091 | dfe-loader | operator | Metrics and health |
 | 9093 | dfe-archiver | operator | Metrics and health |
-| 9094 | dfe-fetcher | operator | Metrics and health |
-| 9095 | dfe-transform-vector | operator | Metrics and health |
-| 9096 | dfe-transform-vrl | operator | Metrics and health |
-| 9099 | dfe-transform-elastic | operator | Metrics and health |
 | 13133 | otel-collector | operator | `health_check` extension |
 | 50051 | dfe-loader | operator | Internal `DfeTransport/Push` gRPC, container port 6000 |
+
+dfe-fetcher and the three transforms run one instance per source. An instance publishes no host port, so their ingest, Vector API and metrics ports are reached over the Docker network. The receiver's Vector protocol on 6000 publishes only once its line in `docker-compose.yml` is uncommented.
 
 `dfe-ui`, `hyperdx`, `hyperdx-postgres` and `hyperdx-ferretdb` publish no host
 ports at all -- they are reached over the Docker network, HyperDX through the
