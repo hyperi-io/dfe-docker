@@ -39,6 +39,7 @@ _APPS = (
     "dfe-fetcher",
     "dfe-loader",
     "dfe-receiver",
+    "dfe-transform-elastic",
     "dfe-transform-vector",
     "dfe-transform-vrl",
 )

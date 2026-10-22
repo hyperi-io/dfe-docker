@@ -274,10 +274,6 @@ ENGINE_CONTENT_DIR_VAR = "DFE_ENGINE_CONTENT_DIR"
 ENGINE_CONTENT_DIR = "/app/content"
 ENGINE_CONTRACT_DIR_VAR = "DFE_ENGINE_CONTRACT_DIR"
 ENGINE_CONTRACT_SUBDIR = "contract"
-# The source catalogue catalogue-dfe-transform-elastic writes into the same
-# volume, handed to the engine on the same tiers as the contract directory.
-ENGINE_CATALOGUE_FILE_VAR = "DFE_ENGINE_CATALOGUE_FILE"
-ENGINE_CATALOGUE_FILE = "catalogue/sources.yaml"
 # The per-source apps that read and write topics only, so a grpc profile cannot run them
 KAFKA_ONLY_APPS = ("dfe-transform-elastic",)
 # The per-source apps are absent: dfe-engine starts one instance per source, never a profile.
@@ -614,9 +610,6 @@ def engine_tier(
         ENGINE_APP_CONFIG_DIR_VAR: ENGINE_APP_CONFIG_DIR if renders else "",
         ENGINE_BROKER_ENV_VAR: tier_broker(
             configured=configured_broker, transport=transport
-        ),
-        ENGINE_CATALOGUE_FILE_VAR: (
-            f"{content_dir}/{ENGINE_CATALOGUE_FILE}" if renders else ""
         ),
         ENGINE_CONTRACT_DIR_VAR: (
             f"{content_dir}/{ENGINE_CONTRACT_SUBDIR}" if renders else ""

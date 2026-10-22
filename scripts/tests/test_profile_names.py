@@ -58,7 +58,6 @@ ENGINE_TIER_CASES = [
         content_dir="/app/content",
         expected={
             **_RENDERED_PATHS,
-            "DFE_ENGINE_CATALOGUE_FILE": "/app/content/catalogue/sources.yaml",
             "DFE_ENGINE_CONTRACT_DIR": "/app/content/contract",
             "DFE_KAFKA_BOOTSTRAP_SERVERS": "kafka:9092",
             "DFE_STACK_PROFILE": "docker-single",
@@ -73,7 +72,6 @@ ENGINE_TIER_CASES = [
         content_dir="/srv/content",
         expected={
             **_RENDERED_PATHS,
-            "DFE_ENGINE_CATALOGUE_FILE": "/srv/content/catalogue/sources.yaml",
             "DFE_ENGINE_CONTRACT_DIR": "/srv/content/contract",
             "DFE_KAFKA_BOOTSTRAP_SERVERS": "broker.example.invalid:9092",
             "DFE_STACK_PROFILE": "docker-slim",
@@ -90,7 +88,6 @@ ENGINE_TIER_CASES = [
             "DFE_APP_CONFIG_MOUNT": "/etc/dfe/apps",
             "DFE_ENGINE_APP_CONFIG_BASE_DIR": "",
             "DFE_ENGINE_APP_CONFIG_DIR": "",
-            "DFE_ENGINE_CATALOGUE_FILE": "",
             "DFE_ENGINE_CONTRACT_DIR": "",
             "DFE_KAFKA_BOOTSTRAP_SERVERS": "",
             "DFE_STACK_PROFILE": "docker-single",
