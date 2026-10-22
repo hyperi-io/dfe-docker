@@ -676,13 +676,7 @@ class IngestNotReady(Exception):
 def _ingest_target(*, table: str) -> tuple[str, str]:
     """Find the ingest edge of the ACTIVE profile, or None if it has none.
 
-    Driven by the resolved profile, NOT by probing ports. Probing looked simpler
-    and was wrong: a stray container from a previous profile answers a probe
-    perfectly well while being wired to a pipeline that is no longer running. A
-    port probe finds it, injects into it, and reports a self-test failure that is
-    really a stale container. (`make down` used to be profile-scoped, which made
-    strays routine; it now sweeps every profile, but a stray can still arrive from
-    an older checkout or something started by hand.) Ask the profile.
+    Driven by the resolved profile, NOT by probing ports: a stray container from another profile, an older checkout or something started by hand answers a probe while wired to a pipeline that is not running, so a probe would inject into it and report a stale container as a self-test failure.
     """
     bind = os.environ.get("DFE_POST_HOST", "localhost")
     services = _resolved_services()

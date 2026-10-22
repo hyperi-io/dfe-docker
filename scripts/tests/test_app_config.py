@@ -67,10 +67,9 @@ def test_a_service_given_a_rendered_path_can_reach_and_read_it(
 def _resolved(
     profile: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> dict[str, str]:
-    """Run the resolver for one profile and read back the assignments it wrote."""
+    """Run the resolver for one profile and read back the assignments it wrote, its caller holding the `dotenv` fixture so the developer's .env changes nothing."""
     written = tmp_path / ".tmp" / "profile.mk"
     monkeypatch.setattr(resolve_profile, "PROFILE_MK", written)
-    monkeypatch.setattr(resolve_profile, "_load_dotenv", lambda: None)
     monkeypatch.setitem(os.environ, "DFE_PROFILE", profile)
     assert resolve_profile.main() == 0
     values: dict[str, str] = {}
@@ -80,6 +79,7 @@ def _resolved(
     return values
 
 
+@pytest.mark.usefixtures("dotenv")
 @pytest.mark.parametrize("profile", RENDERED_PROFILES)
 def test_every_profile_has_the_engine_render_its_app_config(
     profile: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -97,6 +97,7 @@ def test_every_profile_has_the_engine_render_its_app_config(
     )
 
 
+@pytest.mark.usefixtures("dotenv")
 def test_a_profile_without_core_keeps_its_committed_config(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -108,6 +109,7 @@ def test_a_profile_without_core_keeps_its_committed_config(
     assert values["DFE_RECEIVER_CONFIG"] == "receiver/kafka.yaml"
 
 
+@pytest.mark.usefixtures("dotenv")
 def test_an_app_the_tier_does_not_run_is_given_no_rendered_path(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -118,6 +120,7 @@ def test_an_app_the_tier_does_not_run_is_given_no_rendered_path(
     assert values["DFE_ARCHIVER_CONFIG_FILE"] == ""
 
 
+@pytest.mark.usefixtures("dotenv")
 @pytest.mark.parametrize("core", ["true", "false"])
 @pytest.mark.parametrize("profile", RENDERED_PROFILES)
 def test_every_app_config_key_is_written_whatever_the_answer(

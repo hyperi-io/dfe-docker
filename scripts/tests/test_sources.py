@@ -935,6 +935,16 @@ class TestEngineEnvironment:
 
         assert set(environment) <= declared
 
+    @pytest.mark.parametrize(
+        ("variable", "setting"), sorted(_sources.ENGINE_SETTINGS.items())
+    )
+    def test_each_tier_variable_feeds_the_setting_it_is_renamed_to(
+        self, variable: str, setting: str
+    ) -> None:
+        declared = str(_engine_service()["environment"][setting])
+
+        assert declared.startswith(f"${{{variable}")
+
 
 class TestEngineOverride:
     @pytest.mark.parametrize("case", ENGINE_OVERRIDE_CASES)

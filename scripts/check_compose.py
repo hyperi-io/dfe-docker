@@ -1522,6 +1522,8 @@ def _override_coverage_failures(*, env: dict[str, str]) -> list[str]:
 
     Read off the interpolated dev model: every service that runs a buildable
     component's image must resolve to `<component>:local` there.
+
+    A per-source app is left out: its instances extend docker-compose.yml and never read the override, so the resolver gives each one its image.
     """
     config = _config_json(
         env=env, files=[COMPOSE_FILE.name, COMPOSE_OVERRIDE_FILE.name]
@@ -1531,7 +1533,7 @@ def _override_coverage_failures(*, env: dict[str, str]) -> list[str]:
     services = config.get("services", {})
     failures = []
     for service, image in sorted(local_image_services(buildable_components()).items()):
-        if service not in services:
+        if (service not in services) or (service in PER_SOURCE_APP_KEYS):
             continue
         got = services[service].get("image", "")
         if got != image:
@@ -1884,7 +1886,8 @@ def _dev_path_fragment_failures() -> tuple[list[str], int]:
     return failures, made
 
 
-def main() -> int:
+def _checks() -> int:
+    """Run every check in turn, stopping at the first that fails."""
     if not (COMPOSE_FILE.is_file()):
         _print(header=COMPOSE_FILE.name, msg="Not found")
         return 1
@@ -2129,6 +2132,14 @@ def main() -> int:
         f"COMPOSE_FILE chain carries ({fragment_made} assertions)"
     )
     return 0
+
+
+def main() -> int:
+    try:
+        return _checks()
+    finally:
+        _EMPTY_ENV_FILE.unlink(missing_ok=True)
+        _LOCAL_RENDER.unlink(missing_ok=True)
 
 
 if __name__ == "__main__":

@@ -181,7 +181,7 @@ The AWS **region** is not an environment variable: it is a literal in each sourc
 |--------------------------------------------------|--------------------------------------------------------------------------------------|---------------------------------------------------------------------|
 | `DFE_RECEIVER_VERSION`                           | Version of dfe-receiver to use                                                       | none -- `make stack` pins it; unset is a hard-fail                                                            |
 | `DFE_RECEIVER_BEATS_PORT`                        | Receiver Beats port                                                                  | `5044`                                                              |
-| `DFE_RECEIVER_GRPC_PORT`                         | Receiver gRPC port                                                                   | `6000`                                                              |
+| `DFE_RECEIVER_GRPC_PORT`                         | Receiver Vector gRPC port, published once its line in `docker-compose.yml` is uncommented | `6000`                                                              |
 | `DFE_RECEIVER_HEC_PORT`                          | Receiver HEC port                                                                    | `8088`                                                              |
 | `DFE_RECEIVER_HTTP_PORT`                         | Receiver HTTP port                                                                   | `8080`                                                              |
 | `DFE_RECEIVER_OTLP_GRPC_PORT`                    | Receiver OTLP gRPC port                                                              | `4317`                                                              |
@@ -309,10 +309,7 @@ A per-source instance such as `dfe-transform-vrl-<source>` reads its app's custo
 
 The engine alone writes `*.custom.env` and only for a service it renders. A key you set by hand goes in the operator's file. Earlier checkouts read `env/loader.custom.env` and its siblings, names the engine never wrote and nothing reads now: move any key you put there into `env/loader.env`.
 
-**A custom env write needs `docker compose up -d <service>`, not a restart.**
-Compose reads `env_file` when it creates a container, so `docker compose restart`
-gives you the same container with the environment it already had, and the change
-looks like it did nothing.
+**A custom env write needs `make apply SERVICES=<service>`, not a restart.** Compose reads `env_file` when it creates a container, so `docker compose restart` keeps the environment the container already had. A bare `docker compose up -d` misses what make resolves from the profile, the broker address included.
 
 The engine writes those files into the `env/` directory of the checkout it is
 started from: `DFE_DEPLOYMENT_APP_ENV_DIR` names it (`/app/app-env` inside the
@@ -381,30 +378,24 @@ The same toggle points the engine at HyperDX: with it on, the engine receives `D
 | Port  | Service              | Protocol           |
 |-------|----------------------|--------------------|
 | 3000  | dfe-proxy            | Web UI (envoy fronts dfe-ui, which publishes no host port) |
-| 6000  | dfe-receiver         | gRPC               |
 | 8000  | hyperdx              | API                |
 | 8003  | dfe-engine           | HTTP API           |
 | 8080  | dfe-receiver         | HTTP ingest        |
 | 8081  | Kafbat               | Web UI             |
-| 8082  | dfe-fetcher          | HTTP ingest        |
 | 8090  | hyperdx              | App UI             |
 | 8123  | ClickHouse           | HTTP API           |
-| 8686  | dfe-transform-vector | Vector API         |
 | 9000  | ClickHouse           | Native protocol    |
 | 9090  | dfe-receiver         | Prometheus metrics |
 | 9091  | dfe-loader           | Prometheus metrics |
 | 9092  | Kafka (any backend)  | Plaintext          |
 | 9093  | dfe-archiver         | Prometheus metrics |
-| 9094  | dfe-fetcher          | Prometheus metrics |
-| 9095  | dfe-transform-vector | Prometheus metrics |
-| 9096  | dfe-transform-vrl    | Prometheus metrics |
-| 9099  | dfe-transform-elastic | Prometheus metrics |
 | 13133 | otel-collector       | health_check       |
 | 19092 | Kafka (any backend)  | Plaintext host     |
 | 50051 | dfe-loader           | gRPC Push, container port 6000 |
 
-Additional receiver ports (commented out by default in docker-compose.yml):
-4317 (OTLP gRPC), 4318 (OTLP HTTP), 5044 (Beats), 8088 (HEC).
+Additional receiver ports (commented out by default in docker-compose.yml): 4317 (OTLP gRPC), 4318 (OTLP HTTP), 5044 (Beats), 6000 (Vector gRPC, which also needs `DFE_RECEIVER_GRPC__ENABLED=true`), 8088 (HEC).
+
+dfe-fetcher and the transforms run one instance per source. An instance publishes no host port.
 
 ## ClickHouse Schema
 

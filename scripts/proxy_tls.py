@@ -94,7 +94,7 @@ def _docker_networks() -> list[dict]:
 
 
 def _first_line(*, text: str) -> str:
-    """Return the first non-blank line of a tool's output; a placeholder when it printed nothing."""
+    """Return the first non-blank line of a tool's output, or a placeholder when it printed nothing."""
     for line in text.splitlines():
         if line.strip():
             return line.strip()

@@ -21,13 +21,12 @@
 # LOCAL="dfe-engine dfe-ui"` writes docker-compose.local.yml instead of this.
 #
 # A service that runs a component's image under another name (dlq-init, dfe-hunt-runner and dfe-dashboards) is repointed with it. The list is IMAGE_CONSUMERS in scripts/build_dev_images.py and check-compose asserts this file covers all of it.
+#
+# dfe-fetcher and the transforms run as per-source instances, which extend docker-compose.yml and never read this file, so scripts/resolve_profile.py writes their local image into each instance instead.
 
 services:
   dfe-receiver:
     image: dfe-receiver:local
-
-  dfe-fetcher:
-    image: dfe-fetcher:local
 
   dfe-archiver:
     image: dfe-archiver:local
@@ -37,15 +36,6 @@ services:
 
   dfe-loader:
     image: dfe-loader:local
-
-  dfe-transform-elastic:
-    image: dfe-transform-elastic:local
-
-  dfe-transform-vector:
-    image: dfe-transform-vector:local
-
-  dfe-transform-vrl:
-    image: dfe-transform-vrl:local
 
   dfe-engine:
     image: dfe-engine:local

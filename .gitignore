@@ -61,6 +61,9 @@ CLAUDE.md
 TODO.md
 .ai-version
 .benchmarks/
+# Written at the repo root by older checkouts, now under .tmp/
+/.profile.mk
+/docker-compose.instances.yml
 
 # Per-service env files: env/
 env/

@@ -70,10 +70,9 @@ def _model(**overrides: str) -> dict[str, dict]:
 def _resolved(
     profile: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> dict[str, str]:
-    """Run the resolver for one profile and read back the assignments it wrote."""
+    """Run the resolver for one profile and read back the assignments it wrote, its caller holding the `dotenv` fixture so the developer's .env changes nothing."""
     written = tmp_path / ".tmp" / "profile.mk"
     monkeypatch.setattr(resolve_profile, "PROFILE_MK", written)
-    monkeypatch.setattr(resolve_profile, "_load_dotenv", lambda: None)
     monkeypatch.delenv(resolve_profile.ENGINE_CONTENT_DIR_VAR, raising=False)
     monkeypatch.setitem(os.environ, "DFE_PROFILE", profile)
     assert resolve_profile.main() == 0
@@ -235,6 +234,7 @@ def test_a_stack_that_renders_nothing_leaves_the_engine_no_catalogue() -> None:
     assert services[_ENGINE_SERVICE]["environment"]["DFE_SOURCE_CATALOGUE_FILE"] == ""
 
 
+@pytest.mark.usefixtures("dotenv")
 @pytest.mark.parametrize("profile", RENDERED_PROFILES)
 def test_every_profile_hands_the_engine_the_catalogue(
     profile: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -244,6 +244,7 @@ def test_every_profile_hands_the_engine_the_catalogue(
     assert values[resolve_profile.ENGINE_CATALOGUE_FILE_VAR] == _CATALOGUE_FILE
 
 
+@pytest.mark.usefixtures("dotenv")
 def test_a_profile_without_core_hands_the_engine_no_catalogue(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -253,6 +254,7 @@ def test_a_profile_without_core_hands_the_engine_no_catalogue(
     assert values[resolve_profile.ENGINE_CATALOGUE_FILE_VAR] == ""
 
 
+@pytest.mark.usefixtures("dotenv")
 @pytest.mark.parametrize("core", ["true", "false"])
 @pytest.mark.parametrize("profile", RENDERED_PROFILES)
 def test_the_catalogue_key_is_written_whatever_the_answer(
