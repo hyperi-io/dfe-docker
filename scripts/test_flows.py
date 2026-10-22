@@ -43,7 +43,7 @@ from pathlib import Path
 
 import yaml
 
-# Bytecode for the repo modules imported below goes to .tmp/pycache, as it does under make.
+# Bytecode for the repo modules imported below goes to .tmp/pycache, as it does under make
 sys.pycache_prefix = str(Path(__file__).resolve().parent.parent / ".tmp" / "pycache")
 
 from _common import _load_dotenv  # noqa: E402

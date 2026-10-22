@@ -44,7 +44,7 @@ import sys
 from collections.abc import Mapping
 from pathlib import Path
 
-# Bytecode for the repo modules imported below goes to .tmp/pycache, as it does under make.
+# Bytecode for the repo modules imported below goes to .tmp/pycache, as it does under make
 sys.pycache_prefix = str(Path(__file__).resolve().parent.parent / ".tmp" / "pycache")
 
 from _common import (  # noqa: E402

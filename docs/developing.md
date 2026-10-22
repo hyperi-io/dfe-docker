@@ -246,7 +246,7 @@ Live mode needs a Linux host: on macOS the container's install would swap the na
 mounts. `active_profile` is the default; `DFE_PROFILE` overrides it for one
 invocation.
 
-Every profile is a whole stack named `<tier>-<transport>`: `slim` runs the core data path, `single` adds the archiver and the fetchers, over `grpc` or `kafka`. Which profile runs what: [profiles.md](profiles.md). There is no `scale` tier: Compose cannot run an HA broker or a ClickHouse cluster.
+Every profile is a whole stack named `<tier>-<transport>`: `slim` runs the core data path, `single` adds the archiver and the per-source apps, over `grpc` or `kafka`. Which profile runs what: [profiles.md](profiles.md). There is no `scale` tier: Compose cannot run an HA broker or a ClickHouse cluster.
 
 ```bash
 DFE_PROFILE=single-kafka make dev     # override the profile
@@ -273,7 +273,7 @@ not on a fresh stack.
 `make dev SERVICES="..."` no longer starts a subset on top of a running stack:
 `dev` depends on `down`, which now tears down every profile first.
 
-A name in `SERVICES` that is not part of the resolved stack is a hard error, not a silent no-op. Adding a config to a profile that does not exist on disk is caught too -- `resolve_profile.py` validates every `config_path` before writing `.tmp/profile.mk`.
+A name in `SERVICES` that is not part of the resolved stack is a hard error, not a silent no-op. Adding a config to a profile that does not exist on disk is caught too: `resolve_profile.py` validates every `config_path` before writing `.tmp/profile.mk`.
 
 ## Seeding a starter set
 
@@ -362,13 +362,7 @@ Two things about the runner worth knowing before you debug it:
   --wait` counts a container that EXITS as a failure even on exit 0, and the
   topic-init services are one-shots that must exit. Waiting on the profile sweeps
   them in and fails regardless of broker health.
-- **It deletes the `_load` sibling of every expected `_land` topic before each
-  run.** Broker volumes outlive containers, so a `main_load` left by any
-  transform run suppresses `main_land` for every non-transform loader
-  thereafter. See
-  [troubleshooting.md](troubleshooting.md#a-_load-topic-changes-what-the-loader-reads).
-  Deleting it per run makes a run depend on the test definition, not on broker
-  history.
+- **It deletes the `_load` sibling of every expected `_land` topic before each run.** Broker volumes outlive containers, so a `main_load` left by any transform run suppresses `main_land` for every non-transform loader thereafter. See [troubleshooting.md](troubleshooting.md#a-_load-topic-changes-what-the-loader-reads). Deleting it per run makes a run depend on the test definition, not on broker history.
 
 ### Rules and hunts -- exactly the matching events
 
@@ -414,7 +408,7 @@ refusal such as 503 passes, silence fails), every accepted record landed, and on
 every consumer group is back at zero lag. They stop services, so they never run
 in `make post` either.
 
-An outage's `method` is `stop` by default, a graceful stop that lets the service drain what it holds. `method: kill` sends SIGKILL, and a crash gets no drain, so a record the service held in memory survives only if its acknowledgement was held until the next hop had it. The `*-kill-*` tests kill the loader and receiver on Kafka and the loader and vrl transform on direct gRPC. They pass only when every record answered 2xx lands, duplicates counted but allowed. Where the killed service is the receiver itself, a request in flight while it is down may go unanswered, and silence outside that window still fails.
+An outage's `method` is `stop` by default, a graceful stop that lets the service drain what it holds. `method: kill` sends SIGKILL and a crash gets no drain, so a record the service held in memory survives only if its acknowledgement was held until the next hop had it. The `*-kill-*` tests kill the loader and receiver on Kafka and the loader and vrl transform on direct gRPC. They pass only when every record answered 2xx lands, duplicates counted but allowed. Where the killed service is the receiver itself, a request in flight while it is down may go unanswered but silence outside that window still fails.
 
 A kill that catches nothing in flight proves nothing about a crash, so a kill test fails on it. For the receiver or a gRPC hop that means no request out at the instant the container exited. For a Kafka consumer it means nothing its group had left uncommitted just before the kill. The kill tests raise the load with `workers` and `interval` (the default is 4 workers each waiting 0.5 s) so that a kill lands with records in flight.
 
@@ -427,17 +421,9 @@ DFE_INFRA_DIR=../dfe-infra make test-source SOURCE_ARGS="--case elastic"
 DFE_INFRA_DIR=../dfe-infra make test-source SOURCE_ARGS="--case vector"
 ```
 
-Above, sources come through the API. This one creates one in the console,
-attaches a transform, deploys it, feeds it real data and reads the rows back,
-driving a browser to do it. The runner is dfe-infra's
-(`scripts/acceptance/source/run.py`), the same one `dfe-ops acceptance --suite
-source` calls for Kubernetes; `scripts/test_source.py` supplies what this repo
-owns -- the published ports, the archiver container, `make apply` for each
-service the engine says must restart (which is what creates the source's own
-transform container; run `make test-source DEV=1` against a `make dev` stack so
-that apply keeps the local images), and the admin login from `.env`.
-`SOURCE_ARGS` reaches the runner untouched (`--keep`, `--per-module`,
-`--headed`).
+Above, sources come through the API. This one creates one in the console, attaches a transform, deploys it, feeds it real data and reads the rows back, driving a browser to do it. The runner is dfe-infra's (`scripts/acceptance/source/run.py`), the same one `dfe-ops acceptance --suite source` calls for Kubernetes.
+
+`scripts/test_source.py` supplies what this repo owns: the published ports, the archiver container, the admin login from `.env` and `make apply` for each service the engine says must restart, which is what creates the source's own transform container. Run `make test-source DEV=1` against a `make dev` stack so that apply keeps the local images. `SOURCE_ARGS` reaches the runner untouched (`--keep`, `--per-module`, `--headed`).
 
 Beyond a running stack it needs `DFE_INFRA_DIR` (the runner), `DFE_ENGINE_REPO`
 and `DFE_TRANSFORM_VRL_REPO` (the corpus wrapper, the bundled pipeline), a
@@ -514,7 +500,7 @@ suite chains onto every `up`, one that re-prefixes each `container_name`.
 
 ## Sharp edges
 
-**`make down` tears down every profile, not just the active one.** It runs `docker compose -f docker-compose.yml --profile "*" down --remove-orphans` and keeps volumes. That is a change: it used to be profile-scoped, so switching from `single-kafka` to `slim-kafka` left the archiver running. That stray is exactly why the self test asks the resolved profile what should be there instead of probing ports.
+**`make down` tears down every profile, not just the active one.** It runs `docker compose -f docker-compose.yml --profile "*" down --remove-orphans` and keeps volumes. A profile-scoped `down` would leave the archiver running after a switch from `single-kafka` to `slim-kafka`. A stray like that is why the self test asks the resolved profile what should be there instead of probing ports.
 
 The consequence to know: because `make dev` and `make ci` depend on `down`, a
 `make dev SERVICES="dfe-loader"` no longer restarts just that service on top of a

@@ -96,7 +96,7 @@ Turning `DFE_PROXY_TLS` on or off on a running stack needs `make down` first, be
 
 `make test-e2e` and `make test-resilience` run under the dial too, with the same prechecks as a start. Each test's stack chains the fragments `make ci` does, so the exposure opt-outs and container logs apply to it as well. The suite probes the console at `https://<DFE_EXTERNAL_ORIGIN host>:<DFE_UI_PORT>` and verifies its certificate by chain and by name, never with verification off.
 
-A certificate from a public CA verifies against the system trust store. For a private CA, set `DFE_PROXY_CA_BUNDLE` to a PEM file holding the CA chain that signed `console.crt`; after `make certs` that is its `ca.crt`. Chrome takes no CA bundle, so the browser steps are pinned to the public key of the certificate that check has just verified.
+A certificate from a public CA verifies against the system trust store. For a private CA, set `DFE_PROXY_CA_BUNDLE` to a PEM file holding the CA chain that signed `console.crt`, which after `make certs` is its `ca.crt`. Chrome takes no CA bundle, so the browser steps are pinned to the public key of the certificate that check has just verified.
 
 | Variable                                         | Use                                                                                  | Default                                                             |
 |--------------------------------------------------|--------------------------------------------------------------------------------------|---------------------------------------------------------------------|
@@ -335,7 +335,7 @@ Compose maps them onto scalo's `version_check.enabled` and `version_check.send_i
 
 ## Self-monitoring
 
-Every profile declares `otel: true`, which starts a collector that takes the stack's own telemetry over OTLP and writes the `dfe.otel_*` tables HyperDX reads. `DFE_OTEL_ENABLED=false` turns it off. Nothing is scraped, and the collector's OTLP ports stay on the Compose network. Full picture, including which services report today: [observability.md](observability.md).
+Every profile declares `otel: true`, which starts a collector that takes the stack's own telemetry over OTLP and writes the `dfe.otel_*` tables HyperDX reads. `DFE_OTEL_ENABLED=false` turns it off. The only scrape is the collector reading its own metrics on 127.0.0.1:8888 and its OTLP ports stay on the Compose network. Full picture, including which services report today: [observability.md](observability.md).
 
 | Variable                                         | Use                                                                                  | Default                                                             |
 |--------------------------------------------------|--------------------------------------------------------------------------------------|---------------------------------------------------------------------|

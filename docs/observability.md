@@ -143,11 +143,7 @@ scraping estate nothing.
 
 ## Container logs go through the log driver, not a file reader
 
-Nothing in the stack exports logs over OTLP, so the lines a service writes to
-stdout reach ClickHouse a different way: Docker's own `fluentd` log driver sends
-them to the collector's `fluent_forward` receiver, which turns the driver's tag
-into `ServiceName` and writes `dfe.otel_logs`. Search them in HyperDX on the
-`otel_logs` source.
+Nothing in the stack exports logs over OTLP, so the lines a service writes to stdout reach ClickHouse a different way: Docker's own `fluentd` log driver sends them to the collector's `fluent_forward` receiver, which turns the driver's tag into `ServiceName` and writes `dfe.otel_logs`. Search them in HyperDX on the `otel_logs` source.
 
 Kubernetes reads the same lines off the node with a DaemonSet filelog receiver.
 That does not port: the files live under the daemon's data-root, which is not

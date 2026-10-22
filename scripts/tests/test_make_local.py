@@ -24,7 +24,7 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 _BUILD = ["python3", "scripts/build_dev_images.py"]
 _RESOLVER_ARGS = Path(".tmp") / "resolver-args"
 
-# Written only when it differs, as the real resolver does: make re-reads a remade include, so rewriting it every run would never settle.
+# Written only when it differs, as the real resolver does: make re-reads a remade include, so rewriting it every run would never settle
 _RESOLVER = '''\
 import sys
 from pathlib import Path

@@ -52,7 +52,7 @@ LOOPBACK_ORIGINS = frozenset(
     }
 )
 
-# Every service profile, each `<tier>-<transport>`. dfe-engine renders each one's app config and runs as `docker-<tier>`, the only tiers it knows.
+# Every service profile, each `<tier>-<transport>`. dfe-engine renders each one's app config and runs as `docker-<tier>`, the only tiers it knows
 RENDERED_PROFILES = ("slim-grpc", "slim-kafka", "single-grpc", "single-kafka")
 
 # What a Kafka dfe-loader subscribes to when its config names no topics and no topic_regex (dfe-loader src/kafka/transport.rs LANDING_TOPIC_INCLUDE)
@@ -120,7 +120,7 @@ COMPOSE_LIVE_UI_FILE = REPO_ROOT / "docker-compose.live-ui.yml"
 # Generated per run by `make dev LOCAL=...`, never committed.
 COMPOSE_LOCAL_FILE = REPO_ROOT / "docker-compose.local.yml"
 COMPOSE_OVERRIDE_FILE = REPO_ROOT / "docker-compose.override.yml"
-# Written by resolve_profile.py on every make run that needs the stack and included by the Makefile, so deleting .tmp/ costs nothing.
+# Written by resolve_profile.py on every make run that needs the stack and included by the Makefile, so deleting .tmp/ costs nothing
 PROFILE_MK = REPO_ROOT / ".tmp" / "profile.mk"
 RUST_BUILDER = REPO_ROOT / "docker" / "dfe-rust-builder.Dockerfile"
 SERVICE_PROFILES_FILE = REPO_ROOT / "service_profiles.yaml"

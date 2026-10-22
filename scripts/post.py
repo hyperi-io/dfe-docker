@@ -72,7 +72,7 @@ import typing
 from pathlib import Path
 from urllib.parse import quote
 
-# Bytecode for the repo modules imported below goes to .tmp/pycache, as it does under make.
+# Bytecode for the repo modules imported below goes to .tmp/pycache, as it does under make
 sys.pycache_prefix = str(Path(__file__).resolve().parent.parent / ".tmp" / "pycache")
 
 import _detection  # noqa: E402
@@ -152,7 +152,7 @@ LOADER_TOPIC_REFRESH_SECONDS = 60.0
 # rather than an expected duration.
 LOADER_TOPIC_TIMEOUT_SECONDS = 2 * LOADER_TOPIC_REFRESH_SECONDS + 30.0
 LOADER_TOPIC_INTERVAL_SECONDS = 5.0
-# `.tmp/profile.mk`'s resolved answer to "does this deployment have a bus", so the claim is skipped on the gRPC tiers rather than failing on them.
+# `.tmp/profile.mk`'s resolved answer to "does this deployment have a bus", so the claim is skipped on the gRPC tiers rather than failing on them
 TRANSPORT_BUS_KEY = "DFE_TRANSPORT_BUS_PRESENT"
 
 TARGET_DB = "dfe"
@@ -296,7 +296,7 @@ ROUTING_INTERVAL_SECONDS = 3.0
 # The engine deletes a source's two topics before it answers, each delete allowed
 # 30s after a 10s topic listing, which a broker that does not answer uses in full.
 ROUTING_DELETE_TIMEOUT_SECONDS = 90
-# `.tmp/profile.mk`'s answer to "does the engine render this tier's app config": the claim is only makeable where it does.
+# `.tmp/profile.mk`'s answer to "does the engine render this tier's app config": the claim is only makeable where it does
 APP_CONFIG_DIR_KEY = "DFE_ENGINE_APP_CONFIG_DIR"
 
 # Compose defaults that mean "nobody ran `make init`". They are deterministic and
@@ -688,7 +688,7 @@ def _ingest_target(*, table: str) -> tuple[str, str]:
     services = _resolved_services()
     if not (services):
         raise IngestNotReady(
-            "no resolved profile (.tmp/profile.mk missing) -- run a make target first"
+            "no resolved profile (.tmp/profile.mk missing), so run a make target first"
         )
 
     # Not-ready and not-present must NOT collapse into one answer. A profile that
@@ -1102,8 +1102,7 @@ def _verify_container_logs(*, database: str) -> int:
 def _service_var(service: str, suffix: str) -> str:
     """The .env / .tmp/profile.mk variable naming one service's setting.
 
-    Every per-service key follows it -- DFE_LOADER_CONFIG,
-    DFE_ARCHIVER_PROMETHEUS_PORT -- so it is derived rather than tabulated.
+    Every per-service key follows it (DFE_LOADER_CONFIG, DFE_ARCHIVER_PROMETHEUS_PORT), so it is derived rather than tabulated.
     """
     return f"DFE_{service.removeprefix('dfe-').upper().replace('-', '_')}_{suffix}"
 

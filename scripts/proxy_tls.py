@@ -33,9 +33,9 @@ from pathlib import Path
 
 _CA = "ca.crt"
 _CERT = "console.crt"
-# A day inside Apple's 825-day ceiling for a TLS server certificate; the CA signs once, so it needs no longer.
+# A day inside Apple's 825-day ceiling for a TLS server certificate, which is long enough for a CA that signs once
 _DAYS = 824
-# X.509 caps a common name at 64 characters; the subjectAltName carries the full host.
+# X.509 caps a common name at 64 characters, so the subjectAltName carries the full host
 _MAX_CN = 64
 _HOSTNAME = re.compile(
     r"(?!-)[A-Za-z0-9-]{1,63}(?<!-)(\.(?!-)[A-Za-z0-9-]{1,63}(?<!-))*"
@@ -66,7 +66,7 @@ class MintError(Exception):
 
 
 def _cert_dir_form_problem(*, cert_dir: str) -> str:
-    """Return why compose could not mount cert_dir as a path; the empty string when it can."""
+    """Return why compose could not mount cert_dir as a path, the empty string when it can."""
     if not (cert_dir.startswith(("/", "./", "../"))):
         return f"DFE_PROXY_CERT_DIR={cert_dir!r} must be a path starting with /, ./ or ../ because compose reads a bare name as a named volume"
     return ""
@@ -121,12 +121,12 @@ def _is_host(*, name: str) -> bool:
         ipaddress.ip_address(name)
     except ValueError:
         return len(name) <= 253 and _HOSTNAME.fullmatch(name) is not None
-    # An IPv6 zone id may hold any character, newline and comma included.
+    # An IPv6 zone id may hold any character, newline and comma included
     return "%" not in name
 
 
 def _last_line(*, text: str) -> str:
-    """Return the last non-blank line of a tool's output; a placeholder when it printed nothing."""
+    """Return the last non-blank line of a tool's output, a placeholder when it printed nothing."""
     return _first_line(text="\n".join(reversed(text.splitlines())))
 
 
@@ -263,12 +263,12 @@ def mint(*, cert_dir: str, host: str) -> list[str]:
         )
     entries = _subject_alt_names(host=bare)
     today = datetime.datetime.now(tz=datetime.UTC).date().isoformat()
-    # The random tag keeps a re-minted CA from sharing a subject with one a browser still trusts.
+    # The random tag keeps a re-minted CA from sharing a subject with one a browser still trusts
     ca_name = f"DFE local CA {secrets.token_hex(3)} {today} {bare}"[:_MAX_CN]
     leaf_name = bare if len(bare) <= _MAX_CN else "DFE console"
     try:
         directory.mkdir(exist_ok=True, mode=0o700, parents=True)
-        # The CA key stays outside cert_dir, which both proxies mount; the outputs stage inside it so they rename into place on one filesystem.
+        # The CA key stays outside cert_dir, which both proxies mount, while the outputs stage inside it so they rename into place on one filesystem
         with (
             tempfile.TemporaryDirectory() as secret,
             tempfile.TemporaryDirectory(dir=directory) as scratch,

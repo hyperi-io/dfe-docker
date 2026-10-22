@@ -317,7 +317,7 @@ def _listing(*rows: tuple[str, str, str]) -> str:
     )
 
 
-# One container of each kind a compose project can hold here: a declared instance, a deleted source's instance, the app's committed service and a service only a file outside the apply chain declares, which is an orphan to the apply exactly as the deleted source is.
+# One container of each kind a compose project can hold here: a declared instance, a deleted source's instance, the app's committed service and a service only a file outside the apply chain declares, which is an orphan to the apply exactly as the deleted source is
 _PROJECT = _listing(
     ("c1", "dfe-transform-vrl-cisco-ios", VRL),
     ("c2", "dfe-transform-vrl-cisco-meraki", VRL),

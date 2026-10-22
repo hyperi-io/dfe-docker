@@ -291,7 +291,7 @@ def engine_environment(*, profile_name: str, transport: str) -> dict[str, str]:
         "DFE_DEPLOYMENT_APP_CONFIG_BASE_DIR": resolve_profile.ENGINE_APP_CONFIG_BASE_DIR,
         "DFE_DEPLOYMENT_APP_CONFIG_DIR": resolve_profile.ENGINE_APP_CONFIG_DIR,
         "DFE_DEPLOYMENT_APP_CONFIG_MOUNT": resolve_profile.APP_CONFIG_MOUNT,
-        "DFE_KAFKA_BOOTSTRAP_SERVERS": resolve_profile.IN_STACK_BROKER if bus else "",
+        "DFE_KAFKA_BOOTSTRAP_SERVERS": kafka_bootstrap(transport=transport),
         "DFE_PROFILE": f"docker-{profile_name.partition('-')[0]}",
         "DFE_SOURCE_CATALOGUE_FILE": f"{content}/{resolve_profile.ENGINE_CATALOGUE_FILE}",
         "DFE_TRANSPORT_BUS_PRESENT": "true" if bus else "false",
@@ -343,6 +343,11 @@ def indexed(*, sources: Sequence[Source]) -> dict[str, list[str]]:
 def instance_group(*, service: str, sources: Sequence[Source]) -> str | None:
     """The consumer group `service` commits as when it is a source's instance, None when it is not one."""
     return service if (service in bindings(sources=sources)) else None
+
+
+def kafka_bootstrap(*, transport: str) -> str:
+    """The broker a test's apps and dfe-engine are pointed at, the in-stack one on the bus and none on direct gRPC."""
+    return resolve_profile.IN_STACK_BROKER if (transport == "kafka") else ""
 
 
 def merged_topics(

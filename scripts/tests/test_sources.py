@@ -118,6 +118,13 @@ class InstanceGroupCase(TypedDict):
     service: str
 
 
+class KafkaBootstrapCase(TypedDict):
+    """A test's transport and the broker its apps and dfe-engine are pointed at."""
+
+    expected: str
+    transport: str
+
+
 class MergedTopicsCase(TypedDict):
     """The topics a test names, its transport and the topics it expects once the vrl source's join them."""
 
@@ -375,6 +382,10 @@ INSTANCE_GROUP_CASES = [
     ),
     InstanceGroupCase(expected=None, service="dfe-loader"),
     InstanceGroupCase(expected=None, service="dfe-transform-vrl-other"),
+]
+KAFKA_BOOTSTRAP_CASES = [
+    KafkaBootstrapCase(expected="", transport="grpc"),
+    KafkaBootstrapCase(expected="kafka:9092", transport="kafka"),
 ]
 MERGED_TOPICS_CASES = [
     MergedTopicsCase(
@@ -992,6 +1003,14 @@ class TestInstanceGroup:
         group = _sources.instance_group(service=case["service"], sources=[VRL])
 
         assert group == case["expected"]
+
+
+class TestKafkaBootstrap:
+    @pytest.mark.parametrize("case", KAFKA_BOOTSTRAP_CASES)
+    def test_matches_expected(self, case: KafkaBootstrapCase) -> None:
+        broker = _sources.kafka_bootstrap(transport=case["transport"])
+
+        assert broker == case["expected"]
 
 
 class TestMergedTopics:

@@ -104,7 +104,7 @@ import tempfile
 from collections.abc import Callable
 from pathlib import Path
 
-# Bytecode for the repo modules imported below goes to .tmp/pycache, as it does under make.
+# Bytecode for the repo modules imported below goes to .tmp/pycache, as it does under make
 sys.pycache_prefix = str(Path(__file__).resolve().parent.parent / ".tmp" / "pycache")
 
 import _envoy  # noqa: E402
@@ -247,7 +247,7 @@ _CHAIN_FRAGMENT_RE = re.compile(r"chain_fragment,([^),]+)\)")
 # checkout every check-* target must run on.
 _COMPOSE_FILE_GOAL = "print-compose-file"
 _COMPOSE_FILE_PREFIX = "COMPOSE_FILE="
-# The dials that gate a fragment, set so every one chains. The three `_RESOLVED` ones come from .tmp/profile.mk, where only a make command-line variable beats the include.
+# The dials that gate a fragment, set so every one chains. The three `_RESOLVED` ones come from .tmp/profile.mk, where only a make command-line variable beats the include
 _FRAGMENT_DIALS = {
     "DFE_AUTH_RESOLVED": "true",
     "DFE_INSTANCES_RESOLVED": "true",
@@ -1391,8 +1391,8 @@ def _instance_name_collisions(*, services: dict) -> list[str]:
             if name.startswith(f"{app}-"):
                 failures.append(
                     f"{name}: the {app} instance for a source named "
-                    f"{name[len(app) + 1 :]!r} takes this name, and Compose merges the "
-                    "two -- rename it off the <app>-<source> shape"
+                    f"{name[len(app) + 1 :]!r} takes this name and Compose merges the "
+                    "two, so rename it off the <app>-<source> shape"
                 )
     return failures
 

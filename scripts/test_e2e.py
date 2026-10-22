@@ -61,7 +61,7 @@ from urllib.error import HTTPError, URLError
 from urllib.parse import quote
 from urllib.request import Request, urlopen
 
-# Bytecode for the repo modules imported below goes to .tmp/pycache, as it does under make.
+# Bytecode for the repo modules imported below goes to .tmp/pycache, as it does under make
 sys.pycache_prefix = str(Path(__file__).resolve().parent.parent / ".tmp" / "pycache")
 
 import _console_tls  # noqa: E402
@@ -984,7 +984,7 @@ def stack_up(mode, test, services):
         if not (create_topics(test.expected_topics)):
             return None
 
-    # dfe-engine is healthy before the DFE services, or the loader dead-letters records it has no schema for yet
+    # dfe-engine must be healthy before the DFE services start, else the loader dead-letters records it has no schema for yet
     LOGGER.info("Preparing schema authority (ClickHouse + dfe-engine)...")
     authority_up = (
         ["docker", "compose"]
@@ -4151,8 +4151,8 @@ def run_test(ctx, mode, test, persistent_services):
         )
 
     # The apps reach Kafka through the compose anchor, which has to follow this test's transport rather than make's
-    os.environ[resolve_profile.ENGINE_BROKER_ENV_VAR] = (
-        resolve_profile.IN_STACK_BROKER if (test.transport == "kafka") else ""
+    os.environ[resolve_profile.ENGINE_BROKER_ENV_VAR] = _sources.kafka_bootstrap(
+        transport=test.transport
     )
 
     # Start the stack (Kafka profiles: infra first, create topics, then full stack)
@@ -4309,7 +4309,7 @@ def run_suite(ctx, mode, tests, persistent_services):
 # - Removes any temporary files and databases created during the test run
 # ------------------------------------------------------------------------------
 def cleanup(clickhouse_config):
-    # Only this run's directory: the rest of `.tmp/` holds other tools' caches.
+    # Only this run's directory: the rest of `.tmp/` holds other tools' caches
     if TMP_DIR.exists():
         rmtree(TMP_DIR)
     if clickhouse_config.get("drop_database", False):

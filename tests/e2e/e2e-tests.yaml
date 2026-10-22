@@ -83,7 +83,7 @@ tests:
       - main_land
       - simple_receiver_to_loader_kafka_with_archiver_land
 
-  # The complete single-node stack: receiver, loader and archiver over Kafka, with the engine, UI and proxy in front. The HTTP checks assert the single-origin contract dfe-proxy exists for: UI and engine API on ONE origin. DFE_UI_URL is the console URL the suite resolves: localhost on DFE_UI_PORT or https at DFE_EXTERNAL_ORIGIN's host under console TLS.
+  # The complete single-node stack: receiver, loader and archiver over Kafka, with the engine, UI and proxy in front. The HTTP checks assert the single-origin contract dfe-proxy exists for: UI and engine API on ONE origin. DFE_UI_URL is the console URL the suite resolves: localhost on DFE_UI_PORT or https at DFE_EXTERNAL_ORIGIN's host under console TLS
   - name: complete-single-node-stack
     profile: single-kafka
     otel: true

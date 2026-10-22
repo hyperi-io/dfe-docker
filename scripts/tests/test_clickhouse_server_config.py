@@ -215,7 +215,7 @@ def test_keeper_runs_embedded_and_keeps_its_data_with_the_tables() -> None:
     assert _text(root, "keeper_server/server_id") == "1"
     servers = root.findall("keeper_server/raft_configuration/server")
     assert [_text(server, "id") for server in servers] == ["1"]
-    # Snapshots default to the data dir. Lose the log without them and every replicated table goes read-only.
+    # Snapshots default to the data dir. Lose the log without them and every replicated table goes read-only
     assert _text(root, "keeper_server/log_storage_path").startswith(_DATA_DIR)
     assert root.find("keeper_server/snapshot_storage_path") is None
 
@@ -224,7 +224,7 @@ def test_the_server_reaches_its_own_keeper_under_a_generated_identity() -> None:
     root = _root(path=_REPLICATION_FILE)
     nodes = root.findall("zookeeper/node")
 
-    # Keeper's client port binds the image's loopback listen_host defaults.
+    # Keeper's client port binds the image's loopback listen_host defaults
     assert len(nodes) == 1 and _text(nodes[0], "host") in _LOOPBACK
     assert _text(nodes[0], "port") == _text(root, "keeper_server/tcp_port")
     identity = root.find("zookeeper/identity")
@@ -284,7 +284,7 @@ def test_sql_users_and_roles_land_in_keeper() -> None:
 def test_keeper_raft_and_interserver_listen_on_loopback_only() -> None:
     root = _root(path=_LISTEN_FILE)
 
-    # Keeper's client port binds listen_host, which the image's config.xml sets to ::1 and 127.0.0.1.
+    # Keeper's client port binds listen_host, which the image's config.xml sets to ::1 and 127.0.0.1
     assert root.find("listen_host") is None
     assert _text(root, "interserver_listen_host") in _LOOPBACK
 
