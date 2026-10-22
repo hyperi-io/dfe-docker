@@ -11,10 +11,22 @@
 grpc:
   enabled: true
 
+# A record keeps the `_source` its sender wrote, and one with none takes routing.default_source.
+rules:
+  rules:
+    - id: sender-source
+      set: {_source: {from: _source}}
+
+# The detection tests and `make post` send their events' org in `_org_id`, kept
+# here and held to the orgs the HTTP listener is bound to.
 routing:
-  source_rules:
-    - field: _source
-      mode: key_value_use
+  source_org_id: allow
+
+ingest_bindings:
+  listeners:
+    http:
+      orgs: [default, e2e, post]
+      default_org: default
 
 destinations:
   default: loader
