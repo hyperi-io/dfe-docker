@@ -106,8 +106,8 @@ HYPERDX_SERVICES = [
     "dfe-dashboards",
     "dfe-hyperdx-proxy",
     "hyperdx",
-    "hyperdx-ferretdb",
-    "hyperdx-postgres",
+    "hyperdx-documentdb",
+    "hyperdx-documentdb-tls",
 ]
 
 # HyperDX takes ClickHouse as a URL, so the TLS flag dfe-engine reads becomes a

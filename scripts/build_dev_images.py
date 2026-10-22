@@ -42,7 +42,7 @@ IMAGE_TAG = "local"
 # build must repoint all of them or the stack runs two builds of one component.
 IMAGE_CONSUMERS: dict[str, tuple[str, ...]] = {
     "dfe-archiver": ("dlq-init",),
-    "dfe-engine": ("dfe-dashboards", "dfe-hunt-runner"),
+    "dfe-engine": ("dfe-dashboards", "dfe-hunt-runner", "hyperdx-documentdb-tls"),
     "dfe-transform-elastic": ("dfe-transform-e2e-elastic-cisco-ios",),
     "dfe-transform-vector": ("dfe-transform-e2e-vector-filebeat",),
     "dfe-transform-vrl": ("dfe-transform-e2e-vrl-filebeat",),
@@ -55,6 +55,7 @@ IMAGE_CONSUMERS: dict[str, tuple[str, ...]] = {
 IMPLICIT_CONSUMERS: dict[str, tuple[str, ...]] = {
     "dfe-dashboards": ("hyperdx",),
     "dlq-init": ("dfe-archiver", "dfe-fetcher", "dfe-loader", "dfe-receiver"),
+    "hyperdx-documentdb-tls": ("hyperdx-documentdb",),
 }
 RUST_COMPONENTS = [
     "dfe-archiver",

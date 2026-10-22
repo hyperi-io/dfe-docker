@@ -141,7 +141,7 @@ Per-port, as published in `docker-compose.yml`:
 | 13133 | otel-collector | operator | `health_check` extension |
 | 50051 | dfe-loader | operator | Internal `DfeTransport/Push` gRPC, container port 6000 |
 
-`dfe-ui`, `hyperdx`, `hyperdx-postgres` and `hyperdx-ferretdb` publish no host
+`dfe-ui`, `hyperdx` and `hyperdx-documentdb` publish no host
 ports at all -- they are reached over the Docker network, HyperDX through the
 proxy that holds both its origins. The collector publishes only `24224`, which the
 DOCKER DAEMON sends container stdout to; its OTLP ports stay on the Compose
@@ -260,8 +260,8 @@ container takes the host down.
 |---|---|
 | `DFE_CLICKHOUSE_*` | clickhouse |
 | `DFE_BROKER_*` | kafka-redpanda, kafka-apache |
-| `DFE_SERVICE_*` | the DFE components, engine, UI, kafka-ui, HyperDX, its Postgres and FerretDB. HyperDX's memory is `DFE_HYPERDX_MEMORY` |
-| `DFE_SIDECAR_*` | dlq-init, dfe-dashboards, dfe-proxy |
+| `DFE_SERVICE_*` | the DFE components, engine, UI, kafka-ui, HyperDX, its DocumentDB store. HyperDX's memory is `DFE_HYPERDX_MEMORY` |
+| `DFE_SIDECAR_*` | dlq-init, dfe-dashboards, hyperdx-documentdb-tls, dfe-proxy |
 
 For the actual values and totals, ask the stack rather than this page:
 
@@ -398,8 +398,8 @@ These named volumes hold all durable state:
 | `dlq-spool` | Shared dead-letter spool (`/var/spool/dfe`) |
 | `fetcher-cursors` | dfe-fetcher cursors (`/var/lib/dfe-fetcher`), one directory per fetcher service |
 | `dfe-engine-config` / `dfe-engine-schemas` | Engine config and schemas, seeded from the engine image on first run |
-| `hyperdx-pg-data` | HyperDX metadata store |
-| `hyperdx-ferretdb-state` | FerretDB's instance UUID and telemetry choice (`/state`) |
+| `hyperdx-documentdb-data` | HyperDX metadata store, DocumentDB's PostgreSQL cluster (`/data`) |
+| `hyperdx-documentdb-tls` | The CA and gateway certificate `hyperdx-documentdb-tls` mints, renewed when it nears expiry |
 
 `make down` stops containers and leaves every volume intact. `make clean` runs
 `docker compose --profile "*" down -v --remove-orphans` -- the `-v` deletes all

@@ -489,8 +489,7 @@ _TLS_USER = {"DFE_DEV_GID": "4343", "DFE_DEV_UID": "4242"}
 # measures it against each local image.
 _IMAGE_VOLUMES: dict[str, tuple[str, ...]] = {
     "clickhouse": ("/var/lib/clickhouse",),
-    "hyperdx-ferretdb": ("/state",),
-    "hyperdx-postgres": ("/var/lib/postgresql/data",),
+    "hyperdx-documentdb": ("/data",),
     "kafka-apache": ("/etc/kafka/secrets", "/mnt/shared/config", "/var/lib/kafka/data"),
     "kafka-redpanda": ("/var/lib/redpanda/data",),
 }

@@ -124,22 +124,22 @@ def _every_image_volume_mounted() -> dict:
 
 
 def test_an_image_volume_compose_leaves_unmounted_fails():
-    """An unmounted /state strands one anonymous volume per down/up cycle."""
+    """An unmounted /data strands one anonymous volume per down/up cycle."""
     config = _every_image_volume_mounted()
-    config["services"]["hyperdx-ferretdb"]["volumes"] = []
+    config["services"]["hyperdx-documentdb"]["volumes"] = []
 
     failures = check_compose._unmounted_image_volume_failures(config=config)
 
     assert len(failures) == 1
-    assert "hyperdx-ferretdb" in failures[0]
-    assert "/state" in failures[0]
+    assert "hyperdx-documentdb" in failures[0]
+    assert "/data" in failures[0]
 
 
 def test_an_anonymous_compose_volume_is_still_unmounted():
-    """`- /state` with no source is the same anonymous volume, declared in compose."""
+    """`- /data` with no source is the same anonymous volume, declared in compose."""
     config = _every_image_volume_mounted()
-    config["services"]["hyperdx-ferretdb"]["volumes"] = [
-        {"type": "volume", "target": "/state"}
+    config["services"]["hyperdx-documentdb"]["volumes"] = [
+        {"type": "volume", "target": "/data"}
     ]
 
     assert check_compose._unmounted_image_volume_failures(config=config)
@@ -147,8 +147,8 @@ def test_an_anonymous_compose_volume_is_still_unmounted():
 
 def test_named_volumes_and_binds_both_count_as_mounted():
     config = _every_image_volume_mounted()
-    config["services"]["hyperdx-ferretdb"]["volumes"] = [
-        {"type": "bind", "source": "/srv/ferret-state", "target": "/state"}
+    config["services"]["hyperdx-documentdb"]["volumes"] = [
+        {"type": "bind", "source": "/srv/documentdb-data", "target": "/data"}
     ]
 
     assert check_compose._unmounted_image_volume_failures(config=config) == []
@@ -188,16 +188,16 @@ def test_local_images_declaring_exactly_the_table_pass():
 
 def test_a_path_the_image_declares_and_the_table_lacks_fails():
     images, declared = _table_images()
-    declared["hyperdx-ferretdb:pinned"] = frozenset({"/state", "/var/lib/ferretdb"})
+    declared["hyperdx-documentdb:pinned"] = frozenset({"/data", "/var/lib/documentdb"})
 
     failures, _, _ = check_compose._image_volume_drift(
         images=images, inspect=declared.get
     )
 
     assert failures == [
-        "hyperdx-ferretdb: hyperdx-ferretdb:pinned declares VOLUME /var/lib/ferretdb, "
-        "which _IMAGE_VOLUMES does not list -- add it there so the mount check holds "
-        "compose to it"
+        "hyperdx-documentdb: hyperdx-documentdb:pinned declares VOLUME "
+        "/var/lib/documentdb, which _IMAGE_VOLUMES does not list -- add it there so "
+        "the mount check holds compose to it"
     ]
 
 
