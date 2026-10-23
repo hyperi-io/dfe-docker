@@ -150,6 +150,8 @@ other profile may require an issuer.
 
 ### DFE Archiver
 
+Only `single-kafka` runs dfe-archiver, so archiving needs a Kafka profile ([profiles.md](profiles.md)).
+
 | Variable                                         | Use                                                                                  | Default                                                             |
 |--------------------------------------------------|--------------------------------------------------------------------------------------|---------------------------------------------------------------------|
 | `DFE_ARCHIVER_VERSION`                           | Version of dfe-archiver to use                                                       | none -- `make stack` pins it; unset is a hard-fail                                                            |

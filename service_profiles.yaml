@@ -35,7 +35,7 @@
 # PER-SOURCE APP KEYS (optional, default false) say which apps dfe-engine may start one container per source of: fetcher_enabled, transform_elastic_enabled, transform_vector_enabled and transform_vrl_enabled. An instance of any other app fails the resolve. dfe-transform-elastic is Kafka only, so a grpc profile refuses its key.
 #
 # NAMING: every profile is <tier>-<transport>. dfe-engine runs as docker-<tier>,
-# and single adds the archiver and the per-source apps to slim.
+# and single adds the per-source apps to slim, plus the archiver on Kafka.
 # resolve_profile.py refuses any other name.
 
 active_profile: slim-grpc
@@ -76,8 +76,6 @@ profiles:
     transform_vector_enabled: true
     transform_vrl_enabled: true
     services:
-      dfe-archiver:
-        config_path: archiver/grpc.yaml
       dfe-loader:
         config_path: loader/grpc.yaml
       dfe-receiver:

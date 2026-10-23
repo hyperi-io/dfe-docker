@@ -8,14 +8,14 @@ This repo owns every profile in `service_profiles.yaml`. Nothing generates them.
 |----------------|-----------|:------------:|:----------:|:------------:|:-----------:|:---------------------:|:--------------------:|:-----------------:|
 | `slim-grpc`    | gRPC      |              |     X      |      X       |             |                       |                      |                   |
 | `slim-kafka`   | Kafka     |              |     X      |      X       |             |                       |                      |                   |
-| `single-grpc`  | gRPC      |      X       |     X      |      X       |      X      |                       |          X           |         X         |
+| `single-grpc`  | gRPC      |              |     X      |      X       |      X      |                       |          X           |         X         |
 | `single-kafka` | Kafka     |      X       |     X      |      X       |      X      |           X           |          X           |         X         |
 
 The last four columns run one container per source once a source created through the engine binds one.
 
 Every profile also runs the engine, the UI, HyperDX and the self-monitoring collector, from its `core`, `hyperdx` and `otel` footprint keys. The Kafka profiles add the broker and Kafbat. The matching `.env` flag overrides each key ([configuration.md](configuration.md)).
 
-**A name is `<tier>-<transport>`.** dfe-engine runs as `docker-slim` on a `slim-*` profile and as `docker-single` on a `single-*` one. It seeds its default apps from that tier. `slim` is the core data path alone. `single` adds one archiver and the per-source apps. On Kafka the archiver archives each source from its landing topic. On gRPC nothing sends it records ([architecture.md](architecture.md#events-arrive-two-ways-and-leave-one)). `resolve_profile.py` refuses any other name. An old one such as `single` fails with the profile that replaces it.
+**A name is `<tier>-<transport>`.** dfe-engine runs as `docker-slim` on a `slim-*` profile and as `docker-single` on a `single-*` one. It seeds its default apps from that tier. `slim` is the core data path alone. `single` adds the per-source apps. `single-kafka` also runs one archiver, which archives each source from its landing topic. `single-grpc` runs no archiver, so archiving needs a Kafka profile ([architecture.md](architecture.md#events-arrive-two-ways-and-leave-one)). `resolve_profile.py` refuses any other name. An old one such as `single` fails with the profile that replaces it.
 
 **One per source, as on Kubernetes.** The fetcher and the transforms run one instance per source. dfe-engine writes each source's config into its own directory and its name into `env/<app>.instances`. `scripts/instances.py` turns each name into a service in `.tmp/docker-compose.instances.yml`, which `make apply` starts.
 

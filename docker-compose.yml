@@ -550,8 +550,7 @@ services:
 
   # ===========================================================================
   # dfe-archiver
-  # Reads the landing topics off the broker, or receives on its scalo Push
-  # listener where the profile has no broker (config/archiver/<transport>.yaml).
+  # Reads the landing topics off the broker (config/archiver/kafka.yaml). No gRPC profile runs it.
   # ===========================================================================
 
   dfe-archiver:

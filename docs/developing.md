@@ -246,7 +246,7 @@ Live mode needs a Linux host: on macOS the container's install would swap the na
 mounts. `active_profile` is the default; `DFE_PROFILE` overrides it for one
 invocation.
 
-Every profile is a whole stack named `<tier>-<transport>`: `slim` runs the core data path, `single` adds the archiver and the per-source apps, over `grpc` or `kafka`. Which profile runs what: [profiles.md](profiles.md). There is no `scale` tier: Compose cannot run an HA broker or a ClickHouse cluster.
+Every profile is a whole stack named `<tier>-<transport>`: `slim` runs the core data path, `single` adds the per-source apps, over `grpc` or `kafka`. Only `single-kafka` runs the archiver. Which profile runs what: [profiles.md](profiles.md). There is no `scale` tier: Compose cannot run an HA broker or a ClickHouse cluster.
 
 ```bash
 DFE_PROFILE=single-kafka make dev     # override the profile
