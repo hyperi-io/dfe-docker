@@ -11,8 +11,3 @@ destinations:
 
 loader:
   transport: grpc
-
-routing:
-  source_rules:
-    - field: _source
-      mode: key_value_use
