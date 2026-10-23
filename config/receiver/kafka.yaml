@@ -5,8 +5,3 @@
 #
 # License:   BUSL-1.1
 # Copyright: (c) 2026 HYPERI PTY LIMITED
-
-routing:
-  source_rules:
-    - field: _source
-      mode: key_value_use
