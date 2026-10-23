@@ -8,7 +8,7 @@
 
 """The command lines `make apply` and the start goals print, in a copy of the Makefile.
 
-These goals include .tmp/profile.mk, which scripts/resolve_profile.py writes from the real profiles and the engine's instance index. A stand-in resolver writes a fixed one instead, so what is asserted is the Makefile's own wiring: apply removes the instance containers the fragment no longer declares before it recreates anything, against the same compose project. A start goal on a checkout with no .env has it minted before its first compose call.
+These goals include .tmp/profile.mk, which scripts/resolve_profile.py writes from the real profiles and the engine's instance index. A stand-in resolver writes a fixed one instead, so what is asserted is the Makefile's own wiring: apply removes the instance containers the fragment no longer declares before it recreates anything, against the same compose project, and then hands a running collector the CPU limits it re-resolved. A start goal on a checkout with no .env has it minted before its first compose call.
 """
 
 import os
@@ -41,20 +41,36 @@ if not target.is_file() or target.read_text(encoding="utf-8") != content:
 
 _PRUNE = "scripts/instances.py --prune"
 
+# The same stack with the collector running.
+_COLLECTOR_RESOLVER = _RESOLVER.replace(
+    "DFE_OTEL_RESOLVED := false", "DFE_OTEL_RESOLVED := true"
+)
+
+
+def _copy_makefile(root: Path, *, resolver: str) -> Path:
+    """The Makefile, one stand-in resolver, the network precheck, and no .env."""
+    shutil.copy(REPO_ROOT / "Makefile", root / "Makefile")
+    (root / "scripts").mkdir()
+    (root / "scripts" / "resolve_profile.py").write_text(
+        resolver, encoding="utf-8", newline="\n"
+    )
+    # The goals that reuse a live network run it while make parses, and a precheck that cannot run refuses the start.
+    shutil.copy(
+        REPO_ROOT / "scripts" / "proxy_tls.py", root / "scripts" / "proxy_tls.py"
+    )
+    return root
+
+
+@pytest.fixture
+def collector_checkout(tmp_path: Path) -> Path:
+    """A checkout whose resolved stack runs the collector."""
+    return _copy_makefile(tmp_path, resolver=_COLLECTOR_RESOLVER)
+
 
 @pytest.fixture
 def checkout(tmp_path: Path) -> Path:
     """The Makefile, a stand-in resolver, the network precheck, and no .env."""
-    shutil.copy(REPO_ROOT / "Makefile", tmp_path / "Makefile")
-    (tmp_path / "scripts").mkdir()
-    (tmp_path / "scripts" / "resolve_profile.py").write_text(
-        _RESOLVER, encoding="utf-8", newline="\n"
-    )
-    # The goals that reuse a live network run it while make parses, and a precheck that cannot run refuses the start.
-    shutil.copy(
-        REPO_ROOT / "scripts" / "proxy_tls.py", tmp_path / "scripts" / "proxy_tls.py"
-    )
-    return tmp_path
+    return _copy_makefile(tmp_path, resolver=_RESOLVER)
 
 
 def _dry_run(*, cwd: Path, args: list[str]) -> list[list[str]]:
@@ -178,3 +194,24 @@ def test_a_start_goal_mints_env_before_its_first_compose_call(
 
     init = _index(lines, starts=["python3", "scripts/init.py"])
     assert init < _index(lines, starts=["docker", "compose"])
+
+
+@pytest.mark.parametrize("services", ["", "dfe-loader"])
+def test_apply_hands_the_collector_the_limits_it_resolved(
+    collector_checkout: Path, services: str
+) -> None:
+    # An instance added or removed moves the limits, and compose recreates only on a change.
+    lines = _dry_run(cwd=collector_checkout, args=["apply", f"SERVICES={services}"])
+
+    prune = _index(lines, starts=["python3", *_PRUNE.split()])
+    refresh = _index(lines, starts=["docker", "compose"], has="otel-collector")
+    assert prune < refresh
+    assert lines[refresh][-4:] == ["up", "-d", "--no-deps", "otel-collector"]
+    compose_args = lines[refresh][2 : lines[refresh].index("up")]
+    assert lines[prune][lines[prune].index("--") + 1 :] == compose_args
+
+
+def test_apply_leaves_a_stack_with_no_collector_alone(checkout: Path) -> None:
+    lines = _dry_run(cwd=checkout, args=["apply", "SERVICES=dfe-loader"])
+
+    assert not any("otel-collector" in tokens for tokens in lines)

@@ -24,6 +24,9 @@ processors:
   batch:
     send_batch_size: 1024
     timeout: 5s
+  # sql_query sets its columns on each reading, and the usage rollup reads them off the resource
+  groupbyattrs/usage:
+    keys: [k8s.container.name, k8s.pod.uid]
   memory_limiter:
     check_interval: 5s
     limit_percentage: 75
@@ -34,6 +37,23 @@ processors:
       - action: upsert
         key: service.name
         value: clickhouse
+  # The usage rollup joins a service's limit to its host's CPUs on the node name, so both carry the same one
+  resource/host:
+    attributes:
+      - action: upsert
+        key: service.name
+        value: docker-host
+      - action: upsert
+        key: k8s.node.name
+        value: ${env:DFE_USAGE_NODE_NAME}
+  resource/usage:
+    attributes:
+      - action: upsert
+        key: service.name
+        value: docker-compose
+      - action: upsert
+        key: k8s.node.name
+        value: ${env:DFE_USAGE_NODE_NAME}
   # Names container logs after their container and strips colour codes
   transform/container_logs:
     error_mode: ignore
@@ -47,6 +67,12 @@ receivers:
   # Container stdout from Docker's fluentd log driver
   fluent_forward:
     endpoint: 0.0.0.0:24224
+  # The docker host's logical CPUs, through its /proc mounted read-only at /hostfs
+  host_metrics:
+    collection_interval: 30s
+    root_path: /hostfs
+    scrapers:
+      cpu: {}
   otlp:
     protocols:
       grpc:
@@ -148,6 +174,30 @@ receivers:
             toInt64(sumIf(value, event = 'FailedQuery')) AS ch_failed_queries,
             toInt64(sumIf(value, event = 'FailedInsertQuery')) AS ch_failed_insert_queries
           FROM system.events
+  # Each running service's CPU limit as make resolved it, in the shape the usage rollup reads Kubernetes' container requests in
+  sql_query/usage:
+    collection_interval: 30s
+    datasource: "clickhouse://${env:CLICKHOUSE_USERNAME}:${env:CLICKHOUSE_PASSWORD}@${env:CLICKHOUSE_HOST}:${env:CLICKHOUSE_PORT}/${env:DFE_OTEL_DATABASE}"
+    driver: clickhouse
+    queries:
+      - metrics:
+          - attribute_columns: [k8s.container.name, k8s.pod.uid]
+            metric_name: k8s.container.cpu_request
+            unit: "{cpu}"
+            value_column: cores
+            value_type: double
+          # The rollup counts a container only beside a Running (2) phase reading of the same instant, which one query gives both
+          - attribute_columns: [k8s.container.name, k8s.pod.uid]
+            metric_name: k8s.pod.phase
+            value_column: phase
+        sql: >-
+          SELECT
+            tupleElement(entry, 1) AS `k8s.container.name`,
+            tupleElement(entry, 1) AS `k8s.pod.uid`,
+            tupleElement(entry, 2) AS cores,
+            2 AS phase
+          FROM system.one
+          ARRAY JOIN JSONExtractKeysAndValues('${env:DFE_USAGE_CPU_LIMITS}', 'Float64') AS entry
 
 service:
   extensions: [health_check]
@@ -164,6 +214,14 @@ service:
       exporters: [clickhouse]
       processors: [memory_limiter, resource/clickhouse, batch]
       receivers: [sql_query/clickhouse]
+    metrics/host:
+      exporters: [clickhouse]
+      processors: [memory_limiter, resource/host, batch]
+      receivers: [host_metrics]
+    metrics/usage:
+      exporters: [clickhouse]
+      processors: [memory_limiter, groupbyattrs/usage, resource/usage, batch]
+      receivers: [sql_query/usage]
     traces:
       exporters: [clickhouse]
       processors: [memory_limiter, batch]

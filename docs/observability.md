@@ -70,9 +70,10 @@ flowchart LR
     apps["DFE services"] -->|OTLP push :4317| col["otel-collector"]
     apps -->|stdout| drv["Docker log driver"]
     drv -->|fluent_forward :24224| col
-    chsrv[("ClickHouse<br/>system tables")] -->|sql_query pull| col
+    chsrv[(ClickHouse system tables)] -->|sql_query pull| col
+    host("docker host /proc") -->|host_metrics pull| col
     col -->|self-telemetry :8888| col
-    col -->|clickhouse exporter| ch[(`dfe.otel_*` tables)]
+    col -->|clickhouse exporter| ch[(dfe.otel_* tables)]
     ch -.->|queries it| hdx["HyperDX"]
 
     classDef on fill:#009E73,color:#ffffff,stroke:#000000
@@ -83,8 +84,9 @@ Services PUSH. HyperDX reads ClickHouse rather than receiving anything -- the
 fork ships no OTLP receiver, so the collector's exporter writes the tables it
 queries. This is the same chain Kubernetes runs.
 
-Two of the collector's inputs are PULLS, not pushes, because their sources cannot
-push. `sql_query` reads ClickHouse's own `system.metrics`, `system.events` and
+Three of the collector's inputs are PULLS, not pushes, because their sources cannot
+push. `host_metrics` reads the docker host's CPUs for the usage readings below.
+`sql_query` reads ClickHouse's own `system.metrics`, `system.events` and
 `system.parts` on a 30s interval -- the `:9363` Prometheus endpoint is not exposed
 by the stack's image, and these system tables are readable on any provider,
 managed ClickHouse included. The `prometheus` receiver scrapes the collector's own
@@ -98,6 +100,20 @@ working on Kubernetes.
 `/metrics` is a SEPARATE pathway, for anything that scrapes. This repo ships
 nothing that does. Enabling push does not disable it: a Prometheus estate and a
 HyperDX estate are both served.
+
+dfe-engine's Overview counts cores from the usage rollup dfe-schemas declares, and that rollup reads the Kubernetes shape. So the collector reports Compose in it:
+
+| Reading | Where it comes from here | Table |
+|---|---|---|
+| `k8s.container.cpu_request` | `sql_query/usage`: the CPU limit of each service the stack runs | `otel_metrics_gauge` |
+| `k8s.pod.phase`, 2 (Running) | the same query, at the same instant, which the rollup requires beside each limit | `otel_metrics_gauge` |
+| `system.cpu.logical.count` | `host_metrics`, through the host's `/proc` mounted read-only at `/hostfs/proc` | `otel_metrics_sum` |
+
+All three carry `k8s.node.name`, the docker host's name, which joins a service's cores to its host's.
+
+- Compose carries CPU limits where Kubernetes counts requests, so a service counts its ceiling. Limits can add up to more than the host has, and then cores deployed reads higher than worker-node cores.
+- A one-shot (`restart: "no"`) exits once its job is done and does not count. A service with no CPU limit (`DFE_SERVICE_CPUS=0`, say) counts every core on the host.
+- `make dev`, `ci`, `up` and `apply` read the limits from the compose model of what `up` starts and hand them to the collector as `DFE_USAGE_CPU_LIMITS` and `DFE_USAGE_NODE_NAME`. A collector started by a plain `docker compose up` has neither, so cores deployed reads as not measured. `make apply` recreates the collector when an added or deleted source moved them.
 
 ## Turning self-monitoring on and off
 
@@ -178,7 +194,7 @@ moment the container starts, before the collector inside is listening, and drops
 what it is sent. Without an ack the driver counts those lines as delivered, and a
 service starting beside the collector loses its startup lines.
 
-Node metrics are still not collected.
+Of the host's own metrics only its CPUs are collected, for the usage readings.
 
 ## What a passing self test proves
 
