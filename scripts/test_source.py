@@ -44,6 +44,7 @@ import os
 import shlex
 import subprocess
 import sys
+from collections.abc import Mapping
 from pathlib import Path
 
 # Bytecode for the repo modules imported below goes to .tmp/pycache, as it does under make
@@ -261,11 +262,18 @@ def _ui_urls(*, bound: str, host: str) -> tuple[str, str]:
     return console, engine
 
 
-def _suite_env(*, host: str, engine_url: str) -> dict[str, str]:
+def _suite_env(
+    *, found: Mapping[str, str], host: str, engine_url: str
+) -> dict[str, str]:
     """The DFE_E2E_* block, the same one dfe-ops exports for the Kubernetes lanes.
 
     There it comes from the cluster's secrets and port-forwards; here from .env
     and the published ports, which is where a compose deployment keeps them.
+
+    The block is laid over ``found``, the environment the script was started
+    with, never over .env: make re-reads .env and exports a key it finds in the
+    environment with the spaces before that line's comment, which turns every
+    annotated image pin into a reference Docker refuses.
     """
     password = os.environ.get("DFE_AUTH_LOCAL_ADMIN_PASSWORD", "")
     if not (password):
@@ -273,7 +281,7 @@ def _suite_env(*, host: str, engine_url: str) -> dict[str, str]:
             "test_source: the runner signs in as this deployment's admin, so it "
             "needs DFE_AUTH_LOCAL_ADMIN_PASSWORD from this stack's .env"
         )
-    env = dict(os.environ)
+    env = dict(found)
     env.update(
         {
             "DFE_E2E_RECEIVER_URL": env_or(
@@ -342,6 +350,7 @@ def main(argv: list[str] | None = None) -> int:
     # ports to, and .env's own copy is inert by design (.env.example says not to
     # set it by hand, because a raw `docker compose` gets the loopback default).
     ui_bind = os.environ.get("DFE_UI_BIND_HOST", "").strip()
+    found = dict(os.environ)
     _load_dotenv()
     infra = _infra_repo(args.infra_repo)
     engine = _engine_repo(args.engine_repo)
@@ -389,7 +398,7 @@ def main(argv: list[str] | None = None) -> int:
     runner += [arg for arg in runner_args if arg != "--"]
 
     _print(msg=f"case {args.case}, console {ui_url}, runner from {infra}")
-    return walk(runner, _suite_env(host=host, engine_url=engine_url))
+    return walk(runner, _suite_env(found=found, host=host, engine_url=engine_url))
 
 
 if __name__ == "__main__":
