@@ -49,7 +49,7 @@ secrets:
   ## Base path the secrets live under. Which path is estate context.
   ref: ""
 
-## Service profile. Left commented, service_profiles.yaml's active_profile is used. One of slim-grpc, slim-kafka, single-grpc or single-kafka, each `<tier>-<transport>`: single adds the archiver and the fetchers to slim. There is no `scale`: Compose runs neither an HA broker nor a ClickHouse cluster. Each profile carries its own core/kafbat/hyperdx/otel footprint. The flags below OVERRIDE it.
+## Service profile. Left commented, service_profiles.yaml's active_profile is used. One of slim-grpc, slim-kafka, single-grpc or single-kafka, each `<tier>-<transport>`: single adds the per-source apps to slim, plus the archiver on Kafka. There is no `scale`: Compose runs neither an HA broker nor a ClickHouse cluster. Each profile carries its own core/kafbat/hyperdx/otel footprint. The flags below OVERRIDE it.
 # profile: single-kafka
 
 ## docker-vm knobs. Each maps to one .env key; a blank/absent field leaves the

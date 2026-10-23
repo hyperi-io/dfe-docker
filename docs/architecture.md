@@ -64,16 +64,16 @@ flowchart LR
     loader --> ch
 ```
 
-Transport is a per-profile choice, not a global one. On a `kafka-*` profile the
+Transport is a per-profile choice, not a global one. On a `*-kafka` profile the
 ingest components produce to a `*_land` topic derived from the event's `_source`,
-and the loader consumes `topic_regex: .*_land`. On a `grpc-*` profile there is no
-broker -- the ingest components dial `dfe-loader:6000` directly.
+and the loader consumes `topic_regex: .*_land`. On a `*-grpc` profile there is no
+broker: the ingest components dial `dfe-loader:6000` directly.
 
-The three transforms are bus-only today: each reads a topic and writes a topic. `dfe-archiver` archives each source from its landing topic on Kafka. Its gRPC config (`config/archiver/grpc.yaml`) listens on port 6000, but nothing on a direct tier sends records to it. Once a transform writes `<base>_load`, the loader reads it instead of `<base>_land`, through the same `config/loader/kafka.yaml`: scalo drops `<base>_land` from its subscription once `<base>_load` exists.
+The three transforms are bus-only today: each reads a topic and writes a topic. `dfe-archiver` archives each source from its landing topic on Kafka. No gRPC profile runs it, so archiving needs a Kafka profile. Once a transform writes `<base>_load`, the loader reads it instead of `<base>_land`, through the same `config/loader/kafka.yaml`: scalo drops `<base>_land` from its subscription once `<base>_load` exists.
 
 ## What each profile runs
 
-`slim-*` is the core data path alone: receiver, loader, engine, UI and HyperDX. `single-*` adds one archiver and the per-source apps its keys enable ([profiles.md](profiles.md#which-profile-runs-what)). The `-kafka` profiles add the broker. None starts a per-source app until a source created through the engine binds one.
+`slim-*` is the core data path alone: receiver, loader, engine, UI and HyperDX. `single-*` adds the per-source apps its keys enable ([profiles.md](profiles.md#which-profile-runs-what)). The `-kafka` profiles add the broker. `single-kafka` also adds one archiver. None starts a per-source app until a source created through the engine binds one.
 
 ## The engine renders each app's config
 
