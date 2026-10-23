@@ -9,6 +9,8 @@
 """What `make dev LOCAL=...` accepts and builds, in a copy of the Makefile.
 
 A per-source app is never in DFE_SERVICES, only its instances are, so LOCAL also accepts the apps the profile runs per source. The resolver is handed the per-source apps built locally, because only it can put a local image on an instance: what LOCAL names, else every one the profile runs on `make dev`, else what the last dev build recorded on `make apply`.
+
+Only the goals that start services also hand it `--usage`, because that run asks docker compose for each service's CPU limit.
 """
 
 import os
@@ -24,6 +26,8 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 _BUILD = ["python3", "scripts/build_dev_images.py"]
 _RECORD = "docker-compose.local.yml"
 _RESOLVER_ARGS = Path(".tmp") / "resolver-args"
+# What a goal that starts services adds, asserted apart from the LOCAL arguments.
+_USAGE = "--usage"
 
 # Each run appends its arguments as a line, because make runs the resolver again on each pass and in each sub-make. Written only when it differs, as the real resolver does: make re-reads a remade include, so rewriting it every run would never settle
 _RESOLVER = '''\
@@ -69,10 +73,20 @@ def _build_targets(*, result: subprocess.CompletedProcess) -> list[str] | None:
     return names
 
 
-def _first_resolve(*, checkout: Path) -> list[str]:
-    """The arguments the resolver was handed by the goal's own make, before any sub-make ran it."""
+def _resolves(*, checkout: Path) -> list[list[str]]:
+    """The arguments of every resolver run, in order."""
     lines = (checkout / _RESOLVER_ARGS).read_text(encoding="utf-8").splitlines()
-    return lines[0].split()
+    return [line.split() for line in lines]
+
+
+def _local_args(args: list[str]) -> list[str]:
+    """One run's arguments without the usage flag."""
+    return [arg for arg in args if arg != _USAGE]
+
+
+def _first_resolve(*, checkout: Path) -> list[str]:
+    """The LOCAL arguments the resolver was handed by the goal's own make, before any sub-make ran it."""
+    return _local_args(_resolves(checkout=checkout)[0])
 
 
 def _make(*, args: list[str], cwd: Path) -> subprocess.CompletedProcess:
@@ -192,9 +206,9 @@ def test_apply_puts_each_instance_back_on_what_the_dev_build_recorded(
     )
 
     assert result.returncode == 0, result.stderr
-    lines = (checkout / _RESOLVER_ARGS).read_text(encoding="utf-8").splitlines()
-    assert lines
-    assert all(line.split() == ["--local-overlay", _RECORD] for line in lines)
+    runs = _resolves(checkout=checkout)
+    assert runs
+    assert all(_local_args(run) == ["--local-overlay", _RECORD] for run in runs)
 
 
 def test_apply_with_local_hands_the_resolver_what_it_names(checkout: Path) -> None:
@@ -221,6 +235,28 @@ def test_a_registry_start_hands_the_resolver_none(checkout: Path) -> None:
 
     assert result.returncode == 0, result.stderr
     assert _first_resolve(checkout=checkout) == []
+
+
+@pytest.mark.parametrize("goal", ["ci", "dev", "up", "apply"])
+def test_a_goal_that_starts_services_asks_for_the_usage_limits(
+    checkout: Path, goal: str
+) -> None:
+    result = _make(args=["-n", goal], cwd=checkout)
+
+    assert result.returncode == 0, result.stderr
+    assert _USAGE in _resolves(checkout=checkout)[0]
+
+
+@pytest.mark.parametrize("goal", ["post", "ps"])
+def test_a_goal_that_starts_nothing_never_asks_compose_for_the_limits(
+    checkout: Path, goal: str
+) -> None:
+    result = _make(args=["-n", goal], cwd=checkout)
+
+    assert result.returncode == 0, result.stderr
+    runs = _resolves(checkout=checkout)
+    assert runs, "the resolver never ran"
+    assert not any(_USAGE in run for run in runs)
 
 
 def test_a_registry_start_removes_the_dev_build_record_before_it_starts(

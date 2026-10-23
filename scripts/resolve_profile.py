@@ -44,6 +44,7 @@ from pathlib import Path
 sys.pycache_prefix = str(Path(__file__).resolve().parent.parent / ".tmp" / "pycache")
 
 import instances  # noqa: E402
+import usage_cores  # noqa: E402
 from _common import (  # noqa: E402
     CONFIG_DIR,
     EXTERNAL_ORIGIN_KEY,
@@ -588,6 +589,13 @@ def _parse_args(argv: Sequence[str]) -> argparse.Namespace:
         help="put every per-source app the profile runs on its local image, as a "
         "`make dev` with no LOCAL builds each one",
     )
+    parser.add_argument(
+        "--usage",
+        action="store_true",
+        help="also export the CPU limit of each service the stack runs, which the "
+        "collector reports as cores deployed. It asks docker compose, so only the "
+        "goals that start services pass it",
+    )
     return parser.parse_args(list(argv))
 
 
@@ -770,6 +778,13 @@ def main(argv: Sequence[str] = ()) -> int:
             if footprint["hyperdx"]:
                 service_list.extend(AUTH_HYPERDX_SERVICES)
         lines.append(f"export DFE_SERVICES := {' '.join(service_list)}")
+
+        # The limits the collector reports, read from the services this resolve starts, so only a stack with a collector needs them.
+        if args.usage and footprint["otel"]:
+            fragment = instances.COMPOSE_INSTANCES_FILE if instance_services else None
+            lines += usage_cores.profile_lines(
+                profiles=profiles, services=service_list, fragment=fragment
+            )
 
         # What the engine is told about this tier, each line emitted unconditionally and empty where it does not apply, so the included file settles. .env may name another broker and move the content volume's mount
         tier = engine_tier(
