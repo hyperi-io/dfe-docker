@@ -1,0 +1,2 @@
+# Marks each record this program runs on, which the e2e suite then looks for in every row the test lands
+._tags.e2e_transform = "vrl"

@@ -8,7 +8,7 @@
 
 """The *.tls.yaml proxy configs are their plain configs with marked TLS blocks added and nothing else.
 
-The plain config is what every stack runs and the TLS one is what DFE_PROXY_TLS=true mounts instead, so an edit made to one alone would leave the two stacks routing differently without any check noticing. Stripping the blocks between the markers has to give back the plain file exactly.
+The plain config is what every stack runs and the TLS one is what DFE_PROXY_TLS=true mounts instead, so an edit made to one alone would leave the two stacks routing differently without any check noticing. Past each file's own header comment, stripping the blocks between the markers has to give back the plain file exactly.
 
 dfe-hyperdx-proxy's TLS chains repeat the filters of the plain chain that follows each one, because YAML cannot point at a node that carries no anchor, so those copies are held equal too.
 """
@@ -39,7 +39,8 @@ _LISTENERS = [
         True,
     ),
 ]
-_LISTENER_NAME = re.compile(r"^    - name: (\S+)$")
+_LISTENER_ITEM = "    - "
+_LISTENER_NAME = re.compile(r"^    [ -] name: (\S+)$")
 # The key a filter chain's network filters sit under, with or without the list dash.
 _FILTERS_KEYS = ("filters:", "- filters:")
 
@@ -69,25 +70,35 @@ def _filters_blocks(*, text: str) -> list[tuple[bool, list[str]]]:
 
 
 def _listeners(*, text: str) -> dict[str, list[str]]:
-    """Return each listener's lines by listener name, from `listeners:` to `clusters:`."""
+    """Return each listener's lines by listener name, from `listeners:` to the next key at its level."""
     blocks = {}
-    current = None
+    current = []
     inside = False
     for line in text.splitlines():
         if line == "  listeners:":
             inside = True
             continue
-        if line == "  clusters:":
-            break
         if not (inside):
             continue
+        if line.strip() and not (line.startswith("   ")):
+            break
+        if line.startswith(_LISTENER_ITEM):
+            current = []
+        current.append(line)
         match = _LISTENER_NAME.match(line)
         if match:
-            current = match.group(1)
-            blocks[current] = []
-        elif current is not None:
-            blocks[current].append(line)
+            blocks[match.group(1)] = current
     return blocks
+
+
+def _past_header(*, text: str) -> str:
+    """Return text from its first line that is not a comment, so each file keeps a header of its own."""
+    lines = text.splitlines(keepends=True)
+    start = next(
+        (index for index, line in enumerate(lines) if not (line.startswith("#"))),
+        len(lines),
+    )
+    return "".join(lines[start:])
 
 
 def _strip_tls(*, text: str) -> str:
@@ -115,9 +126,10 @@ def _strip_tls(*, text: str) -> str:
 def test_stripping_the_tls_blocks_gives_back_the_plain_config(
     plain: str, tls: str
 ) -> None:
+    plain_text = (PROXY_DIR / plain).read_text(encoding="utf-8")
     tls_text = (PROXY_DIR / tls).read_text(encoding="utf-8")
 
-    assert _strip_tls(text=tls_text) == (PROXY_DIR / plain).read_text(encoding="utf-8")
+    assert _past_header(text=_strip_tls(text=tls_text)) == _past_header(text=plain_text)
 
 
 @pytest.mark.parametrize(("plain", "tls", "listeners", "dual"), _LISTENERS)

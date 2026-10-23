@@ -52,12 +52,26 @@ LOOPBACK_ORIGINS = frozenset(
     }
 )
 
-# The profiles that are PROJECTIONS of the Kubernetes tiers of the same name,
-# rendered by render_profiles.py. Their app set comes from dfe-infra apps.yaml
-# `default_in` and every app in it idles until something configures it, so these
-# are also the tiers whose app config dfe-engine renders. Every other profile is
-# a hand-crafted data-plane shape that ships its own config and must keep it.
-PROJECTED_PROFILES = ("slim", "single")
+# Every service profile, each `<tier>-<transport>`. dfe-engine renders each one's app config and runs as `docker-<tier>`, the only tiers it knows
+RENDERED_PROFILES = ("slim-grpc", "slim-kafka", "single-grpc", "single-kafka")
+
+# What a Kafka dfe-loader subscribes to when its config names no topics and no topic_regex (dfe-loader src/kafka/transport.rs LANDING_TOPIC_INCLUDE)
+LOADER_DEFAULT_TOPIC_REGEX = "_(land|load)$"
+
+# Each app dfe-engine starts one container per source of, never as a profile's service, with the profile key that runs it and the variable resolve_profile.py writes the enabled apps to
+FETCHER_SERVICE = "dfe-fetcher"
+PER_SOURCE_APP_KEYS = {
+    FETCHER_SERVICE: "fetcher_enabled",
+    "dfe-transform-elastic": "transform_elastic_enabled",
+    "dfe-transform-vector": "transform_vector_enabled",
+    "dfe-transform-vrl": "transform_vrl_enabled",
+}
+PER_SOURCE_APPS_VAR = "DFE_PER_SOURCE_APPS"
+# A source's `transform.engine` runs the app this prefix names (dfe-engine appmgmt/catalogue.py TRANSFORM_SERVICE_PREFIX)
+TRANSFORM_APP_PREFIX = "dfe-transform-"
+# dfe-engine's rule for a source name (source/models.py _SOURCE_PATTERN and _SOURCE_MAX_LENGTH), which a per-source instance is named after
+SOURCE_NAME = re.compile(r"[a-z]([a-z0-9-]*[a-z0-9])?")
+SOURCE_NAME_MAX_LENGTH = 40
 
 # The config file each app reads, by the manifest's `consumes.config`. Shared,
 # because the resident service reads it at <mount>/<app>/ and a per-source
@@ -77,12 +91,8 @@ SERVICE_CONFIG_FILE = {
 # committed file and the file NAME in the rendered path is SERVICE_CONFIG_FILE.
 SERVICE_TO_RENDERED_CONFIG_VAR = {
     "dfe-archiver": "DFE_ARCHIVER_CONFIG_FILE",
-    "dfe-fetcher": "DFE_FETCHER_CONFIG_FILE",
     "dfe-loader": "DFE_LOADER_CONFIG_FILE",
     "dfe-receiver": "DFE_RECEIVER_CONFIG_FILE",
-    "dfe-transform-elastic": "DFE_TRANSFORM_ELASTIC_CONFIG_FILE",
-    "dfe-transform-vector": "DFE_TRANSFORM_VECTOR_CONFIG_FILE",
-    "dfe-transform-vrl": "DFE_TRANSFORM_VRL_CONFIG_FILE",
 }
 
 # The suffix of the env file dfe-engine writes into env/ for one Compose service,
@@ -110,7 +120,8 @@ COMPOSE_LIVE_UI_FILE = REPO_ROOT / "docker-compose.live-ui.yml"
 # Generated per run by `make dev LOCAL=...`, never committed.
 COMPOSE_LOCAL_FILE = REPO_ROOT / "docker-compose.local.yml"
 COMPOSE_OVERRIDE_FILE = REPO_ROOT / "docker-compose.override.yml"
-PROFILE_MK = REPO_ROOT / ".profile.mk"
+# Written by resolve_profile.py on every make run that needs the stack and included by the Makefile, so deleting .tmp/ costs nothing
+PROFILE_MK = REPO_ROOT / ".tmp" / "profile.mk"
 RUST_BUILDER = REPO_ROOT / "docker" / "dfe-rust-builder.Dockerfile"
 SERVICE_PROFILES_FILE = REPO_ROOT / "service_profiles.yaml"
 
@@ -162,14 +173,17 @@ def _config_topics(*, path: Path) -> tuple[set[str], set[str], str]:
 
     A dfe-transform-vector config names one source instead of its topics, and the
     app derives ``<source>_land`` in and ``<source>_load`` out from it. Deriving
-    them here too is what keeps such a config inside the wiring and topic-init
-    checks rather than silently outside them. Named topics still win, exactly as
+    them here too is what keeps such a config inside the outage tests' consumer
+    counts rather than silently outside them. Named topics still win, exactly as
     they do in the app.
+
+    A Kafka dfe-loader config that names neither topics nor a topic_regex reads the loader's own default pattern, for the same reason.
     """
     subscribed: set[str] = set()
     produced: set[str] = set()
     regex = ""
     dfe_source = ""
+    transport = ""
     in_list = False
     for raw in path.read_text(encoding="utf-8", errors="replace").splitlines():
         line = raw.strip()
@@ -185,33 +199,19 @@ def _config_topics(*, path: Path) -> tuple[set[str], set[str], str]:
             regex = line.split(": ", 1)[1].strip().strip("\"'")
         elif line.startswith("dfe_source: "):
             dfe_source = line.split(": ", 1)[1].strip().strip("\"'")
+        elif line.startswith("transport: "):
+            transport = line.split(": ", 1)[1].strip().strip("\"'")
     if dfe_source:
         subscribed = subscribed or {f"{dfe_source}_land"}
         produced = produced or {f"{dfe_source}_load"}
+    if (
+        path.parent.name == "loader"
+        and transport != "grpc"
+        and not (subscribed)
+        and not (regex)
+    ):
+        regex = LOADER_DEFAULT_TOPIC_REGEX
     return subscribed, produced, regex
-
-
-def _config_enrichment_paths(*, path: Path) -> set[str]:
-    """Return the container paths a service config's `enrichment_tables` entries name.
-
-    The same deliberately small reader as `_config_topics`, for the same reason:
-    the callers run with no PyYAML. A config with no enrichment tables returns an
-    empty set.
-    """
-    paths: set[str] = set()
-    in_block = False
-    for raw in path.read_text(encoding="utf-8", errors="replace").splitlines():
-        line = raw.strip()
-        if not (line) or line.startswith("#"):
-            continue
-        if line == "enrichment_tables:":
-            in_block = True
-            continue
-        if in_block and not (raw.startswith((" ", "\t"))):
-            in_block = False
-        if in_block and (line.startswith("path: ") or line.startswith("- path: ")):
-            paths.add(line.split("path: ", 1)[1].strip().strip("\"'"))
-    return paths
 
 
 def _config_argument(*, args: typing.Sequence[str]) -> str | None:
@@ -297,9 +297,7 @@ def _load_dotenv() -> None:
 def _use_mounted_configs(*, environ: typing.MutableMapping[str, str]) -> None:
     """Blank every rendered-config variable, so each service reads its mounted file.
 
-    `make` exports the engine-rendered paths from `.profile.mk` to every recipe
-    and `.env` can carry them too. Compose falls back to the committed mount on an
-    empty value, and a set-but-empty variable also beats the one in `.env`.
+    `make` exports the engine-rendered paths from `.tmp/profile.mk` to every recipe and `.env` can carry them too. Compose falls back to the committed mount on an empty value. A set-but-empty variable also beats the one in `.env`.
     """
     for var in SERVICE_TO_RENDERED_CONFIG_VAR.values():
         environ[var] = ""
@@ -345,11 +343,9 @@ def _parse_yaml_subset(*, text: str) -> dict[str, object]:
 
 
 def _profile_mk_value(*, key: str) -> list[str]:
-    """Return the whitespace-split value of one `.profile.mk` assignment.
+    """Return the whitespace-split value of one `.tmp/profile.mk` assignment.
 
-    `.profile.mk` is regenerated by `make` from service_profiles.yaml, so it is
-    the resolved answer to "what is this stack meant to be". Empty list when the
-    profile has not been resolved yet or the key is absent.
+    `.tmp/profile.mk` is regenerated by `make` from service_profiles.yaml, so it is the resolved answer to "what is this stack meant to be". Empty list when the profile has not been resolved yet or the key is absent.
     """
     if not (PROFILE_MK.is_file()):
         return []
@@ -395,15 +391,3 @@ def _required_compose_vars(*, files: tuple[Path, ...] = (COMPOSE_FILE,)) -> set[
     for path in files:
         found |= set(_REQUIRED_VAR_RE.findall(path.read_text(encoding="utf-8")))
     return found
-
-
-def _transform_topics(*, path: Path) -> tuple[set[str], set[str]]:
-    """Return the (subscribed, written) topics of one transform config.
-
-    A transform that subscribes to nothing is IDLE: it joins no consumer group and
-    produces nothing, so the sink it is still required to name is not a topic of
-    this deployment. The config reads the same either way, so the predicate is
-    shared rather than repeated at each caller.
-    """
-    subscribed, produced, _ = _config_topics(path=path)
-    return subscribed, produced if subscribed else set()

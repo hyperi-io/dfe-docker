@@ -28,7 +28,10 @@ import re
 import sys
 from pathlib import Path
 
-from _common import REPO_ROOT, _print, _rel_path
+# Bytecode for the repo modules imported below goes to .tmp/pycache, as it does under make
+sys.pycache_prefix = str(Path(__file__).resolve().parent.parent / ".tmp" / "pycache")
+
+from _common import REPO_ROOT, _print, _rel_path  # noqa: E402
 
 # Markdown inline links: the `](target)` half. Reference-style links are not used
 # anywhere in this docs set; if they appear, extend this rather than assume.

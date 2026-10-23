@@ -19,7 +19,7 @@ import re
 from pathlib import Path
 
 import build_dev_images
-from _common import COMPOSE_FILE
+from _common import COMPOSE_FILE, PER_SOURCE_APP_KEYS
 
 _OVERRIDE_FILE = COMPOSE_FILE.parent / "docker-compose.override.yml"
 _SERVICE_KEY_RE = re.compile(r"^  ([A-Za-z0-9._-]+):$")
@@ -28,7 +28,7 @@ _DEPENDS_ON_RE = re.compile(r"^    depends_on:$")
 _DEPENDENCY_RE = re.compile(r"^      (?:- )?([A-Za-z0-9._-]+):?$")
 _REGISTRY_IMAGE_RE = re.compile(r"^\$\{IMAGE_REGISTRY:-[^}]*\}/([a-z0-9-]+):")
 # One-shots that emit an artefact of the PINNED release (docs/developing.md).
-_PINNED_ONE_SHOT_RE = re.compile(r"^(catalogue|contract)-")
+_PINNED_ONE_SHOT_RE = re.compile(r"^contract-")
 
 
 def _services(path: Path) -> dict[str, dict[str, object]]:
@@ -88,15 +88,42 @@ def test_a_local_build_repoints_every_service_that_runs_its_image():
 
 
 def test_the_committed_override_repoints_every_service_that_runs_a_component():
+    # A per-source app's instances extend docker-compose.yml and never read the override
     override = _services(_OVERRIDE_FILE)
     wrong = {}
     for component in build_dev_images.buildable_components():
-        for service in sorted(_runners(component=component)):
+        for service in sorted(_runners(component=component) - set(PER_SOURCE_APP_KEYS)):
             got = override.get(service, {}).get("image")
             if got != f"{component}:local":
                 wrong[service] = got
 
     assert wrong == {}
+
+
+def test_the_committed_override_names_no_per_source_app() -> None:
+    assert set(_services(_OVERRIDE_FILE)) & set(PER_SOURCE_APP_KEYS) == set()
+
+
+def test_a_recorded_build_reads_back_as_the_components_it_put_on_local(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "docker-compose.local.yml"
+    build_dev_images._record(built=["dfe-engine", "dfe-fetcher"], path=path)
+
+    assert build_dev_images.overlay_components(path=path) == [
+        "dfe-engine",
+        "dfe-fetcher",
+    ]
+
+
+def test_a_record_of_nothing_built_is_deleted(tmp_path: Path) -> None:
+    path = tmp_path / "docker-compose.local.yml"
+    path.write_text(data="services:\n", encoding="utf-8")
+
+    build_dev_images._record(built=[], path=path)
+
+    assert not (path.exists())
+    assert build_dev_images.overlay_components(path=path) == []
 
 
 def test_a_consumer_started_without_its_component_still_gets_it_built():

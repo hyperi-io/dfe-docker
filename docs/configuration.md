@@ -34,7 +34,7 @@ table and the UI classes.
 
 | Variable                                         | Use                                                                                  | Default                                                             |
 |--------------------------------------------------|--------------------------------------------------------------------------------------|---------------------------------------------------------------------|
-| `DFE_INGRESS_BIND_HOST`                          | Interface the receiver and fetcher ingest ports bind                                 | `0.0.0.0`                                                           |
+| `DFE_INGRESS_BIND_HOST`                          | Interface the receiver ingest ports bind                                             | `0.0.0.0`                                                           |
 | `DFE_BIND_HOST`                                  | Interface the datastore, broker, metrics and internal gRPC ports bind                | `127.0.0.1`                                                         |
 | `DFE_BIND_SCOPE`                                 | Where every web UI publishes (`localhost`\|`all`); `make` resolves it to `DFE_UI_BIND_HOST`, and `all` requires `DFE_EXTERNAL_ORIGIN` | `localhost`                            |
 | `DFE_INFRA_UIS_EXTERNAL`                         | Kill switch -- `false` unpublishes every infra-class UI and beats their own flags    | `true`                                                              |
@@ -72,17 +72,17 @@ working on the box itself.
 
 `DFE_PROXY_TLS=true` serves the console (`DFE_UI_PORT`), the HyperDX embed (`DFE_HYPERDX_EMBED_PORT`) and both HyperDX origins (`DFE_HYPERDX_APP_PORT`, `DFE_HYPERDX_API_PORT`) over TLS 1.2 or 1.3 with one certificate. Key exchange prefers hybrid post-quantum X25519MLKEM768, then P-384; TLS 1.2 offers AEAD suites only, AES-256-GCM first. OIDC sign-in needs it on any hostname but `localhost`: outside a dev posture the engine marks its OIDC state and token cookies `Secure` and a browser drops a `Secure` cookie sent over plain http.
 
-Generate a P-384 key and a certificate whose subjectAltName covers every name browsers use. Both proxies run as the user who runs `make` under TLS, so keep the key `0600` and owned by that user:
+`make certs` mints the pair into `DFE_PROXY_CERT_DIR`: a P-384 `console.crt` and `0600` `console.key` for the host `DFE_EXTERNAL_ORIGIN` names plus `localhost` and `127.0.0.1`, along with the `ca.crt` that signed them. It deletes the CA's private key once it has signed, so trusting `ca.crt` in the browser or OS trusts that one certificate and nothing else. It never replaces a file already there. To renew or change the hostname, delete the three files, run it again and trust the new `ca.crt`. Both proxies run as the user who runs `make` under TLS, so run it as that user.
 
-```bash
-mkdir -p certs
-openssl req -x509 -newkey ec -pkeyopt ec_paramgen_curve:P-384 -nodes -sha384 -days 365 \
-  -subj "/CN=dfe.example.com" -addext "subjectAltName=DNS:dfe.example.com" \
-  -keyout certs/console.key -out certs/console.crt
-chmod 600 certs/console.key
-```
+Each machine whose browser opens the console trusts `ca.crt` once, as a certificate authority. Copy `ca.crt` there and nothing else: `console.key` stays on the stack's host. The hostname must resolve on that machine too, through DNS or `/etc/hosts`.
 
-That certificate is self-signed, which suits an evaluation. A CA-issued one goes in the same two files, with the full chain in `console.crt`. Copy real files rather than linking them: a symlink, certbot's `live/` layout included, dangles inside the container, so `cp -L` the pair into place.
+- Firefox keeps its own trust store: Settings, Privacy & Security, View Certificates, the Authorities tab, Import, then tick "Trust this CA to identify websites".
+- Chrome and Edge: open Manage certificates in Settings and import `ca.crt` as a trusted authority. The menu names differ between versions and platforms.
+- macOS, which Safari uses: `sudo security add-trusted-cert -d -r trustRoot -k /Library/Keychains/System.keychain ca.crt`.
+- Windows, from an administrator prompt: `certutil -addstore -f Root ca.crt`.
+- Debian and Ubuntu system tools such as `curl`: copy it to `/usr/local/share/ca-certificates/dfe-local-ca.crt`, then run `sudo update-ca-certificates`.
+
+A CA-issued certificate goes in the same two files instead, with the full chain in `console.crt`. Copy real files rather than linking them: a symlink, certbot's `live/` layout included, dangles inside the container, so `cp -L` the pair into place.
 
 Set `DFE_EXTERNAL_ORIGIN=https://dfe.example.com` and make `DFE_HYPERDX_APP_URL` an `https://` origin too if you set it. Register the engine's callback with the IdP as `https://<hostname>:<DFE_UI_PORT>/api/v1/auth/oidc/<provider>/callback`, without the port when `DFE_UI_PORT` is 443.
 
@@ -96,7 +96,7 @@ Turning `DFE_PROXY_TLS` on or off on a running stack needs `make down` first, be
 
 `make test-e2e` and `make test-resilience` run under the dial too, with the same prechecks as a start. Each test's stack chains the fragments `make ci` does, so the exposure opt-outs and container logs apply to it as well. The suite probes the console at `https://<DFE_EXTERNAL_ORIGIN host>:<DFE_UI_PORT>` and verifies its certificate by chain and by name, never with verification off.
 
-A certificate from a public CA verifies against the system trust store. For a private CA, set `DFE_PROXY_CA_BUNDLE` to a PEM file holding the CA chain that signed `console.crt`. Chrome takes no CA bundle, so the browser steps are pinned to the public key of the certificate that check has just verified.
+A certificate from a public CA verifies against the system trust store. For a private CA, set `DFE_PROXY_CA_BUNDLE` to a PEM file holding the CA chain that signed `console.crt`, which after `make certs` is its `ca.crt`. Chrome takes no CA bundle, so the browser steps are pinned to the public key of the certificate that check has just verified.
 
 | Variable                                         | Use                                                                                  | Default                                                             |
 |--------------------------------------------------|--------------------------------------------------------------------------------------|---------------------------------------------------------------------|
@@ -150,6 +150,8 @@ other profile may require an issuer.
 
 ### DFE Archiver
 
+Only `single-kafka` runs dfe-archiver, so archiving needs a Kafka profile ([profiles.md](profiles.md)).
+
 | Variable                                         | Use                                                                                  | Default                                                             |
 |--------------------------------------------------|--------------------------------------------------------------------------------------|---------------------------------------------------------------------|
 | `DFE_ARCHIVER_VERSION`                           | Version of dfe-archiver to use                                                       | none -- `make stack` pins it; unset is a hard-fail                                                            |
@@ -165,9 +167,7 @@ other profile may require an issuer.
 | `AWS_ACCESS_KEY_ID`                              | AWS access key. Goes in `env/fetcher.env`, NOT `.env` -- the fetcher config reads it via `env:`  | -                                    |
 | `AWS_SECRET_ACCESS_KEY`                          | AWS secret key. Same file as above                                                   | -                                                                   |
 
-The AWS **region** is not an environment variable: it is a literal in
-`config/fetcher/aws-*.yaml` (`region: us-west-2`), because only the two
-credential fields are `env:`-interpolated. Change it there.
+The AWS **region** is not an environment variable: it is a literal in each source's fetcher config (`region: us-west-2` in `resources/seed/sources/aws-*.yaml`), because only the two credential fields are `env:`-interpolated.
 
 ### DFE Loader
 
@@ -183,7 +183,7 @@ credential fields are `env:`-interpolated. Change it there.
 |--------------------------------------------------|--------------------------------------------------------------------------------------|---------------------------------------------------------------------|
 | `DFE_RECEIVER_VERSION`                           | Version of dfe-receiver to use                                                       | none -- `make stack` pins it; unset is a hard-fail                                                            |
 | `DFE_RECEIVER_BEATS_PORT`                        | Receiver Beats port                                                                  | `5044`                                                              |
-| `DFE_RECEIVER_GRPC_PORT`                         | Receiver gRPC port                                                                   | `6000`                                                              |
+| `DFE_RECEIVER_GRPC_PORT`                         | Receiver Vector gRPC port, published once its line in `docker-compose.yml` is uncommented | `6000`                                                              |
 | `DFE_RECEIVER_HEC_PORT`                          | Receiver HEC port                                                                    | `8088`                                                              |
 | `DFE_RECEIVER_HTTP_PORT`                         | Receiver HTTP port                                                                   | `8080`                                                              |
 | `DFE_RECEIVER_OTLP_GRPC_PORT`                    | Receiver OTLP gRPC port                                                              | `4317`                                                              |
@@ -196,7 +196,6 @@ credential fields are `env:`-interpolated. Change it there.
 |--------------------------------------------------|--------------------------------------------------------------------------------------|---------------------------------------------------------------------|
 | `DFE_TRANSFORM_ELASTIC_VERSION`                  | Version of dfe-transform-elastic to use                                              | none -- `make stack` pins it; unset is a hard-fail                                                            |
 | `DFE_TRANSFORM_ELASTIC_PROMETHEUS_PORT`          | Transform Elastic Prometheus port                                                    | `9099`                                                              |
-| `DFE_TRANSFORM_ELASTIC_CISCO_IOS_PROMETHEUS_PORT` | Prometheus port of the cisco-ios instance -- it runs the same image, so it needs its own; 9100 is node_exporter's | `9089`                                                          |
 
 ### DFE Transform Vector
 
@@ -212,10 +211,6 @@ credential fields are `env:`-interpolated. Change it there.
 |--------------------------------------------------|--------------------------------------------------------------------------------------|---------------------------------------------------------------------|
 | `DFE_TRANSFORM_VRL_VERSION`                      | Version of dfe-transform-vrl to use                                                  | none -- `make stack` pins it; unset is a hard-fail                                                            |
 | `DFE_TRANSFORM_VRL_PROMETHEUS_PORT`              | Transform VRL Prometheus port                                                        | `9096`                                                              |
-| `DFE_TRANSFORM_VRL_FILEBEAT_PROMETHEUS_PORT`     | Prometheus port of the filebeat instance -- it runs the same image, so it needs its own | `9097`                                                           |
-
-The filebeat instance takes its version from `DFE_TRANSFORM_VRL_VERSION` as well:
-it is a second deployment of the one component, not a component of its own.
 
 ### ClickHouse
 
@@ -225,9 +220,9 @@ it is a second deployment of the one component, not a component of its own.
 | `CLICKHOUSE_HOST`                                | External ClickHouse host (skips Docker container)                                    | `clickhouse`                                                        |
 | `CLICKHOUSE_HTTP_PORT`                           | Host publish of the bundled ClickHouse's HTTP port; services in the stack dial 8123 whatever it says, so it is safe to move | `8123`                                                              |
 | `CLICKHOUSE_NATIVE_PORT`                         | Host publish of the bundled ClickHouse's native port; services in the stack dial 9000 whatever it says, so it is safe to move | `9000`                                                              |
-| `CLICKHOUSE_EXTERNAL_HTTP_PORT`                  | HTTP port dfe-engine, dfe-hunt-runner and HyperDX's seeded connection dial on an external `CLICKHOUSE_HOST`; leave unset for the bundled container | `8123`                                                              |
+| `CLICKHOUSE_EXTERNAL_HTTP_PORT`                  | HTTP port dfe-engine, dfe-hunt-runner, dfe-loader and the connection the engine hands HyperDX dial on an external `CLICKHOUSE_HOST`. Leave unset for the bundled container | `8123`                                                              |
 | `CLICKHOUSE_EXTERNAL_NATIVE_PORT`                | Native port dfe-engine, dfe-hunt-runner and the collector dial on an external `CLICKHOUSE_HOST`; leave unset for the bundled container | `9000`                                                              |
-| `CLICKHOUSE_SECURE`                              | TLS to an external `CLICKHOUSE_HOST` for dfe-engine, dfe-hunt-runner and HyperDX's seeded connection (`https://`), on `true`, `1` or `yes`; the collector and the loader do not read it | `false`                                                             |
+| `CLICKHOUSE_SECURE`                              | TLS to an external `CLICKHOUSE_HOST` for dfe-engine, dfe-hunt-runner and the connection the engine hands HyperDX (`https://`), on `true`, `1` or `yes`. The collector and the loader do not read it | `false`                                                             |
 | `CLICKHOUSE_DB`                                  | ClickHouse initialisation database                                                   | `default`                                                           |
 | `CLICKHOUSE_USERNAME`                            | ClickHouse admin username, which only dfe-engine connects as                         | `default`                                                           |
 | `CLICKHOUSE_PASSWORD`                            | ClickHouse admin password, which only dfe-engine connects with                       | -                                                                   |
@@ -242,6 +237,7 @@ it is a second deployment of the one component, not a component of its own.
 
 | Variable                                         | Use                                                                                  | Default                                                             |
 |--------------------------------------------------|--------------------------------------------------------------------------------------|---------------------------------------------------------------------|
+| `DFE_KAFKA_BOOTSTRAP_SERVERS`                    | The broker dfe-engine creates topics on and dfe-archiver, dfe-fetcher, dfe-loader, dfe-receiver, dfe-transform-elastic, dfe-transform-vector and dfe-transform-vrl read or write. Set it for an external broker | `kafka:9092`, the in-stack broker                                   |
 | `KAFKA_BACKEND`                                  | Kafka backend for `kafka` transport profiles                                         | `redpanda`                                                          |
 | `KAFKA_PLAINTEXT_HOST_PORT`                      | Kafka plaintext host port (host-facing)                                              | `19092`                                                             |
 | `KAFKA_PLAINTEXT_PORT`                           | Host publish of the broker's in-network listener; services in the stack dial `kafka:9092` whatever it says | `9092`                                                              |
@@ -313,12 +309,9 @@ A setting the app's own schema does not declare is written as an environment var
 
 A per-source instance such as `dfe-transform-vrl-<source>` reads its app's custom file and then its own, `env/dfe-transform-vrl-<source>.custom.env`, so a key set on one source reaches that source's container alone. `make apply SERVICES=dfe-transform-vrl-<source>` recreates it, the command the engine's response names.
 
-Only the engine writes `*.custom.env`, and only for a service it renders, so the static `dfe-transform-e2e-*` services read none. A key you set by hand goes in the operator's file. Earlier checkouts read `env/loader.custom.env` and its siblings, names the engine never wrote and nothing reads now: move any key you put there into `env/loader.env`.
+The engine alone writes `*.custom.env` and only for a service it renders. A key you set by hand goes in the operator's file. Earlier checkouts read `env/loader.custom.env` and its siblings, names the engine never wrote and nothing reads now: move any key you put there into `env/loader.env`.
 
-**A custom env write needs `docker compose up -d <service>`, not a restart.**
-Compose reads `env_file` when it creates a container, so `docker compose restart`
-gives you the same container with the environment it already had, and the change
-looks like it did nothing.
+**A custom env write needs `make apply SERVICES=<service>`, not a restart.** Compose reads `env_file` when it creates a container, so `docker compose restart` keeps the environment the container already had. A bare `docker compose up -d` misses what make resolves from the profile, the broker address included.
 
 The engine writes those files into the `env/` directory of the checkout it is
 started from: `DFE_DEPLOYMENT_APP_ENV_DIR` names it (`/app/app-env` inside the
@@ -339,83 +332,73 @@ Every DFE app asks `releases.hyperi.io` at startup whether a newer version exist
 
 Compose maps them onto scalo's `version_check.enabled` and `version_check.send_instance_id` keys, in the env form scalo's cascade nests with. Each app reads those under its own prefix, so compose does the spelling: `DFE_LOADER_`, `DFE_RECEIVER_` and `DFE_FETCHER_` for those three, `ARCHIVER_` for the archiver (no `DFE_`), `DFE_TRANSFORM_` for vector and vrl, `DFE_TRANSFORM_ELASTIC_` for elastic, and no prefix for dfe-engine. dfe-ui and the hunt runner start no check. A compose `environment:` entry beats `env/<app>.env`, so set the dial in `.env`. The third-party images keep their own telemetry settings, which this dial does not reach.
 
-## Self-monitoring (opt-in)
+## Self-monitoring
 
-Off by default. `DFE_OTEL_ENABLED=true` (or a profile declaring `otel: true`, as `single` does) starts a collector that takes the stack's own telemetry over OTLP and writes the `dfe.otel_*` tables, which HyperDX reads. Nothing is scraped, and the collector's OTLP ports stay on the Compose network. Full picture, including which services report today: [observability.md](observability.md).
+Every profile declares `otel: true`, which starts a collector that takes the stack's own telemetry over OTLP and writes the `dfe.otel_*` tables HyperDX reads. `DFE_OTEL_ENABLED=false` turns it off. The only scrape is the collector reading its own metrics on 127.0.0.1:8888 and its OTLP ports stay on the Compose network. Full picture, including which services report today: [observability.md](observability.md).
 
 | Variable                                         | Use                                                                                  | Default                                                             |
 |--------------------------------------------------|--------------------------------------------------------------------------------------|---------------------------------------------------------------------|
-| `DFE_OTEL_ENABLED`                               | Toggle to start the collector                                                        | `false`                                                             |
+| `DFE_OTEL_ENABLED`                               | Toggle to start the collector                                                        | unset, the profile decides                                          |
 | `DFE_OTEL_COLLECTOR_VERSION`                     | Version of otel/opentelemetry-collector-contrib                                      | none -- `make stack` pins it; unset is a hard-fail                  |
 | `DFE_OTEL_EXPORTER_ENDPOINT`                     | Where services push; empty exports nothing                                           | empty (the profile points it at the bundled collector)              |
 | `DFE_OTEL_DATABASE`                              | ClickHouse database the collector writes                                             | `dfe`                                                              |
 | `DFE_OTEL_HEALTH_PORT`                           | Collector `health_check` host port                                                   | `13133`                                                             |
 | `DFE_OTEL_COLLECTOR_LOG_LEVEL`                   | Collector's own log level                                                            | `warn`                                                              |
-| `DFE_OTEL_FLUENT_PORT`                           | Collector `fluentforward` host port, where the daemon sends container stdout         | `24224`                                                             |
+| `DFE_OTEL_FLUENT_PORT`                           | Collector `fluent_forward` host port, where the daemon sends container stdout        | `24224`                                                             |
 | `DFE_CONTAINER_LOGS_ENABLED`                     | Ship DFE container stdout; `false` puts every service back on `json-file`            | `true`                                                              |
 | `DFE_CONTAINER_LOG_ADDRESS`                      | Where the DOCKER DAEMON sends it                                                     | `tcp://127.0.0.1:24224`                                             |
 | `DFE_ENGINE_METRICS_BACKEND`                     | dfe-engine metrics backend; `opentelemetry` is dual (push + `/metrics`)              | `prometheus` (the profile sets `opentelemetry`)                     |
 
-## HyperDX (opt-in observability)
+## HyperDX
 
-Off by default. `DFE_HYPERDX_ENABLED=true` starts `hyperdx` (API + App), the `dfe-hyperdx-proxy` that fronts both origins, a one-shot `dfe-dashboards` that copies the engine's shipped dashboards into a volume, plus `hyperdx-ferretdb` and `hyperdx-postgres`, sharing the always-on ClickHouse.
+Every profile declares `hyperdx: true` and `DFE_HYPERDX_ENABLED=false` turns it off. It starts `hyperdx` (API + App), the `dfe-hyperdx-proxy` that fronts both origins, a one-shot `dfe-dashboards` that copies the engine's shipped dashboards into a volume, plus `hyperdx-documentdb`, sharing the always-on ClickHouse.
 
-HyperDX runs in `oidc-proxy` mode, as it does on Kubernetes: it verifies the engine's ES384 token against the engine's JWKS, and a caller carrying none is unauthenticated. Signing in to the console is what signs a browser in here -- dfe-ui mirrors the session into a `dfe_token` cookie, and cookies ignore ports. The engine identifies with a service token of its own, which is how a source added through the console reaches every HyperDX team. That token's team, `DFE_HYPERDX_TEAM`, holds no connection and no sources, because HyperDX seeds a team only from a person's login, never from the service token. Every other team gets its connection and sources on its members' first login, from the engine's answer for that member: `main` and `hunts` everywhere, plus the otel and `clickhouse_system` sources on a platform team, and the shipped dashboards those sources can render. From hyperi-io/dfe-hyperdx#106 on, a login the engine gives no connection is retried on a later request. `config/hyperdx/default-sources.json` seeds nothing in `oidc-proxy` mode, only in `header-dev`.
+`hyperdx-documentdb` is PostgreSQL with the DocumentDB extensions and the Mongo-wire gateway HyperDX talks to, in one container, with its usage telemetry to a third party switched off. The gateway serves TLS only, on a certificate the one-shot `hyperdx-documentdb-tls` mints into a volume on first start and renews once it has 30 days left. HyperDX gets only the CA that signed it, verifies the gateway against it and logs in with SCRAM-SHA-256.
+
+HyperDX runs in `oidc-proxy` mode, as it does on Kubernetes: it verifies the engine's ES384 token against the engine's JWKS. A caller carrying none is unauthenticated. Signing in to the console is what signs a browser in here: dfe-ui mirrors the session into a `dfe_token` cookie and cookies ignore ports. The engine identifies with a service token of its own, which is how a source added through the console reaches every HyperDX team. That token's team, `DFE_HYPERDX_TEAM`, holds no connection and no sources, because HyperDX seeds a team only from a person's login, never from the service token. Every other team gets its connection and sources on its members' first login, from the engine's answer for that member: `main` and `hunts` everywhere, plus the otel and `clickhouse_system` sources on a platform team. Each team also gets the shipped dashboards those sources can render. From hyperi-io/dfe-hyperdx#106 on, a login the engine gives no connection is retried on a later request.
 
 The same toggle points the engine at HyperDX: with it on, the engine receives `DFE_HYPERDX_ENABLED=true` and `DFE_HYPERDX_BASE_URL=http://hyperdx:8000`, so its `/api/v1/hyperdx/*` surface answers instead of returning `503 hyperdx_absent`.
 
 | Variable                                         | Use                                                                                  | Default                                                             |
 |--------------------------------------------------|--------------------------------------------------------------------------------------|---------------------------------------------------------------------|
-| `DFE_HYPERDX_ENABLED`                            | Toggle to start HyperDX + its proxy + FerretDB + Postgres                            | `false`                                                             |
+| `DFE_HYPERDX_ENABLED`                            | Toggle to start HyperDX + its proxy + DocumentDB. Ignored with `DFE_CORE_ENABLED=false`, since HyperDX signs callers in with the engine's token | unset, the profile decides                                          |
 | `DFE_HYPERDX_VERSION`                            | Version of the dfe-hyperdx fork image to use                                         | pinned by `make stack` from the SSoT (fail-loud, like every image)  |
 | `DFE_HYPERDX_API_PORT`                           | HyperDX API host port, on `dfe-hyperdx-proxy`                                        | `8000`                                                              |
 | `DFE_HYPERDX_APP_PORT`                           | HyperDX App UI host port, on `dfe-hyperdx-proxy`                                     | `8090`                                                              |
 | `DFE_HYPERDX_APP_URL`                            | Scheme and host only, no port, the browser uses to reach HyperDX; overrides `DFE_EXTERNAL_ORIGIN` | follows `DFE_EXTERNAL_ORIGIN`                                       |
-| `DFE_HYPERDX_AUTH_MODE`                          | `header-dev` runs HyperDX off request headers, for a stack with no engine            | `oidc-proxy`                                                        |
 | `DFE_HYPERDX_BASE_URL`                           | Where the ENGINE reaches HyperDX; name an external one here                          | `http://hyperdx:8000`                                               |
 | `DFE_HYPERDX_TEAM`                               | Team name when the token carries no group claim                                      | `dfe`                                                               |
 | `DFE_HYPERDX_USAGE_STATS_ENABLED`                | `true` sends upstream HyperDX's usage stats to `in-otel.hyperdx.io`, a third party   | `false`                                                             |
 | `HYPERDX_THEME`                                  | UI theme (NEXT_PUBLIC_THEME)                                                         | `dfe`                                                               |
-| `HYPERDX_POSTGRES_USER`                          | FerretDB/Postgres user                                                               | `hyperdx`                                                           |
-| `HYPERDX_POSTGRES_PASSWORD`                      | FerretDB/Postgres password                                                           | `hyperdx`                                                           |
+| `HYPERDX_POSTGRES_USER`                          | DocumentDB login HyperDX uses, a PostgreSQL role inside DocumentDB                   | `hyperdx`                                                           |
+| `HYPERDX_POSTGRES_PASSWORD`                      | Password for that login                                                              | `hyperdx`                                                           |
 | `HYPERDX_EXPRESS_SESSION_SECRET`                 | Signs HyperDX's session cookie (`EXPRESS_SESSION_SECRET`)                            | generated by `make init`; sentinel otherwise, which `make post` fails |
 | `HYPERDX_TOKEN_ENCRYPTION_KEY`                   | Encrypts the third-party tokens HyperDX stores (`TOKEN_ENCRYPTION_KEY`), 64 hex chars | generated by `make init`; empty (plain text) otherwise, which `make post` fails |
-| `HYPERDX_FERRETDB_VERSION`                       | FerretDB image version                                                               | none -- `make stack` pins it from the DFE stack SSoT; unset is a hard-fail                |
-| `HYPERDX_POSTGRES_VERSION`                       | Postgres/DocumentDB image version                                                    | none -- `make stack` pins it from the DFE stack SSoT; unset is a hard-fail                |
+| `HYPERDX_DOCUMENTDB_VERSION`                     | `documentdb-local` image version                                                     | none -- `make stack` pins it from the DFE stack SSoT, and unset is a hard-fail            |
 
 ## Default Ports
 
 | Port  | Service              | Protocol           |
 |-------|----------------------|--------------------|
 | 3000  | dfe-proxy            | Web UI (envoy fronts dfe-ui, which publishes no host port) |
-| 6000  | dfe-receiver         | gRPC               |
 | 8000  | hyperdx              | API                |
 | 8003  | dfe-engine           | HTTP API           |
 | 8080  | dfe-receiver         | HTTP ingest        |
 | 8081  | Kafbat               | Web UI             |
-| 8082  | dfe-fetcher          | HTTP ingest        |
 | 8090  | hyperdx              | App UI             |
 | 8123  | ClickHouse           | HTTP API           |
-| 8686  | dfe-transform-vector | Vector API         |
-| 8687  | dfe-transform-e2e-vector-filebeat | Vector API |
 | 9000  | ClickHouse           | Native protocol    |
-| 9089  | dfe-transform-e2e-elastic-cisco-ios | Prometheus metrics |
 | 9090  | dfe-receiver         | Prometheus metrics |
 | 9091  | dfe-loader           | Prometheus metrics |
 | 9092  | Kafka (any backend)  | Plaintext          |
 | 9093  | dfe-archiver         | Prometheus metrics |
-| 9094  | dfe-fetcher          | Prometheus metrics |
-| 9095  | dfe-transform-vector | Prometheus metrics |
-| 9096  | dfe-transform-vrl    | Prometheus metrics |
-| 9097  | dfe-transform-e2e-vrl-filebeat | Prometheus metrics |
-| 9098  | dfe-transform-e2e-vector-filebeat | Prometheus metrics |
-| 9099  | dfe-transform-elastic | Prometheus metrics |
 | 13133 | otel-collector       | health_check       |
 | 19092 | Kafka (any backend)  | Plaintext host     |
 | 50051 | dfe-loader           | gRPC Push, container port 6000 |
 
-Additional receiver ports (commented out by default in docker-compose.yml):
-4317 (OTLP gRPC), 4318 (OTLP HTTP), 5044 (Beats), 8088 (HEC).
+Additional receiver ports (commented out by default in docker-compose.yml): 4317 (OTLP gRPC), 4318 (OTLP HTTP), 5044 (Beats), 6000 (Vector gRPC, which also needs `DFE_RECEIVER_GRPC__ENABLED=true`), 8088 (HEC).
+
+dfe-fetcher and the transforms run one instance per source. An instance publishes no host port.
 
 ## ClickHouse Schema
 

@@ -31,7 +31,7 @@ import pytest
 
 import instances
 import resolve_profile
-from _common import COMPOSE_LOCAL_FILE, _required_compose_vars
+from _common import COMPOSE_LOCAL_FILE, PROFILE_MK, _required_compose_vars
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 
@@ -50,8 +50,8 @@ _HYPERDX = {
     "probe_url": "http://dfe-hyperdx-proxy:8090",
 }
 
-# A profile per transport that declares no footprint key, so the env vars decide.
-_TRANSPORT_PROFILES = {"kafka": "kafka-minimal", "grpc": "grpc-minimal"}
+# A profile per transport. The matrix sets each footprint env var it varies and the env var wins over the profile's key
+_TRANSPORT_PROFILES = {"kafka": "slim-kafka", "grpc": "slim-grpc"}
 
 # Placeholders for the settings an armed auth profile refuses to resolve without.
 _AUTH_SETTINGS = {
@@ -94,7 +94,7 @@ def _hyperdx(url: str) -> dict[str, str]:
 
 
 def _exports(*, path: Path) -> dict[str, str]:
-    """Return the make exports one .profile.mk carries."""
+    """Return the make exports one .tmp/profile.mk carries."""
     values: dict[str, str] = {}
     for line in path.read_text(encoding="utf-8").splitlines():
         name, _, value = line.partition(":=")
@@ -139,11 +139,13 @@ def _links(
     **environment: str,
 ) -> list[dict[str, str]]:
     """Return the admin links resolve_profile writes for one profile."""
-    written = tmp_path / ".profile.mk"
+    written = tmp_path / ".tmp" / "profile.mk"
     monkeypatch.setattr(resolve_profile, "PROFILE_MK", written)
     # A tier the engine renders nothing for removes the instances fragment.
     monkeypatch.setattr(
-        instances, "COMPOSE_INSTANCES_FILE", tmp_path / "docker-compose.instances.yml"
+        instances,
+        "COMPOSE_INSTANCES_FILE",
+        tmp_path / ".tmp" / "docker-compose.instances.yml",
     )
     # Set before deleting, so teardown also removes what .env loads during the run.
     for key in _RESOLUTION_KEYS:
@@ -211,14 +213,19 @@ def test_a_ui_is_listed_exactly_where_it_runs_and_is_published(
 @pytest.mark.parametrize(
     ("profile", "want"),
     [
-        ("slim", [_hyperdx("http://localhost:8090")]),
+        ("slim-grpc", [_hyperdx("http://localhost:8090")]),
         (
-            "single",
+            "slim-kafka",
+            [_kafbat("http://localhost:8081"), _hyperdx("http://localhost:8090")],
+        ),
+        ("single-grpc", [_hyperdx("http://localhost:8090")]),
+        (
+            "single-kafka",
             [_kafbat("http://localhost:8081"), _hyperdx("http://localhost:8090")],
         ),
     ],
 )
-def test_the_projected_tiers_list_what_their_footprint_runs(
+def test_every_profile_lists_what_its_footprint_runs(
     dotenv: Path,
     monkeypatch: pytest.MonkeyPatch,
     profile: str,
@@ -235,7 +242,7 @@ def test_behind_the_auth_profile_both_links_take_the_proxy_origin(
     links = _links(
         monkeypatch=monkeypatch,
         tmp_path=tmp_path,
-        profile="kafka-minimal",
+        profile="slim-kafka",
         DFE_HYPERDX_ENABLED="true",
         DFE_EXTERNAL_ORIGIN=_ORIGIN,
         DFE_OAUTH2_PROXY_EXTERNAL_ORIGIN=_PROXY_ORIGIN,
@@ -256,7 +263,7 @@ def test_without_auth_hyperdx_takes_its_own_app_url(
     links = _links(
         monkeypatch=monkeypatch,
         tmp_path=tmp_path,
-        profile="kafka-minimal",
+        profile="slim-kafka",
         DFE_HYPERDX_ENABLED="true",
         DFE_EXTERNAL_ORIGIN=_ORIGIN,
         DFE_OAUTH2_PROXY_EXTERNAL_ORIGIN=_PROXY_ORIGIN,
@@ -275,7 +282,7 @@ def test_a_moved_host_port_moves_the_link_and_not_the_probe(
     links = _links(
         monkeypatch=monkeypatch,
         tmp_path=tmp_path,
-        profile="single",
+        profile="single-kafka",
         KAFBAT_PORT="18081",
         DFE_HYPERDX_APP_PORT="18090",
     )
@@ -292,7 +299,7 @@ def test_a_trailing_slash_on_the_origin_is_not_carried_into_the_url(
     links = _links(
         monkeypatch=monkeypatch,
         tmp_path=tmp_path,
-        profile="slim",
+        profile="slim-grpc",
         DFE_EXTERNAL_ORIGIN=f"{_ORIGIN}/",
     )
 
@@ -309,7 +316,7 @@ def test_the_origin_is_read_from_dotenv_where_an_operator_sets_it(
         newline="\n",
     )
 
-    links = _links(monkeypatch=monkeypatch, tmp_path=tmp_path, profile="slim")
+    links = _links(monkeypatch=monkeypatch, tmp_path=tmp_path, profile="slim-grpc")
 
     assert links == [_hyperdx(f"{_ORIGIN}:18090")]
 
@@ -322,7 +329,7 @@ def test_an_unpublished_name_the_resolver_does_not_know_is_refused(
         _links(
             monkeypatch=monkeypatch,
             tmp_path=tmp_path,
-            profile="single",
+            profile="single-kafka",
             unpublished=("kafka-ui",),
         )
 
@@ -364,7 +371,7 @@ _PLACEHOLDER = "0.0.0-admin-links-test"
 _FOREIGN_PREFIXES = ("DFE_", "KAFBAT_", "KAFKA_", "HYPERDX_", "CLICKHOUSE_", "COMPOSE_")
 _MAKE_STATE = ("MAKEFLAGS", "MAKELEVEL", "MFLAGS")
 # Written by a make run, so never copied from the checkout into the scratch one.
-_GENERATED = {instances.COMPOSE_INSTANCES_FILE.name, COMPOSE_LOCAL_FILE.name}
+_GENERATED = {COMPOSE_LOCAL_FILE.name}
 
 
 def _compose_renders() -> bool:
@@ -387,7 +394,18 @@ _needs_compose = pytest.mark.skipif(
 def checkout(tmp_path: Path) -> Path:
     """A copy of what make and compose read, with no .env and no resolved profile."""
     shutil.copy(REPO_ROOT / "Makefile", tmp_path / "Makefile")
-    shutil.copy(REPO_ROOT / "service_profiles.yaml", tmp_path / "service_profiles.yaml")
+    # The committed profiles, so an active_profile edited in the checkout does not move the default case
+    committed = subprocess.run(
+        args=["git", "-C", str(REPO_ROOT), "show", "HEAD:service_profiles.yaml"],
+        capture_output=True,
+        check=True,
+        encoding="utf-8",
+        errors="replace",
+        text=True,
+    )
+    (tmp_path / "service_profiles.yaml").write_text(
+        data=committed.stdout, encoding="utf-8", newline="\n"
+    )
     for compose in REPO_ROOT.glob("docker-compose*.yml"):
         if compose.name not in _GENERATED:
             shutil.copy(compose, tmp_path / compose.name)
@@ -402,7 +420,7 @@ def checkout(tmp_path: Path) -> Path:
 
 
 def _through_make(*, cwd: Path, **settings: str) -> tuple[str, str]:
-    """Return (the .profile.mk value, the engine's DFE_ADMIN_LINKS) for one make run."""
+    """Return (the .tmp/profile.mk value, the engine's DFE_ADMIN_LINKS) for one make run."""
     environment = {
         key: value
         for key, value in os.environ.items()
@@ -424,12 +442,13 @@ def _through_make(*, cwd: Path, **settings: str) -> tuple[str, str]:
     )
     assert result.returncode == 0, result.stderr
     engine = json.loads(result.stdout)["services"]["dfe-engine"]["environment"]
-    resolved = _exports(path=cwd / ".profile.mk")[resolve_profile.ADMIN_LINKS_VAR]
+    written = cwd / PROFILE_MK.relative_to(REPO_ROOT)
+    resolved = _exports(path=written)[resolve_profile.ADMIN_LINKS_VAR]
     return resolved, engine["DFE_ADMIN_LINKS"]
 
 
 _SINGLE_ALL = {
-    "DFE_PROFILE": "single",
+    "DFE_PROFILE": "single-kafka",
     "DFE_BIND_SCOPE": "all",
     "DFE_EXTERNAL_ORIGIN": _ORIGIN,
 }
@@ -462,13 +481,13 @@ _BOTH_ON_ORIGIN = [_kafbat(f"{_ORIGIN}:8081"), _hyperdx(f"{_ORIGIN}:8090")]
         ({**_SINGLE_ALL, **_AUTH_SETTINGS, "DFE_INFRA_UIS_EXTERNAL": "false"}, []),
     ],
     ids=[
-        "slim-default",
-        "single-scope-all",
-        "single-infra-killed",
-        "single-kafbat-unpublished",
-        "single-hyperdx-unpublished",
-        "single-auth",
-        "single-auth-infra-killed",
+        "default-slim-grpc",
+        "single-kafka-scope-all",
+        "single-kafka-infra-killed",
+        "single-kafka-kafbat-unpublished",
+        "single-kafka-hyperdx-unpublished",
+        "single-kafka-auth",
+        "single-kafka-auth-infra-killed",
     ],
 )
 def test_the_engine_receives_the_list_make_resolves_intact(

@@ -1,0 +1,17 @@
+<!--
+  Project:   dfe-docker
+  File:      config/clickhouse/server-logger.xml
+  Purpose:   Logs at information level in three 50M files
+  Language:  XML
+
+  License:   BUSL-1.1
+  Copyright: (c) 2026 HYPERI PTY LIMITED
+-->
+<clickhouse>
+  <!-- The image logs at trace level in ten 1000M files -->
+  <logger>
+    <count>3</count>
+    <level>information</level>
+    <size>50M</size>
+  </logger>
+</clickhouse>

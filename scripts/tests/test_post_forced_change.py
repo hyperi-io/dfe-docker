@@ -131,7 +131,7 @@ def test_an_engine_without_the_flag_is_logged_into_as_it_is(
 ) -> None:
     engine = _serve(monkeypatch, _Engine(password=_ISSUED, sends_flag=False))
 
-    login = post._login(_BASE)
+    login = post.login(base=_BASE)
 
     assert login == post.Login("token-1", 200, "admin", "")
     assert engine.changes == []
@@ -143,7 +143,7 @@ def test_an_issued_password_is_replaced_recorded_and_logged_in_again(
 ) -> None:
     engine = _serve(monkeypatch, _Engine(password=_ISSUED, sends_flag=True))
 
-    login = post._login(_BASE)
+    login = post.login(base=_BASE)
 
     recorded = _recorded(issued)
     assert login == post.Login("token-2", 200, "admin", "")
@@ -162,8 +162,8 @@ def test_the_next_login_in_the_same_run_uses_the_new_password(
     """Every claim logs in on its own, so only the first may make the change."""
     engine = _serve(monkeypatch, _Engine(password=_ISSUED, sends_flag=True))
 
-    post._login(_BASE)
-    second = post._login(_BASE)
+    post.login(base=_BASE)
+    second = post.login(base=_BASE)
 
     assert second.fault == ""
     assert len(engine.changes) == 1
@@ -174,7 +174,7 @@ def test_only_the_password_line_changes_and_the_mode_stays(
 ) -> None:
     _serve(monkeypatch, _Engine(password=_ISSUED, sends_flag=True))
 
-    post._login(_BASE)
+    post.login(base=_BASE)
 
     recorded = _recorded(issued)
     assert issued.read_text(encoding="utf-8") == _ENV.replace(
@@ -192,7 +192,7 @@ def test_a_dotenv_left_open_to_others_is_closed_by_the_rewrite(
     issued.chmod(0o644)
     _serve(monkeypatch, _Engine(password=_ISSUED, sends_flag=True))
 
-    post._login(_BASE)
+    post.login(base=_BASE)
 
     assert _recorded(issued) != _ISSUED
     assert stat.S_IMODE(issued.stat().st_mode) == 0o644 & _common.DOTENV_MODE
@@ -203,7 +203,7 @@ def test_neither_password_is_printed(
 ) -> None:
     _serve(monkeypatch, _Engine(password=_ISSUED, sends_flag=True))
 
-    post._login(_BASE)
+    post.login(base=_BASE)
 
     captured = capsys.readouterr()
     output = captured.out + captured.err
@@ -219,7 +219,7 @@ def test_no_dotenv_to_record_it_in_means_nothing_is_changed(
     engine = _serve(monkeypatch, _Engine(password=_ISSUED, sends_flag=True))
     issued.unlink()
 
-    login = post._login(_BASE)
+    login = post.login(base=_BASE)
 
     assert login.token == ""
     assert "nothing was changed" in login.fault
@@ -240,7 +240,7 @@ def test_a_refused_change_puts_dotenv_back(
         ),
     )
 
-    login = post._login(_BASE)
+    login = post.login(base=_BASE)
 
     assert login.token == ""
     assert "HTTP 500" in login.fault
@@ -262,7 +262,7 @@ def test_a_refusal_that_echoes_the_new_password_does_not_print_it(
 
     monkeypatch.setattr(post, "_api_post_json", _echoing)
 
-    login = post._login(_BASE)
+    login = post.login(base=_BASE)
 
     submitted = engine.changes[0]["new_password"]
     assert "HTTP 422" in login.fault
@@ -283,7 +283,7 @@ def test_a_refusal_that_echoes_the_current_password_does_not_print_it(
 
     monkeypatch.setattr(post, "_api_post_json", _echoing)
 
-    login = post._login(_BASE)
+    login = post.login(base=_BASE)
 
     assert "HTTP 422" in login.fault
     assert _ISSUED not in login.fault
@@ -306,7 +306,7 @@ def test_a_change_that_applied_without_an_answer_is_kept(
 
     monkeypatch.setattr(post, "_api_post_json", _applied_then_lost)
 
-    login = post._login(_BASE)
+    login = post.login(base=_BASE)
 
     assert login.fault == ""
     assert _recorded(issued) == engine.password != _ISSUED
@@ -326,7 +326,7 @@ def test_a_change_the_engine_took_is_kept_when_the_next_login_fails(
 
     monkeypatch.setattr(post, "_api_post_json", _second_login_lost)
 
-    login = post._login(_BASE)
+    login = post.login(base=_BASE)
 
     assert login.token == ""
     assert login.status == 200
@@ -347,7 +347,7 @@ def test_a_change_that_leaves_the_flag_set_fails(
 
     monkeypatch.setattr(post, "_api_post_json", _sticky)
 
-    login = post._login(_BASE)
+    login = post.login(base=_BASE)
 
     assert login.token == ""
     assert "still requires a change" in login.fault
@@ -361,7 +361,7 @@ def test_an_existing_access_summary_is_rewritten(
     summary.write_text(f"| Admin | `admin` | `{_ISSUED}` |\n", encoding="utf-8")
     _serve(monkeypatch, _Engine(password=_ISSUED, sends_flag=True))
 
-    post._login(_BASE)
+    post.login(base=_BASE)
 
     text = summary.read_text(encoding="utf-8")
     assert _recorded(issued) in text
@@ -375,7 +375,7 @@ def test_no_access_summary_is_created_where_there_was_none(
     """It is a plaintext copy the operator was told to delete."""
     _serve(monkeypatch, _Engine(password=_ISSUED, sends_flag=True))
 
-    post._login(_BASE)
+    post.login(base=_BASE)
 
     assert not (issued.parent / "access-summary.md").exists()
 
@@ -401,7 +401,7 @@ def test_a_rejected_login_is_not_a_forced_change(
 ) -> None:
     engine = _serve(monkeypatch, _Engine(password="something-else", sends_flag=True))
 
-    login = post._login(_BASE)
+    login = post.login(base=_BASE)
 
     assert login == post.Login("", 401, "admin", "login as 'admin' returned HTTP 401")
     assert engine.changes == []

@@ -67,7 +67,7 @@ def test_a_request_over_the_network_carries_the_method_body_and_token(
         return _completed(stdout='200\n{"access_token": "t"}')
 
     monkeypatch.setattr(post.subprocess, "run", _run)
-    post._api_container.cache_clear()
+    post.api_container.cache_clear()
 
     status, body = post._api_post_json(
         f"{post.ENGINE_NETWORK_BASE}/auth/login",
@@ -97,7 +97,7 @@ def test_neither_the_password_nor_the_token_reaches_the_exec_argv(
         return _completed(stdout="200\n{}")
 
     monkeypatch.setattr(post.subprocess, "run", _run)
-    post._api_container.cache_clear()
+    post.api_container.cache_clear()
 
     post._api_post_json(
         f"{post.ENGINE_NETWORK_BASE}/auth/login",
@@ -124,7 +124,7 @@ def test_the_exec_addresses_the_container_compose_names_not_the_service(
         return _completed(stdout="200\n{}")
 
     monkeypatch.setattr(post.subprocess, "run", _run)
-    post._api_container.cache_clear()
+    post.api_container.cache_clear()
 
     post._api_post_json(f"{post.ENGINE_NETWORK_BASE}/auth/login", {})
 
@@ -142,7 +142,7 @@ def test_no_container_for_this_project_is_reported_not_guessed(
         "run",
         lambda args, **kwargs: _completed(stdout="", stderr="no such service"),
     )
-    post._api_container.cache_clear()
+    post.api_container.cache_clear()
 
     with pytest.raises(post.ApiUnreachable, match="no running"):
         post._api_post_json(f"{post.ENGINE_NETWORK_BASE}/auth/login", {})
@@ -180,7 +180,6 @@ def test_only_the_services_that_push_their_own_metrics_are_expected() -> None:
         "dfe-engine",
         "dfe-hunt-runner",
         "dfe-loader",
-        "dfe-transform-e2e-vrl-filebeat",
         "dfe-transform-elastic",
         "dfe-transform-vrl-filebeat",
         "dfe-ui",
@@ -192,7 +191,6 @@ def test_only_the_services_that_push_their_own_metrics_are_expected() -> None:
         "dfe-engine",
         "dfe-hunt-runner",
         "dfe-loader",
-        "dfe-transform-e2e-vrl-filebeat",
         "dfe-transform-elastic",
         "dfe-transform-vrl-filebeat",
     ]
@@ -200,7 +198,6 @@ def test_only_the_services_that_push_their_own_metrics_are_expected() -> None:
 
 def test_an_instance_make_apply_has_not_created_is_not_expected() -> None:
     services = [
-        "dfe-fetcher",
         "dfe-fetcher-aws-cloudtrail",
         "dfe-fetcher-aws-guardduty",
         "dfe-loader",
@@ -210,7 +207,7 @@ def test_an_instance_make_apply_has_not_created_is_not_expected() -> None:
         services=services, unapplied={"dfe-fetcher-aws-guardduty"}
     )
 
-    assert expected == ["dfe-fetcher", "dfe-fetcher-aws-cloudtrail", "dfe-loader"]
+    assert expected == ["dfe-fetcher-aws-cloudtrail", "dfe-loader"]
 
 
 def test_the_per_service_read_covers_the_metrics_tables_and_not_traces(
@@ -270,22 +267,24 @@ def test_one_failed_claim_fails_the_run() -> None:
     assert post._report_claims(claims=claims) == 1
 
 
+@pytest.mark.usefixtures("dotenv")
 def test_a_profile_that_can_prove_nothing_does_not_pass(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """The grpc-minimal shape: no ingest component, every other claim skipped."""
+    """A stack with no ingest component and every other claim skipped."""
     _stub_main(monkeypatch)
 
     def _no_ingest(*, table):
         raise post.NoIngestComponent("active profile has no ingest component")
 
     monkeypatch.setattr(post, "_ingest_target", _no_ingest)
-    for name in ("_verify_self_monitoring", "_verify_hyperdx", "_verify_idle_apps"):
+    for name in ("_verify_self_monitoring", "_verify_hyperdx"):
         monkeypatch.setattr(post, name, lambda: post.SKIPPED)
 
     assert post.main() == 1
 
 
+@pytest.mark.usefixtures("dotenv")
 def test_the_subscription_is_asked_once_the_events_have_landed(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -308,6 +307,7 @@ def test_the_subscription_is_asked_once_the_events_have_landed(
     assert calls.index("http_post") < calls.index("_verify_loader_subscription")
 
 
+@pytest.mark.usefixtures("dotenv")
 def test_events_that_never_land_ask_the_subscription_why(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -447,7 +447,7 @@ def _engine_answers(
 
     monkeypatch.setattr(post.subprocess, "run", _run)
     monkeypatch.setattr(post, "http_get_json", _no_host_port)
-    post._api_container.cache_clear()
+    post.api_container.cache_clear()
     monkeypatch.setattr(post, "_resolved_services", lambda: [post.ENGINE_SERVICE])
     monkeypatch.setattr(post, "SCHEMA_TIMEOUT_SECONDS", 0.0)
     return asked
@@ -489,7 +489,7 @@ def test_an_engine_container_not_up_yet_reads_as_not_answering(
         post.subprocess, "run", lambda args, **kwargs: _completed(stdout="")
     )
     monkeypatch.setattr(post, "http_get_json", _no_host_port)
-    post._api_container.cache_clear()
+    post.api_container.cache_clear()
 
     assert post._schema_state() is None
 
@@ -555,7 +555,7 @@ def test_an_engine_that_never_answers_fails_rather_than_skips(
 
     monkeypatch.setattr(post.subprocess, "run", _refused)
     monkeypatch.setattr(post, "http_get_json", _no_host_port)
-    post._api_container.cache_clear()
+    post.api_container.cache_clear()
     monkeypatch.setattr(post, "_resolved_services", lambda: [post.ENGINE_SERVICE])
     monkeypatch.setattr(post, "SCHEMA_TIMEOUT_SECONDS", 0.0)
 
@@ -577,9 +577,8 @@ def _completed(*, code: int = 0, stdout: str = "", stderr: str = "") -> _Complet
 
 
 def _stub_main(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Let main() run without a stack, a .env or the developer's own environment."""
+    """Let main() run without a stack or the developer's own environment, its caller holding the `dotenv` fixture so their .env is never read."""
     monkeypatch.delenv("DFE_POST_ENABLED", raising=False)
-    monkeypatch.setattr(post, "_load_dotenv", lambda: None)
     monkeypatch.setattr(post, "_weak_secrets", list)
     monkeypatch.setattr(post, "_cleanup", lambda *args: None)
     # Unstubbed, this polls the engine's /readyz for 300s against whatever the
@@ -609,7 +608,6 @@ def _stub_claims(monkeypatch: pytest.MonkeyPatch) -> list[str]:
         "_verify_self_monitoring",
         "_verify_hyperdx",
         "_verify_ui_query",
-        "_verify_idle_apps",
         "_verify_routing_applied",
     ):
         monkeypatch.setattr(post, name, _recorder(name))
@@ -870,7 +868,7 @@ def test_the_hunt_runs_for_an_org_it_makes_and_removes(
     assert [request["customers"] for request in stack.hunt_requests] == [
         [post.HUNT_CUSTOMER]
     ]
-    assert {event["org_id"] for event in stack.sent} == {post.HUNT_CUSTOMER}
+    assert {event["_org_id"] for event in stack.sent} == {post.HUNT_CUSTOMER}
     assert stack.orgs == {}
 
 
@@ -882,7 +880,7 @@ def test_an_org_the_engine_holds_is_read_for_its_tenant_and_left_in_place(
 
     assert _hunt_claim() == post.HELD
     assert stack.org_requests == []
-    assert {event["org_id"] for event in stack.sent} == {"acme"}
+    assert {event["_org_id"] for event in stack.sent} == {"acme"}
     assert stack.orgs == held
 
 
@@ -1150,6 +1148,7 @@ def test_no_marked_row_means_nothing_is_deleted(
     assert clickhouse.statements == []
 
 
+@pytest.mark.usefixtures("dotenv")
 def test_the_rows_are_deleted_after_the_console_reads_them_back(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -1245,84 +1244,6 @@ def test_a_source_delete_with_no_answer_keeps_the_table_and_does_not_raise(
     )
 
     assert statements == []
-
-
-_METRICS_BASE = "http://localhost:9099"
-
-
-def test_an_app_holding_pipeline_idle_at_one_has_no_idle_fault() -> None:
-    body = "# TYPE pipeline_idle gauge\npipeline_idle 1\n"
-
-    assert post._idle_fault(body=body, base=_METRICS_BASE) == ""
-
-
-def test_an_app_reporting_pipeline_idle_zero_is_working_anyway() -> None:
-    fault = post._idle_fault(body="pipeline_idle 0\n", base=_METRICS_BASE)
-
-    assert "pipeline_idle=0" in fault
-    assert "working anyway" in fault
-
-
-def test_an_app_serving_ready_and_no_idle_gauge_has_started_its_pipeline() -> None:
-    """Ready is not inert, and the app says so by serving the gauge a run loop sets."""
-    fault = post._idle_fault(body="pipeline_ready 1\n", base=_METRICS_BASE)
-
-    assert "pipeline_ready=1" in fault
-    assert "no pipeline_idle" in fault
-    assert "the idle gate never engaged" in fault
-    assert "cannot be read" not in fault
-
-
-def test_an_app_serving_neither_gauge_cannot_be_read() -> None:
-    body = "# TYPE records_received_total counter\nrecords_received_total 0\n"
-
-    fault = post._idle_fault(body=body, base=_METRICS_BASE)
-
-    assert "neither pipeline_idle nor pipeline_ready" in fault
-    assert "cannot be read" in fault
-
-
-def test_an_unreachable_app_cannot_be_read() -> None:
-    fault = post._idle_fault(body=None, base=_METRICS_BASE)
-
-    assert "serves no pipeline_idle" in fault
-    assert "cannot be read" in fault
-
-
-def test_one_idle_app_that_started_its_pipeline_fails_the_claim_and_says_why(
-    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
-) -> None:
-    bodies = {
-        "9093": "pipeline_idle 1\n",
-        "9094": "pipeline_idle 1\n",
-        "9099": "pipeline_ready 1\n",
-        "9096": "pipeline_idle 1\n",
-    }
-    monkeypatch.setattr(
-        post,
-        "_idle_apps",
-        lambda: [
-            ("dfe-archiver", "9093"),
-            ("dfe-fetcher", "9094"),
-            ("dfe-transform-elastic", "9099"),
-            ("dfe-transform-vrl", "9096"),
-        ],
-    )
-    monkeypatch.setattr(post, "_wait_ready", lambda url: True)
-    monkeypatch.setattr(
-        post, "http_get", lambda url, **kwargs: bodies[url.split(":")[2].split("/")[0]]
-    )
-
-    claim = post._verify_idle_apps()
-
-    err = capsys.readouterr().err
-    assert claim == post.Claim(asserted=True, failed=1)
-    assert (
-        "FAIL  dfe-transform-elastic reports pipeline_ready=1 and no pipeline_idle"
-        in err
-    )
-    assert "cannot be read" not in err
-    assert err.count("PASS") == 3
 
 
 def _reported(monkeypatch: pytest.MonkeyPatch, *, names: set[str]) -> list[str]:

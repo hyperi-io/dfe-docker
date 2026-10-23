@@ -1,112 +1,26 @@
-# Profiles: which are yours, and which come from Kubernetes
+# Profiles
 
-`service_profiles.yaml` holds two KINDS of profile, and the difference decides
-where you edit one.
-
-**Projected.** `slim` and `single` are the Compose renderings of the Kubernetes
-tiers of the same name. Kubernetes is the master: the shape lives in dfe-infra's
-`argocd/values/profile-<mode>.yaml`, and the block between the
-`# BEGIN projected profiles` and `# END projected profiles` markers is rendered
-from it. Editing that block by hand is drift -- CI fails and the next render
-overwrites it.
-
-**Hand-crafted.** Every other profile (`kafka-full`, `grpc-receiver`,
-`kafka-filebeat`, ...) is a fine-grained data-plane shape with no Kubernetes
-counterpart, and nothing generates them. They are yours to add, change and
-delete.
+This repo owns every profile in `service_profiles.yaml`. Nothing generates them.
 
 ## Which profile runs what
 
-`X2` is two instances of that app: the shared passthrough one, plus the filebeat
-source's own with the bundled filebeat program. `idle` is one instance started
-with a config that gives it no work.
+| Profile        | Transport | dfe-archiver | dfe-loader | dfe-receiver | dfe-fetcher | dfe-transform-elastic | dfe-transform-vector | dfe-transform-vrl |
+|----------------|-----------|:------------:|:----------:|:------------:|:-----------:|:---------------------:|:--------------------:|:-----------------:|
+| `slim-grpc`    | gRPC      |              |     X      |      X       |             |                       |                      |                   |
+| `slim-kafka`   | Kafka     |              |     X      |      X       |             |                       |                      |                   |
+| `single-grpc`  | gRPC      |              |     X      |      X       |      X      |                       |          X           |         X         |
+| `single-kafka` | Kafka     |      X       |     X      |      X       |      X      |           X           |          X           |         X         |
 
-| Profile                           | Transport | dfe-archiver | dfe-fetcher | dfe-loader | dfe-receiver | dfe-transform-vrl | dfe-transform-vector | dfe-transform-elastic |
-|-----------------------------------|-----------|:------------:|:-----------:|:----------:|:------------:|:-----------------:|:--------------------:|:---------------------:|
-| `slim` (projected)                | gRPC      |              |             |     X      |      X       |                   |                      |                       |
-| `single` (projected)              | Kafka     |     idle     |     idle    |     X      |      X       |       idle        |                      |         idle          |
-| `kafka-fetcher`                   | Kafka     |              |      X      |     X      |              |                   |                      |                       |
-| `kafka-full`                      | Kafka     |      X       |      X      |     X      |      X       |                   |                      |                       |
-| `kafka-full-transform-vrl`        | Kafka     |              |      X      |     X      |      X       |         X         |                      |                       |
-| `kafka-full-transform-elastic`    | Kafka     |              |      X      |     X      |      X       |                   |                      |           X           |
-| `kafka-minimal`                   | Kafka     |              |             |     X      |              |                   |                      |                       |
-| `kafka-receiver`                  | Kafka     |              |             |     X      |      X       |                   |                      |                       |
-| `kafka-receiver-archiver`         | Kafka     |      X       |             |     X      |      X       |                   |                      |                       |
-| `kafka-receiver-transform-vector` | Kafka     |              |             |     X      |      X       |                   |           X          |                       |
-| `kafka-filebeat`                  | Kafka     |              |             |     X      |      X       |        X2         |                      |                       |
-| `kafka-filebeat-vector`           | Kafka     |              |             |     X      |      X       |                   |          X2          |                       |
-| `kafka-elastic-cisco-ios`         | Kafka     |              |             |     X      |      X       |                   |                      |           X           |
-| `grpc-fetcher`                    | gRPC      |              |      X      |     X      |              |                   |                      |                       |
-| `grpc-full`                       | gRPC      |              |      X      |     X      |      X       |                   |                      |                       |
-| `grpc-minimal`                    | gRPC      |              |             |     X      |              |                   |                      |                       |
-| `grpc-receiver`                   | gRPC      |              |             |     X      |      X       |                   |                      |                       |
+The last four columns run one container per source once a source created through the engine binds one.
 
-Both projected profiles run the core data path -- the receiver and the loader --
-plus the engine, the UI and HyperDX from the `core` and `hyperdx` footprint keys.
-`slim` runs nothing else. `single` adds one archiver, one fetcher, one
-transform-vrl and one transform-elastic, each started with a config that gives
-it no work: they are Ready,
-serve health and metrics, open no broker connection and hold `pipeline_idle` at
-1. `make post` asserts that on every start.
+Every profile also runs the engine, the UI, HyperDX and the self-monitoring collector, from its `core`, `hyperdx` and `otel` footprint keys. The Kafka profiles add the broker and Kafbat. The matching `.env` flag overrides each key ([configuration.md](configuration.md)).
 
-**One per source, as on Kubernetes.** The fetcher and the transforms run one
-instance per source. dfe-engine writes each source's config into its own
-directory and its name into `env/<app>.instances`, and `scripts/instances.py`
-turns each name into a service in `docker-compose.instances.yml`, which
-`make apply` starts.
+**A name is `<tier>-<transport>`.** dfe-engine runs as `docker-slim` on a `slim-*` profile and as `docker-single` on a `single-*` one. It seeds its default apps from that tier. `slim` is the core data path alone. `single` adds the per-source apps. `single-kafka` also runs one archiver, which archives each source from its landing topic. `single-grpc` runs no archiver, so archiving needs a Kafka profile ([architecture.md](architecture.md#events-arrive-two-ways-and-leave-one)). `resolve_profile.py` refuses any other name. An old one such as `single` fails with the profile that replaces it.
 
-## Why the two tiers are projected
+**One per source, as on Kubernetes.** The fetcher and the transforms run one instance per source. dfe-engine writes each source's config into its own directory and its name into `env/<app>.instances`. `scripts/instances.py` turns each name into a service in `.tmp/docker-compose.instances.yml`, which `make apply` starts.
 
-`slim` and `single` are the same deployment tier expressed twice: the same
-transport, the same components, the same reason for existing. When they drift,
-the Compose box stops being a faithful small version of the Kubernetes one, and
-the difference is only found when something behaves differently on the two.
+**A key runs each per-source app.** No profile names a per-source app as a service. `fetcher_enabled`, `transform_elastic_enabled`, `transform_vector_enabled` and `transform_vrl_enabled` each let dfe-engine start that app once per source. A key left out is false. dfe-transform-elastic is Kafka only, so a gRPC profile refuses its key. Each instance reads the config dfe-engine renders for its source, so the keys do nothing while `DFE_CORE_ENABLED=false`. For the filebeat, Vector and Elastic transform scenarios, run [`make test-source`](developing.md#post-deploy-source-test----what-an-operator-does-first).
 
-## Re-rendering
+**An instance of an app the profile does not run is left out.** Every make target that resolves the profile warns on an `env/<app>.instances` naming one, with the app, its sources and the key to set. It starts none of them. dfe-engine still starts, so those sources can be deleted through it. `make clean` deletes every index with the engine's volume. `make sources` skips a seed source whose fetcher or transform the profile does not run.
 
-The renderer is dfe-infra's, so it reads the profile values beside the files it
-reads them from:
-
-    make render-profiles DFE_INFRA_DIR=/path/to/dfe-infra
-    make check-profiles  DFE_INFRA_DIR=/path/to/dfe-infra
-
-`DFE_INFRA_DIR` must be set explicitly -- nothing probes for a sibling checkout.
-Without it, `check-profiles` reports SKIPPED rather than passing: a check that
-cannot read the master cannot say the copy is current. dfe-infra is public, so a
-plain clone reads it with no credential. CI checks it out the same way, with no
-App token and no secret.
-
-## What the projection maps
-
-| Compose key | Where it comes from |
-|---|---|
-| `transport` | `kafka.mode` -- `disabled` is `grpc`, any other mode is `kafka` |
-| `clickhouse` | the tier deploys a warehouse (every Kubernetes profile does) |
-| `core` | `dfe-engine` and `dfe-ui` are default in `apps.yaml` |
-| `hyperdx` | `hyperdx` is default in `apps.yaml` |
-| `kafbat` | `kafbat.enabled`, and only on the `kafka` transport |
-| `otel` | the tier deploys the collector (every Kubernetes profile does) |
-| `services[]` | every other app `apps.yaml` makes default in `docker-<mode>` |
-| `services[].config_path` | `<app>/<transport>.yaml` under `config/` |
-
-WHICH apps a projected profile runs is dfe-infra `apps.yaml`'s `default_in` for
-the matching `docker-<mode>` profile. That is the one place the default
-composition is declared, for Kubernetes and Compose alike, so adding an app to
-the default path is a manifest edit and a re-render rather than a list per
-platform.
-
-Replica counts, KEDA dials and operator choices do not cross: Compose runs one
-of each and has no autoscaler, so what survives the projection is WHICH
-components run, not how many.
-
-## Changing a projected profile
-
-Change the master, then re-render:
-
-1. In dfe-infra, edit `argocd/values/profile-<mode>.yaml` for the tier's shape,
-   or `apps.yaml`'s `default_in` for which apps it runs.
-2. `make render-profiles DFE_INFRA_DIR=...` here.
-3. Commit both, so the two repos move together.
-
-A shape that suits Compose and not Kubernetes is not a change to these two --
-add a hand-crafted profile beside them instead.
+**`make dev` builds every per-source app the profile runs.** Each instance runs the local image, because it `extends` the committed service and never sees an overlay, so the resolver writes the image into it. [`LOCAL`](developing.md#some-from-source-the-rest-pinned) narrows the build to what it names: `make dev LOCAL=dfe-fetcher` builds the fetcher alone. The build records what it made in `docker-compose.local.yml`. `make apply` puts a recreated instance back on that image, so the engine's `make apply SERVICES=<instance>` needs no `LOCAL`. `make ci` deletes the record.

@@ -69,7 +69,7 @@ a broken ingest pipeline cannot take the reporting on it down too.
 flowchart LR
     apps["DFE services"] -->|OTLP push :4317| col["otel-collector"]
     apps -->|stdout| drv["Docker log driver"]
-    drv -->|fluentforward :24224| col
+    drv -->|fluent_forward :24224| col
     chsrv[("ClickHouse<br/>system tables")] -->|sql_query pull| col
     col -->|self-telemetry :8888| col
     col -->|clickhouse exporter| ch[(`dfe.otel_*` tables)]
@@ -99,13 +99,13 @@ working on Kubernetes.
 nothing that does. Enabling push does not disable it: a Prometheus estate and a
 HyperDX estate are both served.
 
-## Turning self-monitoring on
+## Turning self-monitoring on and off
 
-Declare `otel: true` on a profile (`single` does) or set `DFE_OTEL_ENABLED=true`.
+Every profile declares `otel: true`. `DFE_OTEL_ENABLED=false` turns it off.
 
 | Variable | Default | Effect |
 |---|---|---|
-| `DFE_OTEL_ENABLED` | `false` | starts the bundled collector |
+| `DFE_OTEL_ENABLED` | unset, the profile decides | starts the bundled collector |
 | `DFE_OTEL_EXPORTER_ENDPOINT` | empty | where services push -- **empty exports nothing** |
 | `DFE_OTEL_DATABASE` | `dfe` | database the collector writes |
 | `DFE_OTEL_HEALTH_PORT` | `13133` | the `health_check` extension |
@@ -143,11 +143,7 @@ scraping estate nothing.
 
 ## Container logs go through the log driver, not a file reader
 
-Nothing in the stack exports logs over OTLP, so the lines a service writes to
-stdout reach ClickHouse a different way: Docker's own `fluentd` log driver sends
-them to the collector's `fluentforward` receiver, which turns the driver's tag
-into `ServiceName` and writes `dfe.otel_logs`. Search them in HyperDX on the
-`otel_logs` source.
+Nothing in the stack exports logs over OTLP, so the lines a service writes to stdout reach ClickHouse a different way: Docker's own `fluentd` log driver sends them to the collector's `fluent_forward` receiver, which turns the driver's tag into `ServiceName` and writes `dfe.otel_logs`. Search them in HyperDX on the `otel_logs` source.
 
 Kubernetes reads the same lines off the node with a DaemonSet filelog receiver.
 That does not port: the files live under the daemon's data-root, which is not
@@ -186,7 +182,7 @@ Node metrics are still not collected.
 
 ## What a passing self test proves
 
-`make post` makes up to eight claims, and each one the profile can make must hold:
+`make post` makes up to seven claims and each one the profile can make must hold:
 
 - **Ingest.** Three marked events posted at the profile's ingest edge come back
   as those exact rows in `dfe.main` inside 60s.
@@ -206,8 +202,6 @@ Node metrics are still not collected.
   matches and none of its near misses.
 - **Subscription**, where the tier has a bus. The loader is fetching at least one
   topic. It skips on the gRPC tiers.
-- **Idle apps.** Each app the tier starts with no work is serving and doing
-  nothing.
 - **Routing**, where the engine renders the tier's app config. A source created
   through the API reaches the running receiver, and a record matching its rule
   lands in a table of its own. The source is deleted afterwards and then that

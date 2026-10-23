@@ -30,14 +30,6 @@ from _common import COMPOSE_FILE, REPO_ROOT
 
 _FRAGMENTS = "-f docker-compose.yml -f docker-compose.override.yml"
 _PROXY_DIR = REPO_ROOT / "config" / "proxy"
-# One strip list as the configs write it, at the indentation of a virtual host's keys.
-_STRIP_LIST = (
-    "                      request_headers_to_remove:\n"
-    "                        - X-Forwarded-Email\n"
-    "                        - X-Forwarded-Groups\n"
-    "                        - X-OIDC-Subject\n"
-    "                        - X-OIDC-Groups\n"
-)
 
 # A service key in docker-compose.yml: two spaces in, alone on its line.
 _SERVICE_KEY_RE = re.compile(r"^  ([A-Za-z0-9._-]+):$", re.MULTILINE)
@@ -124,22 +116,22 @@ def _every_image_volume_mounted() -> dict:
 
 
 def test_an_image_volume_compose_leaves_unmounted_fails():
-    """An unmounted /state strands one anonymous volume per down/up cycle."""
+    """An unmounted /data strands one anonymous volume per down/up cycle."""
     config = _every_image_volume_mounted()
-    config["services"]["hyperdx-ferretdb"]["volumes"] = []
+    config["services"]["hyperdx-documentdb"]["volumes"] = []
 
     failures = check_compose._unmounted_image_volume_failures(config=config)
 
     assert len(failures) == 1
-    assert "hyperdx-ferretdb" in failures[0]
-    assert "/state" in failures[0]
+    assert "hyperdx-documentdb" in failures[0]
+    assert "/data" in failures[0]
 
 
 def test_an_anonymous_compose_volume_is_still_unmounted():
-    """`- /state` with no source is the same anonymous volume, declared in compose."""
+    """`- /data` with no source is the same anonymous volume, declared in compose."""
     config = _every_image_volume_mounted()
-    config["services"]["hyperdx-ferretdb"]["volumes"] = [
-        {"type": "volume", "target": "/state"}
+    config["services"]["hyperdx-documentdb"]["volumes"] = [
+        {"type": "volume", "target": "/data"}
     ]
 
     assert check_compose._unmounted_image_volume_failures(config=config)
@@ -147,8 +139,8 @@ def test_an_anonymous_compose_volume_is_still_unmounted():
 
 def test_named_volumes_and_binds_both_count_as_mounted():
     config = _every_image_volume_mounted()
-    config["services"]["hyperdx-ferretdb"]["volumes"] = [
-        {"type": "bind", "source": "/srv/ferret-state", "target": "/state"}
+    config["services"]["hyperdx-documentdb"]["volumes"] = [
+        {"type": "bind", "source": "/srv/documentdb-data", "target": "/data"}
     ]
 
     assert check_compose._unmounted_image_volume_failures(config=config) == []
@@ -188,16 +180,16 @@ def test_local_images_declaring_exactly_the_table_pass():
 
 def test_a_path_the_image_declares_and_the_table_lacks_fails():
     images, declared = _table_images()
-    declared["hyperdx-ferretdb:pinned"] = frozenset({"/state", "/var/lib/ferretdb"})
+    declared["hyperdx-documentdb:pinned"] = frozenset({"/data", "/var/lib/documentdb"})
 
     failures, _, _ = check_compose._image_volume_drift(
         images=images, inspect=declared.get
     )
 
     assert failures == [
-        "hyperdx-ferretdb: hyperdx-ferretdb:pinned declares VOLUME /var/lib/ferretdb, "
-        "which _IMAGE_VOLUMES does not list -- add it there so the mount check holds "
-        "compose to it"
+        "hyperdx-documentdb: hyperdx-documentdb:pinned declares VOLUME "
+        "/var/lib/documentdb, which _IMAGE_VOLUMES does not list -- add it there so "
+        "the mount check holds compose to it"
     ]
 
 
@@ -327,6 +319,9 @@ def _dialling(*, host: str, http: str, native: str) -> dict:
         "services": {
             "dfe-engine": {"environment": dict(engine_keys)},
             "dfe-hunt-runner": {"environment": dict(engine_keys)},
+            "dfe-loader": {
+                "environment": {"DFE_LOADER_CLICKHOUSE_HOSTS": f"{host}:{http}"}
+            },
             "otel-collector": {
                 "environment": {"CLICKHOUSE_HOST": host, "CLICKHOUSE_PORT": native}
             },
@@ -368,6 +363,21 @@ def test_the_collector_is_held_to_the_native_port_it_dials():
     assert failures == ["otel-collector: CLICKHOUSE_PORT=19000, want 9000"]
 
 
+def test_a_loader_left_on_the_bundled_container_fails_an_external_host():
+    config = _dialling(host="ch.example.invalid", http="8443", native="9440")
+    config["services"]["dfe-loader"]["environment"]["DFE_LOADER_CLICKHOUSE_HOSTS"] = (
+        "clickhouse:8123"
+    )
+
+    failures = check_compose._clickhouse_dial_mismatches(
+        config=config, want=("ch.example.invalid", "8443", "9440")
+    )
+
+    assert failures == [
+        "dfe-loader: DFE_LOADER_CLICKHOUSE_HOSTS=clickhouse:8123, want ch.example.invalid:8443"
+    ]
+
+
 def test_a_dialler_missing_from_the_stack_fails_rather_than_passing():
     config = _dialling(host="clickhouse", http="8123", native="9000")
     del config["services"]["dfe-hunt-runner"]
@@ -377,74 +387,6 @@ def test_a_dialler_missing_from_the_stack_fails_rather_than_passing():
     )
 
     assert failures == ["dfe-hunt-runner: dials ClickHouse but is not in the stack"]
-
-
-def _seeding(connections: str) -> dict:
-    return {
-        "services": {"hyperdx": {"environment": {"DEFAULT_CONNECTIONS": connections}}}
-    }
-
-
-def test_hyperdx_dialling_the_wanted_url_passes():
-    config = _seeding('[{"name":"platform","host":"https://ch.example.invalid:8443"}]')
-
-    assert (
-        check_compose._hyperdx_connection_mismatches(
-            config=config, want="https://ch.example.invalid:8443"
-        )
-        == []
-    )
-
-
-def test_hyperdx_left_on_the_bundled_container_fails_an_external_host():
-    """The literal connection HyperDX kept whatever CLICKHOUSE_HOST said."""
-    config = _seeding('[{"name":"platform","host":"http://clickhouse:8123"}]')
-
-    failures = check_compose._hyperdx_connection_mismatches(
-        config=config, want="http://ch.example.invalid:8123"
-    )
-
-    assert failures == [
-        "hyperdx: DEFAULT_CONNECTIONS dials ['http://clickhouse:8123'], "
-        "want ['http://ch.example.invalid:8123']"
-    ]
-
-
-def test_hyperdx_on_plain_http_fails_a_tls_host():
-    config = _seeding('[{"name":"platform","host":"http://ch.example.invalid:8443"}]')
-
-    assert check_compose._hyperdx_connection_mismatches(
-        config=config, want="https://ch.example.invalid:8443"
-    )
-
-
-def test_a_second_hyperdx_connection_fails_rather_than_hiding_behind_the_first():
-    config = _seeding(
-        '[{"host":"http://clickhouse:8123"},{"host":"http://other.invalid:8123"}]'
-    )
-
-    assert check_compose._hyperdx_connection_mismatches(
-        config=config, want="http://clickhouse:8123"
-    )
-
-
-def test_unparseable_hyperdx_connections_fail_rather_than_passing():
-    config = _seeding("[{not json")
-
-    failures = check_compose._hyperdx_connection_mismatches(
-        config=config, want="http://clickhouse:8123"
-    )
-
-    assert len(failures) == 1
-    assert "is not JSON" in failures[0]
-
-
-def test_hyperdx_missing_from_the_stack_fails_rather_than_passing():
-    failures = check_compose._hyperdx_connection_mismatches(
-        config={"services": {}}, want="http://clickhouse:8123"
-    )
-
-    assert failures == ["hyperdx: dials ClickHouse but is not in the stack"]
 
 
 def test_a_committed_service_named_like_a_generated_instance_fails():
@@ -458,16 +400,10 @@ def test_a_committed_service_named_like_a_generated_instance_fails():
     assert "'filebeat'" in failures[0]
 
 
-def test_the_apps_and_their_e2e_instances_take_no_instance_name():
+def test_the_apps_themselves_take_no_instance_name():
     services = {
         name: {}
-        for name in (
-            "dfe-fetcher",
-            "dfe-loader",
-            "dfe-transform-e2e-vrl-filebeat",
-            "dfe-transform-vrl",
-            "kafka-ui",
-        )
+        for name in ("dfe-fetcher", "dfe-loader", "dfe-transform-vrl", "kafka-ui")
     }
 
     assert check_compose._instance_name_collisions(services=services) == []
@@ -556,14 +492,10 @@ def test_an_instance_with_no_file_of_its_own_fails():
 
 
 def test_a_service_the_engine_does_not_render_reads_no_custom_file():
-    """The engine writes nothing for a static e2e instance, under any name."""
-    for name in ("transform-vrl-filebeat.custom.env", "dfe-transform-vrl.custom.env"):
+    """The engine writes nothing for a service it does not render, under any name."""
+    for name in ("ui.custom.env", "dfe-ui.custom.env"):
         failures = check_compose._custom_env_mismatches(
-            services={
-                "dfe-transform-e2e-vrl-filebeat": _reads(
-                    "transform-vrl-filebeat.env", name
-                )
-            }
+            services={"dfe-ui": _reads("ui.env", name)}
         )
 
         assert len(failures) == 1
@@ -574,31 +506,17 @@ def _proxy_text(name: str) -> str:
     return (_PROXY_DIR / name).read_text(encoding="utf-8")
 
 
-def _gated(*, app: str, api: str) -> dict:
-    return {
-        "services": {
-            "oauth2-proxy-hyperdx": {"environment": {"OAUTH2_PROXY_UPSTREAMS": app}},
-            "oauth2-proxy-hyperdx-api": {
-                "environment": {"OAUTH2_PROXY_UPSTREAMS": api}
-            },
-        }
-    }
-
-
 @pytest.mark.parametrize(
     ("name", "hosts"),
     [
         ("hyperdx.yaml", 2),
         ("hyperdx.tls.yaml", 4),
-        ("envoy.yaml", 1),
-        ("envoy.tls.yaml", 1),
+        ("envoy.yaml", 2),
+        ("envoy.tls.yaml", 2),
     ],
 )
-def test_every_route_to_hyperdx_strips_caller_supplied_identity(
-    hosts: int, name: str
-) -> None:
-    """Both HyperDX origins on every chain, and dfe-proxy's embed, which skips dfe-hyperdx-proxy."""
-    failures, made = check_compose._identity_strip_failures(
+def test_no_proxy_adds_an_identity_header(hosts: int, name: str) -> None:
+    failures, made = check_compose._identity_stamp_failures(
         label=name, text=_proxy_text(name)
     )
 
@@ -606,47 +524,20 @@ def test_every_route_to_hyperdx_strips_caller_supplied_identity(
     assert made == hosts
 
 
-def test_a_route_to_hyperdx_missing_one_header_fails():
-    """The fork's default email header is the one a header-dev HyperDX reads with no setting."""
-    original = _proxy_text("hyperdx.yaml")
-    text = original.replace("                        - X-Forwarded-Email\n", "", 1)
-
-    failures, _ = check_compose._identity_strip_failures(
-        label="hyperdx.yaml", text=text
-    )
-
-    assert text != original
-    assert len(failures) == 1
-    assert failures[0].startswith("hyperdx.yaml hyperdx-app/hyperdx: ")
-    assert "['x-forwarded-email']" in failures[0]
-
-
-def test_a_tls_chain_that_drops_the_strip_fails_while_its_plain_twin_keeps_it():
-    original = _proxy_text("hyperdx.tls.yaml")
-    text = original.replace(_STRIP_LIST, "", 1)
-
-    failures, made = check_compose._identity_strip_failures(
-        label="hyperdx.tls.yaml", text=text
-    )
-
-    assert text != original
-    assert made == 4
-    assert len(failures) == 1
-    assert failures[0].startswith("hyperdx.tls.yaml hyperdx-app/hyperdx: ")
-
-
-def test_a_proxy_that_stamps_an_identity_fails_even_while_it_strips():
-    """Strip then add is the fixed-operator stamping the engine-issued token replaced."""
+def test_a_proxy_that_stamps_an_identity_fails():
     original = _proxy_text("envoy.yaml")
+    embed = (
+        '                    - name: hyperdx\n                      domains: ["*"]\n'
+    )
     stamp = (
         "                      request_headers_to_add:\n"
         "                        - header:\n"
         "                            key: X-Forwarded-Email\n"
         '                            value: "admin@dfe.local"\n'
     )
-    text = original.replace(_STRIP_LIST, _STRIP_LIST + stamp, 1)
+    text = original.replace(embed, embed + stamp, 1)
 
-    failures, _ = check_compose._identity_strip_failures(label="envoy.yaml", text=text)
+    failures, _ = check_compose._identity_stamp_failures(label="envoy.yaml", text=text)
 
     assert text != original
     assert failures == [
@@ -655,60 +546,17 @@ def test_a_proxy_that_stamps_an_identity_fails_even_while_it_strips():
     ]
 
 
-def test_a_config_that_routes_nothing_to_hyperdx_fails_rather_than_passing():
-    text = _proxy_text("hyperdx.yaml").replace(
-        "address: hyperdx,", "address: elsewhere,"
-    )
+def test_a_config_with_no_virtual_host_fails_rather_than_passing():
+    original = _proxy_text("hyperdx.yaml")
+    text = original.replace("HttpConnectionManager", "TcpProxy")
 
-    failures, made = check_compose._identity_strip_failures(
+    failures, made = check_compose._identity_stamp_failures(
         label="hyperdx.yaml", text=text
     )
 
-    assert made == 0
-    assert failures == [
-        "hyperdx.yaml: no virtual host routes to HyperDX, so nothing was checked"
-    ]
-
-
-def test_a_strip_list_written_another_way_is_refused_rather_than_read_as_empty():
-    original = _proxy_text("hyperdx.yaml")
-    text = original.replace(
-        _STRIP_LIST,
-        "                      request_headers_to_remove: [X-Forwarded-Email]\n",
-        1,
-    )
-
     assert text != original
-    with pytest.raises(ValueError, match="request_headers_to_remove must be a block"):
-        check_compose._identity_strip_failures(label="hyperdx.yaml", text=text)
-
-
-def test_hyperdx_gates_that_reach_hyperdx_directly_pass():
-    config = _gated(app="http://hyperdx:8090", api="http://hyperdx:8000")
-
-    assert check_compose._gate_upstream_mismatches(config=config) == []
-
-
-def test_a_hyperdx_gate_routed_through_dfe_hyperdx_proxy_fails():
-    """dfe-hyperdx-proxy strips the identity oauth2-proxy sets, so header-dev loses its login."""
-    config = _gated(app="http://dfe-hyperdx-proxy:8090", api="http://hyperdx:8000")
-
-    failures = check_compose._gate_upstream_mismatches(config=config)
-
-    assert len(failures) == 1
-    assert failures[0].startswith(
-        "oauth2-proxy-hyperdx: OAUTH2_PROXY_UPSTREAMS='http://dfe-hyperdx-proxy:8090', "
-        "want 'http://hyperdx:8090'"
-    )
-
-
-def test_a_hyperdx_gate_missing_from_the_stack_fails_rather_than_passing():
-    config = _gated(app="http://hyperdx:8090", api="http://hyperdx:8000")
-    del config["services"]["oauth2-proxy-hyperdx-api"]
-
-    assert check_compose._gate_upstream_mismatches(config=config) == [
-        "oauth2-proxy-hyperdx-api: gates HyperDX but is not in the stack"
-    ]
+    assert made == 0
+    assert failures == ["hyperdx.yaml: no virtual host found, so nothing was checked"]
 
 
 def test_a_service_that_queues_and_waits_passes_and_json_file_is_not_checked():

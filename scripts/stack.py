@@ -45,9 +45,9 @@ Transport is EXPLICIT-LOCAL-FIRST, OCI-DEFAULT:
 
 The rendered fragment is the source of truth for the pins. This tool only
 routes it and merges it; it does not compose version strings itself.
-"""
 
-from __future__ import annotations
+``--print KEY`` prints the value the stack pins KEY to and leaves ``.env`` alone, reading the stack ``deployment.example.yaml`` pins when no VERSION is given, which is how `make check-proxy` finds the Envoy on a checkout with no ``.env``.
+"""
 
 import argparse
 import os
@@ -58,17 +58,22 @@ import sys
 import tempfile
 from pathlib import Path
 
-from _common import (
+# Bytecode for the repo modules imported below goes to .tmp/pycache, as it does under make
+sys.pycache_prefix = str(Path(__file__).resolve().parent.parent / ".tmp" / "pycache")
+
+from _common import (  # noqa: E402
     COMPOSE_FILE,
+    DEPLOYMENT_DIAL_TEMPLATE,
     DOTENV_FILE,
     DOTENV_MODE,
     DOTENV_TEMPLATE,
     _dotenv_values,
+    _parse_yaml_subset,
     _print,
     _rel_path,
     write_private,
 )
-from _registry import (
+from _registry import (  # noqa: E402
     DISCOVERY_WORDS,
     RegistryError,
     latest_release,
@@ -81,7 +86,7 @@ from _registry import (
 # the only place that mints the generated secrets. A plain copy here would produce
 # a .env whose secrets are still the sentinel placeholders, which starts but fails
 # `make post`.
-from init import _create_dotenv
+from init import _create_dotenv  # noqa: E402
 
 # A rendered pin line: KEY=value[  # annotation]. Keys are UPPER_SNAKE ending in
 # _VERSION; only such active (non-comment) lines from the fragment are merged.
@@ -323,6 +328,35 @@ def _ensure_env() -> None:
     _create_dotenv(dst_path=DOTENV_FILE, src_path=DOTENV_TEMPLATE)
 
 
+def _dial_pin() -> str:
+    """Return the stack version deployment.example.yaml pins, which every checkout carries."""
+    dial = _parse_yaml_subset(
+        text=DEPLOYMENT_DIAL_TEMPLATE.read_text(encoding="utf-8", errors="replace")
+    )
+    version = dial.get("version")
+    pin = version.get("pin") if isinstance(version, dict) else None
+    if not (isinstance(pin, str)) or not (pin.strip()):
+        raise StackError(
+            f"{_rel_path(path=DEPLOYMENT_DIAL_TEMPLATE)!r} sets no version.pin"
+        )
+    return pin.strip()
+
+
+def _pin_value(*, key: str, pins: dict[str, str]) -> str:
+    """Return the value one pin line sets without its annotation, refusing a missing or undigested pin."""
+    if key not in pins:
+        raise StackError(f"the stack pins no {key!r}")
+    _refuse_undigested(pins={key: pins[key]})
+    return pins[key].partition("=")[2].split("  #", maxsplit=1)[0].strip()
+
+
+def _stack_version(*, requested: str) -> str:
+    """Return the stack version a request names, the newest published one for a discovery word."""
+    if requested in DISCOVERY_WORDS:
+        return latest_tag(prereleases=DISCOVERY_WORDS[requested], repo=manifest_repo())
+    return requested
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(
         prog="stack.py", description=__doc__.split("\n")[0].strip()
@@ -334,20 +368,29 @@ def main() -> int:
         f"the newest published stack ({REPIN_ENV}=1 also repins the DFE images "
         "at their newest GitHub releases)",
     )
+    parser.add_argument(
+        "--print",
+        dest="print_key",
+        help="print the value the stack pins KEY to and leave .env alone, for the "
+        "stack deployment.example.yaml pins when no version is given",
+        metavar="KEY",
+    )
     args = parser.parse_args()
     requested = (args.version or "").strip()
     try:
+        if args.print_key:
+            version = _stack_version(requested=requested or _dial_pin())
+            fragment, _ = _resolve_fragment(version=version)
+            pins = _parse_pins(fragment=fragment)
+            print(_pin_value(key=args.print_key, pins=pins))
+            return 0
         if not requested:
             raise StackError(
                 "no VERSION given -- usage: make stack VERSION=X.Y.Z[-rc.N]|latest"
             )
         discover = requested in DISCOVERY_WORDS
         repin = discover and _repin_requested()
-        version = (
-            latest_tag(prereleases=DISCOVERY_WORDS[requested], repo=manifest_repo())
-            if discover
-            else requested
-        )
+        version = _stack_version(requested=requested)
         _ensure_env()
         fragment, source = _resolve_fragment(version)
         pins = _parse_pins(fragment)

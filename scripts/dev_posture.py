@@ -40,7 +40,10 @@ import datetime
 import sys
 from pathlib import Path
 
-from _common import (
+# Bytecode for the repo modules imported below goes to .tmp/pycache, as it does under make
+sys.pycache_prefix = str(Path(__file__).resolve().parent.parent / ".tmp" / "pycache")
+
+from _common import (  # noqa: E402
     DOTENV_FILE,
     DOTENV_MODE,
     _dotenv_values,
@@ -48,14 +51,14 @@ from _common import (
     _rel_path,
     write_private,
 )
-from creds import (
+from creds import (  # noqa: E402
     _ADMIN_PASSWORD_KEY,
     _DEFAULT_PASSWORD,
     _DEV_POSTURES,
     default_admin_password,
     is_dev_posture,
 )
-from init import GENERATED_SECRETS, _generate_secret, _setting_key
+from init import GENERATED_SECRETS, _generate_secret, _setting_key  # noqa: E402
 
 # The two postures written, and what each means for the admin password.
 _DEV_ENV = "dev"

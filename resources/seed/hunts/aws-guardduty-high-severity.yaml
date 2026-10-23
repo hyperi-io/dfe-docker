@@ -1,0 +1,19 @@
+# Project:   dfe-docker
+# File:      resources/seed/hunts/aws-guardduty-high-severity.yaml
+# Purpose:   Starter hunt running the GuardDuty high severity rule every five minutes
+# Language:  YAML
+#
+# License:   BUSL-1.1
+# Copyright: (c) 2026 HYPERI PTY LIMITED
+
+name: aws-guardduty-high-severity
+display_name: GuardDuty high severity findings
+cron: "*/5 * * * *"
+# A required label: the runner takes each detection's org from the matched row.
+customers:
+  - seed
+rules:
+  - aws-guardduty-high-severity
+global_source_table_name: dfe.aws-guardduty
+global_target_table_name: dfe.detection
+checkpoint_timestamp_field: _timestamp_load

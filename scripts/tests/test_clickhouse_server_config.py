@@ -34,11 +34,12 @@ from _common import COMPOSE_FILE, REPO_ROOT
 
 _SERVICE = "clickhouse"
 _CONFIG_D = "/etc/clickhouse-server/config.d"
-_DATA_DIR = "/var/lib/clickhouse/"
-_LOGGER_FILE = REPO_ROOT / "clickhouse" / "server-logger.xml"
-_SYSTEM_LOGS_FILE = REPO_ROOT / "clickhouse" / "system-logs.xml"
-_REPLICATION_FILE = REPO_ROOT / "clickhouse" / "replication.xml"
-_LISTEN_FILE = REPO_ROOT / "clickhouse" / "listen.xml"
+# Where existing volumes hold Keeper's log, not the image default coordination/logs
+_KEEPER_LOG_DIR = "/var/lib/clickhouse/coordination/log"
+_LOGGER_FILE = REPO_ROOT / "config" / "clickhouse" / "server-logger.xml"
+_SYSTEM_LOGS_FILE = REPO_ROOT / "config" / "clickhouse" / "system-logs.xml"
+_REPLICATION_FILE = REPO_ROOT / "config" / "clickhouse" / "replication.xml"
+_LISTEN_FILE = REPO_ROOT / "config" / "clickhouse" / "listen.xml"
 # The image's file that opens every listener on every interface.
 _IMAGE_LISTEN_NAME = "docker_related_config.xml"
 _LOOPBACK = {"127.0.0.1", "::1"}
@@ -65,6 +66,7 @@ _SYSTEM_LOG_TTL = {
     "metric_log": "event_date + INTERVAL 7 DAY DELETE",
     "part_log": "event_date + INTERVAL 7 DAY DELETE",
     "query_log": "event_date + INTERVAL 30 DAY DELETE",
+    "query_views_log": "event_date + INTERVAL 7 DAY DELETE",
     # HyperDX's clickhouse_system source reads it, so it stays on.
     "text_log": "event_date + INTERVAL 7 DAY DELETE",
 }
@@ -208,26 +210,23 @@ def _text(root: ElementTree.Element, path: str) -> str:
     return (element.text or "").strip()
 
 
-def test_keeper_runs_embedded_and_keeps_its_data_with_the_tables() -> None:
+def test_keeper_runs_embedded_on_the_log_path_existing_volumes_hold() -> None:
     root = _root(path=_REPLICATION_FILE)
 
     assert _text(root, "keeper_server/server_id") == "1"
     servers = root.findall("keeper_server/raft_configuration/server")
     assert [_text(server, "id") for server in servers] == ["1"]
-    # Lose one without the other and every replicated table goes read-only.
-    for path in ("log_storage_path", "snapshot_storage_path"):
-        assert _text(root, f"keeper_server/{path}").startswith(_DATA_DIR), path
+    assert _text(root, "keeper_server/log_storage_path") == _KEEPER_LOG_DIR
+    # Snapshots stay at the image default inside the data volume
+    assert root.find("keeper_server/snapshot_storage_path") is None
 
 
 def test_the_server_reaches_its_own_keeper_under_a_generated_identity() -> None:
     root = _root(path=_REPLICATION_FILE)
     nodes = root.findall("zookeeper/node")
-    bound = {
-        (e.text or "").strip() for e in _root(path=_LISTEN_FILE).findall("listen_host")
-    }
 
-    # A name such as localhost can resolve to ::1 alone, where Keeper does not listen.
-    assert len(nodes) == 1 and _text(nodes[0], "host") in bound, bound
+    # Keeper's client port binds the image's loopback listen_host defaults
+    assert len(nodes) == 1 and _text(nodes[0], "host") in _LOOPBACK
     assert _text(nodes[0], "port") == _text(root, "keeper_server/tcp_port")
     identity = root.find("zookeeper/identity")
     assert identity is not None, "Keeper's znodes would be open to every container"
@@ -285,10 +284,9 @@ def test_sql_users_and_roles_land_in_keeper() -> None:
 
 def test_keeper_raft_and_interserver_listen_on_loopback_only() -> None:
     root = _root(path=_LISTEN_FILE)
-    hosts = {(e.text or "").strip() for e in root.findall("listen_host")}
 
-    # Keeper's client port binds listen_host and has no host setting of its own.
-    assert hosts and hosts <= _LOOPBACK, hosts
+    # Keeper's client port binds listen_host, which the image's config.xml sets to ::1 and 127.0.0.1
+    assert root.find("listen_host") is None
     assert _text(root, "interserver_listen_host") in _LOOPBACK
 
 

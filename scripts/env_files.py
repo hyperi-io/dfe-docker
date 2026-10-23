@@ -29,7 +29,13 @@ Silent when nothing is missing, nothing has drifted and env/ is already shared.
 
 from __future__ import annotations
 
-from _common import (
+import sys
+from pathlib import Path
+
+# Bytecode for the repo modules imported below goes to .tmp/pycache, as it does under make
+sys.pycache_prefix = str(Path(__file__).resolve().parent.parent / ".tmp" / "pycache")
+
+from _common import (  # noqa: E402
     DOTENV_FILE,
     DOTENV_TEMPLATE,
     ENV_DIR,
@@ -37,8 +43,8 @@ from _common import (
     _print,
     _rel_path,
 )
-from init import drift_keys, share_env_dir
-from init import main as init_main
+from init import drift_keys, share_env_dir  # noqa: E402
+from init import main as init_main  # noqa: E402
 
 
 def _missing_files() -> list[str]:

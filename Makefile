@@ -7,6 +7,7 @@
 # Copyright: (c) 2026 HYPERI PTY LIMITED
 
 .DEFAULT_GOAL := help
+export PYTHONPYCACHEPREFIX := $(CURDIR)/.tmp/pycache
 
 # Read only when present, because make builds a missing include before any goal
 # and `make help` must not mint secrets. Goals that need .env depend on it.
@@ -52,20 +53,16 @@ endif
 # any more (both sweep every profile), and requiring a resolvable profile to STOP
 # a stack is the same lockout the compose secret comments argue against -- set
 # DFE_PROFILE to something that does not exist and you could not tear down.
-BOOTSTRAP_GOALS := init env-files creds dev-posture help stack dial modes down clean limits check check-compose check-hardfail check-dockerfile check-docs check-locks check-proxy check-python check-tests
+BOOTSTRAP_GOALS := init env-files creds certs dev-posture help stack dial modes down clean limits check check-compose check-hardfail check-dockerfile check-docs check-locks check-proxy check-python check-tests
 
 # Resolve the active profile only when a goal actually needs the compose stack
 ifneq (,$(filter-out $(BOOTSTRAP_GOALS),$(or $(MAKECMDGOALS),help)))
-    include .profile.mk
+    include .tmp/profile.mk
     SERVICES ?=
     ifeq ($(strip $(SERVICES)),)
         ACTIVE_SERVICES := $(DFE_SERVICES)
     else
-        # On a fresh checkout make parses once before .profile.mk exists, then
-        # remakes it and parses again; the name check only means anything on
-        # the second pass, when DFE_SERVICES is populated. `apply` skips it: it
-        # names instances declared since .profile.mk was last written, so the
-        # make it starts checks them against the re-resolved list instead.
+        # On a fresh checkout make parses once before .tmp/profile.mk exists, then remakes it and parses again, so the name check only means anything on the second pass, when DFE_SERVICES is populated. `apply` skips it: it names instances declared since .tmp/profile.mk was last written, so the make it starts checks them against the re-resolved list instead
         ifneq ($(strip $(DFE_SERVICES)),)
             ifeq ($(filter apply,$(MAKECMDGOALS)),)
                 INVALID_SERVICES := $(filter-out $(DFE_SERVICES),$(SERVICES))
@@ -92,9 +89,10 @@ ifneq (,$(filter-out $(BOOTSTRAP_GOALS),$(or $(MAKECMDGOALS),help)))
     # `LIVE_UI=1` runs dfe-ui from the checkout, so there is no dfe-ui image to build.
     LIVE_UI_SKIP := $(if $(strip $(LIVE_UI)),dfe-ui)
     ifeq ($(strip $(LOCAL)),)
-        DEV_BUILD := $(filter-out $(LIVE_UI_SKIP),$(ACTIVE_SERVICES))
+        # DFE_SERVICES names a per-source app's instances and never the app, so the apps the profile runs per source are built beside it. The build records what it made in the overlay file, which `make apply` reads to keep an instance on its local image
+        DEV_BUILD := $(filter-out $(LIVE_UI_SKIP),$(ACTIVE_SERVICES)) $(DFE_PER_SOURCE_APPS)
         DEV_FLAGS :=
-        DEV_OVERLAY_ARG :=
+        DEV_OVERLAY_ARG := --record $(LOCAL_OVERLAY)
     else
         # Validated against the buildable set rather than the resolved stack: a
         # name the builder skips builds nothing and leaves nothing to overlay.
@@ -104,10 +102,11 @@ ifneq (,$(filter-out $(BOOTSTRAP_GOALS),$(or $(MAKECMDGOALS),help)))
                 $(error 'LOCAL' contains names this repo cannot build from source: $(UNBUILDABLE_LOCAL). Buildable: $(DFE_BUILDABLE_SERVICES))
             endif
         endif
+        # DFE_SERVICES names a per-source app's instances and never the app, so the apps the profile runs per source are named beside it
         ifneq ($(strip $(DFE_SERVICES)),)
-            INVALID_LOCAL := $(filter-out $(DFE_SERVICES),$(LOCAL))
+            INVALID_LOCAL := $(filter-out $(DFE_SERVICES) $(DFE_PER_SOURCE_APPS),$(LOCAL))
             ifneq ($(INVALID_LOCAL),)
-                $(error 'LOCAL' contains names not in the resolved stack: $(INVALID_LOCAL). Available: $(DFE_SERVICES))
+                $(error 'LOCAL' contains names not in the resolved stack: $(INVALID_LOCAL). Available: $(DFE_SERVICES) $(DFE_PER_SOURCE_APPS))
             endif
         endif
         ifneq ($(filter $(LIVE_UI_SKIP),$(LOCAL)),)
@@ -144,11 +143,7 @@ endif
 # INFRA-class UI at once and beats their individual flags. dfe-ui and the engine
 # API are PRODUCT class and answer only to their own.
 #
-# Below the profile block because DFE_AUTH_RESOLVED comes from .profile.mk, so
-# the profile key and the env var can never disagree about whether the auth
-# proxies are in play. The bootstrap goals skip that include and read it empty,
-# which is the auth-off branch -- the safe direction for a target that only
-# stops a stack or checks a file.
+# Below the profile block because DFE_AUTH_RESOLVED comes from .tmp/profile.mk, so the profile key and the env var can never disagree about whether the auth proxies are in play. The bootstrap goals skip that include and read it empty, which is the auth-off branch, the safe direction for a target that only stops a stack or checks a file.
 # ---------------------------------------------------------------------------
 DFE_BIND_SCOPE ?= localhost
 ifeq ($(strip $(DFE_BIND_SCOPE)),localhost)
@@ -285,7 +280,7 @@ endif
 # with the profile (scripts/instances.py). Empty for the bootstrap goals, which
 # reads as off -- the safe direction for a target that only stops a stack.
 ifeq ($(strip $(DFE_INSTANCES_RESOLVED)),true)
-    $(eval $(call chain_fragment,docker-compose.instances.yml))
+    $(eval $(call chain_fragment,.tmp/docker-compose.instances.yml))
 endif
 
 # Container stdout to the collector. Off wherever the collector is, because the
@@ -332,10 +327,13 @@ ifneq ($(filter-out true false,$(strip $(DFE_PROXY_TLS)))$(word 2,$(DFE_PROXY_TL
     $(error DFE_PROXY_TLS must be `true` or `false`, got '$(strip $(DFE_PROXY_TLS))')
 endif
 
+# Set before the dial so `make certs` writes where a later DFE_PROXY_TLS=true start reads
+DFE_PROXY_CERT_DIR ?= ./certs
+# The directory goes into a quoted shell argument, so one holding a quote is refused before the shell sees it
+CERT_DIR_REFUSAL = $(if $(findstring ',$(DFE_PROXY_CERT_DIR)),$(error DFE_PROXY_CERT_DIR='$(DFE_PROXY_CERT_DIR)' holds a single quote, which ends the quoted shell argument it is passed in. Set DFE_PROXY_CERT_DIR to a path without one))
 ifeq ($(strip $(DFE_PROXY_TLS)),true)
     # Private space outside Docker's stock pools (172.17-31/16, 192.168/20) and the fleet's 172.16.0.0/12 pool.
     DFE_NETWORK_SUBNET ?= 10.207.0.0/24
-    DFE_PROXY_CERT_DIR ?= ./certs
     export DFE_NETWORK_SUBNET
     export DFE_PROXY_CERT_DIR
     PROXY_NETWORK := $(shell python3 scripts/proxy_tls.py network '$(strip $(DFE_NETWORK_SUBNET))')
@@ -344,7 +342,7 @@ ifeq ($(strip $(DFE_PROXY_TLS)),true)
     $(eval $(call chain_fragment,docker-compose.tls.yml))
 endif
 
-# Only the start goals need the certificate, for the reason ORIGIN_GOALS gives. The auth refusal is in the .profile.mk recipe instead, because it reads DFE_AUTH_RESOLVED and this pass may still hold the previous run's.
+# Only the start goals need the certificate, for the reason ORIGIN_GOALS gives. The auth refusal is in the .tmp/profile.mk recipe instead, because it reads DFE_AUTH_RESOLVED and this pass may still hold the previous run's
 PROXY_TLS_START := $(and $(filter true,$(strip $(DFE_PROXY_TLS))),$(filter $(ORIGIN_GOALS),$(or $(MAKECMDGOALS),help)))
 ifneq ($(PROXY_TLS_START),)
     ifeq ($(filter https://%,$(call origin_value,DFE_EXTERNAL_ORIGIN)),)
@@ -365,11 +363,19 @@ PROXY_PROJECT := $(or $(strip $(COMPOSE_PROJECT_NAME)),$(notdir $(CURDIR)))
 # The certificate pair, the subnet and the network as Docker holds it now; the helper prints the first problem and nothing when there is none.
 # A helper that exits non-zero printed no problem because it checked nothing, so that exit becomes the problem and the start is refused.
 ifneq ($(PROXY_TLS_START)$(PROXY_NETWORK_REUSE),)
+    $(CERT_DIR_REFUSAL)
     PROXY_TLS_PROBLEM := $(shell python3 scripts/proxy_tls.py precheck $(if $(PROXY_TLS_START),--certs --overlap) $(if $(PROXY_NETWORK_REUSE),--toggle) --cert-dir '$(DFE_PROXY_CERT_DIR)' --project '$(PROXY_PROJECT)' --subnet '$(strip $(DFE_NETWORK_SUBNET))' --tls $(if $(filter true,$(strip $(DFE_PROXY_TLS))),true,false) || echo "scripts/proxy_tls.py precheck failed before it could check the console TLS setup, so the start is refused rather than assumed safe. Its error is printed above")
     ifneq ($(strip $(PROXY_TLS_PROBLEM)),)
         $(error $(PROXY_TLS_PROBLEM))
     endif
 endif
+
+# The host goes into a quoted shell argument, so one holding a character no host holds is refused before the shell sees it
+.PHONY: certs
+certs: ## Mint a console TLS certificate for DFE_EXTERNAL_ORIGIN's host, localhost and 127.0.0.1 into DFE_PROXY_CERT_DIR, with a single-use CA to trust once. Never replaces a file already there
+	@$(if $(call origin_bad,$(call origin_host,DFE_EXTERNAL_ORIGIN)),$(error DFE_EXTERNAL_ORIGIN='$(call origin_value,DFE_EXTERNAL_ORIGIN)' carries characters a host cannot hold: `$(call origin_bad,$(call origin_host,DFE_EXTERNAL_ORIGIN))`. Set DFE_EXTERNAL_ORIGIN=$(call origin_fix,DFE_EXTERNAL_ORIGIN)))
+	@$(CERT_DIR_REFUSAL)
+	@python3 scripts/proxy_tls.py mint --cert-dir '$(DFE_PROXY_CERT_DIR)' --host '$(or $(call origin_host,DFE_EXTERNAL_ORIGIN),localhost)'
 
 ifneq ($(strip $(LIVE)),)
     export COMPOSE_FILE := docker-compose.yml:docker-compose.override.yml:docker-compose.live.yml$(STORAGE_CHAIN)$(UI_CHAIN)$(LIVE_UI_CHAIN)
@@ -378,11 +384,18 @@ else ifneq ($(strip $(STORAGE_CHAIN))$(strip $(UI_CHAIN))$(strip $(LIVE_UI_CHAIN
 endif
 
 # The gated infra UIs go to the resolver, so the engine's admin links name only
-# what the host publishes.
+# what the host publishes. The per-source apps built locally go too, because the overlay never reaches an instance's `extends`: what LOCAL names, else every one the profile runs on `make dev`, else what the last dev build recorded on any goal but `make ci`.
 #
 # Console TLS refuses the auth profile here, after the resolver has written this run's answer: the oauth2-proxy ports serve no TLS, so an https origin gives them callbacks they cannot answer.
-.profile.mk: FORCE
-	@python3 scripts/resolve_profile.py $(if $(KAFBAT_GATED),--unpublished kafbat) $(if $(HYPERDX_GATED),--unpublished hyperdx)
+ifneq ($(strip $(LOCAL)),)
+    RESOLVE_LOCAL_ARGS = $(foreach app,$(LOCAL),--local $(app))
+else ifneq ($(filter dev dev-build,$(MAKECMDGOALS)),)
+    RESOLVE_LOCAL_ARGS = --local-per-source
+else ifeq ($(filter ci,$(MAKECMDGOALS)),)
+    RESOLVE_LOCAL_ARGS = --local-overlay $(LOCAL_OVERLAY)
+endif
+.tmp/profile.mk: FORCE
+	@python3 scripts/resolve_profile.py $(if $(KAFBAT_GATED),--unpublished kafbat) $(if $(HYPERDX_GATED),--unpublished hyperdx) $(RESOLVE_LOCAL_ARGS)
 ifneq ($(PROXY_TLS_START),)
 	@if grep -qx 'export DFE_AUTH_RESOLVED := true' $@; then echo "DFE_PROXY_TLS=true cannot start with the auth profile: oauth2-proxy serves no TLS here, so the https callbacks it registers with the IdP never answer. Set DFE_AUTH_ENABLED=false (or drop auth from the profile) to keep TLS. Set DFE_PROXY_TLS=false to keep the auth profile" >&2; exit 1; fi
 endif
@@ -477,7 +490,7 @@ modes: ## Show the deploy modes -- pinned vs track-latest -- and which one this 
 .PHONY: storage-dirs
 storage-dirs:
 ifneq ($(strip $(DFE_DATA_ROOT)),)
-	@mkdir -p $(addprefix $(DFE_DATA_ROOT)/,clickhouse kafka-redpanda kafka-apache archiver dlq-spool fetcher-cursors engine-config engine-schemas hyperdx-pg)
+	@mkdir -p $(addprefix $(DFE_DATA_ROOT)/,clickhouse kafka-redpanda kafka-apache archiver dlq-spool fetcher-cursors engine-config engine-schemas hyperdx-documentdb)
 endif
 
 # `dev` and `dev-build` clone the component repos from github.com/hyperi-io,
@@ -500,8 +513,10 @@ dev-build: ## Build local DFE images from source (no start; honours LOCAL). Clon
 # CI / registry images (skips docker-compose.override.yml)
 # ---------------------------------------------------------------------------
 
+# A registry stack runs no local image, so the record of the last dev build goes, or `make apply` would put an instance back on it.
 .PHONY: ci
 ci: env-files down storage-dirs  ## Pull and start infra and registry DFE images. Prints no credentials -- run `make creds` for those
+	@rm -f $(LOCAL_OVERLAY)
 	docker compose -f docker-compose.yml $(STORAGE_FLAGS) $(UI_FLAGS) $(PROFILE_FLAGS) pull
 	docker compose -f docker-compose.yml $(STORAGE_FLAGS) $(UI_FLAGS) $(PROFILE_FLAGS) pull $(ACTIVE_SERVICES)
 	docker compose -f docker-compose.yml $(STORAGE_FLAGS) $(UI_FLAGS) $(PROFILE_FLAGS) up -d $(ACTIVE_SERVICES)
@@ -529,9 +544,7 @@ endif
 apply: env-files storage-dirs ## Create or recreate the named services after a config write, removing the containers of deleted sources (SERVICES="svc ..."; DEV=1 for a `make dev` stack), the command dfe-engine's hints name. With no SERVICES it only removes, for after a source is deleted
 	@$(MAKE) --no-print-directory apply-services
 
-# A second make, because it reads the .profile.mk this one just re-resolved and
-# so checks SERVICES against the instances the engine has declared. A source the
-# engine deleted has left that fragment, so its container is removed first.
+# A second make, because it reads the .tmp/profile.mk this one just re-resolved and so checks SERVICES against the instances the engine has declared. A source the engine deleted has left that fragment, so its container is removed first
 .PHONY: apply-services
 apply-services:
 	@python3 scripts/instances.py --prune -- $(APPLY_FLAGS) $(PROFILE_FLAGS)
@@ -564,7 +577,7 @@ infra: .env storage-dirs ## Start infrastructure services
 # hadolint image while check-tests resolves the pinned pytest, so those two want
 # a network the first time; the rest need none.
 #
-# check-proxy pulls the pinned Envoy image the same way and needs openssl on the host for its throwaway certificate.
+# check-proxy reads the stack SSoT, anonymously through oras, when DFE_PROXY_VERSION is unset, then pulls that Envoy and needs openssl on the host for its throwaway certificate.
 # ---------------------------------------------------------------------------
 
 .PHONY: check
@@ -593,7 +606,7 @@ check-python: ## Lint the helper scripts (config in ruff.toml)
 # (PYTEST=pytest). Unit tests over the helper scripts: they
 # touch a tmp_path .env and start nothing, so they belong with the static checks.
 PYTEST_VERSION := 9.1.1
-# The seed tests parse config/seed with the PyYAML scripts/seed.py pins, and scripts/tests/test_script_locks.py holds the two pins equal.
+# The seed tests parse resources/seed with the PyYAML scripts/seed.py pins. scripts/tests/test_script_locks.py holds the two pins equal
 PYYAML_VERSION := 6.0.3
 PYTEST ?= uvx --with pyyaml==$(PYYAML_VERSION) pytest@$(PYTEST_VERSION)
 
@@ -623,21 +636,6 @@ check-locks: ## Assert each inline-metadata script's lock matches its pins (relo
 	$(LOCK_UV) lock --check --script scripts/seed.py
 	$(LOCK_UV) lock --check --script scripts/test_e2e.py
 	$(LOCK_UV) lock --check --script scripts/test_flows.py
-
-# `slim` and `single` are projections of the Kubernetes tiers of the same name,
-# so both targets need DFE_INFRA_DIR pointed at a dfe-infra checkout. Unset,
-# check-profiles reports SKIPPED rather than passing: it cannot read the master.
-.PHONY: render-profiles
-render-profiles: ## Re-render the projected slim/single profiles from dfe-infra (DFE_INFRA_DIR=...)
-	@python3 scripts/render_profiles.py
-
-.PHONY: check-profiles
-check-profiles: ## Assert the projected profiles match the Kubernetes ones (DFE_INFRA_DIR=...)
-ifeq ($(strip $(DFE_INFRA_DIR)),)
-	@echo "check-profiles: DFE_INFRA_DIR unset -- projection NOT checked (not a pass)"
-else
-	@python3 scripts/render_profiles.py --check
-endif
 
 # The resolved chain, for check-compose to compare the `make dev LOCAL=...` file
 # list against. Not a bootstrap goal: the chain depends on DFE_AUTH_RESOLVED.
@@ -673,19 +671,23 @@ check-dockerfile: ## Lint the dev builder Dockerfile (hadolint gates on error se
 
 # Validate mode loads every listener, cluster and TLS context, so a config that would crash-loop either proxy fails here instead.
 #
-# The Envoy version tracks services.envoy-proxy in dfe-infra's versions.yaml, the pin `make stack` writes to DFE_PROXY_VERSION. The digest is that file's services-digests.envoy-proxy, the manifest-list digest, so move both together.
+# The Envoy is the one the stack runs: DFE_PROXY_VERSION when set, else the pin scripts/stack.py reads from the stack manifest at VERSION, which falls back to deployment.example.yaml's version.pin.
 #
 # The TLS variants read their certificate at validation, so a throwaway P-384 pair is minted into a scratch directory. Envoy runs as the make user, as both proxies do under TLS, because the image's own user cannot read a 0600 key.
-ENVOY_IMAGE := envoyproxy/envoy:v1.39.0@sha256:d59f7f5fa10cff6d5892b6c5e7df5c9297ddfb2c3683e33fbfb82da24de4fa66
+ENVOY_REPO := envoyproxy/envoy
+# Run in the recipe, since $(shell) drops the exit status and a failed lookup would validate on an empty tag
+PROXY_VERSION_COMMAND = $(if $(strip $(DFE_PROXY_VERSION)),echo '$(strip $(DFE_PROXY_VERSION))',python3 scripts/stack.py --print DFE_PROXY_VERSION $(VERSION))
 PROXY_CHECK_DIR := .tmp/check-proxy
 PROXY_CONFIGS := envoy hyperdx envoy.tls hyperdx.tls
 
 .PHONY: check-proxy
-check-proxy: ## Validate the Envoy proxy configs, plain and TLS, on the pinned Envoy
+check-proxy: ## Validate the Envoy proxy configs, plain and TLS, on the Envoy the stack runs
 	@rm -rf $(PROXY_CHECK_DIR) && mkdir -p $(PROXY_CHECK_DIR)
 	@openssl req -x509 -newkey ec -pkeyopt ec_paramgen_curve:P-384 -nodes -days 1 -subj /CN=check-proxy -keyout $(PROXY_CHECK_DIR)/console.key -out $(PROXY_CHECK_DIR)/console.crt 2>/dev/null
-	@status=0; for config in $(PROXY_CONFIGS); do \
-		if out=$$(docker run --rm --user $(DFE_DEV_UID):$(DFE_DEV_GID) -v "$(CURDIR)/config/proxy/$$config.yaml:/etc/envoy/envoy.yaml:ro" -v "$(CURDIR)/$(PROXY_CHECK_DIR):/etc/envoy/certs:ro" $(ENVOY_IMAGE) envoy --mode validate -c /etc/envoy/envoy.yaml --log-level error 2>&1); then \
+	@version=$$($(PROXY_VERSION_COMMAND)) || { rm -rf $(PROXY_CHECK_DIR); exit 1; }; \
+	echo "Envoy $(ENVOY_REPO):$$version"; \
+	status=0; for config in $(PROXY_CONFIGS); do \
+		if out=$$(docker run --rm --user $(DFE_DEV_UID):$(DFE_DEV_GID) -v "$(CURDIR)/config/proxy/$$config.yaml:/etc/envoy/envoy.yaml:ro" -v "$(CURDIR)/$(PROXY_CHECK_DIR):/etc/envoy/certs:ro" "$(ENVOY_REPO):$$version" envoy --mode validate -c /etc/envoy/envoy.yaml --log-level error 2>&1); then \
 			echo "OK   config/proxy/$$config.yaml"; \
 		else \
 			status=1; echo "FAIL config/proxy/$$config.yaml"; echo "$$out"; \
@@ -747,23 +749,23 @@ post: ## Prove the RUNNING stack moves data end to end (DFE_POST_ENABLED=false t
 
 # ---------------------------------------------------------------------------
 # Seed
-# The starter set in config/seed, created through the engine API on a RUNNING stack, and fake events for its hunt to find. hunts also creates the rules in the same seed.py run, because the engine refuses a hunt whose rule does not exist; one run means a login asked for at the terminal is asked for once. sources, rules and hunts create only what the engine lacks; events sends its records again on every run.
+# The starter set in resources/seed, created through the engine API on a RUNNING stack, plus fake events for its hunt to find. hunts also creates the rules in the same seed.py run, because the engine refuses a hunt whose rule does not exist. One run means a login asked for at the terminal is asked for once. sources, rules and hunts create only what the engine lacks, but events sends its records again on every run.
 # ---------------------------------------------------------------------------
 
 .PHONY: sources
-sources: ## Create the config/seed sources the running engine lacks, deploying each
+sources: ## Create the resources/seed sources the running engine lacks, deploying each
 	@$(UV) run --locked --script ./scripts/seed.py sources
 
 .PHONY: rules
-rules: ## Create the config/seed rules the running engine lacks
+rules: ## Create the resources/seed rules the running engine lacks
 	@$(UV) run --locked --script ./scripts/seed.py rules
 
 .PHONY: hunts
-hunts: ## Create the config/seed rules and hunts the running engine lacks
+hunts: ## Create the resources/seed rules and hunts the running engine lacks
 	@$(UV) run --locked --script ./scripts/seed.py hunts
 
 .PHONY: events
-events: ## Send the fake config/seed events through the receiver, after `make sources`, for the seeded hunt to find
+events: ## Send the fake resources/seed events through the receiver, after `make sources`, for the seeded hunt to find
 	@$(UV) run --locked --script ./scripts/seed.py events
 
 # ---------------------------------------------------------------------------
@@ -786,9 +788,11 @@ ps: ## Show running containers, and warn about a deleted source's container stil
 down: ## Stop and remove containers across all profiles (keeps volumes)
 	docker compose -f docker-compose.yml --profile "*" down --remove-orphans
 
+# The engine's volume goes with its sources, so the instance indexes it wrote into env/ go too.
 .PHONY: clean
-clean: ## Stop and remove all containers and volumes across every profile
+clean: ## Stop and remove all containers and volumes across every profile, and dfe-engine's per-source instance indexes
 	docker compose -f docker-compose.yml --profile "*" down -v --remove-orphans
+	rm -f env/*.instances
 
 # ---------------------------------------------------------------------------
 # Help

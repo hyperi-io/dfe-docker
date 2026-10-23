@@ -1,0 +1,67 @@
+<!--
+  Project:   dfe-docker
+  File:      config/clickhouse/replication.xml
+  Purpose:   Runs ClickHouse as a one-node cluster with its own Keeper, which dfe-engine's replicated tables need
+  Language:  XML
+
+  License:   BUSL-1.1
+  Copyright: (c) 2026 HYPERI PTY LIMITED
+-->
+<clickhouse>
+  <keeper_server>
+    <!-- Health and status commands only -->
+    <four_letter_word_white_list>ruok,isro,mntr,srvr,stat</four_letter_word_white_list>
+
+    <!-- Existing volumes keep Keeper's log here, not in the image default coordination/logs -->
+    <log_storage_path>/var/lib/clickhouse/coordination/log</log_storage_path>
+
+    <raft_configuration>
+      <server>
+        <hostname>127.0.0.1</hostname>
+        <id>1</id>
+        <port>9234</port>
+      </server>
+    </raft_configuration>
+    <server_id>1</server_id>
+    <tcp_port>9181</tcp_port>
+  </keeper_server>
+
+  <!-- This server's place in the dfe cluster -->
+  <macros>
+    <cluster>dfe</cluster>
+    <replica>r1</replica>
+    <shard>01</shard>
+  </macros>
+
+  <!-- The dfe cluster, which is this server alone -->
+  <remote_servers>
+    <dfe>
+      <shard>
+        <replica>
+          <host>127.0.0.1</host>
+          <port>9000</port>
+        </replica>
+      </shard>
+    </dfe>
+  </remote_servers>
+
+  <!-- Keeps the users and roles dfe-engine creates in Keeper, beside the image's users.xml -->
+  <user_directories replace="replace">
+    <users_xml>
+      <path>users.xml</path>
+    </users_xml>
+    <replicated>
+      <zookeeper_path>/clickhouse/access/</zookeeper_path>
+    </replicated>
+  </user_directories>
+
+  <!-- How the server reaches its own Keeper -->
+  <zookeeper>
+    <!-- The login Keeper stores on every entry, hidden from the generated config files -->
+    <identity from_env="DFE_KEEPER_IDENTITY" hide_in_preprocessed="1"/>
+    <node>
+      <host>127.0.0.1</host>
+      <port>9181</port>
+    </node>
+  </zookeeper>
+</clickhouse>

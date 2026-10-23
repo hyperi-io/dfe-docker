@@ -1,0 +1,16 @@
+# Project:   dfe-docker
+# File:      resources/seed/rules/aws-guardduty-high-severity.yaml
+# Purpose:   Starter rule matching GuardDuty findings rated high or critical
+# Language:  YAML
+#
+# License:   BUSL-1.1
+# Copyright: (c) 2026 HYPERI PTY LIMITED
+
+name: aws-guardduty-high-severity
+display_name: GuardDuty High Severity Finding
+severity: high
+source: aws-guardduty
+source_type: raw
+# GuardDuty rates a finding 7.0 to 8.9 high and 9.0 to 10.0 critical.
+# The column is qualified because the hunt runner selects this rule's own severity label AS severity, which would shadow it (hyperi-io/dfe-engine#845).
+user_sql: "SELECT * FROM dfe.`aws-guardduty` WHERE `aws-guardduty`.severity >= 7"

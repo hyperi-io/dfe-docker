@@ -25,7 +25,7 @@ from _common import COMPOSE_FILE, REPO_ROOT
 
 FETCHER = "dfe-fetcher"
 VRL = "dfe-transform-vrl"
-COMPOSE_ARGS = ["-f", "docker-compose.yml", "-f", "docker-compose.instances.yml"]
+COMPOSE_ARGS = ["-f", "docker-compose.yml", "-f", ".tmp/docker-compose.instances.yml"]
 
 
 def _index(env_dir: Path, service: str, *names: str) -> None:
@@ -99,6 +99,26 @@ def test_each_service_reads_the_custom_env_file_the_engine_names_for_it() -> Non
         ) in text
 
 
+def test_an_instance_of_an_app_given_an_image_runs_that_image() -> None:
+    # extends reads the committed service, so a LOCAL overlay never reaches an instance
+    text = instances.fragment(
+        {FETCHER: ["okta-audit"], VRL: ["cisco-ios"]},
+        images={VRL: f"{VRL}:local"},
+    )
+
+    assert (
+        f"  {VRL}-cisco-ios:\n    extends:\n      file: docker-compose.yml\n"
+        f"      service: {VRL}\n    image: {VRL}:local\n"
+    ) in text
+    assert text.count("    image: ") == 1
+
+
+def test_an_instance_given_no_image_keeps_the_committed_one() -> None:
+    text = instances.fragment({FETCHER: ["okta-audit"]})
+
+    assert "    image: " not in text
+
+
 def test_no_instance_publishes_a_host_port() -> None:
     # N containers cannot share one host port, and nothing outside the stack
     # addresses an instance directly.
@@ -150,6 +170,15 @@ def test_the_fragment_is_removed_when_the_last_source_goes(tmp_path: Path) -> No
 
     assert instances.write({}, path=target) is False
     assert not target.exists()
+
+
+def test_the_fragment_is_written_after_its_directory_was_deleted(
+    tmp_path: Path,
+) -> None:
+    target = tmp_path / ".tmp" / "docker-compose.instances.yml"
+
+    assert instances.write(instances={FETCHER: ["okta-audit"]}, path=target) is True
+    assert instances.fragment_services(path=target) == {f"{FETCHER}-okta-audit"}
 
 
 @pytest.mark.parametrize("service", sorted(instances.SERVICE_CONFIG_FILE))
@@ -288,14 +317,11 @@ def _listing(*rows: tuple[str, str, str]) -> str:
     )
 
 
-# One container of each kind a compose project can hold here: a declared
-# instance, a deleted source's instance, a committed static instance of the same
-# app, and a service only a file outside the apply chain declares -- an orphan to
-# the apply exactly as the deleted source is.
+# One container of each kind a compose project can hold here: a declared instance, a deleted source's instance, the app's committed service and a service only a file outside the apply chain declares, which is an orphan to the apply exactly as the deleted source is
 _PROJECT = _listing(
     ("c1", "dfe-transform-vrl-cisco-ios", VRL),
     ("c2", "dfe-transform-vrl-cisco-meraki", VRL),
-    ("c3", "dfe-transform-e2e-vrl-filebeat", ""),
+    ("c3", VRL, ""),
     ("c4", "dfe-e2e-sidecar", ""),
     ("c5", "dfe-loader", ""),
 )

@@ -71,13 +71,7 @@ These are real and open. Each one has a symptom that misleads.
 --remove-orphans`, so it tears down every profile and keeps volumes. Switching
 profiles no longer strands anything.
 
-It used to be profile-scoped, and if you are on an older checkout it still is:
-switch from a receiver-based profile to a fetcher-based one and the old receiver
-keeps running, keeps answering on `:8080`, and keeps its ports. The misleading
-part is that the stray is wired to a pipeline that is no longer running, so
-anything probing ports rather than asking the profile finds it and reports a
-data-path failure that is really a stale container. That is why
-`scripts/post.py` resolves its ingest edge from `.profile.mk` instead of probing.
+On an older checkout it is still profile-scoped: switch from a profile with a receiver to one without and the old receiver keeps running, keeps answering on `:8080` and keeps its ports. The misleading part is that the stray is wired to a pipeline that is no longer running, so anything probing ports rather than asking the profile finds it and reports a data-path failure that is really a stale container. That is why `scripts/post.py` resolves its ingest edge from `.tmp/profile.mk` instead of probing.
 
 If you suspect strays, `docker ps` and compare uptimes -- a container minutes
 older than the rest is the giveaway.
@@ -103,17 +97,15 @@ KAFKA_BACKEND=apache make -e dev  # -e flips the precedence
 
 ...or edit `.env`, which is the durable answer.
 
-### `config/loader/kafka-load.yaml` consumes a topic nothing pre-creates
+### A `_load` topic changes what the loader reads
 
 ```mermaid
 flowchart LR
     recv["dfe-receiver"] --> land["main_land"]
-    fetch["dfe-fetcher"] --> land
-    land --> arch["dfe-archiver"]
     land --> vrl["dfe-transform-vrl"]
-    land -->|topic_regex .*_land| ldr1["dfe-loader<br/>loader/kafka.yaml"]
     vrl --> load["main_load"]
-    load -->|topic main_load| ldr2["dfe-loader<br/>loader/kafka-load.yaml"]
+    land -.->|until main_load exists| ldr["dfe-loader<br/>loader/kafka.yaml"]
+    load -->|once it exists| ldr
 
     classDef made fill:#009E73,color:#ffffff,stroke:#000000
     classDef notmade fill:#D55E00,color:#ffffff,stroke:#000000
@@ -121,17 +113,9 @@ flowchart LR
     class load notmade
 ```
 
-`dfe-engine` creates the bootstrap topic set `dfe-schemas` declares, which is
-`main_land` and the five DLQ topics. `config/loader/kafka-load.yaml` subscribes to
-`main_load`, which is produced by `config/transform-vrl/main.yaml`. That topic
-exists only if broker auto-creation makes it. The profiles affected are the ones
-that point the loader at `kafka-load.yaml`: `kafka-receiver-transform-vector` and
-`kafka-full-transform-vrl`.
+`config/loader/kafka.yaml` subscribes by `topic_regex: .*_(land|load)`. scalo drops `<base>_land` from the subscription whenever `<base>_load` exists. `dfe-engine` creates the bootstrap topic set `dfe-schemas` declares, which is `main_land` and the five DLQ topics, so `main_load` exists only once a transform first produces to it.
 
-The topic names are literals in those YAML files, not env-interpolated. A single
-topic variable cannot work: the consumers name their topics in their own YAML, so
-setting it pre-creates a topic nobody consumes and stops pre-creating the one
-they do.
+Once a transform runs, the loader therefore reads `main_land` until that first write, then switches to `main_load`. The first records land twice: once raw, once transformed. Create the transform's `_load` topic before sending anything to avoid it. The e2e suite does, from each test's `expected_topics`.
 
 **Do not close this gap by adding `main_load` to the bootstrap topic set.**
 The loader auto-discovers topics and scalo suppresses `<base>_land` whenever
@@ -348,7 +332,7 @@ Note the argument position -- if those keys are live in your `.env`, the
 The gRPC-only tests need no broker at all:
 
 ```bash
-make test-e2e E2E_TESTS="simple-receiver-to-loader-grpc simple-fetcher-to-loader"
+make test-e2e E2E_TESTS="simple-receiver-to-loader-grpc rules-and-hunts"
 ```
 
 Also check for a stray container from a previous profile before assuming the

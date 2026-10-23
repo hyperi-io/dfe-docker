@@ -57,8 +57,7 @@ flowchart LR
     user(["Anyone who can route to the box"])
 
     subgraph ingress["DFE_INGRESS_BIND_HOST -- default 0.0.0.0"]
-        recv["dfe-receiver :6000 :8080"]
-        fetch["dfe-fetcher :8082"]
+        recv["dfe-receiver :8080"]
     end
 
     subgraph uis["DFE_UI_BIND_HOST -- DFE_BIND_SCOPE, default 127.0.0.1"]
@@ -73,14 +72,13 @@ flowchart LR
     end
 
     user --> recv
-    user --> fetch
     user --> proxy
     proxy -->|proxies /api/v1 paths| engine
     hdx -.->|HyperDX queries for the browser| ch
 
     classDef open fill:#D55E00,color:#ffffff,stroke:#000000
     classDef loop fill:#0072B2,color:#ffffff,stroke:#000000
-    class recv,fetch open
+    class recv open
     class proxy,engine,kafbat,hdx,ch loop
 ```
 
@@ -112,7 +110,7 @@ Three variables, chosen by who the port is for.
 
 | Variable | Default | Audience |
 |---|---|---|
-| `DFE_INGRESS_BIND_HOST` | `0.0.0.0` | What users push to: receiver and fetcher ingest |
+| `DFE_INGRESS_BIND_HOST` | `0.0.0.0` | What users push to: receiver ingest |
 | `DFE_UI_BIND_HOST` | `127.0.0.1` | Every web UI. Derived from `DFE_BIND_SCOPE`, not set by hand |
 | `DFE_BIND_HOST` | `127.0.0.1` | What operators reach: datastores, broker, metrics, internal gRPC |
 
@@ -121,27 +119,22 @@ Per-port, as published in `docker-compose.yml`:
 | Host port | Service | Binds | Purpose |
 |---|---|---|---|
 | 3000 | dfe-proxy | ui | UI, plus `/api/v1/*` to the engine |
-| 6000 | dfe-receiver | ingress | Vector protocol ingest |
 | 8080 | dfe-receiver | ingress | HTTP ingest |
-| 8082 | dfe-fetcher | ingress | HTTP ingest |
 | 8090 | dfe-hyperdx-proxy | ui | HyperDX app UI |
 | 8000 | dfe-hyperdx-proxy | ui | HyperDX API |
 | 8003 | dfe-engine | ui | Config and schema API (container `:8000`) |
 | 8081 | kafka-ui | ui | Kafbat UI (container `:8080`) |
 | 8123 / 9000 | clickhouse | operator | HTTP and native protocol |
 | 9092 / 19092 | kafka (either backend) | operator | Plaintext listeners |
-| 8686 | dfe-transform-vector | operator | Vector API |
 | 9090 | dfe-receiver | operator | Metrics and health |
 | 9091 | dfe-loader | operator | Metrics and health |
 | 9093 | dfe-archiver | operator | Metrics and health |
-| 9094 | dfe-fetcher | operator | Metrics and health |
-| 9095 | dfe-transform-vector | operator | Metrics and health |
-| 9096 | dfe-transform-vrl | operator | Metrics and health |
-| 9099 | dfe-transform-elastic | operator | Metrics and health |
 | 13133 | otel-collector | operator | `health_check` extension |
 | 50051 | dfe-loader | operator | Internal `DfeTransport/Push` gRPC, container port 6000 |
 
-`dfe-ui`, `hyperdx`, `hyperdx-postgres` and `hyperdx-ferretdb` publish no host
+dfe-fetcher and the three transforms run one instance per source. An instance publishes no host port, so their ingest, Vector API and metrics ports are reached over the Docker network. The receiver's Vector protocol on 6000 publishes only once its line in `docker-compose.yml` is uncommented.
+
+`dfe-ui`, `hyperdx` and `hyperdx-documentdb` publish no host
 ports at all -- they are reached over the Docker network, HyperDX through the
 proxy that holds both its origins. The collector publishes only `24224`, which the
 DOCKER DAEMON sends container stdout to; its OTLP ports stay on the Compose
@@ -234,11 +227,7 @@ proxies as well as the UIs. A gated door is still a door.
 
 Three limits, none of them cosmetic:
 
-- **It gates page access only.** Kafbat never learns who signed in. HyperDX
-  learns it only with `DFE_HYPERDX_AUTH_MODE=header-dev`, which signs in the user
-  the proxy names in `X-Forwarded-Email`. In the default `oidc-proxy` mode
-  HyperDX ignores those headers and identifies callers by the engine token.
-  Neither UI gains roles or an audit trail from the proxy.
+- **It gates page access only.** Neither UI learns who signed in from the proxy: HyperDX identifies callers by the engine token. Neither gains roles or an audit trail from the proxy.
 - **An expired session on the API origin fails opaquely.** A cross-origin XHR
   that gets a redirect to the IdP is blocked by the browser, so the app shows
   failed requests rather than a login prompt. Reload the app page to sign back
@@ -260,8 +249,8 @@ container takes the host down.
 |---|---|
 | `DFE_CLICKHOUSE_*` | clickhouse |
 | `DFE_BROKER_*` | kafka-redpanda, kafka-apache |
-| `DFE_SERVICE_*` | the DFE components, engine, UI, kafka-ui, HyperDX, its Postgres and FerretDB. HyperDX's memory is `DFE_HYPERDX_MEMORY` |
-| `DFE_SIDECAR_*` | dlq-init, dfe-dashboards, dfe-proxy |
+| `DFE_SERVICE_*` | the DFE components, engine, UI, kafka-ui, HyperDX, its DocumentDB store. HyperDX's memory is `DFE_HYPERDX_MEMORY` |
+| `DFE_SIDECAR_*` | dlq-init, bearer-tokens-init, dfe-dashboards, hyperdx-documentdb-tls, dfe-proxy |
 
 For the actual values and totals, ask the stack rather than this page:
 
@@ -376,12 +365,14 @@ with the same value:
 | `DFE_HUNT_RUNNER_CLICKHOUSE_PASSWORD` | `dfe_hunt_runner` | dfe-hunt-runner | `SELECT` and `INSERT` on the data database |
 | `DFE_LOADER_CLICKHOUSE_PASSWORD` | `dfe_loader` | dfe-loader | `INSERT` on the data database, and its schema |
 | `DFE_OTEL_WRITER_CLICKHOUSE_PASSWORD` | `dfe_otel_writer` | otel-collector | `INSERT` on the otel tables, and server health |
-| `DFE_QUERY_READER_CLICKHOUSE_PASSWORD` | `dfe_query_reader` | HyperDX's seeded connection, under `header-dev` | `SELECT` on the data database |
+| `DFE_QUERY_READER_CLICKHOUSE_PASSWORD` | `dfe_query_reader` | The platform connection dfe-engine hands HyperDX | `SELECT` on the data database |
 
 An existing `.env` takes the new keys on the next `make init`, and the engine
 creates each user on its next start.
 
-`CLICKHOUSE_KEEPER_PASSWORD` is the identity ClickHouse's embedded Keeper creates every znode under, so compose refuses to start without it and it is fixed for the life of `clickhouse-data`. Under any other value the server cannot read its own znodes and exits with code 231 at start, and putting the old value back in `.env` followed by `make ci` recovers it whole. If the old value is lost, stop ClickHouse, move `coordination/` in the volume aside (`docker compose run --rm --no-deps --entrypoint mv clickhouse /var/lib/clickhouse/coordination /var/lib/clickhouse/coordination.lost`), start it under the new value, and run `SYSTEM RESTORE DATABASE REPLICA <db>` for each Replicated database and `SYSTEM RESTORE REPLICA <db>.<table>` for each replicated table. The rows survive, and the engine re-creates its SQL users and roles on its next start.
+`CLICKHOUSE_KEEPER_PASSWORD` is the identity ClickHouse's embedded Keeper creates every znode under, so compose refuses to start without it and it is fixed for the life of `clickhouse-data`. Under any other value the server cannot read its own znodes and exits with code 231 at start. Putting the old value back in `.env` followed by `make ci` recovers it whole.
+
+If the old value is lost, stop ClickHouse, move `coordination/` in the volume aside (`docker compose run --rm --no-deps --entrypoint mv clickhouse /var/lib/clickhouse/coordination /var/lib/clickhouse/coordination.lost`) and start it under the new value. Then run `SYSTEM RESTORE DATABASE REPLICA <db>` for each Replicated database and `SYSTEM RESTORE REPLICA <db>.<table>` for each replicated table. The rows survive and the engine re-creates its SQL users and roles on its next start.
 
 Never commit `.env`.
 
@@ -398,8 +389,8 @@ These named volumes hold all durable state:
 | `dlq-spool` | Shared dead-letter spool (`/var/spool/dfe`) |
 | `fetcher-cursors` | dfe-fetcher cursors (`/var/lib/dfe-fetcher`), one directory per fetcher service |
 | `dfe-engine-config` / `dfe-engine-schemas` | Engine config and schemas, seeded from the engine image on first run |
-| `hyperdx-pg-data` | HyperDX metadata store |
-| `hyperdx-ferretdb-state` | FerretDB's instance UUID and telemetry choice (`/state`) |
+| `hyperdx-documentdb-data` | HyperDX metadata store, DocumentDB's PostgreSQL cluster (`/data`) |
+| `hyperdx-documentdb-tls` | The CA and gateway certificate `hyperdx-documentdb-tls` mints, renewed when it nears expiry |
 
 `make down` stops containers and leaves every volume intact. `make clean` runs
 `docker compose --profile "*" down -v --remove-orphans` -- the `-v` deletes all
@@ -465,12 +456,6 @@ hold: that the stack's own telemetry is landing fresh in the `dfe.otel_*` tables
 That is the pair the Kubernetes bootstrap smoke asserts as CORE 1 and CORE 2 --
 the two pipelines a complete deployment has to move.
 
-On a profile that starts an app with no work -- the archiver, fetcher and
-transform-vrl `single` carries -- it makes a third: each of them is ready AND
-reports `pipeline_idle` 1. A container that crash-looped on the idle config fails
-the first half, and one that is quietly archiving, polling or consuming fails the
-second.
-
 What it does not prove: anything about tables other than the target, about
 profiles you are not running, or about throughput. Three rows is deliberate -- a
 self test that writes thousands of rows into a landing table on every boot is one
@@ -494,23 +479,12 @@ The other outcomes are as informative as the PASS:
   tables. It cannot reach ClickHouse; read its logs.
 - **FAIL, no fresh rows** -- the tables exist and nothing recent is in them, so
   the services are not exporting. See below.
-- **FAIL, not inert** -- an app the tier started with no work reports
-  `pipeline_idle` 0, or serves `pipeline_ready` and no `pipeline_idle`: its pipeline
-  started, and ready is not inert.
 
 ## Self-monitoring
 
-The stack's own telemetry goes out over OTLP to a collector, which writes the
-`dfe.otel_*` tables that HyperDX reads. Turn it on with `otel: true` on a
-profile (`single` has it) or `DFE_OTEL_ENABLED=true`.
+The stack's own telemetry goes out over OTLP to a collector, which writes the `dfe.otel_*` tables that HyperDX reads. Every profile declares `otel: true`. `DFE_OTEL_ENABLED=false` turns it off.
 
-Every DFE app the profile runs pushes over OTLP, dfe-ui aside. Two things do
-scrape: the collector scrapes its own metrics on
-127.0.0.1:8888, and `sql_query` reads ClickHouse. Nothing on this path sends
-logs -- there is no container-log collector, and the apps export metrics and
-traces only -- so `dfe.otel_logs` stays empty even though the collector has a
-logs pipeline wired. See [observability.md](observability.md), which also has
-the dials, what each component does, and why `/metrics` still exists.
+Every DFE app the profile runs pushes metrics and traces over OTLP, dfe-ui aside. Two things are pulled instead: the collector scrapes its own metrics on 127.0.0.1:8888 and `sql_query` reads ClickHouse. Container stdout reaches `dfe.otel_logs` through Docker's fluentd log driver and the collector's `fluent_forward` receiver, unless `DFE_CONTAINER_LOGS_ENABLED=false`. See [observability.md](observability.md), which also has the dials, what each component does and why `/metrics` still exists.
 
 ## Related
 

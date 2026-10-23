@@ -1,0 +1,13 @@
+# Project:   dfe-docker
+# File:      tests/e2e/configs/archiver-short-roll.yaml
+# Purpose:   Archives every Kafka topic and rolls a file every 10s, so an outage test sees the archiver commit before its broker goes down
+# Language:  YAML
+#
+# License:   BUSL-1.1
+# Copyright: (c) 2026 HYPERI PTY LIMITED
+
+archive:
+  destination: file:///var/data/archive
+  roll_interval_secs: 10
+
+transport: kafka

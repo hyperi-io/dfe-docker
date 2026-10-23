@@ -64,56 +64,26 @@ flowchart LR
     loader --> ch
 ```
 
-Transport is a per-profile choice, not a global one. On a `kafka-*` profile the
+Transport is a per-profile choice, not a global one. On a `*-kafka` profile the
 ingest components produce to a `*_land` topic derived from the event's `_source`,
-and the loader consumes `topic_regex: .*_land`. On a `grpc-*` profile there is no
-broker -- the ingest components dial `dfe-loader:6000` directly.
+and the loader consumes `topic_regex: .*_land`. On a `*-grpc` profile there is no
+broker: the ingest components dial `dfe-loader:6000` directly.
 
-The three transforms are bus-only today: each reads a topic and writes a topic.
-`dfe-archiver` runs on either -- it consumes the landing topics on Kafka and
-answers a scalo Push listener on gRPC (`config/archiver/grpc.yaml`). With a
-transform in the profile the loader switches to `config/loader/kafka-load.yaml`
-and consumes `main_load`.
+The three transforms are bus-only today: each reads a topic and writes a topic. `dfe-archiver` archives each source from its landing topic on Kafka. No gRPC profile runs it, so archiving needs a Kafka profile. Once a transform writes `<base>_load`, the loader reads it instead of `<base>_land`, through the same `config/loader/kafka.yaml`: scalo drops `<base>_land` from its subscription once `<base>_load` exists.
 
-## What each tier runs, and what starts with nothing to do
+## What each profile runs
 
-`slim` is the core data path alone: receiver, loader, engine, UI and HyperDX.
-`single` adds the broker and three more apps -- one archiver, one fetcher, one
-transform-vrl -- each started from a config that gives it no work.
+`slim-*` is the core data path alone: receiver, loader, engine, UI and HyperDX. `single-*` adds the per-source apps its keys enable ([profiles.md](profiles.md#which-profile-runs-what)). The `-kafka` profiles add the broker. `single-kafka` also adds one archiver. None starts a per-source app until a source created through the engine binds one.
 
-An idle app is Ready, serves health and metrics, opens no broker connection and
-holds `pipeline_idle` at 1, so being deployed unconfigured costs a container and
-nothing else. It is there because Compose declares its services in this repo and
-creates none at run time: an app that cannot be added later has to be present
-before anything needs it.
+## The engine renders each app's config
 
-They stay inert until something gives them work, and on these two tiers that is a
-source created through the engine.
+On Kubernetes an app's chart turns its values overlay into a ConfigMap the pod mounts. Compose runs no chart, so dfe-engine does that step: it merges each instance's overlay over the committed `config/<app>/<transport>.yaml` and writes the app's config file, its programs and its enrichment tables into the `dfe-app-config` volume, one directory per app. Every app mounts that volume read-only at `/etc/dfe/apps`.
 
-## The engine renders each app's config on the projected tiers
+The committed file stays the DEPLOYMENT's (brokers, warehouse credentials, the spool) and the overlay wins wherever the two name the same key, so nothing deployment-specific is written into the deploy repo. `resolve_profile.py` turns this on wherever the core footprint runs.
 
-On Kubernetes an app's chart turns its values overlay into a ConfigMap the pod
-mounts. Compose runs no chart, so on `slim` and `single` dfe-engine does that
-step: it merges each instance's overlay over the committed
-`config/<app>/<transport>.yaml` and writes the app's config file, its programs
-and its enrichment tables into the `dfe-app-config` volume, one directory per
-app. Every app mounts that volume read-only at `/etc/dfe/apps`.
+dfe-fetcher and the three transforms have no committed file. The overlay is their whole config and their broker comes from `DFE_KAFKA_BOOTSTRAP_SERVERS` in their environment.
 
-The committed file stays the DEPLOYMENT's -- brokers, warehouse credentials, the
-spool -- and the overlay wins wherever the two name the same key, so nothing
-deployment-specific is written into the deploy repo. `resolve_profile.py` turns
-this on for the projected tiers only: every other profile ships the config it
-exists to exercise.
-
-Nothing restarts a container. A change the running app cannot take in place is
-reported by the API as `restart required: make apply SERVICES=<app>`, and one
-to its env file as `recreate required:` with the same command; `make apply`
-creates a per-source container the engine has only just declared and recreates
-one that exists, and removes the container of a source the engine has deleted
--- found by the `dfe.instance-of` label only generated services carry. A delete
-names no command, so `make apply` with no `SERVICES` does that removal alone and
-starts nothing. An app that was IDLE needs no restart, because scalo's gate
-re-reads the file and starts the service on the spot.
+Nothing restarts a container. A change the running app cannot take in place is reported by the API as `restart required: make apply SERVICES=<app>` and one to its env file as `recreate required:` with the same command. `make apply` creates a per-source container the engine has only just declared, recreates one that exists and removes the container of a source the engine has deleted, which it finds by the `dfe.instance-of` label only generated services carry. A delete names no command, so `make apply` with no `SERVICES` does that removal alone and starts nothing.
 
 ## A source with its own transform gets its own instance
 
@@ -122,47 +92,11 @@ A source with a transform stops sharing `main_land`: the receiver routes it to
 is deployed once per source, as the Kubernetes tier deploys one per Source
 definition -- input topic, program directory and output topic all carry the name.
 
-Two shipped examples, one per transform app, and the shape another source copies.
-All eleven pieces are needed: the first five carry the data, the rest keep dev
-mode, profile resolution and the checks working.
+The source and its transform are created through the engine, as the console does it. dfe-engine renders the instance's config into `dfe-app-config` and `make apply` starts a service that extends the committed `dfe-transform-vrl`, `dfe-transform-vector` or `dfe-transform-elastic`. Those committed services carry the broker env and nothing of a source's own. dfe-transform-vector also mounts `resources/enrichment/` at `/etc/dfe-transform-vector/data`, where its bundled filebeat pipeline reads `timezones.csv`. `make test-source` drives the filebeat, Vector and Elastic cases end to end.
 
-| Piece | `kafka-filebeat`, on dfe-transform-vrl | `kafka-filebeat-vector`, on dfe-transform-vector |
-|---|---|---|
-| Compose service | `dfe-transform-e2e-vrl-filebeat`, the same image, its own metrics port | `dfe-transform-e2e-vector-filebeat`, likewise |
-| Config | `config/transform-vrl/filebeat.yaml` -- `filebeat_land` in, `filebeat_load` out | `config/transform-vector/filebeat.yaml` -- `dfe_source: filebeat-vector` derives both topics |
-| Program | `config/transform-vrl/transforms-filebeat/`, vendored from dfe-transform-vrl | `config/transform-vector/transforms-filebeat/`, the same VRL inside a Vector `remap`, vendored from dfe-transform-vector |
-| Loader | `config/loader/kafka-load-filebeat.yaml` lists `filebeat_load` alongside `main_load` | `config/loader/kafka-load-filebeat-vector.yaml` lists `filebeat-vector_load` |
-| Table | `dfe.filebeat`, from the `_load` topic name -- the loader strips the suffix and routes on it | ``dfe.`filebeat-vector` ``, the same way |
-| Enrichment data | `config/transform-vrl/data/`, mounted beside the program dir -- the transform scans that dir for programs | the same directory, mounted at `/etc/dfe-transform-vector/data` -- one table, not a copy per app |
-| Dev images | an override block plus `IMAGE_CONSUMERS` in `scripts/build_dev_images.py`, or `make dev` leaves it on the registry pin | the same |
-| Env file | `env.example/transform-vrl-filebeat.env` for its own overrides; `make init` copies it into `env/` | `env.example/transform-e2e-vector-filebeat.env` |
-| Profile resolution | `SERVICES` and `SERVICE_TO_CONFIG_VAR` in `scripts/resolve_profile.py`, so a profile can run it without the passthrough instance | the same |
-| Check coverage | `_DFE_OWNED_SERVICES` in `scripts/check_compose.py`, which holds it to the `/livez` health surface | the same |
-| Metrics ports | a free host port (`DFE_TRANSFORM_VRL_FILEBEAT_PROMETHEUS_PORT`, 9097): every instance serves 9090 and two cannot publish one | the same (`DFE_TRANSFORM_VECTOR_FILEBEAT_PROMETHEUS_PORT`, 9098) |
+dfe-transform-vector's one port carries everything. The wrapper scrapes Vector's `internal_metrics` off its `prometheus_exporter` on loopback and registers the samples on scalo's own recorder (dfe-transform-vector#70), so `vector_*` reads on the published port AND rides the OTLP push into the otel database. The exporter's 9598 is not published.
 
-A static instance puts `e2e-` after `dfe-transform-` because dfe-engine names a real per-source instance `<app>-<source>`, and Compose merges two services sharing a name. Its `DFE_TRANSFORM_*` variables keep their names, so an existing `.env` still applies.
-
-One port carries everything. The wrapper scrapes Vector's `internal_metrics` off
-its `prometheus_exporter` on loopback and registers the samples on scalo's own
-recorder (dfe-transform-vector#70), so `vector_*` reads on the published port AND
-rides the OTLP push into the otel database. The exporter's 9598 is not published.
-
-The two profiles are deliberately disjoint -- own source name, own topics, own
-table -- so a deployment can run both and compare what the two transform apps
-make of one corpus.
-
-`kafka-elastic-cisco-ios` is the same shape on `dfe-transform-elastic`, minus
-the program and enrichment rows: that app compiles its transforms in and names
-one per instance in `source.name`, so there is nothing to vendor and nothing to
-mount. Its source is `cisco-ios` rather than `filebeat` because
-`filebeat.cisco_ios.default` is one data stream, not an umbrella program. It
-also runs one instance rather than two -- there is no passthrough variant to
-pair it with, so the loader reads `main_land` itself through its `topic_regex`.
-
-Both tables are dfe-engine's to create from the `meta/beats/filebeat` meta
-schema -- nothing here provisions them. Create the source before sending it
-data: a loader that meets rows for a table it has no schema for buffers them,
-then dead-letters them.
+dfe-engine creates a transform's table and nothing here provisions it. Create the source before sending it data: a loader that meets rows for a table it has no schema for buffers them, then dead-letters them.
 
 The source NAME propagates character for character: the engine requires a
 Kubernetes DNS-1123 label (hyphens, never underscores, because a source-bound
@@ -170,9 +104,6 @@ app deploys one instance named for its source), the receiver substitutes it into
 `<_source>_land`, and the loader strips `_load` back off for the table. So
 `filebeat-vector` gives `filebeat-vector_land`, `filebeat-vector_load` and a
 table name that needs backticks in SQL.
-
-`make check` asserts the wiring: a transform whose output topic no loader in the
-profile reads fails, as does an enrichment table no mount resolves.
 
 ## The management plane rides alongside
 
@@ -210,22 +141,20 @@ flowchart LR
     receiver["dfe-receiver"]:::dfe
     loader["dfe-loader"]:::dfe
 
-    client -->|external - Vector protocol :6000| receiver
+    client -->|external - Vector protocol :6000, opt-in| receiver
     receiver -->|internal - DfeTransport Push dfe-loader:6000| loader
 ```
 
 | Container port | Host port | Owner | Protocol | Audience | Binds |
 |---|---|---|---|---|---|
-| 6000 | 6000 | dfe-receiver | Vector protocol, an ingest source | external clients | `DFE_INGRESS_BIND_HOST` (`0.0.0.0`) |
+| 6000 | none, 6000 once its `docker-compose.yml` line is uncommented | dfe-receiver | Vector protocol, an ingest source that listens only with `DFE_RECEIVER_GRPC__ENABLED=true` | external clients | `DFE_INGRESS_BIND_HOST` (`0.0.0.0`) |
 | 6000 | 50051 | dfe-loader | `DfeTransport/Push`, internal transport | receiver, fetcher, transform-vrl | `DFE_BIND_HOST` (`127.0.0.1`) |
 
-Every Push listener in the suite answers on 6000, and dfe-engine compiles each sender's endpoint against that port. The loader publishes on host port 50051 only because the receiver already holds 6000 there. The binding split is the tell: the receiver's listener is meant to be reachable, the loader's is not.
+Every Push listener in the suite answers on 6000, and dfe-engine compiles each sender's endpoint against that port. The loader publishes on host port 50051, which leaves 6000 for the receiver's listener. The binding split is the tell: the receiver's listener is meant to be reachable, the loader's is not.
 
 ## Two independent selectors decide what runs
 
-Compose profiles select INFRASTRUCTURE. `service_profiles.yaml` selects DFE
-SERVICES. `scripts/resolve_profile.py` reads the second and derives the first,
-writing `.profile.mk` for the Makefile.
+Compose profiles select INFRASTRUCTURE. `service_profiles.yaml` selects DFE SERVICES. `scripts/resolve_profile.py` reads the second and derives the first, writing `.tmp/profile.mk` for the Makefile.
 
 ```mermaid
 flowchart TD
@@ -234,7 +163,7 @@ flowchart TD
 
     sp["service_profiles.yaml - active_profile, DFE_PROFILE overrides"]:::cfg
     resolve["scripts/resolve_profile.py"]:::cfg
-    mk[".profile.mk - PROFILE_FLAGS, DFE_SERVICES, config paths"]:::out
+    mk[".tmp/profile.mk - PROFILE_FLAGS, DFE_SERVICES, config paths"]:::out
     make["make dev / make ci"]:::out
 
     sp --> resolve
@@ -248,9 +177,9 @@ flowchart TD
 | `kafka-redpanda` | `kafka-redpanda` |
 | `kafka-apache` | `kafka-apache` |
 | `kafka-ui` | `kafka-ui` (Kafbat) |
-| `dfe` | `dlq-init`, archiver, fetcher, loader, receiver, every transform instance |
+| `dfe` | `dlq-init`, `bearer-tokens-init`, archiver, fetcher, loader, receiver, every transform instance |
 | `core` | `dfe-engine`, `dfe-ui`, `dfe-proxy` |
-| `hyperdx` | `hyperdx`, `hyperdx-ferretdb`, `hyperdx-postgres` |
+| `hyperdx` | `hyperdx`, `hyperdx-documentdb`, `hyperdx-documentdb-tls` |
 | `otel` | `otel-collector` |
 
 A profile declares its whole footprint through the optional `clickhouse`, `core`,
@@ -268,11 +197,7 @@ converged. Every service that reads one waits on
 pending-schema and dead-letters them, which reads as data loss and is really start
 ordering.
 
-`dfe-schemas` rides inside the engine image, so there is no separate schema pin
-here and a schema change is a `dfe-engine` release. The only file the ClickHouse
-service mounts is `clickhouse/default-user.xml`; a DDL file or a topic-creating
-step appearing in this repo is wrong by construction, and
-`scripts/tests/test_engine_only_schema_control.py` fails the build on one.
+`dfe-schemas` rides inside the engine image, so there is no separate schema pin here and a schema change is a `dfe-engine` release. The ClickHouse service mounts only server settings from `config/clickhouse/`. A DDL file or a topic-creating step appearing in this repo is wrong by construction and `scripts/tests/test_engine_only_schema_control.py` fails the build on one.
 
 ## The Kafka backend is swappable
 
@@ -292,7 +217,7 @@ Dev builds fetch source into a managed git cache, or from your own checkouts whe
 
 | Repo | Language | Role | Profile |
 |---|---|---|---|
-| `dfe-receiver` | Rust | Push ingest; HTTP `:8080` and Vector gRPC `:6000` published, OTLP/Beats/HEC commented out | `dfe` |
+| `dfe-receiver` | Rust | Push ingest. HTTP `:8080` published, Vector gRPC `:6000`, OTLP, Beats and HEC commented out | `dfe` |
 | `dfe-fetcher` | Rust | Pull ingest from vendor APIs | `dfe` |
 | `dfe-loader` | Rust | Writes ClickHouse; hosts `DfeTransport/Push` | `dfe` |
 | `dfe-archiver` | Rust | Archive sink (filesystem, S3, MinIO, GCS, Azure Blob) | `dfe` |

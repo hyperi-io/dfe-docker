@@ -53,8 +53,12 @@ import re
 import subprocess
 import sys
 import tempfile
+from pathlib import Path
 
-from _common import COMPOSE_FILE, REPO_ROOT, _print, _required_compose_vars
+# Bytecode for the repo modules imported below goes to .tmp/pycache, as it does under make
+sys.pycache_prefix = str(Path(__file__).resolve().parent.parent / ".tmp" / "pycache")
+
+from _common import COMPOSE_FILE, REPO_ROOT, _print, _required_compose_vars  # noqa: E402
 
 # What compose says when a `${VAR:?}` is unset. Matching on this rather than the
 # exit code alone distinguishes "hard-failed as designed" from "broken YAML".

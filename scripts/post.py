@@ -9,7 +9,7 @@
 
 """Power-on self test (POST) for a stack that is ALREADY running.
 
-Eight claims. SUBSCRIPTION: where the tier has a bus, the loader is fetching at
+Seven claims. SUBSCRIPTION: where the tier has a bus, the loader is fetching at
 least one topic -- asserted once the injected events land, because a topic nothing
 has been written to carries no lag series, and as the diagnosis when they do not.
 INGEST: uniquely-marked events put in at the ingest edge come out as those exact
@@ -23,12 +23,10 @@ through the engine query API that dfe-ui uses, so the data is not merely stored 
 reachable from the surface an operator works in. HUNTS: a hunt created through the
 API while the runner is already running is picked up without a restart, and a run
 queued through the API detects exactly the events its rule matches and none of its
-near misses, all carrying the tenant id of the org the hunt runs for. IDLE APPS:
-each app the tier starts with
-no work is serving and doing nothing, which is the whole point of starting it.
+near misses, all carrying the tenant id of the org the hunt runs for.
 ROUTING: where the engine renders this tier's app config, a source created
 through the API reaches the RUNNING receiver, and a record matching its rule
-lands in a table of its own. None of the eight is "the containers started" or
+lands in a table of its own. None of the seven is "the containers started" or
 "the ports answer".
 
 The INGEST claim is transport-agnostic by construction: it posts to the ingest
@@ -74,9 +72,12 @@ import typing
 from pathlib import Path
 from urllib.parse import quote
 
-import _detection
-import instances
-from _common import (
+# Bytecode for the repo modules imported below goes to .tmp/pycache, as it does under make
+sys.pycache_prefix = str(Path(__file__).resolve().parent.parent / ".tmp" / "pycache")
+
+import _detection  # noqa: E402
+import instances  # noqa: E402
+from _common import (  # noqa: E402
     ACCESS_SUMMARY_FILE,
     DOTENV_FILE,
     DOTENV_MODE,
@@ -87,7 +88,7 @@ from _common import (
     _profile_mk_value,
     _resolved_services,
 )
-from _pipeline import (
+from _pipeline import (  # noqa: E402
     MARKER_EXPRESSIONS,
     _decoded,
     ch_count,
@@ -101,12 +102,13 @@ from _pipeline import (
     http_get_json,
     http_post,
     http_post_json,
+    http_put_json,
     marked_event,
     otel_fresh_counts,
     poll_until,
 )
-from creds import write_summary
-from init import GENERATED_SECRETS, _generate_secret, _setting_key
+from creds import write_summary  # noqa: E402
+from init import GENERATED_SECRETS, _generate_secret, _setting_key  # noqa: E402
 
 # Kept small on purpose. This proves the path works; the e2e suite is what
 # exercises volume. A self test that writes thousands of rows into a production
@@ -150,8 +152,7 @@ LOADER_TOPIC_REFRESH_SECONDS = 60.0
 # rather than an expected duration.
 LOADER_TOPIC_TIMEOUT_SECONDS = 2 * LOADER_TOPIC_REFRESH_SECONDS + 30.0
 LOADER_TOPIC_INTERVAL_SECONDS = 5.0
-# `.profile.mk`'s resolved answer to "does this deployment have a bus", so the
-# claim is skipped on the gRPC tiers rather than failing on them.
+# `.tmp/profile.mk`'s resolved answer to "does this deployment have a bus", so the claim is skipped on the gRPC tiers rather than failing on them
 TRANSPORT_BUS_KEY = "DFE_TRANSPORT_BUS_PRESENT"
 
 TARGET_DB = "dfe"
@@ -193,9 +194,7 @@ CONTAINER_LOG_SERVICES = ("dfe-engine", "dfe-loader", "dfe-receiver")
 
 # The services whose OWN metrics have to reach the otel database, as name prefixes
 # so a per-source instance (dfe-transform-vrl-filebeat) is covered by its app.
-# dfe-transform-e2e-vector-filebeat and dfe-transform-e2e-vrl-filebeat are static
-# extra instances named off that shape, so no app prefix covers them and each is
-# named in full. dfe-ui carries the OTel API and no SDK, so it does not push.
+# dfe-ui carries the OTel API and no SDK, so it does not push.
 OTEL_PUSHER_PREFIXES = (
     "dfe-archiver",
     "dfe-engine",
@@ -203,8 +202,6 @@ OTEL_PUSHER_PREFIXES = (
     "dfe-hunt-runner",
     "dfe-loader",
     "dfe-receiver",
-    "dfe-transform-e2e-vector-filebeat",
-    "dfe-transform-e2e-vrl-filebeat",
     "dfe-transform-elastic",
     "dfe-transform-vector",
     "dfe-transform-vrl",
@@ -286,19 +283,6 @@ HUNT_EVENTS = {
     ),
 }
 
-# Idle-app assertion: the config that gives each app no work, and the metrics
-# port compose publishes it on. dfe-infra apps.yaml declares the idle predicate
-# and the app evaluates it; this reads the answer the app publishes.
-IDLE_APPS: dict[str, tuple[str, str]] = {
-    "dfe-archiver": ("archiver/kafka.yaml", "9093"),
-    "dfe-fetcher": ("fetcher/kafka.yaml", "9094"),
-    "dfe-transform-elastic": ("transform-elastic/kafka.yaml", "9099"),
-    "dfe-transform-vrl": ("transform-vrl/kafka.yaml", "9096"),
-}
-IDLE_GAUGE = "pipeline_idle"
-# Set by a run loop that has started, which an idle app never enters.
-READY_GAUGE = "pipeline_ready"
-
 # Routing assertion. A source created through the API compiles a receiver rule,
 # and on this target the engine renders that rule into the file the RUNNING
 # receiver polls. The receiver re-reads on a 5s mtime poll and rebuilds its
@@ -312,8 +296,7 @@ ROUTING_INTERVAL_SECONDS = 3.0
 # The engine deletes a source's two topics before it answers, each delete allowed
 # 30s after a 10s topic listing, which a broker that does not answer uses in full.
 ROUTING_DELETE_TIMEOUT_SECONDS = 90
-# `.profile.mk`'s answer to "does the engine render this tier's app config": the
-# claim is only makeable where it does.
+# `.tmp/profile.mk`'s answer to "does the engine render this tier's app config": the claim is only makeable where it does
 APP_CONFIG_DIR_KEY = "DFE_ENGINE_APP_CONFIG_DIR"
 
 # Compose defaults that mean "nobody ran `make init`". They are deterministic and
@@ -438,32 +421,6 @@ def _over_network(url: str) -> bool:
 
 
 @functools.cache
-def _api_container() -> str:
-    """The container running API_EXEC_SERVICE in THIS compose project.
-
-    Container names are daemon-wide, so exec'ing a bare service name reaches
-    whichever stack on the host happens to own it -- and succeeds, against the
-    wrong deployment's credentials. Compose knows which container is ours.
-    """
-    result = subprocess.run(
-        ["docker", "compose", "ps", "--quiet", API_EXEC_SERVICE],
-        capture_output=True,
-        check=False,
-        text=True,
-        encoding="utf-8",
-        errors="replace",
-        timeout=API_EXEC_MARGIN_SECONDS,
-    )
-    ids = result.stdout.split()
-    if result.returncode != 0 or not ids:
-        raise ApiUnreachable(
-            f"no running {API_EXEC_SERVICE} in this compose project: "
-            f"{result.stderr.strip() or 'docker compose ps named no container'}"
-        )
-    return ids[0]
-
-
-@functools.cache
 def _container_name(service: str) -> str:
     """This project's container NAME for one compose service.
 
@@ -542,7 +499,7 @@ def _exec_request(
             "exec",
             "-e",
             API_REQUEST_KEY,
-            _api_container(),
+            api_container(),
             "python",
             "-c",
             _EXEC_REQUEST_SCRIPT,
@@ -719,22 +676,13 @@ class IngestNotReady(Exception):
 def _ingest_target(*, table: str) -> tuple[str, str]:
     """Find the ingest edge of the ACTIVE profile, or None if it has none.
 
-    Driven by the resolved profile, NOT by probing ports. Probing looked simpler
-    and was wrong: a stray container from a previous profile answers a probe
-    perfectly well while being wired to a pipeline that is no longer running. A
-    port probe finds it, injects into it, and reports a self-test failure that is
-    really a stale container. (`make down` used to be profile-scoped, which made
-    strays routine; it now sweeps every profile, but a stray can still arrive from
-    an older checkout or something started by hand.) Ask the profile.
-
-    Order matters: the receiver is the front door when the profile has one. The
-    fetcher is the fallback, and its ingest path is per-table.
+    Driven by the resolved profile, NOT by probing ports: a stray container from another profile, an older checkout or something started by hand answers a probe while wired to a pipeline that is not running, so a probe would inject into it and report a stale container as a self-test failure.
     """
     bind = os.environ.get("DFE_POST_HOST", "localhost")
     services = _resolved_services()
     if not (services):
         raise IngestNotReady(
-            "no resolved profile (.profile.mk missing) -- run a make target first"
+            "no resolved profile (.tmp/profile.mk missing), so run a make target first"
         )
 
     # Not-ready and not-present must NOT collapse into one answer. A profile that
@@ -751,16 +699,6 @@ def _ingest_target(*, table: str) -> tuple[str, str]:
                 f"within {READY_TIMEOUT_SECONDS:.0f}s"
             )
         return "dfe-receiver", f"http://{bind}:{port}/ingest"
-
-    if "dfe-fetcher" in services:
-        port = os.environ.get("DFE_FETCHER_INGEST_PORT", "8082")
-        metrics = os.environ.get("DFE_FETCHER_PROMETHEUS_PORT", "9094")
-        if not (_wait_ready(f"http://{bind}:{metrics}/readyz")):
-            raise IngestNotReady(
-                "dfe-fetcher is in the active profile but never became ready "
-                f"within {READY_TIMEOUT_SECONDS:.0f}s"
-            )
-        return "dfe-fetcher", f"http://{bind}:{port}/ingest/{table}"
 
     raise NoIngestComponent(
         f"active profile has no ingest component (services: {', '.join(services)})"
@@ -1156,27 +1094,11 @@ def _verify_container_logs(*, database: str) -> int:
 
 
 def _service_var(service: str, suffix: str) -> str:
-    """The .env / .profile.mk variable naming one service's setting.
+    """The .env / .tmp/profile.mk variable naming one service's setting.
 
-    Every per-service key follows it -- DFE_TRANSFORM_VRL_CONFIG,
-    DFE_ARCHIVER_PROMETHEUS_PORT -- so it is derived rather than tabulated.
+    Every per-service key follows it (DFE_LOADER_CONFIG, DFE_ARCHIVER_PROMETHEUS_PORT), so it is derived rather than tabulated.
     """
     return f"DFE_{service.removeprefix('dfe-').upper().replace('-', '_')}_{suffix}"
-
-
-def _metric_value(body: str, name: str) -> float | None:
-    """One unlabelled gauge out of a Prometheus exposition body, or None if absent."""
-    for line in body.splitlines():
-        if line.startswith("#"):
-            continue
-        key, _, value = line.partition(" ")
-        if key.split("{", 1)[0] != name:
-            continue
-        try:
-            return float(value)
-        except ValueError:
-            return None
-    return None
 
 
 def _metric_label_values(body: str, name: str, label: str) -> set[str]:
@@ -1263,99 +1185,6 @@ def _verify_loader_subscription() -> Claim:
     return HELD
 
 
-def _idle_apps() -> list[tuple[str, str]]:
-    """The (service, metrics port) pairs this run started with an idle config.
-
-    Read off the resolved profile rather than the profile NAME: a data-plane
-    profile pointing the same app at a config that gives it work is not one of
-    these, and must not be asserted inert.
-    """
-    running = set(_resolved_services())
-    found: list[tuple[str, str]] = []
-    for service, (config, default_port) in sorted(IDLE_APPS.items()):
-        if service not in running:
-            continue
-        resolved = _profile_mk_value(key=_service_var(service, "CONFIG"))
-        if resolved[:1] != [config]:
-            continue
-        port = os.environ.get(_service_var(service, "PROMETHEUS_PORT"), "").strip()
-        found.append((service, port or default_port))
-    return found
-
-
-def _verify_idle_apps() -> Claim:
-    """Prove each app the tier starts with no work is serving and doing nothing.
-
-    Two-sided on purpose. A container that crash-looped on the idle config fails
-    the readiness half; one that is quietly archiving, polling or consuming fails
-    the gauge half, and neither shows up as a missing row anywhere else.
-    """
-    expected = _idle_apps()
-    if not expected:
-        _print(
-            msg="SKIP  this profile starts no app with an idle config -- nothing to prove"
-        )
-        return SKIPPED
-
-    bind = os.environ.get("DFE_POST_HOST", "localhost")
-    failed = 0
-    for service, port in expected:
-        base = f"http://{bind}:{port}"
-        _print(msg=f"Waiting for {service} to report {IDLE_GAUGE} at {base}")
-        if not (_wait_ready(f"{base}/readyz")):
-            _print(
-                msg=f"FAIL  {service} runs an idle config but never became ready within "
-                f"{READY_TIMEOUT_SECONDS:.0f}s -- it did not start on a config that gives "
-                "it no work"
-            )
-            failed += 1
-            continue
-        try:
-            body = http_get(f"{base}/metrics", timeout=5)
-        except Exception:  # noqa: BLE001 - unreachable and unreadable are one answer here
-            body = None
-        fault = _idle_fault(body=body, base=base)
-        if fault:
-            _print(msg=f"FAIL  {service} {fault}")
-            failed += 1
-        else:
-            _print(msg=f"PASS  {service} is ready and inert ({IDLE_GAUGE}=1)")
-    return Claim(asserted=True, failed=failed)
-
-
-def _idle_fault(*, body: str | None, base: str) -> str:
-    """Why a /metrics scrape does not show an idle app, or '' when it does.
-
-    scalo's idle gate sets `pipeline_idle` only when it enters or leaves idle, so
-    an app that never idled serves no such gauge. One serving `pipeline_ready`
-    instead has started its run loop, which an idle app never enters: it is working,
-    and ready says nothing about inert.
-    """
-    if body is None:
-        return (
-            f"serves no {IDLE_GAUGE} on {base}/metrics, so whether it is inert cannot "
-            "be read"
-        )
-    idle = _metric_value(body, IDLE_GAUGE)
-    if idle == 1:
-        return ""
-    if idle is not None:
-        return (
-            f"reports {IDLE_GAUGE}={idle:g} -- it was given a config with no work and "
-            "is working anyway"
-        )
-    ready = _metric_value(body, READY_GAUGE)
-    if ready is not None:
-        return (
-            f"reports {READY_GAUGE}={ready:g} and no {IDLE_GAUGE} -- its pipeline "
-            "started on a config that gives it no work, so the idle gate never engaged"
-        )
-    return (
-        f"serves neither {IDLE_GAUGE} nor {READY_GAUGE} on {base}/metrics, so whether "
-        "it is inert cannot be read"
-    )
-
-
 def _create_routed_source(*, base: str, name: str, token: str) -> str:
     """Create and deploy a source with a rule of its own. Returns '' or the fault.
 
@@ -1408,7 +1237,7 @@ def _verify_routing_applied(*, database: str) -> Claim:
         return SKIPPED
 
     base = _engine_base()
-    token, status, _, fault = _login(base)
+    token, status, _, fault = login(base=base)
     if fault and _skip_retired(base=base, status=status, what="the routing"):
         return SKIPPED
     if fault:
@@ -1552,7 +1381,7 @@ def _verify_hyperdx() -> Claim:
         return SKIPPED
 
     engine_base = _engine_base()
-    token, status, _, fault = _login(engine_base)
+    token, status, _, fault = login(base=engine_base)
     if fault and _skip_retired(
         base=engine_base, status=status, what="HyperDX's seeded state"
     ):
@@ -1678,29 +1507,6 @@ def _request_token(*, base: str, username: str, password: str) -> tuple[str, int
         return "", status, False
     token = body.get("access_token", "")
     return token, status, body.get("password_change_required") is True
-
-
-def _login(base: str) -> Login:
-    """Log POST's console account in, replacing an issued password first if it has to."""
-    username, password = _console_credential()
-    if not (password):
-        return Login("", 0, username, f"no password for {username!r} is set")
-    token, status, change_required = _request_token(
-        base=base, username=username, password=password
-    )
-    if status != 200 or not (token):
-        return Login(
-            "", status, username, f"login as {username!r} returned HTTP {status}"
-        )
-    if not (change_required):
-        return Login(token, status, username, "")
-    return _replace_issued_password(
-        base=base,
-        current=password,
-        key=ADMIN_PASSWORD_KEY,
-        token=token,
-        username=username,
-    )
 
 
 def _dotenv_with(*, text: str, key: str, value: str) -> str:
@@ -1934,7 +1740,7 @@ def _verify_ui_query(*, database: str, marker: str, table: str) -> Claim:
         return SKIPPED
 
     base = _engine_base()
-    token, status, username, fault = _login(base)
+    token, status, username, fault = login(base=base)
     if fault and _skip_retired(base=base, status=status, what="the query path"):
         return SKIPPED
     if status == 0:
@@ -2150,7 +1956,7 @@ def _verify_hunt(*, database: str, ingest_url: str, marker: str, table: str) -> 
         return SKIPPED
 
     base = _engine_base()
-    token, status, _, fault = _login(base)
+    token, status, _, fault = login(base=base)
     if fault and _skip_retired(base=base, status=status, what="the hunt path"):
         return SKIPPED
     if status == 0:
@@ -2494,6 +2300,73 @@ def _report_claims(*, claims: dict[str, Claim]) -> int:
     return 1 if sum(claim.failed for claim in claims.values()) else 0
 
 
+@functools.cache
+def api_container() -> str:
+    """The container running API_EXEC_SERVICE in THIS compose project.
+
+    Container names are daemon-wide, so exec'ing a bare service name reaches whichever stack on the host happens to own it, succeeding against the wrong deployment's credentials. Compose knows which container is ours.
+    """
+    result = subprocess.run(
+        ["docker", "compose", "ps", "--quiet", API_EXEC_SERVICE],
+        capture_output=True,
+        check=False,
+        encoding="utf-8",
+        errors="replace",
+        text=True,
+        timeout=API_EXEC_MARGIN_SECONDS,
+    )
+    ids = result.stdout.split()
+    if (result.returncode != 0) or not (ids):
+        detail = (result.stderr.strip()) or ("docker compose ps named no container")
+        raise ApiUnreachable(
+            f"no running {API_EXEC_SERVICE!r} in this compose project: {detail}"
+        )
+    return ids[0]
+
+
+def api_put_json(
+    *, payload: dict, timeout: int = 30, token: str = "", url: str
+) -> tuple[int, typing.Any]:
+    """PUT JSON and return (status, decoded body), over whichever transport reaches it."""
+    if not (_over_network(url=url)):
+        return http_put_json(payload=payload, timeout=timeout, token=token, url=url)
+    status, body = _exec_request(
+        method="PUT", payload=payload, timeout=timeout, token=token, url=url
+    )
+    return status, _decoded(raw=body)
+
+
+def login(base: str) -> Login:
+    """Log POST's console account in, replacing an issued password first if it has to."""
+    username, password = _console_credential()
+    if not (password):
+        return Login(
+            fault=f"no password for {username!r} is set",
+            status=0,
+            token="",
+            username=username,
+        )
+    token, status, change_required = _request_token(
+        base=base, password=password, username=username
+    )
+    if (status != 200) or not (token):
+        return Login(
+            fault=f"login as {username!r} returned HTTP {status}",
+            status=status,
+            token="",
+            username=username,
+        )
+    if not (change_required):
+        return Login(fault="", status=status, token=token, username=username)
+    return _replace_issued_password(
+        base=base,
+        current=password,
+        key=ADMIN_PASSWORD_KEY,
+        token=token,
+        username=username,
+    )
+
+
 def main() -> int:
     _load_dotenv()
 
@@ -2533,7 +2406,6 @@ def main() -> int:
                 "ingest": SKIPPED,
                 "self-monitoring": _verify_self_monitoring(),
                 "observability": _verify_hyperdx(),
-                "idle apps": _verify_idle_apps(),
             }
         )
     except IngestNotReady as reason:
@@ -2614,7 +2486,6 @@ def main() -> int:
             "self-monitoring": _verify_self_monitoring(),
             "observability": _verify_hyperdx(),
             "console": _verify_ui_query(database=database, marker=marker, table=table),
-            "idle apps": _verify_idle_apps(),
             "routing": _verify_routing_applied(database=database),
         }
         # After the console claim, which reads these same rows back.

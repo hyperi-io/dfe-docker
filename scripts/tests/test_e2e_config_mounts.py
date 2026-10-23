@@ -8,10 +8,7 @@
 
 """The e2e suite's services read the config the test mounts, whatever make exports.
 
-`make test-e2e` and `make test-resilience` include `.profile.mk`, which exports
-the engine-rendered config paths, and compose runs each service on
-`--config ${VAR:-<mount>}`. A text read of the scripts where a check needs one:
-these tests run with no PyYAML, and test_e2e.py cannot be imported without it.
+`make test-e2e` and `make test-resilience` include `.tmp/profile.mk`, which exports the engine-rendered config paths. Compose runs each service on `--config ${VAR:-<mount>}`. A text read of the scripts where a check needs one: these tests run with no PyYAML and test_e2e.py cannot be imported without it.
 """
 
 import re

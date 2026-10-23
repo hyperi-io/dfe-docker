@@ -52,10 +52,14 @@
 # HyperDX search in the console, `search` in the search bar and `filter` picked in
 # the side panel, and the hunt is added and triggered from the console. It adds
 # HyperDX to the stack and needs Playwright and Chrome.
+#
+# A `sources` block makes each source through the dfe-engine API the way the console does, once the stack is healthy: a create, a deploy and an upload of each fixture its `files` lists by file set, from tests/e2e/ only. A source is created on the meta/syslog schema unless its `schema` names the settings its transform's output needs. The instance dfe-engine then declares for it, `dfe-transform-<engine>-<name>`, starts in the test's own compose project. The load waits until it is ready, on Kafka until its consumer group has joined as well. The profile has to run each named transform app per source. The receiver reads the config dfe-engine renders, which sends each source's `_source` label to its transform. A record whose label no source matches skips every transform, so `table` and each key of an outage's `sources` must name a source the test makes. On Kafka each source's `<name>_land` and `<name>_load` join `expected_topics` while its instance's consumer group joins the consumer checks. An outage `service` may name a source's instance. A program the table's source uploads sets `_tags.e2e_transform` to its engine's name on every record, which each row the test lands must carry. The sources are deleted after the test. Their tables keep the rows it wrote. Names are lowercase letters and digits, free of the `-` a ClickHouse identifier would need quoted.
 
 global:
   data_file: tests/e2e/data/events.jsonl
   mode: ci
+  # Data-path tests skip the self-monitoring collector. A test that asserts on it sets otel: true
+  otel: false
   # Only ClickHouse persists between tests (schema + accumulated rows; the
   # count-delta verify baselines per test). Kafka, kafbat and the DFE services
   # recreate fresh each test so a test always runs its own config and a stale
@@ -65,43 +69,24 @@ global:
 
 tests:
   - name: simple-receiver-to-loader-grpc
-    profile: grpc-receiver
+    profile: slim-grpc
 
   - name: simple-receiver-to-loader-kafka
-    profile: kafka-receiver
+    profile: slim-kafka
     expected_topics:
       - main_land
       - simple_receiver_to_loader_kafka_land
 
   - name: simple-receiver-to-loader-kafka-with-archiver
-    profile: kafka-receiver-archiver
+    profile: single-kafka
     expected_topics:
       - main_land
       - simple_receiver_to_loader_kafka_with_archiver_land
 
-  # The fetcher tests post into dfe-fetcher's ingest endpoint, which it leaves
-  # off unless configured. The configs under tests/e2e/config turn it on for the
-  # suite alone, so no stack config publishes an unauthenticated ingest.
-  - name: simple-fetcher-to-loader
-    profile: grpc-fetcher
-    config_overrides:
-      dfe-fetcher: tests/e2e/config/fetcher-grpc.yaml
-
-  - name: simple-fetcher-to-loader-kafka
-    profile: kafka-fetcher
-    config_overrides:
-      dfe-fetcher: tests/e2e/config/fetcher-kafka.yaml
-    expected_topics:
-      - main_land
-      - simple_fetcher_to_loader_kafka_land
-
-  # The complete single-node stack: receiver, fetcher, transform, loader and
-  # archiver over Kafka, with the engine, UI and proxy in front. The HTTP checks
-  # assert the single-origin contract dfe-proxy exists for -- UI and engine API
-  # on ONE origin. DFE_UI_URL is the console URL the suite resolves: localhost on
-  # DFE_UI_PORT, or https at DFE_EXTERNAL_ORIGIN's host under console TLS.
+  # The complete single-node stack: receiver, loader and archiver over Kafka, with the engine, UI and proxy in front. The HTTP checks assert the single-origin contract dfe-proxy exists for: UI and engine API on ONE origin. DFE_UI_URL is the console URL the suite resolves: localhost on DFE_UI_PORT or https at DFE_EXTERNAL_ORIGIN's host under console TLS
   - name: complete-single-node-stack
-    profile: single
+    profile: single-kafka
+    otel: true
     expected_topics:
       - main_land
       - complete_single_node_stack_land
@@ -118,7 +103,7 @@ tests:
   # Failed root logins are the detection; a failure for another user, a root
   # success and an unrelated API event are the near misses it must leave alone.
   - name: rules-and-hunts
-    profile: grpc-receiver
+    profile: slim-grpc
     detection:
       where: "toString(_json.event_type) = 'login_failure' AND toString(_json.user_name) = 'root'"
       matching: tests/e2e/data/detection-matching.jsonl
@@ -128,7 +113,7 @@ tests:
   # panel narrowed to root, Create Rule, then a hunt added and triggered from the
   # console's form. Each filter alone lets a near miss through.
   - name: search-rule-hunt
-    profile: grpc-receiver
+    profile: slim-grpc
     detection:
       matching: tests/e2e/data/detection-matching.jsonl
       other: tests/e2e/data/detection-other.jsonl
@@ -141,7 +126,7 @@ tests:
   # ClickHouse down under load on the core data path: dfe-loader has to hold or
   # refuse what it cannot write, and deliver it once ClickHouse is back.
   - name: clickhouse-outage
-    profile: grpc-receiver
+    profile: slim-grpc
     outage:
       service: clickhouse
       seconds: 60
@@ -149,21 +134,35 @@ tests:
   # A direct gRPC destination pulled from under its sender and returned. Every
   # app upstream of the stopped one has to hold or refuse, never exit.
   - name: loader-outage-grpc
-    profile: grpc-receiver
+    profile: slim-grpc
     outage:
       service: dfe-loader
       seconds: 60
 
+  # The direct gRPC chain through the vrl transform dfe-engine starts for a source made through its API, with dfe-loader stopped under it
   - name: loader-outage-grpc-transform-vrl
-    profile: grpc-receiver-transform-vrl
+    profile: single-grpc
+    table: e2evrl
+    sources:
+      - &e2evrl
+        files:
+          transforms:
+            - tests/e2e/programs/stamp_transformed.vrl
+        name: e2evrl
+        transform:
+          engine: vrl
     outage:
       service: dfe-loader
       seconds: 60
 
+  # The same chain with the transform instance itself stopped mid-chain
   - name: transform-vrl-outage-grpc
-    profile: grpc-receiver-transform-vrl
+    profile: single-grpc
+    table: e2evrl
+    sources:
+      - *e2evrl
     outage:
-      service: dfe-transform-vrl
+      service: dfe-transform-vrl-e2evrl
       seconds: 60
 
   # A hop killed with SIGKILL mid-stream rather than stopped, so whatever it held
@@ -171,7 +170,7 @@ tests:
   # land, on the Kafka path and on the direct gRPC path. The load is dense enough
   # that the kill lands with records in flight; a kill that catches none fails.
   - name: loader-kill-kafka
-    profile: kafka-receiver
+    profile: slim-kafka
     expected_topics:
       - main_land
     outage:
@@ -182,7 +181,7 @@ tests:
       interval: 0.01
 
   - name: receiver-kill-kafka
-    profile: kafka-receiver
+    profile: slim-kafka
     expected_topics:
       - main_land
     outage:
@@ -193,7 +192,7 @@ tests:
       interval: 0.01
 
   - name: loader-kill-grpc
-    profile: grpc-receiver
+    profile: slim-grpc
     outage:
       service: dfe-loader
       method: kill
@@ -202,30 +201,42 @@ tests:
       interval: 0.01
 
   - name: transform-vrl-kill-grpc
-    profile: grpc-receiver-transform-vrl
+    profile: single-grpc
+    table: e2evrl
+    sources:
+      - *e2evrl
     outage:
-      service: dfe-transform-vrl
+      service: dfe-transform-vrl-e2evrl
       method: kill
       seconds: 30
       workers: 16
       interval: 0.01
 
-  # The broker down under load with every Kafka app consuming. The vector and
-  # cisco-ios records keep dfe-transform-vector's and dfe-transform-elastic's
-  # own topics moving, so their groups have to catch up too.
+  # The broker down under load with every Kafka app consuming, each transform included: the e2evector and e2eelastic records keep the vector and elastic instances' own topics moving, so their groups have to catch up too
   - name: kafka-outage
-    profile: kafka-resilience
-    expected_topics:
-      - main_land
-      - main_load
-      - vector_land
-      - vector_load
-      - cisco-ios_land
-      - cisco-ios_load
+    profile: single-kafka
+    # The archiver commits only when it rolls a file, every 300s by default
+    config_overrides:
+      dfe-archiver: tests/e2e/configs/archiver-short-roll.yaml
+    table: e2evrl
+    sources:
+      - *e2evrl
+      - name: e2evector
+        transform:
+          engine: vector
+      # The ECS schema the elastic catalogue builds this variant's table on (dfe-engine appmgmt/apps.yaml `catalogue`)
+      - name: e2eelastic
+        schema:
+          additional_fields: additional/cisco_ios/log
+          derived_schema: derived/cisco_ios/log
+          meta_schema: meta/elastic/ecs
+        transform:
+          engine: elastic
+          variant: filebeat.cisco_ios.default
     outage:
       service: kafka
       seconds: 60
       sources:
-        main: tests/e2e/data/events.jsonl
-        vector: tests/e2e/data/events.jsonl
-        cisco-ios: tests/e2e/data/cisco-ios.jsonl
+        e2evrl: tests/e2e/data/events.jsonl
+        e2evector: tests/e2e/data/events.jsonl
+        e2eelastic: tests/e2e/data/cisco-ios.jsonl

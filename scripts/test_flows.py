@@ -10,7 +10,7 @@
 #
 #  Usage:
 #    ./scripts/test_flows.py                        # the active profile's transport
-#    ./scripts/test_flows.py --profile single       # a named service_profiles.yaml profile
+#    ./scripts/test_flows.py --profile single-kafka # a named service_profiles.yaml profile
 #    ./scripts/test_flows.py --engine-repo ../dfe-engine
 #    DFE_ENGINE_REPO=../dfe-engine ./scripts/test_flows.py
 
@@ -43,8 +43,11 @@ from pathlib import Path
 
 import yaml
 
-from _common import _load_dotenv
-from _pipeline import env_or
+# Bytecode for the repo modules imported below goes to .tmp/pycache, as it does under make
+sys.pycache_prefix = str(Path(__file__).resolve().parent.parent / ".tmp" / "pycache")
+
+from _common import _load_dotenv  # noqa: E402
+from _pipeline import env_or  # noqa: E402
 
 PROJECT_DIR = Path(__file__).resolve().parent.parent
 SERVICE_PROFILES_FILE = PROJECT_DIR / "service_profiles.yaml"

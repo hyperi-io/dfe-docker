@@ -28,7 +28,7 @@ _PROBE = "probe-node-image"
 _RESOLVER = '''\
 from pathlib import Path
 
-target = Path(".profile.mk")
+target = Path(".tmp/profile.mk")
 content = """\\
 export PROFILE_FLAGS := --profile core
 export DFE_SERVICES := dfe-engine dfe-ui dfe-proxy
@@ -38,6 +38,7 @@ export DFE_AUTH_RESOLVED := false
 export DFE_OTEL_RESOLVED := true
 """
 if not target.is_file() or target.read_text(encoding="utf-8") != content:
+    target.parent.mkdir(exist_ok=True, parents=True)
     target.write_text(content, encoding="utf-8")
 '''
 

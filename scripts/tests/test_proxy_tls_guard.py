@@ -8,7 +8,7 @@
 
 """The console TLS prechecks, driven through make itself.
 
-Most of them are parse-time `$(error)`s, reachable from a copy of the Makefile in a directory of its own as in test_origin_guard.py. The auth refusal runs in the .profile.mk recipe once the resolver has written this run's answer, so the copy gets a stub resolver that writes the footprint a test asks for. It also gets the real helper the Makefile runs while it parses, a real throwaway certificate pair and a stub `docker` that reports the networks a test writes, so no daemon decides an answer.
+Most of them are parse-time `$(error)`s, reachable from a copy of the Makefile in a directory of its own as in test_origin_guard.py. The auth refusal runs in the .tmp/profile.mk recipe once the resolver has written this run's answer, so the copy gets a stub resolver that writes the footprint a test asks for. It also gets the real helper the Makefile runs while it parses, a real throwaway certificate pair and a stub `docker` that reports the networks a test writes, so no daemon decides an answer.
 """
 
 import json
@@ -115,9 +115,10 @@ else:
 _STUB_RESOLVER = """\
 from pathlib import Path
 
-target = Path(".profile.mk")
+target = Path(".tmp/profile.mk")
 text = "export DFE_AUTH_RESOLVED := {auth}\\n"
 if (not (target.exists())) or (target.read_text(encoding="utf-8") != text):
+    target.parent.mkdir(exist_ok=True, parents=True)
     target.write_text(text, encoding="utf-8")
 """
 
@@ -132,8 +133,28 @@ print-tls-env:
 def _make(
     *, cwd: Path, dry_run: bool = True, goal: str, **overrides: str
 ) -> subprocess.CompletedProcess[str]:
-    """Run one goal with the stub docker first on PATH and every DFE_* key, the project name and any outer make's flags dropped, then the overrides applied."""
-    dropped = ("COMPOSE_PROJECT_NAME", "MAKEFLAGS", "MAKELEVEL", "MFLAGS")
+    """Run one goal with the stub docker first on PATH, then the overrides applied.
+
+    Every DFE_* key, the project name, an outer make's flags and everything it exports to its children are dropped, so a `make check-tests` run passes on none of its own chain.
+    """
+    dropped = (
+        "CLICKHOUSE_HOST",
+        "CLICKHOUSE_HTTP_PORT",
+        "CLICKHOUSE_PASSWORD",
+        "CLICKHOUSE_URL",
+        "CLICKHOUSE_USERNAME",
+        "COMPOSE_FILE",
+        "COMPOSE_PROJECT_NAME",
+        "DEV",
+        "LIVE",
+        "LIVE_UI",
+        "LOCAL",
+        "MAKEFLAGS",
+        "MAKELEVEL",
+        "MFLAGS",
+        "PYTHONPYCACHEPREFIX",
+        "SERVICES",
+    )
     environment = {
         key: value
         for key, value in os.environ.items()
@@ -361,7 +382,8 @@ def test_the_auth_profile_stops_the_start(goal: str, makefile: Path) -> None:
 def test_the_auth_refusal_reads_this_runs_resolution_not_the_last(
     makefile: Path,
 ) -> None:
-    (makefile / ".profile.mk").write_text(
+    (makefile / ".tmp").mkdir()
+    (makefile / ".tmp" / "profile.mk").write_text(
         "export DFE_AUTH_RESOLVED := true\n", encoding="utf-8", newline="\n"
     )
 
@@ -581,3 +603,62 @@ def test_compose_gets_the_derived_network(
 
     assert result.returncode == 0, result.stderr
     assert result.stdout.strip() == expected
+
+
+@pytest.mark.parametrize(
+    ("origin", "names"),
+    [
+        (
+            "https://dfe.example.test",
+            "DNS:dfe.example.test, DNS:localhost, IP Address:127.0.0.1",
+        ),
+        (
+            "https://[::1]",
+            "IP Address:0:0:0:0:0:0:0:1, DNS:localhost, IP Address:127.0.0.1",
+        ),
+        ("", "DNS:localhost, IP Address:127.0.0.1"),
+    ],
+)
+def test_make_certs_names_the_origin_host(
+    makefile: Path, origin: str, names: str
+) -> None:
+    result = _make(
+        cwd=makefile,
+        dry_run=False,
+        goal="certs",
+        DFE_EXTERNAL_ORIGIN=origin,
+        DFE_PROXY_CERT_DIR="./minted",
+    )
+    san = subprocess.run(
+        [
+            "openssl",
+            "x509",
+            "-noout",
+            "-ext",
+            "subjectAltName",
+            "-in",
+            str(makefile / "minted" / "console.crt"),
+        ],
+        capture_output=True,
+        check=False,
+        encoding="utf-8",
+        errors="replace",
+        text=True,
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert names in san.stdout
+
+
+def test_make_certs_writes_where_a_tls_start_reads_with_the_dial_off(
+    makefile: Path,
+) -> None:
+    result = _make(
+        cwd=makefile,
+        dry_run=False,
+        goal="certs",
+        DFE_EXTERNAL_ORIGIN="https://dfe.example.test",
+    )
+
+    assert result.returncode != 0
+    assert "./certs already holds console.crt, console.key." in result.stderr

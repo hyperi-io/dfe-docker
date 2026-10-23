@@ -75,8 +75,11 @@ import tempfile
 import time
 from pathlib import Path
 
-import _common
-import _stack_lock
+# Bytecode for the repo modules imported below goes to .tmp/pycache, as it does under make
+sys.pycache_prefix = str(Path(__file__).resolve().parent.parent / ".tmp" / "pycache")
+
+import _common  # noqa: E402
+import _stack_lock  # noqa: E402
 
 PROJECT_DIR = Path(__file__).resolve().parent.parent
 ENV_FILE = PROJECT_DIR / ".env"

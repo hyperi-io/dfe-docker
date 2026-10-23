@@ -36,13 +36,19 @@ this points at rather than duplicates.
 
 from __future__ import annotations
 
-from _common import (
+import sys
+from pathlib import Path
+
+# Bytecode for the repo modules imported below goes to .tmp/pycache, as it does under make
+sys.pycache_prefix = str(Path(__file__).resolve().parent.parent / ".tmp" / "pycache")
+
+from _common import (  # noqa: E402
     DEPLOYMENT_DIAL,
     REPO_ROOT,
     _dotenv_values,
     _parse_yaml_subset,
 )
-from _registry import DISCOVERY_WORDS
+from _registry import DISCOVERY_WORDS  # noqa: E402
 
 # self_update.py records the last-applied version here (its STATE_FILENAME): a
 # track-latest box grows one, a purely pinned box never does. Kept in step with

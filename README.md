@@ -48,9 +48,7 @@ See [docs/architecture.md](docs/architecture.md).
 - Docker and Docker Compose v2
 - Python 3
 - [`uv`](https://docs.astral.sh/uv/) - only for the seed targets (`make sources`, `make rules`, `make hunts`, `make events`) and the e2e tests, which run their scripts through it.
-- [`oras`](https://oras.land) - `make stack` reads the signed OCI stack-manifest
-  through it. Not needed if you render from a local dfe-infra checkout instead
-  (`DFE_INFRA_DIR`).
+- [`oras`](https://oras.land) - `make stack` and `make check-proxy` read the signed OCI stack-manifest through it. Not needed if you render from a local dfe-infra checkout (`DFE_INFRA_DIR`).
 - [`gh`](https://cli.github.com), logged in - only for `DFE_STACK_REPIN_IMAGES=1`,
   which reads each component's GitHub releases through it.
 
@@ -136,16 +134,16 @@ All three, in full, plus what an upgrade does to an existing stack:
 
 ## Service Profiles
 
-Service selection is controlled by `service_profiles.yaml` at the repo root. Each profile declares a transport mode, which DFE services to start, and optionally its whole footprint - the `clickhouse`, `core`, `kafbat`, `hyperdx` and `otel` keys. The `active_profile` field is used to define the profile set and can be overridden with the `DFE_PROFILE` env var; it ships as `slim`, the Compose default, the way a Kubernetes deploy defaults to `scale`. The matching `.env` flags (`DFE_CLICKHOUSE_ENABLED`, `DFE_CORE_ENABLED`, `KAFBAT_ENABLED`, `DFE_HYPERDX_ENABLED`, `DFE_OTEL_ENABLED`) override the profile's keys.
+Service selection is controlled by `service_profiles.yaml` at the repo root. Each profile declares a transport mode, which DFE services to start and optionally its whole footprint - the `clickhouse`, `core`, `kafbat`, `hyperdx` and `otel` keys. The `active_profile` field is used to define the profile set and can be overridden with the `DFE_PROFILE` env var. It ships as `slim-grpc`. The matching `.env` flags (`DFE_CLICKHOUSE_ENABLED`, `DFE_CORE_ENABLED`, `KAFBAT_ENABLED`, `DFE_HYPERDX_ENABLED`, `DFE_OTEL_ENABLED`) override the profile's keys.
 
 For `kafka` transport profiles, the Kafka backend is selected via `KAFKA_BACKEND` (default `redpanda`).
 
 ```bash
-make dev                         # Uses active_profile from service_profiles.yaml
-DFE_PROFILE=grpc-full make dev   # Override profile
-KAFKA_BACKEND=apache make dev    # Override Kafka backend
-DFE_HYPERDX_ENABLED=1 make dev   # Also start the HyperDX observability stack
-DFE_OTEL_ENABLED=1 make dev      # Also start the self-monitoring collector
+make dev                           # Uses active_profile from service_profiles.yaml
+DFE_PROFILE=single-kafka make dev  # Override profile
+KAFKA_BACKEND=apache make dev      # Override Kafka backend
+DFE_HYPERDX_ENABLED=false make dev # Skip the HyperDX observability stack
+DFE_OTEL_ENABLED=false make dev    # Skip the self-monitoring collector
 ```
 
 To start only a subset of the resolved profile for a single invocation, pass `SERVICES` (space-separated). It also works with `make ci`. An empty `SERVICES` (the default) starts the whole profile; a name that is not part of the resolved stack is a hard error.
@@ -158,11 +156,7 @@ make dev LOCAL="dfe-engine dfe-ui"      # Build only these from source; the rest
 
 ### Application Profiles (service_profiles.yaml)
 
-`slim` and `single` share their names with the Kubernetes tiers and are rendered
-from them, so they are edited THERE and re-rendered here; every other profile is
-a hand-crafted data-plane shape you own. There is no `scale` - Compose cannot run
-an HA broker or a ClickHouse cluster. Which profile runs what, and how the two
-projected ones are re-rendered: [docs/profiles.md](docs/profiles.md).
+This repo owns every profile: `slim-grpc`, `slim-kafka`, `single-grpc` and `single-kafka`. Each is `<tier>-<transport>` and dfe-engine runs as `docker-<tier>`. There is no `scale` tier - Compose cannot run an HA broker or a ClickHouse cluster. Which profile runs what: [docs/profiles.md](docs/profiles.md).
 
 ### Infrastructure Profiles (docker-compose.yml)
 
@@ -197,6 +191,7 @@ In `dev` mode, they build from each repo's own Dockerfile (not the shared Rust b
 | `make init`        | Create .env and per-service .env files from templates, minting the admin and break-glass passwords |
 | `make env-files`   | Assert every `env/<service>.env` exists, creating any the templates have gained |
 | `make creds`       | Print the access summary -- console URL, admin login, where the break-glass password lives. The password prints on a TTY only; a pipe, a file or `DFE_CREDS_SHOW=0` gets the `.env` key instead |
+| `make certs`       | Mint a console TLS certificate for `DFE_EXTERNAL_ORIGIN`'s host into `DFE_PROXY_CERT_DIR`, with a single-use CA to trust once. Never replaces a file already there |
 | `make up`          | Start the pinned stack and print the access summary                |
 | `make dev`         | Build local DFE images from source and start the stack (`LOCAL="..."` builds only those, rest pinned) |
 | `make dev-build`   | Build local DFE images from source (no start)                      |
@@ -224,7 +219,7 @@ row lands in the ClickHouse table. It is transport-agnostic - each test selects 
 the direct-gRPC paths. Run a subset by name:
 
 ```
-make test-e2e E2E_TESTS="simple-receiver-to-loader-grpc simple-fetcher-to-loader"
+make test-e2e E2E_TESTS="simple-receiver-to-loader-grpc simple-receiver-to-loader-kafka"
 ```
 
 ### Power-on self test
@@ -240,11 +235,7 @@ DFE_POST_ENABLED=false make ci   # opt out
 
 It is opt-**out**. A self test you have to remember to run is not a self test.
 
-Transport-agnostic: it posts to the ingest edge and reads ClickHouse, so it
-behaves identically on the Kafka and kafka-less (gRPC) profiles. The edge it uses
-comes from the resolved profile - receiver when the profile has one, otherwise
-fetcher. On a profile with no ingest component at all (loader-only) it skips with
-a stated reason rather than failing: there is nothing to prove end to end.
+Transport-agnostic: it posts to the ingest edge and reads ClickHouse, so it behaves identically on the Kafka and kafka-less (gRPC) profiles. The edge it uses is the resolved profile's receiver. On a profile with no receiver (loader-only) it skips with a stated reason rather than failing: there is nothing to prove end to end.
 
 Two things it deliberately is not. It is not a Docker `HEALTHCHECK` - that runs
 inside one container with no view of the others, and repeats forever, so it would
@@ -255,12 +246,7 @@ exist, is my topic there) belongs in the scalo deployment contract, not here.
 
 ### The two default acceptance tests
 
-The DFE stack ships two default "it is working" e2e tests: (1) the core data path
-and (2) self-monitoring - the stack's own telemetry landing in the
-`dfe.otel_*` tables. Both run here. Test (2) needs a profile that declares
-`otel`, which `single` does, and `make post` makes the same pair of claims
-against an already-running stack. See
-[observability.md](docs/observability.md) for which services report.
+The DFE stack ships two default "it is working" e2e tests: (1) the core data path and (2) self-monitoring - the stack's own telemetry landing in the `dfe.otel_*` tables. Both run here. Test (2) needs a profile that declares `otel`, which every profile does. `make post` makes the same pair of claims against an already-running stack. See [observability.md](docs/observability.md) for which services report.
 
 ### Shared dev hosts (port collision)
 
@@ -278,7 +264,7 @@ always-on dev daemon) that clashes. Two clean ways to run without the clash:
 - Or run the gRPC-only tests, which need no broker at all:
 
   ```
-  make test-e2e E2E_TESTS="simple-receiver-to-loader-grpc simple-fetcher-to-loader"
+  make test-e2e E2E_TESTS="simple-receiver-to-loader-grpc rules-and-hunts"
   ```
 
 ## Configuration
@@ -306,9 +292,9 @@ dfe-docker stands the whole DFE suite up as one Docker Compose stack on a single
 | `docker-compose.yml` | Every service and every infrastructure profile. The one file `make ci` names explicitly |
 | `docker-compose.override.yml` | Auto-loaded by `docker compose`, so `make dev` builds from source; `make ci` passes `-f docker-compose.yml` to skip it |
 | `docker-compose.{live,storage,container-logs,unpublish-*}.yml` | Opt-in overlays the Makefile chains onto `COMPOSE_FILE` |
-| `service_profiles.yaml` | Which DFE services start, the transport, and the config each one mounts. Ships `active_profile: slim` |
+| `service_profiles.yaml` | Which DFE services start, the transport and the config each one mounts. Ships `active_profile: slim-grpc` |
 | `Makefile` | Every entry point, plus the profile, overlay and UI-exposure resolution that decides which compose files a target passes |
-| `scripts/resolve_profile.py` | Reads `service_profiles.yaml` and writes the generated `.profile.mk` the Makefile includes |
+| `scripts/resolve_profile.py` | Reads `service_profiles.yaml` and writes the generated `.tmp/profile.mk` the Makefile includes |
 | `scripts/stack.py` | `make stack` - writes `tag@sha256` pins into `.env` from a local dfe-infra checkout (`DFE_INFRA_DIR`) or the signed OCI stack manifest |
 | `scripts/post.py` | The power-on self test `make dev` and `make ci` end with |
 | `scripts/test_e2e.py` + `tests/e2e/e2e-tests.yaml` | The declarative e2e suite, one stack per test |
@@ -333,11 +319,10 @@ make down        # stop and remove containers across EVERY profile
 
 `make check` is `check-compose check-hardfail check-dockerfile check-docs check-proxy check-python check-tests`, and CI runs each one through the same make target so the two cannot drift.
 
-Three ways a green run says less than it looks:
+Two ways a green run says less than it looks:
 
 - **`make check` starts nothing.** It resolves compose, lints the helpers and unit-tests them. `make dev`, `make ci`, `make post` and `make test-e2e` are the only things that prove the stack moves data, and CI runs none of them.
 - **`check-compose` validates compose STRUCTURE, not digests.** It substitutes placeholders for the mandatory keys so it reads neither the stack SSoT nor the registry, which means no particular pin is proved to resolve.
-- **`check-profiles` is not part of `make check`.** Locally with `DFE_INFRA_DIR` unset it prints `projection NOT checked (not a pass)` and exits 0. dfe-infra is public, so the CI Profile projection job checks it out with no App token and no secret, and runs the check on every pull request.
 
 `check-hardfail` does earn its pass. It resolves compose with a scrubbed environment and an empty `--env-file` so a developer's pinned `.env` cannot mask it, requires the run to fail on a missing pin, then reads every `image:` line and requires each to resolve to an `@sha256:` digest.
 
@@ -347,11 +332,10 @@ Three ways a green run says less than it looks:
 |---|---|---|
 | Leave containers running when you are finished | `make down`, on every host you touched, the same session | `down` sweeps every profile rather than the active one, because passing only the active profile's services left the previous profile's containers up - still holding host ports and still answering health probes for a pipeline that was no longer wired (`Makefile`, the `down` target) |
 | Assume the deployment target is idle | Check what is already running before you start anything | The docker definition-of-done target carries a long-lived stack refreshed on a 6-hourly systemd timer (`ops/daemon-update/`), not a box you get to yourself |
-| Assume events go through Kafka | Read the profile's `transport` first | `slim`, the shipped `active_profile`, is `transport: grpc`: the receiver dials `dfe-loader:6000` directly and no broker starts. `single` is the Kafka one. The core data path is otherwise identical, and `post` and `test-e2e` assert the same landing row either way |
+| Assume events go through Kafka | Read the profile's `transport` first | `slim-grpc`, the shipped `active_profile`, is `transport: grpc`: the receiver dials `dfe-loader:6000` directly and no broker starts. The `-kafka` profiles start one. The core data path is otherwise identical. `post` and `test-e2e` assert the same landing row either way |
 | Add a DDL file or a topic-creating step here | Change the schema in dfe-engine | dfe-engine ships the schemas in its own image and reports healthy only once it has applied them. `scripts/tests/test_engine_only_schema_control.py` fails the build on one (#118) |
-| Point the stack at an external ClickHouse with `CLICKHOUSE_HOST` alone | Edit `config/loader/*.yaml` as well | That variable moves dfe-engine, dfe-hunt-runner, the collector and HyperDX's seeded connection only. The loader's host is a literal - `config/loader/grpc.yaml:15` is `- clickhouse:8123` - so the loader keeps talking to a container that is not running |
 | Give an external ClickHouse's port through `CLICKHOUSE_HTTP_PORT` or `CLICKHOUSE_NATIVE_PORT` | Set `CLICKHOUSE_EXTERNAL_HTTP_PORT` and `CLICKHOUSE_EXTERNAL_NATIVE_PORT` | The first pair is the bundled container's host publish and nothing else, so it is safe to move for a second stack; services on the network dial 8123/9000 unless the EXTERNAL pair says otherwise (#75) |
-| Move the loader's `grpc.listen` off 6000, or confuse it with the receiver's 6000 | Keep the loader on container port 6000, published on host port 50051 | dfe-engine compiles every sender's loader endpoint as `dfe-loader:6000`, so a loader listening anywhere else drops every record behind an HTTP 202 with nothing logged. The receiver's 6000 is the external Vector protocol and binds `DFE_INGRESS_BIND_HOST` (`0.0.0.0`). The loader's is the internal `DfeTransport/Push` and binds `DFE_BIND_HOST` (`127.0.0.1`). `scripts/tests/test_loader_grpc_port.py` fails the build on a mismatch |
+| Move the loader's `grpc.listen` off 6000, or confuse it with the receiver's 6000 | Keep the loader on container port 6000, published on host port 50051 | dfe-engine compiles every sender's loader endpoint as `dfe-loader:6000`, so a loader listening anywhere else drops every record behind an HTTP 202 with nothing logged. The receiver's 6000 is the external Vector protocol, off unless `DFE_RECEIVER_GRPC__ENABLED=true` and unpublished until its line in `docker-compose.yml` is uncommented. The loader's is the internal `DfeTransport/Push` and binds `DFE_BIND_HOST` (`127.0.0.1`). `scripts/tests/test_loader_grpc_port.py` fails the build on a mismatch |
 | Publish the UIs beyond loopback and leave `DFE_EXTERNAL_ORIGIN` alone | Set it to the address browsers actually use | `DFE_BIND_SCOPE=all` with a loopback origin builds HyperDX's frame-ancestors policy and every next-auth redirect from the wrong host, so the console comes up with its observability views blocked and sends logins to the wrong machine. The Makefile now refuses the combination (#108) |
 | Raise `REDPANDA_MEMORY` on its own | Raise `DFE_BROKER_MEMORY` above it | The broker gets at most the container limit less the host's `vm.min_free_kbytes`: `redpanda/start.sh` lowers `--memory` to that and logs a WARN naming the `DFE_BROKER_MEMORY` that restores it (`.env.example:229`, `.env.example:519`) |
 | Run Kafka-transport tests on a host that already has a broker on 9092 | `make test-e2e KAFKA_PLAINTEXT_PORT=29092 KAFKA_PLAINTEXT_HOST_PORT=29192`, or run the gRPC-only tests | The broker publishes 9092 and 19092 and collides with an always-on dev daemon (#36) |
@@ -365,7 +349,6 @@ The suite graph in `dfe-infra/suite.yaml` records exactly one edge on this repo 
 | Repo | Direction | How they interact |
 |---|---|---|
 | dfe-infra | inbound, `derived-pins` | dfe-docker holds no copy of the pins. `scripts/stack.py` renders them at `make stack` time, from a local dfe-infra checkout when `DFE_INFRA_DIR` names one, else from the signed OCI stack manifest pulled with `oras`. `ops/daemon-update/self_update.py` is the second consumer of that manifest. The edge's declared check is "nothing" - there is no second copy that can drift, and the graph records the edge so the suite tooling knows to walk past it. Do not go hunting for a pin file here to update |
-| dfe-infra | inbound, not carried by the graph | `slim` and `single` are projections of the Kubernetes tiers of the same name. Edit `dfe-infra argocd/values/profile-<mode>.yaml`, then `make render-profiles` here, which needs `DFE_INFRA_DIR`. Every other profile in `service_profiles.yaml` is this repo's own |
 | dfe-receiver, dfe-fetcher, dfe-loader, dfe-archiver, dfe-transform-elastic, dfe-transform-vector, dfe-transform-vrl, dfe-engine, dfe-ui, dfe-hyperdx | inbound | This stack runs their published GHCR images at the digests `make stack` pins, and `make dev` builds the same components from source into local images. Nothing flows the other way |
 
 Nothing in the suite graph depends on dfe-docker, so a change here breaks a deployment rather than another repo's build. `dfe-transform-splack` and `dfe-transform-wasm` have repos but no service in this stack.

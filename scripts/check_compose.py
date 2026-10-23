@@ -60,15 +60,14 @@ Beyond resolution, these semantic assertions ride along.
 - The opt-in auth profile must gate without holes: no stack needs an OIDC setting
   to resolve, an armed profile moves every infra-UI origin behind a proxy, and
   the infra kill switch takes the proxies down with the UIs. See `_AUTH_PROXIES`.
-- Only the auth profile's oauth2-proxy may hand HyperDX an identity: it reaches
-  HyperDX directly, and every proxy route to HyperDX strips the identity headers
-  from its callers. See `_hyperdx_identity_failures`.
+- No proxy config, plain or TLS, may add an identity header. See `_identity_stamp_failures`.
 - The committed override must repoint every service that runs a buildable
   component's image, consumers included, or `make dev` runs two builds of one
   component. See `_override_coverage_failures`.
 - The overlay `make dev LOCAL=...` generates must put the named component and its
   image consumers on `:local` and leave every other service on its registry pin.
   See `_local_overlay_failures`.
+- A generated per-source instance of a LOCAL app must run its `:local` image, which `extends` alone never gives it. See `_local_instance_failures`.
 - That overlay must describe THIS run: a build that builds nothing removes it
   rather than leaving the previous run's. See `_overlay_staleness_failures`.
 - `make dev LOCAL=...` names its compose files explicitly instead of riding
@@ -77,10 +76,6 @@ Beyond resolution, these semantic assertions ride along.
 - The builder's IMPLICIT_CONSUMERS must match the compose graph, or a `depends_on`
   edge added here silently stops `make dev` building an image the stack starts.
   See `_implicit_consumer_failures`.
-- Every profile's transform output topic must be read by that profile's loader,
-  and no two transforms may consume one topic. See `_transform_wiring_failures`.
-- Every enrichment table a transform config names must resolve to a file through
-  that service's own bind mounts. See `_enrichment_table_failures`.
 - The engine must never receive an empty or `changeme` admin password outside a
   dev posture, because it refuses to start on one. See `_credential_failures`.
 - Moving ClickHouse's host publish must not move the port any service dials it
@@ -109,44 +104,44 @@ import tempfile
 from collections.abc import Callable
 from pathlib import Path
 
-import _envoy
-import instances
-import proxy_tls
-from _common import (
+# Bytecode for the repo modules imported below goes to .tmp/pycache, as it does under make
+sys.pycache_prefix = str(Path(__file__).resolve().parent.parent / ".tmp" / "pycache")
+
+import _envoy  # noqa: E402
+import instances  # noqa: E402
+import proxy_tls  # noqa: E402
+from _common import (  # noqa: E402
     COMPOSE_FILE,
     COMPOSE_LIVE_FILE,
     COMPOSE_LIVE_UI_FILE,
     COMPOSE_OVERRIDE_FILE,
-    CONFIG_DIR,
     CUSTOM_ENV_SUFFIX,
     DOTENV_FILE,
     DOTENV_TEMPLATE,
     ENV_DIR,
     ENV_TEMPLATE_DIR,
+    PER_SOURCE_APP_KEYS,
     REPO_ROOT,
     SERVICE_CONFIG_FILE,
-    SERVICE_PROFILES_FILE,
-    _config_enrichment_paths,
-    _config_topics,
     _dotenv_values,
     _parse_dotenv,
     _print,
     _required_compose_vars,
-    _transform_topics,
 )
-from build_dev_images import (
+from build_dev_images import (  # noqa: E402
     IMPLICIT_CONSUMERS,
     buildable_components,
     local_image_services,
     overlay_text,
 )
-from init import _render_secrets
-from resolve_profile import _parse_yaml
+from init import _render_secrets  # noqa: E402
 
 # The overlay `make dev LOCAL=...` generates, rendered for dfe-engine because it
 # is the component with IMAGE_CONSUMERS followers. Written under .tmp so compose
 # resolves it relative to the repo like the shipped files.
 _LOCAL_SAMPLE = ["dfe-engine"]
+# The per-source app a LOCAL build names when its generated instances are checked
+_LOCAL_INSTANCE_SAMPLE = ["dfe-fetcher"]
 _LOCAL_RENDER = REPO_ROOT / ".tmp" / "compose-check-local.yml"
 # A stack service the builder cannot build, for the overlay staleness assertion.
 _UNBUILDABLE_SAMPLE = "kafka-ui"
@@ -193,8 +188,7 @@ _RETIRED_HEALTH_PATHS = ("/healthz", "/health/live", "/health/ready", "/health/s
 _UI_EXPOSURE: dict[str, tuple[str, str]] = {
     "dfe-engine": ("product", "docker-compose.unpublish-engine-api.yml"),
     "dfe-proxy": ("product", "docker-compose.unpublish-dfe-ui.yml"),
-    # HyperDX is published by the proxy that strips caller-supplied identity, never
-    # by the hyperdx container itself.
+    # HyperDX's ports sit on its proxy, never on the hyperdx container
     "dfe-hyperdx-proxy": ("infra", "docker-compose.unpublish-hyperdx.yml"),
     "kafka-ui": ("infra", "docker-compose.unpublish-kafbat.yml"),
 }
@@ -236,21 +230,13 @@ _AUTH_ENV = {
     "DFE_OAUTH2_PROXY_COOKIE_SECRET": "0123456789abcdef0123456789abcdef",  # gitleaks:allow
 }
 
-# The identity headers a header-dev HyperDX signs a caller in from: its own defaults, which oauth2-proxy sets after its group check, and the X-OIDC pair the Kubernetes edge sets. No caller may send any of them to HyperDX itself.
-_FORGEABLE_IDENTITY = (
+# The identity headers oauth2-proxy and the Kubernetes edge set, which no proxy in this stack may add
+_IDENTITY_HEADERS = (
     "X-Forwarded-Email",
     "X-Forwarded-Groups",
     "X-OIDC-Subject",
     "X-OIDC-Groups",
 )
-# The service whose endpoints a HyperDX route reaches, whatever the proxy names its cluster.
-_HYPERDX_HOST = "hyperdx"
-# With the auth profile armed oauth2-proxy is HyperDX's edge, and it replaces the caller's identity headers with the signed-in user's, so it reaches HyperDX directly: through dfe-hyperdx-proxy those headers are stripped.
-_HYPERDX_GATE_UPSTREAMS = {
-    "oauth2-proxy-hyperdx": "http://hyperdx:8090",
-    "oauth2-proxy-hyperdx-api": "http://hyperdx:8000",
-}
-_UPSTREAMS_KEY = "OAUTH2_PROXY_UPSTREAMS"
 
 # Every overlay fragment the Makefile chains, read back out of its own
 # `chain_fragment` calls, so a fragment added there needs no edit here.
@@ -261,8 +247,7 @@ _CHAIN_FRAGMENT_RE = re.compile(r"chain_fragment,([^),]+)\)")
 # checkout every check-* target must run on.
 _COMPOSE_FILE_GOAL = "print-compose-file"
 _COMPOSE_FILE_PREFIX = "COMPOSE_FILE="
-# The dials that gate a fragment, set so every one chains. Two come from
-# .profile.mk, where only a make command-line variable beats the include.
+# The dials that gate a fragment, set so every one chains. The three `_RESOLVED` ones come from .tmp/profile.mk, where only a make command-line variable beats the include
 _FRAGMENT_DIALS = {
     "DFE_AUTH_RESOLVED": "true",
     "DFE_INSTANCES_RESOLVED": "true",
@@ -332,13 +317,9 @@ _CLICKHOUSE_DIALLERS: dict[str, tuple[str, str | None, str]] = {
     ),
     "otel-collector": ("CLICKHOUSE_HOST", None, "CLICKHOUSE_PORT"),
 }
+# Each service that takes its ClickHouse address as one `host:HTTP port` key
+_CLICKHOUSE_HOST_PORT_DIALLERS = {"dfe-loader": "DFE_LOADER_CLICKHOUSE_HOSTS"}
 _CLICKHOUSE_SERVICE = "clickhouse"
-# HyperDX dials ClickHouse too, from the URL in the connection it seeds.
-_HYPERDX_SERVICE = "hyperdx"
-_HYPERDX_CONNECTIONS_KEY = "DEFAULT_CONNECTIONS"
-# What `make` exports from resolve_profile.py for CLICKHOUSE_SECURE; this check
-# runs without make, so a case sets it directly.
-_CLICKHOUSE_SCHEME_KEY = "DFE_CLICKHOUSE_RESOLVED_SCHEME"
 # Every key that moves a ClickHouse address, stripped before each case so the
 # checkout's own .env cannot decide the answer.
 _CLICKHOUSE_ADDRESS_KEYS = frozenset(
@@ -349,36 +330,32 @@ _CLICKHOUSE_ADDRESS_KEYS = frozenset(
         "CLICKHOUSE_EXTERNAL_HTTP_PORT",
         "CLICKHOUSE_EXTERNAL_NATIVE_PORT",
         "CLICKHOUSE_SECURE",
-        _CLICKHOUSE_SCHEME_KEY,
     }
 )
 _EXTERNAL_CLICKHOUSE = "clickhouse.example.invalid"
 # (label, environment, the (host, HTTP, native) every dialler must get, the host
-# ports the bundled container must publish, the URL HyperDX's connection must
-# name). The publish is asserted too, so a case that moved nothing cannot pass.
+# ports the bundled container must publish). The publish is asserted too, so a
+# case that moved nothing cannot pass.
 _CLICKHOUSE_DIAL_CASES: tuple[
-    tuple[str, dict[str, str], tuple[str, str, str], tuple[str, ...], str], ...
+    tuple[str, dict[str, str], tuple[str, str, str], tuple[str, ...]], ...
 ] = (
     (
         "defaults",
         {},
         ("clickhouse", "8123", "9000"),
         ("8123", "9000"),
-        "http://clickhouse:8123",
     ),
     (
         "host publish moved",
         {"CLICKHOUSE_HTTP_PORT": "18123", "CLICKHOUSE_NATIVE_PORT": "19000"},
         ("clickhouse", "8123", "9000"),
         ("18123", "19000"),
-        "http://clickhouse:8123",
     ),
     (
         "external host",
         {"CLICKHOUSE_HOST": _EXTERNAL_CLICKHOUSE},
         (_EXTERNAL_CLICKHOUSE, "8123", "9000"),
         ("8123", "9000"),
-        f"http://{_EXTERNAL_CLICKHOUSE}:8123",
     ),
     (
         "external host and ports",
@@ -391,7 +368,6 @@ _CLICKHOUSE_DIAL_CASES: tuple[
         },
         (_EXTERNAL_CLICKHOUSE, "8443", "9440"),
         ("18123", "19000"),
-        f"http://{_EXTERNAL_CLICKHOUSE}:8443",
     ),
     (
         "external host over TLS",
@@ -400,11 +376,9 @@ _CLICKHOUSE_DIAL_CASES: tuple[
             "CLICKHOUSE_EXTERNAL_HTTP_PORT": "8443",
             "CLICKHOUSE_EXTERNAL_NATIVE_PORT": "9440",
             "CLICKHOUSE_SECURE": "true",
-            _CLICKHOUSE_SCHEME_KEY: "https",
         },
         (_EXTERNAL_CLICKHOUSE, "8443", "9440"),
         ("8123", "9000"),
-        f"https://{_EXTERNAL_CLICKHOUSE}:8443",
     ),
 )
 
@@ -416,9 +390,6 @@ _DFE_OWNED_SERVICES = {
     "dfe-fetcher",
     "dfe-loader",
     "dfe-receiver",
-    "dfe-transform-e2e-elastic-cisco-ios",
-    "dfe-transform-e2e-vector-filebeat",
-    "dfe-transform-e2e-vrl-filebeat",
     "dfe-transform-elastic",
     "dfe-transform-vector",
     "dfe-transform-vrl",
@@ -435,9 +406,6 @@ _VERSION_CHECK_PREFIXES = {
     "dfe-fetcher": "DFE_FETCHER_",
     "dfe-loader": "DFE_LOADER_",
     "dfe-receiver": "DFE_RECEIVER_",
-    "dfe-transform-e2e-elastic-cisco-ios": "DFE_TRANSFORM_ELASTIC_",
-    "dfe-transform-e2e-vector-filebeat": "DFE_TRANSFORM_",
-    "dfe-transform-e2e-vrl-filebeat": "DFE_TRANSFORM_",
     "dfe-transform-elastic": "DFE_TRANSFORM_ELASTIC_",
     "dfe-transform-vector": "DFE_TRANSFORM_",
     "dfe-transform-vrl": "DFE_TRANSFORM_",
@@ -489,8 +457,7 @@ _TLS_USER = {"DFE_DEV_GID": "4343", "DFE_DEV_UID": "4242"}
 # measures it against each local image.
 _IMAGE_VOLUMES: dict[str, tuple[str, ...]] = {
     "clickhouse": ("/var/lib/clickhouse",),
-    "hyperdx-ferretdb": ("/state",),
-    "hyperdx-postgres": ("/var/lib/postgresql/data",),
+    "hyperdx-documentdb": ("/data",),
     "kafka-apache": ("/etc/kafka/secrets", "/mnt/shared/config", "/var/lib/kafka/data"),
     "kafka-redpanda": ("/var/lib/redpanda/data",),
 }
@@ -498,14 +465,6 @@ _IMAGE_VOLUMES: dict[str, tuple[str, ...]] = {
 type _Inspect = Callable[[str], frozenset[str] | None]
 # A hung daemon must not hang the gate.
 _INSPECT_TIMEOUT_SECONDS = 30
-
-# A dfe-transform-vector pipeline declares its own enrichment tables, and the
-# service mounts the directory holding it rather than the file.
-_TRANSFORM_FILE_SUFFIXES = (".yaml", ".yml")
-
-# Profile services whose config declares a Kafka sink topic somebody has to read.
-_TRANSFORM_PREFIX = "dfe-transform-"
-_LOADER_SERVICE = "dfe-loader"
 
 # The keys `_sentinel_model` writes into each env file it plants.
 _SENTINEL_LAST = "DFE_COMPOSE_CHECK_LAST_ENV_FILE"
@@ -817,83 +776,34 @@ def _auth_exposure_failures(*, env: dict[str, str]) -> tuple[list[str], int]:
     return failures, made
 
 
-def _gate_upstream_mismatches(*, config: dict) -> list[str]:
-    """Return one message per HyperDX gate that does not reach HyperDX directly."""
-    services = config.get("services", {})
-    failures = []
-    for name, want in sorted(_HYPERDX_GATE_UPSTREAMS.items()):
-        if name not in services:
-            failures.append(f"{name}: gates HyperDX but is not in the stack")
-            continue
-        got = ((services[name].get("environment")) or ({})).get(_UPSTREAMS_KEY)
-        if got != want:
-            failures.append(
-                f"{name}: {_UPSTREAMS_KEY}={got!r}, want {want!r}. A hop through "
-                "dfe-hyperdx-proxy strips the signed-in user's identity headers "
-                "before a header-dev HyperDX reads them"
-            )
-    return failures
-
-
-def _identity_strip_failures(*, label: str, text: str) -> tuple[list[str], int]:
-    """Return (messages, virtual hosts checked) for one proxy config's identity handling.
-
-    Every virtual host that routes to HyperDX must strip each of `_FORGEABLE_IDENTITY`, and no virtual host may add one. A config with no route to HyperDX at all fails rather than passing unchecked.
-
-    Raises:
-        ValueError: The config strays outside the block style `_envoy` reads.
-    """
-    hyperdx_clusters = {
-        name
-        for name, addresses in _envoy.cluster_hosts(text=text).items()
-        if _HYPERDX_HOST in addresses
-    }
-    want = {header.lower() for header in _FORGEABLE_IDENTITY}
+def _identity_stamp_failures(*, label: str, text: str) -> tuple[list[str], int]:
+    """Return (messages, virtual hosts checked) for one proxy config, failing a virtual host that adds one of `_IDENTITY_HEADERS` and a config with none."""
+    want = {header.lower() for header in _IDENTITY_HEADERS}
     failures = []
     made = 0
     for manager in _envoy.connection_managers(text=text):
         for host in manager.virtual_hosts:
-            where = f"{label} {manager.listener}/{host.name}"
+            made += 1
             stamped = sorted(want & {header.lower() for header in host.added})
             if stamped:
                 failures.append(
-                    f"{where}: adds {stamped}, an identity no proxy in this stack asserts"
-                )
-            if not (any(route.cluster in hyperdx_clusters for route in host.routes)):
-                continue
-            made += 1
-            missing = sorted(want - {header.lower() for header in host.removed})
-            if missing:
-                failures.append(
-                    f"{where}: routes to HyperDX without stripping {missing}, so a "
-                    "caller can sign in to a header-dev HyperDX as anyone"
+                    f"{label} {manager.listener}/{host.name}: adds {stamped}, an "
+                    "identity no proxy in this stack asserts"
                 )
     if made == 0:
-        failures.append(
-            f"{label}: no virtual host routes to HyperDX, so nothing was checked"
-        )
+        failures.append(f"{label}: no virtual host found, so nothing was checked")
     return failures, made
 
 
-def _hyperdx_identity_failures(*, env: dict[str, str]) -> tuple[list[str], int]:
-    """Return (messages, assertions made) for who may hand HyperDX an identity.
-
-    Both halves of one rule: the auth profile's oauth2-proxy reaches HyperDX directly, so the identity it sets arrives, and every proxy config that routes to HyperDX, plain and TLS, strips that identity from its own callers.
-    """
-    on = _config_json(
-        env={**env, **_AUTH_ENV},
-        files=[COMPOSE_FILE.name, *_AUTH_DIRECT_FRAGMENTS],
-        extra_profiles=(_AUTH_PROFILE,),
-    )
-    if on is None:
-        return ([f"the {_AUTH_PROFILE} profile path did not resolve"], 0)
-    failures = _gate_upstream_mismatches(config=on)
-    made = len(_HYPERDX_GATE_UPSTREAMS)
+def _proxy_identity_failures() -> tuple[list[str], int]:
+    """Return (messages, virtual hosts checked) across every proxy config, plain and TLS."""
+    failures = []
+    made = 0
     for configs in _TLS_PROXY_CONFIGS.values():
         for relative in configs:
             text = (REPO_ROOT / relative).read_text(encoding="utf-8")
             try:
-                found, checked = _identity_strip_failures(label=relative, text=text)
+                found, checked = _identity_stamp_failures(label=relative, text=text)
             except ValueError as error:
                 failures.append(f"{relative}: {error}")
                 continue
@@ -976,134 +886,6 @@ def _paths() -> list[tuple[str, list[str]]]:
     ]
 
 
-def _transform_wiring_failures() -> tuple[list[str], int]:
-    """Return (messages, assertions made) for every profile's transform topics.
-
-    Two properties, both of them things a profile can get wrong while every
-    service still starts and reports healthy:
-
-    - a WORKING transform's output topic must be read by that profile's loader,
-      or the events reach a topic and stop there (dfe-docker#66);
-    - two transform instances in one profile must not consume the same topic,
-      because each event would then take whichever program won the partition.
-    """
-    data = _parse_yaml(
-        text=SERVICE_PROFILES_FILE.read_text(encoding="utf-8", errors="replace")
-    )
-    failures: list[str] = []
-    made = 0
-    for name, profile in sorted(data.get("profiles", {}).items()):
-        services = profile.get("services", {})
-        transforms = {}
-        for service, config in services.items():
-            if not (service.startswith(_TRANSFORM_PREFIX)):
-                continue
-            config_path = config.get("config_path")
-            if config_path is None:
-                failures.append(
-                    f"{name}: {service} declares no config_path -- its topics cannot "
-                    "be read, so nothing checks what it consumes or produces"
-                )
-                continue
-            transforms[service] = config_path
-        if not (transforms):
-            continue
-        loader = services.get(_LOADER_SERVICE, {}).get("config_path")
-        consumed, _, pattern = (
-            _config_topics(path=CONFIG_DIR / loader) if loader else (set(), set(), "")
-        )
-        seen: dict[str, str] = {}
-        for service, config_path in sorted(transforms.items()):
-            subscribed, written = _transform_topics(path=CONFIG_DIR / config_path)
-            for topic in sorted(written):
-                made += 1
-                if topic in consumed or (pattern and re.fullmatch(pattern, topic)):
-                    continue
-                failures.append(
-                    f"{name}: {service} produces {topic} and no loader in the profile "
-                    "consumes it -- events reach the topic and stop there"
-                )
-            for topic in sorted(subscribed):
-                made += 1
-                if topic in seen:
-                    failures.append(
-                        f"{name}: {service} and {seen[topic]} both consume {topic} -- "
-                        "an event would take whichever program won the partition"
-                    )
-                seen[topic] = service
-    return failures, made
-
-
-def _bind_host_path(*, binds: dict[str, Path], target: str) -> Path | None:
-    """Return the file on disk a container path resolves to, or None if nothing mounts it.
-
-    Longest mount first, so a nested mount wins over the directory containing it.
-    """
-    for mount, source in sorted(binds.items(), key=lambda item: -len(item[0])):
-        mount = mount.rstrip("/")
-        if target == mount:
-            return source
-        if target.startswith(f"{mount}/"):
-            return source / target[len(mount) + 1 :]
-    return None
-
-
-def _enrichment_table_failures(*, env: dict[str, str]) -> tuple[list[str], int]:
-    """Return (messages, assertions made) for the enrichment tables the transforms name.
-
-    An `enrichment_tables` entry names a CONTAINER path, and a transform that
-    cannot open one fails to compile its programs at startup -- a running-stack
-    failure compose resolution never sees. So each path is mapped back through the
-    service's own bind mounts and the file is required to exist on disk.
-
-    Every YAML the service mounts is read, files and mounted directories alike:
-    dfe-transform-vrl declares its tables in the service config, and
-    dfe-transform-vector declares them in the pipeline file inside its transforms
-    directory.
-    """
-    config = _config_json(env=env, files=[COMPOSE_FILE.name])
-    if config is None:
-        return (
-            ["the registry path did not resolve, so enrichment tables are unknown"],
-            0,
-        )
-    failures: list[str] = []
-    made = 0
-    for name, service in sorted(config.get("services", {}).items()):
-        if not (name.startswith(_TRANSFORM_PREFIX)):
-            continue
-        binds = {
-            volume["target"]: Path(volume["source"])
-            for volume in service.get("volumes") or []
-            if volume.get("type") == "bind" and volume.get("source")
-        }
-        mounted: set[Path] = set()
-        for path in binds.values():
-            if path.is_file():
-                mounted.add(path)
-            elif path.is_dir():
-                mounted |= {
-                    child
-                    for child in path.iterdir()
-                    if child.is_file() and child.suffix in _TRANSFORM_FILE_SUFFIXES
-                }
-        for source in sorted(mounted):
-            for target in sorted(_config_enrichment_paths(path=source)):
-                made += 1
-                host = _bind_host_path(binds=binds, target=target)
-                if host is None:
-                    failures.append(
-                        f"{name}: enrichment table {target} is under no bind mount -- "
-                        "the transform cannot open it and fails to compile its programs"
-                    )
-                elif not (host.is_file()):
-                    failures.append(
-                        f"{name}: enrichment table {target} maps to {host}, which is "
-                        "not a file -- the transform fails to compile its programs"
-                    )
-    return failures, made
-
-
 def _credential_fault(*, config: dict) -> str:
     """Return why the engine's admin credential is unusable, or empty when it is fine."""
     service = config.get("services", {}).get(_ENGINE_SERVICE, {})
@@ -1149,31 +931,15 @@ def _clickhouse_dial_mismatches(
             got = str(environment.get(key) or "")
             if got != expected:
                 failures.append(f"{name}: {key}={got or 'unset'}, want {expected}")
+    host, http_port, _ = want
+    for name, key in sorted(_CLICKHOUSE_HOST_PORT_DIALLERS.items()):
+        if name not in services:
+            failures.append(f"{name}: dials ClickHouse but is not in the stack")
+            continue
+        got = str((services[name].get("environment") or {}).get(key) or "")
+        if got != f"{host}:{http_port}":
+            failures.append(f"{name}: {key}={got or 'unset'}, want {host}:{http_port}")
     return failures
-
-
-def _hyperdx_connection_mismatches(*, config: dict, want: str) -> list[str]:
-    """Return a message unless HyperDX seeds exactly one connection, dialling `want`."""
-    services = config.get("services", {})
-    if _HYPERDX_SERVICE not in services:
-        return [f"{_HYPERDX_SERVICE}: dials ClickHouse but is not in the stack"]
-    environment = services[_HYPERDX_SERVICE].get("environment") or {}
-    raw = str(environment.get(_HYPERDX_CONNECTIONS_KEY) or "")
-    try:
-        connections = json.loads(raw)
-    except json.JSONDecodeError:
-        return [f"{_HYPERDX_SERVICE}: {_HYPERDX_CONNECTIONS_KEY} is not JSON: {raw!r}"]
-    if not (isinstance(connections, list)):
-        return [f"{_HYPERDX_SERVICE}: {_HYPERDX_CONNECTIONS_KEY} is not a list"]
-    hosts = [
-        str(connection.get("host") or "") if isinstance(connection, dict) else ""
-        for connection in connections
-    ]
-    if hosts != [want]:
-        return [
-            f"{_HYPERDX_SERVICE}: {_HYPERDX_CONNECTIONS_KEY} dials {hosts}, want [{want!r}]"
-        ]
-    return []
 
 
 def _clickhouse_dial_failures(*, env: dict[str, str]) -> tuple[list[str], int]:
@@ -1184,13 +950,12 @@ def _clickhouse_dial_failures(*, env: dict[str, str]) -> tuple[list[str], int]:
     service dialling either in-network reaches a port nothing listens on as soon
     as a second stack moves the publish (#75). An external CLICKHOUSE_HOST is the
     one case whose port can differ, and CLICKHOUSE_EXTERNAL_*_PORT carries it.
-    HyperDX is held to the same address, as the URL its seeded connection names.
     """
     empty_env_file = _empty_env_file()
     base = {k: v for k, v in env.items() if k not in _CLICKHOUSE_ADDRESS_KEYS}
     failures: list[str] = []
     made = 0
-    for label, overrides, want, published, hyperdx_url in _CLICKHOUSE_DIAL_CASES:
+    for label, overrides, want, published in _CLICKHOUSE_DIAL_CASES:
         made += 1
         config = _config_json(
             env={**base, **overrides},
@@ -1200,16 +965,10 @@ def _clickhouse_dial_failures(*, env: dict[str, str]) -> tuple[list[str], int]:
         if config is None:
             failures.append(f"the ClickHouse case {label!r} did not resolve")
             continue
-        made += len(_CLICKHOUSE_DIALLERS) + 1
+        made += len(_CLICKHOUSE_DIALLERS) + len(_CLICKHOUSE_HOST_PORT_DIALLERS)
         failures.extend(
             f"{label}: {message}"
             for message in _clickhouse_dial_mismatches(config=config, want=want)
-        )
-        failures.extend(
-            f"{label}: {message}"
-            for message in _hyperdx_connection_mismatches(
-                config=config, want=hyperdx_url
-            )
         )
         got = tuple(
             port for _, port in _published(config=config, service=_CLICKHOUSE_SERVICE)
@@ -1631,9 +1390,8 @@ def _instance_name_collisions(*, services: dict) -> list[str]:
             if name.startswith(f"{app}-"):
                 failures.append(
                     f"{name}: the {app} instance for a source named "
-                    f"{name[len(app) + 1 :]!r} takes this name, and Compose merges the "
-                    "two -- rename it off the <app>-<source> shape, as the "
-                    "dfe-transform-e2e-* services are"
+                    f"{name[len(app) + 1 :]!r} takes this name and Compose merges the "
+                    "two, so rename it off the <app>-<source> shape"
                 )
     return failures
 
@@ -1763,6 +1521,8 @@ def _override_coverage_failures(*, env: dict[str, str]) -> list[str]:
 
     Read off the interpolated dev model: every service that runs a buildable
     component's image must resolve to `<component>:local` there.
+
+    A per-source app is left out: its instances extend docker-compose.yml and never read the override, so the resolver gives each one its image.
     """
     config = _config_json(
         env=env, files=[COMPOSE_FILE.name, COMPOSE_OVERRIDE_FILE.name]
@@ -1772,7 +1532,7 @@ def _override_coverage_failures(*, env: dict[str, str]) -> list[str]:
     services = config.get("services", {})
     failures = []
     for service, image in sorted(local_image_services(buildable_components()).items()):
-        if service not in services:
+        if (service not in services) or (service in PER_SOURCE_APP_KEYS):
             continue
         got = services[service].get("image", "")
         if got != image:
@@ -1832,6 +1592,41 @@ def _local_overlay_failures(*, env: dict[str, str]) -> tuple[list[str], int]:
                 "LOCAL builds only what it names and leaves the rest on the registry"
             )
     return failures, made
+
+
+def _local_instance_failures(*, env: dict[str, str]) -> tuple[list[str], int]:
+    """Return (messages, assertions made) for the image each generated instance runs beside a LOCAL build.
+
+    `extends` reads the committed service and never the LOCAL overlay, so the generator writes the local image into each instance of a LOCAL app. That instance must resolve to `:local` and every other app's instance to its app's registry pin.
+    """
+    probes = {
+        app: ["compose-check"]
+        for app in sorted(PER_SOURCE_APP_KEYS)
+        if instances.extendable(app)
+    }
+    images = local_image_services(_LOCAL_INSTANCE_SAMPLE)
+    config = _config_json(
+        env=env,
+        files=[COMPOSE_FILE.name],
+        fragment=instances.fragment(probes, images=images),
+    )
+    if config is None:
+        return (
+            ["the registry path with a generated LOCAL instance did not resolve"],
+            0,
+        )
+    services = config.get("services", {})
+    failures = []
+    for app, names in sorted(probes.items()):
+        want = images.get(app) or services.get(app, {}).get("image", "")
+        for name in (instances.service_name(app, instance) for instance in names):
+            got = services.get(name, {}).get("image", "")
+            if got != want:
+                failures.append(
+                    f"{name}: runs {got or 'no image'}, not {want}, beside a LOCAL "
+                    f"build of {', '.join(_LOCAL_INSTANCE_SAMPLE)}"
+                )
+    return failures, len(probes)
 
 
 def _overlay_staleness_failures() -> tuple[list[str], int]:
@@ -2090,7 +1885,8 @@ def _dev_path_fragment_failures() -> tuple[list[str], int]:
     return failures, made
 
 
-def main() -> int:
+def _checks() -> int:
+    """Run every check in turn, stopping at the first that fails."""
     if not (COMPOSE_FILE.is_file()):
         _print(header=COMPOSE_FILE.name, msg="Not found")
         return 1
@@ -2142,26 +1938,6 @@ def main() -> int:
         f"on all {len(paths)} path(s)"
     )
     _print(msg="No healthcheck targets a retired health path")
-
-    wiring_failures, wiring_made = _transform_wiring_failures()
-    for message in wiring_failures:
-        _print(msg=f"FAIL {message}")
-    if wiring_failures:
-        return 1
-    _print(
-        msg="Every transform output topic is read by its profile's loader, and no two "
-        f"transforms in a profile consume the same topic ({wiring_made} assertions)"
-    )
-
-    table_failures, table_made = _enrichment_table_failures(env=env)
-    for message in table_failures:
-        _print(msg=f"FAIL {message}")
-    if table_failures:
-        return 1
-    _print(
-        msg="Every enrichment table a transform config names resolves to a file "
-        f"through that service's bind mounts ({table_made} assertions)"
-    )
 
     credential_failures, credential_made = _credential_failures(env=env)
     for message in credential_failures:
@@ -2285,6 +2061,16 @@ def main() -> int:
         f"consumers on :local and everything else on its pin ({local_made} assertions)"
     )
 
+    instance_failures, instance_made = _local_instance_failures(env=env)
+    for message in instance_failures:
+        _print(msg=f"FAIL {message}")
+    if instance_failures:
+        return 1
+    _print(
+        msg=f"A LOCAL build of {', '.join(_LOCAL_INSTANCE_SAMPLE)} puts its generated "
+        f"instance on :local and every other app's on its pin ({instance_made} assertions)"
+    )
+
     stale_failures, stale_made = _overlay_staleness_failures()
     for message in stale_failures:
         _print(msg=f"FAIL {message}")
@@ -2325,14 +2111,13 @@ def main() -> int:
         f"infra UI behind a proxy the kill switch still covers ({auth_made} assertions)"
     )
 
-    identity_failures, identity_made = _hyperdx_identity_failures(env=env)
+    identity_failures, identity_made = _proxy_identity_failures()
     for message in identity_failures:
         _print(msg=f"FAIL {message}")
     if identity_failures:
         return 1
     _print(
-        msg=f"The {_AUTH_PROFILE} profile's oauth2-proxy reaches HyperDX directly, and every "
-        "route to HyperDX strips caller-supplied identity, plain and TLS "
+        msg="No proxy config, plain or TLS, adds an identity header "
         f"({identity_made} assertions)"
     )
 
@@ -2346,6 +2131,14 @@ def main() -> int:
         f"COMPOSE_FILE chain carries ({fragment_made} assertions)"
     )
     return 0
+
+
+def main() -> int:
+    try:
+        return _checks()
+    finally:
+        _EMPTY_ENV_FILE.unlink(missing_ok=True)
+        _LOCAL_RENDER.unlink(missing_ok=True)
 
 
 if __name__ == "__main__":

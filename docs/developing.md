@@ -169,7 +169,7 @@ A service that runs a component's image under another name follows it:
 engine image. The map is `IMAGE_CONSUMERS` in `scripts/build_dev_images.py`, and
 `make check-compose` asserts the override covers all of it.
 
-The `contract-<app>` and `catalogue-<app>` one-shots are the deliberate
+The `contract-<app>` one-shots are the deliberate
 exception: they emit an artefact of the PINNED release and stay on the registry
 pin while a local build runs beside them, because moving them onto `:local` would
 make a core-only profile compile the Rust components to emit a few files.
@@ -246,19 +246,14 @@ Live mode needs a Linux host: on macOS the container's install would swap the na
 mounts. `active_profile` is the default; `DFE_PROFILE` overrides it for one
 invocation.
 
-`slim` and `single` are whole-stack shapes RENDERED from the Kubernetes tiers of
-the same name, so a change to either belongs in dfe-infra and comes back here
-through `make render-profiles`. The rest are fine-grained data-plane shapes the
-e2e suite pins by name. Which profile runs what, and how the rendering works:
-[profiles.md](profiles.md). There is no `scale`: Compose cannot run an HA broker
-or a ClickHouse cluster.
+Every profile is a whole stack named `<tier>-<transport>`: `slim` runs the core data path, `single` adds the per-source apps, over `grpc` or `kafka`. Only `single-kafka` runs the archiver. Which profile runs what: [profiles.md](profiles.md). There is no `scale` tier: Compose cannot run an HA broker or a ClickHouse cluster.
 
 ```bash
-DFE_PROFILE=grpc-full make dev        # override the profile
+DFE_PROFILE=single-kafka make dev     # override the profile
 KAFKA_BACKEND=apache make dev         # Apache Kafka instead of Redpanda
-DFE_CORE_ENABLED=false make dev       # skip engine, UI and proxy
+DFE_CORE_ENABLED=false make dev       # skip engine, UI, proxy and HyperDX
 DFE_CLICKHOUSE_ENABLED=false make dev # no warehouse container (external instance)
-DFE_HYPERDX_ENABLED=1 make dev        # add the HyperDX observability stack
+DFE_HYPERDX_ENABLED=false make dev    # skip the HyperDX observability stack
 make dev SERVICES="dfe-loader"        # start a subset of the resolved profile
 ```
 
@@ -278,21 +273,18 @@ not on a fresh stack.
 `make dev SERVICES="..."` no longer starts a subset on top of a running stack:
 `dev` depends on `down`, which now tears down every profile first.
 
-A name in `SERVICES` that is not part of the resolved stack is a hard error, not a
-silent no-op. Adding a config to a profile that does not exist on disk is caught
-too -- `resolve_profile.py` validates every `config_path` before writing
-`.profile.mk`.
+A name in `SERVICES` that is not part of the resolved stack is a hard error, not a silent no-op. Adding a config to a profile that does not exist on disk is caught too: `resolve_profile.py` validates every `config_path` before writing `.tmp/profile.mk`.
 
 ## Seeding a starter set
 
-`make sources`, `make rules` and `make hunts` create a starter set of detection content on a running stack through the engine API, from the request bodies in `config/seed/`. `make hunts` also creates the rules, because the engine refuses a hunt whose rule does not exist. A rule over an undeployed source reads nothing until its source is deployed. A hunt whose table does not exist yet is not created, because the hunt runner would fail on every run; `make hunts` creates it once `make sources` has made the table, on a profile that runs the source.
+`make sources`, `make rules` and `make hunts` create a starter set of detection content on a running stack through the engine API, from the request bodies in `resources/seed/`. `make hunts` also creates the rules, because the engine refuses a hunt whose rule does not exist. A rule over an undeployed source reads nothing until its source is deployed. A hunt whose table does not exist yet is not created, because the hunt runner would fail on every run. `make hunts` creates it once `make sources` has made the table, on a profile that runs the source.
 
 | Target | What it creates |
 |---|---|
-| `make sources` | `aws-cloudtrail`, `aws-guardduty` and `aws-securityhub`, each polled by its own dfe-fetcher instance, and `syslog`, which takes any record sent to the receiver with `_source: syslog`. Each lands in `dfe.<source>`. A profile without dfe-fetcher, such as `slim`, gets `syslog` alone |
+| `make sources` | `aws-cloudtrail`, `aws-guardduty` and `aws-securityhub` (each polled by its own dfe-fetcher instance) and `syslog`, which takes any record sent to the receiver with `_source: syslog`. Each lands in `dfe.<source>`. Sources a profile cannot run are skipped, so [`slim-grpc`](profiles.md#which-profile-runs-what) gets `syslog` alone |
 | `make rules` | `aws-guardduty-high-severity`, matching a GuardDuty finding rated 7 or above |
 | `make hunts` | That rule, and the hunt `aws-guardduty-high-severity` once `dfe.aws-guardduty` exists, running it every five minutes into `dfe.detection` |
-| `make events` | Two fake GuardDuty findings from `config/seed/events/`, rated 8.0 and 2.0, so the hunt's next run detects the first and leaves the second |
+| `make events` | Two fake GuardDuty findings from `resources/seed/events/`, rated 8.0 and 2.0, so the hunt's next run detects the first and leaves the second |
 
 `make events` posts its records to dfe-receiver tagged with the source each file is named for, which routes them over the stack's transport, Kafka or gRPC. It waits until the source's table holds them and fails if they do not arrive, so it needs the source deployed by `make sources`, dfe-receiver and an engine that renders the apps' config. It skips the records of a source `make sources` skipped. It sends the records again on every run and needs no login. The hunt that finds them runs in dfe-hunt-runner.
 
@@ -300,7 +292,7 @@ A run of the other three creates only what the engine lacks and leaves an object
 
 `make sources`, `make rules` and `make hunts` log in as `admin` with `DFE_AUTH_LOCAL_ADMIN_PASSWORD` from `.env`, as `make post` does, and replace a password the engine issued the same way. Once the setup wizard has retired `admin`, they ask at the terminal for an account that can write sources, rules and hunts. They ask once per run and store the login nowhere; without a terminal they stop. An account still on the password it was issued has to change it in the console first.
 
-Each fetcher source runs in its own container, which the engine declares but does not start. The deploy prints the command it needs, such as `recreate required: make apply SERVICES=dfe-fetcher-aws-guardduty`; add `DEV=1` on a `make dev` stack. Until then `make post` leaves the instance out of its metrics check. The fetchers read `AWS_ACCESS_KEY_ID` and `AWS_SECRET_ACCESS_KEY` from `env/fetcher.env` and cannot fetch until both are set. Compose reads that file only when it creates a container, so set the keys before `make apply`, or run it again after setting them.
+Each fetcher source runs in its own container, which the engine declares but does not start. The deploy prints the command it needs, such as `recreate required: make apply SERVICES=dfe-fetcher-aws-guardduty`. Until then `make post` leaves the instance out of its metrics check. The fetchers read `AWS_ACCESS_KEY_ID` and `AWS_SECRET_ACCESS_KEY` from `env/fetcher.env` and cannot fetch until both are set. Compose reads that file only when it creates a container, so set the keys before `make apply`, or run it again after setting them.
 
 ## Proving the pipeline works
 
@@ -310,10 +302,7 @@ does not move data.
 
 ### Power-on self test -- runs whether you ask or not
 
-`make dev` and `make ci` finish by running `scripts/post.py`. It injects three
-marked events at the ingest edge of the **resolved profile** (receiver if the
-profile has one, otherwise fetcher) and waits for those exact rows in
-`dfe.main`.
+`make dev` and `make ci` finish by running `scripts/post.py`. It injects three marked events into the receiver of the **resolved profile** and waits for those exact rows in `dfe.main`.
 
 ```bash
 make post                        # against an already-running stack
@@ -333,7 +322,7 @@ unverifiable, which is not the same as passing.
 
 ```bash
 make test-e2e
-make test-e2e E2E_TESTS="simple-receiver-to-loader-grpc simple-fetcher-to-loader"
+make test-e2e E2E_TESTS="simple-receiver-to-loader-grpc simple-receiver-to-loader-kafka"
 ```
 
 `tests/e2e/e2e-tests.yaml` is the definition. A `global:` block sets the data file
@@ -352,10 +341,7 @@ The delta alone would pass on somebody else's rows; the marker alone would not
 notice a partial load. A marker column it cannot locate is reported, never
 silently treated as a pass.
 
-A profile declaring `otel` adds a third assertion -- the stack's own telemetry
-landing fresh in the `dfe.otel_*` tables -- and `expected_http` adds a fourth, a
-status and optional body check per URL. `single` uses both, which is what makes
-`complete-single-node-stack` a whole-stack test rather than a data-path one.
+Every profile declares `otel`, which adds a third assertion: the stack's own telemetry landing fresh in the `dfe.otel_*` tables. `expected_http` adds a fourth, a status and optional body check per URL. It makes `complete-single-node-stack` a whole-stack test rather than a data-path one.
 
 An archiver that subscribes to the test's landing topic and archives to a
 `file://` destination must also write a file there during the test, new or grown
@@ -376,13 +362,7 @@ Two things about the runner worth knowing before you debug it:
   --wait` counts a container that EXITS as a failure even on exit 0, and the
   topic-init services are one-shots that must exit. Waiting on the profile sweeps
   them in and fails regardless of broker health.
-- **It deletes the `_load` sibling of every expected `_land` topic before each
-  run.** Broker volumes outlive containers, so a `main_load` left by any
-  transform run suppresses `main_land` for every non-transform loader
-  thereafter. See
-  [troubleshooting.md](troubleshooting.md#configloaderkafka-loadyaml-consumes-a-topic-nothing-pre-creates).
-  Deleting it per run makes a run depend on the test definition, not on broker
-  history.
+- **It deletes the `_load` sibling of every expected `_land` topic before each run.** Broker volumes outlive containers, so a `main_load` left by any transform run suppresses `main_land` for every non-transform loader thereafter. See [troubleshooting.md](troubleshooting.md#a-_load-topic-changes-what-the-loader-reads). Deleting it per run makes a run depend on the test definition, not on broker history.
 
 ### Rules and hunts -- exactly the matching events
 
@@ -390,7 +370,7 @@ Two things about the runner worth knowing before you debug it:
 make test-e2e E2E_TESTS=rules-and-hunts
 ```
 
-A test with a `detection:` block makes the `e2e` organisation when absent, a rule (`POST /rules`) and a one-minute hunt for it over `dfe.main` into `dfe.detection` (`POST /hunts`), and the runner must commit its first window. It sends the `matching` events and `other` near misses, with `"org_id": "e2e"`, which dfe-loader writes to `_org_id`, as the runner reads only the org's rows. It queues a run (`POST /hunts/{name}/run`) and waits for `last_run` to pass the last event's load time.
+A test with a `detection:` block makes the `e2e` organisation when absent, a rule (`POST /rules`) and a one-minute hunt for it over `dfe.main` into `dfe.detection` (`POST /hunts`), and the runner must commit its first window. It sends the `matching` events and `other` near misses, with `"_org_id": "e2e"`, as the runner reads only the org's rows. The receiver configs keep a sender's `_org_id` (`routing.source_org_id: allow`) and bind the HTTP listener to `default`, `e2e` and `post`, so the field survives the receiver's org clamp. It queues a run (`POST /hunts/{name}/run`) and waits for `last_run` to pass the last event's load time.
 
 The hunt's rows must name, by `matched_uuid`, every landed `matching` row once and no `other` row, under the rule and severity the test gave. The hunt, rule and any org it made are deleted and asserted gone. The rows stay, tagged with the run marker.
 
@@ -416,7 +396,7 @@ Under console TLS the suite first verifies the console certificate itself, then 
 
 ```bash
 make test-resilience
-make test-resilience E2E_TESTS="clickhouse-outage kafka-outage"
+make test-resilience E2E_TESTS="clickhouse-outage loader-outage-grpc"
 ```
 
 Opt-in: `make test-e2e` never runs these, and refuses one named in `E2E_TESTS`.
@@ -428,7 +408,7 @@ refusal such as 503 passes, silence fails), every accepted record landed, and on
 every consumer group is back at zero lag. They stop services, so they never run
 in `make post` either.
 
-An outage's `method` is `stop` by default, a graceful stop that lets the service drain what it holds. `method: kill` sends SIGKILL, and a crash gets no drain, so a record the service held in memory survives only if its acknowledgement was held until the next hop had it. The `*-kill-*` tests kill the loader and the receiver on the Kafka path, and the loader and dfe-transform-vrl on the direct gRPC path, and pass only when every record answered 2xx lands, duplicates counted but allowed. Where the killed service is the receiver itself, a request in flight while it is down may go unanswered, and silence outside that window still fails.
+An outage's `method` is `stop` by default, a graceful stop that lets the service drain what it holds. `method: kill` sends SIGKILL and a crash gets no drain, so a record the service held in memory survives only if its acknowledgement was held until the next hop had it. The `*-kill-*` tests kill the loader and receiver on Kafka and the loader and vrl transform on direct gRPC. They pass only when every record answered 2xx lands, duplicates counted but allowed. Where the killed service is the receiver itself, a request in flight while it is down may go unanswered but silence outside that window still fails.
 
 A kill that catches nothing in flight proves nothing about a crash, so a kill test fails on it. For the receiver or a gRPC hop that means no request out at the instant the container exited. For a Kafka consumer it means nothing its group had left uncommitted just before the kill. The kill tests raise the load with `workers` and `interval` (the default is 4 workers each waiting 0.5 s) so that a kill lands with records in flight.
 
@@ -441,17 +421,9 @@ DFE_INFRA_DIR=../dfe-infra make test-source SOURCE_ARGS="--case elastic"
 DFE_INFRA_DIR=../dfe-infra make test-source SOURCE_ARGS="--case vector"
 ```
 
-Neither harness above adds a source. This one creates one in the console,
-attaches a transform, deploys it, feeds it real data and reads the rows back,
-driving a browser to do it. The runner is dfe-infra's
-(`scripts/acceptance/source/run.py`), the same one `dfe-ops acceptance --suite
-source` calls for Kubernetes; `scripts/test_source.py` supplies what this repo
-owns -- the published ports, the archiver container, `make apply` for each
-service the engine says must restart (which is what creates the source's own
-transform container; run `make test-source DEV=1` against a `make dev` stack so
-that apply keeps the local images), and the admin login from `.env`.
-`SOURCE_ARGS` reaches the runner untouched (`--keep`, `--per-module`,
-`--headed`).
+Above, sources come through the API. This one creates one in the console, attaches a transform, deploys it, feeds it real data and reads the rows back, driving a browser to do it. The runner is dfe-infra's (`scripts/acceptance/source/run.py`), the same one `dfe-ops acceptance --suite source` calls for Kubernetes.
+
+`scripts/test_source.py` supplies what this repo owns: the published ports, the archiver container, the admin login from `.env` and `make apply` for each service the engine says must restart, which is what creates the source's own transform container. Run `make test-source DEV=1` against a `make dev` stack so that apply keeps the local images. `SOURCE_ARGS` reaches the runner untouched (`--keep`, `--per-module`, `--headed`).
 
 Beyond a running stack it needs `DFE_INFRA_DIR` (the runner), `DFE_ENGINE_REPO`
 and `DFE_TRANSFORM_VRL_REPO` (the corpus wrapper, the bundled pipeline), a
@@ -495,7 +467,7 @@ still passes.
 pinned pytest through `uvx` and `check-locks` the pinned uv, so those want a
 network the first time. The rest need none.
 
-`check-proxy` pulls the pinned Envoy image the same way and mints a throwaway P-384 certificate with the host's `openssl` for the TLS variants.
+`check-proxy` validates on the Envoy in `DFE_PROXY_VERSION`. With that unset it asks `scripts/stack.py --print DFE_PROXY_VERSION` for the one the stack at `VERSION` pins, falling back to `deployment.example.yaml`'s `version.pin`. That lookup reads the stack manifest anonymously through `oras`. The check mints a throwaway P-384 certificate with the host's `openssl` for the TLS variants.
 
 ## Port collisions on a shared dev host
 
@@ -512,7 +484,7 @@ run outside the containers. If you would rather avoid the broker altogether, the
 gRPC tests need none:
 
 ```bash
-make test-e2e E2E_TESTS="simple-receiver-to-loader-grpc simple-fetcher-to-loader"
+make test-e2e E2E_TESTS="simple-receiver-to-loader-grpc rules-and-hunts"
 ```
 
 The same reasoning applies to ClickHouse (`CLICKHOUSE_HTTP_PORT`,
@@ -528,23 +500,13 @@ suite chains onto every `up`, one that re-prefixes each `container_name`.
 
 ## Sharp edges
 
-**`make down` tears down every profile, not just the active one.** It runs
-`docker compose -f docker-compose.yml --profile "*" down --remove-orphans`, and
-keeps volumes. That is a change: it used to be profile-scoped, so switching from
-`kafka-receiver` to `kafka-fetcher` left the old receiver running and answering on
-`:8080`. That stray is exactly why the self test asks the resolved profile what
-should be there instead of probing ports.
+**`make down` tears down every profile, not just the active one.** It runs `docker compose -f docker-compose.yml --profile "*" down --remove-orphans` and keeps volumes. A profile-scoped `down` would leave the archiver running after a switch from `single-kafka` to `slim-kafka`. A stray like that is why the self test asks the resolved profile what should be there instead of probing ports.
 
 The consequence to know: because `make dev` and `make ci` depend on `down`, a
 `make dev SERVICES="dfe-loader"` no longer restarts just that service on top of a
 running stack -- everything is stopped first.
 
-**`.env` shadows a command-line environment variable through make.** The Makefile
-does `-include .env`, and GNU make re-exports a variable that came from the
-environment using the *makefile's* value. So with `DFE_PROFILE` set in `.env`,
-`DFE_PROFILE=grpc-full make dev` silently uses the `.env` value. Verified on this
-repo's shape with a minimal reproduction. If an override appears to do nothing,
-check `.env` first; comment the key out there, or use `make -e`.
+**`.env` shadows a command-line environment variable through make.** The Makefile does `-include .env`. GNU make re-exports a variable that came from the environment using the *makefile's* value. So with `DFE_PROFILE` set in `.env`, `DFE_PROFILE=single-kafka make dev` silently uses the `.env` value. If an override appears to do nothing, check `.env` first. Comment the key out there or use `make -e`.
 
 **Compose `environment:` beats `env/<service>.env`.** A key listed in a service's
 `environment:` block in `docker-compose.yml` wins over the same key in the

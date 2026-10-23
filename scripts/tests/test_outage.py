@@ -21,8 +21,6 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import pytest
 
 import _outage
-import resolve_profile
-from _common import CONFIG_DIR, SERVICE_PROFILES_FILE
 
 
 def test_a_record_marker_round_trips_to_its_sequence_number() -> None:
@@ -469,6 +467,19 @@ def test_a_pattern_subscriber_is_owed_a_commit_on_each_topic_it_reads(
     assert counts == {"main_load": 1, "vector_load": 1, "orphan_land": 1}
 
 
+def test_an_archiver_with_no_topics_is_owed_a_commit_on_each_topic_it_discovers(
+    tmp_path,
+) -> None:
+    archiver = tmp_path / "archiver" / "kafka.yaml"
+    archiver.parent.mkdir()
+    archiver.write_text("transport: kafka\n", encoding="utf-8")
+    topics = ["main_land", "main_load", "solo_load", "main_dlq", "__consumer_offsets"]
+
+    counts = _outage.expected_consumers(configs=[archiver], topics=topics)
+
+    assert counts == {"main_land": 1, "solo_load": 1}
+
+
 def test_a_topic_pattern_is_searched_not_anchored() -> None:
     assert _outage.pattern_subscriptions("land", ["main_land", "main_load"]) == {
         "main_land"
@@ -476,31 +487,6 @@ def test_a_topic_pattern_is_searched_not_anchored() -> None:
     assert _outage.pattern_subscriptions(
         "^strimzi\\.", ["strimzi.a", "x.strimzi.b"]
     ) == {"strimzi.a"}
-
-
-def test_the_broker_outage_owes_the_loader_a_commit_on_every_load_topic() -> None:
-    profiles = resolve_profile._parse_yaml(
-        text=SERVICE_PROFILES_FILE.read_text(encoding="utf-8")
-    )
-    services = profiles["profiles"]["kafka-resilience"]["services"]
-    configs = [CONFIG_DIR / service["config_path"] for service in services.values()]
-    # kafka-outage's expected_topics in tests/e2e/e2e-tests.yaml.
-    topics = [
-        f"{source}_{end}"
-        for source in ("main", "vector", "cisco-ios")
-        for end in ("land", "load")
-    ]
-
-    counts = _outage.expected_consumers(configs, topics)
-
-    assert counts == {
-        "main_land": 2,
-        "vector_land": 1,
-        "cisco-ios_land": 1,
-        "main_load": 1,
-        "vector_load": 1,
-        "cisco-ios_load": 1,
-    }
 
 
 # What `rpk topic describe <topic> -p` printed for a three-partition topic.
@@ -623,6 +609,59 @@ def test_an_apache_partition_with_no_commit_is_left_out() -> None:
 
 def test_no_groups_reads_as_no_lag() -> None:
     assert _outage.group_lag_json("[]") == {}
+
+
+# A group that has joined and been assigned its topic, before any commit
+_RPK_JOINED = (
+    '[{"group_name":"dfe-transform-vrl-e2evrl","state":"Stable","members":1,'
+    '"partitions":[{"partition":0,"current_offset":-1,"log_end_offset":0,"lag":0,'
+    '"topic":"e2evrl_land","member_id":"rdkafka-5c1f","client_id":"rdkafka",'
+    '"host":"/172.18.0.9"}]}]'
+)
+
+
+def test_rpk_names_a_joined_group_before_it_commits() -> None:
+    assert _outage.group_assignments_json(described=_RPK_JOINED) == {
+        "dfe-transform-vrl-e2evrl": {"e2evrl_land"}
+    }
+    assert _outage.group_lag_json(described=_RPK_JOINED) == {
+        "dfe-transform-vrl-e2evrl": {}
+    }
+
+
+def test_rpk_holds_no_topic_for_a_partition_no_member_has() -> None:
+    assert _outage.group_assignments_json(described=_RPK_DESCRIBE) == {
+        "probe-group": set()
+    }
+    assert _outage.group_assignments_json(described=_NEVER_COMMITTED) == {
+        "dfe-transform-vrl": set()
+    }
+
+
+def test_rpk_assignments_refuse_text_that_is_not_its_json() -> None:
+    with pytest.raises(ValueError):
+        _outage.group_assignments_json(described="GROUP  TOPIC")
+
+
+def test_apache_names_a_joined_group_by_its_consumer_id() -> None:
+    joined = _APACHE_DESCRIBE.replace(
+        "probe_land      1          0               0               0               -",
+        "probe_land      1          -               0               -               consumer-1-ab12",
+    )
+
+    assert _outage.group_assignments_table(described=joined) == {
+        "probe-group": {"probe_land"}
+    }
+    assert _outage.group_assignments_table(described=_APACHE_DESCRIBE) == {
+        "probe-group": set()
+    }
+
+
+def test_apache_rows_shorter_than_the_header_hold_no_topic() -> None:
+    described = "GROUP TOPIC PARTITION CONSUMER-ID\nprobe-group probe_land 0\n"
+
+    assert _outage.group_assignments_table(described=described) == {}
+    assert _outage.group_lag_table(described=described) == {}
 
 
 def test_consumers_are_behind_until_each_topic_has_its_groups_at_zero() -> None:

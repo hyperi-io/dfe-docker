@@ -1,7 +1,6 @@
 #  Project:      dfe-docker
 #  File:         tests/test_hyperdx.py
 #  Purpose:      Assert the engine is pointed at HyperDX, and HyperDX at the engine
-#                and at the ClickHouse the engine dials
 #  Language:     Python
 #
 #  License:      BUSL-1.1
@@ -13,16 +12,12 @@ The engine drives HyperDX's team, connections and sources over a token it signs
 itself, so it has to know HyperDX is there; HyperDX has to verify that token
 against the engine's JWKS. With either half unset a source added through the
 console never gets its HyperDX view, and the engine answers 503 `hyperdx_absent`.
-HyperDX's own ClickHouse connection has to follow the engine's too, or an external
-ClickHouse leaves every HyperDX query aimed at a container that is not running.
 Its session signing key comes from `make init`, or the fork signs with a key
 published upstream; so does its token encryption key, in a format it parses.
 
-Read the way compose reads it: the `.profile.mk` values resolve_profile writes for
-a profile, expanded over the `${NAME:-default}` forms docker-compose.yml uses.
+Read the way compose reads it: the `.tmp/profile.mk` values resolve_profile writes for a profile, expanded over the `${NAME:-default}` forms docker-compose.yml uses.
 """
 
-import json
 import re
 from pathlib import Path
 
@@ -31,7 +26,7 @@ import pytest
 import init
 import post
 import resolve_profile
-from _common import COMPOSE_FILE, REPO_ROOT
+from _common import COMPOSE_FILE, RENDERED_PROFILES, REPO_ROOT
 
 _ENGINE_SERVICE = "dfe-engine"
 _HYPERDX_SERVICE = "hyperdx"
@@ -53,15 +48,7 @@ _FOOTPRINT_KEYS = (
     "DFE_HYPERDX_RESOLVED",
     "DFE_HYPERDX_RESOLVED_BASE_URL",
     "KAFKA_BACKEND",
-    "CLICKHOUSE_HOST",
-    "CLICKHOUSE_EXTERNAL_HTTP_PORT",
-    "CLICKHOUSE_SECURE",
-    "DFE_CLICKHOUSE_RESOLVED_SCHEME",
 )
-_EXTERNAL_CLICKHOUSE = {
-    "CLICKHOUSE_HOST": "ch.example.invalid",
-    "CLICKHOUSE_EXTERNAL_HTTP_PORT": "8443",
-}
 
 # The dials for the fixed identity a proxy used to stamp on every HyperDX request.
 # `oidc-proxy` ignores it, so one left anywhere reads as an identity that still
@@ -120,7 +107,8 @@ def _exports(
     **environment: str,
 ) -> dict[str, str]:
     """Return the make exports resolve_profile writes for one profile."""
-    monkeypatch.setattr(resolve_profile, "PROFILE_MK", tmp_path / ".profile.mk")
+    written = tmp_path / ".tmp" / "profile.mk"
+    monkeypatch.setattr(resolve_profile, "PROFILE_MK", written)
     # Set before deleting, so teardown also removes what .env loads during the run.
     for key in _FOOTPRINT_KEYS:
         monkeypatch.setenv(key, "")
@@ -132,7 +120,7 @@ def _exports(
     assert resolve_profile.main() == 0
 
     values: dict[str, str] = {}
-    for line in (tmp_path / ".profile.mk").read_text(encoding="utf-8").splitlines():
+    for line in written.read_text(encoding="utf-8").splitlines():
         name, _, value = line.partition(":=")
         values[name.replace("export", "").strip()] = value.strip()
     return values
@@ -147,8 +135,8 @@ def _engine_hyperdx(*, exports: dict[str, str]) -> tuple[str, str]:
     )
 
 
-@pytest.mark.parametrize("profile", ["single", "slim"])
-def test_a_tier_that_runs_hyperdx_points_the_engine_at_it(
+@pytest.mark.parametrize("profile", RENDERED_PROFILES)
+def test_every_profile_points_the_engine_at_its_hyperdx(
     dotenv: Path, monkeypatch: pytest.MonkeyPatch, profile: str, tmp_path: Path
 ) -> None:
     exports = _exports(monkeypatch=monkeypatch, profile=profile, tmp_path=tmp_path)
@@ -156,29 +144,37 @@ def test_a_tier_that_runs_hyperdx_points_the_engine_at_it(
     assert _engine_hyperdx(exports=exports) == ("true", _IN_STACK_HYPERDX)
 
 
-def test_a_tier_without_hyperdx_leaves_the_engine_holding_nothing(
-    dotenv: Path, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-) -> None:
-    exports = _exports(
-        monkeypatch=monkeypatch, profile="kafka-minimal", tmp_path=tmp_path
-    )
-
-    assert _engine_hyperdx(exports=exports) == ("false", "")
-
-
 def test_the_operator_toggle_moves_the_engine_with_the_containers(
     dotenv: Path, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    """One DFE_HYPERDX_ENABLED, whether it comes from the profile or from .env."""
+    """One DFE_HYPERDX_ENABLED, whether it comes from the profile or from .env.
+
+    Switched off, the engine is left holding nothing.
+    """
     exports = _exports(
         monkeypatch=monkeypatch,
-        profile="kafka-minimal",
+        profile="slim-kafka",
         tmp_path=tmp_path,
+        DFE_HYPERDX_ENABLED="false",
+    )
+
+    assert _HYPERDX_SERVICE not in exports["DFE_SERVICES"].split()
+    assert _engine_hyperdx(exports=exports) == ("false", "")
+
+
+def test_hyperdx_does_not_start_without_core(
+    dotenv: Path, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    exports = _exports(
+        monkeypatch=monkeypatch,
+        profile="single-kafka",
+        tmp_path=tmp_path,
+        DFE_CORE_ENABLED="false",
         DFE_HYPERDX_ENABLED="true",
     )
 
-    assert _HYPERDX_SERVICE in exports["DFE_SERVICES"].split()
-    assert _engine_hyperdx(exports=exports) == ("true", _IN_STACK_HYPERDX)
+    assert _HYPERDX_SERVICE not in exports["DFE_SERVICES"].split()
+    assert _engine_hyperdx(exports=exports) == ("false", "")
 
 
 def test_an_external_hyperdx_is_the_one_the_engine_is_given(
@@ -187,7 +183,7 @@ def test_an_external_hyperdx_is_the_one_the_engine_is_given(
     external = "http://observability.example.test:8000"
     exports = _exports(
         monkeypatch=monkeypatch,
-        profile="single",
+        profile="single-kafka",
         tmp_path=tmp_path,
         DFE_HYPERDX_BASE_URL=external,
     )
@@ -195,87 +191,12 @@ def test_an_external_hyperdx_is_the_one_the_engine_is_given(
     assert _engine_hyperdx(exports=exports) == ("true", external)
 
 
-def _hyperdx_clickhouse_url(*, values: dict[str, str]) -> str:
-    """Return the URL HyperDX's seeded connection dials ClickHouse on."""
-    template = _service_environment(service=_HYPERDX_SERVICE)["DEFAULT_CONNECTIONS"]
-    connections = json.loads(_expand(template=template, values=values).strip("'"))
-    return connections[0]["host"]
-
-
-def test_hyperdx_dials_the_bundled_clickhouse_on_its_container_port(
-    dotenv: Path, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-) -> None:
-    exports = _exports(monkeypatch=monkeypatch, profile="single", tmp_path=tmp_path)
-
-    assert _hyperdx_clickhouse_url(values=exports) == "http://clickhouse:8123"
-
-
-@pytest.mark.parametrize(
-    ("secure", "scheme"),
-    [
-        ("true", "https"),
-        ("TRUE", "https"),
-        ("1", "https"),
-        ("yes", "https"),
-        ("false", "http"),
-        ("0", "http"),
-        ("", "http"),
-    ],
-)
-def test_hyperdx_follows_an_external_clickhouse_and_its_tls_switch(
-    dotenv: Path,
-    monkeypatch: pytest.MonkeyPatch,
-    scheme: str,
-    secure: str,
-    tmp_path: Path,
-) -> None:
-    """HyperDX speaks TLS on exactly the values dfe-engine reads as TLS on."""
-    environment = {**_EXTERNAL_CLICKHOUSE, "CLICKHOUSE_SECURE": secure}
-    exports = _exports(
-        monkeypatch=monkeypatch, profile="single", tmp_path=tmp_path, **environment
-    )
-
-    assert (
-        _hyperdx_clickhouse_url(values={**environment, **exports})
-        == f"{scheme}://ch.example.invalid:8443"
-    )
-
-
-def test_the_tls_switch_is_read_from_dotenv_where_an_operator_sets_it(
-    dotenv: Path, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-) -> None:
-    dotenv.write_text("CLICKHOUSE_SECURE=true\n", encoding="utf-8", newline="\n")
-    exports = _exports(
-        monkeypatch=monkeypatch,
-        profile="single",
-        tmp_path=tmp_path,
-        **_EXTERNAL_CLICKHOUSE,
-    )
-
-    assert (
-        _hyperdx_clickhouse_url(values={**_EXTERNAL_CLICKHOUSE, **exports})
-        == "https://ch.example.invalid:8443"
-    )
-
-
 def test_hyperdx_verifies_the_engines_token() -> None:
     environment = _service_environment(service=_HYPERDX_SERVICE)
 
-    assert _expand(template=environment["DFE_AUTH_MODE"], values={}) == "oidc-proxy"
+    # A literal, so no .env or env/hyperdx.env value can switch the mode
+    assert environment["DFE_AUTH_MODE"] == "oidc-proxy"
     assert _expand(template=environment["DFE_ENGINE_JWKS_URL"], values={}) == _JWKS_URL
-
-
-def test_a_developer_with_no_engine_can_still_select_header_dev() -> None:
-    """The compose `environment:` beats env/hyperdx.env, so the switch lives here."""
-    environment = _service_environment(service=_HYPERDX_SERVICE)
-
-    assert (
-        _expand(
-            template=environment["DFE_AUTH_MODE"],
-            values={"DFE_HYPERDX_AUTH_MODE": "header-dev"},
-        )
-        == "header-dev"
-    )
 
 
 def test_hyperdx_signs_sessions_with_the_key_make_init_mints() -> None:

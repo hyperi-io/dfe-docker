@@ -23,6 +23,7 @@
 # scripts ever become an installable package.
 
 line-length = 88
+cache-dir = ".tmp/ruff"
 
 [lint]
 ignore = ["E501"]

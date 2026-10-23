@@ -1,7 +1,7 @@
 #!/usr/bin/env -S uv run --locked --script
 #  Project:      dfe-docker
 #  File:         scripts/seed.py
-#  Purpose:      Create the starter sources, rules and hunts in config/seed that the running engine lacks, and send its fake events
+#  Purpose:      Create the starter sources, rules and hunts in resources/seed that the running engine lacks and send its fake events
 #  Language:     Python
 #
 #  License:      BUSL-1.1
@@ -14,11 +14,11 @@
 # ]
 # ///
 
-"""Create one part of the starter set in config/seed on the running stack, or send its fake events.
+"""Create one part of the starter set in resources/seed on the running stack or send its fake events.
 
 The hunts target also creates the rules, because the engine refuses a hunt whose rule does not exist. Nothing else is created for a target: a rule over a source that is not deployed yet is accepted and reads nothing until it is. A hunt whose table does not exist yet is not created, because the hunt runner fails on every run of it.
 
-Each sources, rules or hunts file is the body the engine's create route takes, named for the object it creates. An object the engine already holds is left as it is, so a re-run creates only what is missing; the one exception is a held source that was never deployed, which is deployed. A source polled by dfe-fetcher is skipped on a profile that runs no dfe-fetcher. The sources end with a request for the engine to bring every app in step with them, which retries a deploy whose apps did not follow. A restart the engine asks for is printed, not run: `make apply` on a `make dev` stack needs DEV=1, which this script cannot know.
+Each sources, rules or hunts file is the body the engine's create route takes, named for the object it creates. An object the engine already holds is left as it is, so a re-run creates only what is missing. The one exception is a held source that was never deployed, which is deployed. A source whose fetcher or transform app the profile does not run is skipped. The sources end with a request for the engine to bring every app in step with them, which retries a deploy whose apps did not follow. A restart the engine asks for is printed, not run: `make apply` on a `make dev` stack needs DEV=1, which this script cannot know.
 
 Each events file is a list of records for the source it is named for. They go to dfe-receiver, which routes them by `_source` over whichever transport the stack runs, and the run waits until the source's table holds them. Events for a source the profile cannot run are skipped. Every run sends them again, and needs no login.
 
@@ -43,15 +43,24 @@ from pathlib import Path
 from urllib.parse import quote
 
 import yaml
-from _common import (
+
+# Bytecode for the repo modules imported below goes to .tmp/pycache, as it does under make
+sys.pycache_prefix = str(Path(__file__).resolve().parent.parent / ".tmp" / "pycache")
+
+from _common import (  # noqa: E402
+    FETCHER_SERVICE,
+    PER_SOURCE_APP_KEYS,
+    PER_SOURCE_APPS_VAR,
     REPO_ROOT,
+    SOURCE_NAME,
+    TRANSFORM_APP_PREFIX,
     _load_dotenv,
     _print,
     _profile_mk_value,
     _resolved_services,
 )
-from _pipeline import ch_int, escape_literal, http_post
-from post import (
+from _pipeline import ch_int, escape_literal, http_post  # noqa: E402
+from post import (  # noqa: E402
     ADMIN_PASSWORD_KEY,
     APP_CONFIG_DIR_KEY,
     TARGET_DB,
@@ -63,8 +72,8 @@ from post import (
     _api_post_json,
     _engine_base,
     _ingest_target,
-    _login,
     _request_token,
+    login,
 )
 
 
@@ -85,8 +94,6 @@ DEPLOY_TIMEOUT_SECONDS = 90
 EVENTS = "events"
 # Every engine call the seeder makes can fail in one of these ways without the engine answering.
 ENGINE_FAULTS = (ApiUnreachable, OSError, subprocess.TimeoutExpired)
-# The app that polls a source carrying a `fetcher` stanza, one instance per source.
-FETCHER_SERVICE = "dfe-fetcher"
 KINDS = {
     "hunts": Kind(key="name", noun="hunt", route="/hunts"),
     "rules": Kind(key="name", noun="rule", route="/rules"),
@@ -94,9 +101,7 @@ KINDS = {
 }
 LANDING_INTERVAL_SECONDS = 3.0
 LANDING_TIMEOUT_SECONDS = 60.0
-SEED_DIR = REPO_ROOT / "config" / "seed"
-# The engine's rule for a source name, which also keeps an events file's name safe to quote into SQL.
-SOURCE_NAME = re.compile(r"[a-z]([a-z0-9-]*[a-z0-9])?")
+SEED_DIR = REPO_ROOT / "resources" / "seed"
 # A hunt's `global_source_table_name`, the `<database>.<source>` table a source's deploy creates.
 HUNT_TABLE = re.compile(
     rf"(?P<database>[A-Za-z_][A-Za-z0-9_]*)\.(?P<table>{SOURCE_NAME.pattern})"
@@ -154,7 +159,7 @@ def _deploy(*, base: str, name: str, token: str) -> None:
         payload={}, timeout=DEPLOY_TIMEOUT_SECONDS, token=token, url=f"{base}{path}"
     )
     _print_hints(answer=answer)
-    fault = _deploy_fault(answer=answer, status=status)
+    fault = deploy_fault(answer=answer, status=status)
     if fault:
         raise SeedError(fault)
     _print(msg=f"deployed source {name!r}")
@@ -163,22 +168,6 @@ def _deploy(*, base: str, name: str, token: str) -> None:
             msg=f"  the apps did not take it ({answer['apps_sync_error']}); the "
             f"reconcile that ends this run retries it"
         )
-
-
-def _deploy_fault(*, answer: object, status: int) -> str:
-    """Why a deploy answer leaves its source not live, or an empty string when it is live."""
-    if (
-        (status != 200)
-        or not (isinstance(answer, dict))
-        or (answer.get("applied") is not True)
-    ):
-        return f"the deploy answered HTTP {status}: {answer}"
-    if answer.get("topics_failed"):
-        return (
-            f"the deploy could not create topics {answer['topics_failed']}, so the "
-            f"source has nowhere to land"
-        )
-    return ""
 
 
 def _deployed(*, body: object) -> bool:
@@ -210,6 +199,7 @@ def _events(*, directory: Path) -> list[tuple[str, list[dict]]]:
     """Read every events file in directory, in name order, as (source, records)."""
     events = []
     for path in sorted(directory.glob(pattern="*.yaml")):
+        # The engine's own rule, which also keeps the name safe to quote into SQL
         if not (SOURCE_NAME.fullmatch(string=path.stem)):
             raise SeedError(f"{path.name!r} is not named for a valid source")
         records = _read(path=path)
@@ -363,14 +353,14 @@ def _seed_kind(
     base: str,
     kind: str,
     objects: list[tuple[str, dict]],
-    services: list[str],
+    per_source_apps: list[str],
     token: str,
 ) -> int:
     """Create every object of one kind the engine lacks and this stack can run, and return how many failed."""
     failed = 0
     for name, body in objects:
         try:
-            reason = _skip_reason(body=body, kind=kind, services=services)
+            reason = skip_reason(body=body, kind=kind, per_source_apps=per_source_apps)
             if reason:
                 _print(msg=f"SKIP {KINDS[kind].noun} {name!r}: {reason}")
                 continue
@@ -416,14 +406,16 @@ def _send(*, records: list[dict], source: str) -> None:
 def _send_events(
     *,
     events: list[tuple[str, list[dict]]],
-    services: list[str],
+    per_source_apps: list[str],
     sources: dict[str, dict],
 ) -> int:
     """Send every events file's records whose source this stack can run, and return 1 at the first that cannot be sent or seen to land."""
     try:
         for source, records in events:
-            reason = _skip_reason(
-                body=sources.get(source, {}), kind="sources", services=services
+            reason = skip_reason(
+                body=sources.get(source, {}),
+                kind="sources",
+                per_source_apps=per_source_apps,
             )
             if reason:
                 _print(msg=f"SKIP events for source {source!r}: {reason}")
@@ -441,11 +433,15 @@ def _send_events(
     return 0
 
 
-def _skip_reason(*, body: dict, kind: str, services: list[str]) -> str:
-    """Why this profile cannot run one object, or an empty string when it can."""
-    if kind == "sources" and body.get("fetcher") and FETCHER_SERVICE not in services:
-        return f"this profile runs no {FETCHER_SERVICE} to poll it"
-    return ""
+def _source_apps(*, body: dict) -> list[str]:
+    """The per-source apps dfe-engine starts for one source: its fetcher and its transform."""
+    apps = []
+    if body.get("fetcher"):
+        apps.append(FETCHER_SERVICE)
+    transform = body.get("transform")
+    if isinstance(transform, dict) and transform.get("engine"):
+        apps.append(f"{TRANSFORM_APP_PREFIX}{transform['engine']}")
+    return apps
 
 
 def _table_exists(*, database: str, table: str) -> bool:
@@ -471,12 +467,43 @@ def _token(*, base: str) -> str:
     """A token for the seed writes: the bootstrap admin's, or once it is retired, one for an account named at the terminal."""
     if _admin_retired(base=base):
         return _prompted_token(base=base, terminal=sys.stdin.isatty())
-    login = _login(base=base)
-    if login.fault:
+    signed_in = login(base=base)
+    if signed_in.fault:
         raise SeedError(
-            _refusal(fault=login.fault, prompted=False, status=login.status)
+            _refusal(fault=signed_in.fault, prompted=False, status=signed_in.status)
         )
-    return login.token
+    return signed_in.token
+
+
+def deploy_fault(*, answer: object, status: int) -> str:
+    """Why a deploy answer leaves its source not live, empty when it is live."""
+    if (
+        (status != 200)
+        or not (isinstance(answer, dict))
+        or (answer.get("applied") is not True)
+    ):
+        return f"the deploy answered HTTP {status}: {answer!r}"
+    if answer.get("topics_failed"):
+        return (
+            f"the deploy could not create topics {answer['topics_failed']}, so the "
+            f"source has nowhere to land"
+        )
+    return ""
+
+
+def skip_reason(*, body: dict, kind: str, per_source_apps: list[str]) -> str:
+    """Why this profile cannot run one object, empty when it can."""
+    if kind != "sources":
+        return ""
+    for app in _source_apps(body=body):
+        if app not in per_source_apps:
+            key = PER_SOURCE_APP_KEYS.get(app)
+            return (
+                f"this profile sets no {key}: true, so no {app} runs it"
+                if (key)
+                else f"no profile runs {app}"
+            )
+    return ""
 
 
 def main() -> int:
@@ -490,13 +517,13 @@ def main() -> int:
     )
     kinds = TARGETS[parser.parse_args().target]
     _load_dotenv()
-    services = _resolved_services()
-    if not (services):
+    if not (_resolved_services()):
         _print(
             msg="FAIL the profile is not resolved, so which services run is unknown; "
-            "run this through make, which writes .profile.mk"
+            "run this through make, which writes .tmp/profile.mk"
         )
         return 1
+    per_source_apps = _profile_mk_value(key=PER_SOURCE_APPS_VAR)
 
     if EVENTS in kinds:
         try:
@@ -505,7 +532,9 @@ def main() -> int:
         except SeedError as error:
             _print(msg=f"FAIL {error}")
             return 1
-        return _send_events(events=events, services=services, sources=dict(sources))
+        return _send_events(
+            events=events, per_source_apps=per_source_apps, sources=dict(sources)
+        )
 
     try:
         objects = {
@@ -529,7 +558,7 @@ def main() -> int:
             base=base,
             kind=kind,
             objects=kind_objects,
-            services=services,
+            per_source_apps=per_source_apps,
             token=token,
         ):
             return 1

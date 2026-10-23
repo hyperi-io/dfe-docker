@@ -9,7 +9,7 @@
 
 """Resolve DFE service profile from service_profiles.yaml.
 
-Reads service_profiles.yaml, resolves the active profile (overridable via DFE_PROFILE env var), validates config paths exist and writes to the .profile.mk file.
+Reads service_profiles.yaml, resolves the active profile (overridable via DFE_PROFILE env var), validates config paths exist and writes to the .tmp/profile.mk file.
 For kafka transport, KAFKA_BACKEND selects the backend (defaults to redpanda).
 
 A profile declares its whole FOOTPRINT, not just the data plane. The optional
@@ -20,6 +20,8 @@ a profile that declares none behaves exactly as it did before the keys existed.
 ``auth`` defaults OFF and is the only key whose settings are validated here: the
 oauth2-proxies it starts need an OIDC issuer, and no dfe-docker profile may
 require one to exist.
+
+The ``*_enabled`` keys in ``PER_SOURCE_APP_KEYS`` say which apps dfe-engine may start one container per source of. An instance index naming any other app is left out of everything the resolve writes, with a warning, because dfe-engine has to start for an operator to delete those sources.
 
 The matching env var wins over the profile key, because ``.env`` is what a deploy
 writes (via the deployment dial) while the profile is the committed shape -- the
@@ -38,13 +40,18 @@ from collections.abc import Collection, Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 
-import instances
-from _common import (
+# Bytecode for the repo modules imported below goes to .tmp/pycache, as it does under make
+sys.pycache_prefix = str(Path(__file__).resolve().parent.parent / ".tmp" / "pycache")
+
+import instances  # noqa: E402
+from _common import (  # noqa: E402
     CONFIG_DIR,
     EXTERNAL_ORIGIN_KEY,
     FALSY,
+    PER_SOURCE_APP_KEYS,
+    PER_SOURCE_APPS_VAR,
     PROFILE_MK,
-    PROJECTED_PROFILES,
+    RENDERED_PROFILES,
     SERVICE_CONFIG_FILE,
     SERVICE_PROFILES_FILE,
     SERVICE_TO_RENDERED_CONFIG_VAR,
@@ -52,7 +59,11 @@ from _common import (
     _print,
     _rel_path,
 )
-from build_dev_images import buildable_components
+from build_dev_images import (  # noqa: E402
+    buildable_components,
+    local_image_services,
+    overlay_components,
+)
 
 AUTH_ENABLED_ENV_VAR = "DFE_AUTH_ENABLED"
 # One proxy per infra-UI ORIGIN, not per UI: oauth2-proxy serves a single
@@ -79,6 +90,10 @@ AUTH_NON_BLANK_IF_SET = ("DFE_OIDC_ALLOWED_GROUPS",)
 
 ENGINE_BROKER_ENV_VAR = "DFE_KAFKA_BOOTSTRAP_SERVERS"
 IN_STACK_BROKER = "kafka:9092"
+# The tier dfe-engine runs as and the one transport the tier binds its stages to, in the engine's own vocabulary
+STACK_PROFILE_VAR = "DFE_STACK_PROFILE"
+TRANSPORT_BUS_PRESENT_VAR = "DFE_TRANSPORT_BUS_PRESENT"
+TRANSPORT_DEFAULT_VAR = "DFE_TRANSPORT_DEFAULT"
 
 # `make stack` pins dfe-ui as a container reference (tag@sha256:...), which is
 # what the image line needs and is not a version anyone reads. The engine reports
@@ -106,15 +121,9 @@ HYPERDX_SERVICES = [
     "dfe-dashboards",
     "dfe-hyperdx-proxy",
     "hyperdx",
-    "hyperdx-ferretdb",
-    "hyperdx-postgres",
+    "hyperdx-documentdb",
+    "hyperdx-documentdb-tls",
 ]
-
-# HyperDX takes ClickHouse as a URL, so the TLS flag dfe-engine reads becomes a
-# scheme, on exactly the values the engine reads as TLS on.
-CLICKHOUSE_SECURE_ENV_VAR = "CLICKHOUSE_SECURE"
-CLICKHOUSE_SECURE_VALUES = frozenset({"1", "true", "yes"})
-CLICKHOUSE_SCHEME_VAR = "DFE_CLICKHOUSE_RESOLVED_SCHEME"
 
 OTEL_ENABLED_ENV_VAR = "DFE_OTEL_ENABLED"
 OTEL_SERVICES = ["otel-collector"]
@@ -211,6 +220,28 @@ PROFILE_ENV_VAR = "DFE_PROFILE"
 PROFILE_ACTIVE_YAML_FIELD = "active_profile"
 PROFILE_LIST_YAML_FIELD = "profiles"
 PROFILE_SERVICE_CONFIG_YAML_FIELD = "config_path"
+# Every retired profile name and the profile its refusal names instead: one that ran a fetcher, an archiver or a transform runs on single, the rest on slim
+RETIRED_PROFILES = {
+    "grpc-fetcher": "single-grpc",
+    "grpc-full": "single-grpc",
+    "grpc-minimal": "slim-grpc",
+    "grpc-receiver": "slim-grpc",
+    "grpc-receiver-transform-vrl": "single-grpc",
+    "kafka-elastic-cisco-ios": "single-kafka",
+    "kafka-fetcher": "single-kafka",
+    "kafka-filebeat": "single-kafka",
+    "kafka-filebeat-vector": "single-kafka",
+    "kafka-full": "single-kafka",
+    "kafka-full-transform-elastic": "single-kafka",
+    "kafka-full-transform-vrl": "single-kafka",
+    "kafka-minimal": "slim-kafka",
+    "kafka-receiver": "slim-kafka",
+    "kafka-receiver-archiver": "single-kafka",
+    "kafka-receiver-transform-vector": "single-kafka",
+    "kafka-resilience": "single-kafka",
+    "single": "single-kafka",
+    "slim": "slim-grpc",
+}
 
 SERVICE_KAFKA_DEFAULT = "redpanda"
 SERVICE_KAFKA_OPTIONS = {
@@ -219,31 +250,14 @@ SERVICE_KAFKA_OPTIONS = {
 }
 SERVICE_TO_CONFIG_VAR = {
     "dfe-archiver": "DFE_ARCHIVER_CONFIG",
-    "dfe-fetcher": "DFE_FETCHER_CONFIG",
     "dfe-loader": "DFE_LOADER_CONFIG",
     "dfe-receiver": "DFE_RECEIVER_CONFIG",
-    "dfe-transform-e2e-elastic-cisco-ios": "DFE_TRANSFORM_ELASTIC_CISCO_IOS_CONFIG",
-    "dfe-transform-e2e-vector-filebeat": "DFE_TRANSFORM_VECTOR_FILEBEAT_CONFIG",
-    "dfe-transform-e2e-vrl-filebeat": "DFE_TRANSFORM_VRL_FILEBEAT_CONFIG",
-    "dfe-transform-elastic": "DFE_TRANSFORM_ELASTIC_CONFIG",
-    "dfe-transform-vector": "DFE_TRANSFORM_VECTOR_CONFIG",
-    "dfe-transform-vrl": "DFE_TRANSFORM_VRL_CONFIG",
-}
-# The base the engine renders a per-source transform's instances over, on a grpc
-# tier that runs no resident copy of the app: compose defaults these variables to
-# the bus config, which would hand every instance a broker the tier does not run.
-DIRECT_INSTANCE_BASE = {
-    "dfe-transform-vector": "transform-vector/grpc.yaml",
-    "dfe-transform-vrl": "transform-vrl/grpc.yaml",
 }
 
 # The engine is the Compose stand-in for the ConfigMap an app's chart renders on
 # Kubernetes: it merges each instance's values overlay over the committed config
 # above and writes the app's own config file into a volume the container mounts.
-# It runs on the PROJECTED tiers only -- the hand-crafted profiles ship a config
-# that says exactly what they exist to exercise, and a compile from the sources
-# would overwrite it. A second instance of one app (the -filebeat services) has
-# no overlay of its own, so it keeps its committed file either way.
+# It runs on every profile while the core footprint does.
 ENGINE_APP_CONFIG_DIR_VAR = "DFE_ENGINE_APP_CONFIG_DIR"
 ENGINE_APP_CONFIG_DIR = "/app/app-config"
 ENGINE_APP_CONFIG_BASE_DIR_VAR = "DFE_ENGINE_APP_CONFIG_BASE_DIR"
@@ -260,29 +274,20 @@ ENGINE_CONTENT_DIR_VAR = "DFE_ENGINE_CONTENT_DIR"
 ENGINE_CONTENT_DIR = "/app/content"
 ENGINE_CONTRACT_DIR_VAR = "DFE_ENGINE_CONTRACT_DIR"
 ENGINE_CONTRACT_SUBDIR = "contract"
-# The source catalogue catalogue-dfe-transform-elastic writes into the same
-# volume, handed to the engine on the same tiers as the contract directory.
-ENGINE_CATALOGUE_FILE_VAR = "DFE_ENGINE_CATALOGUE_FILE"
-ENGINE_CATALOGUE_FILE = "catalogue/sources.yaml"
-# A per-source transform instance is a service of its own here, because a
-# profile has to be able to run one without the other.
+# The per-source apps that read and write topics only, so a grpc profile cannot run them
+KAFKA_ONLY_APPS = ("dfe-transform-elastic",)
+# The per-source apps are absent: dfe-engine starts one instance per source, never a profile.
+# A profile runs each one's with its PER_SOURCE_APP_KEYS key set true.
 SERVICES = [
     "dfe-archiver",
-    "dfe-fetcher",
     "dfe-loader",
     "dfe-receiver",
-    "dfe-transform-e2e-elastic-cisco-ios",
-    "dfe-transform-e2e-vector-filebeat",
-    "dfe-transform-e2e-vrl-filebeat",
-    "dfe-transform-elastic",
-    "dfe-transform-vector",
-    "dfe-transform-vrl",
 ]
 
 TRANSPORT_TYPES = ["grpc", "kafka"]
 
 
-class _ProfileError(Exception):
+class ProfileError(Exception):
     """Raised when the active profile cannot be resolved or validated."""
 
     def __init__(self, *, header: str | None = None, msg: str) -> None:
@@ -321,7 +326,7 @@ def _validate_auth() -> None:
     detail += [
         f"- {name} is set to an empty value, which allows any group" for name in blank
     ]
-    raise _ProfileError(
+    raise ProfileError(
         header="auth",
         msg="The auth profile is armed but its OIDC settings are incomplete:\n"
         + "\n".join(detail)
@@ -329,12 +334,44 @@ def _validate_auth() -> None:
     )
 
 
-def _instance_services(*, profile: str, renders: bool) -> list[str]:
+def _disabled_instances(*, found: Mapping[str, Sequence[str]], transport: str) -> str:
+    """Name each app the index declares instances of and the profile does not run, with the key that runs it."""
+    lines = []
+    for app, names in sorted(found.items()):
+        key = PER_SOURCE_APP_KEYS.get(app)
+        if (app in KAFKA_ONLY_APPS) and (transport != "kafka"):
+            fix = "it runs on the kafka transport only"
+        elif key:
+            fix = f"set {key}: true"
+        else:
+            fix = "no profile key runs it per source"
+        lines.append(f"- {app} (sources {', '.join(names)}): {fix}")
+    return (
+        "WARNING: dfe-engine declared instances of apps this profile does not run, "
+        "so none of them starts:\n"
+        + "\n".join(lines)
+        + "\nSet the key on the profile to run them, or delete those sources through "
+        f"dfe-engine. It lists them in {instances.ENV_DIR.name}/<app>{instances.INDEX_SUFFIX}"
+    )
+
+
+def _instance_services(
+    *,
+    enabled: Collection[str],
+    local: Collection[str],
+    profile: str,
+    renders: bool,
+    transport: str,
+) -> list[str]:
     """The per-source containers this tier declares, writing their compose fragment.
 
     Only where the engine renders the app config: anywhere else the index is a
     leftover from a tier this checkout ran earlier, and declaring containers off
     it would start apps this profile does not run.
+
+    An instance of an app in `local` runs that app's local image, because `extends` reads the committed service and never the overlay that repoints it.
+
+    An instance of an app not in `enabled` is left out with a warning rather than failing the resolve, because dfe-engine has to start for its source to be deleted.
     """
     if not renders:
         instances.write({})
@@ -342,14 +379,21 @@ def _instance_services(*, profile: str, renders: bool) -> list[str]:
     found = instances.declared()
     unknown = instances.unknown_apps(found)
     if unknown:
-        raise _ProfileError(
+        raise ProfileError(
             header=profile,
             msg=f"dfe-engine named instances of {', '.join(unknown)}, which this repo "
             "declares no compose service for. Add one, or every source bound to it is "
             "stored and never run",
         )
-    instances.write(found)
-    return instances.services(found)
+    disabled = {app: names for app, names in found.items() if app not in enabled}
+    if disabled:
+        _print(
+            header=profile, msg=_disabled_instances(found=disabled, transport=transport)
+        )
+    running = {app: names for app, names in found.items() if app in enabled}
+    images = local_image_services(components=[app for app in running if app in local])
+    instances.write(images=images, instances=running)
+    return instances.services(instances=running)
 
 
 def _footprint(*, profile: dict[str, object], profile_name: str) -> dict[str, bool]:
@@ -358,7 +402,7 @@ def _footprint(*, profile: dict[str, object], profile_name: str) -> dict[str, bo
     for key, (env_var, default) in FOOTPRINT_KEYS.items():
         declared = profile.get(key)
         if declared is not None and not (isinstance(declared, str)):
-            raise _ProfileError(
+            raise ProfileError(
                 header=profile_name,
                 msg=f"Footprint key {key!r} must be true or false, not a block",
             )
@@ -366,36 +410,9 @@ def _footprint(*, profile: dict[str, object], profile_name: str) -> dict[str, bo
             default if declared is None else declared.strip().lower() not in FALSY
         )
         resolved[key] = _env_truthy(default=fallback, name=env_var)
+    # HyperDX signs callers in with dfe-engine's token, so without core nobody could sign in
+    resolved["hyperdx"] = resolved["hyperdx"] and resolved["core"]
     return resolved
-
-
-def _parse_yaml(*, text: str) -> dict[str, object]:
-    """Parse a minimal YAML subset into nested dicts with string values."""
-    root = {}
-    stack = [(root, -1)]
-
-    for line_num, raw_line in enumerate(text.splitlines(), 1):
-        line = raw_line.strip()
-        if not (line) or (line.isspace()) or (line.startswith("#")):
-            continue
-
-        indent = len(raw_line) - len(raw_line.lstrip())
-        while len(stack) > 1 and stack[-1][1] >= indent:
-            stack.pop()
-        parent = stack[-1][0]
-
-        if ": " in line:
-            key, value = line.split(": ", 1)
-            value = value.strip('"')
-            parent[key] = value
-        elif line.endswith(":"):
-            key = line[:-1]
-            child = {}
-            parent[key] = child
-            stack.append((child, indent))
-        else:
-            raise _ProfileError(msg=f"Line {line_num} cannot be parsed: {line!r}")
-    return root
 
 
 def _resolve_profile(
@@ -406,19 +423,28 @@ def _resolve_profile(
         PROFILE_ACTIVE_YAML_FIELD, None
     )
     if not (active_profile):
-        raise _ProfileError(
+        raise ProfileError(
             msg=f"No active profile. Set {PROFILE_ACTIVE_YAML_FIELD!r} in {Path(SERVICE_PROFILES_FILE).name!r} or use the {PROFILE_ENV_VAR!r} environment variable"
         )
 
     profiles = data.get(PROFILE_LIST_YAML_FIELD)
     if not (profiles) or not (isinstance(profiles, dict)):
-        raise _ProfileError(
+        raise ProfileError(
             msg=f"{Path(SERVICE_PROFILES_FILE).name!r} missing {PROFILE_LIST_YAML_FIELD!r} section"
         )
 
-    if active_profile not in profiles:
-        available_profiles = [f"- {profile_name}" for profile_name in profiles.keys()]
-        raise _ProfileError(
+    replacement = RETIRED_PROFILES.get(active_profile)
+    if replacement:
+        raise ProfileError(
+            msg=f"Profile {active_profile!r} is retired. Set {PROFILE_ENV_VAR!r} or {PROFILE_ACTIVE_YAML_FIELD!r} to {replacement!r} instead"
+        )
+    if (active_profile not in RENDERED_PROFILES) or (active_profile not in profiles):
+        available_profiles = [
+            f"- {profile_name}"
+            for profile_name in RENDERED_PROFILES
+            if profile_name in profiles
+        ]
+        raise ProfileError(
             msg=f"Profile {active_profile!r} not found. Available profiles:\n{'\n'.join(available_profiles)}"
         )
 
@@ -427,41 +453,54 @@ def _resolve_profile(
 
     # A typo like `cor: true` would otherwise resolve to the default and start a
     # footprint nobody asked for, silently.
-    known_keys = {"transport", "services"} | set(FOOTPRINT_KEYS)
+    known_keys = {"transport", "services", *PER_SOURCE_APP_KEYS.values()} | set(
+        FOOTPRINT_KEYS
+    )
     unknown = sorted(set(profile) - known_keys)
     if unknown:
-        raise _ProfileError(
+        raise ProfileError(
             header=active_profile,
             msg=f"Unknown profile key(s) {', '.join(unknown)}. Known keys:\n{'\n'.join(f'- {key}' for key in sorted(known_keys))}",
         )
 
     transport = profile.get("transport", "")
     if transport not in TRANSPORT_TYPES:
-        raise _ProfileError(
+        raise ProfileError(
             header=active_profile,
             msg=f"Transport type {transport!r} unknown. Available transport types:\n{'\n'.join([f'- {transport_type}' for transport_type in TRANSPORT_TYPES])}",
+        )
+    named_transport = active_profile.partition("-")[2]
+    if transport != named_transport:
+        raise ProfileError(
+            header=active_profile,
+            msg=f"Transport {transport!r} disagrees with the profile name, which says {named_transport!r}",
         )
 
     services = profile.get("services", {})
     if not (services):
-        raise _ProfileError(header=active_profile, msg="Undefined services")
+        raise ProfileError(header=active_profile, msg="Undefined services")
 
     for service_name, service_config in services.items():
+        if service_name in PER_SOURCE_APP_KEYS:
+            raise ProfileError(
+                header=active_profile,
+                msg=f"{service_name} runs one container per source, never as a profile's service. Set {PER_SOURCE_APP_KEYS[service_name]}: true instead",
+            )
         if service_name not in SERVICES:
-            raise _ProfileError(
+            raise ProfileError(
                 header=active_profile,
                 msg=f"Service {service_name!r} unknown. Available services:\n{'\n'.join([f'- {service}' for service in SERVICES])}",
             )
         if not (isinstance(service_config, dict)) or (
             PROFILE_SERVICE_CONFIG_YAML_FIELD not in service_config
         ):
-            raise _ProfileError(
+            raise ProfileError(
                 header=active_profile,
                 msg=f"Missing {PROFILE_SERVICE_CONFIG_YAML_FIELD!r} value for service {service_name!r}",
             )
         config_file = CONFIG_DIR / service_config[PROFILE_SERVICE_CONFIG_YAML_FIELD]
         if not (config_file.is_file()):
-            raise _ProfileError(
+            raise ProfileError(
                 header=active_profile,
                 msg=f"Config file {_rel_path(path=config_file)!r} not found.",
             )
@@ -520,7 +559,7 @@ def _admin_links(
 
 def _parse_args(argv: Sequence[str]) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Resolve the active service profile into .profile.mk."
+        description="Resolve the active service profile into .tmp/profile.mk."
     )
     parser.add_argument(
         "--unpublished",
@@ -529,20 +568,134 @@ def _parse_args(argv: Sequence[str]) -> argparse.Namespace:
         default=[],
         help="an infra UI the exposure dials take off the host (repeatable)",
     )
+    parser.add_argument(
+        "--local",
+        action="append",
+        default=[],
+        help="a component `make dev LOCAL=...` builds, whose per-source instances "
+        "then run its local image (repeatable)",
+    )
+    parser.add_argument(
+        "--local-overlay",
+        default=None,
+        help="the overlay a `make dev` build recorded, whose per-source apps then run "
+        "their local image",
+        type=Path,
+    )
+    parser.add_argument(
+        "--local-per-source",
+        action="store_true",
+        help="put every per-source app the profile runs on its local image, as a "
+        "`make dev` with no LOCAL builds each one",
+    )
     return parser.parse_args(list(argv))
+
+
+def engine_tier(
+    *,
+    configured_broker: str,
+    content_dir: str,
+    profile_name: str,
+    renders: bool,
+    transport: str,
+) -> dict[str, str]:
+    """What dfe-engine is told about one tier, keyed by the variable .tmp/profile.mk exports each setting as.
+
+    The rendered-config, contract and catalogue paths are empty where the engine renders nothing.
+    """
+    bus = transport == "kafka"
+    return {
+        APP_CONFIG_MOUNT_VAR: APP_CONFIG_MOUNT,
+        ENGINE_APP_CONFIG_BASE_DIR_VAR: ENGINE_APP_CONFIG_BASE_DIR if renders else "",
+        ENGINE_APP_CONFIG_DIR_VAR: ENGINE_APP_CONFIG_DIR if renders else "",
+        ENGINE_BROKER_ENV_VAR: tier_broker(
+            configured=configured_broker, transport=transport
+        ),
+        ENGINE_CONTRACT_DIR_VAR: (
+            f"{content_dir}/{ENGINE_CONTRACT_SUBDIR}" if renders else ""
+        ),
+        # docker-slim or docker-single, which the engine seeds its default app instances from and reports as its deployment profile
+        STACK_PROFILE_VAR: f"docker-{profile_name.partition('-')[0]}",
+        # The engine refuses a source on the other transport at save
+        TRANSPORT_BUS_PRESENT_VAR: "true" if bus else "false",
+        TRANSPORT_DEFAULT_VAR: "bus" if bus else "direct",
+    }
+
+
+def parse_yaml(*, text: str) -> dict[str, object]:
+    """Parse a minimal YAML subset into nested dicts with string values."""
+    root = {}
+    stack = [(root, -1)]
+
+    for line_num, raw_line in enumerate(text.splitlines(), 1):
+        line = raw_line.strip()
+        if not (line) or (line.isspace()) or (line.startswith("#")):
+            continue
+
+        indent = len(raw_line) - len(raw_line.lstrip())
+        while len(stack) > 1 and stack[-1][1] >= indent:
+            stack.pop()
+        parent = stack[-1][0]
+
+        if ": " in line:
+            key, value = line.split(": ", 1)
+            value = value.strip('"')
+            parent[key] = value
+        elif line.endswith(":"):
+            key = line[:-1]
+            child = {}
+            parent[key] = child
+            stack.append((child, indent))
+        else:
+            raise ProfileError(msg=f"Line {line_num} cannot be parsed: {line!r}")
+    return root
+
+
+def per_source_apps(
+    *, profile: dict[str, object], profile_name: str, renders: bool, transport: str
+) -> list[str]:
+    """The apps this profile runs one container per source of, each reading the config dfe-engine renders for its source.
+
+    A profile with its core footprint switched off renders nothing, so it runs none there rather than failing.
+    """
+    enabled = []
+    for app, key in PER_SOURCE_APP_KEYS.items():
+        declared = profile.get(key, "false")
+        if not (isinstance(declared, str)) or (
+            declared.strip().lower() not in ("false", "true")
+        ):
+            raise ProfileError(
+                header=profile_name, msg=f"{key!r} must be true or false"
+            )
+        if declared.strip().lower() == "false":
+            continue
+        if (app in KAFKA_ONLY_APPS) and (transport != "kafka"):
+            raise ProfileError(
+                header=profile_name,
+                msg=f"{app} runs on the kafka transport only, so {key!r} cannot be true on a {transport} profile",
+            )
+        enabled.append(app)
+    return enabled if renders else []
+
+
+def tier_broker(*, configured: str, transport: str) -> str:
+    """The broker a tier's apps and dfe-engine dial: `configured`, else the in-stack one, on the bus and none on direct gRPC, so no app opens a Kafka client there."""
+    if transport != "kafka":
+        return ""
+    return (configured.strip()) or (IN_STACK_BROKER)
 
 
 def main(argv: Sequence[str] = ()) -> int:
     args = _parse_args(argv)
     try:
         if not (SERVICE_PROFILES_FILE.is_file()):
-            raise _ProfileError(
+            raise ProfileError(
                 header=_rel_path(path=SERVICE_PROFILES_FILE),
                 msg=f"File not found at {_rel_path(path=SERVICE_PROFILES_FILE)!r}",
             )
 
         _load_dotenv()
-        data = _parse_yaml(
+        data = parse_yaml(
             text=SERVICE_PROFILES_FILE.read_text(encoding="utf-8", errors="replace")
         )
         active_profile, transport, services, footprint = _resolve_profile(data=data)
@@ -562,7 +715,7 @@ def main(argv: Sequence[str] = ()) -> int:
                 os.environ.get("KAFKA_BACKEND", SERVICE_KAFKA_DEFAULT).strip().lower()
             )
             if backend not in SERVICE_KAFKA_OPTIONS:
-                raise _ProfileError(
+                raise ProfileError(
                     msg=f"Kafka backend {backend!r} unknown. Available Kafka backends:\n{'\n'.join([f'- {option}' for option in SERVICE_KAFKA_OPTIONS])}",
                 )
             profiles.append(SERVICE_KAFKA_OPTIONS[backend])
@@ -571,14 +724,31 @@ def main(argv: Sequence[str] = ()) -> int:
                 profiles.append("kafka-ui")
                 kafka_ui_enabled = True
 
-        # Write to .profile.mk ($(shell) collapses newlines)
+        # Write to .tmp/profile.mk ($(shell) collapses newlines)
         lines = []
         profile_flags = " ".join(f"--profile {profile}" for profile in profiles)
         lines.append(f"export PROFILE_FLAGS := {profile_flags}")
         # Whether the ENGINE renders this tier's app config, which is also what
         # decides whether its instance index is this deployment's or a leftover.
-        renders = (active_profile in PROJECTED_PROFILES) and footprint["core"]
-        instance_services = _instance_services(profile=active_profile, renders=renders)
+        renders = footprint["core"]
+        source_apps = per_source_apps(
+            profile=data[PROFILE_LIST_YAML_FIELD][active_profile],
+            profile_name=active_profile,
+            renders=renders,
+            transport=transport,
+        )
+        local = list(args.local)
+        if args.local_overlay is not None:
+            local += overlay_components(path=args.local_overlay)
+        if args.local_per_source:
+            local += source_apps
+        instance_services = _instance_services(
+            enabled=source_apps,
+            local=local,
+            profile=active_profile,
+            renders=renders,
+            transport=transport,
+        )
 
         # ClickHouse stays out of this list -- it starts via its compose profile
         # and the depends_on of whatever needs it. DFE_SERVICES is also what
@@ -601,26 +771,16 @@ def main(argv: Sequence[str] = ()) -> int:
                 service_list.extend(AUTH_HYPERDX_SERVICES)
         lines.append(f"export DFE_SERVICES := {' '.join(service_list)}")
 
-        # The manifest's name for this Compose tier (dfe-infra apps.yaml says
-        # docker-slim, docker-single), which the engine seeds its default app
-        # instances from and reports as its deployment profile.
-        lines.append(f"export DFE_STACK_PROFILE := docker-{active_profile}")
-
-        # The one transport this tier binds its stages to, in the engine's own
-        # vocabulary: it refuses a source on the other one at save.
-        bus = transport == "kafka"
-        lines.append(f"export DFE_TRANSPORT_DEFAULT := {'bus' if bus else 'direct'}")
-        lines.append(
-            f"export DFE_TRANSPORT_BUS_PRESENT := {'true' if bus else 'false'}"
+        # What the engine is told about this tier, each line emitted unconditionally and empty where it does not apply, so the included file settles. .env may name another broker and move the content volume's mount
+        tier = engine_tier(
+            configured_broker=os.environ.get(ENGINE_BROKER_ENV_VAR, ""),
+            content_dir=(os.environ.get(ENGINE_CONTENT_DIR_VAR, "").strip())
+            or (ENGINE_CONTENT_DIR),
+            profile_name=active_profile,
+            renders=renders,
+            transport=transport,
         )
-        # The engine creates a source's topics on the in-stack broker, which every
-        # kafka tier reaches by the `kafka` alias; .env names an external broker
-        # instead, and a direct tier hands the engine no broker at all.
-        if bus:
-            broker = (
-                os.environ.get(ENGINE_BROKER_ENV_VAR, "").strip() or IN_STACK_BROKER
-            )
-            lines.append(f"export {ENGINE_BROKER_ENV_VAR} := {broker}")
+        lines += [f"export {name} := {value}" for name, value in tier.items()]
 
         # The console version the engine reports. Emitted unconditionally, empty
         # when nothing is pinned, so the included file settles on every make pass.
@@ -661,12 +821,6 @@ def main(argv: Sequence[str] = ()) -> int:
         lines.append(
             f"export {HYPERDX_RESOLVED_BASE_URL_VAR} := "
             f"{hyperdx_base if footprint['hyperdx'] else ''}"
-        )
-        # Emitted unconditionally, for the reason the two lines above are.
-        secure = os.environ.get(CLICKHOUSE_SECURE_ENV_VAR, "").strip().lower()
-        lines.append(
-            f"export {CLICKHOUSE_SCHEME_VAR} := "
-            f"{'https' if secure in CLICKHOUSE_SECURE_VALUES else 'http'}"
         )
 
         # The admin UIs the engine lists, from the footprint that starts them and
@@ -711,37 +865,7 @@ def main(argv: Sequence[str] = ()) -> int:
         for service_name, service_config in services.items():
             var_name = SERVICE_TO_CONFIG_VAR[service_name]
             lines.append(f"export {var_name} := {service_config['config_path']}")
-        if transport == "grpc":
-            for service_name, base in DIRECT_INSTANCE_BASE.items():
-                if service_name not in services:
-                    var_name = SERVICE_TO_CONFIG_VAR[service_name]
-                    lines.append(f"export {var_name} := {base}")
 
-        # Emitted unconditionally, empty when the engine is not the writer here:
-        # a line that vanishes with its own value would make the included file
-        # re-settle on every make pass.
-        lines.append(
-            f"export {ENGINE_APP_CONFIG_DIR_VAR} := {ENGINE_APP_CONFIG_DIR if renders else ''}"
-        )
-        lines.append(
-            f"export {ENGINE_APP_CONFIG_BASE_DIR_VAR} := "
-            f"{ENGINE_APP_CONFIG_BASE_DIR if renders else ''}"
-        )
-        lines.append(f"export {APP_CONFIG_MOUNT_VAR} := {APP_CONFIG_MOUNT}")
-        # The engine is given the contract directory on the same tiers it is
-        # given the rendered app config, and an empty value everywhere else.
-        # Emitted unconditionally, for the reason the keys above are.
-        content_dir = (
-            os.environ.get(ENGINE_CONTENT_DIR_VAR, "").strip() or ENGINE_CONTENT_DIR
-        )
-        lines.append(
-            f"export {ENGINE_CONTRACT_DIR_VAR} := "
-            f"{f'{content_dir}/{ENGINE_CONTRACT_SUBDIR}' if renders else ''}"
-        )
-        lines.append(
-            f"export {ENGINE_CATALOGUE_FILE_VAR} := "
-            f"{f'{content_dir}/{ENGINE_CATALOGUE_FILE}' if renders else ''}"
-        )
         for service_name, var_name in SERVICE_TO_RENDERED_CONFIG_VAR.items():
             rendered = (
                 f"{APP_CONFIG_MOUNT}/{service_name}/{SERVICE_CONFIG_FILE[service_name]}"
@@ -755,14 +879,17 @@ def main(argv: Sequence[str] = ()) -> int:
         lines.append(
             f"export DFE_INSTANCES_RESOLVED := {'true' if instance_services else 'false'}"
         )
+        # The per-source apps this profile runs, which `make sources` seeds and `LOCAL=` may build, emitted unconditionally for the reason the keys above are
+        lines.append(f"export {PER_SOURCE_APPS_VAR} := {' '.join(source_apps)}")
 
         new_content = "\n".join(lines) + "\n"
         if (
             not (PROFILE_MK.exists())
             or PROFILE_MK.read_text(encoding="utf-8") != new_content
         ):
+            PROFILE_MK.parent.mkdir(exist_ok=True, parents=True)
             PROFILE_MK.write_text(new_content, encoding="utf-8")
-    except _ProfileError as error:
+    except ProfileError as error:
         PROFILE_MK.unlink(missing_ok=True)
         _print(header=error.header, msg=error.msg)
         return 1
