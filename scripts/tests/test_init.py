@@ -56,6 +56,17 @@ def _never_asked(_prompt: str = "") -> str:
     raise AssertionError("input() must not be called")
 
 
+def test_help_prints_and_writes_nothing(
+    dotenv: Path, layout: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    with pytest.raises(SystemExit) as exited:
+        init.main(["--help"])
+    assert exited.value.code == 0
+    assert "Bootstrap local config files" in capsys.readouterr().out
+    assert not (dotenv.exists())
+    assert not ((dotenv.parent / "env").exists())
+
+
 def test_a_tty_answer_is_written_live(
     dotenv: Path, layout: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
