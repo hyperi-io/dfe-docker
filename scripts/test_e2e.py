@@ -74,7 +74,13 @@ import instances  # noqa: E402
 import post  # noqa: E402
 import resolve_profile  # noqa: E402
 import seed  # noqa: E402
-from _common import FALSY, _config_argument, _load_dotenv, _use_mounted_configs  # noqa: E402
+from _common import (  # noqa: E402
+    FALSY,
+    _config_argument,
+    _load_dotenv,
+    _use_mounted_configs,
+    log_line,
+)
 from _pipeline import MARKER_EXPRESSIONS  # noqa: E402, F401 - re-exported for callers
 from _pipeline import ch_marker_count as _ch_marker_count  # noqa: E402
 from _pipeline import (  # noqa: E402
@@ -413,15 +419,16 @@ class ColouredFormatter(logging.Formatter):
         logging.ERROR: "\033[31m",
         logging.CRITICAL: "\033[35m",
     }
-    RESET = "\033[0m"
 
     def format(self, record):
-        message = super().format(record)
-        level = record.levelname
-        if sys.stderr.isatty():
-            colour = self.COLOURS.get(record.levelno, "")
-            return f"{colour}[{level}]{self.RESET} {message}"
-        return f"[{level}] {message}"
+        colour = self.COLOURS.get(record.levelno, "") if sys.stderr.isatty() else ""
+        return log_line(
+            level=record.levelname,
+            name=Path(sys.argv[0]).stem,
+            msg=super().format(record),
+            colour=colour,
+            now=datetime.fromtimestamp(record.created, timezone.utc),
+        )
 
 
 # ==============================================================================
