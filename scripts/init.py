@@ -21,7 +21,7 @@ The retention question. A NEW .env is asked, once and on a TTY only, for the def
 
 The env/ directory. The engine writes env/<app>.custom.env into it, so it is made group-writable and setgid: the engine writes through the group compose adds it to, and every file it creates keeps the group Compose reads it as.
 
-File modes. A new .env and every new env/<service>.env are written at DOTENV_MODE whatever the template's own mode, because the operator fills credentials into both.
+File modes. A new .env and every new env/<service>.env are written at DOTENV_MODE whatever the template's own mode (DOTENV_CEILING in a setgid directory, a checkout shared with a daemon user), because the operator fills credentials into both.
 """
 
 from __future__ import annotations
@@ -39,13 +39,12 @@ sys.pycache_prefix = str(Path(__file__).resolve().parent.parent / ".tmp" / "pyca
 
 from _common import (  # noqa: E402
     DOTENV_FILE,
-    DOTENV_MODE,
     DOTENV_TEMPLATE,
     ENV_DIR,
     ENV_TEMPLATE_DIR,
     _print,
     _rel_path,
-    write_private,
+    write_dotenv,
 )
 
 # Secrets that must not be left at their weak/empty default. scripts/post.py
@@ -201,7 +200,7 @@ def _render_secrets(*, text: str) -> str:
 def _create_dotenv(*, dst_path: Path, src_path: Path) -> None:
     """Write a new .env from its template with generated secrets materialised."""
     template = src_path.read_text(encoding="utf-8")
-    write_private(path=dst_path, text=_render_secrets(text=template), mode=DOTENV_MODE)
+    write_dotenv(path=dst_path, text=_render_secrets(text=template))
     _print(
         header=_rel_path(path=dst_path),
         msg=f"Created (generated {len(GENERATED_SECRETS)} secrets)",
@@ -262,10 +261,9 @@ def _ask_retention(*, dotenv_path: Path) -> None:
     if days is None:
         return
     text = dotenv_path.read_text(encoding="utf-8")
-    write_private(
+    write_dotenv(
         path=dotenv_path,
         text=_set_live(text=text, key=RETENTION_KEY, value=days),
-        mode=DOTENV_MODE,
     )
     _print(header=_rel_path(path=dotenv_path), msg=f"{RETENTION_KEY}={days}")
 
@@ -300,7 +298,7 @@ def _top_up_secrets(*, dotenv_path: Path) -> None:
         )
         rewritten.extend(f"{key}={_mint(key)}" for key in sorted(pending))
 
-    write_private(path=dotenv_path, text="\n".join(rewritten) + "\n", mode=DOTENV_MODE)
+    write_dotenv(path=dotenv_path, text="\n".join(rewritten) + "\n")
     _print(
         header=_rel_path(path=dotenv_path),
         msg=f"Generated missing secrets: {', '.join(missing)}",
@@ -377,16 +375,14 @@ def _close_dotenv_to_others(*, dotenv_path: Path) -> None:
 def _copy_if_absent(*, dst_path: Path, src_path: Path) -> None:
     """Copy src_path to dst_path unless dst_path already exists - report the outcome.
 
-    The copy is written at DOTENV_MODE rather than the template's mode: the
+    The copy is written by write_dotenv rather than the template's mode: the
     templates name cloud keys, client secrets and a broker password the operator
     fills in.
     """
     if dst_path.exists():
         _print(header=_rel_path(path=dst_path), msg="Skipped (already exists)")
         return
-    write_private(
-        path=dst_path, text=src_path.read_text(encoding="utf-8"), mode=DOTENV_MODE
-    )
+    write_dotenv(path=dst_path, text=src_path.read_text(encoding="utf-8"))
     _print(header=_rel_path(path=dst_path), msg="Created")
 
 
