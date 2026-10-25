@@ -271,6 +271,8 @@ def engine_pin(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Path:
     monkeypatch.delenv("DFE_ENGINE_VERSION", raising=False)
     monkeypatch.delenv("DFE_PROOF_TRANSFORM_VRL_REF", raising=False)
     monkeypatch.delenv("DFE_TRANSFORM_VRL_VERSION", raising=False)
+    monkeypatch.delenv("DFE_PROOF_TRANSFORM_VECTOR_REF", raising=False)
+    monkeypatch.delenv("DFE_TRANSFORM_VECTOR_VERSION", raising=False)
     monkeypatch.setattr(proof, "remote_has_ref", lambda repo, ref: True)
     return env_file
 
@@ -325,29 +327,83 @@ def test_transform_vrl_ref_override_wins(
     assert proof.transform_vrl_ref("repo") == "my-branch"
 
 
-def test_the_source_walk_clones_its_repos_at_the_pinned_tags(
-    engine_pin: Path, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+def test_transform_vector_ref_is_its_pinned_tag(engine_pin: Path) -> None:
+    engine_pin.write_text(
+        f"DFE_TRANSFORM_VECTOR_VERSION=v1.0.41@sha256:{'c' * 64}\n", encoding="utf-8"
+    )
+    assert proof.transform_vector_ref("repo") == "v1.0.41"
+
+
+def test_transform_vector_ref_override_wins(
+    engine_pin: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    engine_pin.write_text("DFE_TRANSFORM_VECTOR_VERSION=v1.0.41\n", encoding="utf-8")
+    monkeypatch.setenv("DFE_PROOF_TRANSFORM_VECTOR_REF", "my-branch")
+    assert proof.transform_vector_ref("repo") == "my-branch"
+
+
+def test_each_case_keeps_its_own_screenshots(tmp_path: Path) -> None:
+    assert proof.source_args("vector", tmp_path) == (
+        f"--case vector --shots-dir {tmp_path / 'source-shots' / 'vector'}"
+    )
+
+
+@pytest.fixture
+def source_walk(engine_pin: Path, monkeypatch: pytest.MonkeyPatch) -> dict:
+    """source_step with the clones and make steps faked, recording what each would do."""
     engine_pin.write_text(
         f"DFE_ENGINE_VERSION=v1.22.16@sha256:{'a' * 64}\n"
-        f"DFE_TRANSFORM_VRL_VERSION=v1.1.33@sha256:{'b' * 64}\n",
+        f"DFE_TRANSFORM_VRL_VERSION=v1.1.33@sha256:{'b' * 64}\n"
+        f"DFE_TRANSFORM_VECTOR_VERSION=v1.0.41@sha256:{'c' * 64}\n",
         encoding="utf-8",
     )
-    cloned: dict[str, str] = {}
+    state: dict = {"cloned": {}, "steps": [], "env": {}, "outcome": {}}
     monkeypatch.setattr(proof.shutil, "which", lambda name: "/usr/bin/chrome")
     monkeypatch.setattr(
-        proof, "clone", lambda repo, ref, dest: cloned.update({dest.name: ref})
+        proof,
+        "clone",
+        lambda repo, ref, dest: state["cloned"].update({dest.name: ref}),
     )
     monkeypatch.setattr(proof, "infra_ref", lambda repo: "2.2.1")
     monkeypatch.setattr(proof, "acceptance_python", lambda infra, venv: "python")
-    seen: dict[str, str] = {}
-    monkeypatch.setattr(
-        proof, "run_step", lambda name, argv, env: seen.update(env) or True
-    )
+
+    def fake_run_step(name: str, argv: list[str], env: dict[str, str]) -> bool:
+        state["steps"].append(name)
+        state["env"][name] = env
+        return state["outcome"].get(name, True)
+
+    monkeypatch.setattr(proof, "run_step", fake_run_step)
+    return state
+
+
+def test_the_source_walk_clones_its_repos_at_the_pinned_tags(
+    source_walk: dict, tmp_path: Path
+) -> None:
     assert proof.source_step(tmp_path, {}) is True
-    assert cloned == {
+    assert source_walk["cloned"] == {
         "dfe-infra": "2.2.1",
         "dfe-engine": "v1.22.16",
         "dfe-transform-vrl": "v1.1.33",
+        "dfe-transform-vector": "v1.0.41",
     }
-    assert seen["DFE_TRANSFORM_VRL_REPO"] == str(tmp_path / "dfe-transform-vrl")
+    env = source_walk["env"]["source vector"]
+    assert env["DFE_TRANSFORM_VRL_REPO"] == str(tmp_path / "dfe-transform-vrl")
+    assert env["DFE_TRANSFORM_VECTOR_REPO"] == str(tmp_path / "dfe-transform-vector")
+
+
+def test_the_source_walk_runs_the_vector_case_after_filebeat(
+    source_walk: dict, tmp_path: Path
+) -> None:
+    assert proof.source_step(tmp_path, {}) is True
+    assert source_walk["steps"] == ["source filebeat", "source vector"]
+    assert source_walk["env"]["source vector"]["SOURCE_ARGS"].startswith(
+        "--case vector "
+    )
+
+
+def test_a_failed_case_fails_the_walk_and_the_next_still_runs(
+    source_walk: dict, tmp_path: Path
+) -> None:
+    source_walk["outcome"]["source filebeat"] = False
+    assert proof.source_step(tmp_path, {}) is False
+    assert source_walk["steps"] == ["source filebeat", "source vector"]

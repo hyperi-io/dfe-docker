@@ -62,13 +62,16 @@ APPLY_SCRIPT = 'exec make -C "$0" --no-print-directory apply SERVICES="$1"'
 RUNNER_PATH = Path("scripts") / "acceptance" / "source" / "run.py"
 # The cases that push a corpus, and the checkout the runner reads it out of.
 # One repo for all three: they feed the same corpus and the elastic case takes
-# its cisco_ios module out of it. The vector case's program comes from the
-# dfe-transform-vector checkout beside the engine repo, which the runner finds
-# itself. A case absent here passes no --transform-repo, which is the fetched
-# cloudwatch one.
+# its cisco_ios module out of it. A case absent here passes no --transform-repo,
+# which is the fetched cloudwatch one.
 CORPUS_CASES = ("filebeat", "elastic", "vector")
 CORPUS_REPO_ENV_VAR = "DFE_TRANSFORM_VRL_REPO"
 CORPUS_MARKER = Path("pipelines") / "filebeat" / "filebeat.vrl"
+# The vector case uploads its own app's pipeline. Unnamed, the runner looks for
+# a dfe-transform-vector checkout beside the engine repo.
+PROGRAM_CASES = ("vector",)
+PROGRAM_REPO_ENV_VAR = "DFE_TRANSFORM_VECTOR_REPO"
+PROGRAM_MARKER = Path("pipelines") / "filebeat" / "filebeat.yaml"
 
 
 def _infra_repo(flag: str | None) -> Path:
@@ -120,6 +123,19 @@ def _transform_repo(flag: str | None, case: str) -> Path | None:
     repo = Path(candidate).expanduser().resolve()
     if not ((repo / CORPUS_MARKER).is_file()):
         sys.exit(f"test_source: {repo} carries no {CORPUS_MARKER}")
+    return repo
+
+
+def _program_repo(flag: str | None, case: str) -> Path | None:
+    """The checkout this case's program is uploaded from, or None to let the runner find it."""
+    if case not in PROGRAM_CASES:
+        return None
+    candidate = flag or os.environ.get(PROGRAM_REPO_ENV_VAR)
+    if not candidate:
+        return None
+    repo = Path(candidate).expanduser().resolve()
+    if not ((repo / PROGRAM_MARKER).is_file()):
+        sys.exit(f"test_source: {repo} carries no {PROGRAM_MARKER}")
     return repo
 
 
@@ -324,6 +340,11 @@ def main(argv: list[str] | None = None) -> int:
         help="dfe-transform-vrl checkout holding the corpus the pushed cases feed",
     )
     parser.add_argument(
+        "--program-repo",
+        default=None,
+        help="dfe-transform-vector checkout whose pipeline the vector case uploads",
+    )
+    parser.add_argument(
         "--python", default=None, help="interpreter carrying Playwright"
     )
     parser.add_argument(
@@ -355,6 +376,7 @@ def main(argv: list[str] | None = None) -> int:
     infra = _infra_repo(args.infra_repo)
     engine = _engine_repo(args.engine_repo)
     transform = _transform_repo(args.transform_repo, args.case)
+    program = _program_repo(args.program_repo, args.case)
     python = _runner_python(args.python)
 
     # The address the stack publishes on, which is `localhost` for one stack on a
@@ -383,6 +405,8 @@ def main(argv: list[str] | None = None) -> int:
         runner += ["--aws-service", args.aws_service]
     if transform:
         runner += ["--transform-repo", str(transform)]
+    if program:
+        runner += ["--program-repo", str(program)]
     # The upstream a fetched case polls is a property of the DEPLOYMENT, so it
     # comes from .env rather than from this script.
     for flag, key in (
