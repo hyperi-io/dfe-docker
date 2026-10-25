@@ -121,10 +121,11 @@ sudo DFE_DOCKER_DIR=/opt/dfe-docker DFE_UPDATE_USER=dfe DFE_OPERATOR_USER=ubuntu
 
 ```bash
 id -nG                                   # includes dfe
-pkcheck --action-id org.freedesktop.systemd1.manage-units \
-  --process $$ --detail unit dfe-docker-update.service --detail verb start; echo $?   # 0
 git -C /opt/dfe-docker pull --ff-only
+systemctl start --no-block dfe-docker-update.service && systemctl status dfe-docker-update.service
 ```
+
+Starting the unit is the check for the polkit rule. A refusal prints `Interactive authentication required`. `pkcheck --detail` answers only to root, so it cannot test the rule from the operator's login.
 
 `python3 ops/daemon-update/share_checkout.py --dry-run --repo-dir /opt/dfe-docker` lists what the conversion would change and touches nothing.
 
