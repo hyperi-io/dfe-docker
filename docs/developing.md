@@ -427,7 +427,8 @@ Above, sources come through the API. This one creates one in the console, attach
 
 Beyond a running stack it needs `DFE_INFRA_DIR` (the runner), `DFE_ENGINE_REPO`
 and `DFE_TRANSFORM_VRL_REPO` (the corpus wrapper, the bundled pipeline), a
-dfe-transform-vector checkout beside the engine repo for the vector case, and an
+dfe-transform-vector checkout for the vector case (`DFE_TRANSFORM_VECTOR_REPO`, else
+the one beside the engine repo), and an
 interpreter carrying Playwright -- `DFE_ACCEPTANCE_PYTHON` where the system one
 is externally managed. The cloudwatch case polls a real AWS upstream and writes
 nothing to it: put the two `AWS_*` credentials in `env/fetcher.env` and
@@ -436,6 +437,10 @@ nothing to it: put the two `AWS_*` credentials in `env/fetcher.env` and
 Every step is a report row and a screenshot under `--shots-dir` (`.tmp/source`).
 A step the console cannot do falls back to the engine API and says so, because
 that is a finding about the console rather than about the pipeline.
+
+`make proof` runs the filebeat and vector cases on every stack version, each
+transform checkout cloned at the tag the stack pins, so a pin of either transform
+is proven through its data path.
 
 ## Static checks
 
