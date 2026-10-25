@@ -11,6 +11,7 @@
 Internal support module - imported by the runnable scripts, not executed directly. Resolves the repo root once and exposes the well-known file/dir locations the scripts read and write so every script agrees on where things live. Add further shared locations here, alphabetical by name.
 """
 
+import datetime
 import os
 import re
 import stat
@@ -134,15 +135,45 @@ SERVICE_PROFILES_FILE = REPO_ROOT / "service_profiles.yaml"
 _REQUIRED_VAR_RE = re.compile(r"\$\{([A-Z][A-Z0-9_]*):\?")
 
 
+# Levels a message names by its first word. _print has no level argument, so the word callers already lead with (`FAIL ...`, `WARNING: ...`) becomes the line's level and everything else is INFO.
+_LEADING_LEVEL_RE = re.compile(r"(PASS|FAIL|SKIP|WARNING)\b|(error):")
+_LEVEL_WIDTH = 8
+_RESET = "\033[0m"
+
+
+def log_line(
+    *,
+    level: str,
+    name: str,
+    msg: str,
+    colour: str = "",
+    now: datetime.datetime | None = None,
+) -> str:
+    """Return a line in the shape of scalo's text console logger, without its fields.
+
+    `<UTC RFC 3339 millis> | <level, padded to 8> | <name> - <msg>`. `colour` is an ANSI
+    escape wrapped round the level word only, empty for none.
+    """
+    when = (now or datetime.datetime.now(datetime.UTC)).astimezone(datetime.UTC)
+    stamp = f"{when:%Y-%m-%dT%H:%M:%S}.{when.microsecond // 1000:03d}Z"
+    shown = f"{colour}{level}{_RESET}" if colour else level
+    return f"{stamp} | {shown}{' ' * (_LEVEL_WIDTH - len(level))} | {name} - {msg}"
+
+
 def _print(
     *, file: typing.TextIO | None = None, header: str | None = None, msg: str
 ) -> None:
     """Print a custom message with caller script name prefixed."""
+    leading = _LEADING_LEVEL_RE.match(msg)
+    level = "INFO"
+    if leading:
+        level = "ERROR" if leading.group(2) else leading.group(1)
+    script = Path(sys.argv[0]).stem
     # Resolved at call time, not bound as a default: a caller that replaces
     # sys.stderr (pytest's capture) must still see the message.
     print(
         # codeql[py/clear-text-logging-sensitive-data] callers pass a secret's key or committed default, never a minted value
-        f"{Path(sys.argv[0]).stem}{f' ({header})' if header else ''}: {msg}",
+        log_line(level=level, name=f"{script}:{header}" if header else script, msg=msg),
         file=file or sys.stderr,
     )
 

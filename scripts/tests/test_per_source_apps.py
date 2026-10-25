@@ -190,7 +190,7 @@ class TestInstanceServices:
 
         assert services == [f"{enabled[0]}-aws-cloudtrail"]
         error = capsys.readouterr().err
-        assert "(single-kafka): WARNING: dfe-engine declared instances" in error
+        assert ":single-kafka - WARNING: dfe-engine declared instances" in error
         assert f"- {app} (sources okta-audit, okta-system): set {key}: true" in error
         fragment = instances.COMPOSE_INSTANCES_FILE.read_text(encoding="utf-8")
         assert f"  {app}-okta-audit:" not in fragment
@@ -303,7 +303,7 @@ class TestResolveProfile:
         values = _resolve(monkeypatch=monkeypatch, profile="slim-grpc")
 
         error = capsys.readouterr().err
-        assert "(slim-grpc): WARNING: dfe-engine declared instances of apps" in error
+        assert ":slim-grpc - WARNING: dfe-engine declared instances of apps" in error
         assert "Set the key on the profile to run them, or delete those sources" in (
             error
         )
