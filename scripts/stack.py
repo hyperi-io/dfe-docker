@@ -65,13 +65,12 @@ from _common import (  # noqa: E402
     COMPOSE_FILE,
     DEPLOYMENT_DIAL_TEMPLATE,
     DOTENV_FILE,
-    DOTENV_MODE,
     DOTENV_TEMPLATE,
     _dotenv_values,
     _parse_yaml_subset,
     _print,
     _rel_path,
-    write_private,
+    write_dotenv,
 )
 from _registry import (  # noqa: E402
     DISCOVERY_WORDS,
@@ -415,7 +414,7 @@ def main() -> int:
         merged = _merge_into_env(
             DOTENV_FILE.read_text(encoding="utf-8", errors="replace"), pins | marker
         )
-        write_private(path=DOTENV_FILE, text=merged, mode=DOTENV_MODE)
+        write_dotenv(path=DOTENV_FILE, text=merged)
         _print(
             msg=(
                 f"Pinned {len(pins)} image version(s) for stack {version} into "

@@ -45,10 +45,10 @@ sys.pycache_prefix = str(Path(__file__).resolve().parent.parent / ".tmp" / "pyca
 
 from _common import (  # noqa: E402
     DOTENV_FILE,
-    DOTENV_MODE,
     _dotenv_values,
     _print,
     _rel_path,
+    write_dotenv,
     write_private,
 )
 from creds import (  # noqa: E402
@@ -172,7 +172,7 @@ def main(*, argv: list[str] | None = None) -> int:
         return 0
 
     backup = _backup(text=text)
-    write_private(path=DOTENV_FILE, text=rewritten, mode=DOTENV_MODE)
+    write_dotenv(path=DOTENV_FILE, text=rewritten)
     written = (
         f"Real posture: DFE_ENV={wanted.get(_POSTURE_KEY, environment)}, admin password "
         f"minted. Read it with `make creds`."

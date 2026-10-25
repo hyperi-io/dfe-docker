@@ -376,6 +376,8 @@ If the old value is lost, stop ClickHouse, move `coordination/` in the volume as
 
 Never commit `.env`.
 
+**File modes.** `.env` and the files in `env/` are created `0640`, or `0660` when the checkout root is setgid, which is how a checkout shared with the daemon user is marked. Others never get a bit. A rewrite keeps whatever group-write bit the file has and drops any bit for others. The setup is in [deploying.md](deploying.md#updating-a-daemon-vm-without-sudo).
+
 ## Persistence: what survives, and what `make clean` destroys
 
 These named volumes hold all durable state:

@@ -13,6 +13,7 @@ Internal support module - imported by the runnable scripts, not executed directl
 
 import os
 import re
+import stat
 import sys
 import typing
 from pathlib import Path
@@ -111,6 +112,8 @@ DOTENV_FILE = REPO_ROOT / ".env"
 # Owner and group read it (a daemon install shares it through the checkout's group); others never.
 # The per-service env/<service>.env files take the same mode.
 DOTENV_MODE = 0o640
+# The widest a shared checkout may grant: the daemon user and the operator both rewrite .env, so the group needs write too. Others never get a bit.
+DOTENV_CEILING = 0o660
 DOTENV_TEMPLATE = REPO_ROOT / ".env.example"
 ENV_DIR = REPO_ROOT / "env"
 ENV_TEMPLATE_DIR = REPO_ROOT / "env.example"
@@ -160,8 +163,28 @@ def write_private(*, path: Path, text: str, mode: int = 0o600) -> None:
     fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, mode)
     with os.fdopen(fd, "w", encoding="utf-8", newline="\n") as handle:
         # O_CREAT's mode applies only to a new file, so an existing one is set here.
-        os.fchmod(fd, mode)
+        # Skipped when it already matches: chmod needs the owner, and a group member rewriting a shared file is not.
+        if stat.S_IMODE(os.fstat(fd).st_mode) != mode:
+            os.fchmod(fd, mode)
         handle.write(text)
+
+
+def write_dotenv(*, path: Path, text: str) -> None:
+    """Write .env, or an env/<service>.env, for a checkout one user or a group runs.
+
+    A new file is DOTENV_MODE, or DOTENV_CEILING when the checkout's root directory
+    is setgid, which is how a checkout shared with a daemon user is marked (env/ is
+    setgid on every checkout, so its own bit says nothing). An existing file keeps
+    the bits it has within DOTENV_CEILING, so a group-writable file stays writable
+    by the group that shares it and a bit for others is dropped.
+    """
+    if path.exists():
+        mode = stat.S_IMODE(path.stat().st_mode) & DOTENV_CEILING
+    elif REPO_ROOT.stat().st_mode & stat.S_ISGID:
+        mode = DOTENV_CEILING
+    else:
+        mode = DOTENV_MODE
+    write_private(path=path, text=text, mode=mode)
 
 
 def _config_topics(*, path: Path) -> tuple[set[str], set[str], str]:

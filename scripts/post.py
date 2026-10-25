@@ -80,7 +80,7 @@ import instances  # noqa: E402
 from _common import (  # noqa: E402
     ACCESS_SUMMARY_FILE,
     DOTENV_FILE,
-    DOTENV_MODE,
+    DOTENV_CEILING,
     FALSY,
     _dotenv_values,
     _load_dotenv,
@@ -1533,12 +1533,12 @@ def _dotenv_with(*, text: str, key: str, value: str) -> str:
 
 
 def _replace_file(*, path: Path, text: str) -> None:
-    """Write text over path through a renamed sibling, keeping the file's mode within DOTENV_MODE.
+    """Write text over path through a renamed sibling, keeping the file's mode within DOTENV_CEILING.
 
     A reader sees the old file or the new one, never a half-written credential. A
     stricter mode is kept; a wider one is narrowed rather than carried over.
     """
-    mode = stat.S_IMODE(path.stat().st_mode) & DOTENV_MODE
+    mode = stat.S_IMODE(path.stat().st_mode) & DOTENV_CEILING
     handle, temp = tempfile.mkstemp(
         dir=path.parent, prefix=f".{path.name}.", suffix=".tmp"
     )

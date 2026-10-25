@@ -98,6 +98,36 @@ version, so leave `version.pin` out of the dial there. `make modes` calls it
 > stable-only track-latest daemon finds nothing to apply -- pin explicitly, or set
 > `DFE_UPDATE_ALLOW_PRERELEASE=1` knowingly.
 
+## Updating a daemon VM without sudo
+
+A box on the track-latest daemon has two users. The service user (`dfe`) runs the timer and owns the checkout, and the operator logs in as someone else. Left alone, every `git` and `make` step then needs `sudo -u dfe`, which an unattended agent cannot use (git runs the repo's config as the target user).
+
+`install.sh` sets the box up so the operator never needs it:
+
+- **Start an update on demand.** A polkit rule lets members of the service user's group start, stop and restart `dfe-docker-update.service` and `dfe-docker-proof.service`. `systemctl start dfe-docker-update.service` runs the timer's tick as `dfe` and waits for it. Add `--no-block` to return at once and follow with `journalctl -u dfe-docker-update -f`. The tick takes the newest tag in the signed stack-manifest repository, not a git branch, so a cycle moves the version by publishing one and starting the unit.
+- **Work in the checkout directly.** The checkout is group-writable with the setgid bit, `UMask=0002` makes the service's own files match, and `.env` is group read/write and closed to others. The operator can `git pull`, `make stack VERSION=X.Y.Z`, `make ci` and `make post` as themselves, and start the proof with `systemctl start dfe-docker-proof.service`. Use this path for a version the manifest does not list as newest.
+
+Secret files go no wider than group read/write. `.env`, `.env.*`, `access-summary.md` and everything in `env/` are never open to others, and a rewrite by either user keeps the group-write bit it finds.
+
+**Converting an existing install.** Once, as a user with sudo, from the box's own checkout:
+
+```bash
+sudo -u dfe git -C /opt/dfe-docker pull --ff-only
+sudo DFE_DOCKER_DIR=/opt/dfe-docker DFE_UPDATE_USER=dfe DFE_OPERATOR_USER=ubuntu \
+  DFE_UPDATE_ENABLE_TIMER=0 /opt/dfe-docker/ops/daemon-update/install.sh
+```
+
+`DFE_UPDATE_ENABLE_TIMER=0` leaves the timer as it is, so an operator-triggered box stays that way. The operator logs in again to pick up the group. Check it from that login, with no sudo:
+
+```bash
+id -nG                                   # includes dfe
+pkcheck --action-id org.freedesktop.systemd1.manage-units \
+  --process $$ --detail unit dfe-docker-update.service --detail verb start; echo $?   # 0
+git -C /opt/dfe-docker pull --ff-only
+```
+
+`python3 ops/daemon-update/share_checkout.py --dry-run --repo-dir /opt/dfe-docker` lists what the conversion would change and touches nothing.
+
 ## Upgrading an existing deployment
 
 Two changes bite an existing stack. Neither is silent if you read this; both are

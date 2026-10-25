@@ -72,7 +72,9 @@ this flag.
   `DFE_UPDATE_WIPE_STATE=1` destroys every volume on each version change.
 - `dfe-docker-update.service` - oneshot that runs the updater.
 - `dfe-docker-update.timer` - runs it 10 min after boot, then every 6h (jittered).
-- `install.sh` - renders + installs the units and enables the timer.
+- `dfe-docker-update.rules` - polkit rule: members of the service user's group start, stop and restart the update and proof units without sudo.
+- `share_checkout.py` - makes the checkout group-writable and setgid, keeps secrets closed to others, sets `core.sharedRepository group` and `safe.directory`, adds operators to the group. Idempotent, `--dry-run` lists changes.
+- `install.sh` - renders + installs the units and the polkit rule, shares the checkout, and enables the timer. `DFE_UPDATE_ENABLE_TIMER=0` leaves the timer alone, `DFE_OPERATOR_USER=<login>` adds a login to the group, `DFE_UPDATE_SHARE_CHECKOUT=0` skips the checkout conversion.
 
 ## Install (parked - run on the dfe-docker VM as root)
 
@@ -91,6 +93,18 @@ journalctl -u dfe-docker-update.service -f                     # watch a real ru
 
 First real run adopts the current newest stable stack and records it; subsequent
 ticks are no-ops until a newer certified stack ships.
+
+## Operating without sudo
+
+After `install.sh`, a login in the service user's group runs everything itself:
+
+```
+systemctl start dfe-docker-update.service      # one tick, as the service user, waits for it
+systemctl start --no-block dfe-docker-update.service && journalctl -u dfe-docker-update -f
+git -C /opt/dfe-docker pull --ff-only          # and make stack / make ci / make post
+```
+
+The tick follows the newest tag in the stack-manifest repository. A version the manifest does not list as newest goes through `make stack VERSION=X.Y.Z && make ci` as the operator. The full account, with the one-time conversion of an existing install, is in [docs/deploying.md](../../docs/deploying.md#updating-a-daemon-vm-without-sudo).
 
 ## Why staged
 

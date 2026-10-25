@@ -109,3 +109,53 @@ def test_write_private_narrows_an_existing_file_before_the_new_text_lands(
     assert chmod_watch.exposed(secret="new-secret-value", allowed=0o600) == []
     assert _mode(path) == 0o600
     assert path.read_text(encoding="utf-8") == "new-secret-value\n"
+
+
+def test_a_group_writable_dotenv_stays_group_writable_when_rewritten(
+    dotenv: Path, open_umask: None
+) -> None:
+    dotenv.write_text("old\n", encoding="utf-8")
+    dotenv.chmod(0o660)
+
+    _common.write_dotenv(path=dotenv, text="new\n")
+
+    assert _mode(dotenv) == _common.DOTENV_CEILING
+    assert dotenv.read_text(encoding="utf-8") == "new\n"
+
+
+def test_a_rewrite_never_gives_others_a_bit_or_widens_a_private_file(
+    dotenv: Path, open_umask: None
+) -> None:
+    dotenv.write_text("old\n", encoding="utf-8")
+    dotenv.chmod(0o666)
+    _common.write_dotenv(path=dotenv, text="new\n")
+    assert _mode(dotenv) == _common.DOTENV_CEILING
+
+    dotenv.chmod(0o600)
+    _common.write_dotenv(path=dotenv, text="newer\n")
+    assert _mode(dotenv) == 0o600
+
+
+def test_a_new_dotenv_is_group_writable_only_in_a_setgid_checkout(
+    dotenv: Path, open_umask: None
+) -> None:
+    _common.write_dotenv(path=dotenv, text="a\n")
+    assert _mode(dotenv) == _common.DOTENV_MODE
+    dotenv.unlink()
+
+    dotenv.parent.chmod(0o2775)
+    _common.write_dotenv(path=dotenv, text="b\n")
+    assert _mode(dotenv) == _common.DOTENV_CEILING
+
+
+def test_write_private_leaves_a_file_that_already_has_the_mode_alone(
+    tmp_path: Path, open_umask: None, chmod_watch
+) -> None:
+    path = tmp_path / "secret"
+    path.write_text("old\n", encoding="utf-8")
+    path.chmod(0o660)
+    chmod_watch.views.clear()
+
+    _common.write_private(path=path, text="new\n", mode=0o660)
+
+    assert chmod_watch.views == []
