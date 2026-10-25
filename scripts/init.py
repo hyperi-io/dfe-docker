@@ -26,6 +26,7 @@ File modes. A new .env and every new env/<service>.env are written at DOTENV_MOD
 
 from __future__ import annotations
 
+import argparse
 import os
 import re
 import secrets
@@ -386,7 +387,11 @@ def _copy_if_absent(*, dst_path: Path, src_path: Path) -> None:
     _print(header=_rel_path(path=dst_path), msg="Created")
 
 
-def main() -> int:
+def main(argv: list[str] | None = None) -> int:
+    # Takes no options. Parsing anyway makes --help print and exit before anything is written.
+    argparse.ArgumentParser(
+        description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
+    ).parse_args(argv or [])
     if not (DOTENV_TEMPLATE.exists()):
         _print(
             header=_rel_path(path=DOTENV_TEMPLATE),
@@ -421,4 +426,4 @@ def main() -> int:
 
 
 if __name__ == "__main__":
-    raise SystemExit(main())
+    raise SystemExit(main(sys.argv[1:]))
