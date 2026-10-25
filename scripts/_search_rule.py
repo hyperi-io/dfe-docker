@@ -118,9 +118,44 @@ def hunt_identifier(marker: str) -> str:
     return name if name[:1].isalpha() else f"h_{name}"
 
 
+def _without_identifier_quotes(sql: str) -> str:
+    """The SQL with its backtick identifier quotes removed and its string literals untouched.
+
+    The engine stores the WHERE with every identifier quoted (`_json`.`user_name`), where the search bar had them bare. A backtick inside a single-quoted literal is data, so it stays.
+    """
+    out = []
+    in_literal = False
+    in_identifier = False
+    escaped = False
+    for char in sql:
+        if in_literal:
+            out.append(char)
+            if escaped:
+                escaped = False
+            elif char == "\\":
+                escaped = True
+            elif char == "'":
+                in_literal = False
+        elif char == "`":
+            in_identifier = not in_identifier
+        else:
+            out.append(char)
+            if char == "'" and not in_identifier:
+                in_literal = True
+    return "".join(out)
+
+
 def missing_fragments(where_clause: str, fragments: list[str]) -> list[str]:
-    """The fragments a stored WHERE clause does not carry, in the order given."""
-    return [fragment for fragment in fragments if fragment not in where_clause]
+    """The fragments a stored WHERE clause does not carry, in the order given.
+
+    Identifier quoting is not part of the comparison, on either side.
+    """
+    stored = _without_identifier_quotes(where_clause)
+    return [
+        fragment
+        for fragment in fragments
+        if _without_identifier_quotes(fragment) not in stored
+    ]
 
 
 def _label(name: str) -> re.Pattern[str]:
