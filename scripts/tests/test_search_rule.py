@@ -95,6 +95,47 @@ def test_a_stored_where_names_every_fragment_it_dropped() -> None:
     assert _search_rule.missing_fragments(where, ["run-1"]) == []
 
 
+# The WHERE the engine stored for the search-rule-hunt e2e: every identifier backtick-quoted
+_STORED_WHERE = (
+    "(toString(`_tags`.marker) = 'e2e-20260929010203-search-rule-hunt' AND "
+    "(toString(`_json`.event_type) = 'login_failure')) AND "
+    "((toString(`_json`.`user_name`) IN ('root')))"
+)
+_SEARCH_FRAGMENTS = [
+    "e2e-20260929010203-search-rule-hunt",
+    "toString(_json.event_type) = 'login_failure'",
+    "user_name",
+    "'root'",
+]
+
+
+def test_backtick_quoted_identifiers_in_the_stored_where_still_carry_the_search() -> (
+    None
+):
+    assert _search_rule.missing_fragments(_STORED_WHERE, _SEARCH_FRAGMENTS) == []
+
+
+def test_a_fragment_the_stored_where_lacks_is_still_reported_when_quoted() -> None:
+    where = _STORED_WHERE.replace("event_type", "other_field")
+
+    assert _search_rule.missing_fragments(where, _SEARCH_FRAGMENTS) == [
+        "toString(_json.event_type) = 'login_failure'"
+    ]
+
+
+def test_a_backtick_inside_a_string_literal_is_data_not_quoting() -> None:
+    where = "toString(`_json`.note) = 'a`b'"
+
+    assert _search_rule.missing_fragments(where, ["note) = 'a`b'"]) == []
+    assert _search_rule.missing_fragments(where, ["note) = 'ab'"]) == ["note) = 'ab'"]
+
+
+def test_an_escaped_quote_does_not_end_the_literal_early() -> None:
+    where = "toString(`_json`.note) = 'it\\'s `x`'"
+
+    assert _search_rule.missing_fragments(where, ["'it\\'s `x`'"]) == []
+
+
 @pytest.mark.parametrize(
     "accessible_name", ["Username", "* Username", "Username *", "*Username"]
 )
