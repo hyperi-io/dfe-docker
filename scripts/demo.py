@@ -18,7 +18,7 @@
 
 The Sources come from resources/demo/demo.yaml. Each vendor table is its engine catalogue entry, created and deployed for its table, then set dormant so no per-vendor transform runs. The intake is one agentless dfe-transform-elastic Source on the receiver's syslog listener, its detect candidates the vendors' catalogue variants. The receiver's syslog listener, UDP and TCP on 514, is switched on through the engine, and `make apply` recreates what the engine says has to change.
 
-The generator is dfe-transform-elastic's own replay script and fixtures, fetched shallow at the tag DFE_TRANSFORM_ELASTIC_VERSION pins so the lines match the detector that runs, or read from DFE_SRC_ROOT/dfe-transform-elastic when that is set. It runs in a pinned Python container on the stack's network and sends raw syslog to dfe-receiver. The run ends with each vendor table's new rows, and fails when one gained none.
+The generator is dfe-transform-elastic's own replay script and fixtures, fetched shallow at the tag DFE_TRANSFORM_ELASTIC_VERSION pins so the lines match the detector that runs, or read from DFE_SRC_ROOT/dfe-transform-elastic when that is set. A vendor with a sample set under resources/demo/samples/<package>/ replays that instead of its fixtures. It runs detached in a pinned Python container on the stack's network, looping raw syslog at dfe-receiver until `make demo-stop` or `make down` removes it, and a second run replaces it. The run returns once every vendor table has gained rows, and fails, stopping the stream, when one gains none.
 
 Exit codes:
   0  every vendor table gained rows
@@ -81,14 +81,16 @@ SYSLOG_SWITCH = {
 SYSLOG_PORT = 514
 # The generator's inputs beside its own directory: the detector's label table and the fixtures it replays
 GENERATOR_INPUTS = ("src/detect", "tests/fixtures/unencumbered")
+FIXTURES = "tests/fixtures/unencumbered"
 FETCH_ROOT = REPO_ROOT / ".tmp" / "demo"
+SAMPLES_DIR = REPO_ROOT / "resources" / "demo" / "samples"
+# The generator ends a loop only at --count or --duration, so the stream runs ten years unless removed
+STREAM_SECONDS = 315_360_000
 DEPLOY_TIMEOUT_SECONDS = 90
 READY_TIMEOUT_SECONDS = 120.0
 READY_INTERVAL_SECONDS = 3.0
 LAND_TIMEOUT_SECONDS = 180.0
 LAND_INTERVAL_SECONDS = 5.0
-# A destination that refuses a push is retried in bursts, so one unchanged poll is not the end of the backlog
-LAND_QUIET_SECONDS = 20.0
 GIT_TIMEOUT_SECONDS = 300
 VERSION_TAG = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]*")
 
@@ -436,10 +438,22 @@ def resolve_generator(*, generator: str) -> Path:
     return checkout
 
 
+def stage_feed(*, checkout: Path, feed: Path, generator: str, samples: Path) -> Path:
+    """A copy of the generator's tree where each package with a demo sample set replays that set instead of its fixtures."""
+    shutil.rmtree(feed, ignore_errors=True)
+    for part in (str(Path(generator).parent), *GENERATOR_INPUTS):
+        shutil.copytree(checkout / part, feed / part, dirs_exist_ok=True)
+    for package in sorted(path for path in samples.glob("*") if path.is_dir()):
+        target = feed / FIXTURES / package.name
+        shutil.rmtree(target, ignore_errors=True)
+        shutil.copytree(package, target)
+    return feed
+
+
 def generator_command(
     *,
-    checkout: Path,
-    duration: float,
+    container: str,
+    feed: Path,
     generator: str,
     image: str,
     network: str,
@@ -447,17 +461,20 @@ def generator_command(
     rate: float,
     sources: list[str],
 ) -> list[str]:
-    """The docker run that replays the vendor fixtures at dfe-receiver's syslog listener."""
+    """The detached docker run that loops the vendor lines at dfe-receiver's syslog listener."""
     mount = "/demo"
     return [
         "docker",
         "run",
+        "--detach",
         "--rm",
         "--init",
+        "--name",
+        container,
         "--network",
         network,
         "--volume",
-        f"{checkout}:{mount}:ro",
+        f"{feed}:{mount}:ro",
         image,
         "python3",
         "-I",
@@ -470,8 +487,13 @@ def generator_command(
         f"{rate:g}",
         "--loop",
         "--duration",
-        f"{duration:g}",
+        str(STREAM_SECONDS),
     ]
+
+
+def _stop_stream(*, container: str) -> None:
+    """Remove the stream's container, if one runs."""
+    _docker(args=["rm", "--force", container])
 
 
 def load_demo(*, path: Path) -> Demo:
@@ -548,20 +570,13 @@ def _counts(*, tables: list[str]) -> dict[str, int | None]:
 
 
 def _await_rows(*, before: dict[str, int | None], vendors: list[str]) -> dict[str, int]:
-    """Poll until every vendor table has gained rows and the counts hold still, and return each table's gain."""
+    """Poll until every vendor table has gained rows, and return each table's gain so far."""
     deadline = time.monotonic() + LAND_TIMEOUT_SECONDS
-    previous: dict[str, int] = {}
-    quiet_since = time.monotonic()
     while True:
         now = _counts(tables=list(before))
         gained = {table: (now[table] or 0) - (before[table] or 0) for table in before}
-        if gained != previous:
-            quiet_since = time.monotonic()
-        landed = all(gained[table] > 0 for table in vendors)
-        settled = time.monotonic() - quiet_since >= LAND_QUIET_SECONDS
-        if (landed and settled) or time.monotonic() >= deadline:
+        if all(gained[table] > 0 for table in vendors) or time.monotonic() >= deadline:
             return gained
-        previous = gained
         time.sleep(LAND_INTERVAL_SECONDS)
 
 
@@ -614,9 +629,16 @@ def _run(*, args: argparse.Namespace) -> int:
     # Lines no detector claims land in the intake's own table, and main is shown to prove none went there
     tables = [*demo.sources, intake["source"], TARGET_TABLE]
     before = _counts(tables=tables)
-    command = generator_command(
+    feed = stage_feed(
         checkout=checkout,
-        duration=args.duration,
+        feed=FETCH_ROOT / "feed",
+        generator=args.generator,
+        samples=SAMPLES_DIR,
+    )
+    _stop_stream(container=args.container)
+    command = generator_command(
+        container=args.container,
+        feed=feed,
         generator=args.generator,
         image=args.image,
         network=network,
@@ -625,11 +647,13 @@ def _run(*, args: argparse.Namespace) -> int:
         sources=demo.sources,
     )
     _print(
-        msg=f"sending {', '.join(demo.sources)} syslog over {args.protocol.upper()} for "
-        f"{args.duration:g}s at {args.rate:g} lines/s"
+        msg=f"streaming {', '.join(demo.sources)} syslog over {args.protocol.upper()} at "
+        f"{args.rate:g} lines/s in container {args.container}"
     )
     if subprocess.run(command, check=False).returncode != 0:
-        raise DemoError("the generator container failed; its output is above")
+        raise DemoError(
+            "the generator container did not start; docker's error is above"
+        )
 
     gained = _await_rows(before=before, vendors=demo.sources)
     for table, rows in gained.items():
@@ -638,11 +662,14 @@ def _run(*, args: argparse.Namespace) -> int:
     if empty:
         _print(
             msg=f"FAIL no rows landed in {', '.join(f'{TARGET_DB}.{t}' for t in empty)}; "
-            f"`docker compose logs {instance}` says what the transform did with them"
+            f"`docker compose logs {instance}` says what the transform did with them "
+            f"and `docker logs {args.container}` what the generator sent"
         )
+        _stop_stream(container=args.container)
         return 1
     _print(
-        msg="PASS every vendor table gained rows, ready to query in the console or HyperDX"
+        msg="PASS every vendor table gained rows, ready to query in the console or "
+        "HyperDX. The stream runs until `make demo-stop`"
     )
     return 0
 
@@ -657,7 +684,7 @@ def main() -> int:
         help="recreate from the local images a `make dev` stack runs",
     )
     parser.add_argument(
-        "--duration", default=60.0, type=float, help="seconds to send for"
+        "--container", required=True, help="the name the stream's container runs under"
     )
     parser.add_argument(
         "--generator",
@@ -672,8 +699,8 @@ def main() -> int:
     )
     parser.add_argument("--rate", default=20.0, type=float, help="lines per second")
     args = parser.parse_args()
-    if (args.rate <= 0) or (args.duration <= 0):
-        parser.error("--rate and --duration must be positive")
+    if args.rate <= 0:
+        parser.error("--rate must be positive")
     try:
         return _run(args=args)
     except (*ENGINE_FAULTS, DemoError, SeedError) as error:

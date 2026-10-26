@@ -31,5 +31,3 @@ intake:
 sources:
   - cisco-asa
   - fortinet
-  - panw
-  - cisco-ios
