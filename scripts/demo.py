@@ -77,8 +77,6 @@ RECEIVER_SERVICE = "dfe-receiver"
 SYSLOG_SWITCH = {
     "config.syslog.enabled": True,
     "config.syslog.accept_unauthenticated": True,
-    # The original line, so dfe-transform-elastic parses vendors whose header the loose syslog split misreads
-    "config.syslog.raw_capture.enabled": True,
 }
 SYSLOG_PORT = 514
 # The generator's inputs beside its own directory: the detector's label table and the fixtures it replays
