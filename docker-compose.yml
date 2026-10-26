@@ -1417,22 +1417,17 @@ services:
       - hyperdx-dashboards:/etc/hyperdx/dashboards
     restart: "no"
 
-  # The CA and the certificate hyperdx-documentdb serves, so HyperDX verifies the
-  # gateway rather than trusting whatever answers. Minted once into their own
-  # volume. The engine image is here only for its openssl.
+  # Mints the CA and the certificate hyperdx-documentdb serves, with the engine image's openssl
   hyperdx-documentdb-tls:
     image: ${IMAGE_REGISTRY:-ghcr.io/hyperi-io}/dfe-engine:${DFE_ENGINE_VERSION:?run 'make stack VERSION=X.Y.Z' to pin DFE_ENGINE_VERSION}
     container_name: ${DFE_CONTAINER_PREFIX:-}dfe-hyperdx-documentdb-tls
     dns_search: *no-dns-search
     profiles: ["hyperdx"]
     deploy: *limits-sidecar
-    # Root because an empty named volume lands root-owned at a path no image creates.
+    # Root because an empty named volume lands root-owned at a path no image creates
     user: "0:0"
     entrypoint: ["/bin/sh", "-c"]
-    # A LIST with one element, for the reason dlq-init's command gives. A pair
-    # with 30 days left is kept, so a restart never moves the CA under HyperDX.
-    # The CA key is discarded: a pair that needs replacing gets a new CA with it.
-    # Modes are set on every run, so a run cut short is repaired by the next.
+    # A list of one for the reason dlq-init's command gives, keeping a pair with 30 days left so a restart never moves the CA
     command:
       - |
         set -eu
@@ -1454,7 +1449,7 @@ services:
             -days 3650 -sha384 -extfile server.ext -out server/tls.crt
           rm -f ca.key ca.srl server.csr server.ext
         fi
-        # HyperDX (uid 1000) reads the CA, and documentdb-local (uid 1000) the pair.
+        # HyperDX reads the CA and documentdb-local the pair, both as uid 1000
         chmod 0755 ca
         chmod 0644 ca/ca.crt
         chown -R 1000:1000 server
@@ -1462,30 +1457,27 @@ services:
       - hyperdx-documentdb-tls:/tls
     restart: "no"
 
-  # HyperDX's document store: PostgreSQL with the DocumentDB extensions and the
-  # Mongo-wire gateway HyperDX talks to, in one container.
+  # HyperDX's document store: PostgreSQL with the DocumentDB extensions and their Mongo-wire gateway in one container
   hyperdx-documentdb:
     image: ghcr.io/documentdb/documentdb/documentdb-local:${HYPERDX_DOCUMENTDB_VERSION:-pg18-1.0.0@sha256:03aef53ed72cd3007236f8ce1b4ef7a0c958dbbce1519074b85d8a3e10be89a5}
     container_name: ${DFE_CONTAINER_PREFIX:-}dfe-hyperdx-documentdb
     dns_search: *no-dns-search
     profiles: ["hyperdx"]
     restart: unless-stopped
-    # The image exposes no PostgreSQL memory settings, so initdb's 128MB
-    # shared_buffers, 4MB work_mem and 100 connections run inside this limit.
+    # The image takes no PostgreSQL memory settings, so initdb's 128MB shared_buffers run inside this limit
     deploy: *limits-service
     environment:
-      USERNAME: ${HYPERDX_POSTGRES_USER:-hyperdx}
-      # `make init` generates this. Not a `:?` hard-fail -- see NEXTAUTH_SECRET.
-      PASSWORD: ${HYPERDX_POSTGRES_PASSWORD:-hyperdx}
-      # The gateway refuses plain connections and serves the minted certificate.
+      USERNAME: ${HYPERDX_DOCUMENTDB_USER:-hyperdx}
+      # `make init` generates this, not a `:?` hard-fail for the reason NEXTAUTH_SECRET gives
+      PASSWORD: ${HYPERDX_DOCUMENTDB_PASSWORD:-hyperdx}
+      # The gateway refuses plain connections and serves the minted certificate
       TLS_MODE: requireTLS
       CERT_PATH: /etc/documentdb/tls/tls.crt
       KEY_FILE: /etc/documentdb/tls/tls.key
-      # On by default upstream: it reports to a third party at start and hourly.
+      # On by default upstream: it reports to a third party at start and hourly
       DOCUMENTDB_USAGE_TELEMETRY: "false"
     volumes:
-      # The image's VOLUME. A fresh volume takes the cluster the image ships
-      # pre-initialised, so the first start skips initdb.
+      # The image's VOLUME, which a fresh volume fills with the pre-initialised cluster so the first start skips initdb
       - hyperdx-documentdb-data:/data
       - type: volume
         source: hyperdx-documentdb-tls
@@ -1497,9 +1489,7 @@ services:
       hyperdx-documentdb-tls:
         condition: service_completed_successfully
     healthcheck:
-      # The image's own probe: startup finished, PostgreSQL answering and a TLS
-      # handshake on the gateway. We only retune its 30s interval and 600s start
-      # period, which are far too slow to gate startup on.
+      # The image's own probe, retuned from its 30s interval and 600s start period to gate startup
       test: ["CMD", "/usr/local/bin/documentdb-healthcheck"]
       interval: 5s
       timeout: 10s
@@ -1554,9 +1544,8 @@ services:
       # UI (served by dfe-proxy on DFE_UI_PORT), not the HyperDX origin. Matches
       # the k8s hyperdx chart. next-runtime-env reads it per request.
       NEXT_PUBLIC_DFE_UI_BASE_URL: ${DFE_HYPERDX_APP_URL:-${DFE_EXTERNAL_ORIGIN:-http://localhost}}:${DFE_UI_PORT:-3000}
-      # HyperDX talks Mongo wire protocol to DocumentDB's gateway, over TLS checked
-      # against the minted CA and with a SCRAM-SHA-256 login.
-      MONGO_URI: mongodb://${HYPERDX_POSTGRES_USER:-hyperdx}:${HYPERDX_POSTGRES_PASSWORD:-hyperdx}@hyperdx-documentdb:10260/hyperdx?tls=true&tlsCAFile=/etc/dfe/documentdb-ca/ca.crt&authMechanism=SCRAM-SHA-256
+      # Mongo wire protocol to DocumentDB's gateway over TLS checked against the minted CA, with a SCRAM-SHA-256 login
+      MONGO_URI: mongodb://${HYPERDX_DOCUMENTDB_USER:-hyperdx}:${HYPERDX_DOCUMENTDB_PASSWORD:-hyperdx}@hyperdx-documentdb:10260/hyperdx?tls=true&tlsCAFile=/etc/dfe/documentdb-ca/ca.crt&authMechanism=SCRAM-SHA-256
       # Unset, HyperDX signs sessions with a key published upstream, so `make init`
       # generates one. Not a `:?` hard-fail -- see NEXTAUTH_SECRET.
       EXPRESS_SESSION_SECRET: ${HYPERDX_EXPRESS_SESSION_SECRET:-RUN-make-init-TO-GENERATE-A-REAL-SECRET}
@@ -1567,7 +1556,7 @@ services:
       NEXT_PUBLIC_THEME: ${HYPERDX_THEME:-dfe}
     volumes:
       - hyperdx-dashboards:/etc/hyperdx/dashboards:ro
-      # The CA alone, never the gateway's key beside it.
+      # The CA alone, never the gateway's key beside it
       - type: volume
         source: hyperdx-documentdb-tls
         target: /etc/dfe/documentdb-ca

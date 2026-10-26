@@ -466,9 +466,7 @@ nobody leaves enabled.
 
 The other outcomes are as informative as the PASS:
 
-- **FAIL on weak secrets** -- `DFE_UI_NEXTAUTH_SECRET`, `HYPERDX_POSTGRES_PASSWORD`,
-  `HYPERDX_EXPRESS_SESSION_SECRET` or `HYPERDX_TOKEN_ENCRYPTION_KEY` is still the
-  committed default. Run `make init`.
+- **FAIL on weak secrets**: `DFE_UI_NEXTAUTH_SECRET`, `HYPERDX_DOCUMENTDB_PASSWORD`, `HYPERDX_EXPRESS_SESSION_SECRET` or `HYPERDX_TOKEN_ENCRYPTION_KEY` is still the committed default. Run `make init`.
 - **FAIL, schema not converged** -- dfe-engine did not report its `schema` readiness check true within 300 seconds. `GET /api/v1/system/schema` on the engine names the object that failed.
 - **SKIP, schema convergence not checked** -- the engine names no `schema` check on `/readyz` and answers 404 on `/api/v1/system/schema`, which is every engine before v1.21.0. The rest of the run still asserts the rows land.
 - **FAIL, not ready** -- the profile declares an ingest component that never
