@@ -104,6 +104,8 @@ tests:
   # success and an unrelated API event are the near misses it must leave alone.
   - name: rules-and-hunts
     profile: slim-grpc
+    config_overrides:
+      dfe-receiver: tests/e2e/configs/receiver-e2e-org.yaml
     detection:
       where: "toString(_json.event_type) = 'login_failure' AND toString(_json.user_name) = 'root'"
       matching: tests/e2e/data/detection-matching.jsonl
@@ -114,6 +116,8 @@ tests:
   # console's form. Each filter alone lets a near miss through.
   - name: search-rule-hunt
     profile: slim-grpc
+    config_overrides:
+      dfe-receiver: tests/e2e/configs/receiver-e2e-org.yaml
     detection:
       matching: tests/e2e/data/detection-matching.jsonl
       other: tests/e2e/data/detection-other.jsonl

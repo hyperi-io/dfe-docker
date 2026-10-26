@@ -14,18 +14,21 @@ detection tables, and the verdict is driven through every way a hunt can be wron
 
 import json
 import re
-from pathlib import Path
 
 import pytest
+import yaml
 
 import _detection
-import post
-from _common import CONFIG_DIR, REPO_ROOT
+from _common import REPO_ROOT
 
 _E2E_TESTS = REPO_ROOT / "tests" / "e2e" / "e2e-tests.yaml"
 _E2E_SUITE = REPO_ROOT / "scripts" / "test_e2e.py"
-_RECEIVER_CONFIGS = sorted((CONFIG_DIR / "receiver").glob("*.yaml"))
-# test_e2e.py cannot be imported without PyYAML, so its org name is read as text.
+_DETECTION_TESTS = [
+    case
+    for case in yaml.safe_load(_E2E_TESTS.read_text(encoding="utf-8"))["tests"]
+    if "detection" in case
+]
+# test_e2e.py loads .env when imported, so its org name is read as text
 _DETECTION_CUSTOMER = re.compile(r'^DETECTION_CUSTOMER = "([^"]+)"$', re.MULTILINE)
 _RULE = "run-1-rules-and-hunts-rule"
 _LANDED = {
@@ -182,47 +185,20 @@ def test_every_event_names_its_tenant_in_the_field_the_loader_reads() -> None:
     assert {json.loads(body)["_org_id"] for _, body in bodies} == {"e2e"}
 
 
-def _top_level_block(text: str, key: str) -> list[str]:
-    """Return the stripped lines of one top-level YAML block, comments dropped."""
-    lines: list[str] = []
-    inside = False
-    for raw in text.splitlines():
-        line = raw.strip()
-        if not (line) or line.startswith("#"):
-            continue
-        if not (raw.startswith((" ", "\t"))):
-            inside = line == f"{key}:"
-        elif inside:
-            lines.append(line)
-    return lines
-
-
-def _http_orgs(text: str) -> set[str]:
-    """Return the orgs a receiver config binds its HTTP listener to."""
-    block = _top_level_block(text, "ingest_bindings")
-    if "http:" not in block:
-        return set()
-    after_http = block[block.index("http:") + 1 :]
-    orgs = next((line for line in after_http if line.startswith("orgs: [")), "")
-    return {org.strip() for org in orgs.removeprefix("orgs: [").rstrip("]").split(",")}
-
-
-@pytest.mark.parametrize("path", _RECEIVER_CONFIGS, ids=lambda path: path.name)
-def test_each_receiver_keeps_the_org_a_detection_event_names(path: Path) -> None:
+@pytest.mark.parametrize(
+    "case", _DETECTION_TESTS, ids=[case["name"] for case in _DETECTION_TESTS]
+)
+def test_each_detection_test_runs_a_receiver_that_keeps_its_org(case: dict) -> None:
     """Under `allow` a sender's `_org_id` survives only for an org its listener binds."""
-    text = path.read_text(encoding="utf-8")
+    path = REPO_ROOT / case["config_overrides"]["dfe-receiver"]
+    config = yaml.safe_load(path.read_text(encoding="utf-8"))
     customer = _DETECTION_CUSTOMER.search(_E2E_SUITE.read_text(encoding="utf-8"))
+    http_orgs = config["ingest_bindings"]["listeners"]["http"]["orgs"]
 
-    assert "source_org_id: allow" in _top_level_block(text, "routing")
+    assert config["routing"]["source_org_id"] == "allow"
     assert customer is not None
-    assert {"default", customer.group(1), post.HUNT_CUSTOMER} <= _http_orgs(text)
-
-
-def test_the_binding_reader_sees_an_unbound_listener() -> None:
-    text = "ingest_bindings:\n  listeners:\n    syslog:\n      orgs: [netops]\n"
-
-    assert _http_orgs(text) == set()
-    assert _http_orgs("routing:\n  source_org_id: allow\n") == set()
+    assert http_orgs[0] == "default"
+    assert customer.group(1) in http_orgs
 
 
 def test_the_org_request_makes_its_name_its_one_tenant_id() -> None:

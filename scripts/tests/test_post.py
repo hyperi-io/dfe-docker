@@ -875,7 +875,13 @@ def test_the_hunt_runs_for_an_org_it_makes_and_removes(
 def test_an_org_the_engine_holds_is_read_for_its_tenant_and_left_in_place(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    held = {"post": {"name": "post", "display_name": "Post", "org_ids": ["acme"]}}
+    held = {
+        post.HUNT_CUSTOMER: {
+            "name": post.HUNT_CUSTOMER,
+            "display_name": "Default",
+            "org_ids": ["acme"],
+        }
+    }
     stack = _hunt_stack(monkeypatch, detected=["matching-000"], orgs=held)
 
     assert _hunt_claim() == post.HELD
