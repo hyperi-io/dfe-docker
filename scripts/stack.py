@@ -94,6 +94,8 @@ from init import _create_dotenv  # noqa: E402
 # A rendered pin line: KEY=value[  # annotation]. Keys are UPPER_SNAKE ending in
 # _VERSION; only such active (non-comment) lines from the fragment are merged.
 _PIN_LINE = re.compile(r"^(?P<key>[A-Z][A-Z0-9_]*)=(?P<rest>.+)$")
+# make keeps the whitespace before an inline comment as part of the value, so no pin written to .env carries one
+_PIN_COMMENT = re.compile(r"\s+#")
 
 # Which stack the pins came from. `make modes` reports it and `VERSION ?=
 # $(DFE_STACK_VERSION)` defaults from it, so it rides in `.env` beside the pins
@@ -258,7 +260,7 @@ def _resolve_fragment(version: str) -> tuple[str, str]:
 
 
 def _parse_pins(fragment: str) -> dict[str, str]:
-    """Extract KEY -> full rendered line for every active ``*_VERSION`` pin line."""
+    """Extract KEY -> rendered line, its inline comment dropped, for every active ``*_VERSION`` pin line."""
     pins: dict[str, str] = {}
     for raw in fragment.splitlines():
         stripped = raw.strip()
@@ -270,7 +272,8 @@ def _parse_pins(fragment: str) -> dict[str, str]:
         key = match.group("key")
         if not key.endswith("_VERSION"):
             continue
-        pins[key] = f"{key}={match.group('rest').strip()}"
+        value = _PIN_COMMENT.split(match.group("rest"), maxsplit=1)[0].strip()
+        pins[key] = f"{key}={value}"
     return pins
 
 
@@ -286,8 +289,7 @@ def _refuse_undigested(pins: dict[str, str]) -> None:
         key
         for key, line in pins.items()
         # The stack marker is a version string, not an image reference.
-        if key != STACK_VERSION_KEY
-        and "@sha256:" not in line.split("=", 1)[1].split("  #", 1)[0]
+        if key != STACK_VERSION_KEY and "@sha256:" not in line.split("=", 1)[1]
     )
     if bare:
         raise StackError(
@@ -341,8 +343,17 @@ def _latest_image_pins(*, prereleases: str) -> dict[str, str]:
     for key, repo in sorted(_our_image_repos().items()):
         tag = latest_release(prereleases=prereleases, repo=sources[key])
         digest = resolve_digest(reference=f"{repo}:{tag}")
-        pins[key] = f"{key}={tag}@{digest}  # {repo}, newest release of {sources[key]}"
+        pins[key] = f"{key}={tag}@{digest}"
     return pins
+
+
+def _repin_notes() -> dict[str, str]:
+    """Return, per DFE image, the repo and release source `make stack` prints beside a repinned pin."""
+    sources = _our_release_repos()
+    return {
+        key: f"  # {repo}, newest release of {sources[key]}"
+        for key, repo in _our_image_repos().items()
+    }
 
 
 def _merge_into_env(env_text: str, pins: dict[str, str]) -> str:
@@ -403,11 +414,11 @@ def _dial_pin() -> str:
 
 
 def _pin_value(*, key: str, pins: dict[str, str]) -> str:
-    """Return the value one pin line sets without its annotation, refusing a missing or undigested pin."""
+    """Return the value one pin line sets, refusing a missing or undigested pin."""
     if key not in pins:
         raise StackError(f"the stack pins no {key!r}")
     _refuse_undigested(pins={key: pins[key]})
-    return pins[key].partition("=")[2].split("  #", maxsplit=1)[0].strip()
+    return pins[key].partition("=")[2].strip()
 
 
 def _stack_version(*, requested: str) -> str:
@@ -468,10 +479,7 @@ def main() -> int:
         # A discovered set records the WORD, so a re-run refreshes rather than
         # freezing on the stack that happened to be newest at the time.
         resolved = f"  # resolved {version}" + (" + newest DFE images" if repin else "")
-        marker = {
-            STACK_VERSION_KEY: f"{STACK_VERSION_KEY}={requested}"
-            + (resolved if discover else "")
-        }
+        marker = {STACK_VERSION_KEY: f"{STACK_VERSION_KEY}={requested}"}
         merged = _merge_into_env(
             DOTENV_FILE.read_text(encoding="utf-8", errors="replace"), pins | marker
         )
@@ -482,11 +490,12 @@ def main() -> int:
                 f"{_rel_path(path=DOTENV_FILE)} (source: {source})"
             )
         )
+        notes = _repin_notes() if repin else {}
         for key in pins:
-            _print(msg=f"  {pins[key]}")
+            _print(msg=f"  {pins[key]}{notes.get(key, '')}")
         stamped = marker[STACK_VERSION_KEY]
         _print(
-            msg=f"  {stamped}"
+            msg=f"  {stamped}{resolved}"
             if discover
             else f"  {stamped}  # the stack these came from"
         )
