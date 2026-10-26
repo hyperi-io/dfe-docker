@@ -24,5 +24,5 @@ services:
     environment:
       HOME: /tmp
     volumes:
-      - ${DFE_SRC_ROOT:?set DFE_SRC_ROOT to the directory holding your dfe-engine checkout (live mode builds and mounts local source)}/dfe-engine/config:${DFE_ENGINE_CONFIG_DIR:-/app/config}
-      - ${DFE_SRC_ROOT:?set DFE_SRC_ROOT to the directory holding your dfe-engine checkout (live mode builds and mounts local source)}/dfe-engine/schemas:${DFE_ENGINE_SCHEMAS_DIR:-/app/schemas}
+      - ${DFE_SRC_ROOT:?set DFE_SRC_ROOT to the directory holding your dfe-engine checkout (live mode builds and mounts local source)}/dfe-engine/config:/app/config
+      - ${DFE_SRC_ROOT:?set DFE_SRC_ROOT to the directory holding your dfe-engine checkout (live mode builds and mounts local source)}/dfe-engine/schemas:/app/schemas
