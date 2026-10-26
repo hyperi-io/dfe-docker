@@ -12,6 +12,7 @@
 # sudo: a polkit rule for starting the units, and share_checkout.py for the files.
 #
 #   DFE_OPERATOR_USER=ubuntu   add this login to the group (default: none)
+#   DFE_UPDATE_GROUP=ops       the sharing group (default: the service user's primary group)
 #   DFE_UPDATE_ENABLE_TIMER=0  install everything but leave the timer as it is
 #   DFE_UPDATE_SHARE_CHECKOUT=0  skip the checkout conversion
 set -euo pipefail
@@ -40,7 +41,7 @@ sed -e "s#__DFE_DOCKER_DIR__#${DFE_DOCKER_DIR}#g" \
     "${HERE}/dfe-docker-update.service" >"${UNIT_DIR}/dfe-docker-update.service"
 install -m 0644 "${HERE}/dfe-docker-update.timer" "${UNIT_DIR}/dfe-docker-update.timer"
 
-# The proof unit is not shipped here, but when the box has one its files need the same umask.
+# The proof unit is not shipped here, but when the box has one its files need the same umask
 if [[ -f "${UNIT_DIR}/dfe-docker-proof.service" ]]; then
   mkdir -p "${UNIT_DIR}/dfe-docker-proof.service.d"
   printf '[Service]\nUMask=0002\n' >"${UNIT_DIR}/dfe-docker-proof.service.d/20-shared-checkout.conf"

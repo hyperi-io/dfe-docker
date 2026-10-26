@@ -115,7 +115,7 @@ DOTENV_FILE = REPO_ROOT / ".env"
 # Owner and group read it (a daemon install shares it through the checkout's group); others never.
 # The per-service env/<service>.env files take the same mode.
 DOTENV_MODE = 0o640
-# The widest a shared checkout may grant: the daemon user and the operator both rewrite .env, so the group needs write too. Others never get a bit.
+# The widest a shared checkout may grant: the daemon user and the operator both rewrite .env, so the group needs write too and others never get a bit
 DOTENV_CEILING = 0o660
 DOTENV_TEMPLATE = REPO_ROOT / ".env.example"
 ENV_DIR = REPO_ROOT / "env"
@@ -201,8 +201,7 @@ def write_private(*, path: Path, text: str, mode: int = 0o600) -> None:
     """
     fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, mode)
     with os.fdopen(fd, "w", encoding="utf-8", newline="\n") as handle:
-        # O_CREAT's mode applies only to a new file, so an existing one is set here.
-        # Skipped when it already matches: chmod needs the owner, and a group member rewriting a shared file is not.
+        # O_CREAT's mode applies only to a new file, so an existing one is set here unless it already matches: chmod needs the owner, which a group member rewriting a shared file is not
         if stat.S_IMODE(os.fstat(fd).st_mode) != mode:
             os.fchmod(fd, mode)
         handle.write(text)
@@ -223,7 +222,7 @@ def write_dotenv(*, path: Path, text: str) -> None:
         mode = DOTENV_CEILING
     else:
         mode = DOTENV_MODE
-    write_private(path=path, text=text, mode=mode)
+    write_private(mode=mode, path=path, text=text)
 
 
 def _compose_env() -> dict[str, str]:
