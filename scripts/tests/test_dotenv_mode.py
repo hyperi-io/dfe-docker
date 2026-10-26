@@ -149,13 +149,13 @@ def test_a_new_dotenv_is_group_writable_only_in_a_setgid_checkout(
 
 
 def test_write_private_leaves_a_file_that_already_has_the_mode_alone(
-    tmp_path: Path, open_umask: None, chmod_watch
+    chmod_watch, open_umask: None, tmp_path: Path
 ) -> None:
     path = tmp_path / "secret"
     path.write_text("old\n", encoding="utf-8")
     path.chmod(0o660)
     chmod_watch.views.clear()
 
-    _common.write_private(path=path, text="new\n", mode=0o660)
+    _common.write_private(mode=0o660, path=path, text="new\n")
 
     assert chmod_watch.views == []

@@ -376,9 +376,7 @@ def _close_dotenv_to_others(*, dotenv_path: Path) -> None:
 def _copy_if_absent(*, dst_path: Path, src_path: Path) -> None:
     """Copy src_path to dst_path unless dst_path already exists - report the outcome.
 
-    The copy is written by write_dotenv rather than the template's mode: the
-    templates name cloud keys, client secrets and a broker password the operator
-    fills in.
+    The copy is written at write_dotenv's mode, not the template's: the templates name cloud keys, client secrets and a broker password the operator fills in.
     """
     if dst_path.exists():
         _print(header=_rel_path(path=dst_path), msg="Skipped (already exists)")

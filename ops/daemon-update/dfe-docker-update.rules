@@ -1,7 +1,4 @@
-// Installed by install.sh into /etc/polkit-1/rules.d/, with the group substituted.
-// Lets members of that group start, stop and restart the updater and the proof
-// unit with plain `systemctl`, no sudo. Nothing else changes: other units, enable,
-// disable and daemon-reload still ask for root.
+// Lets members of the group install.sh fills in start, stop and restart the updater and proof units without sudo, while other units, enable, disable and daemon-reload still ask for root
 polkit.addRule(function (action, subject) {
     if (action.id !== "org.freedesktop.systemd1.manage-units") {
         return polkit.Result.NOT_HANDLED;

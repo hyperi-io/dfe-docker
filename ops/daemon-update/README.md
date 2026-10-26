@@ -73,8 +73,8 @@ this flag.
 - `dfe-docker-update.service` - oneshot that runs the updater.
 - `dfe-docker-update.timer` - runs it 10 min after boot, then every 6h (jittered).
 - `dfe-docker-update.rules` - polkit rule: members of the service user's group start, stop and restart the update and proof units without sudo.
-- `share_checkout.py` - makes the checkout group-writable and setgid, keeps secrets closed to others, sets `core.sharedRepository group` and `safe.directory`, adds operators to the group. Idempotent, `--dry-run` lists changes.
-- `install.sh` - renders + installs the units and the polkit rule, shares the checkout, and enables the timer. `DFE_UPDATE_ENABLE_TIMER=0` leaves the timer alone, `DFE_OPERATOR_USER=<login>` adds a login to the group, `DFE_UPDATE_SHARE_CHECKOUT=0` skips the checkout conversion.
+- `share_checkout.py` - makes the checkout bar `certs/` group-writable and setgid, closes secrets to others, sets `core.sharedRepository group` and `safe.directory`, adds operators to the group. Idempotent, `--dry-run` lists changes.
+- `install.sh` - renders + installs the units and polkit rule, shares the checkout and enables the timer. `DFE_UPDATE_ENABLE_TIMER=0` leaves the timer alone, `DFE_OPERATOR_USER=<login>` adds a login to the group, `DFE_UPDATE_SHARE_CHECKOUT=0` skips the checkout conversion.
 
 ## Install (parked - run on the dfe-docker VM as root)
 
