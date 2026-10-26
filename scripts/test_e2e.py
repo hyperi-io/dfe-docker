@@ -151,9 +151,10 @@ EXTRA_COMPOSE_FILES_ENV_VAR = "DFE_E2E_COMPOSE_FILES"
 # ------------------------------------------------------------------------------
 SCHEMA_AUTHORITY_SERVICE = "dfe-engine"
 SCHEMA_AUTHORITY_PROFILE = "core"
-# Two-second attempts: the engine restores its accounts and reconciles ClickHouse
-# RBAC before it listens, which can outlast 90 seconds.
-ENGINE_READY_ATTEMPTS = 90
+# Two-second attempts, as long as the engine's compose start period: an engine that finds
+# a schema lease left by a removed one waits the lease out before it applies, and it does
+# not listen until it has.
+ENGINE_READY_ATTEMPTS = 270
 # resolve_profile.py's `core` footprint, less dfe-engine, which starts first.
 HUNT_RUNNER_SERVICE = "dfe-hunt-runner"
 CORE_SURFACE_SERVICES = [HUNT_RUNNER_SERVICE, "dfe-ui", "dfe-proxy"]
