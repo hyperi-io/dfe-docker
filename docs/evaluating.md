@@ -100,7 +100,7 @@ make demo DEMO_RATE=100        # replaces a running stream with a faster one
 make demo-stop                 # stops the stream; `make down` stops it too
 ```
 
-It creates the Sources in [`resources/demo/demo.yaml`](../resources/demo/demo.yaml) through the engine: a `demo-syslog` intake, and the tables `dfe.cisco-asa` and `dfe.fortinet`. It turns on dfe-receiver's syslog listener, UDP and TCP on port 514, and recreates what that changes. The FortiGate lines are dfe-transform-elastic's own test fixtures, and the ASA lines come from [`resources/demo/samples/`](../resources/demo/samples/). It returns as soon as every vendor table has gained rows, and the stream keeps running:
+It creates the Sources in [`resources/demo/demo.yaml`](../resources/demo/demo.yaml) through the engine: a `demo-syslog` intake, and the tables `dfe.cisco-asa` and `dfe.fortinet`. It turns on dfe-receiver's syslog listener, UDP and TCP on port 514, and recreates what that changes. Both vendors replay about 6,000 sample lines each from [`resources/demo/samples/`](../resources/demo/samples/), roughly ten minutes before a line repeats, and `python3 resources/demo/samples/generate.py` regenerates them. It returns as soon as every vendor table has gained rows, and the stream keeps running:
 
 ```text
 demo -   dfe.cisco-asa: +N rows
