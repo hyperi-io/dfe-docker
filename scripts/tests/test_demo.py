@@ -236,20 +236,29 @@ def test_a_sample_set_replaces_its_package_fixtures_and_leaves_the_rest(
     assert (fixtures / "cisco_asa" / "upstream.log").is_file()
 
 
-def test_the_committed_samples_are_varied_asa_lines_on_documentation_addresses() -> (
-    None
-):
+@pytest.mark.parametrize(
+    ("package", "prefix", "kind"),
+    [
+        pytest.param("cisco_asa", "%ASA-", re.compile(r"^%ASA-\d-(\d{6}):"), id="asa"),
+        pytest.param("fortinet", "date=", re.compile(r'action="(\w+)"'), id="fortinet"),
+    ],
+)
+def test_the_committed_samples_are_varied_lines_on_documentation_addresses(
+    package: str, prefix: str, kind: re.Pattern[str]
+) -> None:
     lines = (
-        (demo.SAMPLES_DIR / "cisco_asa" / "demo.log")
+        (demo.SAMPLES_DIR / package / "demo.log")
         .read_text(encoding="utf-8")
         .splitlines()
     )
-    ids = {line.split(":", 1)[0] for line in lines}
+    kinds = {found.group(1) for line in lines if (found := kind.search(line))}
     addresses = set(re.findall(r"\d+\.\d+\.\d+\.\d+", "\n".join(lines)))
 
-    assert len(lines) >= 300
-    assert all(line.startswith("%ASA-") for line in lines)
-    assert len(ids) >= 8
+    assert len(lines) >= 5000
+    assert len(set(lines)) >= 0.95 * len(lines)
+    assert all(line.startswith(prefix) for line in lines)
+    assert len(kinds) >= 4
+    assert len(addresses) >= 300
     assert all(
         address.startswith(("10.", "192.168.", "192.0.2.", "198.51.100.", "203.0.113."))
         for address in addresses
