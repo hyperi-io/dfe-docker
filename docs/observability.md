@@ -93,15 +93,13 @@ managed ClickHouse included. The `prometheus` receiver scrapes the collector's o
 `service.telemetry` endpoint on loopback, which is what puts queue depth and
 refused/failed counts (`otelcol_*`) into the same pipeline as everything else.
 
-Between them they are what the pre-canned DFE ClickHouse Health and DFE Pipeline
-Health dashboards read. Without them those dashboards render empty here while
-working on Kubernetes.
+`sql_query` and `prometheus` are what the pre-canned DFE ClickHouse Health and DFE Pipeline Health dashboards read. Without them those dashboards render empty here while working on Kubernetes.
 
 `/metrics` is a SEPARATE pathway, for anything that scrapes. This repo ships
 nothing that does. Enabling push does not disable it: a Prometheus estate and a
 HyperDX estate are both served.
 
-dfe-engine's Overview counts cores from the usage rollup dfe-schemas declares, and that rollup reads the Kubernetes shape. So the collector reports Compose in it:
+dfe-engine's Overview counts cores from the usage rollup dfe-schemas declares. That rollup reads the Kubernetes shape, so the collector reports Compose in it:
 
 | Reading | Where it comes from here | Table |
 |---|---|---|
@@ -111,9 +109,9 @@ dfe-engine's Overview counts cores from the usage rollup dfe-schemas declares, a
 
 All three carry `k8s.node.name`, the docker host's name, which joins a service's cores to its host's.
 
-- Compose carries CPU limits where Kubernetes counts requests, so a service counts its ceiling. Limits can add up to more than the host has, and then cores deployed reads higher than worker-node cores.
+- Compose carries CPU limits where Kubernetes counts requests, so a service counts its ceiling. When limits add up to more than the host has, cores deployed reads higher than worker-node cores.
 - A one-shot (`restart: "no"`) exits once its job is done and does not count. A service with no CPU limit (`DFE_SERVICE_CPUS=0`, say) counts every core on the host.
-- `make dev`, `ci`, `up` and `apply` read the limits from the compose model of what `up` starts and hand them to the collector as `DFE_USAGE_CPU_LIMITS` and `DFE_USAGE_NODE_NAME`. A collector started by a plain `docker compose up` has neither, so cores deployed reads as not measured. `make apply` recreates the collector when an added or deleted source moved them.
+- `make dev`, `ci`, `up`, `infra` and `apply` read the limits from the compose model of what `up` starts and hand them to the collector as `DFE_USAGE_CPU_LIMITS` and `DFE_USAGE_NODE_NAME`. A collector started by a plain `docker compose up` has neither, so cores deployed reads as not measured. `make apply` recreates the collector when an added or deleted source moved them.
 
 ## Turning self-monitoring on and off
 

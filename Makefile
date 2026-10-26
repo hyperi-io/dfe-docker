@@ -397,8 +397,8 @@ else ifneq ($(filter dev dev-build,$(MAKECMDGOALS)),)
 else ifeq ($(filter ci,$(MAKECMDGOALS)),)
     RESOLVE_LOCAL_ARGS = --local-overlay $(LOCAL_OVERLAY)
 endif
-# The goals that start or recreate services, the only ones that ask docker compose for the CPU limits the collector reports as cores deployed.
-USAGE_GOALS := dev ci up apply apply-services
+# The goals that start or recreate services, the only ones that ask docker compose for the CPU limits the collector reports as cores deployed
+USAGE_GOALS := dev ci up infra apply apply-services
 .tmp/profile.mk: FORCE
 	@python3 scripts/resolve_profile.py $(if $(KAFBAT_GATED),--unpublished kafbat) $(if $(HYPERDX_GATED),--unpublished hyperdx) $(RESOLVE_LOCAL_ARGS) $(if $(filter $(USAGE_GOALS),$(MAKECMDGOALS)),--usage)
 ifneq ($(PROXY_TLS_START),)
@@ -571,7 +571,7 @@ apply-services:
 ifneq ($(strip $(SERVICES)),)
 	docker compose $(APPLY_FLAGS) $(PROFILE_FLAGS) up -d --force-recreate --no-deps $(ACTIVE_SERVICES)
 endif
-# An added or removed instance moves the CPU limits the collector reports, and compose recreates it only when they did.
+# An added or removed instance moves the CPU limits the collector reports and compose recreates it only when they did
 ifeq ($(strip $(DFE_OTEL_RESOLVED)),true)
 	docker compose $(APPLY_FLAGS) $(PROFILE_FLAGS) up -d --no-deps otel-collector
 endif

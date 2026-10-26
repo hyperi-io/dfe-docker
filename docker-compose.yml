@@ -1181,7 +1181,7 @@ services:
       test: ["CMD", "curl", "-sf", "http://localhost:8000/readyz"]
       interval: 10s
       timeout: 3s
-      # A removed engine's schema lease (twice the 180 s bootstrap wait) plus a first start's table creation.
+      # A removed engine's schema lease (twice the 180 s bootstrap wait) plus a first start's table creation
       start_period: 540s
       retries: 5
 
@@ -1369,12 +1369,12 @@ services:
       CLICKHOUSE_PASSWORD: ${DFE_OTEL_WRITER_CLICKHOUSE_PASSWORD:-}
       DFE_OTEL_DATABASE: ${DFE_OTEL_DATABASE:-dfe}
       DFE_OTEL_COLLECTOR_LOG_LEVEL: ${DFE_OTEL_COLLECTOR_LOG_LEVEL:-warn}
-      # Resolved by `make` for the usage rollup (scripts/usage_cores.py), and cores deployed reads as not measured without them.
+      # Resolved by `make` for the usage rollup (scripts/usage_cores.py) and cores deployed reads as not measured without them
       DFE_USAGE_CPU_LIMITS: ${DFE_USAGE_CPU_LIMITS:-}
       DFE_USAGE_NODE_NAME: ${DFE_USAGE_NODE_NAME:-docker-host}
     volumes:
       - ./config/otel-collector/config.yaml:/etc/otelcol/config.yaml:ro
-      # host_metrics counts the docker host's CPUs through its /proc, the one host path the cpu scraper reads.
+      # host_metrics counts the docker host's CPUs through its /proc, the one host path the cpu scraper reads
       - /proc:/hostfs/proc:ro
     depends_on:
       clickhouse:
