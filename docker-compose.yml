@@ -812,9 +812,7 @@ services:
       - ./config/${DFE_RECEIVER_CONFIG:-receiver/kafka.yaml}:/etc/dfe-receiver/config.yaml:ro
       - dfe-app-config:/etc/dfe/apps:ro
       - dlq-spool:/var/spool/dfe
-      # The one directory of the engine's secrets the receiver reads: the bearer
-      # tokens the engine writes per listener, which each listener's file:
-      # secret_source names. A directory, so a rewrite reaches the running receiver.
+      # The bearer tokens the engine writes per listener, a directory so a rewrite reaches the running receiver
       - type: volume
         source: dfe-engine-config
         target: /var/run/secrets/dfe/ingest-bearer-tokens
