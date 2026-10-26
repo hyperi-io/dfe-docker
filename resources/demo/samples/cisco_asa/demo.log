@@ -1,0 +1,480 @@
+%ASA-4-106023: Deny tcp src outside:198.51.100.90/7651 dst inside:192.168.50.25/3389 by access-group "outside_access_in" [0x0, 0x0]
+%ASA-2-106001: Inbound TCP connection denied from 203.0.113.107/48777 to 192.168.60.11/53 flags SYN on interface outside
+%ASA-2-106006: Deny inbound UDP from 203.0.113.107/14171 to 192.168.50.25/123 on interface outside
+%ASA-6-302013: Built inbound TCP connection 260520 for outside:203.0.113.42/6772 (203.0.113.42/6772) to inside:192.168.50.20/993 (192.0.2.11/993)
+%ASA-6-302014: Teardown TCP connection 260520 for outside:203.0.113.42/6772 to inside:192.168.50.20/993 duration 0:42:13 bytes 279492 TCP FINs
+%ASA-4-106023: Deny udp src outside:203.0.113.172/6498 dst inside:192.168.60.25/123 by access-group "dmz_access_in" [0x0, 0x0]
+%ASA-6-113005: AAA user authentication Rejected : reason = AAA failure : server = 10.10.5.5 : user = judy : user IP = 10.10.30.54
+%ASA-4-106023: Deny udp src outside:203.0.113.237/29515 dst inside:192.168.60.11/123 by access-group "outside_access_in" [0x0, 0x0]
+%ASA-6-302013: Built inbound TCP connection 260780 for outside:203.0.113.16/41145 (203.0.113.16/41145) to inside:192.168.60.25/143 (192.0.2.11/143)
+%ASA-6-302014: Teardown TCP connection 260780 for outside:203.0.113.16/41145 to inside:192.168.60.25/143 duration 0:14:01 bytes 496291 TCP FINs
+%ASA-4-106023: Deny udp src outside:203.0.113.146/62563 dst inside:192.168.50.20/123 by access-group "inside_access_out" [0x0, 0x0]
+%ASA-2-106001: Inbound TCP connection denied from 203.0.113.224/26113 to 192.168.50.11/993 flags SYN on interface outside
+%ASA-4-106023: Deny udp src outside:203.0.113.29/23911 dst inside:192.168.60.10/500 by access-group "dmz_access_in" [0x0, 0x0]
+%ASA-2-106006: Deny inbound UDP from 203.0.113.133/34819 to 192.168.50.10/389 on interface outside
+%ASA-6-305011: Built dynamic TCP translation from inside:10.10.20.19/4885 to outside:192.0.2.12/4885
+%ASA-6-305012: Teardown dynamic TCP translation from inside:10.10.20.19/4885 to outside:192.0.2.12/4885 duration 0:14:04
+%ASA-6-113004: AAA user authentication Successful : server =  10.10.5.5 : user = grace
+%ASA-6-305011: Built dynamic TCP translation from inside:10.10.30.5/44186 to outside:192.0.2.10/44186
+%ASA-6-305012: Teardown dynamic TCP translation from inside:10.10.30.5/44186 to outside:192.0.2.10/44186 duration 1:10:14
+%ASA-2-106001: Inbound TCP connection denied from 198.51.100.2/12550 to 192.168.50.25/53 flags SYN on interface outside
+%ASA-6-305011: Built dynamic TCP translation from inside:10.10.20.12/41834 to outside:192.0.2.10/41834
+%ASA-6-305012: Teardown dynamic TCP translation from inside:10.10.20.12/41834 to outside:192.0.2.10/41834 duration 1:06:00
+%ASA-2-106006: Deny inbound UDP from 198.51.100.90/13305 to 192.168.60.25/389 on interface outside
+%ASA-6-302015: Built outbound UDP connection 261392 for outside:203.0.113.3/53 (203.0.113.3/53) to inside:10.10.30.19/32799 (192.0.2.11/32799)
+%ASA-6-302016: Teardown UDP connection 261392 for outside:203.0.113.3/53 to inside:10.10.30.19/32799 duration 0:00:00 bytes 218
+%ASA-6-302015: Built outbound UDP connection 261441 for outside:203.0.113.211/53 (203.0.113.211/53) to inside:10.10.20.12/11854 (192.0.2.10/11854)
+%ASA-6-302016: Teardown UDP connection 261441 for outside:203.0.113.211/53 to inside:10.10.20.12/11854 duration 0:00:00 bytes 870
+%ASA-6-302013: Built inbound TCP connection 261453 for outside:203.0.113.16/62959 (203.0.113.16/62959) to inside:192.168.60.20/80 (192.0.2.12/80)
+%ASA-6-302014: Teardown TCP connection 261453 for outside:203.0.113.16/62959 to inside:192.168.60.20/80 duration 0:44:20 bytes 186683 TCP FINs
+%ASA-4-106023: Deny tcp src outside:203.0.113.224/28649 dst inside:192.168.50.30/993 by access-group "dmz_access_in" [0x0, 0x0]
+%ASA-2-106006: Deny inbound UDP from 198.51.100.134/31843 to 192.168.60.10/8080 on interface outside
+%ASA-6-113005: AAA user authentication Rejected : reason = AAA failure : server = 10.10.5.5 : user = bob : user IP = 10.10.10.54
+%ASA-6-302015: Built outbound UDP connection 261573 for outside:198.51.100.156/53 (198.51.100.156/53) to inside:10.10.20.26/29338 (192.0.2.10/29338)
+%ASA-6-302016: Teardown UDP connection 261573 for outside:198.51.100.156/53 to inside:10.10.20.26/29338 duration 0:00:00 bytes 477
+%ASA-6-113005: AAA user authentication Rejected : reason = AAA failure : server = 10.10.5.5 : user = dave : user IP = 10.10.20.47
+%ASA-6-302013: Built inbound TCP connection 261686 for outside:198.51.100.244/64095 (198.51.100.244/64095) to inside:192.168.50.20/443 (192.0.2.12/443)
+%ASA-6-302014: Teardown TCP connection 261686 for outside:198.51.100.244/64095 to inside:192.168.50.20/443 duration 1:08:30 bytes 537885 TCP FINs
+%ASA-2-106001: Inbound TCP connection denied from 198.51.100.244/45067 to 192.168.60.25/8080 flags SYN on interface outside
+%ASA-6-113005: AAA user authentication Rejected : reason = AAA failure : server = 10.10.5.5 : user = bob : user IP = 10.10.40.54
+%ASA-4-106023: Deny tcp src outside:198.51.100.13/2213 dst inside:192.168.60.20/123 by access-group "inside_access_out" [0x0, 0x0]
+%ASA-6-305011: Built dynamic TCP translation from inside:10.10.10.12/64178 to outside:192.0.2.10/64178
+%ASA-6-305012: Teardown dynamic TCP translation from inside:10.10.10.12/64178 to outside:192.0.2.10/64178 duration 1:07:42
+%ASA-4-106023: Deny udp src outside:203.0.113.81/3089 dst inside:192.168.50.10/53 by access-group "dmz_access_in" [0x0, 0x0]
+%ASA-4-106023: Deny udp src outside:203.0.113.16/47576 dst inside:192.168.60.10/500 by access-group "outside_access_in" [0x0, 0x0]
+%ASA-2-106001: Inbound TCP connection denied from 203.0.113.68/36437 to 192.168.60.11/3306 flags SYN on interface outside
+%ASA-4-106023: Deny udp src outside:203.0.113.107/33803 dst inside:192.168.50.25/161 by access-group "outside_access_in" [0x0, 0x0]
+%ASA-6-113005: AAA user authentication Rejected : reason = AAA failure : server = 10.10.5.5 : user = dave : user IP = 10.10.30.54
+%ASA-6-302013: Built outbound TCP connection 262086 for outside:198.51.100.134/993 (198.51.100.134/993) to inside:10.10.40.12/16249 (192.0.2.12/16249)
+%ASA-6-302014: Teardown TCP connection 262086 for outside:198.51.100.134/993 to inside:10.10.40.12/16249 duration 0:29:50 bytes 53186 TCP Reset-O
+%ASA-6-113005: AAA user authentication Rejected : reason = AAA failure : server = 10.10.5.5 : user = alice : user IP = 10.10.40.12
+%ASA-4-106023: Deny tcp src outside:198.51.100.90/45674 dst inside:192.168.60.10/25 by access-group "inside_access_out" [0x0, 0x0]
+%ASA-6-302013: Built outbound TCP connection 262288 for outside:203.0.113.120/3389 (203.0.113.120/3389) to inside:10.10.10.19/7054 (192.0.2.12/7054)
+%ASA-6-302014: Teardown TCP connection 262288 for outside:203.0.113.120/3389 to inside:10.10.10.19/7054 duration 0:28:49 bytes 467627 TCP Reset-O
+%ASA-4-106023: Deny tcp src outside:198.51.100.178/40867 dst inside:192.168.60.30/8080 by access-group "dmz_access_in" [0x0, 0x0]
+%ASA-2-106001: Inbound TCP connection denied from 198.51.100.68/39301 to 192.168.50.30/143 flags SYN on interface outside
+%ASA-2-106006: Deny inbound UDP from 203.0.113.55/32201 to 192.168.50.10/443 on interface outside
+%ASA-6-113004: AAA user authentication Successful : server =  10.10.5.5 : user = alice
+%ASA-4-106023: Deny udp src outside:203.0.113.29/7844 dst inside:192.168.60.11/161 by access-group "dmz_access_in" [0x0, 0x0]
+%ASA-2-106001: Inbound TCP connection denied from 198.51.100.68/43826 to 192.168.60.10/445 flags SYN on interface outside
+%ASA-2-106001: Inbound TCP connection denied from 203.0.113.198/24176 to 192.168.60.11/3389 flags SYN on interface outside
+%ASA-6-302015: Built outbound UDP connection 262590 for outside:198.51.100.167/53 (198.51.100.167/53) to inside:10.10.10.54/7120 (192.0.2.12/7120)
+%ASA-6-302016: Teardown UDP connection 262590 for outside:198.51.100.167/53 to inside:10.10.10.54/7120 duration 0:00:00 bytes 75
+%ASA-6-302013: Built inbound TCP connection 262606 for outside:203.0.113.68/61566 (203.0.113.68/61566) to inside:192.168.50.10/443 (192.0.2.11/443)
+%ASA-6-302014: Teardown TCP connection 262606 for outside:203.0.113.68/61566 to inside:192.168.50.10/443 duration 1:39:12 bytes 390247 TCP FINs
+%ASA-6-302015: Built outbound UDP connection 262632 for outside:198.51.100.46/53 (198.51.100.46/53) to inside:10.10.30.5/30844 (192.0.2.12/30844)
+%ASA-6-302016: Teardown UDP connection 262632 for outside:198.51.100.46/53 to inside:10.10.30.5/30844 duration 0:00:00 bytes 504
+%ASA-6-302015: Built outbound UDP connection 262654 for outside:198.51.100.101/53 (198.51.100.101/53) to inside:10.10.30.54/6866 (192.0.2.10/6866)
+%ASA-6-302016: Teardown UDP connection 262654 for outside:198.51.100.101/53 to inside:10.10.30.54/6866 duration 0:00:00 bytes 173
+%ASA-2-106001: Inbound TCP connection denied from 198.51.100.24/11919 to 192.168.60.20/53 flags SYN on interface outside
+%ASA-2-106001: Inbound TCP connection denied from 203.0.113.224/9346 to 192.168.60.20/1433 flags SYN on interface outside
+%ASA-6-113004: AAA user authentication Successful : server =  10.10.5.5 : user = erin
+%ASA-2-106001: Inbound TCP connection denied from 198.51.100.2/40253 to 192.168.50.20/22 flags SYN on interface outside
+%ASA-4-106023: Deny tcp src outside:203.0.113.68/13732 dst inside:192.168.50.20/22 by access-group "inside_access_out" [0x0, 0x0]
+%ASA-6-302013: Built inbound TCP connection 262974 for outside:198.51.100.167/60708 (198.51.100.167/60708) to inside:192.168.60.25/123 (192.0.2.12/123)
+%ASA-6-302014: Teardown TCP connection 262974 for outside:198.51.100.167/60708 to inside:192.168.60.25/123 duration 1:15:41 bytes 790958 TCP FINs
+%ASA-2-106001: Inbound TCP connection denied from 203.0.113.159/8969 to 192.168.60.30/445 flags SYN on interface outside
+%ASA-6-113004: AAA user authentication Successful : server =  10.10.5.5 : user = frank
+%ASA-6-113004: AAA user authentication Successful : server =  10.10.5.5 : user = ivan
+%ASA-6-302015: Built outbound UDP connection 263126 for outside:198.51.100.156/53 (198.51.100.156/53) to inside:10.10.30.40/16488 (192.0.2.10/16488)
+%ASA-6-302016: Teardown UDP connection 263126 for outside:198.51.100.156/53 to inside:10.10.30.40/16488 duration 0:00:00 bytes 84
+%ASA-2-106001: Inbound TCP connection denied from 198.51.100.2/32038 to 192.168.50.10/445 flags SYN on interface outside
+%ASA-6-113005: AAA user authentication Rejected : reason = AAA failure : server = 10.10.5.5 : user = dave : user IP = 10.10.30.26
+%ASA-2-106001: Inbound TCP connection denied from 203.0.113.211/14268 to 192.168.60.11/389 flags SYN on interface outside
+%ASA-6-113004: AAA user authentication Successful : server =  10.10.5.5 : user = grace
+%ASA-6-302013: Built inbound TCP connection 263484 for outside:203.0.113.55/53098 (203.0.113.55/53098) to inside:192.168.60.30/389 (192.0.2.11/389)
+%ASA-6-302014: Teardown TCP connection 263484 for outside:203.0.113.55/53098 to inside:192.168.60.30/389 duration 1:59:46 bytes 427133 TCP FINs
+%ASA-6-305011: Built dynamic TCP translation from inside:10.10.20.26/2432 to outside:192.0.2.11/2432
+%ASA-6-305012: Teardown dynamic TCP translation from inside:10.10.20.26/2432 to outside:192.0.2.11/2432 duration 1:13:59
+%ASA-6-113005: AAA user authentication Rejected : reason = AAA failure : server = 10.10.5.5 : user = ivan : user IP = 10.10.20.5
+%ASA-6-113004: AAA user authentication Successful : server =  10.10.5.5 : user = dave
+%ASA-2-106006: Deny inbound UDP from 198.51.100.112/41957 to 192.168.60.10/25 on interface outside
+%ASA-2-106001: Inbound TCP connection denied from 203.0.113.237/5367 to 192.168.50.10/80 flags SYN on interface outside
+%ASA-6-302015: Built outbound UDP connection 263727 for outside:198.51.100.134/53 (198.51.100.134/53) to inside:10.10.10.5/12370 (192.0.2.10/12370)
+%ASA-6-302016: Teardown UDP connection 263727 for outside:198.51.100.134/53 to inside:10.10.10.5/12370 duration 0:00:00 bytes 628
+%ASA-2-106001: Inbound TCP connection denied from 198.51.100.233/22407 to 192.168.50.25/1433 flags SYN on interface outside
+%ASA-4-106023: Deny udp src outside:203.0.113.133/1631 dst inside:192.168.50.30/53 by access-group "dmz_access_in" [0x0, 0x0]
+%ASA-2-106006: Deny inbound UDP from 198.51.100.57/42133 to 192.168.50.20/110 on interface outside
+%ASA-4-106023: Deny udp src outside:198.51.100.222/52114 dst inside:192.168.60.25/123 by access-group "inside_access_out" [0x0, 0x0]
+%ASA-6-305011: Built dynamic TCP translation from inside:10.10.40.40/48103 to outside:192.0.2.11/48103
+%ASA-6-305012: Teardown dynamic TCP translation from inside:10.10.40.40/48103 to outside:192.0.2.11/48103 duration 1:18:27
+%ASA-2-106006: Deny inbound UDP from 203.0.113.224/57031 to 192.168.50.11/80 on interface outside
+%ASA-4-106023: Deny tcp src outside:203.0.113.94/54226 dst inside:192.168.60.25/1433 by access-group "inside_access_out" [0x0, 0x0]
+%ASA-6-113004: AAA user authentication Successful : server =  10.10.5.5 : user = judy
+%ASA-4-106023: Deny tcp src outside:198.51.100.156/14341 dst inside:192.168.50.20/3306 by access-group "outside_access_in" [0x0, 0x0]
+%ASA-6-113004: AAA user authentication Successful : server =  10.10.5.5 : user = grace
+%ASA-6-113004: AAA user authentication Successful : server =  10.10.5.5 : user = erin
+%ASA-6-113005: AAA user authentication Rejected : reason = AAA failure : server = 10.10.5.5 : user = dave : user IP = 10.10.10.26
+%ASA-6-305011: Built dynamic TCP translation from inside:10.10.20.12/46776 to outside:192.0.2.10/46776
+%ASA-6-305012: Teardown dynamic TCP translation from inside:10.10.20.12/46776 to outside:192.0.2.10/46776 duration 1:10:18
+%ASA-6-305011: Built dynamic TCP translation from inside:10.10.40.12/52236 to outside:192.0.2.10/52236
+%ASA-6-305012: Teardown dynamic TCP translation from inside:10.10.40.12/52236 to outside:192.0.2.10/52236 duration 1:44:46
+%ASA-2-106001: Inbound TCP connection denied from 203.0.113.198/45349 to 192.168.50.11/53 flags SYN on interface outside
+%ASA-6-302013: Built inbound TCP connection 264633 for outside:198.51.100.134/37024 (198.51.100.134/37024) to inside:192.168.50.20/80 (192.0.2.11/80)
+%ASA-6-302014: Teardown TCP connection 264633 for outside:198.51.100.134/37024 to inside:192.168.50.20/80 duration 1:26:16 bytes 469928 TCP FINs
+%ASA-2-106006: Deny inbound UDP from 198.51.100.101/20197 to 192.168.50.30/8443 on interface outside
+%ASA-2-106001: Inbound TCP connection denied from 198.51.100.24/21878 to 192.168.60.11/110 flags SYN on interface outside
+%ASA-4-106023: Deny udp src outside:198.51.100.167/3768 dst inside:192.168.60.25/161 by access-group "outside_access_in" [0x0, 0x0]
+%ASA-4-106023: Deny udp src outside:203.0.113.120/6297 dst inside:192.168.60.20/123 by access-group "outside_access_in" [0x0, 0x0]
+%ASA-2-106006: Deny inbound UDP from 203.0.113.237/29996 to 192.168.60.25/22 on interface outside
+%ASA-6-302013: Built inbound TCP connection 264861 for outside:198.51.100.68/12669 (198.51.100.68/12669) to inside:192.168.50.10/143 (192.0.2.10/143)
+%ASA-6-302014: Teardown TCP connection 264861 for outside:198.51.100.68/12669 to inside:192.168.50.10/143 duration 0:55:49 bytes 121795 TCP FINs
+%ASA-6-113004: AAA user authentication Successful : server =  10.10.5.5 : user = heidi
+%ASA-6-302013: Built inbound TCP connection 264941 for outside:203.0.113.94/11832 (203.0.113.94/11832) to inside:192.168.60.30/80 (192.0.2.11/80)
+%ASA-6-302014: Teardown TCP connection 264941 for outside:203.0.113.94/11832 to inside:192.168.60.30/80 duration 0:41:27 bytes 50406 TCP FINs
+%ASA-2-106001: Inbound TCP connection denied from 198.51.100.46/26559 to 192.168.60.20/143 flags SYN on interface outside
+%ASA-4-106023: Deny tcp src outside:198.51.100.167/11227 dst inside:192.168.60.25/22 by access-group "inside_access_out" [0x0, 0x0]
+%ASA-2-106001: Inbound TCP connection denied from 203.0.113.107/20820 to 192.168.60.11/389 flags SYN on interface outside
+%ASA-6-302013: Built outbound TCP connection 265059 for outside:203.0.113.172/3389 (203.0.113.172/3389) to inside:10.10.10.33/3187 (192.0.2.12/3187)
+%ASA-6-302014: Teardown TCP connection 265059 for outside:203.0.113.172/3389 to inside:10.10.10.33/3187 duration 0:25:59 bytes 387977 TCP Reset-O
+%ASA-6-113004: AAA user authentication Successful : server =  10.10.5.5 : user = ivan
+%ASA-4-106023: Deny udp src outside:198.51.100.90/16937 dst inside:192.168.50.30/123 by access-group "outside_access_in" [0x0, 0x0]
+%ASA-2-106001: Inbound TCP connection denied from 198.51.100.244/59449 to 192.168.50.30/8443 flags SYN on interface outside
+%ASA-6-113004: AAA user authentication Successful : server =  10.10.5.5 : user = frank
+%ASA-6-302013: Built inbound TCP connection 265275 for outside:198.51.100.189/31525 (198.51.100.189/31525) to inside:192.168.50.11/25 (192.0.2.11/25)
+%ASA-6-302014: Teardown TCP connection 265275 for outside:198.51.100.189/31525 to inside:192.168.50.11/25 duration 1:15:46 bytes 742034 TCP FINs
+%ASA-6-302013: Built inbound TCP connection 265293 for outside:203.0.113.159/12135 (203.0.113.159/12135) to inside:192.168.50.11/443 (192.0.2.11/443)
+%ASA-6-302014: Teardown TCP connection 265293 for outside:203.0.113.159/12135 to inside:192.168.50.11/443 duration 1:20:46 bytes 187675 TCP FINs
+%ASA-6-302015: Built outbound UDP connection 265335 for outside:198.51.100.167/53 (198.51.100.167/53) to inside:10.10.40.26/65375 (192.0.2.12/65375)
+%ASA-6-302016: Teardown UDP connection 265335 for outside:198.51.100.167/53 to inside:10.10.40.26/65375 duration 0:00:00 bytes 711
+%ASA-4-106023: Deny tcp src outside:203.0.113.107/2643 dst inside:192.168.60.30/123 by access-group "outside_access_in" [0x0, 0x0]
+%ASA-6-305011: Built dynamic TCP translation from inside:10.10.10.40/30962 to outside:192.0.2.10/30962
+%ASA-6-305012: Teardown dynamic TCP translation from inside:10.10.10.40/30962 to outside:192.0.2.10/30962 duration 0:39:04
+%ASA-6-305011: Built dynamic TCP translation from inside:10.10.10.47/46142 to outside:192.0.2.12/46142
+%ASA-6-305012: Teardown dynamic TCP translation from inside:10.10.10.47/46142 to outside:192.0.2.12/46142 duration 1:57:12
+%ASA-6-302015: Built outbound UDP connection 265437 for outside:198.51.100.101/53 (198.51.100.101/53) to inside:10.10.30.12/31709 (192.0.2.10/31709)
+%ASA-6-302016: Teardown UDP connection 265437 for outside:198.51.100.101/53 to inside:10.10.30.12/31709 duration 0:00:00 bytes 660
+%ASA-6-113005: AAA user authentication Rejected : reason = AAA failure : server = 10.10.5.5 : user = grace : user IP = 10.10.20.40
+%ASA-2-106006: Deny inbound UDP from 198.51.100.46/58315 to 192.168.50.10/123 on interface outside
+%ASA-4-106023: Deny udp src outside:198.51.100.13/37605 dst inside:192.168.60.25/53 by access-group "dmz_access_in" [0x0, 0x0]
+%ASA-2-106006: Deny inbound UDP from 198.51.100.24/31948 to 192.168.60.25/123 on interface outside
+%ASA-6-302013: Built outbound TCP connection 265673 for outside:203.0.113.42/110 (203.0.113.42/110) to inside:10.10.30.19/48496 (192.0.2.11/48496)
+%ASA-6-302014: Teardown TCP connection 265673 for outside:203.0.113.42/110 to inside:10.10.30.19/48496 duration 0:21:39 bytes 799532 TCP Reset-O
+%ASA-6-113004: AAA user authentication Successful : server =  10.10.5.5 : user = judy
+%ASA-2-106001: Inbound TCP connection denied from 198.51.100.123/17660 to 192.168.60.10/123 flags SYN on interface outside
+%ASA-6-113004: AAA user authentication Successful : server =  10.10.5.5 : user = ivan
+%ASA-6-113004: AAA user authentication Successful : server =  10.10.5.5 : user = heidi
+%ASA-6-302015: Built outbound UDP connection 265870 for outside:203.0.113.172/53 (203.0.113.172/53) to inside:10.10.10.54/30125 (192.0.2.10/30125)
+%ASA-6-302016: Teardown UDP connection 265870 for outside:203.0.113.172/53 to inside:10.10.10.54/30125 duration 0:00:00 bytes 546
+%ASA-6-113005: AAA user authentication Rejected : reason = AAA failure : server = 10.10.5.5 : user = ivan : user IP = 10.10.40.26
+%ASA-6-113005: AAA user authentication Rejected : reason = AAA failure : server = 10.10.5.5 : user = carol : user IP = 10.10.30.54
+%ASA-6-302013: Built outbound TCP connection 266018 for outside:198.51.100.123/389 (198.51.100.123/389) to inside:10.10.30.26/54310 (192.0.2.10/54310)
+%ASA-6-302014: Teardown TCP connection 266018 for outside:198.51.100.123/389 to inside:10.10.30.26/54310 duration 1:36:36 bytes 514170 TCP Reset-O
+%ASA-2-106001: Inbound TCP connection denied from 198.51.100.222/29440 to 192.168.50.20/110 flags SYN on interface outside
+%ASA-6-302013: Built outbound TCP connection 266128 for outside:203.0.113.81/110 (203.0.113.81/110) to inside:10.10.40.54/21994 (192.0.2.10/21994)
+%ASA-6-302014: Teardown TCP connection 266128 for outside:203.0.113.81/110 to inside:10.10.40.54/21994 duration 0:45:22 bytes 814754 TCP Reset-O
+%ASA-6-302013: Built outbound TCP connection 266149 for outside:198.51.100.13/3306 (198.51.100.13/3306) to inside:10.10.30.5/3229 (192.0.2.12/3229)
+%ASA-6-302014: Teardown TCP connection 266149 for outside:198.51.100.13/3306 to inside:10.10.30.5/3229 duration 1:41:12 bytes 116578 TCP Reset-O
+%ASA-6-113005: AAA user authentication Rejected : reason = AAA failure : server = 10.10.5.5 : user = bob : user IP = 10.10.30.5
+%ASA-6-305011: Built dynamic TCP translation from inside:10.10.20.33/42451 to outside:192.0.2.11/42451
+%ASA-6-305012: Teardown dynamic TCP translation from inside:10.10.20.33/42451 to outside:192.0.2.11/42451 duration 1:50:26
+%ASA-6-305011: Built dynamic TCP translation from inside:10.10.10.40/20900 to outside:192.0.2.12/20900
+%ASA-6-305012: Teardown dynamic TCP translation from inside:10.10.10.40/20900 to outside:192.0.2.12/20900 duration 0:40:26
+%ASA-6-302015: Built outbound UDP connection 266447 for outside:198.51.100.24/53 (198.51.100.24/53) to inside:10.10.10.12/57397 (192.0.2.12/57397)
+%ASA-6-302016: Teardown UDP connection 266447 for outside:198.51.100.24/53 to inside:10.10.10.12/57397 duration 0:00:00 bytes 609
+%ASA-4-106023: Deny tcp src outside:203.0.113.81/44880 dst inside:192.168.50.30/443 by access-group "dmz_access_in" [0x0, 0x0]
+%ASA-6-302013: Built outbound TCP connection 266559 for outside:198.51.100.13/389 (198.51.100.13/389) to inside:10.10.40.40/43525 (192.0.2.12/43525)
+%ASA-6-302014: Teardown TCP connection 266559 for outside:198.51.100.13/389 to inside:10.10.40.40/43525 duration 1:42:52 bytes 549450 TCP Reset-O
+%ASA-2-106006: Deny inbound UDP from 203.0.113.94/31223 to 192.168.60.11/1433 on interface outside
+%ASA-6-302013: Built outbound TCP connection 266700 for outside:198.51.100.123/1433 (198.51.100.123/1433) to inside:10.10.40.26/58660 (192.0.2.10/58660)
+%ASA-6-302014: Teardown TCP connection 266700 for outside:198.51.100.123/1433 to inside:10.10.40.26/58660 duration 1:00:30 bytes 21606 TCP Reset-O
+%ASA-6-305011: Built dynamic TCP translation from inside:10.10.30.19/56856 to outside:192.0.2.12/56856
+%ASA-6-305012: Teardown dynamic TCP translation from inside:10.10.30.19/56856 to outside:192.0.2.12/56856 duration 0:09:04
+%ASA-6-302013: Built inbound TCP connection 266731 for outside:198.51.100.178/40549 (198.51.100.178/40549) to inside:192.168.50.30/389 (192.0.2.10/389)
+%ASA-6-302014: Teardown TCP connection 266731 for outside:198.51.100.178/40549 to inside:192.168.50.30/389 duration 0:07:46 bytes 426750 TCP FINs
+%ASA-6-302015: Built outbound UDP connection 266793 for outside:203.0.113.120/53 (203.0.113.120/53) to inside:10.10.20.54/61694 (192.0.2.10/61694)
+%ASA-6-302016: Teardown UDP connection 266793 for outside:203.0.113.120/53 to inside:10.10.20.54/61694 duration 0:00:00 bytes 671
+%ASA-2-106001: Inbound TCP connection denied from 198.51.100.200/17358 to 192.168.50.30/110 flags SYN on interface outside
+%ASA-6-302015: Built outbound UDP connection 266909 for outside:198.51.100.46/53 (198.51.100.46/53) to inside:10.10.40.54/46084 (192.0.2.11/46084)
+%ASA-6-302016: Teardown UDP connection 266909 for outside:198.51.100.46/53 to inside:10.10.40.54/46084 duration 0:00:00 bytes 448
+%ASA-6-302015: Built outbound UDP connection 266958 for outside:203.0.113.3/53 (203.0.113.3/53) to inside:10.10.40.5/55615 (192.0.2.10/55615)
+%ASA-6-302016: Teardown UDP connection 266958 for outside:203.0.113.3/53 to inside:10.10.40.5/55615 duration 0:00:00 bytes 773
+%ASA-2-106006: Deny inbound UDP from 198.51.100.134/28750 to 192.168.60.11/8443 on interface outside
+%ASA-4-106023: Deny tcp src outside:198.51.100.200/41333 dst inside:192.168.50.11/3306 by access-group "inside_access_out" [0x0, 0x0]
+%ASA-6-113004: AAA user authentication Successful : server =  10.10.5.5 : user = erin
+%ASA-6-302015: Built outbound UDP connection 267192 for outside:198.51.100.156/53 (198.51.100.156/53) to inside:10.10.10.19/20602 (192.0.2.12/20602)
+%ASA-6-302016: Teardown UDP connection 267192 for outside:198.51.100.156/53 to inside:10.10.10.19/20602 duration 0:00:00 bytes 707
+%ASA-6-302013: Built inbound TCP connection 267206 for outside:198.51.100.178/6735 (198.51.100.178/6735) to inside:192.168.50.30/443 (192.0.2.12/443)
+%ASA-6-302014: Teardown TCP connection 267206 for outside:198.51.100.178/6735 to inside:192.168.50.30/443 duration 0:11:32 bytes 231971 TCP FINs
+%ASA-6-302015: Built outbound UDP connection 267258 for outside:198.51.100.156/53 (198.51.100.156/53) to inside:10.10.10.19/43897 (192.0.2.11/43897)
+%ASA-6-302016: Teardown UDP connection 267258 for outside:198.51.100.156/53 to inside:10.10.10.19/43897 duration 0:00:00 bytes 312
+%ASA-2-106006: Deny inbound UDP from 198.51.100.79/61958 to 192.168.60.30/445 on interface outside
+%ASA-4-106023: Deny udp src outside:203.0.113.81/53642 dst inside:192.168.50.11/500 by access-group "dmz_access_in" [0x0, 0x0]
+%ASA-2-106001: Inbound TCP connection denied from 203.0.113.133/24966 to 192.168.50.30/993 flags SYN on interface outside
+%ASA-4-106023: Deny tcp src outside:198.51.100.222/42610 dst inside:192.168.50.25/8080 by access-group "outside_access_in" [0x0, 0x0]
+%ASA-6-302013: Built inbound TCP connection 267495 for outside:198.51.100.178/39596 (198.51.100.178/39596) to inside:192.168.60.25/1433 (192.0.2.10/1433)
+%ASA-6-302014: Teardown TCP connection 267495 for outside:198.51.100.178/39596 to inside:192.168.60.25/1433 duration 0:22:17 bytes 131239 TCP FINs
+%ASA-6-113004: AAA user authentication Successful : server =  10.10.5.5 : user = heidi
+%ASA-6-302013: Built outbound TCP connection 267585 for outside:203.0.113.172/993 (203.0.113.172/993) to inside:10.10.20.47/55056 (192.0.2.12/55056)
+%ASA-6-302014: Teardown TCP connection 267585 for outside:203.0.113.172/993 to inside:10.10.20.47/55056 duration 0:43:59 bytes 584569 TCP Reset-O
+%ASA-2-106006: Deny inbound UDP from 198.51.100.167/25082 to 192.168.60.20/389 on interface outside
+%ASA-2-106006: Deny inbound UDP from 198.51.100.178/52846 to 192.168.50.11/110 on interface outside
+%ASA-2-106001: Inbound TCP connection denied from 198.51.100.24/59638 to 192.168.60.10/443 flags SYN on interface outside
+%ASA-2-106001: Inbound TCP connection denied from 203.0.113.68/45178 to 192.168.60.11/445 flags SYN on interface outside
+%ASA-6-302015: Built outbound UDP connection 267764 for outside:203.0.113.94/53 (203.0.113.94/53) to inside:10.10.30.40/18890 (192.0.2.11/18890)
+%ASA-6-302016: Teardown UDP connection 267764 for outside:203.0.113.94/53 to inside:10.10.30.40/18890 duration 0:00:00 bytes 126
+%ASA-4-106023: Deny tcp src outside:203.0.113.224/28513 dst inside:192.168.60.11/993 by access-group "inside_access_out" [0x0, 0x0]
+%ASA-6-305011: Built dynamic TCP translation from inside:10.10.20.12/61105 to outside:192.0.2.11/61105
+%ASA-6-305012: Teardown dynamic TCP translation from inside:10.10.20.12/61105 to outside:192.0.2.11/61105 duration 0:31:40
+%ASA-4-106023: Deny tcp src outside:203.0.113.29/53381 dst inside:192.168.50.30/8443 by access-group "dmz_access_in" [0x0, 0x0]
+%ASA-6-302013: Built outbound TCP connection 267982 for outside:198.51.100.244/53 (198.51.100.244/53) to inside:10.10.40.47/64369 (192.0.2.11/64369)
+%ASA-6-302014: Teardown TCP connection 267982 for outside:198.51.100.244/53 to inside:10.10.40.47/64369 duration 0:56:10 bytes 205653 TCP Reset-O
+%ASA-6-302013: Built inbound TCP connection 267985 for outside:203.0.113.120/41716 (203.0.113.120/41716) to inside:192.168.50.10/3306 (192.0.2.10/3306)
+%ASA-6-302014: Teardown TCP connection 267985 for outside:203.0.113.120/41716 to inside:192.168.50.10/3306 duration 0:09:24 bytes 118039 TCP FINs
+%ASA-6-113005: AAA user authentication Rejected : reason = AAA failure : server = 10.10.5.5 : user = dave : user IP = 10.10.30.26
+%ASA-4-106023: Deny tcp src outside:203.0.113.107/63926 dst inside:192.168.60.20/25 by access-group "inside_access_out" [0x0, 0x0]
+%ASA-2-106001: Inbound TCP connection denied from 203.0.113.146/46534 to 192.168.60.25/993 flags SYN on interface outside
+%ASA-6-113004: AAA user authentication Successful : server =  10.10.5.5 : user = judy
+%ASA-2-106001: Inbound TCP connection denied from 198.51.100.101/60412 to 192.168.60.20/123 flags SYN on interface outside
+%ASA-6-113004: AAA user authentication Successful : server =  10.10.5.5 : user = alice
+%ASA-4-106023: Deny udp src outside:198.51.100.200/4686 dst inside:192.168.60.20/123 by access-group "inside_access_out" [0x0, 0x0]
+%ASA-2-106006: Deny inbound UDP from 198.51.100.211/50349 to 192.168.50.11/123 on interface outside
+%ASA-6-302013: Built inbound TCP connection 268597 for outside:198.51.100.200/20169 (198.51.100.200/20169) to inside:192.168.60.20/993 (192.0.2.11/993)
+%ASA-6-302014: Teardown TCP connection 268597 for outside:198.51.100.200/20169 to inside:192.168.60.20/993 duration 1:31:37 bytes 167373 TCP FINs
+%ASA-6-305011: Built dynamic TCP translation from inside:10.10.40.12/51360 to outside:192.0.2.10/51360
+%ASA-6-305012: Teardown dynamic TCP translation from inside:10.10.40.12/51360 to outside:192.0.2.10/51360 duration 1:23:03
+%ASA-6-305011: Built dynamic TCP translation from inside:10.10.30.5/33016 to outside:192.0.2.10/33016
+%ASA-6-305012: Teardown dynamic TCP translation from inside:10.10.30.5/33016 to outside:192.0.2.10/33016 duration 0:14:46
+%ASA-6-302015: Built outbound UDP connection 268753 for outside:198.51.100.68/53 (198.51.100.68/53) to inside:10.10.30.47/50851 (192.0.2.10/50851)
+%ASA-6-302016: Teardown UDP connection 268753 for outside:198.51.100.68/53 to inside:10.10.30.47/50851 duration 0:00:00 bytes 179
+%ASA-2-106001: Inbound TCP connection denied from 203.0.113.107/26416 to 192.168.50.10/8080 flags SYN on interface outside
+%ASA-2-106001: Inbound TCP connection denied from 203.0.113.3/62279 to 192.168.50.11/8080 flags SYN on interface outside
+%ASA-6-302013: Built outbound TCP connection 268899 for outside:203.0.113.94/3389 (203.0.113.94/3389) to inside:10.10.20.5/47014 (192.0.2.11/47014)
+%ASA-6-302014: Teardown TCP connection 268899 for outside:203.0.113.94/3389 to inside:10.10.20.5/47014 duration 0:04:45 bytes 825786 TCP Reset-O
+%ASA-2-106006: Deny inbound UDP from 203.0.113.237/59894 to 192.168.50.11/8080 on interface outside
+%ASA-4-106023: Deny udp src outside:203.0.113.3/25887 dst inside:192.168.50.10/161 by access-group "inside_access_out" [0x0, 0x0]
+%ASA-2-106006: Deny inbound UDP from 198.51.100.90/48993 to 192.168.60.20/80 on interface outside
+%ASA-6-302013: Built outbound TCP connection 269054 for outside:203.0.113.120/8443 (203.0.113.120/8443) to inside:10.10.10.5/39744 (192.0.2.12/39744)
+%ASA-6-302014: Teardown TCP connection 269054 for outside:203.0.113.120/8443 to inside:10.10.10.5/39744 duration 1:14:14 bytes 585643 TCP Reset-O
+%ASA-6-302013: Built inbound TCP connection 269093 for outside:203.0.113.42/41385 (203.0.113.42/41385) to inside:192.168.50.11/110 (192.0.2.10/110)
+%ASA-6-302014: Teardown TCP connection 269093 for outside:203.0.113.42/41385 to inside:192.168.50.11/110 duration 1:22:39 bytes 701299 TCP FINs
+%ASA-2-106006: Deny inbound UDP from 203.0.113.42/46341 to 192.168.60.10/143 on interface outside
+%ASA-4-106023: Deny udp src outside:203.0.113.81/24361 dst inside:192.168.50.30/500 by access-group "inside_access_out" [0x0, 0x0]
+%ASA-6-305011: Built dynamic TCP translation from inside:10.10.40.5/42995 to outside:192.0.2.11/42995
+%ASA-6-305012: Teardown dynamic TCP translation from inside:10.10.40.5/42995 to outside:192.0.2.11/42995 duration 0:36:49
+%ASA-6-305011: Built dynamic TCP translation from inside:10.10.40.5/64156 to outside:192.0.2.10/64156
+%ASA-6-305012: Teardown dynamic TCP translation from inside:10.10.40.5/64156 to outside:192.0.2.10/64156 duration 0:07:28
+%ASA-6-305011: Built dynamic TCP translation from inside:10.10.30.5/65307 to outside:192.0.2.12/65307
+%ASA-6-305012: Teardown dynamic TCP translation from inside:10.10.30.5/65307 to outside:192.0.2.12/65307 duration 0:14:42
+%ASA-4-106023: Deny tcp src outside:198.51.100.222/16643 dst inside:192.168.60.20/143 by access-group "inside_access_out" [0x0, 0x0]
+%ASA-4-106023: Deny tcp src outside:198.51.100.211/32034 dst inside:192.168.60.20/25 by access-group "outside_access_in" [0x0, 0x0]
+%ASA-2-106006: Deny inbound UDP from 198.51.100.46/45300 to 192.168.50.10/25 on interface outside
+%ASA-4-106023: Deny udp src outside:198.51.100.90/65333 dst inside:192.168.60.25/161 by access-group "dmz_access_in" [0x0, 0x0]
+%ASA-6-302013: Built inbound TCP connection 269672 for outside:198.51.100.101/43463 (198.51.100.101/43463) to inside:192.168.60.30/22 (192.0.2.12/22)
+%ASA-6-302014: Teardown TCP connection 269672 for outside:198.51.100.101/43463 to inside:192.168.60.30/22 duration 0:25:59 bytes 44744 TCP FINs
+%ASA-6-302013: Built inbound TCP connection 269760 for outside:198.51.100.167/52563 (198.51.100.167/52563) to inside:192.168.50.11/80 (192.0.2.12/80)
+%ASA-6-302014: Teardown TCP connection 269760 for outside:198.51.100.167/52563 to inside:192.168.50.11/80 duration 1:13:29 bytes 61488 TCP FINs
+%ASA-6-302013: Built inbound TCP connection 269769 for outside:198.51.100.189/2070 (198.51.100.189/2070) to inside:192.168.50.10/1433 (192.0.2.12/1433)
+%ASA-6-302014: Teardown TCP connection 269769 for outside:198.51.100.189/2070 to inside:192.168.50.10/1433 duration 0:15:30 bytes 134832 TCP FINs
+%ASA-6-302015: Built outbound UDP connection 269850 for outside:198.51.100.13/53 (198.51.100.13/53) to inside:10.10.10.26/12872 (192.0.2.12/12872)
+%ASA-6-302016: Teardown UDP connection 269850 for outside:198.51.100.13/53 to inside:10.10.10.26/12872 duration 0:00:00 bytes 584
+%ASA-2-106001: Inbound TCP connection denied from 198.51.100.244/62218 to 192.168.60.11/25 flags SYN on interface outside
+%ASA-6-302013: Built inbound TCP connection 269968 for outside:198.51.100.112/35392 (198.51.100.112/35392) to inside:192.168.50.10/445 (192.0.2.11/445)
+%ASA-6-302014: Teardown TCP connection 269968 for outside:198.51.100.112/35392 to inside:192.168.50.10/445 duration 1:33:02 bytes 328200 TCP FINs
+%ASA-6-302013: Built outbound TCP connection 269995 for outside:203.0.113.107/123 (203.0.113.107/123) to inside:10.10.40.5/33725 (192.0.2.11/33725)
+%ASA-6-302014: Teardown TCP connection 269995 for outside:203.0.113.107/123 to inside:10.10.40.5/33725 duration 0:45:01 bytes 151437 TCP Reset-O
+%ASA-2-106001: Inbound TCP connection denied from 203.0.113.29/18490 to 192.168.50.11/443 flags SYN on interface outside
+%ASA-6-302015: Built outbound UDP connection 270059 for outside:198.51.100.123/53 (198.51.100.123/53) to inside:10.10.30.47/23294 (192.0.2.10/23294)
+%ASA-6-302016: Teardown UDP connection 270059 for outside:198.51.100.123/53 to inside:10.10.30.47/23294 duration 0:00:00 bytes 769
+%ASA-6-302013: Built outbound TCP connection 270116 for outside:198.51.100.134/993 (198.51.100.134/993) to inside:10.10.40.40/37654 (192.0.2.12/37654)
+%ASA-6-302014: Teardown TCP connection 270116 for outside:198.51.100.134/993 to inside:10.10.40.40/37654 duration 1:46:20 bytes 545938 TCP Reset-O
+%ASA-6-305011: Built dynamic TCP translation from inside:10.10.20.12/44354 to outside:192.0.2.10/44354
+%ASA-6-305012: Teardown dynamic TCP translation from inside:10.10.20.12/44354 to outside:192.0.2.10/44354 duration 0:33:17
+%ASA-6-302015: Built outbound UDP connection 270232 for outside:203.0.113.42/53 (203.0.113.42/53) to inside:10.10.20.54/15347 (192.0.2.12/15347)
+%ASA-6-302016: Teardown UDP connection 270232 for outside:203.0.113.42/53 to inside:10.10.20.54/15347 duration 0:00:00 bytes 158
+%ASA-6-302013: Built outbound TCP connection 270258 for outside:198.51.100.57/443 (198.51.100.57/443) to inside:10.10.20.5/48038 (192.0.2.12/48038)
+%ASA-6-302014: Teardown TCP connection 270258 for outside:198.51.100.57/443 to inside:10.10.20.5/48038 duration 1:48:59 bytes 526167 TCP Reset-O
+%ASA-6-302015: Built outbound UDP connection 270276 for outside:198.51.100.178/53 (198.51.100.178/53) to inside:10.10.20.12/38703 (192.0.2.10/38703)
+%ASA-6-302016: Teardown UDP connection 270276 for outside:198.51.100.178/53 to inside:10.10.20.12/38703 duration 0:00:00 bytes 533
+%ASA-6-305011: Built dynamic TCP translation from inside:10.10.20.26/14442 to outside:192.0.2.12/14442
+%ASA-6-305012: Teardown dynamic TCP translation from inside:10.10.20.26/14442 to outside:192.0.2.12/14442 duration 0:47:29
+%ASA-6-305011: Built dynamic TCP translation from inside:10.10.20.19/34685 to outside:192.0.2.12/34685
+%ASA-6-305012: Teardown dynamic TCP translation from inside:10.10.20.19/34685 to outside:192.0.2.12/34685 duration 1:29:29
+%ASA-4-106023: Deny tcp src outside:198.51.100.211/14692 dst inside:192.168.60.11/110 by access-group "outside_access_in" [0x0, 0x0]
+%ASA-6-302013: Built inbound TCP connection 270453 for outside:203.0.113.94/62741 (203.0.113.94/62741) to inside:192.168.60.25/80 (192.0.2.10/80)
+%ASA-6-302014: Teardown TCP connection 270453 for outside:203.0.113.94/62741 to inside:192.168.60.25/80 duration 1:50:29 bytes 155439 TCP FINs
+%ASA-4-106023: Deny tcp src outside:198.51.100.156/20886 dst inside:192.168.50.25/389 by access-group "dmz_access_in" [0x0, 0x0]
+%ASA-6-302013: Built inbound TCP connection 270546 for outside:198.51.100.211/55593 (198.51.100.211/55593) to inside:192.168.50.20/3389 (192.0.2.10/3389)
+%ASA-6-302014: Teardown TCP connection 270546 for outside:198.51.100.211/55593 to inside:192.168.50.20/3389 duration 1:48:45 bytes 701041 TCP FINs
+%ASA-6-113004: AAA user authentication Successful : server =  10.10.5.5 : user = frank
+%ASA-6-302013: Built inbound TCP connection 270698 for outside:203.0.113.237/36273 (203.0.113.237/36273) to inside:192.168.50.10/22 (192.0.2.12/22)
+%ASA-6-302014: Teardown TCP connection 270698 for outside:203.0.113.237/36273 to inside:192.168.50.10/22 duration 1:03:58 bytes 769953 TCP FINs
+%ASA-6-113005: AAA user authentication Rejected : reason = AAA failure : server = 10.10.5.5 : user = frank : user IP = 10.10.20.47
+%ASA-6-302015: Built outbound UDP connection 270801 for outside:198.51.100.2/53 (198.51.100.2/53) to inside:10.10.10.19/23930 (192.0.2.10/23930)
+%ASA-6-302016: Teardown UDP connection 270801 for outside:198.51.100.2/53 to inside:10.10.10.19/23930 duration 0:00:00 bytes 324
+%ASA-4-106023: Deny udp src outside:203.0.113.198/60079 dst inside:192.168.50.11/123 by access-group "inside_access_out" [0x0, 0x0]
+%ASA-2-106001: Inbound TCP connection denied from 198.51.100.2/26011 to 192.168.50.30/443 flags SYN on interface outside
+%ASA-6-302013: Built outbound TCP connection 270911 for outside:203.0.113.42/110 (203.0.113.42/110) to inside:10.10.10.54/50161 (192.0.2.11/50161)
+%ASA-6-302014: Teardown TCP connection 270911 for outside:203.0.113.42/110 to inside:10.10.10.54/50161 duration 1:23:40 bytes 397069 TCP Reset-O
+%ASA-4-106023: Deny tcp src outside:203.0.113.185/49119 dst inside:192.168.50.25/389 by access-group "outside_access_in" [0x0, 0x0]
+%ASA-4-106023: Deny tcp src outside:198.51.100.211/11317 dst inside:192.168.60.30/8443 by access-group "inside_access_out" [0x0, 0x0]
+%ASA-6-302013: Built inbound TCP connection 271034 for outside:198.51.100.46/35709 (198.51.100.46/35709) to inside:192.168.50.25/445 (192.0.2.11/445)
+%ASA-6-302014: Teardown TCP connection 271034 for outside:198.51.100.46/35709 to inside:192.168.50.25/445 duration 1:01:26 bytes 184810 TCP FINs
+%ASA-6-305011: Built dynamic TCP translation from inside:10.10.40.5/23917 to outside:192.0.2.10/23917
+%ASA-6-305012: Teardown dynamic TCP translation from inside:10.10.40.5/23917 to outside:192.0.2.10/23917 duration 1:23:30
+%ASA-6-302013: Built outbound TCP connection 271111 for outside:198.51.100.57/53 (198.51.100.57/53) to inside:10.10.10.26/8348 (192.0.2.12/8348)
+%ASA-6-302014: Teardown TCP connection 271111 for outside:198.51.100.57/53 to inside:10.10.10.26/8348 duration 0:07:45 bytes 644240 TCP Reset-O
+%ASA-4-106023: Deny udp src outside:198.51.100.123/12218 dst inside:192.168.60.30/123 by access-group "dmz_access_in" [0x0, 0x0]
+%ASA-6-302013: Built outbound TCP connection 271263 for outside:203.0.113.29/445 (203.0.113.29/445) to inside:10.10.30.47/33469 (192.0.2.11/33469)
+%ASA-6-302014: Teardown TCP connection 271263 for outside:203.0.113.29/445 to inside:10.10.30.47/33469 duration 1:04:56 bytes 762753 TCP Reset-O
+%ASA-6-113005: AAA user authentication Rejected : reason = AAA failure : server = 10.10.5.5 : user = heidi : user IP = 10.10.40.40
+%ASA-4-106023: Deny tcp src outside:198.51.100.178/44375 dst inside:192.168.60.20/993 by access-group "dmz_access_in" [0x0, 0x0]
+%ASA-6-302015: Built outbound UDP connection 271403 for outside:198.51.100.178/53 (198.51.100.178/53) to inside:10.10.10.40/34984 (192.0.2.12/34984)
+%ASA-6-302016: Teardown UDP connection 271403 for outside:198.51.100.178/53 to inside:10.10.10.40/34984 duration 0:00:00 bytes 810
+%ASA-6-302013: Built inbound TCP connection 271405 for outside:198.51.100.156/53178 (198.51.100.156/53178) to inside:192.168.60.11/22 (192.0.2.12/22)
+%ASA-6-302014: Teardown TCP connection 271405 for outside:198.51.100.156/53178 to inside:192.168.60.11/22 duration 1:18:54 bytes 142135 TCP FINs
+%ASA-2-106006: Deny inbound UDP from 198.51.100.211/22682 to 192.168.60.11/389 on interface outside
+%ASA-4-106023: Deny udp src outside:203.0.113.42/64718 dst inside:192.168.60.10/53 by access-group "dmz_access_in" [0x0, 0x0]
+%ASA-4-106023: Deny tcp src outside:203.0.113.107/20818 dst inside:192.168.50.11/22 by access-group "dmz_access_in" [0x0, 0x0]
+%ASA-2-106001: Inbound TCP connection denied from 203.0.113.237/29570 to 192.168.50.11/1433 flags SYN on interface outside
+%ASA-2-106001: Inbound TCP connection denied from 198.51.100.46/40465 to 192.168.60.20/110 flags SYN on interface outside
+%ASA-2-106006: Deny inbound UDP from 203.0.113.55/3903 to 192.168.60.11/445 on interface outside
+%ASA-6-302013: Built inbound TCP connection 271811 for outside:198.51.100.167/1207 (198.51.100.167/1207) to inside:192.168.60.25/22 (192.0.2.12/22)
+%ASA-6-302014: Teardown TCP connection 271811 for outside:198.51.100.167/1207 to inside:192.168.60.25/22 duration 1:06:08 bytes 311464 TCP FINs
+%ASA-2-106001: Inbound TCP connection denied from 198.51.100.68/61919 to 192.168.50.11/8443 flags SYN on interface outside
+%ASA-6-302015: Built outbound UDP connection 271895 for outside:203.0.113.237/53 (203.0.113.237/53) to inside:10.10.10.54/3554 (192.0.2.10/3554)
+%ASA-6-302016: Teardown UDP connection 271895 for outside:203.0.113.237/53 to inside:10.10.10.54/3554 duration 0:00:00 bytes 220
+%ASA-4-106023: Deny tcp src outside:198.51.100.24/52967 dst inside:192.168.60.20/22 by access-group "outside_access_in" [0x0, 0x0]
+%ASA-6-302013: Built outbound TCP connection 271996 for outside:198.51.100.68/25 (198.51.100.68/25) to inside:10.10.10.19/26210 (192.0.2.10/26210)
+%ASA-6-302014: Teardown TCP connection 271996 for outside:198.51.100.68/25 to inside:10.10.10.19/26210 duration 0:34:09 bytes 121523 TCP Reset-O
+%ASA-2-106001: Inbound TCP connection denied from 198.51.100.233/3871 to 192.168.60.30/3389 flags SYN on interface outside
+%ASA-6-302013: Built outbound TCP connection 272008 for outside:198.51.100.156/25 (198.51.100.156/25) to inside:10.10.40.54/57170 (192.0.2.12/57170)
+%ASA-6-302014: Teardown TCP connection 272008 for outside:198.51.100.156/25 to inside:10.10.40.54/57170 duration 1:10:54 bytes 202963 TCP Reset-O
+%ASA-6-302013: Built outbound TCP connection 272095 for outside:203.0.113.68/445 (203.0.113.68/445) to inside:10.10.40.5/18505 (192.0.2.11/18505)
+%ASA-6-302014: Teardown TCP connection 272095 for outside:203.0.113.68/445 to inside:10.10.40.5/18505 duration 1:45:32 bytes 317732 TCP Reset-O
+%ASA-2-106001: Inbound TCP connection denied from 198.51.100.68/16021 to 192.168.50.11/22 flags SYN on interface outside
+%ASA-6-113004: AAA user authentication Successful : server =  10.10.5.5 : user = erin
+%ASA-6-302013: Built outbound TCP connection 272257 for outside:203.0.113.29/3306 (203.0.113.29/3306) to inside:10.10.10.33/6577 (192.0.2.10/6577)
+%ASA-6-302014: Teardown TCP connection 272257 for outside:203.0.113.29/3306 to inside:10.10.10.33/6577 duration 1:47:29 bytes 801660 TCP Reset-O
+%ASA-2-106001: Inbound TCP connection denied from 198.51.100.189/42225 to 192.168.50.30/53 flags SYN on interface outside
+%ASA-4-106023: Deny udp src outside:198.51.100.13/24708 dst inside:192.168.50.20/123 by access-group "inside_access_out" [0x0, 0x0]
+%ASA-6-302013: Built outbound TCP connection 272505 for outside:203.0.113.3/1433 (203.0.113.3/1433) to inside:10.10.20.54/20234 (192.0.2.11/20234)
+%ASA-6-302014: Teardown TCP connection 272505 for outside:203.0.113.3/1433 to inside:10.10.20.54/20234 duration 1:08:24 bytes 233809 TCP Reset-O
+%ASA-6-302013: Built inbound TCP connection 272596 for outside:203.0.113.133/19961 (203.0.113.133/19961) to inside:192.168.60.25/389 (192.0.2.11/389)
+%ASA-6-302014: Teardown TCP connection 272596 for outside:203.0.113.133/19961 to inside:192.168.60.25/389 duration 1:49:45 bytes 812034 TCP FINs
+%ASA-2-106006: Deny inbound UDP from 198.51.100.233/42503 to 192.168.50.25/3389 on interface outside
+%ASA-2-106001: Inbound TCP connection denied from 203.0.113.42/56153 to 192.168.60.10/3389 flags SYN on interface outside
+%ASA-2-106006: Deny inbound UDP from 203.0.113.42/58443 to 192.168.50.20/443 on interface outside
+%ASA-6-302015: Built outbound UDP connection 272721 for outside:198.51.100.211/53 (198.51.100.211/53) to inside:10.10.10.12/58217 (192.0.2.11/58217)
+%ASA-6-302016: Teardown UDP connection 272721 for outside:198.51.100.211/53 to inside:10.10.10.12/58217 duration 0:00:00 bytes 834
+%ASA-6-302015: Built outbound UDP connection 272725 for outside:203.0.113.146/53 (203.0.113.146/53) to inside:10.10.20.26/36181 (192.0.2.11/36181)
+%ASA-6-302016: Teardown UDP connection 272725 for outside:203.0.113.146/53 to inside:10.10.20.26/36181 duration 0:00:00 bytes 193
+%ASA-6-305011: Built dynamic TCP translation from inside:10.10.30.26/8708 to outside:192.0.2.12/8708
+%ASA-6-305012: Teardown dynamic TCP translation from inside:10.10.30.26/8708 to outside:192.0.2.12/8708 duration 0:27:31
+%ASA-6-113004: AAA user authentication Successful : server =  10.10.5.5 : user = erin
+%ASA-6-305011: Built dynamic TCP translation from inside:10.10.20.5/20797 to outside:192.0.2.11/20797
+%ASA-6-305012: Teardown dynamic TCP translation from inside:10.10.20.5/20797 to outside:192.0.2.11/20797 duration 1:33:08
+%ASA-2-106006: Deny inbound UDP from 203.0.113.42/17658 to 192.168.50.10/445 on interface outside
+%ASA-6-302013: Built outbound TCP connection 272949 for outside:198.51.100.244/25 (198.51.100.244/25) to inside:10.10.30.47/43315 (192.0.2.11/43315)
+%ASA-6-302014: Teardown TCP connection 272949 for outside:198.51.100.244/25 to inside:10.10.30.47/43315 duration 1:29:54 bytes 675067 TCP Reset-O
+%ASA-6-302015: Built outbound UDP connection 273002 for outside:203.0.113.3/53 (203.0.113.3/53) to inside:10.10.40.26/31309 (192.0.2.11/31309)
+%ASA-6-302016: Teardown UDP connection 273002 for outside:203.0.113.3/53 to inside:10.10.40.26/31309 duration 0:00:00 bytes 858
+%ASA-6-305011: Built dynamic TCP translation from inside:10.10.20.12/58480 to outside:192.0.2.11/58480
+%ASA-6-305012: Teardown dynamic TCP translation from inside:10.10.20.12/58480 to outside:192.0.2.11/58480 duration 0:00:44
+%ASA-6-302013: Built outbound TCP connection 273066 for outside:198.51.100.68/80 (198.51.100.68/80) to inside:10.10.20.40/40586 (192.0.2.12/40586)
+%ASA-6-302014: Teardown TCP connection 273066 for outside:198.51.100.68/80 to inside:10.10.20.40/40586 duration 0:16:35 bytes 330618 TCP Reset-O
+%ASA-6-302015: Built outbound UDP connection 273099 for outside:203.0.113.120/53 (203.0.113.120/53) to inside:10.10.10.40/10963 (192.0.2.11/10963)
+%ASA-6-302016: Teardown UDP connection 273099 for outside:203.0.113.120/53 to inside:10.10.10.40/10963 duration 0:00:00 bytes 394
+%ASA-2-106001: Inbound TCP connection denied from 203.0.113.68/39248 to 192.168.60.11/110 flags SYN on interface outside
+%ASA-6-302013: Built outbound TCP connection 273174 for outside:198.51.100.123/445 (198.51.100.123/445) to inside:10.10.20.33/44791 (192.0.2.12/44791)
+%ASA-6-302014: Teardown TCP connection 273174 for outside:198.51.100.123/445 to inside:10.10.20.33/44791 duration 0:04:29 bytes 708338 TCP Reset-O
+%ASA-4-106023: Deny tcp src outside:203.0.113.133/28855 dst inside:192.168.60.25/445 by access-group "inside_access_out" [0x0, 0x0]
+%ASA-2-106006: Deny inbound UDP from 198.51.100.24/12492 to 192.168.50.30/143 on interface outside
+%ASA-6-113005: AAA user authentication Rejected : reason = AAA failure : server = 10.10.5.5 : user = erin : user IP = 10.10.30.54
+%ASA-6-113004: AAA user authentication Successful : server =  10.10.5.5 : user = erin
+%ASA-2-106001: Inbound TCP connection denied from 198.51.100.24/41677 to 192.168.60.25/8443 flags SYN on interface outside
+%ASA-6-302013: Built inbound TCP connection 273532 for outside:203.0.113.107/61272 (203.0.113.107/61272) to inside:192.168.60.25/389 (192.0.2.10/389)
+%ASA-6-302014: Teardown TCP connection 273532 for outside:203.0.113.107/61272 to inside:192.168.60.25/389 duration 0:18:07 bytes 244221 TCP FINs
+%ASA-2-106001: Inbound TCP connection denied from 198.51.100.35/49490 to 192.168.50.25/25 flags SYN on interface outside
+%ASA-2-106006: Deny inbound UDP from 203.0.113.198/17801 to 192.168.50.10/8080 on interface outside
+%ASA-6-113005: AAA user authentication Rejected : reason = AAA failure : server = 10.10.5.5 : user = grace : user IP = 10.10.30.19
+%ASA-2-106001: Inbound TCP connection denied from 198.51.100.2/17733 to 192.168.60.30/8443 flags SYN on interface outside
+%ASA-6-302015: Built outbound UDP connection 273731 for outside:203.0.113.185/53 (203.0.113.185/53) to inside:10.10.10.33/18201 (192.0.2.10/18201)
+%ASA-6-302016: Teardown UDP connection 273731 for outside:203.0.113.185/53 to inside:10.10.10.33/18201 duration 0:00:00 bytes 333
+%ASA-4-106023: Deny tcp src outside:198.51.100.57/51477 dst inside:192.168.60.30/443 by access-group "dmz_access_in" [0x0, 0x0]
+%ASA-6-302013: Built inbound TCP connection 273794 for outside:198.51.100.57/8771 (198.51.100.57/8771) to inside:192.168.60.11/3389 (192.0.2.10/3389)
+%ASA-6-302014: Teardown TCP connection 273794 for outside:198.51.100.57/8771 to inside:192.168.60.11/3389 duration 0:06:01 bytes 780278 TCP FINs
+%ASA-4-106023: Deny udp src outside:198.51.100.178/2616 dst inside:192.168.50.11/53 by access-group "inside_access_out" [0x0, 0x0]
+%ASA-6-302013: Built inbound TCP connection 273822 for outside:198.51.100.35/15741 (198.51.100.35/15741) to inside:192.168.50.20/445 (192.0.2.12/445)
+%ASA-6-302014: Teardown TCP connection 273822 for outside:198.51.100.35/15741 to inside:192.168.50.20/445 duration 1:31:00 bytes 490960 TCP FINs
+%ASA-2-106006: Deny inbound UDP from 203.0.113.3/51531 to 192.168.50.11/22 on interface outside
+%ASA-6-302013: Built outbound TCP connection 273928 for outside:198.51.100.57/389 (198.51.100.57/389) to inside:10.10.40.40/56563 (192.0.2.11/56563)
+%ASA-6-302014: Teardown TCP connection 273928 for outside:198.51.100.57/389 to inside:10.10.40.40/56563 duration 1:51:22 bytes 107613 TCP Reset-O
+%ASA-2-106006: Deny inbound UDP from 198.51.100.134/57714 to 192.168.60.20/993 on interface outside
+%ASA-2-106001: Inbound TCP connection denied from 203.0.113.198/6314 to 192.168.60.20/53 flags SYN on interface outside
+%ASA-6-113004: AAA user authentication Successful : server =  10.10.5.5 : user = ivan
+%ASA-6-302013: Built inbound TCP connection 274099 for outside:198.51.100.222/39913 (198.51.100.222/39913) to inside:192.168.50.25/443 (192.0.2.11/443)
+%ASA-6-302014: Teardown TCP connection 274099 for outside:198.51.100.222/39913 to inside:192.168.50.25/443 duration 1:37:40 bytes 144231 TCP FINs
+%ASA-4-106023: Deny tcp src outside:203.0.113.107/61421 dst inside:192.168.50.25/25 by access-group "outside_access_in" [0x0, 0x0]
+%ASA-2-106006: Deny inbound UDP from 198.51.100.134/54410 to 192.168.50.30/25 on interface outside
+%ASA-6-302015: Built outbound UDP connection 274243 for outside:203.0.113.146/53 (203.0.113.146/53) to inside:10.10.10.5/14317 (192.0.2.12/14317)
+%ASA-6-302016: Teardown UDP connection 274243 for outside:203.0.113.146/53 to inside:10.10.10.5/14317 duration 0:00:00 bytes 641
+%ASA-6-113004: AAA user authentication Successful : server =  10.10.5.5 : user = dave
+%ASA-6-113004: AAA user authentication Successful : server =  10.10.5.5 : user = erin
+%ASA-6-113005: AAA user authentication Rejected : reason = AAA failure : server = 10.10.5.5 : user = dave : user IP = 10.10.40.40
+%ASA-6-113004: AAA user authentication Successful : server =  10.10.5.5 : user = alice
+%ASA-2-106006: Deny inbound UDP from 203.0.113.120/29571 to 192.168.50.11/3389 on interface outside
+%ASA-6-113004: AAA user authentication Successful : server =  10.10.5.5 : user = heidi
+%ASA-6-302013: Built inbound TCP connection 274638 for outside:198.51.100.189/40578 (198.51.100.189/40578) to inside:192.168.60.30/53 (192.0.2.11/53)
+%ASA-6-302014: Teardown TCP connection 274638 for outside:198.51.100.189/40578 to inside:192.168.60.30/53 duration 1:48:40 bytes 145917 TCP FINs
+%ASA-4-106023: Deny tcp src outside:203.0.113.172/6946 dst inside:192.168.50.30/389 by access-group "outside_access_in" [0x0, 0x0]
+%ASA-2-106006: Deny inbound UDP from 198.51.100.178/29513 to 192.168.50.11/993 on interface outside
+%ASA-6-113004: AAA user authentication Successful : server =  10.10.5.5 : user = grace
+%ASA-2-106001: Inbound TCP connection denied from 203.0.113.42/30692 to 192.168.50.11/993 flags SYN on interface outside
+%ASA-2-106006: Deny inbound UDP from 198.51.100.2/3991 to 192.168.60.30/110 on interface outside
+%ASA-4-106023: Deny tcp src outside:203.0.113.237/1720 dst inside:192.168.60.25/80 by access-group "inside_access_out" [0x0, 0x0]
+%ASA-6-113004: AAA user authentication Successful : server =  10.10.5.5 : user = alice
+%ASA-6-113004: AAA user authentication Successful : server =  10.10.5.5 : user = carol
+%ASA-2-106001: Inbound TCP connection denied from 198.51.100.134/48897 to 192.168.50.11/389 flags SYN on interface outside
+%ASA-2-106006: Deny inbound UDP from 198.51.100.200/44104 to 192.168.50.30/110 on interface outside
+%ASA-6-113005: AAA user authentication Rejected : reason = AAA failure : server = 10.10.5.5 : user = carol : user IP = 10.10.20.26
+%ASA-6-113004: AAA user authentication Successful : server =  10.10.5.5 : user = bob
+%ASA-6-302015: Built outbound UDP connection 275189 for outside:198.51.100.68/53 (198.51.100.68/53) to inside:10.10.10.54/42304 (192.0.2.11/42304)
+%ASA-6-302016: Teardown UDP connection 275189 for outside:198.51.100.68/53 to inside:10.10.10.54/42304 duration 0:00:00 bytes 878
+%ASA-6-302013: Built inbound TCP connection 275210 for outside:198.51.100.145/51331 (198.51.100.145/51331) to inside:192.168.50.20/8443 (192.0.2.10/8443)
+%ASA-6-302014: Teardown TCP connection 275210 for outside:198.51.100.145/51331 to inside:192.168.50.20/8443 duration 1:02:44 bytes 189612 TCP FINs
+%ASA-2-106001: Inbound TCP connection denied from 198.51.100.134/55304 to 192.168.50.10/3389 flags SYN on interface outside
+%ASA-4-106023: Deny udp src outside:198.51.100.178/35387 dst inside:192.168.50.30/123 by access-group "outside_access_in" [0x0, 0x0]
+%ASA-6-302013: Built inbound TCP connection 275350 for outside:198.51.100.35/26225 (198.51.100.35/26225) to inside:192.168.60.30/443 (192.0.2.10/443)
+%ASA-6-302014: Teardown TCP connection 275350 for outside:198.51.100.35/26225 to inside:192.168.60.30/443 duration 1:04:21 bytes 790411 TCP FINs
+%ASA-6-302013: Built outbound TCP connection 275415 for outside:203.0.113.107/80 (203.0.113.107/80) to inside:10.10.10.40/51797 (192.0.2.12/51797)
+%ASA-6-302014: Teardown TCP connection 275415 for outside:203.0.113.107/80 to inside:10.10.10.40/51797 duration 0:47:13 bytes 383565 TCP Reset-O
+%ASA-2-106006: Deny inbound UDP from 203.0.113.133/35859 to 192.168.50.11/123 on interface outside
+%ASA-6-302015: Built outbound UDP connection 275510 for outside:198.51.100.46/53 (198.51.100.46/53) to inside:10.10.20.26/41893 (192.0.2.12/41893)
+%ASA-6-302016: Teardown UDP connection 275510 for outside:198.51.100.46/53 to inside:10.10.20.26/41893 duration 0:00:00 bytes 497
+%ASA-6-113005: AAA user authentication Rejected : reason = AAA failure : server = 10.10.5.5 : user = ivan : user IP = 10.10.40.5
+%ASA-6-302013: Built outbound TCP connection 275619 for outside:198.51.100.68/3389 (198.51.100.68/3389) to inside:10.10.30.40/18972 (192.0.2.12/18972)
+%ASA-6-302014: Teardown TCP connection 275619 for outside:198.51.100.68/3389 to inside:10.10.30.40/18972 duration 0:22:19 bytes 258403 TCP Reset-O
+%ASA-6-113004: AAA user authentication Successful : server =  10.10.5.5 : user = alice
+%ASA-6-113005: AAA user authentication Rejected : reason = AAA failure : server = 10.10.5.5 : user = frank : user IP = 10.10.20.19
+%ASA-6-302013: Built outbound TCP connection 275746 for outside:203.0.113.16/143 (203.0.113.16/143) to inside:10.10.20.26/43262 (192.0.2.10/43262)
+%ASA-6-302014: Teardown TCP connection 275746 for outside:203.0.113.16/143 to inside:10.10.20.26/43262 duration 1:44:13 bytes 764301 TCP Reset-O
+%ASA-2-106001: Inbound TCP connection denied from 198.51.100.145/3097 to 192.168.60.30/8080 flags SYN on interface outside
+%ASA-4-106023: Deny udp src outside:198.51.100.46/47520 dst inside:192.168.60.30/123 by access-group "inside_access_out" [0x0, 0x0]
+%ASA-6-113005: AAA user authentication Rejected : reason = AAA failure : server = 10.10.5.5 : user = judy : user IP = 10.10.30.12
+%ASA-6-302015: Built outbound UDP connection 275872 for outside:203.0.113.55/53 (203.0.113.55/53) to inside:10.10.40.5/28199 (192.0.2.12/28199)
+%ASA-6-302016: Teardown UDP connection 275872 for outside:203.0.113.55/53 to inside:10.10.40.5/28199 duration 0:00:00 bytes 894
+%ASA-6-302013: Built inbound TCP connection 275932 for outside:198.51.100.24/33075 (198.51.100.24/33075) to inside:192.168.50.20/22 (192.0.2.12/22)
+%ASA-6-302014: Teardown TCP connection 275932 for outside:198.51.100.24/33075 to inside:192.168.50.20/22 duration 1:01:25 bytes 714506 TCP FINs
+%ASA-6-302013: Built inbound TCP connection 275983 for outside:203.0.113.172/6466 (203.0.113.172/6466) to inside:192.168.50.30/80 (192.0.2.11/80)
+%ASA-6-302014: Teardown TCP connection 275983 for outside:203.0.113.172/6466 to inside:192.168.50.30/80 duration 1:03:01 bytes 602147 TCP FINs
+%ASA-6-305011: Built dynamic TCP translation from inside:10.10.10.54/1027 to outside:192.0.2.10/1027
+%ASA-6-305012: Teardown dynamic TCP translation from inside:10.10.10.54/1027 to outside:192.0.2.10/1027 duration 0:06:17
+%ASA-6-302015: Built outbound UDP connection 276047 for outside:203.0.113.159/53 (203.0.113.159/53) to inside:10.10.30.19/14253 (192.0.2.10/14253)
+%ASA-6-302016: Teardown UDP connection 276047 for outside:203.0.113.159/53 to inside:10.10.30.19/14253 duration 0:00:00 bytes 721
+%ASA-6-302013: Built inbound TCP connection 276111 for outside:198.51.100.2/57356 (198.51.100.2/57356) to inside:192.168.50.20/1433 (192.0.2.12/1433)
+%ASA-6-302014: Teardown TCP connection 276111 for outside:198.51.100.2/57356 to inside:192.168.50.20/1433 duration 0:44:45 bytes 162523 TCP FINs
+%ASA-6-302013: Built outbound TCP connection 276145 for outside:198.51.100.156/3306 (198.51.100.156/3306) to inside:10.10.30.26/8822 (192.0.2.12/8822)
+%ASA-6-302014: Teardown TCP connection 276145 for outside:198.51.100.156/3306 to inside:10.10.30.26/8822 duration 0:23:35 bytes 714565 TCP Reset-O
+%ASA-2-106001: Inbound TCP connection denied from 203.0.113.146/46275 to 192.168.60.30/3306 flags SYN on interface outside
+%ASA-2-106006: Deny inbound UDP from 203.0.113.81/14652 to 192.168.50.25/389 on interface outside
+%ASA-6-113005: AAA user authentication Rejected : reason = AAA failure : server = 10.10.5.5 : user = frank : user IP = 10.10.10.33
+%ASA-4-106023: Deny udp src outside:198.51.100.167/21489 dst inside:192.168.50.25/161 by access-group "inside_access_out" [0x0, 0x0]
+%ASA-6-302013: Built outbound TCP connection 276367 for outside:198.51.100.145/443 (198.51.100.145/443) to inside:10.10.40.33/45499 (192.0.2.12/45499)
+%ASA-6-302014: Teardown TCP connection 276367 for outside:198.51.100.145/443 to inside:10.10.40.33/45499 duration 1:52:50 bytes 159990 TCP Reset-O
+%ASA-2-106001: Inbound TCP connection denied from 198.51.100.13/23685 to 192.168.50.20/53 flags SYN on interface outside
+%ASA-6-302013: Built inbound TCP connection 276476 for outside:198.51.100.189/38781 (198.51.100.189/38781) to inside:192.168.50.20/3306 (192.0.2.10/3306)
+%ASA-6-302014: Teardown TCP connection 276476 for outside:198.51.100.189/38781 to inside:192.168.50.20/3306 duration 0:03:06 bytes 673334 TCP FINs
+%ASA-6-113004: AAA user authentication Successful : server =  10.10.5.5 : user = dave
+%ASA-4-106023: Deny tcp src outside:198.51.100.24/12704 dst inside:192.168.60.11/110 by access-group "inside_access_out" [0x0, 0x0]
+%ASA-6-113004: AAA user authentication Successful : server =  10.10.5.5 : user = judy

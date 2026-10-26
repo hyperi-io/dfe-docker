@@ -53,7 +53,7 @@ endif
 # any more (both sweep every profile), and requiring a resolvable profile to STOP
 # a stack is the same lockout the compose secret comments argue against -- set
 # DFE_PROFILE to something that does not exist and you could not tear down.
-BOOTSTRAP_GOALS := init env-files creds certs dev-posture help stack dial modes down clean limits check check-compose check-hardfail check-dockerfile check-docs check-locks check-proxy check-python check-tests
+BOOTSTRAP_GOALS := init env-files creds certs dev-posture help stack dial modes down clean demo-stop limits check check-compose check-hardfail check-dockerfile check-docs check-locks check-proxy check-python check-tests
 
 # Resolve the active profile only when a goal actually needs the compose stack
 ifneq (,$(filter-out $(BOOTSTRAP_GOALS),$(or $(MAKECMDGOALS),help)))
@@ -784,13 +784,18 @@ events: ## Send the fake resources/seed events through the receiver, after `make
 DEMO_GENERATOR ?= scripts/replay_syslog.py
 DEMO_PROTOCOL ?= tcp
 DEMO_RATE ?= 20
-DEMO_DURATION ?= 60
+# The stream's container, one per compose project, so a second `make demo` replaces it and `make down` finds it.
+DEMO_CONTAINER := $(PROXY_PROJECT)-demo-syslog-stream
 # The generator is standard-library Python and dfe-transform-elastic's image has none, so it runs here, pinned like the hadolint image above.
 DEMO_PYTHON_IMAGE := python:3.14-slim-trixie@sha256:35caba83af2fe6da9a5d922f9b0156f21d1246a48278c58a08bd253303ba42e8
 
 .PHONY: demo
-demo: env-files ## Send live firewall and switch syslog through the running stack, detected per line by dfe-transform-elastic and landed one table per vendor (DEMO_DURATION, DEMO_RATE, DEMO_PROTOCOL=udp|tcp; DEV=1 for a `make dev` stack)
-	@$(UV) run --locked --script ./scripts/demo.py --generator '$(DEMO_GENERATOR)' --image '$(DEMO_PYTHON_IMAGE)' --protocol '$(DEMO_PROTOCOL)' --rate '$(DEMO_RATE)' --duration '$(DEMO_DURATION)' $(if $(strip $(DEV)),--dev)
+demo: env-files ## Stream live firewall syslog through the running stack until `make demo-stop`, detected per line by dfe-transform-elastic and landed one table per vendor (DEMO_RATE, DEMO_PROTOCOL=tcp|udp; DEV=1 for a `make dev` stack). A second run replaces the stream
+	@$(UV) run --locked --script ./scripts/demo.py --container '$(DEMO_CONTAINER)' --generator '$(DEMO_GENERATOR)' --image '$(DEMO_PYTHON_IMAGE)' --protocol '$(DEMO_PROTOCOL)' --rate '$(DEMO_RATE)' $(if $(strip $(DEV)),--dev)
+
+.PHONY: demo-stop
+demo-stop: ## Stop and remove the `make demo` stream
+	docker rm --force $(DEMO_CONTAINER)
 
 # ---------------------------------------------------------------------------
 # Lifecycle
@@ -809,12 +814,12 @@ ps: ## Show running containers, and warn about a deleted source's container stil
 # services by probing then found the stray. Volumes survive; `make clean` is the
 # one that deletes data.
 .PHONY: down
-down: ## Stop and remove containers across all profiles (keeps volumes)
+down: demo-stop ## Stop and remove containers across all profiles, and the `make demo` stream (keeps volumes)
 	docker compose -f docker-compose.yml --profile "*" down --remove-orphans
 
 # The engine's volume goes with its sources, so the instance indexes it wrote into env/ go too.
 .PHONY: clean
-clean: ## Stop and remove all containers and volumes across every profile, and dfe-engine's per-source instance indexes
+clean: demo-stop ## Stop and remove all containers and volumes across every profile, the `make demo` stream, and dfe-engine's per-source instance indexes
 	docker compose -f docker-compose.yml --profile "*" down -v --remove-orphans
 	rm -f env/*.instances
 

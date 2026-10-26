@@ -8,6 +8,7 @@
 
 """The checks on `make demo` that need no stack: its committed Sources and the pure steps between the engine, the pins and docker."""
 
+import re
 from pathlib import Path
 
 import pytest
@@ -41,7 +42,7 @@ def test_the_committed_demo_names_an_agentless_intake_and_valid_tables() -> None
         "operator": "equals",
         "value": "syslog",
     }
-    assert loaded.sources == ["cisco-asa", "fortinet", "panw", "cisco-ios"]
+    assert loaded.sources == ["cisco-asa", "fortinet"]
     for name in [loaded.intake["source"], *loaded.sources]:
         assert SOURCE_NAME.fullmatch(name), name
 
@@ -174,26 +175,82 @@ def test_refuses_a_profile_that_cannot_run_it(
     assert (message in reason) if message else (reason == "")
 
 
-def test_runs_the_generator_read_only_on_the_stack_network() -> None:
+def test_streams_the_generator_detached_and_read_only_on_the_stack_network() -> None:
     command = demo.generator_command(
-        checkout=Path("/src/dfe-transform-elastic"),
-        duration=30,
+        container="make-demo-demo-syslog-stream",
+        feed=Path("/src/feed"),
         generator="scripts/replay_syslog.py",
         image="python:3@sha256:" + "b" * 64,
         network="make-demo_default",
         protocol="tcp",
         rate=2.5,
-        sources=["cisco-asa", "panw"],
+        sources=["cisco-asa", "fortinet"],
     )
 
-    assert command[:4] == ["docker", "run", "--rm", "--init"]
+    assert command[:5] == ["docker", "run", "--detach", "--rm", "--init"]
+    assert command[command.index("--name") + 1] == "make-demo-demo-syslog-stream"
     assert command[command.index("--network") + 1] == "make-demo_default"
-    assert (
-        command[command.index("--volume") + 1] == "/src/dfe-transform-elastic:/demo:ro"
-    )
+    assert command[command.index("--volume") + 1] == "/src/feed:/demo:ro"
     assert command[command.index("-I") + 1] == "/demo/scripts/replay_syslog.py"
     assert command[command.index("--target") + 1] == "tcp://dfe-receiver:514"
-    assert command[command.index("--sources") + 1] == "cisco-asa,panw"
+    assert command[command.index("--sources") + 1] == "cisco-asa,fortinet"
     assert command[command.index("--rate") + 1] == "2.5"
-    assert command[command.index("--duration") + 1] == "30"
+    assert command[command.index("--duration") + 1] == str(demo.STREAM_SECONDS)
     assert "--loop" in command
+
+
+def test_a_sample_set_replaces_its_package_fixtures_and_leaves_the_rest(
+    tmp_path: Path,
+) -> None:
+    checkout = tmp_path / "checkout"
+    fixtures = checkout / demo.FIXTURES
+    for path, text in {
+        "scripts/replay_syslog.py": "print()\n",
+        "src/detect/labels.rs": "// labels\n",
+        f"{demo.FIXTURES}/cisco_asa/upstream.log": "upstream asa\n",
+        f"{demo.FIXTURES}/fortinet/fortigate.log": "upstream fortigate\n",
+    }.items():
+        (checkout / path).parent.mkdir(parents=True, exist_ok=True)
+        (checkout / path).write_text(text, encoding="utf-8")
+    samples = tmp_path / "samples"
+    (samples / "cisco_asa").mkdir(parents=True)
+    (samples / "cisco_asa" / "demo.log").write_text(
+        "%ASA-6-302013: x\n", encoding="utf-8"
+    )
+    feed = tmp_path / "feed"
+    (feed / "stale").mkdir(parents=True)
+
+    staged = demo.stage_feed(
+        checkout=checkout,
+        feed=feed,
+        generator="scripts/replay_syslog.py",
+        samples=samples,
+    )
+
+    asa = sorted(path.name for path in (staged / demo.FIXTURES / "cisco_asa").iterdir())
+    assert asa == ["demo.log"]
+    assert (staged / demo.FIXTURES / "fortinet" / "fortigate.log").is_file()
+    assert (staged / "scripts" / "replay_syslog.py").is_file()
+    assert (staged / "src" / "detect" / "labels.rs").is_file()
+    assert not (staged / "stale").exists()
+    assert (fixtures / "cisco_asa" / "upstream.log").is_file()
+
+
+def test_the_committed_samples_are_varied_asa_lines_on_documentation_addresses() -> (
+    None
+):
+    lines = (
+        (demo.SAMPLES_DIR / "cisco_asa" / "demo.log")
+        .read_text(encoding="utf-8")
+        .splitlines()
+    )
+    ids = {line.split(":", 1)[0] for line in lines}
+    addresses = set(re.findall(r"\d+\.\d+\.\d+\.\d+", "\n".join(lines)))
+
+    assert len(lines) >= 300
+    assert all(line.startswith("%ASA-") for line in lines)
+    assert len(ids) >= 8
+    assert all(
+        address.startswith(("10.", "192.168.", "192.0.2.", "198.51.100.", "203.0.113."))
+        for address in addresses
+    ), sorted(addresses)

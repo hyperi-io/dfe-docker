@@ -20,6 +20,8 @@ deployment.yaml
 # Held by make proof and the daemon updater while either has the stack down.
 .dfe-stack.lock
 *.log
+# The demo replays these sample sets as syslog
+!resources/demo/samples/**/*.log
 dist/
 dist-bin/
 bin/

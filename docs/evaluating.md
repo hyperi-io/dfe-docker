@@ -90,28 +90,27 @@ genuinely so; a couple of seconds is normal.
 
 ## Raw syslog, parsed per vendor
 
-`make demo` replays real Cisco ASA, FortiGate, Palo Alto and Cisco IOS logs into the running stack as raw syslog. dfe-transform-elastic works out which device sent each line, parses it, and lands it in that vendor's own table.
+`make demo` streams Cisco ASA and FortiGate firewall logs into the running stack as raw syslog. dfe-transform-elastic works out which device sent each line, parses it, and lands it in that vendor's own table. Palo Alto and Cisco IOS come back once [dfe-receiver#212](https://github.com/hyperi-io/dfe-receiver/issues/212) and [dfe-transform-elastic#133](https://github.com/hyperi-io/dfe-transform-elastic/issues/133) land.
 
 It needs a profile that runs dfe-transform-elastic, so set `DFE_PROFILE=single-kafka` or `DFE_PROFILE=single-grpc` in `.env` before `make ci`. Then:
 
 ```bash
-make demo                                    # 60s at 20 lines a second, over TCP
-make demo DEMO_DURATION=300 DEMO_PROTOCOL=udp
+make demo                      # 20 lines a second over TCP, until you stop it
+make demo DEMO_RATE=100        # replaces a running stream with a faster one
+make demo-stop                 # stops the stream; `make down` stops it too
 ```
 
-It creates the Sources in [`resources/demo/demo.yaml`](../resources/demo/demo.yaml) through the engine: a `demo-syslog` intake, and the tables `dfe.cisco-asa`, `dfe.fortinet`, `dfe.panw` and `dfe.cisco-ios`. It turns on dfe-receiver's syslog listener, UDP and TCP on port 514, and recreates what that changes. It ends with what each table gained:
+It creates the Sources in [`resources/demo/demo.yaml`](../resources/demo/demo.yaml) through the engine: a `demo-syslog` intake, and the tables `dfe.cisco-asa` and `dfe.fortinet`. It turns on dfe-receiver's syslog listener, UDP and TCP on port 514, and recreates what that changes. The FortiGate lines are dfe-transform-elastic's own test fixtures, and the ASA lines come from [`resources/demo/samples/`](../resources/demo/samples/). It returns as soon as every vendor table has gained rows, and the stream keeps running:
 
 ```text
 demo -   dfe.cisco-asa: +N rows
 demo -   dfe.fortinet: +N rows
-demo -   dfe.panw: +N rows
-demo -   dfe.cisco-ios: +N rows
 demo -   dfe.demo-syslog: +N rows
 demo -   dfe.main: +0 rows
-demo - PASS every vendor table gained rows, ready to query in the console or HyperDX
+demo - PASS every vendor table gained rows, ready to query in the console or HyperDX. The stream runs until `make demo-stop`
 ```
 
-`dfe.demo-syslog` holds the lines no detector claimed. The replayed logs come from the dfe-transform-elastic release the stack pins, so the demo needs a release with agentless detection and stops before changing anything on one without it. A `make dev` stack takes `make demo DEV=1`.
+`dfe.demo-syslog` holds the lines no detector claimed. The replay script comes from the dfe-transform-elastic release the stack pins, so the demo needs a release with agentless detection and stops before changing anything on one without it. A `make dev` stack takes `make demo DEV=1`.
 
 ## What you are looking at
 
