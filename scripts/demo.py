@@ -254,11 +254,14 @@ def _ensure_table(*, base: str, label: str, token: str) -> list[dict]:
         return held
     url = _source_url(base=base, name=label)
     status, created = _api_post_json(
-        payload={"intake": "receiver"},
+        payload={"entries": [{"entry": label, "intake": "receiver"}]},
         token=token,
-        url=f"{base}/sources/from-catalogue/{quote(safe='', string=label)}",
+        url=f"{base}/sources/from-catalogue",
     )
-    if status not in (201, 202):
+    rows = created.get("created") if isinstance(created, dict) else None
+    stored = {item.get("entry") for item in rows or [] if isinstance(item, dict)}
+    # A refused entry comes back in `failed` under 200 or 409, so the status alone does not say it was stored
+    if status not in (201, 202) or label not in stored:
         raise DemoError(
             f"creating source {label!r} from the catalogue returned HTTP {status}: {created}"
         )
