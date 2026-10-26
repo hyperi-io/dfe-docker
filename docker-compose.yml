@@ -266,25 +266,20 @@ services:
         aliases:
           - kafka
     environment:
-      CLUSTER_ID: ${KAFKA_CLUSTER_ID:-dfe-docker-dev-cluster-01}
-      # KAFKA_ADVERTISED_HOST / KAFKA_PLAINTEXT_HOST_PORT are threaded through here
-      # too, so the .env.example guidance about advertising a reachable name works
-      # on BOTH backends. Previously this hardcoded localhost:19092 while the
-      # Redpanda service honoured the variables -- so following the documentation
-      # on the Apache backend silently did nothing.
-      KAFKA_ADVERTISED_LISTENERS: ${KAFKA_ADVERTISED_LISTENERS:-PLAINTEXT://kafka:9092,PLAINTEXT_HOST://${KAFKA_ADVERTISED_HOST:-localhost}:${KAFKA_PLAINTEXT_HOST_PORT:-19092}}
-      KAFKA_AUTO_CREATE_TOPICS_ENABLE: ${KAFKA_AUTO_CREATE_TOPICS_ENABLE:-true}
-      KAFKA_CONTROLLER_LISTENER_NAMES: ${KAFKA_CONTROLLER_LISTENER_NAMES:-CONTROLLER}
-      KAFKA_CONTROLLER_QUORUM_VOTERS: ${KAFKA_CONTROLLER_QUORUM_VOTERS:-1@kafka:29092}
-      KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: ${KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS:-0}
-      KAFKA_INTER_BROKER_LISTENER_NAME: ${KAFKA_INTER_BROKER_LISTENER_NAME:-PLAINTEXT}
-      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: ${KAFKA_LISTENER_SECURITY_PROTOCOL_MAP:-CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT}
-      KAFKA_LISTENERS: ${KAFKA_LISTENERS:-PLAINTEXT://:9092,PLAINTEXT_HOST://:19092,CONTROLLER://:29092}
-      KAFKA_NODE_ID: ${KAFKA_NODE_ID:-1}
-      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: ${KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR:-1}
-      KAFKA_PROCESS_ROLES: ${KAFKA_PROCESS_ROLES:-broker,controller}
-      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: ${KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR:-1}
-      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: ${KAFKA_TRANSACTION_STATE_LOG_MIN_ISR:-1}
+      CLUSTER_ID: dfe-docker-dev-cluster-01
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:9092,PLAINTEXT_HOST://${KAFKA_ADVERTISED_HOST:-localhost}:${KAFKA_PLAINTEXT_HOST_PORT:-19092}
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "true"
+      KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
+      KAFKA_CONTROLLER_QUORUM_VOTERS: 1@kafka:29092
+      KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: "0"
+      KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT
+      KAFKA_LISTENERS: PLAINTEXT://:9092,PLAINTEXT_HOST://:19092,CONTROLLER://:29092
+      KAFKA_NODE_ID: "1"
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: "1"
+      KAFKA_PROCESS_ROLES: broker,controller
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: "1"
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: "1"
     ports:
       - ${DFE_BIND_HOST:-127.0.0.1}:${KAFKA_PLAINTEXT_HOST_PORT:-19092}:19092
     volumes:
@@ -322,9 +317,9 @@ services:
       # HyperDX. docs/operating.md#port-exposure-is-split-by-audience
       - ${DFE_UI_BIND_HOST:-127.0.0.1}:${KAFBAT_PORT:-8081}:8080
     environment:
-      DYNAMIC_CONFIG_ENABLED: ${KAFBAT_DYNAMIC_CONFIG_ENABLED:-true}
-      KAFKA_CLUSTERS_0_BOOTSTRAPSERVERS: ${KAFBAT_KAFKA_CLUSTERS_0_BOOTSTRAPSERVERS:-kafka:9092}
-      KAFKA_CLUSTERS_0_NAME: ${KAFBAT_KAFKA_CLUSTERS_0_NAME:-dfe-local}
+      DYNAMIC_CONFIG_ENABLED: "true"
+      KAFKA_CLUSTERS_0_BOOTSTRAPSERVERS: ${DFE_KAFKA_BOOTSTRAP_SERVERS:-kafka:9092}
+      KAFKA_CLUSTERS_0_NAME: dfe-local
 
   # ===========================================================================
   # dlq-init
@@ -1071,7 +1066,7 @@ services:
       # the config volume because a volume mounted on a path the image does not own
       # lands root-owned and the engine runs as UID 1000.
       DFE_GITOPS_ENABLED: ${DFE_GITOPS_ENABLED:-true}
-      DFE_GITOPS_LOCAL_PATH: ${DFE_ENGINE_CONFIG_DIR:-/app/config}/deploy-repo
+      DFE_GITOPS_LOCAL_PATH: /app/config/deploy-repo
       # HyperDX's control surface: the engine fans the sources it deploys onto
       # every HyperDX team. Both follow the resolved footprint
       # (scripts/resolve_profile.py), so one DFE_HYPERDX_ENABLED governs the
@@ -1109,12 +1104,12 @@ services:
       DFE_DEPLOYMENT_APP_CONFIG_DIR: ${DFE_ENGINE_APP_CONFIG_DIR:-}
       DFE_DEPLOYMENT_APP_CONFIG_BASE_DIR: ${DFE_ENGINE_APP_CONFIG_BASE_DIR:-}
       DFE_DEPLOYMENT_APP_CONFIG_MOUNT: ${DFE_APP_CONFIG_MOUNT:-/etc/dfe/apps}
-      DFE_CONFIG_DIR: ${DFE_ENGINE_CONFIG_DIR:-/app/config}
+      DFE_CONFIG_DIR: /app/config
       # Onto the config VOLUME, because the engine mints its ES384 JWT signing
       # key here on first use: left on the container filesystem it is remade on
       # every recreate, and every session issued before it stops verifying.
-      DFE_SECRETS_PATH: ${DFE_ENGINE_CONFIG_DIR:-/app/config}/.secrets
-      DFE_SCHEMAS_DIR: ${DFE_ENGINE_SCHEMAS_DIR:-/app/schemas}
+      DFE_SECRETS_PATH: /app/config/.secrets
+      DFE_SCHEMAS_DIR: /app/schemas
       # Transform templates another repo ships, which the engine seeds its
       # library from at startup. Nothing writes it on Compose
       # yet -- the contract one-shots fill the sibling directory, not this one --
@@ -1138,8 +1133,8 @@ services:
       VERSION_CHECK__ENABLED: ${DFE_VERSION_CHECK_ENABLED:-true}
       VERSION_CHECK__SEND_INSTANCE_ID: ${DFE_VERSION_CHECK_SEND_INSTANCE_ID:-true}
     volumes:
-      - dfe-engine-config:${DFE_ENGINE_CONFIG_DIR:-/app/config}
-      - dfe-engine-schemas:${DFE_ENGINE_SCHEMAS_DIR:-/app/schemas}
+      - dfe-engine-config:/app/config
+      - dfe-engine-schemas:/app/schemas
       - dfe-engine-content:${DFE_ENGINE_CONTENT_DIR:-/app/content}
       # The only writer of this volume; every app mounts it read-only.
       - dfe-app-config:/app/app-config
@@ -1241,20 +1236,20 @@ services:
       DFE_CLICKHOUSE_USERNAME: dfe_hunt_runner
       DFE_CLICKHOUSE_PASSWORD: ${DFE_HUNT_RUNNER_CLICKHOUSE_PASSWORD:-}
       DFE_CLICKHOUSE_SECURE: ${CLICKHOUSE_SECURE:-false}
-      DFE_CONFIG_DIR: ${DFE_ENGINE_CONFIG_DIR:-/app/config}
+      DFE_CONFIG_DIR: /app/config
       # Same volume as the API's, so both read the one signing key.
-      DFE_SECRETS_PATH: ${DFE_ENGINE_CONFIG_DIR:-/app/config}/.secrets
+      DFE_SECRETS_PATH: /app/config/.secrets
       # The engine governs hunts and rules in the deploy repo it clones into the
       # shared config volume, so the runner reads that working tree; a runner
       # pointed at the bare config dir polls a directory nothing writes.
-      DFE_HUNTS_DIR: ${DFE_ENGINE_CONFIG_DIR:-/app/config}/deploy-repo/config/hunts
-      DFE_HUNTS_RULES_DIR: ${DFE_ENGINE_CONFIG_DIR:-/app/config}/deploy-repo/config/rules
-      DFE_SCHEMAS_DIR: ${DFE_ENGINE_SCHEMAS_DIR:-/app/schemas}
+      DFE_HUNTS_DIR: /app/config/deploy-repo/config/hunts
+      DFE_HUNTS_RULES_DIR: /app/config/deploy-repo/config/rules
+      DFE_SCHEMAS_DIR: /app/schemas
       OTEL_EXPORTER_OTLP_ENDPOINT: ${DFE_OTEL_EXPORTER_ENDPOINT:-}
       OTEL_SERVICE_NAME: dfe-hunt-runner
     volumes:
-      - dfe-engine-config:${DFE_ENGINE_CONFIG_DIR:-/app/config}
-      - dfe-engine-schemas:${DFE_ENGINE_SCHEMAS_DIR:-/app/schemas}
+      - dfe-engine-config:/app/config
+      - dfe-engine-schemas:/app/schemas
     depends_on:
       dfe-engine:
         condition: service_healthy
