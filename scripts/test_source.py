@@ -279,7 +279,7 @@ def _ui_urls(*, bound: str, host: str) -> tuple[str, str]:
 
 
 def _suite_env(
-    *, found: Mapping[str, str], host: str, engine_url: str
+    *, engine_url: str, found: Mapping[str, str], host: str
 ) -> dict[str, str]:
     """The DFE_E2E_* block, the same one dfe-ops exports for the Kubernetes lanes.
 
@@ -288,8 +288,8 @@ def _suite_env(
 
     The block is laid over ``found``, the environment the script was started
     with, never over .env: make re-reads .env and exports a key it finds in the
-    environment with the spaces before that line's comment, which turns every
-    annotated image pin into a reference Docker refuses.
+    environment with the spaces before that line's comment, which turns any
+    value written with an inline comment into one Docker refuses.
     """
     password = os.environ.get("DFE_AUTH_LOCAL_ADMIN_PASSWORD", "")
     if not (password):
@@ -422,7 +422,7 @@ def main(argv: list[str] | None = None) -> int:
     runner += [arg for arg in runner_args if arg != "--"]
 
     _print(msg=f"case {args.case}, console {ui_url}, runner from {infra}")
-    return walk(runner, _suite_env(found=found, host=host, engine_url=engine_url))
+    return walk(runner, _suite_env(engine_url=engine_url, found=found, host=host))
 
 
 if __name__ == "__main__":
