@@ -88,6 +88,31 @@ PY
 It will not appear instantly. The pipeline is asynchronous, and via Kafka
 genuinely so; a couple of seconds is normal.
 
+## Raw syslog, parsed per vendor
+
+`make demo` replays real Cisco ASA, FortiGate, Palo Alto and Cisco IOS logs into the running stack as raw syslog. dfe-transform-elastic works out which device sent each line, parses it, and lands it in that vendor's own table.
+
+It needs a profile that runs dfe-transform-elastic, so set `DFE_PROFILE=single-kafka` or `DFE_PROFILE=single-grpc` in `.env` before `make ci`. Then:
+
+```bash
+make demo                                    # 60s at 20 lines a second, over UDP
+make demo DEMO_DURATION=300 DEMO_PROTOCOL=tcp
+```
+
+It creates the Sources in [`resources/demo/demo.yaml`](../resources/demo/demo.yaml) through the engine: a `demo-syslog` intake, and the tables `dfe.cisco-asa`, `dfe.fortinet`, `dfe.panw` and `dfe.cisco-ios`. It turns on dfe-receiver's syslog listener, UDP and TCP on port 514, and recreates what that changes. It ends with what each table gained:
+
+```text
+demo -   dfe.cisco-asa: +N rows
+demo -   dfe.fortinet: +N rows
+demo -   dfe.panw: +N rows
+demo -   dfe.cisco-ios: +N rows
+demo -   dfe.demo-syslog: +N rows
+demo -   dfe.main: +0 rows
+demo - PASS every vendor table gained rows, ready to query in the console or HyperDX
+```
+
+`dfe.demo-syslog` holds the lines no detector claimed. The replayed logs come from the dfe-transform-elastic release the stack pins, so the demo needs a release with agentless detection and stops before changing anything on one without it. A `make dev` stack takes `make demo DEV=1`.
+
 ## What you are looking at
 
 | Where | What |

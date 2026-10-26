@@ -48,8 +48,9 @@ def _normalised(name: str) -> str:
 SCRIPTS = sorted(path for path in SCRIPTS_DIR.glob("*.py") if _metadata(path))
 
 
-def test_the_seed_e2e_and_flow_scripts_declare_their_packages() -> None:
+def test_the_demo_seed_e2e_and_flow_scripts_declare_their_packages() -> None:
     assert [path.name for path in SCRIPTS] == [
+        "demo.py",
         "seed.py",
         "test_e2e.py",
         "test_flows.py",

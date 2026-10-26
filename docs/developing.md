@@ -27,7 +27,7 @@ exist, and how a profile decides which of them run.
 |---|---|
 | Docker and Docker Compose v2 | everything |
 | Python 3 | the helper scripts under `scripts/` |
-| uv | `make sources`, `make rules`, `make hunts`, `make events`, `make test-e2e`, `make test-resilience` and `make test-flows` only. It installs the PyYAML and Playwright those scripts declare inline, hash-checked against the `<script>.lock` beside each |
+| uv | `make sources`, `make rules`, `make hunts`, `make events`, `make demo`, `make test-e2e`, `make test-resilience` and `make test-flows` only. It installs the PyYAML and Playwright those scripts declare inline, hash-checked against the `<script>.lock` beside each |
 | ruff | `make check-python` only |
 | pytest | `make check-tests` only (`uvx` fetches the pin if you have it) |
 | git, to clone the public hyperi-io repos (or `DFE_SRC_ROOT` checkouts) | `make dev` |

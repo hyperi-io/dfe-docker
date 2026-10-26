@@ -281,7 +281,12 @@ ENABLED_APPS_CASES = [
     EnabledAppsCase(expected=[], profile="slim-grpc"),
     EnabledAppsCase(expected=[], profile="slim-kafka"),
     EnabledAppsCase(
-        expected=["dfe-fetcher", "dfe-transform-vector", "dfe-transform-vrl"],
+        expected=[
+            "dfe-fetcher",
+            "dfe-transform-elastic",
+            "dfe-transform-vector",
+            "dfe-transform-vrl",
+        ],
         profile="single-grpc",
     ),
     EnabledAppsCase(
@@ -871,10 +876,10 @@ class TestEnabledApps:
     def test_refuses_a_key_the_resolver_refuses(self) -> None:
         text = (
             "profiles:\n  single-grpc:\n    transport: grpc\n"
-            "    transform_elastic_enabled: true\n"
+            "    transform_elastic_enabled: yes\n"
         )
 
-        with pytest.raises(resolve_profile.ProfileError, match="kafka transport only"):
+        with pytest.raises(resolve_profile.ProfileError, match="must be true or false"):
             _sources.enabled_apps(profile_name="single-grpc", text=text)
 
     def test_a_profile_with_the_core_footprint_off_runs_none(self) -> None:

@@ -275,8 +275,6 @@ ENGINE_CONTENT_DIR_VAR = "DFE_ENGINE_CONTENT_DIR"
 ENGINE_CONTENT_DIR = "/app/content"
 ENGINE_CONTRACT_DIR_VAR = "DFE_ENGINE_CONTRACT_DIR"
 ENGINE_CONTRACT_SUBDIR = "contract"
-# The per-source apps that read and write topics only, so a grpc profile cannot run them
-KAFKA_ONLY_APPS = ("dfe-transform-elastic",)
 # The per-source apps are absent: dfe-engine starts one instance per source, never a profile.
 # A profile runs each one's with its PER_SOURCE_APP_KEYS key set true.
 SERVICES = [
@@ -335,14 +333,12 @@ def _validate_auth() -> None:
     )
 
 
-def _disabled_instances(*, found: Mapping[str, Sequence[str]], transport: str) -> str:
+def _disabled_instances(*, found: Mapping[str, Sequence[str]]) -> str:
     """Name each app the index declares instances of and the profile does not run, with the key that runs it."""
     lines = []
     for app, names in sorted(found.items()):
         key = PER_SOURCE_APP_KEYS.get(app)
-        if (app in KAFKA_ONLY_APPS) and (transport != "kafka"):
-            fix = "it runs on the kafka transport only"
-        elif key:
+        if key:
             fix = f"set {key}: true"
         else:
             fix = "no profile key runs it per source"
@@ -362,7 +358,6 @@ def _instance_services(
     local: Collection[str],
     profile: str,
     renders: bool,
-    transport: str,
 ) -> list[str]:
     """The per-source containers this tier declares, writing their compose fragment.
 
@@ -388,9 +383,7 @@ def _instance_services(
         )
     disabled = {app: names for app, names in found.items() if app not in enabled}
     if disabled:
-        _print(
-            header=profile, msg=_disabled_instances(found=disabled, transport=transport)
-        )
+        _print(header=profile, msg=_disabled_instances(found=disabled))
     running = {app: names for app, names in found.items() if app in enabled}
     images = local_image_services(components=[app for app in running if app in local])
     instances.write(images=images, instances=running)
@@ -660,7 +653,7 @@ def parse_yaml(*, text: str) -> dict[str, object]:
 
 
 def per_source_apps(
-    *, profile: dict[str, object], profile_name: str, renders: bool, transport: str
+    *, profile: dict[str, object], profile_name: str, renders: bool
 ) -> list[str]:
     """The apps this profile runs one container per source of, each reading the config dfe-engine renders for its source.
 
@@ -677,11 +670,6 @@ def per_source_apps(
             )
         if declared.strip().lower() == "false":
             continue
-        if (app in KAFKA_ONLY_APPS) and (transport != "kafka"):
-            raise ProfileError(
-                header=profile_name,
-                msg=f"{app} runs on the kafka transport only, so {key!r} cannot be true on a {transport} profile",
-            )
         enabled.append(app)
     return enabled if renders else []
 
@@ -743,7 +731,6 @@ def main(argv: Sequence[str] = ()) -> int:
             profile=data[PROFILE_LIST_YAML_FIELD][active_profile],
             profile_name=active_profile,
             renders=renders,
-            transport=transport,
         )
         local = list(args.local)
         if args.local_overlay is not None:
@@ -755,7 +742,6 @@ def main(argv: Sequence[str] = ()) -> int:
             local=local,
             profile=active_profile,
             renders=renders,
-            transport=transport,
         )
 
         # ClickHouse stays out of this list -- it starts via its compose profile
