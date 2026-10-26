@@ -95,8 +95,8 @@ genuinely so; a couple of seconds is normal.
 It needs a profile that runs dfe-transform-elastic, so set `DFE_PROFILE=single-kafka` or `DFE_PROFILE=single-grpc` in `.env` before `make ci`. Then:
 
 ```bash
-make demo                                    # 60s at 20 lines a second, over UDP
-make demo DEMO_DURATION=300 DEMO_PROTOCOL=tcp
+make demo                                    # 60s at 20 lines a second, over TCP
+make demo DEMO_DURATION=300 DEMO_PROTOCOL=udp
 ```
 
 It creates the Sources in [`resources/demo/demo.yaml`](../resources/demo/demo.yaml) through the engine: a `demo-syslog` intake, and the tables `dfe.cisco-asa`, `dfe.fortinet`, `dfe.panw` and `dfe.cisco-ios`. It turns on dfe-receiver's syslog listener, UDP and TCP on port 514, and recreates what that changes. It ends with what each table gained:
