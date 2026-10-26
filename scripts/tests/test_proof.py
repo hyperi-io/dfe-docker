@@ -16,10 +16,12 @@ also excludes the daemon updater through the stack lock, refuses a user who does
 not own .env, and tests the dfe-engine version the stack pins.
 """
 
+import subprocess
 from pathlib import Path
 
 import pytest
 
+import _common
 import _stack_lock
 import proof
 
@@ -357,8 +359,9 @@ def source_walk(engine_pin: Path, monkeypatch: pytest.MonkeyPatch) -> dict:
         f"DFE_TRANSFORM_VECTOR_VERSION=v1.0.41@sha256:{'c' * 64}\n",
         encoding="utf-8",
     )
-    state: dict = {"cloned": {}, "steps": [], "env": {}, "outcome": {}}
+    state: dict = {"cloned": {}, "steps": [], "env": {}, "outcome": {}, "profile": None}
     monkeypatch.setattr(proof.shutil, "which", lambda name: "/usr/bin/chrome")
+    monkeypatch.setattr(proof, "source_profile_problem", lambda env: state["profile"])
     monkeypatch.setattr(
         proof,
         "clone",
@@ -407,3 +410,67 @@ def test_a_failed_case_fails_the_walk_and_the_next_still_runs(
     source_walk["outcome"]["source filebeat"] = False
     assert proof.source_step(tmp_path, {}) is False
     assert source_walk["steps"] == ["source filebeat", "source vector"]
+
+
+def test_a_profile_without_the_case_transforms_fails_the_walk_before_any_clone(
+    source_walk: dict, tmp_path: Path
+) -> None:
+    source_walk["profile"] = "the profile runs no per-source dfe-transform-vrl"
+    assert proof.source_step(tmp_path, {}) is False
+    assert source_walk["cloned"] == {}
+    assert source_walk["steps"] == []
+
+
+@pytest.fixture
+def resolved_profile(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Path:
+    """A fake `make .tmp/profile.mk` that leaves the given file as the resolved profile."""
+    profile_mk = tmp_path / "profile.mk"
+    monkeypatch.setattr(_common, "PROFILE_MK", profile_mk)
+    monkeypatch.setattr(
+        proof.subprocess,
+        "run",
+        lambda argv, **kwargs: subprocess.CompletedProcess(argv, 0),
+    )
+    return profile_mk
+
+
+@pytest.mark.parametrize(
+    ("running", "named"),
+    [
+        ("", ["dfe-transform-vrl", "dfe-transform-vector"]),
+        ("dfe-fetcher dfe-transform-vrl", ["dfe-transform-vector"]),
+        ("dfe-transform-vector", ["dfe-transform-vrl"]),
+    ],
+)
+def test_a_profile_missing_a_case_transform_names_it_and_the_key_that_runs_it(
+    resolved_profile: Path, running: str, named: list[str]
+) -> None:
+    resolved_profile.write_text(
+        f"export DFE_PER_SOURCE_APPS := {running}\n", encoding="utf-8"
+    )
+    problem = proof.source_profile_problem({})
+    assert problem is not None
+    for app in named:
+        assert app in problem
+        assert _common.PER_SOURCE_APP_KEYS[app] in problem
+
+
+def test_a_profile_running_both_case_transforms_has_no_problem(
+    resolved_profile: Path,
+) -> None:
+    resolved_profile.write_text(
+        "export DFE_PER_SOURCE_APPS := dfe-fetcher dfe-transform-vector dfe-transform-vrl\n",
+        encoding="utf-8",
+    )
+    assert proof.source_profile_problem({}) is None
+
+
+def test_a_profile_that_does_not_resolve_is_a_problem(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        proof.subprocess,
+        "run",
+        lambda argv, **kwargs: subprocess.CompletedProcess(argv, 2),
+    )
+    assert proof.source_profile_problem({}) == "the profile did not resolve"
