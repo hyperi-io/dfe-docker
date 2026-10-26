@@ -77,6 +77,8 @@ RECEIVER_SERVICE = "dfe-receiver"
 SYSLOG_SWITCH = {
     "config.syslog.enabled": True,
     "config.syslog.accept_unauthenticated": True,
+    # The original line, so dfe-transform-elastic parses vendors whose header the loose syslog split misreads
+    "config.syslog.raw_capture.enabled": True,
 }
 SYSLOG_PORT = 514
 # The generator's inputs beside its own directory: the detector's label table and the fixtures it replays
@@ -668,7 +670,7 @@ def main() -> int:
         "--image", required=True, help="the pinned Python image the generator runs in"
     )
     parser.add_argument(
-        "--protocol", choices=("udp", "tcp"), default="udp", help="syslog transport"
+        "--protocol", choices=("udp", "tcp"), default="tcp", help="syslog transport"
     )
     parser.add_argument("--rate", default=20.0, type=float, help="lines per second")
     args = parser.parse_args()

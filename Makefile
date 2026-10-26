@@ -782,7 +782,7 @@ events: ## Send the fake resources/seed events through the receiver, after `make
 
 # The replay script inside the dfe-transform-elastic checkout, fetched at the tag DFE_TRANSFORM_ELASTIC_VERSION pins or read from DFE_SRC_ROOT/dfe-transform-elastic.
 DEMO_GENERATOR ?= scripts/replay_syslog.py
-DEMO_PROTOCOL ?= udp
+DEMO_PROTOCOL ?= tcp
 DEMO_RATE ?= 20
 DEMO_DURATION ?= 60
 # The generator is standard-library Python and dfe-transform-elastic's image has none, so it runs here, pinned like the hadolint image above.
