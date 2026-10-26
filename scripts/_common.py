@@ -12,9 +12,11 @@ Internal support module - imported by the runnable scripts, not executed directl
 """
 
 import datetime
+import json
 import os
 import re
 import stat
+import subprocess
 import sys
 import typing
 from pathlib import Path
@@ -133,6 +135,12 @@ SERVICE_PROFILES_FILE = REPO_ROOT / "service_profiles.yaml"
 # instead of resolving to something silently wrong. `${VAR:-default}` is optional
 # by construction and needs nothing from us.
 _REQUIRED_VAR_RE = re.compile(r"\$\{([A-Z][A-Z0-9_]*):\?")
+# Enough to resolve interpolation: the limits read off the model do not depend on which image runs
+_COMPOSE_PLACEHOLDER = "0.0.0-placeholder"
+
+
+class ComposeConfigError(Exception):
+    """Raised when `docker compose config` refuses the files or returns no model."""
 
 
 # Levels a message names by its first word. _print has no level argument, so the word callers already lead with (`FAIL ...`, `WARNING: ...`) becomes the line's level and everything else is INFO.
@@ -216,6 +224,50 @@ def write_dotenv(*, path: Path, text: str) -> None:
     else:
         mode = DOTENV_MODE
     write_private(path=path, text=text, mode=mode)
+
+
+def _compose_env() -> dict[str, str]:
+    """Return the environment with every mandatory compose key set, a placeholder filling the unset ones."""
+    env = dict(os.environ)
+    for name in _required_compose_vars():
+        if not (env.get(name, "").strip()):
+            env[name] = _COMPOSE_PLACEHOLDER
+    return env
+
+
+def _compose_model(
+    *,
+    files: typing.Sequence[Path],
+    profiles: typing.Sequence[str],
+    services: typing.Sequence[str],
+) -> dict:
+    """Return the model `docker compose config --format json` resolves for the files, profiles and services, raising ComposeConfigError when it resolves none."""
+    cmd = ["docker", "compose"]
+    for path in files:
+        cmd += ["-f", str(path)]
+    for profile in profiles:
+        cmd += ["--profile", profile]
+    cmd += ["config", "--format", "json", *services]
+    result = subprocess.run(
+        cmd,
+        capture_output=True,
+        check=False,
+        cwd=REPO_ROOT,
+        encoding="utf-8",
+        env=_compose_env(),
+        errors="replace",
+        text=True,
+    )
+    if result.returncode != 0:
+        raise ComposeConfigError(
+            f"docker compose config failed: {result.stderr.strip()}"
+        )
+    try:
+        return json.loads(result.stdout)
+    except ValueError as error:
+        raise ComposeConfigError(
+            f"docker compose config returned no model: {error}"
+        ) from error
 
 
 def _config_topics(*, path: Path) -> tuple[set[str], set[str], str]:

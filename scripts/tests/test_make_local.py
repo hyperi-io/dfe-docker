@@ -79,14 +79,14 @@ def _resolves(*, checkout: Path) -> list[list[str]]:
     return [line.split() for line in lines]
 
 
-def _local_args(args: list[str]) -> list[str]:
+def _local_args(*, args: list[str]) -> list[str]:
     """One run's arguments without the usage flag."""
     return [arg for arg in args if arg != _USAGE]
 
 
 def _first_resolve(*, checkout: Path) -> list[str]:
     """The LOCAL arguments the resolver was handed by the goal's own make, before any sub-make ran it."""
-    return _local_args(_resolves(checkout=checkout)[0])
+    return _local_args(args=_resolves(checkout=checkout)[0])
 
 
 def _make(*, args: list[str], cwd: Path) -> subprocess.CompletedProcess:
@@ -208,7 +208,7 @@ def test_apply_puts_each_instance_back_on_what_the_dev_build_recorded(
     assert result.returncode == 0, result.stderr
     runs = _resolves(checkout=checkout)
     assert runs
-    assert all(_local_args(run) == ["--local-overlay", _RECORD] for run in runs)
+    assert all(_local_args(args=run) == ["--local-overlay", _RECORD] for run in runs)
 
 
 def test_apply_with_local_hands_the_resolver_what_it_names(checkout: Path) -> None:
@@ -237,7 +237,7 @@ def test_a_registry_start_hands_the_resolver_none(checkout: Path) -> None:
     assert _first_resolve(checkout=checkout) == []
 
 
-@pytest.mark.parametrize("goal", ["ci", "dev", "up", "apply"])
+@pytest.mark.parametrize("goal", ["ci", "dev", "up", "infra", "apply"])
 def test_a_goal_that_starts_services_asks_for_the_usage_limits(
     checkout: Path, goal: str
 ) -> None:

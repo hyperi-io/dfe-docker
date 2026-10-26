@@ -24,9 +24,7 @@ exclusive -- adding all services together double-counts them.
 
 from __future__ import annotations
 
-import json
 import os
-import subprocess
 import sys
 from pathlib import Path
 
@@ -35,48 +33,15 @@ sys.pycache_prefix = str(Path(__file__).resolve().parent.parent / ".tmp" / "pyca
 
 from _common import (  # noqa: E402
     COMPOSE_FILE,
-    REPO_ROOT,
+    ComposeConfigError,
+    _compose_model,
     _load_dotenv,
     _print,
-    _required_compose_vars,
     _resolved_profiles,
     _resolved_services,
 )
 
-# Enough to resolve interpolation; we are reading limits, not pulling images.
-_PLACEHOLDER = "0.0.0-limits"
-
 _MUTUALLY_EXCLUSIVE = ("kafka-redpanda", "kafka-apache")
-
-
-def _env() -> dict[str, str]:
-    """Return an environment with every mandatory compose key satisfied."""
-    env = dict(os.environ)
-    for name in _required_compose_vars():
-        if not (env.get(name, "").strip()):
-            env[name] = _PLACEHOLDER
-    return env
-
-
-def _resolved(profiles: list[str]) -> dict:
-    """Return the resolved compose config as a dict for the given profiles."""
-    cmd = ["docker", "compose", "-f", COMPOSE_FILE.name]
-    for profile in profiles:
-        cmd += ["--profile", profile]
-    cmd += ["config", "--format", "json"]
-    result = subprocess.run(
-        cmd,
-        capture_output=True,
-        cwd=REPO_ROOT,
-        encoding="utf-8",
-        env=_env(),
-        errors="replace",
-        text=True,
-    )
-    if result.returncode != 0:
-        _print(msg=f"compose config failed:\n{result.stderr.strip()}")
-        raise SystemExit(1)
-    return json.loads(result.stdout)
 
 
 def _limits(service: dict) -> tuple[int, str]:
@@ -149,7 +114,12 @@ def main() -> int:
     _load_dotenv()
 
     profiles, allowed, label = _active_view()
-    services = _resolved(profiles).get("services", {})
+    try:
+        model = _compose_model(files=[COMPOSE_FILE], profiles=profiles, services=[])
+    except ComposeConfigError as error:
+        _print(msg=str(error))
+        return 1
+    services = model.get("services", {})
     if allowed is not None:
         allowed = _with_dependencies(allowed=allowed, services=services)
         # Keep every infra service its profiles brought in; keep only the DFE and

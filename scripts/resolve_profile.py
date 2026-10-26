@@ -795,11 +795,11 @@ def main(argv: Sequence[str] = ()) -> int:
                 service_list.extend(AUTH_HYPERDX_SERVICES)
         lines.append(f"export DFE_SERVICES := {' '.join(service_list)}")
 
-        # The limits the collector reports, read from the services this resolve starts, so only a stack with a collector needs them.
+        # The limits the collector reports, read from the services this resolve starts, so only a stack with a collector needs them
         if args.usage and footprint["otel"]:
             fragment = instances.COMPOSE_INSTANCES_FILE if instance_services else None
             lines += usage_cores.profile_lines(
-                profiles=profiles, services=service_list, fragment=fragment
+                fragment=fragment, profiles=profiles, services=service_list
             )
 
         # What the engine is told about this tier, each line emitted unconditionally and empty where it does not apply, so the included file settles. .env may name another broker and move the content volume's mount

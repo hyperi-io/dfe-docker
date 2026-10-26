@@ -8,7 +8,7 @@
 
 """The command lines `make apply` and the start goals print, in a copy of the Makefile.
 
-These goals include .tmp/profile.mk, which scripts/resolve_profile.py writes from the real profiles and the engine's instance index. A stand-in resolver writes a fixed one instead, so what is asserted is the Makefile's own wiring: apply removes the instance containers the fragment no longer declares before it recreates anything, against the same compose project, and then hands a running collector the CPU limits it re-resolved. A start goal on a checkout with no .env has it minted before its first compose call.
+These goals include .tmp/profile.mk, which scripts/resolve_profile.py writes from the real profiles and the engine's instance index. A stand-in resolver writes a fixed one instead, so what is asserted is the Makefile's own wiring: apply removes the instance containers the fragment no longer declares before it recreates anything, against the same compose project. It then hands a running collector the CPU limits it re-resolved. A start goal on a checkout with no .env has it minted before its first compose call.
 """
 
 import os
@@ -41,14 +41,14 @@ if not target.is_file() or target.read_text(encoding="utf-8") != content:
 
 _PRUNE = "scripts/instances.py --prune"
 
-# The same stack with the collector running.
+# The same stack with the collector running
 _COLLECTOR_RESOLVER = _RESOLVER.replace(
     "DFE_OTEL_RESOLVED := false", "DFE_OTEL_RESOLVED := true"
 )
 
 
-def _copy_makefile(root: Path, *, resolver: str) -> Path:
-    """The Makefile, one stand-in resolver, the network precheck, and no .env."""
+def _copy_makefile(*, resolver: str, root: Path) -> Path:
+    """The Makefile, one stand-in resolver, the network precheck and no .env."""
     shutil.copy(REPO_ROOT / "Makefile", root / "Makefile")
     (root / "scripts").mkdir()
     (root / "scripts" / "resolve_profile.py").write_text(
@@ -64,13 +64,13 @@ def _copy_makefile(root: Path, *, resolver: str) -> Path:
 @pytest.fixture
 def collector_checkout(tmp_path: Path) -> Path:
     """A checkout whose resolved stack runs the collector."""
-    return _copy_makefile(tmp_path, resolver=_COLLECTOR_RESOLVER)
+    return _copy_makefile(resolver=_COLLECTOR_RESOLVER, root=tmp_path)
 
 
 @pytest.fixture
 def checkout(tmp_path: Path) -> Path:
-    """The Makefile, a stand-in resolver, the network precheck, and no .env."""
-    return _copy_makefile(tmp_path, resolver=_RESOLVER)
+    """The Makefile, a stand-in resolver, the network precheck and no .env."""
+    return _copy_makefile(resolver=_RESOLVER, root=tmp_path)
 
 
 def _dry_run(*, cwd: Path, args: list[str]) -> list[list[str]]:
@@ -200,7 +200,7 @@ def test_a_start_goal_mints_env_before_its_first_compose_call(
 def test_apply_hands_the_collector_the_limits_it_resolved(
     collector_checkout: Path, services: str
 ) -> None:
-    # An instance added or removed moves the limits, and compose recreates only on a change.
+    # An instance added or removed moves the limits and compose recreates only on a change
     lines = _dry_run(cwd=collector_checkout, args=["apply", f"SERVICES={services}"])
 
     prune = _index(lines, starts=["python3", *_PRUNE.split()])

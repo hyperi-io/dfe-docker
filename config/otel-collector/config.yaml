@@ -24,7 +24,7 @@ processors:
   batch:
     send_batch_size: 1024
     timeout: 5s
-  # sql_query sets its columns on each reading, and the usage rollup reads them off the resource
+  # sql_query sets its columns on each reading and the usage rollup reads them off the resource
   groupbyattrs/usage:
     keys: [k8s.container.name, k8s.pod.uid]
   memory_limiter:
