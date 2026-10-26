@@ -4158,10 +4158,8 @@ def run_test(ctx, mode, test, persistent_services):
             table=test.table,
         )
 
-    # The apps reach Kafka through the compose anchor, which has to follow this test's transport rather than make's
-    os.environ[resolve_profile.ENGINE_BROKER_ENV_VAR] = _sources.kafka_bootstrap(
-        transport=test.transport
-    )
+    # The apps reach Kafka through the compose anchor, and dfe-engine decides whether a bus exists from these too. Both follow this test's transport rather than make's
+    os.environ.update(_sources.engine_transport(transport=test.transport))
 
     # Start the stack (Kafka profiles: infra first, create topics, then full stack)
     files = stack_up(mode=mode, services=effective_services, test=test)

@@ -356,6 +356,19 @@ def kafka_bootstrap(*, transport: str) -> str:
     return resolve_profile.tier_broker(configured="", transport=transport)
 
 
+def engine_transport(*, transport: str) -> dict[str, str]:
+    """The three settings that tell dfe-engine whether a bus exists, keyed by the variable each reaches it through.
+
+    The engine creates and waits for dead-letter topics on any deployment whose bus is present, so a direct gRPC test run from a Kafka profile's `.env` has to say it has none.
+    """
+    bus = transport == "kafka"
+    return {
+        resolve_profile.ENGINE_BROKER_ENV_VAR: kafka_bootstrap(transport=transport),
+        resolve_profile.TRANSPORT_BUS_PRESENT_VAR: "true" if bus else "false",
+        resolve_profile.TRANSPORT_DEFAULT_VAR: "bus" if bus else "direct",
+    }
+
+
 def merged_topics(
     *, expected_topics: Sequence[str], sources: Sequence[Source], transport: str
 ) -> list[str]:

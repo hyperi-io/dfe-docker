@@ -1022,6 +1022,47 @@ class TestKafkaBootstrap:
         assert broker == case["expected"]
 
 
+class TestEngineTransport:
+    @pytest.mark.parametrize(
+        ("transport", "expected"),
+        [
+            (
+                "grpc",
+                {
+                    "DFE_KAFKA_BOOTSTRAP_SERVERS": "",
+                    "DFE_TRANSPORT_BUS_PRESENT": "false",
+                    "DFE_TRANSPORT_DEFAULT": "direct",
+                },
+            ),
+            (
+                "kafka",
+                {
+                    "DFE_KAFKA_BOOTSTRAP_SERVERS": "kafka:9092",
+                    "DFE_TRANSPORT_BUS_PRESENT": "true",
+                    "DFE_TRANSPORT_DEFAULT": "bus",
+                },
+            ),
+        ],
+    )
+    def test_follows_the_tests_transport(
+        self, transport: str, expected: dict[str, str]
+    ) -> None:
+        assert _sources.engine_transport(transport=transport) == expected
+
+    @pytest.mark.parametrize("transport", ["grpc", "kafka"])
+    def test_agrees_with_the_tier_the_profile_exports(self, transport: str) -> None:
+        tier = resolve_profile.engine_tier(
+            configured_broker="",
+            content_dir="",
+            profile_name=f"slim-{transport}",
+            renders=False,
+            transport=transport,
+        )
+        ours = _sources.engine_transport(transport=transport)
+
+        assert {key: tier[key] for key in ours} == ours
+
+
 class TestMergedTopics:
     @pytest.mark.parametrize("case", MERGED_TOPICS_CASES)
     def test_matches_expected(self, case: MergedTopicsCase) -> None:
