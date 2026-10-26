@@ -6,18 +6,24 @@
 #  License:      BUSL-1.1
 #  Copyright:    (c) 2026 HYPERI PTY LIMITED
 
-"""The program checkout the vector case uploads from, and the cases that take none.
-
-The vector case grades against dfe-transform-vrl's corpus and uploads
-dfe-transform-vector's pipeline, so it names a second checkout. Every other case
-passes none, and the runner then looks beside the engine repo.
-"""
+"""Only the vector case names a program checkout, the dfe-transform-vector one its pipeline is uploaded from."""
 
 from pathlib import Path
 
 import pytest
 
 import test_source
+
+
+def _program_checkout(*, case: str, flag: str | None) -> Path | None:
+    """The checkout test_source.py passes as --program-repo for ``case``."""
+    return test_source._case_repo(
+        case=case,
+        cases=test_source.PROGRAM_CASES,
+        env_var=test_source.PROGRAM_REPO_ENV_VAR,
+        flag=flag,
+        marker=test_source.PROGRAM_MARKER,
+    )
 
 
 @pytest.fixture
@@ -31,24 +37,24 @@ def vector_checkout(tmp_path: Path) -> Path:
 
 @pytest.mark.parametrize("case", ["filebeat", "elastic", "cloudwatch"])
 def test_only_the_vector_case_names_a_program_checkout(
-    case: str, vector_checkout: Path, monkeypatch: pytest.MonkeyPatch
+    monkeypatch: pytest.MonkeyPatch, vector_checkout: Path, case: str
 ) -> None:
     monkeypatch.setenv(test_source.PROGRAM_REPO_ENV_VAR, str(vector_checkout))
-    assert test_source._program_repo(None, case) is None
+    assert _program_checkout(case=case, flag=None) is None
 
 
 def test_the_vector_case_reads_its_checkout_from_the_environment(
-    vector_checkout: Path, monkeypatch: pytest.MonkeyPatch
+    monkeypatch: pytest.MonkeyPatch, vector_checkout: Path
 ) -> None:
     monkeypatch.setenv(test_source.PROGRAM_REPO_ENV_VAR, str(vector_checkout))
-    assert test_source._program_repo(None, "vector") == vector_checkout.resolve()
+    assert _program_checkout(case="vector", flag=None) == vector_checkout.resolve()
 
 
 def test_the_flag_beats_the_environment(
-    vector_checkout: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, vector_checkout: Path
 ) -> None:
     monkeypatch.setenv(test_source.PROGRAM_REPO_ENV_VAR, str(tmp_path / "elsewhere"))
-    found = test_source._program_repo(str(vector_checkout), "vector")
+    found = _program_checkout(case="vector", flag=str(vector_checkout))
     assert found == vector_checkout.resolve()
 
 
@@ -56,9 +62,9 @@ def test_an_unnamed_checkout_leaves_the_runner_to_find_it(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.delenv(test_source.PROGRAM_REPO_ENV_VAR, raising=False)
-    assert test_source._program_repo(None, "vector") is None
+    assert _program_checkout(case="vector", flag=None) is None
 
 
 def test_a_checkout_with_no_pipeline_is_refused(tmp_path: Path) -> None:
     with pytest.raises(SystemExit, match="filebeat.yaml"):
-        test_source._program_repo(str(tmp_path), "vector")
+        _program_checkout(case="vector", flag=str(tmp_path))

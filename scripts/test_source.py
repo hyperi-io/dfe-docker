@@ -60,15 +60,11 @@ ARCHIVER_SERVICE = "dfe-archiver"
 # The runner appends the hinted service as $1; $0 is the checkout make runs in.
 APPLY_SCRIPT = 'exec make -C "$0" --no-print-directory apply SERVICES="$1"'
 RUNNER_PATH = Path("scripts") / "acceptance" / "source" / "run.py"
-# The cases that push a corpus, and the checkout the runner reads it out of.
-# One repo for all three: they feed the same corpus and the elastic case takes
-# its cisco_ios module out of it. A case absent here passes no --transform-repo,
-# which is the fetched cloudwatch one.
+# The cases that push the one corpus repo, which also holds elastic's cisco_ios module, so fetched cloudwatch passes no --transform-repo
 CORPUS_CASES = ("filebeat", "elastic", "vector")
 CORPUS_REPO_ENV_VAR = "DFE_TRANSFORM_VRL_REPO"
 CORPUS_MARKER = Path("pipelines") / "filebeat" / "filebeat.vrl"
-# The vector case uploads its own app's pipeline. Unnamed, the runner looks for
-# a dfe-transform-vector checkout beside the engine repo.
+# The checkout the vector case uploads its own app's pipeline from, else the runner looks beside the engine repo
 PROGRAM_CASES = ("vector",)
 PROGRAM_REPO_ENV_VAR = "DFE_TRANSFORM_VECTOR_REPO"
 PROGRAM_MARKER = Path("pipelines") / "filebeat" / "filebeat.yaml"
@@ -109,33 +105,18 @@ def _engine_repo(flag: str | None) -> Path:
     return repo
 
 
-def _transform_repo(flag: str | None, case: str) -> Path | None:
-    """The checkout this case's corpus is read out of.
-
-    Optional: a fetched case reads none, and the runner falls back to the
-    checkout beside the engine repo when this is not passed.
-    """
-    if case not in CORPUS_CASES:
+def _case_repo(
+    *, case: str, cases: tuple[str, ...], env_var: str, flag: str | None, marker: Path
+) -> Path | None:
+    """The checkout ``flag`` or ``env_var`` names for a case in ``cases``, else None to let the runner find it."""
+    if case not in cases:
         return None
-    candidate = flag or os.environ.get(CORPUS_REPO_ENV_VAR)
-    if not candidate:
+    candidate = (flag) or (os.environ.get(env_var))
+    if not (candidate):
         return None
     repo = Path(candidate).expanduser().resolve()
-    if not ((repo / CORPUS_MARKER).is_file()):
-        sys.exit(f"test_source: {repo} carries no {CORPUS_MARKER}")
-    return repo
-
-
-def _program_repo(flag: str | None, case: str) -> Path | None:
-    """The checkout this case's program is uploaded from, or None to let the runner find it."""
-    if case not in PROGRAM_CASES:
-        return None
-    candidate = flag or os.environ.get(PROGRAM_REPO_ENV_VAR)
-    if not candidate:
-        return None
-    repo = Path(candidate).expanduser().resolve()
-    if not ((repo / PROGRAM_MARKER).is_file()):
-        sys.exit(f"test_source: {repo} carries no {PROGRAM_MARKER}")
+    if not ((repo / marker).is_file()):
+        sys.exit(f"test_source: {repo} carries no {marker}")
     return repo
 
 
@@ -375,8 +356,20 @@ def main(argv: list[str] | None = None) -> int:
     _load_dotenv()
     infra = _infra_repo(args.infra_repo)
     engine = _engine_repo(args.engine_repo)
-    transform = _transform_repo(args.transform_repo, args.case)
-    program = _program_repo(args.program_repo, args.case)
+    transform = _case_repo(
+        case=args.case,
+        cases=CORPUS_CASES,
+        env_var=CORPUS_REPO_ENV_VAR,
+        flag=args.transform_repo,
+        marker=CORPUS_MARKER,
+    )
+    program = _case_repo(
+        case=args.case,
+        cases=PROGRAM_CASES,
+        env_var=PROGRAM_REPO_ENV_VAR,
+        flag=args.program_repo,
+        marker=PROGRAM_MARKER,
+    )
     python = _runner_python(args.python)
 
     # The address the stack publishes on, which is `localhost` for one stack on a
