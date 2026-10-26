@@ -93,6 +93,12 @@ PER_SOURCE_APPS_CASES = [
         transport="grpc",
     ),
     PerSourceAppsCase(
+        declared={"transform_elastic_enabled": "true"},
+        expected=[ELASTIC],
+        renders=True,
+        transport="grpc",
+    ),
+    PerSourceAppsCase(
         declared={
             "fetcher_enabled": "true",
             "transform_elastic_enabled": "true",
@@ -121,16 +127,13 @@ PER_SOURCE_APPS_REFUSAL_CASES = [
         message="'transform_vrl_enabled' must be true or false",
         transport="kafka",
     ),
-    PerSourceAppsRefusalCase(
-        declared={"transform_elastic_enabled": "true"},
-        message="dfe-transform-elastic runs on the kafka transport only",
-        transport="grpc",
-    ),
 ]
 RESOLVED_EXPORT_CASES = [
     ResolvedExportCase(expected="", profile="slim-grpc"),
     ResolvedExportCase(expected="", profile="slim-kafka"),
-    ResolvedExportCase(expected=f"{FETCHER} {VECTOR} {VRL}", profile="single-grpc"),
+    ResolvedExportCase(
+        expected=f"{FETCHER} {ELASTIC} {VECTOR} {VRL}", profile="single-grpc"
+    ),
     ResolvedExportCase(
         expected=f"{FETCHER} {ELASTIC} {VECTOR} {VRL}", profile="single-kafka"
     ),
@@ -167,7 +170,6 @@ class TestInstanceServices:
             local=[],
             profile="single-kafka",
             renders=case["renders"],
-            transport="kafka",
         )
 
         assert services == case["expected"]
@@ -185,7 +187,6 @@ class TestInstanceServices:
             local=[],
             profile="single-kafka",
             renders=True,
-            transport="kafka",
         )
 
         assert services == [f"{enabled[0]}-aws-cloudtrail"]
@@ -206,31 +207,11 @@ class TestInstanceServices:
             local=[],
             profile="slim-grpc",
             renders=True,
-            transport="grpc",
         )
 
         assert services == []
         assert f"- {FETCHER} (sources aws-cloudtrail)" in capsys.readouterr().err
         assert not (instances.COMPOSE_INSTANCES_FILE.exists())
-
-    def test_warns_of_a_kafka_only_instance_on_grpc_without_naming_its_key(
-        self, capsys: pytest.CaptureFixture[str]
-    ) -> None:
-        _index(app=ELASTIC, names=["cisco-asa"])
-
-        services = resolve_profile._instance_services(
-            enabled=[FETCHER, VECTOR, VRL],
-            local=[],
-            profile="single-grpc",
-            renders=True,
-            transport="grpc",
-        )
-
-        assert services == []
-        assert (
-            f"- {ELASTIC} (sources cisco-asa): it runs on the kafka transport only"
-            in capsys.readouterr().err
-        )
 
     def test_refuses_an_instance_of_an_app_with_no_compose_service(self) -> None:
         _index(app="dfe-transform-unknown", names=["cisco-asa"])
@@ -241,7 +222,6 @@ class TestInstanceServices:
                 local=[],
                 profile="single-kafka",
                 renders=True,
-                transport="kafka",
             )
 
     def test_an_instance_of_a_local_app_runs_its_local_image(self) -> None:
@@ -253,7 +233,6 @@ class TestInstanceServices:
             local=["dfe-engine", VRL],
             profile="single-kafka",
             renders=True,
-            transport="kafka",
         )
 
         text = instances.COMPOSE_INSTANCES_FILE.read_text(encoding="utf-8")
@@ -268,7 +247,6 @@ class TestPerSourceApps:
             profile={"transport": case["transport"], **case["declared"]},
             profile_name=f"single-{case['transport']}",
             renders=case["renders"],
-            transport=case["transport"],
         )
 
         assert apps == case["expected"]
@@ -280,7 +258,6 @@ class TestPerSourceApps:
                 profile={"transport": case["transport"], **case["declared"]},
                 profile_name=f"single-{case['transport']}",
                 renders=True,
-                transport=case["transport"],
             )
 
 

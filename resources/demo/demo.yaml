@@ -1,0 +1,35 @@
+# Project:   dfe-docker
+# File:      resources/demo/demo.yaml
+# Purpose:   The Sources `make demo` defines: one agentless syslog intake and the vendor tables it detects into
+# Language:  YAML
+#
+# License:   BUSL-1.1
+# Copyright: (c) 2026 HYPERI PTY LIMITED
+
+# The engine's POST /sources body for the intake. dfe-receiver's syslog listener labels every line `_source: syslog`, this match claims it, and dfe-transform-elastic in agentless mode relabels each line to the vendor it detects.
+intake:
+  source: demo-syslog
+  display_name: Demo syslog
+  description: Raw vendor syslog, each line detected and parsed by dfe-transform-elastic in agentless mode
+  match:
+    field: _source
+    operator: equals
+    value: syslog
+  header:
+    type: common-header/timeseries
+    version: 1.0.1
+  schema:
+    meta_schema: meta/syslog
+    meta_schema_version: 1.0.0
+  transform:
+    engine: elastic
+    mode: agentless
+    detect:
+      unmatched: passthrough
+
+# Engine catalogue entries, one table each. The demo sends lines for each, and the intake's detect candidates are their default variants.
+sources:
+  - cisco-asa
+  - fortinet
+  - panw
+  - cisco-ios

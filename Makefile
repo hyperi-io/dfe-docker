@@ -639,6 +639,7 @@ print-uv-version:
 
 .PHONY: check-locks
 check-locks: ## Assert each inline-metadata script's lock matches its pins (relock with `uv lock --script <script>`)
+	$(LOCK_UV) lock --check --script scripts/demo.py
 	$(LOCK_UV) lock --check --script scripts/seed.py
 	$(LOCK_UV) lock --check --script scripts/test_e2e.py
 	$(LOCK_UV) lock --check --script scripts/test_flows.py
@@ -773,6 +774,23 @@ hunts: ## Create the resources/seed rules and hunts the running engine lacks
 .PHONY: events
 events: ## Send the fake resources/seed events through the receiver, after `make sources`, for the seeded hunt to find
 	@$(UV) run --locked --script ./scripts/seed.py events
+
+# ---------------------------------------------------------------------------
+# Demo
+# Raw firewall and switch syslog through the RUNNING stack, on whichever profile runs dfe-transform-elastic. The Sources are resources/demo/demo.yaml's, created through the engine API, and dfe-transform-elastic in agentless mode detects each line's vendor and lands it in that vendor's table.
+# ---------------------------------------------------------------------------
+
+# The replay script inside the dfe-transform-elastic checkout, fetched at the tag DFE_TRANSFORM_ELASTIC_VERSION pins or read from DFE_SRC_ROOT/dfe-transform-elastic.
+DEMO_GENERATOR ?= scripts/replay_syslog.py
+DEMO_PROTOCOL ?= udp
+DEMO_RATE ?= 20
+DEMO_DURATION ?= 60
+# The generator is standard-library Python and dfe-transform-elastic's image has none, so it runs here, pinned like the hadolint image above.
+DEMO_PYTHON_IMAGE := python:3.15.1-slim-trixie@sha256:533b0b2f9b5d46fd097091cf826f27902f1d6c3bca714b6dc74551356aa97a51
+
+.PHONY: demo
+demo: env-files ## Send live firewall and switch syslog through the running stack, detected per line by dfe-transform-elastic and landed one table per vendor (DEMO_DURATION, DEMO_RATE, DEMO_PROTOCOL=udp|tcp; DEV=1 for a `make dev` stack)
+	@$(UV) run --locked --script ./scripts/demo.py --generator '$(DEMO_GENERATOR)' --image '$(DEMO_PYTHON_IMAGE)' --protocol '$(DEMO_PROTOCOL)' --rate '$(DEMO_RATE)' --duration '$(DEMO_DURATION)' $(if $(strip $(DEV)),--dev)
 
 # ---------------------------------------------------------------------------
 # Lifecycle

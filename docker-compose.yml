@@ -811,9 +811,9 @@ services:
   # ===========================================================================
   # dfe-transform-elastic
   # Beats and Elastic Agent JSON in, DFE-normalised events out. It selects ONE
-  # compiled-in transform by `source.name` and reads no authored program files,
-  # so it has nothing to mount beside its config -- no transforms directory and
-  # no enrichment tables.
+  # compiled-in transform by `source.name`, or in agentless mode detects one per
+  # event, and reads no authored program files, so it has nothing to mount beside
+  # its config -- no transforms directory and no enrichment tables.
   #
   # dfe-engine starts one instance per source, each extending this service.
   # ===========================================================================

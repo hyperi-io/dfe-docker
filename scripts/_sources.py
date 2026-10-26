@@ -274,7 +274,6 @@ def enabled_apps(*, profile_name: str, text: str) -> list[str]:
         profile=profile,
         profile_name=profile_name,
         renders=core not in FALSY,
-        transport=str(profile.get("transport", "")),
     )
 
 
