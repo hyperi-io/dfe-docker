@@ -36,7 +36,7 @@ HUNT_CRON = "* * * * *"
 SEVERITY = "high"
 # Each event's label rides in `_tags` beside the marker, which the landing schema keeps.
 LABEL_EXPRESSION = "toString(`_tags`.event)"
-# The tenant field: the receiver binds it and dfe-loader reads it alone.
+# The tenant field: the receiver binds it and dfe-loader reads it alone
 ORG_ID_FIELD = "_org_id"
 
 POLL_SECONDS = 3.0

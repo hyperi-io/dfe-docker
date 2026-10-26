@@ -1,0 +1,17 @@
+# Project:   dfe-docker
+# File:      tests/e2e/configs/receiver-e2e-org.yaml
+# Purpose:   Receives over gRPC and keeps the `_org_id` a detection test sends for the e2e org
+# Language:  YAML
+#
+# License:   BUSL-1.1
+# Copyright: (c) 2026 HYPERI PTY LIMITED
+
+ingest_bindings:
+  listeners:
+    http:
+      orgs: [default, e2e]
+
+routing:
+  source_org_id: allow
+
+transport: grpc

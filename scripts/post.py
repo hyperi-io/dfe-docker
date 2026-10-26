@@ -268,8 +268,8 @@ UI_QUERY_INTERVAL_SECONDS = 3.0
 # "created while the runner was already up" a claim worth making.
 HUNT_SERVICES = ("dfe-engine", "dfe-hunt-runner")
 HUNT_TARGET_TABLE = "detection"
-# The org the hunt runs for, made for the claim when the engine holds none.
-HUNT_CUSTOMER = "post"
+# The org the hunt runs for: the engine's reserved default org, where a record naming no org lands
+HUNT_CUSTOMER = "default"
 # Failed root logins are the detection, and each near miss breaks one half of it.
 HUNT_WHERE = (
     "toString(_json.event_type) = 'login_failure' "
