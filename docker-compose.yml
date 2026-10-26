@@ -353,11 +353,7 @@ services:
       - transform-elastic-geoip:/var/lib/dfe/geoip
     restart: "no"
 
-  # Creates the directory dfe-receiver mounts out of the engine's volume, because
-  # Docker refuses to start a container whose volume subpath is missing: an
-  # engine too old to write it, no engine at all, or one that failed its sync.
-  # The engine's image at the engine's mount path, so a first mount of an empty
-  # volume gets the uid 1000 owner the engine itself would give it.
+  # Creates the bearer-token directory dfe-receiver mounts as the engine's uid 1000, since Docker refuses a missing volume subpath
   bearer-tokens-init:
     image: ${IMAGE_REGISTRY:-ghcr.io/hyperi-io}/dfe-engine:${DFE_ENGINE_VERSION:?run 'make stack VERSION=X.Y.Z' to pin DFE_ENGINE_VERSION}
     container_name: ${DFE_CONTAINER_PREFIX:-}dfe-bearer-tokens-init
@@ -366,14 +362,11 @@ services:
     deploy: *limits-sidecar
     user: "1000:1000"
     entrypoint: ["/bin/sh", "-c"]
-    environment:
-      DFE_CONFIG_DIR: ${DFE_ENGINE_CONFIG_DIR:-/app/config}
-    # A LIST with one element, for the reason dlq-init's command gives. Owner-only,
-    # as the engine's secrets store creates its own directories.
+    # A list of one for the reason dlq-init's command gives, owner-only like the engine's own secrets
     command:
-      - umask 077 && mkdir -p "$$DFE_CONFIG_DIR/.secrets/ingest/bearer-tokens"
+      - umask 077 && mkdir -p /app/config/.secrets/ingest/bearer-tokens
     volumes:
-      - dfe-engine-config:${DFE_ENGINE_CONFIG_DIR:-/app/config}
+      - dfe-engine-config:/app/config
     restart: "no"
 
   # ===========================================================================
@@ -802,7 +795,7 @@ services:
       dlq-init:
         condition: service_completed_successfully
         required: false
-      # The bearer-token mount below cannot start without its directory.
+      # The bearer-token mount below cannot start without its directory
       bearer-tokens-init:
         condition: service_completed_successfully
     # The engine renders this app's config from the sources on the tiers that run
