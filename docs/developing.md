@@ -437,22 +437,13 @@ Above, sources come through the API. This one creates one in the console, attach
 
 `scripts/test_source.py` supplies what this repo owns: the published ports, the archiver container, the admin login from `.env` and `make apply` for each service the engine says must restart, which is what creates the source's own transform container. Run `make test-source DEV=1` against a `make dev` stack so that apply keeps the local images. `SOURCE_ARGS` reaches the runner untouched (`--keep`, `--per-module`, `--headed`).
 
-Beyond a running stack it needs `DFE_INFRA_DIR` (the runner), `DFE_ENGINE_REPO`
-and `DFE_TRANSFORM_VRL_REPO` (the corpus wrapper, the bundled pipeline), a
-dfe-transform-vector checkout for the vector case (`DFE_TRANSFORM_VECTOR_REPO`, else
-the one beside the engine repo), and an
-interpreter carrying Playwright -- `DFE_ACCEPTANCE_PYTHON` where the system one
-is externally managed. The cloudwatch case polls a real AWS upstream and writes
-nothing to it: put the two `AWS_*` credentials in `env/fetcher.env` and
-`DFE_AWS_REGION` in `.env`.
+Beyond a running stack it needs `DFE_INFRA_DIR` (the runner), `DFE_ENGINE_REPO` and `DFE_TRANSFORM_VRL_REPO` (the corpus wrapper, the bundled pipeline), a dfe-transform-vector checkout for the vector case (`DFE_TRANSFORM_VECTOR_REPO`, else the one beside the engine repo) and an interpreter carrying Playwright (`DFE_ACCEPTANCE_PYTHON` where the system one is externally managed). The cloudwatch case polls a real AWS upstream and writes nothing to it: put the two `AWS_*` credentials in `env/fetcher.env` and `DFE_AWS_REGION` in `.env`.
 
 Every step is a report row and a screenshot under `--shots-dir` (`.tmp/source`).
 A step the console cannot do falls back to the engine API and says so, because
 that is a finding about the console rather than about the pipeline.
 
-`make proof` runs the filebeat and vector cases on every stack version, each
-transform checkout cloned at the tag the stack pins, so a pin of either transform
-is proven through its data path.
+`make proof` runs the filebeat and vector cases on every stack version, each transform checkout cloned at the tag the stack pins, so a pin of either transform is proven through its data path.
 
 ## Static checks
 
