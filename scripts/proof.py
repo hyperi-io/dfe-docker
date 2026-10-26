@@ -18,7 +18,9 @@ Three steps, in order:
 3. ``make test-source`` -- the console source walk against that stack, once per
    case in ``SOURCE_CASES``, from fresh dfe-infra, dfe-engine and transform
    checkouts and a throwaway Playwright environment built from dfe-infra's
-   ``scripts/acceptance/requirements.txt``.
+   ``scripts/acceptance/requirements.txt``. It needs a profile that runs
+   dfe-transform-vrl and dfe-transform-vector per source (single-*), and
+   fails at once on one that does not.
 
 Everything it creates lives in one temporary directory that is deleted at the
 end, pass or fail: the checkouts, the virtualenv and every screenshot. Nothing
@@ -97,6 +99,8 @@ DEFAULT_TRANSFORM_VECTOR_REPO = "https://github.com/hyperi-io/dfe-transform-vect
 # Each pushed case proves one transform's data path, so a pin of either app is
 # proven by the proof that runs on its stack version.
 SOURCE_CASES = ("filebeat", "vector")
+# The app each case routes its source through. A profile starts it per source only with its `*_enabled` key set, so on one that does not (slim-grpc) the engine's instance is never declared and nothing runs it.
+SOURCE_CASE_APPS = {"filebeat": "dfe-transform-vrl", "vector": "dfe-transform-vector"}
 ACCEPTANCE_REQUIREMENTS = Path("scripts") / "acceptance" / "requirements.txt"
 CHROME_NAMES = ("google-chrome", "google-chrome-stable", "chrome")
 
@@ -250,9 +254,35 @@ def acceptance_python(infra: Path, venv: Path) -> str:
     return str(python)
 
 
+def source_profile_problem(env: dict[str, str]) -> str | None:
+    """Why the resolved profile cannot run the source cases, or None when it can."""
+    resolved = subprocess.run(
+        ["make", "--no-print-directory", "-s", ".tmp/profile.mk"],
+        cwd=PROJECT_DIR,
+        env=env,
+        check=False,
+    )
+    if resolved.returncode != 0:
+        return "the profile did not resolve"
+    running = _common._profile_mk_value(key=_common.PER_SOURCE_APPS_VAR)
+    missing = [app for app in SOURCE_CASE_APPS.values() if app not in running]
+    if not missing:
+        return None
+    keys = ", ".join(_common.PER_SOURCE_APP_KEYS[app] for app in missing)
+    return (
+        f"the profile runs no per-source {', '.join(missing)}, so the engine's "
+        f"instance of it is never declared and the cases would wait out their reporting timeouts. "
+        f"Run a profile that sets {keys}, such as DFE_PROFILE=single-grpc in .env"
+    )
+
+
 def source_step(work: Path, env: dict[str, str]) -> bool:
     if not any(shutil.which(name) for name in CHROME_NAMES):
         log("FAIL source: no Chrome on PATH; the runner drives the installed browser")
+        return False
+    problem = source_profile_problem(env)
+    if problem is not None:
+        log(f"FAIL source: {problem}")
         return False
     infra_repo = os.environ.get("DFE_PROOF_INFRA_REPO", DEFAULT_INFRA_REPO)
     engine_repo = os.environ.get("DFE_PROOF_ENGINE_REPO", DEFAULT_ENGINE_REPO)
