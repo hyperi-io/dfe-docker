@@ -85,8 +85,10 @@ FETCH_ROOT = REPO_ROOT / ".tmp" / "demo"
 DEPLOY_TIMEOUT_SECONDS = 90
 READY_TIMEOUT_SECONDS = 120.0
 READY_INTERVAL_SECONDS = 3.0
-LAND_TIMEOUT_SECONDS = 90.0
+LAND_TIMEOUT_SECONDS = 180.0
 LAND_INTERVAL_SECONDS = 5.0
+# A destination that refuses a push is retried in bursts, so one unchanged poll is not the end of the backlog
+LAND_QUIET_SECONDS = 20.0
 GIT_TIMEOUT_SECONDS = 300
 VERSION_TAG = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]*")
 
@@ -230,21 +232,17 @@ def _held(*, base: str, name: str, token: str) -> list[dict] | None:
     return [_deploy(base=base, name=name, token=token)]
 
 
-def _catalogue_variant(*, base: str, label: str, token: str) -> str:
-    """The variant the engine catalogue entry for one vendor table runs by default."""
-    status, answer = _api_get_json(
-        token=token,
-        url=f"{base}/sources/catalogue?search={quote(safe='', string=label)}&per_page=-1",
-    )
-    if status != 200 or not (isinstance(answer, dict)):
-        raise DemoError(f"GET /sources/catalogue returned HTTP {status}: {answer}")
-    for item in answer.get("items") or []:
-        if isinstance(item, dict) and item.get("name") == label and item.get("variant"):
-            return str(item["variant"])
-    raise DemoError(
-        f"the engine catalogue has no entry {label!r} with a transform variant, so "
-        f"the demo has no table to build for it"
-    )
+def _source_variant(*, base: str, label: str, token: str) -> str:
+    """The transform variant a stored vendor source runs, read off the source because the catalogue omits an entry once it is stored."""
+    status, answer = _api_get_json(token=token, url=_source_url(base=base, name=label))
+    transform = answer.get("transform") if isinstance(answer, dict) else None
+    variant = transform.get("variant") if isinstance(transform, dict) else None
+    if status != 200 or not (variant):
+        raise DemoError(
+            f"source {label!r} names no transform variant (GET /sources/{label}: "
+            f"HTTP {status}), so detection has no candidate for it"
+        )
+    return str(variant)
 
 
 def _ensure_table(*, base: str, label: str, token: str) -> list[dict]:
@@ -553,11 +551,15 @@ def _await_rows(*, before: dict[str, int | None], vendors: list[str]) -> dict[st
     """Poll until every vendor table has gained rows and the counts hold still, and return each table's gain."""
     deadline = time.monotonic() + LAND_TIMEOUT_SECONDS
     previous: dict[str, int] = {}
+    quiet_since = time.monotonic()
     while True:
         now = _counts(tables=list(before))
         gained = {table: (now[table] or 0) - (before[table] or 0) for table in before}
+        if gained != previous:
+            quiet_since = time.monotonic()
         landed = all(gained[table] > 0 for table in vendors)
-        if (landed and gained == previous) or time.monotonic() >= deadline:
+        settled = time.monotonic() - quiet_since >= LAND_QUIET_SECONDS
+        if (landed and settled) or time.monotonic() >= deadline:
             return gained
         previous = gained
         time.sleep(LAND_INTERVAL_SECONDS)
@@ -586,8 +588,8 @@ def _run(*, args: argparse.Namespace) -> int:
     replies = []
     variants = []
     for label in demo.sources:
-        variants.append(_catalogue_variant(base=base, label=label, token=token))
         replies += _ensure_table(base=base, label=label, token=token)
+        variants.append(_source_variant(base=base, label=label, token=token))
     intake = with_candidates(intake=demo.intake, variants=variants)
     replies += _ensure_intake(base=base, body=intake, token=token)
     replies.append(_switch_on_syslog(base=base, token=token))
