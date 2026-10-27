@@ -622,8 +622,8 @@ print-ruff-version:
 
 .PHONY: check-python
 check-python: ## Lint the helper scripts (config in ruff.toml)
-	$(RUFF) check scripts/ ops/
-	$(RUFF) format --check scripts/ ops/
+	$(RUFF) check scripts/ ops/ resources/demo/samples/
+	$(RUFF) format --check scripts/ ops/ resources/demo/samples/
 
 # Pinned for the same reason RUFF is, and installed the same way in CI
 # (PYTEST=pytest). Unit tests over the helper scripts: they
