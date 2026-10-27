@@ -797,7 +797,7 @@ events: ## Send the fake resources/seed events through the receiver, after `make
 # Raw firewall and switch syslog through the RUNNING stack, on whichever profile runs dfe-transform-elastic. The Sources are resources/demo/demo.yaml's, created through the engine API, and dfe-transform-elastic in agentless mode detects each line's vendor and lands it in that vendor's table.
 # ---------------------------------------------------------------------------
 
-# The replay script inside the dfe-transform-elastic checkout, fetched at the tag DFE_TRANSFORM_ELASTIC_VERSION pins or read from DFE_SRC_ROOT/dfe-transform-elastic.
+# The replay script inside the dfe-transform-elastic checkout, fetched at the tag DFE_TRANSFORM_ELASTIC_VERSION pins or, with DEV=1, read from DFE_SRC_ROOT/dfe-transform-elastic
 DEMO_GENERATOR ?= scripts/replay_syslog.py
 DEMO_PROTOCOL ?= tcp
 DEMO_RATE ?= 20
