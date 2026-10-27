@@ -73,7 +73,7 @@ The three transforms are bus-only today: each reads a topic and writes a topic. 
 
 ## What each profile runs
 
-`slim-*` is the core data path alone: receiver, loader, engine, UI and HyperDX. `single-*` adds the per-source apps its keys enable ([profiles.md](profiles.md#which-profile-runs-what)). The `-kafka` profiles add the broker. `single-kafka` also adds one archiver. None starts a per-source app until a source created through the engine binds one.
+`slim-*` is the core data path alone: receiver, loader, engine, UI and HyperDX. `single-*` adds the per-source apps its keys enable ([profiles.md](profiles.md#per-source-apps)). The `-kafka` profiles add the broker. `single-kafka` also adds one archiver. None starts a per-source app until a source created through the engine binds one.
 
 ## The engine renders each app's config
 
