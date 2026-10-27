@@ -19,7 +19,7 @@ come out the other. Everything else can wait.
 ## What you need
 
 - Docker and Docker Compose v2
-- Python 3
+- Python 3 and [uv](https://docs.astral.sh/uv/)
 - Network access to `ghcr.io/hyperi-io`, where the images are public and pull with no login
 
 ## Getting it running
@@ -27,7 +27,7 @@ come out the other. Everything else can wait.
 ```bash
 make init                  # create .env and env/, generate secrets
 make stack VERSION=X.Y.Z   # pin every image from the DFE stack manifest
-make ci                    # pull and start
+make up                    # pull, start, print the console login
 ```
 
 `make stack` is not optional. The stack refuses to start on unpinned images
