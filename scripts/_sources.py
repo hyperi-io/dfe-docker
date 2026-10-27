@@ -356,10 +356,7 @@ def kafka_bootstrap(*, transport: str) -> str:
 
 
 def engine_transport(*, transport: str) -> dict[str, str]:
-    """The three settings that tell dfe-engine whether a bus exists, keyed by the variable each reaches it through.
-
-    The engine creates and waits for dead-letter topics on any deployment whose bus is present, so a direct gRPC test run from a Kafka profile's `.env` has to say it has none.
-    """
+    """The settings that tell dfe-engine whether a bus exists, since it waits for dead-letter topics on any deployment that has one."""
     bus = transport == "kafka"
     return {
         resolve_profile.ENGINE_BROKER_ENV_VAR: kafka_bootstrap(transport=transport),
