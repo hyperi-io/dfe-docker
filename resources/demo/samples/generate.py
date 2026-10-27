@@ -97,16 +97,19 @@ SITES = [
 ]
 
 
-def asa_lines(rng: random.Random) -> list[str]:
-    out = []
-    conn = rng.randint(100000, 400000)
-
-    def eph() -> int:
-        return rng.randint(1024, 65535)
+def _asa_lines(*, rng: random.Random) -> list[str]:
+    """The Cisco ASA sample set, connection pairs mixed with denies, AAA and scan drops."""
 
     def dur() -> str:
+        """A connection duration as ASA prints it."""
         return f"{rng.randint(0, 2)}:{rng.randint(0, 59):02d}:{rng.randint(0, 59):02d}"
 
+    def eph() -> int:
+        """An ephemeral port."""
+        return rng.randint(1024, 65535)
+
+    out = []
+    conn = rng.randint(100000, 400000)
     while len(out) < LINES:
         conn += rng.randint(1, 37)
         outer, inner = rng.choice(ZONES)
@@ -193,7 +196,8 @@ def asa_lines(rng: random.Random) -> list[str]:
     return out[:LINES]
 
 
-def fortinet_lines(rng: random.Random) -> list[str]:
+def _fortinet_lines(*, rng: random.Random) -> list[str]:
+    """The FortiGate sample set, forward and local-in traffic with some web filter lines."""
     out = []
     session = rng.randint(1_000_000, 4_000_000)
     devices = [
@@ -247,16 +251,17 @@ def fortinet_lines(rng: random.Random) -> list[str]:
     return out
 
 
-def main() -> None:
+def main() -> int:
     rng = random.Random(SEED)
     for package, lines in (
-        ("cisco_asa", asa_lines(rng)),
-        ("fortinet", fortinet_lines(rng)),
+        ("cisco_asa", _asa_lines(rng=rng)),
+        ("fortinet", _fortinet_lines(rng=rng)),
     ):
         path = HERE / package / "demo.log"
         path.parent.mkdir(exist_ok=True)
         path.write_text("\n".join(lines) + "\n", encoding="utf-8", newline="\n")
+    return 0
 
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())
