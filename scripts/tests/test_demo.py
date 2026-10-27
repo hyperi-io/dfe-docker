@@ -10,6 +10,7 @@
 
 import re
 from pathlib import Path
+from typing import TypedDict
 
 import pytest
 
@@ -27,6 +28,23 @@ TCP6_LISTEN_514 = "   0: 00000000000000000000000000000000:0202 00000000000000000
 TCP_LISTEN_5140 = (
     "   2: 00000000:1414 00000000:0000 0A 00000000:00000000 00:00000000 00000000"
 )
+
+
+class EnsureTableCase(TypedDict):
+    """The vendor source the engine holds, if any, and the steps that leave it deployed and dormant."""
+
+    expected: list[str]
+    held: dict | None
+
+
+ENSURE_TABLE_CASES = [
+    EnsureTableCase(expected=["create", "deploy", "dormant"], held=None),
+    EnsureTableCase(expected=["deploy", "dormant"], held={"state": "active"}),
+    EnsureTableCase(
+        expected=["dormant"], held={"deployed_version": "1", "state": "active"}
+    ),
+    EnsureTableCase(expected=[], held={"deployed_version": "1", "state": "dormant"}),
+]
 
 
 def test_the_committed_demo_names_an_agentless_intake_and_valid_tables() -> None:
@@ -263,3 +281,34 @@ def test_the_committed_samples_are_varied_lines_on_documentation_addresses(
         address.startswith(("10.", "192.168.", "192.0.2.", "198.51.100.", "203.0.113."))
         for address in addresses
     ), sorted(addresses)
+
+
+class TestEnsureTable:
+    @pytest.mark.parametrize("case", ENSURE_TABLE_CASES)
+    def test_matches_expected(
+        self, monkeypatch: pytest.MonkeyPatch, case: EnsureTableCase
+    ) -> None:
+        def fake_create(*, payload: dict, token: str, url: str) -> tuple[int, dict]:
+            steps.append("create")
+            return 201, {"created": [{"entry": "cisco-asa"}]}
+
+        def fake_deploy(*, base: str, name: str, token: str) -> dict:
+            steps.append("deploy")
+            return {}
+
+        def fake_set_dormant(*, base: str, label: str, token: str) -> dict:
+            steps.append("dormant")
+            return {}
+
+        def fake_stored(*, base: str, name: str, token: str) -> dict | None:
+            return case["held"]
+
+        steps = []
+        monkeypatch.setattr(demo, "_api_post_json", fake_create)
+        monkeypatch.setattr(demo, "_deploy", fake_deploy)
+        monkeypatch.setattr(demo, "_set_dormant", fake_set_dormant)
+        monkeypatch.setattr(demo, "_stored", fake_stored)
+
+        demo._ensure_table(base="http://engine", label="cisco-asa", token="token")
+
+        assert steps == case["expected"]

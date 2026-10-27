@@ -18,7 +18,7 @@
 
 The Sources come from resources/demo/demo.yaml. Each vendor table is its engine catalogue entry, created and deployed for its table, then set dormant so no per-vendor transform runs. The intake is one agentless dfe-transform-elastic Source on the receiver's syslog listener, its detect candidates the vendors' catalogue variants. The receiver's syslog listener, UDP and TCP on 514, is switched on through the engine, and `make apply` recreates what the engine says has to change.
 
-The generator is dfe-transform-elastic's own replay script and fixtures, fetched shallow at the tag DFE_TRANSFORM_ELASTIC_VERSION pins so the lines match the detector that runs, or read from DFE_SRC_ROOT/dfe-transform-elastic when that is set. A vendor with a sample set under resources/demo/samples/<package>/ replays that instead of its fixtures. It runs detached in a pinned Python container on the stack's network, looping raw syslog at dfe-receiver until `make demo-stop` or `make down` removes it, and a second run replaces it. The run returns once every vendor table has gained rows, and fails, stopping the stream, when one gains none.
+The generator is dfe-transform-elastic's own replay script and fixtures, fetched shallow at the tag DFE_TRANSFORM_ELASTIC_VERSION pins so the lines match the detector that runs, or read from DFE_SRC_ROOT/dfe-transform-elastic on a `make dev` stack. A vendor with a sample set under resources/demo/samples/<package>/ replays that instead of its fixtures. It runs detached in a pinned Python container on the stack's network, looping raw syslog at dfe-receiver until `make demo-stop` or `make down` removes it, and a second run replaces it. The run returns once every vendor table has gained rows, and fails, stopping the stream, when one gains none.
 
 Exit codes:
   0  every vendor table gained rows
@@ -42,6 +42,7 @@ import yaml
 # Bytecode for the repo modules imported below goes to .tmp/pycache, as it does under make
 sys.pycache_prefix = str(Path(__file__).resolve().parent.parent / ".tmp" / "pycache")
 
+import _stack_state  # noqa: E402
 import instances  # noqa: E402
 from _common import (  # noqa: E402
     PER_SOURCE_APP_KEYS,
@@ -52,7 +53,6 @@ from _common import (  # noqa: E402
     _profile_mk_value,
     _resolved_services,
 )
-from _pipeline import ch_int  # noqa: E402
 from _sources import hinted_services  # noqa: E402
 from build_dev_images import SRC_REMOTE_DEFAULT  # noqa: E402
 from post import (  # noqa: E402
@@ -66,7 +66,15 @@ from post import (  # noqa: E402
     _exec_request,
     api_put_json,
 )
-from seed import ENGINE_FAULTS, SeedError, _token, deploy_fault  # noqa: E402
+from seed import (  # noqa: E402
+    DEPLOY_TIMEOUT_SECONDS,
+    ENGINE_FAULTS,
+    SeedError,
+    _deployed,
+    _row_count,
+    _token,
+    deploy_fault,
+)
 
 DEMO_FILE = REPO_ROOT / "resources" / "demo" / "demo.yaml"
 TRANSFORM_APP = "dfe-transform-elastic"
@@ -86,7 +94,6 @@ FETCH_ROOT = REPO_ROOT / ".tmp" / "demo"
 SAMPLES_DIR = REPO_ROOT / "resources" / "demo" / "samples"
 # The generator ends a loop only at --count or --duration, so the stream runs ten years unless removed
 STREAM_SECONDS = 315_360_000
-DEPLOY_TIMEOUT_SECONDS = 90
 READY_TIMEOUT_SECONDS = 120.0
 READY_INTERVAL_SECONDS = 3.0
 LAND_TIMEOUT_SECONDS = 180.0
@@ -127,9 +134,9 @@ def _container(*, service: str) -> str:
             "--all",
             "--quiet",
             "--filter",
-            f"label=com.docker.compose.project.working_dir={REPO_ROOT}",
+            f"label={_stack_state.WORKING_DIR_LABEL}={REPO_ROOT}",
             "--filter",
-            f"label=com.docker.compose.service={service}",
+            f"label={_stack_state.SERVICE_LABEL}={service}",
         ]
     )
     ids = result.stdout.split()
@@ -221,17 +228,29 @@ def _deploy(*, base: str, name: str, token: str) -> dict:
     return answer
 
 
-def _held(*, base: str, name: str, token: str) -> list[dict] | None:
-    """The engine's replies for a source it already holds, deployed if it never was, or None when it holds none."""
+def _stored(*, base: str, name: str, token: str) -> dict | None:
+    """The engine's record of one source, or None when it holds none."""
     status, answer = _api_get_json(token=token, url=_source_url(base=base, name=name))
     if status == 404:
         return None
     if status != 200:
         raise DemoError(f"GET /sources/{name} returned HTTP {status}: {answer}")
-    _print(msg=f"source {name!r} already exists, left as it is")
-    if isinstance(answer, dict) and answer.get("deployed_version"):
-        return []
-    return [_deploy(base=base, name=name, token=token)]
+    _print(msg=f"source {name!r} already exists")
+    return answer if isinstance(answer, dict) else {}
+
+
+def _set_dormant(*, base: str, label: str, token: str) -> dict:
+    """Set one vendor source dormant, which keeps its table and stops its per-vendor transform, and return the reply."""
+    url = _source_url(base=base, name=label)
+    status, paused = _patch_json(payload={"state": "dormant"}, token=token, url=url)
+    if status != 200:
+        raise DemoError(
+            f"setting source {label!r} dormant returned HTTP {status}: {paused}"
+        )
+    _print(
+        msg=f"set source {label!r} dormant: its table stays, no transform runs for it"
+    )
+    return paused
 
 
 def _source_variant(*, base: str, label: str, token: str) -> str:
@@ -249,42 +268,39 @@ def _source_variant(*, base: str, label: str, token: str) -> str:
 
 def _ensure_table(*, base: str, label: str, token: str) -> list[dict]:
     """Make one vendor's table exist, without a transform running for it, and return the engine's replies."""
-    held = _held(base=base, name=label, token=token)
-    if held is not None:
-        return held
-    url = _source_url(base=base, name=label)
-    status, created = _api_post_json(
-        payload={"entries": [{"entry": label, "intake": "receiver"}]},
-        token=token,
-        url=f"{base}/sources/from-catalogue",
-    )
-    rows = created.get("created") if isinstance(created, dict) else None
-    stored = {item.get("entry") for item in rows or [] if isinstance(item, dict)}
-    # A refused entry comes back in `failed` under 200 or 409, so the status alone does not say it was stored
-    if status not in (201, 202) or label not in stored:
-        raise DemoError(
-            f"creating source {label!r} from the catalogue returned HTTP {status}: {created}"
+    held = _stored(base=base, name=label, token=token)
+    replies = []
+    if held is None:
+        status, created = _api_post_json(
+            payload={"entries": [{"entry": label, "intake": "receiver"}]},
+            token=token,
+            url=f"{base}/sources/from-catalogue",
         )
-    _print(msg=f"created source {label!r} from the engine catalogue")
-    deployed = _deploy(base=base, name=label, token=token)
-    # Dormant keeps the table and stops the per-vendor transform the deploy declared
-    status, paused = _patch_json(payload={"state": "dormant"}, token=token, url=url)
-    if status != 200:
-        raise DemoError(
-            f"setting source {label!r} dormant returned HTTP {status}: {paused}"
-        )
-    _print(
-        msg=f"set source {label!r} dormant: its table stays, no transform runs for it"
-    )
-    return [created, deployed, paused]
+        rows = created.get("created") if isinstance(created, dict) else None
+        stored = {item.get("entry") for item in rows or [] if isinstance(item, dict)}
+        # A refused entry comes back in `failed` under 200 or 409, so the status alone does not say it was stored
+        if status not in (201, 202) or label not in stored:
+            raise DemoError(
+                f"creating source {label!r} from the catalogue returned HTTP {status}: {created}"
+            )
+        _print(msg=f"created source {label!r} from the engine catalogue")
+        replies.append(created)
+    if (held is None) or not (_deployed(body=held)):
+        replies.append(_deploy(base=base, name=label, token=token))
+    # A run stopped between the deploy and this leaves the source active, so a re-run finishes it
+    if (held is None) or (held.get("state") != "dormant"):
+        replies.append(_set_dormant(base=base, label=label, token=token))
+    return replies
 
 
 def _ensure_intake(*, base: str, body: dict, token: str) -> list[dict]:
     """Create and deploy the agentless intake unless the engine holds it, and return the engine's replies."""
     name = body["source"]
-    held = _held(base=base, name=name, token=token)
+    held = _stored(base=base, name=name, token=token)
+    if held is not None and _deployed(body=held):
+        return []
     if held is not None:
-        return held
+        return [_deploy(base=base, name=name, token=token)]
     status, created = _api_post_json(payload=body, token=token, url=f"{base}/sources")
     if status not in (201, 202):
         raise DemoError(
@@ -417,9 +433,9 @@ def generator_tag(*, pin: str) -> str:
     return tag if VERSION_TAG.fullmatch(tag) else ""
 
 
-def resolve_generator(*, generator: str) -> Path:
-    """The dfe-transform-elastic checkout the generator runs from: DFE_SRC_ROOT's, else a fetch at the pinned tag."""
-    raw_root = os.environ.get("DFE_SRC_ROOT", "").strip()
+def resolve_generator(*, dev: bool, generator: str) -> Path:
+    """The dfe-transform-elastic checkout the generator runs from: DFE_SRC_ROOT's on a `make dev` stack, else a fetch at the pinned tag."""
+    raw_root = os.environ.get("DFE_SRC_ROOT", "").strip() if dev else ""
     if raw_root:
         checkout = Path(raw_root).expanduser() / TRANSFORM_REPO
     else:
@@ -528,15 +544,6 @@ def with_candidates(*, intake: dict, variants: list[str]) -> dict:
     return {**intake, "transform": transform}
 
 
-def declared_instances() -> set[str]:
-    """Every per-source instance service dfe-engine declares now."""
-    return {
-        f"{app}-{name}"
-        for app in PER_SOURCE_APP_KEYS
-        for name in instances.read_index(path=instances.index_file(service=app))
-    }
-
-
 def runnable(*, declared: set[str], hinted: list[str]) -> list[str]:
     """The hinted services `make apply` can still create: every resident one, and each per-source instance still declared."""
     return [
@@ -563,10 +570,7 @@ def refusal(*, per_source_apps: list[str], renders: bool) -> str:
 
 
 def _counts(*, tables: list[str]) -> dict[str, int | None]:
-    return {
-        table: ch_int(sql=f"SELECT count() FROM {TARGET_DB}.`{table}`")
-        for table in tables
-    }
+    return {table: _row_count(source=table) for table in tables}
 
 
 def _await_rows(*, before: dict[str, int | None], vendors: list[str]) -> dict[str, int]:
@@ -595,7 +599,7 @@ def _run(*, args: argparse.Namespace) -> int:
     )
     if reason:
         raise DemoError(reason)
-    checkout = resolve_generator(generator=args.generator)
+    checkout = resolve_generator(dev=args.dev, generator=args.generator)
     network = _network(service=RECEIVER_SERVICE)
 
     base = _engine_base()
@@ -609,12 +613,13 @@ def _run(*, args: argparse.Namespace) -> int:
     replies += _ensure_intake(base=base, body=intake, token=token)
     replies.append(_switch_on_syslog(base=base, token=token))
 
-    instance = f"{TRANSFORM_APP}-{intake['source']}"
-    declared = instances.read_index(path=instances.index_file(service=TRANSFORM_APP))
-    if intake["source"] not in declared:
+    instance = instances.service_name(instance=intake["source"], service=TRANSFORM_APP)
+    declared = instances.declared()
+    if intake["source"] not in declared.get(TRANSFORM_APP, []):
         raise DemoError(f"dfe-engine declared no {instance} instance for the intake")
     services = runnable(
-        declared=declared_instances(), hinted=hinted_services(replies=replies)
+        declared=set(instances.services(instances=declared)),
+        hinted=hinted_services(replies=replies),
     )
     # The switch names no restart once it is set, so a receiver that never restarted after it is found by asking the socket table
     unready = {
@@ -628,6 +633,8 @@ def _run(*, args: argparse.Namespace) -> int:
 
     # Lines no detector claims land in the intake's own table, and main is shown to prove none went there
     tables = [*demo.sources, intake["source"], TARGET_TABLE]
+    # A previous run's stream goes before the count, or its rows pass this run
+    _stop_stream(container=args.container)
     before = _counts(tables=tables)
     feed = stage_feed(
         checkout=checkout,
@@ -635,7 +642,6 @@ def _run(*, args: argparse.Namespace) -> int:
         generator=args.generator,
         samples=SAMPLES_DIR,
     )
-    _stop_stream(container=args.container)
     command = generator_command(
         container=args.container,
         feed=feed,
@@ -660,10 +666,11 @@ def _run(*, args: argparse.Namespace) -> int:
         _print(msg=f"  {TARGET_DB}.{table}: +{rows} rows")
     empty = [table for table in demo.sources if gained[table] <= 0]
     if empty:
+        sent = _docker(args=["logs", "--tail", "20", args.container])
         _print(
-            msg=f"FAIL no rows landed in {', '.join(f'{TARGET_DB}.{t}' for t in empty)}; "
-            f"`docker compose logs {instance}` says what the transform did with them "
-            f"and `docker logs {args.container}` what the generator sent"
+            msg=f"FAIL no rows landed in {', '.join(f'{TARGET_DB}.{t}' for t in empty)}. "
+            f"`docker compose logs {instance}` says what the transform did with them. "
+            f"The generator's last output:\n{(sent.stdout + sent.stderr).strip()}"
         )
         _stop_stream(container=args.container)
         return 1
@@ -695,9 +702,9 @@ def main() -> int:
         "--image", required=True, help="the pinned Python image the generator runs in"
     )
     parser.add_argument(
-        "--protocol", choices=("udp", "tcp"), default="tcp", help="syslog transport"
+        "--protocol", choices=("udp", "tcp"), help="syslog transport", required=True
     )
-    parser.add_argument("--rate", default=20.0, type=float, help="lines per second")
+    parser.add_argument("--rate", help="lines per second", required=True, type=float)
     args = parser.parse_args()
     if args.rate <= 0:
         parser.error("--rate must be positive")
