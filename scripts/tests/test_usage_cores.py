@@ -328,14 +328,13 @@ def test_the_collector_reports_the_shape_the_usage_rollup_reads() -> None:
 
 
 def test_the_e2e_suite_outwaits_a_schema_lease_a_removed_engine_left() -> None:
-    # An engine that waits out the lease does not listen, so the suite's readiness poll is
-    # the only thing left to give up on it. Read as text: test_e2e.py needs PyYAML to import.
+    # The readiness poll is all that gives up on an engine waiting out the lease, read as text since test_e2e.py needs PyYAML to import
     source = (REPO_ROOT / "scripts" / "test_e2e.py").read_text(encoding="utf-8")
-    match = re.search(r"^ENGINE_READY_ATTEMPTS = (\d+)$", source, re.MULTILINE)
-    assert match is not None
-    poll_seconds = 2
+    attempts = re.search(pattern=r"(?m)^ENGINE_READY_ATTEMPTS = (\d+)$", string=source)
+    poll = re.search(pattern=r"(?m)^READY_POLL_SECONDS = (\d+)$", string=source)
+    assert attempts is not None and poll is not None
 
-    assert int(match.group(1)) * poll_seconds >= (
+    assert int(attempts.group(1)) * int(poll.group(1)) >= (
         _ENGINE_LEASE_SECONDS + _FIRST_START_SECONDS
     )
 
