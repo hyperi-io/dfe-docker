@@ -143,7 +143,7 @@ class ComposeConfigError(Exception):
     """Raised when `docker compose config` refuses the files or returns no model."""
 
 
-# Levels a message names by its first word. _print has no level argument, so the word callers already lead with (`FAIL ...`, `WARNING: ...`) becomes the line's level and everything else is INFO.
+# Levels a message names by its first word. _print has no level argument, so the word callers already lead with (`FAIL ...`, `WARNING: ...`) becomes the line's level and everything else is INFO
 _LEADING_LEVEL_RE = re.compile(r"(PASS|FAIL|SKIP|WARNING)\b|(error):")
 _LEVEL_WIDTH = 8
 _RESET = "\033[0m"
@@ -151,10 +151,10 @@ _RESET = "\033[0m"
 
 def log_line(
     *,
-    level: str,
-    name: str,
-    msg: str,
     colour: str = "",
+    level: str,
+    msg: str,
+    name: str,
     now: datetime.datetime | None = None,
 ) -> str:
     """Return a line in the shape of scalo's text console logger, without its fields.
@@ -162,7 +162,9 @@ def log_line(
     `<UTC RFC 3339 millis> | <level, padded to 8> | <name> - <msg>`. `colour` is an ANSI
     escape wrapped round the level word only, empty for none.
     """
-    when = (now or datetime.datetime.now(datetime.UTC)).astimezone(datetime.UTC)
+    when = ((now) or (datetime.datetime.now(tz=datetime.UTC))).astimezone(
+        tz=datetime.UTC
+    )
     stamp = f"{when:%Y-%m-%dT%H:%M:%S}.{when.microsecond // 1000:03d}Z"
     shown = f"{colour}{level}{_RESET}" if colour else level
     return f"{stamp} | {shown}{' ' * (_LEVEL_WIDTH - len(level))} | {name} - {msg}"
@@ -181,7 +183,7 @@ def _print(
     # sys.stderr (pytest's capture) must still see the message.
     print(
         # codeql[py/clear-text-logging-sensitive-data] callers pass a secret's key or committed default, never a minted value
-        log_line(level=level, name=f"{script}:{header}" if header else script, msg=msg),
+        log_line(level=level, msg=msg, name=f"{script}:{header}" if header else script),
         file=file or sys.stderr,
     )
 
