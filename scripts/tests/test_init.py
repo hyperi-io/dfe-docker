@@ -57,10 +57,10 @@ def _never_asked(_prompt: str = "") -> str:
 
 
 def test_help_prints_and_writes_nothing(
-    dotenv: Path, layout: Path, capsys: pytest.CaptureFixture[str]
+    capsys: pytest.CaptureFixture[str], dotenv: Path, layout: Path
 ) -> None:
     with pytest.raises(SystemExit) as exited:
-        init.main(["--help"])
+        init.main(argv=["--help"])
     assert exited.value.code == 0
     assert "Bootstrap local config files" in capsys.readouterr().out
     assert not (dotenv.exists())
