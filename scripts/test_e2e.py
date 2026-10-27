@@ -424,11 +424,11 @@ class ColouredFormatter(logging.Formatter):
     def format(self, record):
         colour = self.COLOURS.get(record.levelno, "") if sys.stderr.isatty() else ""
         return log_line(
-            level=record.levelname,
-            name=Path(sys.argv[0]).stem,
-            msg=super().format(record),
             colour=colour,
-            now=datetime.fromtimestamp(record.created, timezone.utc),
+            level=record.levelname,
+            msg=super().format(record=record),
+            name=Path(sys.argv[0]).stem,
+            now=datetime.fromtimestamp(timestamp=record.created, tz=timezone.utc),
         )
 
 

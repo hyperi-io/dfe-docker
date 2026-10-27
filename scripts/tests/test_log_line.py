@@ -16,6 +16,7 @@ import datetime
 import logging
 import re
 import sys
+import types
 
 import pytest
 
@@ -37,8 +38,39 @@ def _printed(
     return match
 
 
+def _record(*, level: int, msg: str) -> logging.LogRecord:
+    """Return a record at `level` stamped at _WHEN."""
+    record = logging.LogRecord(
+        args=None,
+        exc_info=None,
+        level=level,
+        lineno=1,
+        msg=msg,
+        name="e2e",
+        pathname=__file__,
+    )
+    record.created = _WHEN.timestamp()
+    return record
+
+
+@pytest.fixture
+def e2e_formatter(
+    e2e_runner: types.ModuleType, monkeypatch: pytest.MonkeyPatch
+) -> logging.Formatter:
+    """The e2e runner's formatter, run as scripts/test_e2e.py with its PASS level named."""
+    monkeypatch.setattr(name="argv", target=sys, value=["scripts/test_e2e.py"])
+    logging.addLevelName(level=e2e_runner.PASS_LEVEL, levelName="PASS")
+    return e2e_runner.ColouredFormatter(fmt="%(message)s")
+
+
+@pytest.fixture
+def e2e_runner() -> types.ModuleType:
+    """The e2e runner module, skipping the test where it cannot be imported."""
+    return pytest.importorskip("test_e2e")
+
+
 def test_the_line_is_scalos_text_shape_to_the_millisecond() -> None:
-    got = _common.log_line(level="WARNING", name="app", msg="key rejected", now=_WHEN)
+    got = _common.log_line(level="WARNING", msg="key rejected", name="app", now=_WHEN)
 
     assert got == "2026-10-01T10:47:34.727Z | WARNING  | app - key rejected"
 
@@ -47,7 +79,7 @@ def test_a_non_utc_time_is_not_rendered_in_its_own_zone() -> None:
     brisbane = datetime.timezone(datetime.timedelta(hours=10))
 
     got = _common.log_line(
-        level="INFO", name="app", msg="m", now=_WHEN.astimezone(brisbane)
+        level="INFO", msg="m", name="app", now=_WHEN.astimezone(tz=brisbane)
     )
 
     assert got.startswith("2026-10-01T10:47:34.727Z | ")
@@ -55,7 +87,7 @@ def test_a_non_utc_time_is_not_rendered_in_its_own_zone() -> None:
 
 def test_the_level_word_is_the_only_thing_coloured() -> None:
     got = _common.log_line(
-        level="FAIL", name="app", msg="m", colour="\033[1;31m", now=_WHEN
+        colour="\033[1;31m", level="FAIL", msg="m", name="app", now=_WHEN
     )
 
     assert got == "2026-10-01T10:47:34.727Z | \033[1;31mFAIL\033[0m     | app - m"
@@ -106,26 +138,19 @@ def test_the_message_text_is_unchanged(
     assert got["rest"].endswith(" - FAIL seed: boom")
 
 
-@pytest.fixture
-def e2e_formatter(monkeypatch: pytest.MonkeyPatch):
-    test_e2e = pytest.importorskip("test_e2e")
-    monkeypatch.setattr(sys, "argv", ["scripts/test_e2e.py"])
-    logging.addLevelName(test_e2e.PASS_LEVEL, "PASS")
-    return test_e2e.ColouredFormatter("%(message)s")
-
-
-def _record(level: int, msg: str) -> logging.LogRecord:
-    record = logging.LogRecord("e2e", level, __file__, 1, msg, None, None)
-    record.created = _WHEN.timestamp()
-    return record
-
-
 def test_the_e2e_logger_writes_the_same_shape(
-    e2e_formatter: logging.Formatter, monkeypatch: pytest.MonkeyPatch
+    e2e_formatter: logging.Formatter,
+    e2e_runner: types.ModuleType,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setattr(sys.stderr, "isatty", lambda: False)
+    def not_a_terminal() -> bool:
+        return False
 
-    got = e2e_formatter.format(_record(25, "[simple] 1000/1000 rows"))
+    monkeypatch.setattr(name="isatty", target=sys.stderr, value=not_a_terminal)
+
+    got = e2e_formatter.format(
+        record=_record(level=e2e_runner.PASS_LEVEL, msg="[simple] 1000/1000 rows")
+    )
 
     assert (
         got
@@ -134,10 +159,15 @@ def test_the_e2e_logger_writes_the_same_shape(
 
 
 def test_the_e2e_level_word_is_coloured_on_a_terminal_only(
-    e2e_formatter: logging.Formatter, monkeypatch: pytest.MonkeyPatch
+    e2e_formatter: logging.Formatter,
+    e2e_runner: types.ModuleType,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setattr(sys.stderr, "isatty", lambda: True)
+    def a_terminal() -> bool:
+        return True
 
-    got = e2e_formatter.format(_record(25, "ok"))
+    monkeypatch.setattr(name="isatty", target=sys.stderr, value=a_terminal)
+
+    got = e2e_formatter.format(record=_record(level=e2e_runner.PASS_LEVEL, msg="ok"))
 
     assert " | \033[1;32mPASS\033[0m     | " in got
