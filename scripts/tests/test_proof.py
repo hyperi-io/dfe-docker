@@ -368,7 +368,7 @@ def source_walk(engine_pin: Path, monkeypatch: pytest.MonkeyPatch) -> dict:
         state["env"][name] = env
         return state["outcome"].get(name, True)
 
-    def fake_source_profile_problem(env: dict[str, str]) -> str | None:
+    def fake_source_profile_problem(*, env: dict[str, str]) -> str | None:
         return state["profile"]
 
     def fake_which(name: str) -> str:
@@ -427,7 +427,7 @@ def test_a_profile_without_the_case_transforms_fails_the_walk_before_any_clone(
     source_walk: dict, tmp_path: Path
 ) -> None:
     source_walk["profile"] = "the profile runs no per-source dfe-transform-vrl"
-    assert proof.source_step(tmp_path, {}) is False
+    assert proof.source_step(env={}, work=tmp_path) is False
     assert source_walk["cloned"] == {}
     assert source_walk["steps"] == []
 
@@ -435,13 +435,13 @@ def test_a_profile_without_the_case_transforms_fails_the_walk_before_any_clone(
 @pytest.fixture
 def resolved_profile(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Path:
     """A fake `make .tmp/profile.mk` that leaves the given file as the resolved profile."""
+
+    def fake_run(argv: list[str], **kwargs: object) -> subprocess.CompletedProcess:
+        return subprocess.CompletedProcess(args=argv, returncode=0)
+
     profile_mk = tmp_path / "profile.mk"
     monkeypatch.setattr(_common, "PROFILE_MK", profile_mk)
-    monkeypatch.setattr(
-        proof.subprocess,
-        "run",
-        lambda argv, **kwargs: subprocess.CompletedProcess(argv, 0),
-    )
+    monkeypatch.setattr(proof.subprocess, "run", fake_run)
     return profile_mk
 
 
@@ -459,7 +459,7 @@ def test_a_profile_missing_a_case_transform_names_it_and_the_key_that_runs_it(
     resolved_profile.write_text(
         f"export DFE_PER_SOURCE_APPS := {running}\n", encoding="utf-8"
     )
-    problem = proof.source_profile_problem({})
+    problem = proof.source_profile_problem(env={})
     assert problem is not None
     for app in named:
         assert app in problem
@@ -473,15 +473,14 @@ def test_a_profile_running_both_case_transforms_has_no_problem(
         "export DFE_PER_SOURCE_APPS := dfe-fetcher dfe-transform-vector dfe-transform-vrl\n",
         encoding="utf-8",
     )
-    assert proof.source_profile_problem({}) is None
+    assert proof.source_profile_problem(env={}) is None
 
 
 def test_a_profile_that_does_not_resolve_is_a_problem(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setattr(
-        proof.subprocess,
-        "run",
-        lambda argv, **kwargs: subprocess.CompletedProcess(argv, 2),
-    )
-    assert proof.source_profile_problem({}) == "the profile did not resolve"
+    def fake_run(argv: list[str], **kwargs: object) -> subprocess.CompletedProcess:
+        return subprocess.CompletedProcess(args=argv, returncode=2)
+
+    monkeypatch.setattr(proof.subprocess, "run", fake_run)
+    assert proof.source_profile_problem(env={}) == "the profile did not resolve"
