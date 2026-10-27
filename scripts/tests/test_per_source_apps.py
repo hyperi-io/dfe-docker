@@ -37,20 +37,18 @@ class InstanceServicesCase(TypedDict):
 
 
 class PerSourceAppsCase(TypedDict):
-    """The keys a profile declares, the tier and transport it runs and the apps it resolves to."""
+    """The keys a profile declares, whether its tier renders and the apps it resolves to."""
 
     declared: dict[str, str]
     expected: list[str]
     renders: bool
-    transport: str
 
 
 class PerSourceAppsRefusalCase(TypedDict):
-    """The keys a profile declares that the resolver refuses, its transport and what the refusal says."""
+    """The keys a profile declares that the resolver refuses and what the refusal says."""
 
     declared: dict[str, object]
     message: str
-    transport: str
 
 
 class ResolvedExportCase(TypedDict):
@@ -79,24 +77,17 @@ INSTANCE_SERVICES_CASES = [
     ),
 ]
 PER_SOURCE_APPS_CASES = [
-    PerSourceAppsCase(declared={}, expected=[], renders=True, transport="kafka"),
-    PerSourceAppsCase(
-        declared={"fetcher_enabled": "false"},
-        expected=[],
-        renders=True,
-        transport="grpc",
-    ),
+    PerSourceAppsCase(declared={}, expected=[], renders=True),
+    PerSourceAppsCase(declared={"fetcher_enabled": "false"}, expected=[], renders=True),
     PerSourceAppsCase(
         declared={"fetcher_enabled": "True", "transform_vrl_enabled": "true"},
         expected=[FETCHER, VRL],
         renders=True,
-        transport="grpc",
     ),
     PerSourceAppsCase(
         declared={"transform_elastic_enabled": "true"},
         expected=[ELASTIC],
         renders=True,
-        transport="grpc",
     ),
     PerSourceAppsCase(
         declared={
@@ -107,25 +98,21 @@ PER_SOURCE_APPS_CASES = [
         },
         expected=[FETCHER, ELASTIC, VECTOR, VRL],
         renders=True,
-        transport="kafka",
     ),
     PerSourceAppsCase(
         declared={"fetcher_enabled": "true", "transform_vector_enabled": "true"},
         expected=[],
         renders=False,
-        transport="kafka",
     ),
 ]
 PER_SOURCE_APPS_REFUSAL_CASES = [
     PerSourceAppsRefusalCase(
         declared={"fetcher_enabled": "yes"},
         message="'fetcher_enabled' must be true or false",
-        transport="kafka",
     ),
     PerSourceAppsRefusalCase(
         declared={"transform_vrl_enabled": {"enabled": "true"}},
         message="'transform_vrl_enabled' must be true or false",
-        transport="kafka",
     ),
 ]
 RESOLVED_EXPORT_CASES = [
@@ -142,7 +129,7 @@ RESOLVED_EXPORT_CASES = [
 
 def _index(*, app: str, names: list[str]) -> None:
     """Write one app's instance index where the resolver reads it, as dfe-engine does."""
-    path = instances.index_file(app)
+    path = instances.index_file(service=app)
     path.parent.mkdir(exist_ok=True, parents=True)
     path.write_text("".join(f"{name}\n" for name in names), encoding="utf-8")
 
@@ -244,8 +231,8 @@ class TestPerSourceApps:
     @pytest.mark.parametrize("case", PER_SOURCE_APPS_CASES)
     def test_matches_expected(self, case: PerSourceAppsCase) -> None:
         apps = resolve_profile.per_source_apps(
-            profile={"transport": case["transport"], **case["declared"]},
-            profile_name=f"single-{case['transport']}",
+            profile=case["declared"],
+            profile_name="single-kafka",
             renders=case["renders"],
         )
 
@@ -255,9 +242,7 @@ class TestPerSourceApps:
     def test_refuses(self, case: PerSourceAppsRefusalCase) -> None:
         with pytest.raises(resolve_profile.ProfileError, match=case["message"]):
             resolve_profile.per_source_apps(
-                profile={"transport": case["transport"], **case["declared"]},
-                profile_name=f"single-{case['transport']}",
-                renders=True,
+                profile=case["declared"], profile_name="single-kafka", renders=True
             )
 
 

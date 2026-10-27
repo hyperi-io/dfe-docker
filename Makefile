@@ -794,20 +794,20 @@ events: ## Send the fake resources/seed events through the receiver, after `make
 
 # ---------------------------------------------------------------------------
 # Demo
-# Raw firewall and switch syslog through the RUNNING stack, on whichever profile runs dfe-transform-elastic. The Sources are resources/demo/demo.yaml's, created through the engine API, and dfe-transform-elastic in agentless mode detects each line's vendor and lands it in that vendor's table.
+# Raw firewall syslog through the RUNNING stack, each line's vendor detected by dfe-transform-elastic in agentless mode and landed in that vendor's table
 # ---------------------------------------------------------------------------
 
 # The replay script inside the dfe-transform-elastic checkout, fetched at the tag DFE_TRANSFORM_ELASTIC_VERSION pins or, with DEV=1, read from DFE_SRC_ROOT/dfe-transform-elastic
 DEMO_GENERATOR ?= scripts/replay_syslog.py
 DEMO_PROTOCOL ?= tcp
 DEMO_RATE ?= 20
-# The stream's container, one per compose project, so a second `make demo` replaces it and `make down` finds it.
+# The stream's container, one per compose project, so a second `make demo` replaces it and `make down` finds it
 DEMO_CONTAINER := $(PROXY_PROJECT)-demo-syslog-stream
-# The generator is standard-library Python and dfe-transform-elastic's image has none, so it runs here, pinned like the hadolint image above.
+# The generator is standard-library Python and dfe-transform-elastic's image has none, so it runs here, pinned like the hadolint image above
 DEMO_PYTHON_IMAGE := python:3.14-slim-trixie@sha256:cd89c30eda26ee911a4611b18680086e0ea42e6f5f8cbe653d07fa7958c9cec8
 
 .PHONY: demo
-demo: env-files ## Stream live firewall syslog through the running stack until `make demo-stop`, detected per line by dfe-transform-elastic and landed one table per vendor (DEMO_RATE, DEMO_PROTOCOL=tcp|udp; DEV=1 for a `make dev` stack). A second run replaces the stream
+demo: env-files ## Stream live firewall syslog through the running stack, detected per line by dfe-transform-elastic into one table per vendor, until `make demo-stop` or a receiver restart (DEMO_RATE, DEMO_PROTOCOL=tcp|udp, DEV=1 for a `make dev` stack)
 	@$(UV) run --locked --script ./scripts/demo.py --container '$(DEMO_CONTAINER)' --generator '$(DEMO_GENERATOR)' --image '$(DEMO_PYTHON_IMAGE)' --protocol '$(DEMO_PROTOCOL)' --rate '$(DEMO_RATE)' $(if $(strip $(DEV)),--dev)
 
 .PHONY: demo-stop
@@ -831,12 +831,12 @@ ps: ## Show running containers, and warn about a deleted source's container stil
 # services by probing then found the stray. Volumes survive; `make clean` is the
 # one that deletes data.
 .PHONY: down
-down: demo-stop ## Stop and remove containers across all profiles, and the `make demo` stream (keeps volumes)
+down: demo-stop ## Stop and remove containers across all profiles and the `make demo` stream (keeps volumes)
 	docker compose -f docker-compose.yml --profile "*" down --remove-orphans
 
 # The engine's volume goes with its sources, so the instance indexes it wrote into env/ go too.
 .PHONY: clean
-clean: demo-stop ## Stop and remove all containers and volumes across every profile, the `make demo` stream, and dfe-engine's per-source instance indexes
+clean: demo-stop ## Stop and remove all containers and volumes across every profile, the `make demo` stream and dfe-engine's per-source instance indexes
 	docker compose -f docker-compose.yml --profile "*" down -v --remove-orphans
 	rm -f env/*.instances
 
