@@ -90,27 +90,27 @@ genuinely so; a couple of seconds is normal.
 
 ## Raw syslog, parsed per vendor
 
-`make demo` streams Cisco ASA and FortiGate firewall logs into the running stack as raw syslog. dfe-transform-elastic works out which device sent each line, parses it, and lands it in that vendor's own table. Palo Alto and Cisco IOS come back once [dfe-receiver#212](https://github.com/hyperi-io/dfe-receiver/issues/212) and [dfe-transform-elastic#133](https://github.com/hyperi-io/dfe-transform-elastic/issues/133) land.
+`make demo` streams Cisco ASA and FortiGate firewall logs into the running stack as raw syslog. dfe-transform-elastic works out which device sent each line, parses it and lands it in that vendor's own table. Palo Alto and Cisco IOS come back once [dfe-receiver#212](https://github.com/hyperi-io/dfe-receiver/issues/212) and [dfe-transform-elastic#133](https://github.com/hyperi-io/dfe-transform-elastic/issues/133) land.
 
 It needs a profile that runs dfe-transform-elastic, so set `DFE_PROFILE=single-kafka` or `DFE_PROFILE=single-grpc` in `.env` before `make ci`. Then:
 
 ```bash
-make demo                      # 20 lines a second over TCP, until you stop it
+make demo                      # 20 lines a second over TCP, until you stop it or the receiver restarts
 make demo DEMO_RATE=100        # replaces a running stream with a faster one
-make demo-stop                 # stops the stream; `make down` stops it too
+make demo-stop                 # stops the stream, as does `make down`
 ```
 
-It creates the Sources in [`resources/demo/demo.yaml`](../resources/demo/demo.yaml) through the engine: a `demo-syslog` intake, and the tables `dfe.cisco-asa` and `dfe.fortinet`. It turns on dfe-receiver's syslog listener, UDP and TCP on port 514, and recreates what that changes. Both vendors replay about 6,000 sample lines each from [`resources/demo/samples/`](../resources/demo/samples/), roughly ten minutes before a line repeats, and `python3 resources/demo/samples/generate.py` regenerates them. It returns as soon as every vendor table has gained rows, and the stream keeps running:
+It creates the Sources in [`resources/demo/demo.yaml`](../resources/demo/demo.yaml) through the engine: a `demo-syslog` intake and the tables `dfe.cisco-asa` and `dfe.fortinet`. It turns on dfe-receiver's syslog listener (UDP and TCP on port 514) and recreates what that changes. Each vendor replays about 6,000 sample lines from [`resources/demo/samples/`](../resources/demo/samples/), ten minutes at the default rate before a line repeats, which `python3 resources/demo/samples/generate.py` regenerates. It returns once every vendor table has gained rows and leaves the stream running:
 
 ```text
 demo -   dfe.cisco-asa: +N rows
 demo -   dfe.fortinet: +N rows
 demo -   dfe.demo-syslog: +N rows
 demo -   dfe.main: +0 rows
-demo - PASS every vendor table gained rows, ready to query in the console or HyperDX. The stream runs until `make demo-stop`
+demo - PASS every vendor table gained rows, ready to query in the console or HyperDX. The stream runs until `make demo-stop` or a receiver restart
 ```
 
-`dfe.demo-syslog` holds the lines no detector claimed. The replay script comes from the dfe-transform-elastic release the stack pins, so the demo needs a release with agentless detection and stops before changing anything on one without it. A `make dev` stack takes `make demo DEV=1`.
+`dfe.demo-syslog` holds the lines no detector claimed. The replay script comes from the dfe-transform-elastic release the stack pins, so the demo needs a release with agentless detection and stops before changing anything on one without it. A `make dev` stack takes `make demo DEV=1`, which reads the script from `DFE_SRC_ROOT` when that is set.
 
 ## What you are looking at
 
