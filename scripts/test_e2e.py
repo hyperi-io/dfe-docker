@@ -151,9 +151,8 @@ EXTRA_COMPOSE_FILES_ENV_VAR = "DFE_E2E_COMPOSE_FILES"
 # ------------------------------------------------------------------------------
 SCHEMA_AUTHORITY_SERVICE = "dfe-engine"
 SCHEMA_AUTHORITY_PROFILE = "core"
-# Two-second attempts, as long as the engine's compose start period: an engine that finds
-# a schema lease left by a removed one waits the lease out before it applies, and it does
-# not listen until it has.
+READY_POLL_SECONDS = 2
+# Attempts spanning the engine's compose start period, since an engine waiting out a removed engine's schema lease does not listen
 ENGINE_READY_ATTEMPTS = 270
 # resolve_profile.py's `core` footprint, less dfe-engine, which starts first.
 HUNT_RUNNER_SERVICE = "dfe-hunt-runner"
@@ -1401,7 +1400,7 @@ def report_unready(name):
 # ------------------------------------------------------------------------------
 def wait_for_service(name, url, max_attempts=30):
     LOGGER.info(f"Waiting for '{name}' at '{url}'...")
-    time.sleep(2)
+    time.sleep(READY_POLL_SECONDS)
     for attempt in range(1, max_attempts + 1):
         try:
             http_get(url, timeout=3)
@@ -1411,9 +1410,9 @@ def wait_for_service(name, url, max_attempts=30):
             return True
         except Exception:
             LOGGER.debug(
-                f"    Attempt {attempt}/{max_attempts}: '{name}' not ready, retrying in 2s..."
+                f"    Attempt {attempt}/{max_attempts}: '{name}' not ready, retrying in {READY_POLL_SECONDS}s..."
             )
-            time.sleep(2)
+            time.sleep(READY_POLL_SECONDS)
     LOGGER.error(
         f"'{name}' not ready after {max_attempts} attempt{'s' if (attempt > 1) else ''}"
     )
