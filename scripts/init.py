@@ -385,11 +385,11 @@ def _copy_if_absent(*, dst_path: Path, src_path: Path) -> None:
     _print(header=_rel_path(path=dst_path), msg="Created")
 
 
-def main(argv: list[str] | None = None) -> int:
-    # Takes no options. Parsing anyway makes --help print and exit before anything is written.
+def main(*, argv: list[str] | None = None) -> int:
+    # Takes no options, but parsing makes --help print and exit before anything is written
     argparse.ArgumentParser(
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
-    ).parse_args(argv or [])
+    ).parse_args(args=(argv) or ([]))
     if not (DOTENV_TEMPLATE.exists()):
         _print(
             header=_rel_path(path=DOTENV_TEMPLATE),
@@ -424,4 +424,4 @@ def main(argv: list[str] | None = None) -> int:
 
 
 if __name__ == "__main__":
-    raise SystemExit(main(sys.argv[1:]))
+    raise SystemExit(main(argv=sys.argv[1:]))
