@@ -69,7 +69,7 @@ ingest components produce to a `*_land` topic derived from the event's `_source`
 and the loader consumes `topic_regex: .*_land`. On a `*-grpc` profile there is no
 broker: the ingest components dial `dfe-loader:6000` directly.
 
-The three transforms are bus-only today: each reads a topic and writes a topic. `dfe-archiver` archives each source from its landing topic on Kafka. No gRPC profile runs it, so archiving needs a Kafka profile. Once a transform writes `<base>_load`, the loader reads it instead of `<base>_land`, through the same `config/loader/kafka.yaml`: scalo drops `<base>_land` from its subscription once `<base>_load` exists.
+Each transform reads a topic and writes a topic on Kafka but pushes to the loader on gRPC. `dfe-archiver` archives each source from its landing topic on Kafka. No gRPC profile runs it, so archiving needs a Kafka profile. Once a transform writes `<base>_load`, the loader reads it instead of `<base>_land`, through the same `config/loader/kafka.yaml`: scalo drops `<base>_land` from its subscription once `<base>_load` exists.
 
 ## What each profile runs
 
@@ -148,7 +148,7 @@ flowchart LR
 | Container port | Host port | Owner | Protocol | Audience | Binds |
 |---|---|---|---|---|---|
 | 6000 | none, 6000 once its `docker-compose.yml` line is uncommented | dfe-receiver | Vector protocol, an ingest source that listens only with `DFE_RECEIVER_GRPC__ENABLED=true` | external clients | `DFE_INGRESS_BIND_HOST` (`0.0.0.0`) |
-| 6000 | 50051 | dfe-loader | `DfeTransport/Push`, internal transport | receiver, fetcher, transform-vrl | `DFE_BIND_HOST` (`127.0.0.1`) |
+| 6000 | 50051 | dfe-loader | `DfeTransport/Push`, internal transport | receiver, fetcher, the transforms | `DFE_BIND_HOST` (`127.0.0.1`) |
 
 Every Push listener in the suite answers on 6000, and dfe-engine compiles each sender's endpoint against that port. The loader publishes on host port 50051, which leaves 6000 for the receiver's listener. The binding split is the tell: the receiver's listener is meant to be reachable, the loader's is not.
 
