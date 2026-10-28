@@ -23,6 +23,7 @@ from pathlib import Path
 
 import pytest
 
+import _common
 import check_compose
 import init
 import instances
@@ -33,6 +34,15 @@ _PROXY_DIR = REPO_ROOT / "config" / "proxy"
 
 # A service key in docker-compose.yml: two spaces in, alone on its line.
 _SERVICE_KEY_RE = re.compile(r"^  ([A-Za-z0-9._-]+):$", re.MULTILINE)
+# Each service whose own settings live in an env/<component>.env, mapped to that file
+_COMPONENT_ENV_FILES = {
+    "dfe-engine": "engine.env",
+    "dfe-hunt-runner": "engine.env",
+    "dfe-ui": "ui.env",
+    "hyperdx": "hyperdx.env",
+}
+# Planted in each of those files under a key of its own, so a service shows which it read
+_READ_FROM = "DFE_COMPOSE_TEST_READ_"
 
 
 def test_a_checkout_with_no_env_is_checked_as_its_first_start(dotenv: Path) -> None:
@@ -40,13 +50,51 @@ def test_a_checkout_with_no_env_is_checked_as_its_first_start(dotenv: Path) -> N
     values = check_compose._first_start_dotenv()
 
     assert not dotenv.exists()
-    assert all(values.get(key) for key in init.GENERATED_SECRETS)
+    assert all(values.get(key) for key in init.GENERATED_SECRETS[dotenv.name])
 
 
 def test_a_checkout_with_an_env_is_checked_on_its_own(dotenv: Path) -> None:
     dotenv.write_text("DFE_ENV=production\n", encoding="utf-8", newline="\n")
 
     assert check_compose._first_start_dotenv() == {"DFE_ENV": "production"}
+
+
+def test_a_checkout_with_no_engine_env_is_checked_as_its_first_start(
+    dotenv: Path,
+) -> None:
+    rendered = check_compose._first_start_engine_env()
+
+    assert rendered is not None
+    values = _common._parse_dotenv(text=rendered)
+    assert all(values.get(key) for key in init.GENERATED_SECRETS["engine.env"])
+    assert not ((dotenv.parent / "env").exists())
+
+
+def test_a_checkout_with_an_engine_env_is_checked_on_its_own(engine_env: Path) -> None:
+    engine_env.write_text("DFE_API_PORT=8003\n", encoding="utf-8", newline="\n")
+
+    assert check_compose._first_start_engine_env() is None
+
+
+def test_each_component_reads_the_env_file_its_settings_live_in(dotenv: Path) -> None:
+    if shutil.which("docker") is None:
+        pytest.skip("`docker compose config` renders the model this asserts on")
+    env, _ = check_compose._check_env()
+    planted = {
+        name: f"{_READ_FROM}{Path(name).stem.upper()}={name}\n"
+        for name in set(_COMPONENT_ENV_FILES.values())
+    }
+
+    config = check_compose._scratch_config(
+        env=env, env_files=planted, extra_profiles=("*",)
+    )
+
+    assert config is not None, "the registry compose path did not resolve"
+    for service, name in sorted(_COMPONENT_ENV_FILES.items()):
+        environment = config["services"][service].get("environment") or {}
+        assert environment.get(f"{_READ_FROM}{Path(name).stem.upper()}") == name, (
+            service
+        )
 
 
 def test_it_reads_the_files_off_each_subcommand():

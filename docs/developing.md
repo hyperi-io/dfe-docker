@@ -27,7 +27,7 @@ exist, and how a profile decides which of them run.
 |---|---|
 | Docker and Docker Compose v2 | everything |
 | Python 3 | the helper scripts under `scripts/` |
-| uv | `make sources`, `make rules`, `make hunts`, `make events`, `make demo`, `make test-e2e`, `make test-resilience` and `make test-flows` only. It installs the PyYAML and Playwright those scripts declare inline, hash-checked against the `<script>.lock` beside each |
+| uv | `make sources`, `make rules`, `make hunts`, `make events`, `make orgs`, `make accounts`, `make demo`, `make test-e2e`, `make test-resilience` and `make test-flows` only. It installs the PyYAML and Playwright those scripts declare inline, hash-checked against the `<script>.lock` beside each |
 | ruff | `make check-python` only |
 | pytest | `make check-tests` only (`uvx` fetches the pin if you have it) |
 | git, to clone the public hyperi-io repos (or `DFE_SRC_ROOT` checkouts) | `make dev` |
@@ -44,8 +44,7 @@ make up                    # pull and start, self test, then print the login
 to `env/<service>.env`. Existing files are never overwritten, so it is safe to
 re-run. It does two things beyond the copy:
 
-- **Generates secrets.** `DFE_UI_NEXTAUTH_SECRET`, `HYPERDX_DOCUMENTDB_PASSWORD`,
-  `HYPERDX_EXPRESS_SESSION_SECRET` and `HYPERDX_TOKEN_ENCRYPTION_KEY` get a random value. An existing `.env` that predates a key is topped up.
+- **Generates secrets.** Each gets a random value in its file: `.env`, `env/engine.env`, `env/ui.env` or `env/hyperdx.env`. An existing file that predates a key is topped up.
 - **Reports drift.** The copy is one-shot, so a `.env` made months ago never
   learns that `.env.example` grew a setting. A re-run lists the keys yours is
   missing and stops there -- editing your `.env` is yours to do.
@@ -75,7 +74,7 @@ naming the key.
 ## Logging in the first time
 
 The deploy mints the credentials, the engine never ships one. `make init` writes
-two random passwords into `.env` and prints neither.
+two random passwords into `env/engine.env` and prints neither.
 
 | Target | What it does |
 |---|---|
@@ -84,7 +83,7 @@ two random passwords into `.env` and prints neither.
 | `make creds` | prints that summary again, any time |
 
 The password prints to a **terminal** only. Redirect it, pipe it, or run it in
-CI and you get the `.env` key holding the value instead; `DFE_CREDS_SHOW=0` does
+CI and you get the `env/engine.env` key holding the value instead. `DFE_CREDS_SHOW=0` does
 the same on a terminal. `make ci` does not call it at all, which is why `make up`
 exists as the operator-facing name for the same start.
 
@@ -92,18 +91,16 @@ exists as the operator-facing name for the same start.
 first-run setup is incomplete, so an operator who lands there with no password is
 one command from having one.
 
-The two accounts are durable in different ways, deliberately. The engine issues `admin` from `.env` with a forced change at first login, which `make post` makes and records back in `.env`. A new value there is a rotation. The last issued value, or the account's current password, re-issues nothing. `breakglass` is hashed into the engine's deploy repo on its first boot and the variable is ignored from then on, so it still works when the engine, the UI and `.env` are all gone. `make creds` says where its password lives rather than printing it. Once the setup wizard has retired `admin`, `make post` skips the checks that log in and still proves the rest.
+The two accounts are durable in different ways, deliberately. The engine issues `admin` from `env/engine.env` with a forced change at first login, which `make post` makes and records back in `env/engine.env`. A new value there is a rotation. The last issued value or the account's current password re-issues nothing. `breakglass` is hashed into the engine's deploy repo on its first boot and the variable is ignored from then on, so it still works when the engine, the UI and `env/engine.env` are all gone. `make creds` says where its password lives rather than printing it. Once the setup wizard has retired `admin`, `make post` skips the checks that log in and still proves the rest.
 
 The engine **refuses to start** on an empty or `changeme`
 `DFE_AUTH_LOCAL_ADMIN_PASSWORD` unless `DFE_ENV` names a dev posture. `make
 check-compose` asserts the compose file never hands it one, so that is caught
 before a container crash-loops.
 
-`make dev` is the exception and says so: it writes the known default password and `DFE_ENV=dev` into `.env`, because a dev loop should not need a lookup to log in. The engine accepts the default in that posture and makes the admin replace it at first login, and a `.env` already on a dev posture keeps the replacement `make post` recorded. It **refuses** (exit 2) to run when `.env` already declares a non-dev `DFE_ENV` -- downgrading a deployment's posture and overwriting its admin password is not a build target's call. Start that stack with `make up`.
+`make dev` is the exception and says so: it writes the known default password into `env/engine.env` and `DFE_ENV=dev` into `.env`, because a dev loop should not need a lookup to log in. The engine accepts the default in that posture and makes the admin replace it at first login. A `.env` already on a dev posture keeps the replacement `make post` recorded. It **refuses** (exit 2) to run when `.env` already declares a non-dev `DFE_ENV`: downgrading a deployment's posture and overwriting its admin password is not a build target's call. Start that stack with `make up`.
 
-When it does rewrite, it copies the file it replaced to `.env.bak-<utc>` first,
-mode 0600, and prints the path: a minted password is gone once overwritten. A run
-with nothing to change writes neither.
+When it does rewrite, it copies each file it replaces to `<name>.bak-<utc>` beside it first, mode 0600, then prints the paths: a minted password is gone once overwritten. A run with nothing to change writes neither.
 
 `AUTH=real` is the same local build against a deployment's authentication flow,
 for when the login is the thing under test. It mints a password and writes
@@ -285,14 +282,20 @@ A name in `SERVICES` that is not part of the resolved stack is a hard error, not
 | `make rules` | `aws-guardduty-high-severity`, matching a GuardDuty finding rated 7 or above |
 | `make hunts` | That rule, and the hunt `aws-guardduty-high-severity` once `dfe.aws-guardduty` exists, running it every five minutes into `dfe.detection` |
 | `make events` | Two fake GuardDuty findings from `resources/seed/events/`, rated 8.0 and 2.0, so the hunt's next run detects the first and leaves the second |
+| `make orgs` | The org `acme`, for records carrying the tenant id `acme` |
+| `make accounts` | Those orgs, then the admin account `ops` in `dfe-admins` |
 
 `make events` posts its records to dfe-receiver tagged with the source each file is named for, which routes them over the stack's transport, Kafka or gRPC. It waits until the source's table holds them and fails if they do not arrive, so it needs the source deployed by `make sources`, dfe-receiver and an engine that renders the apps' config. It skips the records of a source `make sources` skipped. It sends the records again on every run and needs no login. The hunt that finds them runs in dfe-hunt-runner.
 
-A run of the other three creates only what the engine lacks and leaves an object it already holds as it is, so editing a seed file changes nothing on a stack that has the object; delete the object and the next run creates it from the file. A source is deployed as it is created, which creates its table, and a source the engine holds undeployed is deployed. `make sources` ends by asking the engine to bring every app in step with the sources, which retries a deploy whose apps did not take it.
+A run of any other target creates only what the engine lacks and leaves an object it already holds as it is, so editing a seed file changes nothing on a stack that has the object. Delete the object and the next run creates it from the file. A source is deployed as it is created, which creates its table. A source the engine holds undeployed is deployed. `make sources` ends by asking the engine to bring every app in step with the sources, which retries a deploy whose apps did not take it.
 
-`make sources`, `make rules` and `make hunts` log in as `admin` with `DFE_AUTH_LOCAL_ADMIN_PASSWORD` from `.env`, as `make post` does, and replace a password the engine issued the same way. Once the setup wizard has retired `admin`, they ask at the terminal for an account that can write sources, rules and hunts. They ask once per run and store the login nowhere; without a terminal they stop. An account still on the password it was issued has to change it in the console first.
+Every target but `make events` logs in as `admin` with `DFE_AUTH_LOCAL_ADMIN_PASSWORD` from `env/engine.env` and replaces an issued password as `make post` does. Once the setup wizard has retired `admin`, they ask at the terminal for an account that can write what the target seeds. They ask once per run and store the login nowhere. Without a terminal they stop. An account still on the password it was issued has to change it in the console first.
 
 Each fetcher source runs in its own container, which the engine declares but does not start. The deploy prints the command it needs, such as `recreate required: make apply SERVICES=dfe-fetcher-aws-guardduty`. Until then `make post` leaves the instance out of its metrics check. The fetchers read `AWS_ACCESS_KEY_ID` and `AWS_SECRET_ACCESS_KEY` from `env/fetcher.env` and cannot fetch until both are set. Compose reads that file only when it creates a container, so set the keys before `make apply`, or run it again after setting them.
+
+## Seeding orgs and accounts
+
+`make accounts` creates the orgs first, because the engine refuses an account naming an org it does not hold. An account file carries no password. A new account gets a 24-character one, recorded in `env/engine.env` as `DFE_SEED_ACCOUNT_<USERNAME>_PASSWORD` before the account is created. `make creds` hands it over the way it hands over `admin`. A volume wipe deletes the orgs and accounts, so run both targets again after one. An account comes back on the password already recorded.
 
 ## Proving the pipeline works
 

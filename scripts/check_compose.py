@@ -118,12 +118,14 @@ from _common import (  # noqa: E402
     CUSTOM_ENV_SUFFIX,
     DOTENV_FILE,
     DOTENV_TEMPLATE,
+    ENGINE_COMPONENT,
     ENV_DIR,
     ENV_TEMPLATE_DIR,
     PER_SOURCE_APP_KEYS,
     REPO_ROOT,
     SERVICE_CONFIG_FILE,
     _dotenv_values,
+    _env_file,
     _parse_dotenv,
     _print,
     _required_compose_vars,
@@ -134,7 +136,7 @@ from build_dev_images import (  # noqa: E402
     local_image_services,
     overlay_text,
 )
-from init import _render_secrets  # noqa: E402
+from init import GENERATED_SECRETS, _render_secrets  # noqa: E402
 
 # The overlay `make dev LOCAL=...` generates, rendered for dfe-engine because it
 # is the component with IMAGE_CONSUMERS followers. Written under .tmp so compose
@@ -480,7 +482,18 @@ def _first_start_dotenv() -> dict[str, str]:
     if DOTENV_FILE.is_file():
         return _dotenv_values()
     template = DOTENV_TEMPLATE.read_text(encoding="utf-8", errors="replace")
-    return _parse_dotenv(text=_render_secrets(text=template))
+    return _parse_dotenv(
+        text=_render_secrets(keys=GENERATED_SECRETS[DOTENV_FILE.name], text=template)
+    )
+
+
+def _first_start_engine_env() -> str | None:
+    """The env/engine.env `make init` would write rendered in memory, None when this checkout has its own."""
+    if _env_file(component=ENGINE_COMPONENT).is_file():
+        return None
+    name = f"{ENGINE_COMPONENT}.env"
+    template = (ENV_TEMPLATE_DIR / name).read_text(encoding="utf-8", errors="replace")
+    return _render_secrets(keys=GENERATED_SECRETS[name], text=template)
 
 
 def _check_env() -> tuple[dict[str, str], list[str]]:
@@ -601,6 +614,34 @@ def _config_json(
     if result.returncode != 0:
         return None
     return json.loads(result.stdout)
+
+
+def _scratch_config(
+    *,
+    env: dict[str, str],
+    env_file: Path | None = None,
+    env_files: dict[str, str],
+    extra_profiles: tuple[str, ...] = (),
+    fragment: str | None = None,
+) -> dict | None:
+    """Return `_config_json` of a copy of the compose file in a scratch directory whose env/ holds `env_files`, text by file name.
+
+    So nothing planted lands in this checkout's env/. A copy, because Compose resolves an extended service's paths against the file that declares it.
+    """
+    with tempfile.TemporaryDirectory() as scratch:
+        compose = Path(scratch) / COMPOSE_FILE.name
+        shutil.copyfile(COMPOSE_FILE, compose)
+        env_dir = Path(scratch) / ENV_DIR.name
+        env_dir.mkdir()
+        for name, text in env_files.items():
+            (env_dir / name).write_text(text, encoding="utf-8", newline="\n")
+        return _config_json(
+            env=env,
+            env_file=env_file,
+            extra_profiles=extra_profiles,
+            files=[str(compose)],
+            fragment=fragment,
+        )
 
 
 def _published(*, config: dict, service: str) -> list[tuple[str, str]]:
@@ -992,7 +1033,12 @@ def _credential_failures(*, env: dict[str, str]) -> tuple[list[str], int]:
     """
     failures: list[str] = []
     made = 1
-    live = _config_json(env=env, files=[COMPOSE_FILE.name])
+    engine_env = _first_start_engine_env()
+    live = (
+        _config_json(env=env, files=[COMPOSE_FILE.name])
+        if engine_env is None
+        else _scratch_config(env=env, env_files={f"{ENGINE_COMPONENT}.env": engine_env})
+    )
     if live is None:
         return (
             ["the registry path did not resolve, so the credential is unknown"],
@@ -1003,16 +1049,18 @@ def _credential_failures(*, env: dict[str, str]) -> tuple[list[str], int]:
         failures.append(fault)
 
     empty_env_file = _empty_env_file()
-    base = {
-        k: v for k, v in env.items() if k not in (_POSTURE_KEY, _ADMIN_PASSWORD_KEY)
-    }
+    base = {k: v for k, v in env.items() if k != _POSTURE_KEY}
     for label, posture, password, want_flagged in _CREDENTIAL_CASES:
         made += 1
-        case = {**base, _ADMIN_PASSWORD_KEY: password}
+        case = dict(base)
         if posture:
             case[_POSTURE_KEY] = posture
-        config = _config_json(
-            env=case, files=[COMPOSE_FILE.name], env_file=empty_env_file
+        config = _scratch_config(
+            env=case,
+            env_file=empty_env_file,
+            env_files={
+                f"{ENGINE_COMPONENT}.env": f"{_ADMIN_PASSWORD_KEY}={password}\n"
+            },
         )
         if config is None:
             failures.append(f"the credential case {label!r} did not resolve")
@@ -1425,10 +1473,6 @@ def _sentinel_model(*, env: dict[str, str], fragment: str) -> dict | None:
     name outside those carries no sentinel and goes unseen.
     The effect is what is read because Compose 2.38, the CI runner's, prints no
     `env_file` under any `config` flag and rejects `--no-interpolate` here.
-
-    Rendered from a copy of the compose file in a scratch directory, so no sentinel
-    lands in this checkout's env/. A copy, because Compose resolves an extended
-    service's paths against the file that declares it.
     """
     plain = _config_json(
         env=env, files=[COMPOSE_FILE.name], extra_profiles=("*",), fragment=fragment
@@ -1438,25 +1482,15 @@ def _sentinel_model(*, env: dict[str, str], fragment: str) -> dict | None:
     templates = sorted(ENV_TEMPLATE_DIR.glob("*.env"))
     stems = {*plain.get("services", {}), *SERVICE_CONFIG_FILE}
     stems.update(template.stem for template in templates)
-    with tempfile.TemporaryDirectory() as scratch:
-        compose = Path(scratch) / COMPOSE_FILE.name
-        shutil.copyfile(COMPOSE_FILE, compose)
-        env_dir = Path(scratch) / ENV_DIR.name
-        env_dir.mkdir()
-        for template in templates:
-            (env_dir / template.name).write_text(
-                f"{_SENTINEL_LAST}={template.name}\n", encoding="utf-8", newline="\n"
-            )
-        for index, stem in enumerate(sorted(stems)):
-            name = f"{stem}{CUSTOM_ENV_SUFFIX}"
-            (env_dir / name).write_text(
-                f"{_SENTINEL_LAST}={name}\n{_SENTINEL_READ}{index}={name}\n",
-                encoding="utf-8",
-                newline="\n",
-            )
-        config = _config_json(
-            env=env, files=[str(compose)], extra_profiles=("*",), fragment=fragment
-        )
+    planted = {
+        template.name: f"{_SENTINEL_LAST}={template.name}\n" for template in templates
+    }
+    for index, stem in enumerate(sorted(stems)):
+        name = f"{stem}{CUSTOM_ENV_SUFFIX}"
+        planted[name] = f"{_SENTINEL_LAST}={name}\n{_SENTINEL_READ}{index}={name}\n"
+    config = _scratch_config(
+        env=env, env_files=planted, extra_profiles=("*",), fragment=fragment
+    )
     return None if config is None else config.get("services", {})
 
 

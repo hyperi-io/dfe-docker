@@ -132,5 +132,5 @@ def test_the_engine_is_handed_each_app_password(
 @pytest.mark.parametrize("user", sorted(APP_USERS))
 def test_each_app_password_is_minted_and_enforced(user: str) -> None:
     key, service = APP_USERS[user]
-    assert key in init.GENERATED_SECRETS
+    assert key in init.GENERATED_SECRETS[".env"]
     assert post.WEAK_SECRET_DEFAULTS[key] == ("", service)

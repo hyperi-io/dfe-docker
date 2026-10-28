@@ -22,6 +22,7 @@ the final mode passes a write followed by a chmod, whatever was readable between
 """
 
 import contextlib
+import fcntl
 import os
 import stat
 import sys
@@ -67,6 +68,19 @@ class ChmodWatch:
 _watch: ChmodWatch | None = None
 
 
+def _descriptor_text(*, fd: int) -> str | None:
+    """Return the text of the file a descriptor is open on, reopened by name, None where it cannot be named."""
+    try:
+        if sys.platform == "darwin":
+            named = fcntl.fcntl(fd, fcntl.F_GETPATH, bytes(1024))
+            path = Path(os.fsdecode(named.rstrip(b"\0")))
+        else:
+            path = Path(f"/proc/self/fd/{fd}")
+        return path.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return None
+
+
 def _on_audit(event: str, args: tuple) -> None:
     if _watch is None or event != "os.chmod":
         return
@@ -75,8 +89,8 @@ def _on_audit(event: str, args: tuple) -> None:
         info = os.stat(target)
         text: str | None = ""
         if info.st_size and isinstance(target, int):
-            # A descriptor opened write-only cannot be read back; its content counts.
-            text = None
+            # A write-only descriptor is reopened by name, its content counting as the secret where it cannot be
+            text = _descriptor_text(fd=target)
         elif info.st_size:
             text = Path(target).read_text(encoding="utf-8", errors="replace")
         _watch.views.append((stat.S_IMODE(info.st_mode), text))
@@ -109,6 +123,8 @@ def generated_files_stay_in_tmp(
         tmp_path / ".tmp" / "docker-compose.instances.yml",
     )
     monkeypatch.setattr(instances, "ENV_DIR", tmp_path / "env")
+    # Every env/<component>.env reader and writer resolves the directory here at call time
+    monkeypatch.setattr(_common, "ENV_DIR", tmp_path / "env")
 
 
 @pytest.fixture
@@ -124,4 +140,12 @@ def dotenv(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
         )
     # _rel_path resolves REPO_ROOT at call time, so display paths stay renderable.
     monkeypatch.setattr(_common, "REPO_ROOT", tmp_path)
+    return path
+
+
+@pytest.fixture
+def engine_env(dotenv: Path) -> Path:
+    """Return the path of a throwaway env/engine.env beside the throwaway .env, its directory made."""
+    path = dotenv.parent / "env" / "engine.env"
+    path.parent.mkdir(exist_ok=True)
     return path

@@ -102,6 +102,8 @@ SERVICE_TO_RENDERED_CONFIG_VAR = {
 # The suffix of the env file dfe-engine writes into env/ for one Compose service,
 # `<app>` or `<app>-<instance>` (appmgmt/appconfig.py CUSTOM_ENV_SUFFIX).
 CUSTOM_ENV_SUFFIX = ".custom.env"
+# The env/<component>.env compose hands dfe-engine and dfe-hunt-runner
+ENGINE_COMPONENT = "engine"
 
 # Repo constants
 REPO_ROOT = __find_repo_root()
@@ -129,7 +131,11 @@ COMPOSE_OVERRIDE_FILE = REPO_ROOT / "docker-compose.override.yml"
 # Written by resolve_profile.py on every make run that needs the stack and included by the Makefile, so deleting .tmp/ costs nothing
 PROFILE_MK = REPO_ROOT / ".tmp" / "profile.mk"
 RUST_BUILDER = REPO_ROOT / "docker" / "dfe-rust-builder.Dockerfile"
+# The starter objects the seed targets create through the engine API, one directory per kind
+SEED_DIR = REPO_ROOT / "resources" / "seed"
 SERVICE_PROFILES_FILE = REPO_ROOT / "service_profiles.yaml"
+# What a seed account's username loses in the env/engine.env key its password is recorded under
+_SEED_KEY_STRIP = re.compile(r"[^A-Z0-9]")
 
 # `${VAR:?message}` -- the form that makes an unset value abort the command
 # instead of resolving to something silently wrong. `${VAR:-default}` is optional
@@ -189,8 +195,12 @@ def _print(
 
 
 def _rel_path(*, path: Path) -> str:
-    """Return path relative to the repo root for display."""
-    return str(path.relative_to(REPO_ROOT))
+    """Return path relative to the repo root for display, whole when it lies outside the repo."""
+    return (
+        str(path.relative_to(REPO_ROOT))
+        if path.is_relative_to(REPO_ROOT)
+        else str(path)
+    )
 
 
 def write_private(*, path: Path, text: str, mode: int = 0o600) -> None:
@@ -199,13 +209,15 @@ def write_private(*, path: Path, text: str, mode: int = 0o600) -> None:
     Created at `mode` rather than chmod'ed after, so a new file is never readable
     by others; an existing file is set to `mode` on the open descriptor before any
     of `text` lands, so a rerun narrows one an earlier version or an editor left
-    wide without the new text ever sitting in it.
+    wide without the new text ever sitting in it. It is emptied only once its mode
+    is settled, so a refused chmod leaves the old content in place.
     """
-    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, mode)
+    fd = os.open(path, os.O_WRONLY | os.O_CREAT, mode)
     with os.fdopen(fd, "w", encoding="utf-8", newline="\n") as handle:
         # O_CREAT's mode applies only to a new file, so an existing one is set here unless it already matches: chmod needs the owner, which a group member rewriting a shared file is not
         if stat.S_IMODE(os.fstat(fd).st_mode) != mode:
-            os.fchmod(fd, mode)
+            os.fchmod(fd=fd, mode=mode)
+        os.ftruncate(fd, 0)
         handle.write(text)
 
 
@@ -347,6 +359,19 @@ def _dotenv_values() -> dict[str, str]:
     return _parse_dotenv(text=DOTENV_FILE.read_text(encoding="utf-8", errors="replace"))
 
 
+def _env_file(*, component: str) -> Path:
+    """Return env/<component>.env, the file compose hands that component's containers."""
+    return ENV_DIR / f"{component}.env"
+
+
+def _env_file_values(*, component: str) -> dict[str, str]:
+    """Parse env/<component>.env by the subset `_dotenv_values` documents, empty when the file is absent."""
+    path = _env_file(component=component)
+    if not (path.is_file()):
+        return {}
+    return _parse_dotenv(text=path.read_text(encoding="utf-8", errors="replace"))
+
+
 def _parse_dotenv(*, text: str) -> dict[str, str]:
     """Parse dotenv text into a dict, by the subset `_dotenv_values` documents."""
     values: dict[str, str] = {}
@@ -399,6 +424,22 @@ def _load_dotenv() -> None:
     """Merge .env into os.environ. Existing environment variables take precedence."""
     for key, value in _dotenv_values().items():
         os.environ.setdefault(key, value)
+
+
+def _load_env_file(*, component: str, keys: typing.Iterable[str]) -> None:
+    """Set each of `keys` the environment lacks from env/<component>.env, empty where that file lacks it too.
+
+    Called before `_load_dotenv`, so none of `keys` is ever read from .env, where an older checkout may still hold a stale copy.
+    """
+    values = _env_file_values(component=component)
+    for key in keys:
+        os.environ.setdefault(key, values.get(key, ""))
+
+
+def seed_password_key(*, username: str) -> str:
+    """Return the env/engine.env key `make accounts` records a seed account's password under."""
+    stem = _SEED_KEY_STRIP.sub(repl="_", string=username.upper())
+    return f"DFE_SEED_ACCOUNT_{stem}_PASSWORD"
 
 
 def _use_mounted_configs(*, environ: typing.MutableMapping[str, str]) -> None:

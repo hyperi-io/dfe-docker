@@ -12,14 +12,29 @@
 variable, not a missing one, so a default has to survive the empty string. And a
 second stack published beside another is found through DFE_POST_HOST, which every
 helper has to follow or it reads the first stack's data.
+
+A key a helper reads from env/engine.env comes from that file or the environment, never from the stale copy an older .env may still hold.
 """
 
-from __future__ import annotations
+import os
+from pathlib import Path
 
 import pytest
 
+import _common
 import _pipeline
 import test_source
+
+# A key the helpers read from env/engine.env, never from .env
+_ENGINE_KEY = "DFE_HELPER_ENV_TEST_PASSWORD"
+
+
+@pytest.fixture
+def unset_key(monkeypatch: pytest.MonkeyPatch) -> str:
+    """Return `_ENGINE_KEY`, absent from the environment and absent again once the test ends."""
+    monkeypatch.setenv(_ENGINE_KEY, "")
+    monkeypatch.delenv(_ENGINE_KEY)
+    return _ENGINE_KEY
 
 
 def test_an_empty_exported_clickhouse_key_takes_its_default(
@@ -82,3 +97,50 @@ def test_an_explicit_clickhouse_url_still_wins(
     monkeypatch.setenv("DFE_POST_HOST", "127.0.0.2")
 
     assert _pipeline.clickhouse_url() == "http://warehouse.example.test:8123"
+
+
+def test_a_key_in_both_files_is_read_from_the_engine_env(
+    dotenv: Path, engine_env: Path, unset_key: str
+) -> None:
+    dotenv.write_text(f"{unset_key}=older\n", encoding="utf-8")
+    engine_env.write_text(f"{unset_key}=current\n", encoding="utf-8")
+
+    _common._load_env_file(component=_common.ENGINE_COMPONENT, keys=(unset_key,))
+    _common._load_dotenv()
+
+    assert os.environ[unset_key] == "current"
+
+
+def test_a_key_only_an_older_dotenv_holds_is_not_read(
+    dotenv: Path, engine_env: Path, unset_key: str
+) -> None:
+    dotenv.write_text(f"{unset_key}=older\n", encoding="utf-8")
+    engine_env.write_text("OTHER=value\n", encoding="utf-8")
+
+    _common._load_env_file(component=_common.ENGINE_COMPONENT, keys=(unset_key,))
+    _common._load_dotenv()
+
+    assert os.environ[unset_key] == ""
+
+
+def test_a_key_neither_file_holds_reads_empty(
+    dotenv: Path, engine_env: Path, unset_key: str
+) -> None:
+    dotenv.write_text(f"# {unset_key}=example\n", encoding="utf-8")
+    engine_env.write_text(f"# {unset_key}=example\n", encoding="utf-8")
+
+    _common._load_env_file(component=_common.ENGINE_COMPONENT, keys=(unset_key,))
+    _common._load_dotenv()
+
+    assert os.environ[unset_key] == ""
+
+
+def test_the_environment_beats_the_engine_env(
+    engine_env: Path, monkeypatch: pytest.MonkeyPatch, unset_key: str
+) -> None:
+    monkeypatch.setenv(unset_key, "from-the-shell")
+    engine_env.write_text(f"{unset_key}=current\n", encoding="utf-8")
+
+    _common._load_env_file(component=_common.ENGINE_COMPONENT, keys=(unset_key,))
+
+    assert os.environ[unset_key] == "from-the-shell"

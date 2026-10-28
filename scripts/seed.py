@@ -1,7 +1,7 @@
 #!/usr/bin/env -S uv run --locked --script
 #  Project:      dfe-docker
 #  File:         scripts/seed.py
-#  Purpose:      Create the starter sources, rules and hunts in resources/seed that the running engine lacks and send its fake events
+#  Purpose:      Create the starter sources, rules, hunts, orgs and accounts in resources/seed that the running engine lacks and send its fake events
 #  Language:     Python
 #
 #  License:      BUSL-1.1
@@ -16,13 +16,13 @@
 
 """Create one part of the starter set in resources/seed on the running stack or send its fake events.
 
-The hunts target also creates the rules, because the engine refuses a hunt whose rule does not exist. Nothing else is created for a target: a rule over a source that is not deployed yet is accepted and reads nothing until it is. A hunt whose table does not exist yet is not created, because the hunt runner fails on every run of it.
+The hunts target also creates the rules, because the engine refuses a hunt whose rule does not exist. The accounts target creates the orgs first for the same reason, since the engine refuses an account naming an org it does not hold. Nothing else is created for a target: a rule over a source that is not deployed yet is accepted and reads nothing until it is. A hunt whose table does not exist yet is not created, because the hunt runner fails on every run of it.
 
-Each sources, rules or hunts file is the body the engine's create route takes, named for the object it creates. An object the engine already holds is left as it is, so a re-run creates only what is missing. The one exception is a held source that was never deployed, which is deployed. A source whose fetcher or transform app the profile does not run is skipped. The sources end with a request for the engine to bring every app in step with them, which retries a deploy whose apps did not follow. A restart the engine asks for is printed, not run: `make apply` on a `make dev` stack needs DEV=1, which this script cannot know.
+Each sources, rules, hunts, orgs or accounts file is the body the engine's create route takes, named for the object it creates. An account file carries no password. A new account gets the one env/engine.env already records for it as DFE_SEED_ACCOUNT_<USERNAME>_PASSWORD. Without one it gets a fresh 24-character password, recorded there before the account is created. So a volume wipe brings the account back on the same password, which `make creds` hands over. No password is ever printed. An object the engine already holds is left as it is, so a re-run creates only what is missing. The one exception is a held source that was never deployed, which is deployed. A source whose fetcher or transform app the profile does not run is skipped. The sources end with a request for the engine to bring every app in step with them, which retries a deploy whose apps did not follow. A restart the engine asks for is printed, not run: `make apply` on a `make dev` stack needs DEV=1, which this script cannot know.
 
 Each events file is a list of records for the source it is named for. They go to dfe-receiver, which routes them by `_source` over whichever transport the stack runs, and the run waits until the source's table holds them. Events for a source the profile cannot run are skipped. Every run sends them again, and needs no login.
 
-The other targets log in as the bootstrap admin with the password in .env. Once the engine has retired that admin, they ask at the terminal for an account that can write sources, rules and hunts, and keep that login only for the run.
+The other targets log in as the bootstrap admin with the password in env/engine.env. Once the engine has retired that admin, they ask at the terminal for an account that can write what the target seeds and keep that login only for the run.
 
 Exit codes:
   0  every object the target creates exists, or every event landed
@@ -48,18 +48,25 @@ import yaml
 sys.pycache_prefix = str(Path(__file__).resolve().parent.parent / ".tmp" / "pycache")
 
 from _common import (  # noqa: E402
+    ENGINE_COMPONENT,
     FETCHER_SERVICE,
     PER_SOURCE_APP_KEYS,
     PER_SOURCE_APPS_VAR,
-    REPO_ROOT,
+    SEED_DIR,
     SOURCE_NAME,
     TRANSFORM_APP_PREFIX,
+    _env_file,
+    _env_file_values,
     _load_dotenv,
+    _load_env_file,
     _print,
     _profile_mk_value,
+    _rel_path,
     _resolved_services,
+    seed_password_key,
 )
 from _pipeline import ch_int, escape_literal, http_post  # noqa: E402
+from init import _LEN_CREDENTIAL, _generate_secret  # noqa: E402
 from post import (  # noqa: E402
     ADMIN_PASSWORD_KEY,
     APP_CONFIG_DIR_KEY,
@@ -70,9 +77,13 @@ from post import (  # noqa: E402
     _admin_retired,
     _api_get_json,
     _api_post_json,
+    _dotenv_with,
     _engine_base,
     _ingest_target,
+    _refresh_access_summary,
+    _replace_file,
     _request_token,
+    _without_passwords,
     login,
 )
 
@@ -89,30 +100,46 @@ class SeedError(Exception):
     """A seed object or event that could not be read, checked, created, deployed, sent or seen to land."""
 
 
+# Heads the seed account passwords this appends to env/engine.env
+ACCOUNT_PASSWORD_BANNER = "## Seed account passwords, handed over by `make creds`"
 # A deploy runs DDL, topic creation and app overlay commits, and its restart hints are only ever reported once.
 DEPLOY_TIMEOUT_SECONDS = 90
 EVENTS = "events"
 # Every engine call the seeder makes can fail in one of these ways without the engine answering.
 ENGINE_FAULTS = (ApiUnreachable, OSError, subprocess.TimeoutExpired)
 KINDS = {
+    "accounts": Kind(key="username", noun="account", route="/auth/accounts"),
     "hunts": Kind(key="name", noun="hunt", route="/hunts"),
+    "orgs": Kind(key="name", noun="org", route="/orgs"),
     "rules": Kind(key="name", noun="rule", route="/rules"),
     "sources": Kind(key="source", noun="source", route="/sources"),
 }
 LANDING_INTERVAL_SECONDS = 3.0
 LANDING_TIMEOUT_SECONDS = 60.0
-SEED_DIR = REPO_ROOT / "resources" / "seed"
 # A hunt's `global_source_table_name`, the `<database>.<source>` table a source's deploy creates.
 HUNT_TABLE = re.compile(
     rf"(?P<database>[A-Za-z_][A-Za-z0-9_]*)\.(?P<table>{SOURCE_NAME.pattern})"
 )
-# What each target seeds, in order; the engine refuses a hunt whose rule does not exist.
+# What each target seeds in order, since the engine refuses a hunt or an account naming a rule or org it does not hold
 TARGETS = {
+    "accounts": ("orgs", "accounts"),
     EVENTS: (EVENTS,),
     "hunts": ("rules", "hunts"),
+    "orgs": ("orgs",),
     "rules": ("rules",),
     "sources": ("sources",),
 }
+
+
+def _account_password(*, username: str) -> str:
+    """The password a new seed account is created with: the one env/engine.env records for it, else a fresh one recorded there first."""
+    key = seed_password_key(username=username)
+    recorded = _env_file_values(component=ENGINE_COMPONENT).get(key, "")
+    if recorded:
+        return recorded
+    password = _generate_secret(length=_LEN_CREDENTIAL)
+    _record_account_password(key=key, password=password)
+    return password
 
 
 def _action(*, status: int) -> str:
@@ -141,15 +168,26 @@ def _await_landing(*, expected: int, source: str) -> None:
 
 
 def _create(*, base: str, body: dict, kind: str, name: str, token: str) -> None:
-    """Create one object, deploying it when it is a source."""
+    """Create one object, deploying it when it is a source and handing over its password when it is an account."""
     route = KINDS[kind].route
     status, answer = _api_post_json(payload=body, token=token, url=f"{base}{route}")
     if status != 201:
-        raise SeedError(f"POST {route!r} returned HTTP {status}: {answer}")
+        fault = f"POST {route!r} returned HTTP {status}: {answer}"
+        # A refusal can echo the request, the account's password included
+        if body.get("password"):
+            fault = _without_passwords(current="", new=body["password"], text=fault)
+        raise SeedError(fault)
     _print(msg=f"created {KINDS[kind].noun} {name!r}")
     _print_hints(answer=answer)
     if kind == "sources":
         _deploy(base=base, name=name, token=token)
+    if kind == "accounts":
+        engine_env = _rel_path(path=_env_file(component=ENGINE_COMPONENT))
+        _print(
+            msg=f"  its password is {seed_password_key(username=name)} in "
+            f"{engine_env}, which `make creds` hands over"
+        )
+        _refresh_access_summary()
 
 
 def _deploy(*, base: str, name: str, token: str) -> None:
@@ -177,6 +215,11 @@ def _deployed(*, body: object) -> bool:
 
 def _ensure(*, base: str, body: dict, kind: str, name: str, token: str) -> None:
     """Create one object unless the engine holds it, and deploy a source it holds undeployed."""
+    if kind == "accounts" and "password" in body:
+        raise SeedError(
+            f"{name!r} sets a password, which a seed file must not carry: `make "
+            f"accounts` mints one into env/engine.env instead"
+        )
     path = f"{KINDS[kind].route}/{quote(safe='', string=name)}"
     status, answer = _api_get_json(token=token, url=f"{base}{path}")
     action = _action(status=status)
@@ -187,6 +230,8 @@ def _ensure(*, base: str, body: dict, kind: str, name: str, token: str) -> None:
         if missing:
             _print(msg=f"SKIP {KINDS[kind].noun} {name!r}: {missing}")
             return
+    if action == "create" and kind == "accounts":
+        body = {**body, "password": _account_password(username=name)}
     if action == "create":
         _create(base=base, body=body, kind=kind, name=name, token=token)
         return
@@ -268,7 +313,7 @@ def _prompted_token(*, base: str, terminal: bool) -> str:
         )
     _print(
         msg="The bootstrap admin is retired. Log in as an account that can write "
-        "sources, rules and hunts."
+        "what this target seeds."
     )
     try:
         username = input("username: ").strip()
@@ -328,16 +373,35 @@ def _reconcile(*, base: str, token: str) -> None:
     _print_hints(answer=answer)
 
 
+def _record_account_password(*, key: str, password: str) -> None:
+    """Record a seed account's password in env/engine.env the way POST records the admin's, atomically and keeping the file's mode."""
+    path = _env_file(component=ENGINE_COMPONENT)
+    try:
+        text = path.read_text(encoding="utf-8")
+        _replace_file(
+            path=path,
+            text=_dotenv_with(
+                banner=ACCOUNT_PASSWORD_BANNER, key=key, text=text, value=password
+            ),
+        )
+    except OSError as error:
+        raise SeedError(
+            f"{key} cannot be recorded in {_rel_path(path=path)} ({error.strerror}), "
+            f"so the account is not created"
+        ) from error
+
+
 def _refusal(*, fault: str, prompted: bool, status: int) -> str:
     """A refused login's fault, with the account to use instead where this end can fix it."""
+    engine_env = _rel_path(path=_env_file(component=ENGINE_COMPONENT))
     if prompted and status == 401:
-        step = "log in as an account that can write sources, rules and hunts, with its current password"
+        step = "log in as an account that can write what this target seeds, with its current password"
     elif prompted:
         step = ""
     elif status == 0:
-        step = f"set {ADMIN_PASSWORD_KEY} in .env, which `make init` generates"
+        step = f"set {ADMIN_PASSWORD_KEY} in {engine_env}, which `make init` generates"
     elif status == 401:
-        step = f"{ADMIN_PASSWORD_KEY} in .env is not the bootstrap admin's current password, so set it to that and run this again"
+        step = f"{ADMIN_PASSWORD_KEY} in {engine_env} is not the bootstrap admin's current password, so set it to that and run this again"
     else:
         step = ""
     return f"{fault}; {step}" if step else fault
@@ -513,9 +577,10 @@ def main() -> int:
     parser.add_argument(
         "target",
         choices=sorted(TARGETS),
-        help="what to seed: one kind of object, hunts with their rules, or events to send",
+        help="what to seed: one kind of object, hunts with their rules, accounts with their orgs or events to send",
     )
     kinds = TARGETS[parser.parse_args().target]
+    _load_env_file(component=ENGINE_COMPONENT, keys=(ADMIN_PASSWORD_KEY,))
     _load_dotenv()
     if not (_resolved_services()):
         _print(

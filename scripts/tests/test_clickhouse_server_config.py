@@ -237,7 +237,7 @@ def test_the_server_reaches_its_own_keeper_under_a_generated_identity() -> None:
     # The key `make init` mints, never a literal, and mandatory: a server started on
     # an empty value exits 231 once a real one lands.
     assert re.fullmatch(rf"\w+:\$\{{{_KEEPER_PASSWORD}:\?[^}}]+\}}", value), value
-    assert _KEEPER_PASSWORD in init.GENERATED_SECRETS
+    assert _KEEPER_PASSWORD in init.GENERATED_SECRETS[".env"]
 
 
 def test_the_server_keeps_its_host_name_across_a_recreate() -> None:

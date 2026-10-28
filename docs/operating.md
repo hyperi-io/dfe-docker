@@ -21,16 +21,16 @@ work, choose Kubernetes.
 
 ## Only the console authenticates -- everything else is bounded by that
 
-The engine's API requires a login. `make init` mints two passwords into `.env` and `make creds` hands them over: `admin` from `DFE_AUTH_LOCAL_ADMIN_PASSWORD`, and the `breakglass` recovery admin, whose hash the engine commits to its deploy repo on the first boot and which therefore outlives the engine, the UI and `.env`.
+The engine's API requires a login. `make init` mints two passwords into `env/engine.env` and `make creds` hands them over: `admin` from `DFE_AUTH_LOCAL_ADMIN_PASSWORD` and the `breakglass` recovery admin, whose hash the engine commits to its deploy repo on the first boot and which therefore outlives the engine, the UI and `env/engine.env`.
 
-The engine issues `admin` with a forced change at first login, which `make post` makes and records back in `.env`. Rotate it by changing the value in `.env` and running `make up`. A value the engine last issued, or the account's current password, re-issues nothing, so a restart never undoes a change.
+The engine issues `admin` with a forced change at first login, which `make post` makes and records back in `env/engine.env`. Rotate it by changing the value in `env/engine.env` and running `make up`. The value the engine last issued or the account's current password re-issues nothing, so a restart never undoes a change.
 
 The engine refuses to start when `DFE_AUTH_LOCAL_ADMIN_PASSWORD` is empty or the shipped default and `DFE_ENV` is not a dev posture. An unset `DFE_ENV` counts as `production`, so only a `.env` that says `dev` gets to run on the shipped password.
 
 `make init` and `make up` also write `access-summary.md` (0600, gitignored) with
 both minted passwords in plaintext. Retire the bootstrap admin from the console
 wizard's last step, or `POST /api/v1/auth/setup/retire-admin`, once your own admin
-exists, then delete `DFE_AUTH_LOCAL_ADMIN_PASSWORD` from `.env` -- the account
+exists, then delete `DFE_AUTH_LOCAL_ADMIN_PASSWORD` from `env/engine.env`. The account
 stays disabled and is never reseeded. Keep the break-glass password offline and
 delete both plaintexts, including that file: the engine keeps only the hash.
 
@@ -403,13 +403,13 @@ is that ClickHouse data is in one.
 ### Retention
 
 Every time-series table DFE deploys, the OTel tables included, keeps rows for
-`DFE_CLICKHOUSE_DEFAULT_TTL_DAYS` days -- 90 unless set, and 0 disables the
-default TTL. `make init` asks for it once, on a TTY, when it creates `.env` and
-writes the answer as a live line; a non-interactive run keeps the template's
+`DFE_CLICKHOUSE_DEFAULT_TTL_DAYS` days, set in `env/engine.env`: 90 unless set, 0 to disable the
+default TTL. `make init` asks for it once, on a TTY, when it creates `env/engine.env` and
+writes the answer as a live line. A non-interactive run keeps the template's
 commented 90, and the key already set in the environment pre-answers it. The
 value reaches dfe-engine, whose startup apply reconciles existing tables, so
-changing it later is a `.env` edit and a `make ci`. A source, or a
-dfe-schemas definition, that declares its own TTL keeps it. The same knob is
+changing it later is an `env/engine.env` edit and a `make ci`. A source or a
+dfe-schemas definition that declares its own TTL keeps it. The same knob is
 `retention.default_ttl_days` in `deployment.yaml`.
 
 ### External data location
@@ -466,7 +466,7 @@ nobody leaves enabled.
 
 The other outcomes are as informative as the PASS:
 
-- **FAIL on weak secrets**: `DFE_UI_NEXTAUTH_SECRET`, `HYPERDX_DOCUMENTDB_PASSWORD`, `HYPERDX_EXPRESS_SESSION_SECRET` or `HYPERDX_TOKEN_ENCRYPTION_KEY` is still the committed default. Run `make init`.
+- **FAIL on weak secrets**: `HYPERDX_DOCUMENTDB_PASSWORD`, `NEXTAUTH_SECRET`, `EXPRESS_SESSION_SECRET` or `TOKEN_ENCRYPTION_KEY` is unset or the default. Run `make init`.
 - **FAIL, schema not converged** -- dfe-engine did not report its `schema` readiness check true within 300 seconds. `GET /api/v1/system/schema` on the engine names the object that failed.
 - **SKIP, schema convergence not checked** -- the engine names no `schema` check on `/readyz` and answers 404 on `/api/v1/system/schema`, which is every engine before v1.21.0. The rest of the run still asserts the rows land.
 - **FAIL, not ready** -- the profile declares an ingest component that never

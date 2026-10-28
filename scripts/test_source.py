@@ -50,10 +50,17 @@ from pathlib import Path
 # Bytecode for the repo modules imported below goes to .tmp/pycache, as it does under make
 sys.pycache_prefix = str(Path(__file__).resolve().parent.parent / ".tmp" / "pycache")
 
-from _common import _load_dotenv, _print, _published_url  # noqa: E402
+from _common import (  # noqa: E402
+    ENGINE_COMPONENT,
+    _load_dotenv,
+    _load_env_file,
+    _print,
+    _published_url,
+)
 from _pipeline import env_or  # noqa: E402
 
 PROJECT_DIR = Path(__file__).resolve().parent.parent
+_ADMIN_PASSWORD_KEY = "DFE_AUTH_LOCAL_ADMIN_PASSWORD"
 # Container names are daemon-wide and DFE_CONTAINER_PREFIX moves them, so the
 # archiver is reached through compose.
 ARCHIVER_SERVICE = "dfe-archiver"
@@ -264,19 +271,20 @@ def _suite_env(
 ) -> dict[str, str]:
     """The DFE_E2E_* block, the same one dfe-ops exports for the Kubernetes lanes.
 
-    There it comes from the cluster's secrets and port-forwards; here from .env
-    and the published ports, which is where a compose deployment keeps them.
+    There it comes from the cluster's secrets and port-forwards. Here it comes from
+    .env, env/engine.env and the published ports, where a compose deployment keeps
+    them.
 
     The block is laid over ``found``, the environment the script was started
     with, never over .env: make re-reads .env and exports a key it finds in the
     environment with the spaces before that line's comment, which turns any
     value written with an inline comment into one Docker refuses.
     """
-    password = os.environ.get("DFE_AUTH_LOCAL_ADMIN_PASSWORD", "")
+    password = os.environ.get(_ADMIN_PASSWORD_KEY, "")
     if not (password):
         sys.exit(
             "test_source: the runner signs in as this deployment's admin, so it "
-            "needs DFE_AUTH_LOCAL_ADMIN_PASSWORD from this stack's .env"
+            f"needs {_ADMIN_PASSWORD_KEY} from this stack's env/engine.env"
         )
     env = dict(found)
     env.update(
@@ -353,6 +361,7 @@ def main(argv: list[str] | None = None) -> int:
     # set it by hand, because a raw `docker compose` gets the loopback default).
     ui_bind = os.environ.get("DFE_UI_BIND_HOST", "").strip()
     found = dict(os.environ)
+    _load_env_file(component=ENGINE_COMPONENT, keys=(_ADMIN_PASSWORD_KEY,))
     _load_dotenv()
     infra = _infra_repo(args.infra_repo)
     engine = _engine_repo(args.engine_repo)

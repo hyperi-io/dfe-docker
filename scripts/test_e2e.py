@@ -75,9 +75,11 @@ import post  # noqa: E402
 import resolve_profile  # noqa: E402
 import seed  # noqa: E402
 from _common import (  # noqa: E402
+    ENGINE_COMPONENT,
     FALSY,
     _config_argument,
     _load_dotenv,
+    _load_env_file,
     _use_mounted_configs,
     log_line,
 )
@@ -161,8 +163,6 @@ OTEL_PROFILE = "otel"
 OTEL_SERVICE = "otel-collector"
 OTEL_ENDPOINT_ENV_VAR = "DFE_OTEL_EXPORTER_ENDPOINT"
 OTEL_BUNDLED_ENDPOINT = "http://otel-collector:4317"
-OTEL_ENGINE_BACKEND_ENV_VAR = "DFE_ENGINE_METRICS_BACKEND"
-OTEL_ENGINE_BACKEND = "opentelemetry"
 OTEL_FRESH_WINDOW_SECONDS = 300
 OTEL_TIMEOUT_SECONDS = 120.0
 OTEL_INTERVAL_SECONDS = 5.0
@@ -193,6 +193,7 @@ RESTORE_TIMEOUT_SECONDS = 300
 #   services it found are started again under.
 # ------------------------------------------------------------------------------
 FOUND_ENVIRON = dict(os.environ)
+_load_env_file(component=ENGINE_COMPONENT, keys=(post.ADMIN_PASSWORD_KEY,))
 _load_dotenv()
 _use_mounted_configs(environ=os.environ)
 
@@ -677,7 +678,6 @@ def resolve_services_profile(profile_name, otel=None):
         # The harness drives compose directly, so it sets what resolve_profile.py
         # would have exported through make.
         os.environ.setdefault(OTEL_ENDPOINT_ENV_VAR, OTEL_BUNDLED_ENDPOINT)
-        os.environ.setdefault(OTEL_ENGINE_BACKEND_ENV_VAR, OTEL_ENGINE_BACKEND)
 
     services = {}
     for svc_name, svc_conf in raw_services.items():

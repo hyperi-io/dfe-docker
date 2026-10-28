@@ -6,16 +6,22 @@
 #  License:      BUSL-1.1
 #  Copyright:    (c) 2026 HYPERI PTY LIMITED
 
-"""The checks on the seed set that need no stack: its files, their references to each other and the seeder's reading of the engine's answers."""
+"""The checks on the seed set that need no stack: its files, their references to each other, the seeder's reading of the engine's answers and the passwords it records for the accounts it creates."""
 
 import json
 import re
+import stat
+import string
 from pathlib import Path
 from typing import TypedDict
 
 import pytest
 
+import _common
 import seed
+
+# The key `make accounts` records the `ops` seed account's password under
+_OPS_KEY = "DFE_SEED_ACCOUNT_OPS_PASSWORD"
 
 # The credential rule dfe-engine applies to a fetcher config (source/models.py), so a seed file it would refuse fails here first.
 _CREDENTIAL_FRAGMENTS = ("password", "secret", "token")
@@ -85,10 +91,8 @@ class SkipReasonCase(TypedDict):
     per_source_apps: list[str]
 
 
-_ADMIN_401 = "refused; DFE_AUTH_LOCAL_ADMIN_PASSWORD in .env is not the bootstrap admin's current password, so set it to that and run this again"
-_ADMIN_UNSET = (
-    "refused; set DFE_AUTH_LOCAL_ADMIN_PASSWORD in .env, which `make init` generates"
-)
+_ADMIN_401 = "refused; DFE_AUTH_LOCAL_ADMIN_PASSWORD in env/engine.env is not the bootstrap admin's current password, so set it to that and run this again"
+_ADMIN_UNSET = "refused; set DFE_AUTH_LOCAL_ADMIN_PASSWORD in env/engine.env, which `make init` generates"
 _FETCHER = "dfe-fetcher"
 _FETCHER_BODY = {"fetcher": {"source_type": "aws"}, "source": "aws-guardduty"}
 _FETCHER_VRL_BODY = {
@@ -106,7 +110,7 @@ _VRL_BODY = {
     "source": "filebeat",
     "transform": {"engine": "vrl"},
 }
-_PROMPTED_401 = "refused; log in as an account that can write sources, rules and hunts, with its current password"
+_PROMPTED_401 = "refused; log in as an account that can write what this target seeds, with its current password"
 _RECEIVER_BODY = {"match": {"field": "_source"}, "source": "syslog"}
 
 ACTION_CASES = [
@@ -249,6 +253,77 @@ def _write(*, directory: Path, name: str, text: str) -> None:
     (directory / name).write_text(data=text, encoding="utf-8")
 
 
+class _AccountsEngine:
+    """The engine's account routes, holding no account and answering a create with `status`, echoing the request when it refuses."""
+
+    def __init__(self, *, status: int = 201) -> None:
+        self.created = []
+        self.status = status
+
+    def get_json(
+        self, *, token: str, url: str, timeout: int = 30
+    ) -> tuple[int, object]:
+        """Answer every account read as missing."""
+        return 404, {"detail": {"code": "not_found"}}
+
+    def post_json(
+        self, *, payload: dict, token: str, url: str, timeout: int = 30
+    ) -> tuple[int, object]:
+        """Record the create and answer it with `status`."""
+        self.created.append(payload)
+        if self.status == 201:
+            return 201, {"username": payload["username"]}
+        return self.status, {"detail": [{"input": payload, "type": "value_error"}]}
+
+
+@pytest.fixture
+def accounts_engine(monkeypatch: pytest.MonkeyPatch) -> _AccountsEngine:
+    """Answer the seeder's engine calls from a stand-in that holds no account."""
+    engine = _AccountsEngine()
+    monkeypatch.setattr(seed, "_api_get_json", engine.get_json)
+    monkeypatch.setattr(seed, "_api_post_json", engine.post_json)
+    return engine
+
+
+class TestAccountPassword:
+    def test_mints_and_records_a_password_the_engine_env_lacks(
+        self, engine_env: Path
+    ) -> None:
+        engine_env.write_text("DFE_API_JWT_SECRET=kept\n", encoding="utf-8")
+        engine_env.chmod(0o640)
+
+        password = seed._account_password(username="ops")
+
+        assert len(password) == 24
+        assert set(password) <= set(string.ascii_letters + string.digits)
+        values = _common._env_file_values(component=_common.ENGINE_COMPONENT)
+        assert values == {"DFE_API_JWT_SECRET": "kept", _OPS_KEY: password}
+        assert stat.S_IMODE(engine_env.stat().st_mode) == 0o640
+
+    def test_reuses_the_password_the_engine_env_records(self, engine_env: Path) -> None:
+        recorded = f"{_OPS_KEY}=RecordedBeforeAVolumeWipe1\n"
+        engine_env.write_text(recorded, encoding="utf-8")
+
+        assert seed._account_password(username="ops") == "RecordedBeforeAVolumeWipe1"
+        assert engine_env.read_text(encoding="utf-8") == recorded
+
+    def test_refuses_when_the_password_cannot_be_recorded(self, dotenv: Path) -> None:
+        with pytest.raises(
+            seed.SeedError, match="cannot be recorded in env/engine.env"
+        ):
+            seed._account_password(username="ops")
+
+    @pytest.mark.parametrize(
+        ("username", "expected"),
+        [
+            ("ops", "DFE_SEED_ACCOUNT_OPS_PASSWORD"),
+            ("ops-team.2", "DFE_SEED_ACCOUNT_OPS_TEAM_2_PASSWORD"),
+        ],
+    )
+    def test_names_the_key_for_the_username(self, username: str, expected: str) -> None:
+        assert seed.seed_password_key(username=username) == expected
+
+
 class TestAction:
     @pytest.mark.parametrize("case", ACTION_CASES)
     def test_matches_expected(self, case: ActionCase) -> None:
@@ -267,6 +342,68 @@ class TestDeployed:
     @pytest.mark.parametrize("case", DEPLOYED_CASES)
     def test_matches_expected(self, case: DeployedCase) -> None:
         assert seed._deployed(body=case["body"]) is case["expected"]
+
+
+class TestEnsure:
+    def test_creates_an_absent_account_on_the_password_it_recorded(
+        self,
+        accounts_engine: _AccountsEngine,
+        capsys: pytest.CaptureFixture[str],
+        engine_env: Path,
+    ) -> None:
+        engine_env.write_text("DFE_API_JWT_SECRET=kept\n", encoding="utf-8")
+
+        seed._ensure(
+            base="http://engine.invalid",
+            body={"groups": ["dfe-admins"], "username": "ops"},
+            kind="accounts",
+            name="ops",
+            token="token",
+        )
+
+        recorded = _common._env_file_values(component=_common.ENGINE_COMPONENT)
+        assert accounts_engine.created == [
+            {
+                "groups": ["dfe-admins"],
+                "password": recorded[_OPS_KEY],
+                "username": "ops",
+            }
+        ]
+        err = capsys.readouterr().err
+        assert f"its password is {_OPS_KEY} in env/engine.env" in err
+        assert recorded[_OPS_KEY] not in err
+
+    def test_a_refused_create_does_not_echo_the_password(
+        self, accounts_engine: _AccountsEngine, engine_env: Path
+    ) -> None:
+        engine_env.write_text(
+            f"{_OPS_KEY}=RecordedBeforeAVolumeWipe1\n", encoding="utf-8"
+        )
+        accounts_engine.status = 422
+
+        with pytest.raises(seed.SeedError) as refused:
+            seed._ensure(
+                base="http://engine.invalid",
+                body={"username": "ops"},
+                kind="accounts",
+                name="ops",
+                token="token",
+            )
+        assert "HTTP 422" in str(refused.value)
+        assert "RecordedBeforeAVolumeWipe1" not in str(refused.value)
+
+    def test_refuses_an_account_file_that_carries_a_password(
+        self, accounts_engine: _AccountsEngine, engine_env: Path
+    ) -> None:
+        with pytest.raises(seed.SeedError, match="sets a password"):
+            seed._ensure(
+                base="http://engine.invalid",
+                body={"password": "committed", "username": "ops"},
+                kind="accounts",
+                name="ops",
+                token="token",
+            )
+        assert accounts_engine.created == []
 
 
 class TestEvents:
@@ -389,7 +526,7 @@ class TestPromptedToken:
 
 class TestRefusal:
     @pytest.mark.parametrize("case", REFUSAL_CASES)
-    def test_matches_expected(self, case: RefusalCase) -> None:
+    def test_matches_expected(self, dotenv: Path, case: RefusalCase) -> None:
         refusal = seed._refusal(
             fault="refused", prompted=case["prompted"], status=case["status"]
         )
@@ -441,6 +578,18 @@ class TestSeedSet:
     @pytest.mark.parametrize("kind", sorted(seed.KINDS))
     def test_every_kind_has_files(self, kind: str) -> None:
         assert _seeded(kind=kind)
+
+    def test_every_account_leaves_its_password_to_the_seeder(self) -> None:
+        for name, body in _seeded(kind="accounts"):
+            assert not (_plaintext_credentials(path=name, value=body)), name
+
+    def test_every_org_an_account_names_is_seeded(self) -> None:
+        orgs = {name for name, _ in _seeded(kind="orgs")}
+        for name, body in _seeded(kind="accounts"):
+            assert body.get("org", "") in orgs | {""}, name
+
+    def test_the_accounts_target_creates_the_orgs_first(self) -> None:
+        assert seed.TARGETS["accounts"] == ("orgs", "accounts")
 
     def test_every_events_file_names_a_seeded_source(self) -> None:
         sources = {name for name, _ in _seeded(kind="sources")}

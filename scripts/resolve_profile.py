@@ -147,13 +147,6 @@ def otel_http_endpoint(endpoint: str) -> str:
     return endpoint
 
 
-# The Rust services push whenever the endpoint is set. dfe-engine also needs its
-# backend switched, because scalo-py's CLI defaults it to prometheus (scalo-py#11).
-# `opentelemetry` is dual -- it pushes AND keeps serving /metrics, so switching
-# costs a scraping estate nothing.
-OTEL_ENGINE_BACKEND_ENV_VAR = "DFE_ENGINE_METRICS_BACKEND"
-OTEL_ENGINE_BACKEND = "opentelemetry"
-
 # What the engine is handed as DFE_ADMIN_LINKS: the JSON list of admin UIs a
 # browser can open on this stack.
 ADMIN_LINKS_VAR = "DFE_ADMIN_LINKS_RESOLVED"
@@ -891,11 +884,6 @@ def main(argv: Sequence[str] = ()) -> int:
             lines.append(
                 f"export {OTEL_HTTP_ENDPOINT_ENV_VAR} := {otel_http_endpoint(endpoint)}"
             )
-            backend = (
-                os.environ.get(OTEL_ENGINE_BACKEND_ENV_VAR, "").strip()
-                or OTEL_ENGINE_BACKEND
-            )
-            lines.append(f"export {OTEL_ENGINE_BACKEND_ENV_VAR} := {backend}")
 
         for service_name, service_config in services.items():
             var_name = SERVICE_TO_CONFIG_VAR[service_name]

@@ -1,21 +1,20 @@
 #  Project:      dfe-docker
 #  File:         tests/test_post_forced_change.py
-#  Purpose:      Assert POST replaces an issued admin password and keeps .env on the live one
+#  Purpose:      Assert POST replaces an issued admin password and keeps env/engine.env on the live one
 #  Language:     Python
 #
 #  License:      BUSL-1.1
 #  Copyright:    (c) 2026 HYPERI PTY LIMITED
 
-"""POST's login against both engine shapes, and what it leaves in .env.
+"""POST's login against both engine shapes and what it leaves in env/engine.env.
 
 An engine that issues its bootstrap admin a password to replace at first login
 answers that login with `password_change_required` and refuses every route but
 the owner's own change. An older engine sends no flag at all. POST has to work
-against both, and on the newer one .env has to end on whichever password the
-engine holds, whatever the change answered, because nothing else records it.
+against both. On the newer one env/engine.env has to end on whichever
+password the engine holds, whatever the change answered, because nothing else
+records it.
 """
-
-from __future__ import annotations
 
 import stat
 from pathlib import Path
@@ -30,7 +29,6 @@ _BASE = post.ENGINE_NETWORK_BASE
 _ENV = f"""\
 ## The bootstrap admin.
 # {post.ADMIN_PASSWORD_KEY}=commented-out-example
-DFE_ENV=production
 {post.ADMIN_PASSWORD_KEY}={_ISSUED}
 DFE_AUTH_BREAKGLASS_PASSWORD=untouched-breakglass-value
 """
@@ -86,14 +84,14 @@ class _Engine:
 
 
 @pytest.fixture
-def issued(dotenv: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
-    """A .env holding the issued admin password, 0600, and nothing else steering POST."""
-    dotenv.write_text(_ENV, encoding="utf-8", newline="\n")
-    dotenv.chmod(0o600)
+def issued(engine_env: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+    """An env/engine.env holding the issued admin password at 0600 with nothing else steering POST."""
+    engine_env.write_text(_ENV, encoding="utf-8", newline="\n")
+    engine_env.chmod(0o600)
     monkeypatch.setenv("DFE_AUTH_LOCAL_ADMIN_NAME", "admin")
     monkeypatch.setenv(post.ADMIN_PASSWORD_KEY, _ISSUED)
     monkeypatch.setattr(post, "_setup_status", _setup_unread)
-    return dotenv
+    return engine_env
 
 
 def _serve(monkeypatch: pytest.MonkeyPatch, engine: _Engine) -> _Engine:
@@ -102,7 +100,7 @@ def _serve(monkeypatch: pytest.MonkeyPatch, engine: _Engine) -> _Engine:
 
 
 def _recorded(path: Path, key: str = post.ADMIN_PASSWORD_KEY) -> str:
-    """The live value .env gives key -- the last assignment, as every reader takes it."""
+    """The live value the file gives key: the last assignment, as every reader takes it."""
     values = [
         line.partition("=")[2]
         for line in path.read_text(encoding="utf-8").splitlines()
@@ -182,7 +180,7 @@ def test_only_the_password_line_changes_and_the_mode_stays(
         f"{post.ADMIN_PASSWORD_KEY}={recorded}",
     )
     assert stat.S_IMODE(issued.stat().st_mode) == 0o600
-    assert sorted(path.name for path in issued.parent.iterdir()) == [".env"]
+    assert sorted(path.name for path in issued.parent.iterdir()) == ["engine.env"]
 
 
 def test_a_dotenv_left_open_to_others_is_closed_by_the_rewrite(
@@ -295,7 +293,6 @@ def test_a_refusal_that_echoes_the_current_password_does_not_print_it(
 def test_a_change_that_applied_without_an_answer_is_kept(
     issued: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """The engine holds the new password, so .env must too."""
     engine = _Engine(password=_ISSUED, sends_flag=True)
 
     def _applied_then_lost(url: str, payload: dict, token: str = "", timeout: int = 30):
@@ -357,7 +354,7 @@ def test_a_change_that_leaves_the_flag_set_fails(
 def test_an_existing_access_summary_is_rewritten(
     issued: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    summary = issued.parent / "access-summary.md"
+    summary = post.ACCESS_SUMMARY_FILE
     summary.write_text(f"| Admin | `admin` | `{_ISSUED}` |\n", encoding="utf-8")
     _serve(monkeypatch, _Engine(password=_ISSUED, sends_flag=True))
 
@@ -377,7 +374,7 @@ def test_no_access_summary_is_created_where_there_was_none(
 
     post.login(base=_BASE)
 
-    assert not (issued.parent / "access-summary.md").exists()
+    assert not (post.ACCESS_SUMMARY_FILE.exists())
 
 
 def test_every_live_assignment_is_rewritten_and_a_comment_is_not() -> None:

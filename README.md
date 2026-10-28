@@ -47,7 +47,7 @@ See [docs/architecture.md](docs/architecture.md).
 
 - Docker and Docker Compose v2
 - Python 3
-- [`uv`](https://docs.astral.sh/uv/) - only for the seed targets (`make sources`, `make rules`, `make hunts`, `make events`), `make demo` and the e2e tests.
+- [`uv`](https://docs.astral.sh/uv/) - only for the seed targets (`make sources`, `make rules`, `make hunts`, `make events`, `make orgs`, `make accounts`), `make demo` and the e2e tests.
 - [`oras`](https://oras.land) - `make stack` and `make check-proxy` read the signed OCI stack-manifest through it. Not needed if you render from a local dfe-infra checkout (`DFE_INFRA_DIR`).
 - [`gh`](https://cli.github.com), logged in - only for `DFE_STACK_REPIN_IMAGES=1`,
   which reads each component's GitHub releases through it.
@@ -65,12 +65,7 @@ This creates `.env` from `.env.example` and `env/<service>.env` for every templa
 Re-running `make init` is safe - existing files are never overwritten. It does two
 things beyond the copy:
 
-- **Generates secrets.** A random value is minted for `DFE_UI_NEXTAUTH_SECRET`,
-  `HYPERDX_DOCUMENTDB_PASSWORD`, `HYPERDX_EXPRESS_SESSION_SECRET` and
-  `HYPERDX_TOKEN_ENCRYPTION_KEY`. An existing `.env` that predates a key is topped up,
-  so upgrading does not break your checkout. Compose carries a sentinel (or empty)
-  default for each rather than hard-failing (a hard-fail would abort `make down` too); the
-  power-on self test is what refuses to pass while a default is still in place.
+- **Generates secrets.** Each secret is minted into the file that holds it: `.env`, `env/engine.env`, `env/ui.env` or `env/hyperdx.env`. An existing file that predates a key is topped up. A compose hard-fail would abort `make down` too, so the power-on self test refuses to pass while a default is in place.
 - **Reports drift.** The copy is one-shot, so an `.env` created months ago never
   learns that `.env.example` grew a setting. A re-run lists the keys you are
   missing. It only reports - editing your `.env` is yours to do.

@@ -40,8 +40,8 @@ runs when you remember to ask for it is not a power-on self test.
 
 An engine that issues its bootstrap admin a password to replace at first login
 refuses that account every route but the change itself. POST makes the change,
-records the new password in .env where `make creds` and the next run read it, and
-logs in again.
+records the new password in env/engine.env where the engine, `make creds` and the
+next run read it, then logs in again.
 
 Exit codes:
   0  every claim the active profile can make, held (or POST is switched off)
@@ -79,13 +79,17 @@ import _detection  # noqa: E402
 import instances  # noqa: E402
 from _common import (  # noqa: E402
     ACCESS_SUMMARY_FILE,
-    DOTENV_FILE,
     DOTENV_CEILING,
+    DOTENV_FILE,
+    ENGINE_COMPONENT,
     FALSY,
-    _dotenv_values,
+    _env_file,
+    _env_file_values,
     _load_dotenv,
+    _load_env_file,
     _print,
     _profile_mk_value,
+    _rel_path,
     _resolved_services,
 )
 from _pipeline import (  # noqa: E402
@@ -107,8 +111,8 @@ from _pipeline import (  # noqa: E402
     otel_fresh_counts,
     poll_until,
 )
-from creds import write_summary  # noqa: E402
-from init import GENERATED_SECRETS, _generate_secret, _setting_key  # noqa: E402
+from creds import access_values, write_summary  # noqa: E402
+from init import GENERATED_SECRETS, _mint, _setting_key  # noqa: E402
 
 # Kept small on purpose. This proves the path works; the e2e suite is what
 # exercises volume. A self test that writes thousands of rows into a production
@@ -156,8 +160,7 @@ LOADER_TOPIC_INTERVAL_SECONDS = 5.0
 TRANSPORT_BUS_KEY = "DFE_TRANSPORT_BUS_PRESENT"
 
 TARGET_DB = "dfe"
-# The engine's catch-all landing table, DFE_CLICKHOUSE_LANDING_TABLE. A deployment
-# that moved it points POST at the same name through DFE_POST_TABLE.
+# The engine's catch-all landing table behind its core `main` source, which DFE_POST_TABLE overrides
 TARGET_TABLE = "main"
 
 # Schema control. dfe-engine applies every ClickHouse object and every bootstrap
@@ -254,6 +257,7 @@ ADMIN_PASSWORD_KEY = "DFE_AUTH_LOCAL_ADMIN_PASSWORD"
 # The owner's own password change, the one call the engine serves an account that
 # is still on the password it was issued.
 CHANGE_PASSWORD_PATH = "/auth/accounts/reset-password"
+_FORCED_CHANGE_BANNER = "## Changed at login when the engine forced a password change"
 
 # Console assertion. dfe-ui holds no ClickHouse credential of its own -- it reads
 # through the engine's query API -- so exercising that API with the break-glass
@@ -299,23 +303,23 @@ ROUTING_DELETE_TIMEOUT_SECONDS = 90
 # `.tmp/profile.mk`'s answer to "does the engine render this tier's app config": the claim is only makeable where it does
 APP_CONFIG_DIR_KEY = "DFE_ENGINE_APP_CONFIG_DIR"
 
-# Compose defaults that mean "nobody ran `make init`". They are deterministic and
-# committed, so a stack running them has a signing key and a database password
-# that anyone with the repo already knows.
+# Values that mean "nobody ran `make init`", a committed compose default or nothing
+# at all, so a stack running them has a signing key and a database password that
+# anyone with the repo already knows.
 #
 # Each maps to the service that consumes it, so a secret is only enforced when the
 # service using it is actually running. Failing a HyperDX password on a profile
 # with no HyperDX told an operator "the stack is up, but it did not prove it moves
 # data" for a reason with nothing to do with data.
 WEAK_SECRET_DEFAULTS = {
-    "DFE_UI_NEXTAUTH_SECRET": ("RUN-make-init-TO-GENERATE-A-REAL-SECRET", "dfe-ui"),
+    "NEXTAUTH_SECRET": ("", "dfe-ui"),
     "HYPERDX_DOCUMENTDB_PASSWORD": ("hyperdx", "hyperdx"),
-    "HYPERDX_EXPRESS_SESSION_SECRET": (
-        "RUN-make-init-TO-GENERATE-A-REAL-SECRET",
-        "hyperdx",
-    ),
-    # Empty, not a sentinel: HyperDX refuses to start on a malformed key.
-    "HYPERDX_TOKEN_ENCRYPTION_KEY": ("", "hyperdx"),
+    # Unset, the fork signs sessions with a key published in upstream's source
+    "EXPRESS_SESSION_SECRET": ("", "hyperdx"),
+    # Unset, HyperDX stores third-party tokens in plain text
+    "TOKEN_ENCRYPTION_KEY": ("", "hyperdx"),
+    # Unset, the engine signs its tokens with this placeholder from its own published source
+    "DFE_API_JWT_SECRET": ("dev-secret-key-change-in-production", "dfe-engine"),
     # Empty leaves the app's user on a password the engine mints, which the app never sees.
     "DFE_HUNT_RUNNER_CLICKHOUSE_PASSWORD": ("", "dfe-hunt-runner"),
     "DFE_LOADER_CLICKHOUSE_PASSWORD": ("", "dfe-loader"),
@@ -339,6 +343,17 @@ SKIPPED = Claim(asserted=False, failed=0)
 HELD = Claim(asserted=True, failed=0)
 
 
+def _secret_values() -> dict[str, str]:
+    """Return the environment with each env/<component>.env secret as the file `make init` mints it into sets it."""
+    values = dict(os.environ)
+    for name, keys in GENERATED_SECRETS.items():
+        if name == DOTENV_FILE.name:
+            continue
+        found = _env_file_values(component=name.removesuffix(".env"))
+        values.update({key: found.get(key, "") for key in keys})
+    return values
+
+
 def _weak_secrets() -> list[tuple[str, str]]:
     """Return (name, value) for every in-use secret still at its built-in default.
 
@@ -347,11 +362,12 @@ def _weak_secrets() -> list[tuple[str, str]]:
     case that matters.
     """
     running = set(_resolved_services())
+    values = _secret_values()
     weak = []
     for name, (default, service) in sorted(WEAK_SECRET_DEFAULTS.items()):
         if running and service not in running:
             continue
-        value = os.environ.get(name, "").strip()
+        value = values.get(name, "").strip()
         if not (value) or value == default:
             weak.append((name, value or default))
 
@@ -1509,11 +1525,14 @@ def _request_token(*, base: str, username: str, password: str) -> tuple[str, int
     return token, status, body.get("password_change_required") is True
 
 
-def _dotenv_with(*, text: str, key: str, value: str) -> str:
+def _dotenv_with(
+    *, banner: str = _FORCED_CHANGE_BANNER, key: str, text: str, value: str
+) -> str:
     """Return dotenv text with every live assignment of key set to value.
 
     Every live line is rewritten so no reader can pick up a stale duplicate, a
-    commented line is left alone, and a key with no live line is appended.
+    commented line is left alone and a key with no live line is appended under
+    `banner`.
     """
     lines = []
     found = False
@@ -1525,9 +1544,7 @@ def _dotenv_with(*, text: str, key: str, value: str) -> str:
         lines.append(line)
     if not (found):
         lines.append("")
-        lines.append(
-            "## Written at login by `make post` or a seed target, when the engine required a password change."
-        )
+        lines.append(banner)
         lines.append(f"{key}={value}")
     return "\n".join(lines) + "\n"
 
@@ -1559,7 +1576,7 @@ def _refresh_access_summary() -> None:
     if not (ACCESS_SUMMARY_FILE.is_file()):
         return
     try:
-        write_summary(values=_dotenv_values(), path=ACCESS_SUMMARY_FILE)
+        write_summary(values=access_values(), path=ACCESS_SUMMARY_FILE)
     except OSError as error:
         _print(
             msg=f"      note: {ACCESS_SUMMARY_FILE.name} still names the replaced "
@@ -1576,18 +1593,19 @@ def _without_passwords(text: str, new: str, current: str) -> str:
 def _replace_issued_password(
     *, base: str, key: str, token: str, username: str, current: str
 ) -> Login:
-    """Replace an issued password with a fresh one, leaving .env on the one the engine holds.
+    """Replace an issued password with a fresh one, leaving env/engine.env on the one the engine holds.
 
-    The new password reaches .env BEFORE the engine is asked to take it, so a
-    change the engine applied is never one nothing recorded. When the engine did
-    not take it, .env is put back as it was.
+    The new password reaches env/engine.env BEFORE the engine is asked to take it,
+    so a change the engine applied is never one nothing recorded. When the engine
+    did not take it, env/engine.env is put back as it was.
     """
-    replacement = _generate_secret(GENERATED_SECRETS[ADMIN_PASSWORD_KEY])
-    dotenv = DOTENV_FILE.resolve()
+    replacement = _mint(key=ADMIN_PASSWORD_KEY)
+    shown = _rel_path(path=_env_file(component=ENGINE_COMPONENT))
+    recorded = _env_file(component=ENGINE_COMPONENT).resolve()
     try:
-        original = dotenv.read_text(encoding="utf-8")
+        original = recorded.read_text(encoding="utf-8")
         _replace_file(
-            path=dotenv, text=_dotenv_with(text=original, key=key, value=replacement)
+            path=recorded, text=_dotenv_with(text=original, key=key, value=replacement)
         )
     except OSError as error:
         return Login(
@@ -1595,11 +1613,11 @@ def _replace_issued_password(
             200,
             username,
             f"{username!r} must replace the password it was issued, and {key} cannot "
-            f"be recorded in {DOTENV_FILE.name} ({error.strerror}) -- nothing was changed",
+            f"be recorded in {shown} ({error.strerror}), so nothing was changed",
         )
     _print(
         msg=f"      {username!r} is on an issued password -- replacing it, with the new "
-        f"one recorded as {key} in {DOTENV_FILE.name}"
+        f"one recorded as {key} in {shown}"
     )
 
     try:
@@ -1632,10 +1650,10 @@ def _replace_issued_password(
     if login_fault and change_fault:
         restored = ""
         try:
-            _replace_file(path=dotenv, text=original)
+            _replace_file(path=recorded, text=original)
         except OSError as error:
             restored = (
-                f" -- and {DOTENV_FILE.name} could not be put back ({error.strerror}), "
+                f". {shown} could not be put back either ({error.strerror}), "
                 f"so its {key} names a password the engine does not hold"
             )
         fault = (
@@ -1658,7 +1676,7 @@ def _replace_issued_password(
         )
     _print(
         msg=f"      {username!r} replaced the password it was issued -- {key} in "
-        f"{DOTENV_FILE.name} holds the new one"
+        f"{shown} holds the new one"
     )
     return Login(new_token, new_status, username, "")
 
@@ -1753,7 +1771,7 @@ def _verify_ui_query(*, database: str, marker: str, table: str) -> Claim:
         _print(
             msg=f"FAIL  {fault} -- the console "
             "cannot authenticate, so nobody can read this data through dfe-ui. "
-            f"Set {ADMIN_PASSWORD_KEY} in .env to {username!r}'s current password"
+            f"Set {ADMIN_PASSWORD_KEY} in {_rel_path(path=_env_file(component=ENGINE_COMPONENT))} to {username!r}'s current password"
         )
         return Claim(asserted=True, failed=1)
 
@@ -2368,6 +2386,7 @@ def login(base: str) -> Login:
 
 
 def main() -> int:
+    _load_env_file(component=ENGINE_COMPONENT, keys=(ADMIN_PASSWORD_KEY,))
     _load_dotenv()
 
     if not (_enabled()):

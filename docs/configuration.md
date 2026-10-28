@@ -231,7 +231,7 @@ The AWS **region** is not an environment variable: it is a literal in each sourc
 | `DFE_LOADER_CLICKHOUSE_PASSWORD`                 | Password of `dfe_loader`, the loader's own ClickHouse user, which the engine creates on it | generated                                                           |
 | `DFE_QUERY_READER_CLICKHOUSE_PASSWORD`           | Password of `dfe_query_reader`, the platform reader HyperDX's seeded connection uses, which the engine creates on it | generated                                                           |
 | `DFE_OTEL_WRITER_CLICKHOUSE_PASSWORD`            | Password of `dfe_otel_writer`, the collector's own ClickHouse user, which the engine creates on it | generated                                                           |
-| `DFE_CLICKHOUSE_DEFAULT_TTL_DAYS`                | Days every time-series table keeps rows, the OTel tables included; 0 disables the default TTL; a source or dfe-schemas TTL overrides it | `90`                                                                |
+| `DFE_CLICKHOUSE_DEFAULT_TTL_DAYS`                | In `env/engine.env`. Days every time-series table keeps rows, the OTel tables included. 0 disables the default TTL and a source or dfe-schemas TTL overrides it | `90`                                                                |
 
 ### Kafka - General
 
@@ -272,7 +272,6 @@ The AWS **region** is not an environment variable: it is a literal in each sourc
 | `DFE_ENGINE_CONTENT_DIR`                         | Path the content volume mounts on, holding the emitted contracts and the seed library | `/app/content`                                                      |
 | `DFE_UI_VERSION`                                 | Version of dfe-ui to use                                                             | none -- `make stack` pins it; unset is a hard-fail                                                            |
 | `DFE_UI_PORT`                                    | Port used by dfe-ui                                                                  | `3000`                                                              |
-| `DFE_UI_NODE_ENV`                                | Node environment of dfe-ui                                                           | `production`                                                        |
 
 ### App contracts, and the custom environment the console writes
 
@@ -327,7 +326,7 @@ Every profile declares `otel: true`, which starts a collector that takes the sta
 | `DFE_OTEL_FLUENT_PORT`                           | Collector `fluent_forward` host port, where the daemon sends container stdout        | `24224`                                                             |
 | `DFE_CONTAINER_LOGS_ENABLED`                     | Ship DFE container stdout; `false` puts every service back on `json-file`            | `true`                                                              |
 | `DFE_CONTAINER_LOG_ADDRESS`                      | Where the DOCKER DAEMON sends it                                                     | `tcp://<DFE_BIND_HOST>:<DFE_OTEL_FLUENT_PORT>`                      |
-| `DFE_ENGINE_METRICS_BACKEND`                     | dfe-engine metrics backend; `opentelemetry` is dual (push + `/metrics`)              | `prometheus` (the profile sets `opentelemetry`)                     |
+| `DFE_API_METRICS_BACKEND`                        | In `env/engine.env`. Metrics backend of dfe-engine and dfe-hunt-runner. `opentelemetry` is dual (push + `/metrics`) | `opentelemetry`                                                     |
 
 ## HyperDX
 
@@ -348,12 +347,12 @@ The same toggle points the engine at HyperDX: with it on, the engine receives `D
 | `DFE_HYPERDX_APP_URL`                            | Scheme and host only, no port, the browser uses to reach HyperDX; overrides `DFE_EXTERNAL_ORIGIN` | follows `DFE_EXTERNAL_ORIGIN`                                       |
 | `DFE_HYPERDX_BASE_URL`                           | Where the ENGINE reaches HyperDX; name an external one here                          | `http://hyperdx:8000`                                               |
 | `DFE_HYPERDX_TEAM`                               | Team name when the token carries no group claim                                      | `dfe`                                                               |
-| `DFE_HYPERDX_USAGE_STATS_ENABLED`                | `true` sends upstream HyperDX's usage stats to `in-otel.hyperdx.io`, a third party   | `false`                                                             |
-| `HYPERDX_THEME`                                  | UI theme (NEXT_PUBLIC_THEME)                                                         | `dfe`                                                               |
+| `USAGE_STATS_ENABLED`                            | In `env/hyperdx.env`. `true` sends upstream HyperDX's usage stats to `in-otel.hyperdx.io`, a third party | `false`                                                             |
+| `NEXT_PUBLIC_THEME`                              | In `env/hyperdx.env`. UI theme                                                       | `dfe`                                                               |
 | `HYPERDX_DOCUMENTDB_USER`                        | DocumentDB login HyperDX uses                                                        | `hyperdx`                                                           |
 | `HYPERDX_DOCUMENTDB_PASSWORD`                    | Password for that login                                                              | `hyperdx`                                                           |
-| `HYPERDX_EXPRESS_SESSION_SECRET`                 | Signs HyperDX's session cookie (`EXPRESS_SESSION_SECRET`)                            | generated by `make init`; sentinel otherwise, which `make post` fails |
-| `HYPERDX_TOKEN_ENCRYPTION_KEY`                   | Encrypts the third-party tokens HyperDX stores (`TOKEN_ENCRYPTION_KEY`), 64 hex chars | generated by `make init`; empty (plain text) otherwise, which `make post` fails |
+| `EXPRESS_SESSION_SECRET`                         | In `env/hyperdx.env`. Signs HyperDX's session cookie                                 | generated by `make init`, unset otherwise, which `make post` fails  |
+| `TOKEN_ENCRYPTION_KEY`                           | In `env/hyperdx.env`. Encrypts the third-party tokens HyperDX stores, 64 hex chars   | generated by `make init`, unset (plain text) otherwise, which `make post` fails |
 | `HYPERDX_DOCUMENTDB_VERSION`                     | `documentdb-local` image version, which `make stack` sets from the DFE stack SSoT once it carries one | pinned in `docker-compose.yml`                                      |
 
 ## Default Ports

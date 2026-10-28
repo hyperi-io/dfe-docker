@@ -420,8 +420,8 @@ init: ## Create .env and per-service env/<service>.env files from templates, and
 	@python3 scripts/init.py
 	@python3 scripts/creds.py --write
 
-# Start targets require every per-service env file (dfe-ui reads INTERNAL_API_URL
-# from env/ui.env). Compose marks them optional so `make down` never needs them.
+# Start targets require every per-service env file (dfe-engine reads its secrets
+# from env/engine.env). Compose marks them optional so `make down` never needs them.
 # The guard creates what is missing (init is non-destructive) rather than refusing,
 # so a release that adds a template does not stop an initialised deployment. The
 # .env prerequisite mints the secrets before a fresh checkout's first start.
@@ -434,15 +434,15 @@ env-files: .env ## Assert every env/<service>.env exists, creating any the templ
 # call it, because its stdout is a build log. `make init` and `make up` pass
 # --write, which also leaves access-summary.md (0600, gitignored) for the operator.
 .PHONY: creds
-creds: ## Print the access summary. The admin password prints on a TTY only -- a pipe, a file, a CI log or DFE_CREDS_SHOW=0 gets the .env key instead
+creds: ## Print the access summary. The admin password prints on a TTY only -- a pipe, a file, a CI log or DFE_CREDS_SHOW=0 gets the env/engine.env key instead
 	@python3 scripts/creds.py
 
 # A dev tyre-kick logs in without looking anything up, so `make dev` writes the
 # KNOWN default password and DFE_ENV=dev, the one posture the engine accepts it in.
 # A .env already on a dev posture keeps a non-default password, the replacement
 # `make post` recorded after the engine made the admin change the default.
-# It refuses with exit 2 on any other DFE_ENV, and copies .env to .env.bak-<utc>
-# before overwriting a minted password.
+# It refuses with exit 2 on any other DFE_ENV and copies each file it rewrites to
+# <name>.bak-<utc> first, so a minted password in env/engine.env survives.
 #
 # `AUTH=real` is the other half: local images running the same authentication flow
 # a deployment gets, so it mints a password and writes a non-dev posture instead.
@@ -454,7 +454,7 @@ else
 endif
 
 .PHONY: dev-posture
-dev-posture: .env ## Put .env into the dev posture (DFE_ENV=dev, known admin password until the stack replaces it); AUTH=real mints one and writes a non-dev posture instead
+dev-posture: env-files ## Put .env and env/engine.env into the dev posture (DFE_ENV=dev, known admin password until the stack replaces it); AUTH=real mints one and writes a non-dev posture instead
 	@python3 scripts/dev_posture.py $(DEV_POSTURE_ARG)
 
 .PHONY: e2e-posture
@@ -488,7 +488,7 @@ stack: .env ## Pin image versions into .env from the DFE stack SSoT (VERSION=X.Y
 # the dial merges the deploy-controlled keys over them. Canonical superset lives
 # in dfe-infra; a lone dfe-docker clone deploys from deployment.yaml alone.
 .PHONY: dial
-dial: .env ## Render deployment.yaml (the deployment dial) into .env -- docker-vm slice
+dial: .env ## Render deployment.yaml (the deployment dial) into .env and env/engine.env -- docker-vm slice
 	@python3 scripts/render_dial.py
 
 # The two deploy-currency modes, stated in one place: PINNED (make stack + make
@@ -773,8 +773,16 @@ post: ## Prove the RUNNING stack moves data end to end (DFE_POST_ENABLED=false t
 
 # ---------------------------------------------------------------------------
 # Seed
-# The starter set in resources/seed, created through the engine API on a RUNNING stack, plus fake events for its hunt to find. hunts also creates the rules in the same seed.py run, because the engine refuses a hunt whose rule does not exist. One run means a login asked for at the terminal is asked for once. sources, rules and hunts create only what the engine lacks, but events sends its records again on every run.
+# The starter set in resources/seed, created through the engine API on a RUNNING stack, plus fake events for its hunt to find. hunts also creates the rules in the same seed.py run, because the engine refuses a hunt whose rule does not exist. accounts creates the orgs first, because the engine refuses an account naming an org it does not hold. One run means a login asked for at the terminal is asked for once. Every target but events creates only what the engine lacks. events sends its records again on every run. A volume wipe loses every object, so run the targets again after one.
 # ---------------------------------------------------------------------------
+
+.PHONY: orgs
+orgs: ## Create the resources/seed orgs the running engine lacks
+	@$(UV) run --locked --script ./scripts/seed.py orgs
+
+.PHONY: accounts
+accounts: ## Create the resources/seed orgs and accounts the running engine lacks, recording each new account's minted password in env/engine.env for `make creds`
+	@$(UV) run --locked --script ./scripts/seed.py accounts
 
 .PHONY: sources
 sources: ## Create the resources/seed sources the running engine lacks, deploying each

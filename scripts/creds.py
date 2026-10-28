@@ -9,8 +9,8 @@
 
 """Hand the operator the credentials this deployment minted.
 
-`make init` mints the admin and break-glass passwords into .env and prints
-neither, so something has to hand them over afterwards. This is it: `make up` and
+`make init` mints the admin and break-glass passwords into env/engine.env and
+prints neither, so something has to hand them over afterwards. This is it: `make up` and
 `make dev` end with it, and `make creds` prints it again on demand. The engine
 names the same command on its login page while first-run setup is incomplete
 (deployment_hints.credential_fetch_command for the docker target), so an operator
@@ -24,8 +24,8 @@ which is why it is 0600, gitignored, and told to be deleted -- it exists to be
 read once and removed, and the terminal print below is the every-day path.
 
 The admin password prints ONLY to a terminal. A pipe, a file or a CI job log gets
-the line that says which key in .env holds it instead, because a build log is
-read by more people, for longer, than the person who ran the command.
+the line that says which key in env/engine.env holds it instead, because a build
+log is read by more people, for longer, than the person who ran the command.
 DFE_CREDS_SHOW=0 takes the same branch on a terminal. `make ci` does not call this
 at all.
 
@@ -35,15 +35,16 @@ lives and leaves reading it a deliberate act. The OIDC fixture password is never
 printed either -- it is one shared login across every tester, so the summary
 names the key holding it and stops there.
 
+Each seed account `make accounts` created is handed over the way the admin is: its password on a terminal only, its env/engine.env key otherwise.
+
 The console and engine URLs follow DFE_EXTERNAL_ORIGIN wherever a deployment has
 set one, so the operator is handed the address browsers use rather than one that
 resolves only on the box the stack runs on.
 
-Values are read out of .env with the same minimal parser compose uses. A key with
-no value reads as missing and is reported as such rather than printed blank.
+Values are read out of .env and the two passwords out of env/engine.env with the
+same minimal parser compose uses. A key with no value reads as missing and is
+reported as such rather than printed blank.
 """
-
-from __future__ import annotations
 
 import os
 import re
@@ -56,16 +57,29 @@ sys.pycache_prefix = str(Path(__file__).resolve().parent.parent / ".tmp" / "pyca
 from _common import (  # noqa: E402
     ACCESS_SUMMARY_FILE,
     DOTENV_FILE,
+    ENGINE_COMPONENT,
     FALSY,
+    SEED_DIR,
     _dotenv_values,
+    _env_file,
+    _env_file_values,
     _print,
     _published_url,
     _rel_path,
+    seed_password_key,
     write_private,
 )
 
 # Set to 0 to keep the password off a terminal too.
 _SHOW_KEY = "DFE_CREDS_SHOW"
+# What a password line says off a terminal, under the key it names
+_NOT_PRINTED = (
+    "                 not printed -- stdout is not a terminal, so run "
+    "`make creds` on one to see it"
+)
+# The accounts `make accounts` creates, one file each named for its username
+_SEED_ACCOUNTS_DIR = SEED_DIR / "accounts"
+_SEED_LABEL = "Seed account"
 
 # The account names the engine seeds. `breakglass` is fixed in the engine
 # (auth/breakglass.py); `admin` is overridable per deployment.
@@ -103,6 +117,22 @@ _NEXT_STEPS = (
     "Retire the bootstrap admin from the wizard's last step once your own admin exists.",
     "Keep the break-glass password somewhere safe, then delete this file.",
 )
+
+
+def _seed_logins(*, values: dict[str, str]) -> list[tuple[str, str, str]]:
+    """Return (username, key, password) for each seed account whose password `values` holds."""
+    logins = []
+    for username in _seed_usernames():
+        key = seed_password_key(username=username)
+        password = values.get(key, "").strip()
+        if password:
+            logins.append((username, key, password))
+    return logins
+
+
+def _seed_usernames() -> list[str]:
+    """Return the username of each resources/seed account, which its file is named for."""
+    return sorted(path.stem for path in _SEED_ACCOUNTS_DIR.glob("*.yaml"))
 
 
 def _url(
@@ -183,11 +213,23 @@ def fixture_lines(*, values: dict[str, str]) -> list[str]:
     return lines
 
 
+def access_values() -> dict[str, str]:
+    """Return .env's values with both logins' and each seed account's password as env/engine.env, the file compose hands the engine, sets them."""
+    values = _dotenv_values()
+    engine = _env_file_values(component=ENGINE_COMPONENT)
+    keys = [_ADMIN_PASSWORD_KEY, _BREAKGLASS_PASSWORD_KEY]
+    keys += [seed_password_key(username=username) for username in _seed_usernames()]
+    for key in keys:
+        values[key] = engine.get(key, "")
+    return values
+
+
 def summary_lines(*, values: dict[str, str], reveal: bool = True) -> list[str]:
     """The access summary, one line per thing the operator needs."""
     environment = values.get("DFE_ENV", "").strip() or _UNSET_POSTURE
     admin = values.get(_ADMIN_NAME_KEY, "").strip() or "admin"
     password = values.get(_ADMIN_PASSWORD_KEY, "").strip()
+    engine_env = _rel_path(path=_env_file(component=ENGINE_COMPONENT))
 
     lines = [
         "",
@@ -200,12 +242,9 @@ def summary_lines(*, values: dict[str, str], reveal: bool = True) -> list[str]:
     elif password:
         lines.append(
             f"    login        {admin} / the value of {_ADMIN_PASSWORD_KEY} in "
-            f"{_rel_path(path=DOTENV_FILE)}"
+            f"{engine_env}"
         )
-        lines.append(
-            "                 not printed -- stdout is not a terminal, so run "
-            "`make creds` on one to see it"
-        )
+        lines.append(_NOT_PRINTED)
     else:
         lines.append(
             f"    login        {admin} / NOT MINTED -- run `make init` to mint "
@@ -228,7 +267,7 @@ def summary_lines(*, values: dict[str, str], reveal: bool = True) -> list[str]:
     if values.get(_BREAKGLASS_PASSWORD_KEY, "").strip():
         lines.append(
             f"    break-glass  {_BREAKGLASS_NAME} / the value of "
-            f"{_BREAKGLASS_PASSWORD_KEY} in {_rel_path(path=DOTENV_FILE)}"
+            f"{_BREAKGLASS_PASSWORD_KEY} in {engine_env}"
         )
         lines.append(
             "                 recovery only -- the engine hashed it into the deploy "
@@ -239,6 +278,12 @@ def summary_lines(*, values: dict[str, str], reveal: bool = True) -> list[str]:
             f"    break-glass  none -- {_BREAKGLASS_PASSWORD_KEY} is unset, so no "
             "recovery admin was minted"
         )
+    seed_logins = _seed_logins(values=values)
+    for username, key, account_password in seed_logins:
+        shown = account_password if reveal else f"the value of {key} in {engine_env}"
+        lines.append(f"    seed account {username} / {shown}")
+    if seed_logins and not (reveal):
+        lines.append(_NOT_PRINTED)
     lines.extend(fixture_lines(values=values))
     lines.append("    show again   make creds")
     lines.append("")
@@ -246,7 +291,7 @@ def summary_lines(*, values: dict[str, str], reveal: bool = True) -> list[str]:
     lines.append("    1. Finish the first-run wizard in the console.")
     lines.append(
         "    2. Retire the bootstrap admin from its last step once your own admin "
-        f"exists, then delete {_ADMIN_PASSWORD_KEY} from {_rel_path(path=DOTENV_FILE)}."
+        f"exists, then delete {_ADMIN_PASSWORD_KEY} from {engine_env}."
     )
     lines.append(
         "    3. Keep the break-glass password offline and delete its plaintext -- "
@@ -264,14 +309,15 @@ def _password_cell(*, password: str, key: str) -> str:
 
 
 def summary_markdown(*, values: dict[str, str]) -> str:
-    """The access summary as a file: both minted passwords, and what to do next.
+    """The access summary as a file: the minted passwords and what to do next.
 
     The plaintext is the point -- this is the artefact an operator reads once
     while finishing setup, and the closing steps are what let them delete it.
 
-    The one line dfe-infra's file does not carry is the .env note: deleting this
-    file is the whole clean-up after a kubernetes deploy, but here .env keeps its
-    own copy of both passwords and has to be cleaned up as well.
+    The one line dfe-infra's file does not carry is the env/engine.env note:
+    deleting this file is the whole clean-up after a kubernetes deploy, but here
+    env/engine.env keeps its own copy of both passwords and has to be cleaned up as
+    well.
     """
     admin = values.get(_ADMIN_NAME_KEY, "").strip() or "admin"
     admin_password = values.get(_ADMIN_PASSWORD_KEY, "").strip()
@@ -280,7 +326,8 @@ def summary_markdown(*, values: dict[str, str]) -> str:
     api = _url(
         default_port="8003", port_key="DFE_ENGINE_PORT", proxied=False, values=values
     )
-    dotenv = _rel_path(path=DOTENV_FILE)
+    engine_env = _rel_path(path=_env_file(component=ENGINE_COMPONENT))
+    seed_logins = _seed_logins(values=values)
     lines = [
         _SUMMARY_HEADING,
         "",
@@ -293,12 +340,25 @@ def summary_markdown(*, values: dict[str, str]) -> str:
         f"{_password_cell(password=admin_password, key=_ADMIN_PASSWORD_KEY)} |",
         f"| {_BREAKGLASS_LABEL} | `{_BREAKGLASS_NAME}` | "
         f"{_password_cell(password=breakglass_password, key=_BREAKGLASS_PASSWORD_KEY)} |",
+    ]
+    lines += [
+        f"| {_SEED_LABEL} | `{username}` | `{password}` |"
+        for username, _key, password in seed_logins
+    ]
+    lines += [
         "",
-        f"Both are also in `{dotenv}`, as `{_ADMIN_PASSWORD_KEY}` and "
+        f"Both are also in `{engine_env}`, as `{_ADMIN_PASSWORD_KEY}` and "
         f"`{_BREAKGLASS_PASSWORD_KEY}` -- delete those two keys as well as this file. "
         "`make creds` prints the admin one again on a terminal.",
         "",
     ]
+    if seed_logins:
+        keys = ", ".join(f"`{key}`" for _username, key, _password in seed_logins)
+        lines += [
+            f"Each seed account's password stays in `{engine_env}` as {keys}, so "
+            "`make accounts` can create the account again after a volume wipe.",
+            "",
+        ]
     lines += [f"{number}. {step}" for number, step in enumerate(_NEXT_STEPS, start=1)]
     return "\n".join(lines) + "\n"
 
@@ -317,7 +377,7 @@ def main(argv: list[str] | None = None) -> int:
             msg="Missing -- run `make init` to mint this deployment's credentials",
         )
         return 1
-    values = _dotenv_values()
+    values = access_values()
     reveal = show_password(
         is_tty=sys.stdout.isatty(), setting=os.environ.get(_SHOW_KEY, "")
     )
