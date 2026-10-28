@@ -53,6 +53,15 @@
 #   docker compose -f docker-compose.yml --profile clickhouse --profile kafka-redpanda up -d dfe-loader
 
 # =============================================================================
+# DNS search domain
+# A host inside a search domain (corp.example.com) passes it into every container,
+# so a bare name with no network alias, `kafka` on a stack without a broker,
+# resolves to that domain's host (the shared Kafka) and the app connects there
+# silently. `.` clears the search list: such a name fails to resolve instead.
+# =============================================================================
+x-no-dns-search: &no-dns-search ["."]
+
+# =============================================================================
 # Resource limit tiers
 # Anchors, not services -- the `x-` prefix keeps Compose from treating them as one.
 # =============================================================================
@@ -155,6 +164,7 @@ services:
   clickhouse:
     image: clickhouse/clickhouse-server:${CLICKHOUSE_VERSION:?run 'make stack VERSION=X.Y.Z' to pin CLICKHOUSE_VERSION}
     container_name: ${DFE_CONTAINER_PREFIX:-}dfe-clickhouse
+    dns_search: *no-dns-search
     # Fixed, because the Replicated database leaves a stale host id behind on every recreate
     hostname: clickhouse
     profiles: ["clickhouse"]
@@ -207,6 +217,7 @@ services:
   kafka-redpanda:
     image: docker.redpanda.com/redpandadata/redpanda:${REDPANDA_VERSION:?run 'make stack VERSION=X.Y.Z' to pin REDPANDA_VERSION}
     container_name: ${DFE_CONTAINER_PREFIX:-}dfe-kafka-redpanda
+    dns_search: *no-dns-search
     profiles: ["kafka-redpanda"]
     restart: unless-stopped
     deploy: *limits-broker
@@ -246,6 +257,7 @@ services:
   kafka-apache:
     image: apache/kafka:${APACHE_KAFKA_VERSION:?run 'make stack VERSION=X.Y.Z' to pin APACHE_KAFKA_VERSION}
     container_name: ${DFE_CONTAINER_PREFIX:-}dfe-kafka-apache
+    dns_search: *no-dns-search
     profiles: ["kafka-apache"]
     restart: unless-stopped
     deploy: *limits-broker
@@ -296,6 +308,7 @@ services:
   kafka-ui:
     image: ghcr.io/kafbat/kafka-ui:${KAFBAT_VERSION:?run 'make stack VERSION=X.Y.Z' to pin KAFBAT_VERSION}
     container_name: ${DFE_CONTAINER_PREFIX:-}dfe-kafka-ui
+    dns_search: *no-dns-search
     profiles: ["kafka-ui"]
     restart: unless-stopped
     # Service tier, not sidecar: kafbat is a Spring Boot JVM, and the JVM sizes its
@@ -328,6 +341,7 @@ services:
   dlq-init:
     image: ${IMAGE_REGISTRY:-ghcr.io/hyperi-io}/dfe-archiver:${DFE_ARCHIVER_VERSION:?run 'make stack VERSION=X.Y.Z' to pin DFE_ARCHIVER_VERSION}
     container_name: ${DFE_CONTAINER_PREFIX:-}dfe-dlq-init
+    dns_search: *no-dns-search
     profiles: ["dfe"]
     deploy: *limits-sidecar
     user: "0:0"
@@ -351,6 +365,7 @@ services:
   bearer-tokens-init:
     image: ${IMAGE_REGISTRY:-ghcr.io/hyperi-io}/dfe-engine:${DFE_ENGINE_VERSION:?run 'make stack VERSION=X.Y.Z' to pin DFE_ENGINE_VERSION}
     container_name: ${DFE_CONTAINER_PREFIX:-}dfe-bearer-tokens-init
+    dns_search: *no-dns-search
     profiles: ["dfe"]
     deploy: *limits-sidecar
     user: "1000:1000"
@@ -387,6 +402,7 @@ services:
   contract-dfe-archiver:
     image: ${IMAGE_REGISTRY:-ghcr.io/hyperi-io}/dfe-archiver:${DFE_ARCHIVER_VERSION:?run 'make stack VERSION=X.Y.Z' to pin DFE_ARCHIVER_VERSION}
     container_name: ${DFE_CONTAINER_PREFIX:-}dfe-contract-dfe-archiver
+    dns_search: *no-dns-search
     profiles: ["core"]
     deploy: *limits-sidecar
     # Root because an empty named volume lands root-owned at a path no image
@@ -414,6 +430,7 @@ services:
   contract-dfe-fetcher:
     image: ${IMAGE_REGISTRY:-ghcr.io/hyperi-io}/dfe-fetcher:${DFE_FETCHER_VERSION:?run 'make stack VERSION=X.Y.Z' to pin DFE_FETCHER_VERSION}
     container_name: ${DFE_CONTAINER_PREFIX:-}dfe-contract-dfe-fetcher
+    dns_search: *no-dns-search
     profiles: ["core"]
     deploy: *limits-sidecar
     # Root because an empty named volume lands root-owned at a path no image
@@ -438,6 +455,7 @@ services:
   contract-dfe-loader:
     image: ${IMAGE_REGISTRY:-ghcr.io/hyperi-io}/dfe-loader:${DFE_LOADER_VERSION:?run 'make stack VERSION=X.Y.Z' to pin DFE_LOADER_VERSION}
     container_name: ${DFE_CONTAINER_PREFIX:-}dfe-contract-dfe-loader
+    dns_search: *no-dns-search
     profiles: ["core"]
     deploy: *limits-sidecar
     # Root because an empty named volume lands root-owned at a path no image
@@ -462,6 +480,7 @@ services:
   contract-dfe-receiver:
     image: ${IMAGE_REGISTRY:-ghcr.io/hyperi-io}/dfe-receiver:${DFE_RECEIVER_VERSION:?run 'make stack VERSION=X.Y.Z' to pin DFE_RECEIVER_VERSION}
     container_name: ${DFE_CONTAINER_PREFIX:-}dfe-contract-dfe-receiver
+    dns_search: *no-dns-search
     profiles: ["core"]
     deploy: *limits-sidecar
     # Root because an empty named volume lands root-owned at a path no image
@@ -486,6 +505,7 @@ services:
   contract-dfe-transform-elastic:
     image: ${IMAGE_REGISTRY:-ghcr.io/hyperi-io}/dfe-transform-elastic:${DFE_TRANSFORM_ELASTIC_VERSION:?run 'make stack VERSION=X.Y.Z' to pin DFE_TRANSFORM_ELASTIC_VERSION}
     container_name: ${DFE_CONTAINER_PREFIX:-}dfe-contract-dfe-transform-elastic
+    dns_search: *no-dns-search
     profiles: ["core"]
     deploy: *limits-sidecar
     # Root because an empty named volume lands root-owned at a path no image
@@ -510,6 +530,7 @@ services:
   contract-dfe-transform-vector:
     image: ${IMAGE_REGISTRY:-ghcr.io/hyperi-io}/dfe-transform-vector:${DFE_TRANSFORM_VECTOR_VERSION:?run 'make stack VERSION=X.Y.Z' to pin DFE_TRANSFORM_VECTOR_VERSION}
     container_name: ${DFE_CONTAINER_PREFIX:-}dfe-contract-dfe-transform-vector
+    dns_search: *no-dns-search
     profiles: ["core"]
     deploy: *limits-sidecar
     # Root because an empty named volume lands root-owned at a path no image
@@ -534,6 +555,7 @@ services:
   contract-dfe-transform-vrl:
     image: ${IMAGE_REGISTRY:-ghcr.io/hyperi-io}/dfe-transform-vrl:${DFE_TRANSFORM_VRL_VERSION:?run 'make stack VERSION=X.Y.Z' to pin DFE_TRANSFORM_VRL_VERSION}
     container_name: ${DFE_CONTAINER_PREFIX:-}dfe-contract-dfe-transform-vrl
+    dns_search: *no-dns-search
     profiles: ["core"]
     deploy: *limits-sidecar
     # Root because an empty named volume lands root-owned at a path no image
@@ -563,6 +585,7 @@ services:
   dfe-archiver:
     image: ${IMAGE_REGISTRY:-ghcr.io/hyperi-io}/dfe-archiver:${DFE_ARCHIVER_VERSION:?run 'make stack VERSION=X.Y.Z' to pin DFE_ARCHIVER_VERSION}
     container_name: ${DFE_CONTAINER_PREFIX:-}dfe-archiver
+    dns_search: *no-dns-search
     profiles: ["dfe"]
     restart: unless-stopped
     deploy: *limits-service
@@ -618,6 +641,7 @@ services:
   dfe-fetcher:
     image: ${IMAGE_REGISTRY:-ghcr.io/hyperi-io}/dfe-fetcher:${DFE_FETCHER_VERSION:?run 'make stack VERSION=X.Y.Z' to pin DFE_FETCHER_VERSION}
     container_name: ${DFE_CONTAINER_PREFIX:-}dfe-fetcher
+    dns_search: *no-dns-search
     profiles: ["dfe"]
     restart: unless-stopped
     deploy: *limits-service
@@ -671,6 +695,7 @@ services:
   dfe-loader:
     image: ${IMAGE_REGISTRY:-ghcr.io/hyperi-io}/dfe-loader:${DFE_LOADER_VERSION:?run 'make stack VERSION=X.Y.Z' to pin DFE_LOADER_VERSION}
     container_name: ${DFE_CONTAINER_PREFIX:-}dfe-loader
+    dns_search: *no-dns-search
     profiles: ["dfe"]
     restart: unless-stopped
     deploy: *limits-service
@@ -736,6 +761,7 @@ services:
   dfe-receiver:
     image: ${IMAGE_REGISTRY:-ghcr.io/hyperi-io}/dfe-receiver:${DFE_RECEIVER_VERSION:?run 'make stack VERSION=X.Y.Z' to pin DFE_RECEIVER_VERSION}
     container_name: ${DFE_CONTAINER_PREFIX:-}dfe-receiver
+    dns_search: *no-dns-search
     profiles: ["dfe"]
     restart: unless-stopped
     deploy: *limits-service
@@ -819,6 +845,7 @@ services:
   dfe-transform-elastic:
     image: ${IMAGE_REGISTRY:-ghcr.io/hyperi-io}/dfe-transform-elastic:${DFE_TRANSFORM_ELASTIC_VERSION:?run 'make stack VERSION=X.Y.Z' to pin DFE_TRANSFORM_ELASTIC_VERSION}
     container_name: ${DFE_CONTAINER_PREFIX:-}dfe-transform-elastic
+    dns_search: *no-dns-search
     profiles: ["dfe"]
     restart: unless-stopped
     deploy: *limits-service
@@ -868,6 +895,7 @@ services:
   dfe-transform-vector:
     image: ${IMAGE_REGISTRY:-ghcr.io/hyperi-io}/dfe-transform-vector:${DFE_TRANSFORM_VECTOR_VERSION:?run 'make stack VERSION=X.Y.Z' to pin DFE_TRANSFORM_VECTOR_VERSION}
     container_name: ${DFE_CONTAINER_PREFIX:-}dfe-transform-vector
+    dns_search: *no-dns-search
     profiles: ["dfe"]
     restart: unless-stopped
     deploy: *limits-service
@@ -915,6 +943,7 @@ services:
   dfe-transform-vrl:
     image: ${IMAGE_REGISTRY:-ghcr.io/hyperi-io}/dfe-transform-vrl:${DFE_TRANSFORM_VRL_VERSION:?run 'make stack VERSION=X.Y.Z' to pin DFE_TRANSFORM_VRL_VERSION}
     container_name: ${DFE_CONTAINER_PREFIX:-}dfe-transform-vrl
+    dns_search: *no-dns-search
     profiles: ["dfe"]
     restart: unless-stopped
     deploy: *limits-service
@@ -961,6 +990,7 @@ services:
   dfe-engine:
     image: ${IMAGE_REGISTRY:-ghcr.io/hyperi-io}/dfe-engine:${DFE_ENGINE_VERSION:?run 'make stack VERSION=X.Y.Z' to pin DFE_ENGINE_VERSION}
     container_name: ${DFE_CONTAINER_PREFIX:-}dfe-engine
+    dns_search: *no-dns-search
     profiles: ["core"]
     restart: unless-stopped
     deploy: *limits-service
@@ -1175,6 +1205,7 @@ services:
   dfe-hunt-runner:
     image: ${IMAGE_REGISTRY:-ghcr.io/hyperi-io}/dfe-engine:${DFE_ENGINE_VERSION:?run 'make stack VERSION=X.Y.Z' to pin DFE_ENGINE_VERSION}
     container_name: ${DFE_CONTAINER_PREFIX:-}dfe-hunt-runner
+    dns_search: *no-dns-search
     profiles: ["core"]
     restart: unless-stopped
     deploy: *limits-service
@@ -1235,6 +1266,7 @@ services:
   dfe-ui:
     image: ${IMAGE_REGISTRY:-ghcr.io/hyperi-io}/dfe-ui:${DFE_UI_VERSION:?run 'make stack VERSION=X.Y.Z' to pin DFE_UI_VERSION}
     container_name: ${DFE_CONTAINER_PREFIX:-}dfe-ui
+    dns_search: *no-dns-search
     profiles: ["core"]
     restart: unless-stopped
     deploy: *limits-service
@@ -1278,6 +1310,7 @@ services:
   dfe-proxy:
     image: envoyproxy/envoy:${DFE_PROXY_VERSION:?run 'make stack VERSION=X.Y.Z' to pin DFE_PROXY_VERSION}
     container_name: ${DFE_CONTAINER_PREFIX:-}dfe-proxy
+    dns_search: *no-dns-search
     profiles: ["core"]
     restart: unless-stopped
     deploy: *limits-sidecar
@@ -1324,6 +1357,7 @@ services:
   otel-collector:
     image: otel/opentelemetry-collector-contrib:${DFE_OTEL_COLLECTOR_VERSION:?run 'make stack VERSION=X.Y.Z' to pin DFE_OTEL_COLLECTOR_VERSION}
     container_name: ${DFE_CONTAINER_PREFIX:-}dfe-otel-collector
+    dns_search: *no-dns-search
     profiles: ["otel"]
     restart: unless-stopped
     deploy: *limits-sidecar
@@ -1378,6 +1412,7 @@ services:
   dfe-dashboards:
     image: ${IMAGE_REGISTRY:-ghcr.io/hyperi-io}/dfe-engine:${DFE_ENGINE_VERSION:?run 'make stack VERSION=X.Y.Z' to pin DFE_ENGINE_VERSION}
     container_name: ${DFE_CONTAINER_PREFIX:-}dfe-dashboards
+    dns_search: *no-dns-search
     profiles: ["hyperdx"]
     deploy: *limits-sidecar
     # A fresh named volume mounted at a path the image does not create is owned by
@@ -1398,6 +1433,7 @@ services:
   hyperdx-documentdb-tls:
     image: ${IMAGE_REGISTRY:-ghcr.io/hyperi-io}/dfe-engine:${DFE_ENGINE_VERSION:?run 'make stack VERSION=X.Y.Z' to pin DFE_ENGINE_VERSION}
     container_name: ${DFE_CONTAINER_PREFIX:-}dfe-hyperdx-documentdb-tls
+    dns_search: *no-dns-search
     profiles: ["hyperdx"]
     deploy: *limits-sidecar
     # Root because an empty named volume lands root-owned at a path no image creates.
@@ -1441,6 +1477,7 @@ services:
   hyperdx-documentdb:
     image: ghcr.io/documentdb/documentdb/documentdb-local:${HYPERDX_DOCUMENTDB_VERSION:-pg18-1.0.0@sha256:03aef53ed72cd3007236f8ce1b4ef7a0c958dbbce1519074b85d8a3e10be89a5}
     container_name: ${DFE_CONTAINER_PREFIX:-}dfe-hyperdx-documentdb
+    dns_search: *no-dns-search
     profiles: ["hyperdx"]
     restart: unless-stopped
     # The image exposes no PostgreSQL memory settings, so initdb's 128MB
@@ -1488,6 +1525,7 @@ services:
     # the render appends as tag@sha256.
     image: ${IMAGE_REGISTRY:-ghcr.io/hyperi-io}/dfe-hyperdx:${DFE_HYPERDX_VERSION:?run 'make stack VERSION=X.Y.Z' to pin DFE_HYPERDX_VERSION}
     container_name: ${DFE_CONTAINER_PREFIX:-}dfe-hyperdx
+    dns_search: *no-dns-search
     profiles: ["hyperdx"]
     restart: unless-stopped
     deploy: *limits-hyperdx
@@ -1570,6 +1608,7 @@ services:
   dfe-hyperdx-proxy:
     image: envoyproxy/envoy:${DFE_PROXY_VERSION:?run 'make stack VERSION=X.Y.Z' to pin DFE_PROXY_VERSION}
     container_name: ${DFE_CONTAINER_PREFIX:-}dfe-hyperdx-proxy
+    dns_search: *no-dns-search
     profiles: ["hyperdx"]
     restart: unless-stopped
     deploy: *limits-sidecar
@@ -1608,6 +1647,7 @@ services:
   oauth2-proxy-kafbat:
     image: quay.io/oauth2-proxy/oauth2-proxy:${DFE_OAUTH2_PROXY_VERSION:-v7.15.5@sha256:8498b0d0ef0a7b29686414000a08aee467f02d0299c9ed1e006a8f33fc017916}
     container_name: ${DFE_CONTAINER_PREFIX:-}dfe-oauth2-proxy-kafbat
+    dns_search: *no-dns-search
     profiles: ["auth"]
     restart: unless-stopped
     deploy: *limits-sidecar
@@ -1625,6 +1665,7 @@ services:
   oauth2-proxy-hyperdx:
     image: quay.io/oauth2-proxy/oauth2-proxy:${DFE_OAUTH2_PROXY_VERSION:-v7.15.5@sha256:8498b0d0ef0a7b29686414000a08aee467f02d0299c9ed1e006a8f33fc017916}
     container_name: ${DFE_CONTAINER_PREFIX:-}dfe-oauth2-proxy-hyperdx
+    dns_search: *no-dns-search
     profiles: ["auth"]
     restart: unless-stopped
     deploy: *limits-sidecar
@@ -1649,6 +1690,7 @@ services:
   oauth2-proxy-hyperdx-api:
     image: quay.io/oauth2-proxy/oauth2-proxy:${DFE_OAUTH2_PROXY_VERSION:-v7.15.5@sha256:8498b0d0ef0a7b29686414000a08aee467f02d0299c9ed1e006a8f33fc017916}
     container_name: ${DFE_CONTAINER_PREFIX:-}dfe-oauth2-proxy-hyperdx-api
+    dns_search: *no-dns-search
     profiles: ["auth"]
     restart: unless-stopped
     deploy: *limits-sidecar

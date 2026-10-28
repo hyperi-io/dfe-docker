@@ -683,3 +683,23 @@ def test_a_new_dfe_app_nobody_decided_for_fails(monkeypatch: pytest.MonkeyPatch)
 
     assert len(failures) == 1
     assert failures[0].startswith("dfe-newcomer: no release-check decision")
+
+
+@pytest.mark.parametrize(
+    ("dns_search", "expected_failures"),
+    [
+        (["."], 0),
+        (None, 1),
+        ([], 1),
+        (["corp.example.com"], 1),
+        (["corp.example.com", "."], 1),
+    ],
+)
+def test_a_service_must_clear_the_host_search_domain(dns_search, expected_failures):
+    service = {} if dns_search is None else {"dns_search": dns_search}
+    config = {"services": {"dfe-loader": service}}
+
+    failures = check_compose._dns_search_failures(config=config)
+
+    assert len(failures) == expected_failures
+    assert all("dfe-loader" in failure for failure in failures)

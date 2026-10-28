@@ -1043,6 +1043,16 @@ def _log_driver_failures(*, config: dict) -> list[str]:
     return failures
 
 
+def _dns_search_failures(*, config: dict) -> list[str]:
+    """Return one message per service that keeps the host's DNS search domain."""
+    return [
+        f"{name}: dns_search is {service.get('dns_search')!r}, so a bare name with no "
+        "network alias resolves through the host's search domain to a host outside the stack"
+        for name, service in sorted(config.get("services", {}).items())
+        if list(service.get("dns_search") or []) != ["."]
+    ]
+
+
 def _container_log_failures(*, env: dict[str, str]) -> tuple[list[str], int]:
     """Return (messages, services checked) for the log-driver fragment as it resolves."""
     config = _config_json(env=env, files=[COMPOSE_FILE.name, _CONTAINER_LOGS_FRAGMENT])
@@ -1967,6 +1977,21 @@ def _checks() -> int:
     _print(
         msg=f"All {log_made} service(s) on the fluentd driver queue their lines and "
         "wait for the collector's ack"
+    )
+
+    dns_config = _config_json(env=env, files=[COMPOSE_FILE.name])
+    dns_failures = (
+        ["docker-compose.yml did not resolve on the registry path"]
+        if dns_config is None
+        else _dns_search_failures(config=dns_config)
+    )
+    for message in dns_failures:
+        _print(msg=f"FAIL {message}")
+    if dns_failures:
+        return 1
+    _print(
+        msg=f"All {len(dns_config['services'])} service(s) clear the host's DNS search domain, "
+        "so a bare name with no alias fails instead of reaching the estate"
     )
 
     version_failures, version_made = _version_check_failures(env=env)
