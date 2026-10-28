@@ -1,0 +1,60 @@
+# Project:   dfe-docker
+# File:      resources/demo/sources/component-releases.yaml
+# Purpose:   A demo fetcher that pulls the latest GitHub release of each public DFE component repo
+# Language:  YAML
+#
+# License:   BUSL-1.1
+# Copyright: (c) 2026 HYPERI PTY LIMITED
+
+description: The latest GitHub release of each public DFE component repo
+display_name: Component releases
+fetcher:
+  config:
+    auth:
+      mode: none
+    # Unauthenticated GitHub allows 60 requests an hour per IP and each poll makes one per repo
+    interval_secs: 900
+    profile:
+      auth:
+        accepts: [none]
+      base_url: "{{ vars.api_url }}"
+      endpoints:
+        - add_fields:
+            _dfe_fetcher_repo: "{{ key }}"
+          construct:
+            keyset:
+              from: "{{ vars.repos }}"
+          ignore_status: [404]
+          path: "/repos/hyperi-io/{{ key }}/releases/latest"
+          rows:
+            decoder: document
+          unit: latest
+      headers:
+        Accept: application/vnd.github+json
+        User-Agent: dfe-fetcher (https://github.com/hyperi-io/dfe-fetcher)
+      probe:
+        path: /rate_limit
+      retry:
+        never_retry: [401, 403]
+      shape: incremental
+    vars:
+      api_url: https://api.github.com
+      repos:
+        - dfe-archiver
+        - dfe-engine
+        - dfe-fetcher
+        - dfe-loader
+        - dfe-receiver
+        - dfe-transform-elastic
+        - dfe-transform-vector
+        - dfe-transform-vrl
+        - dfe-ui
+  source_type: rest
+  topic: own
+header:
+  type: common-header/timeseries
+  version: 1.0.1
+schema:
+  meta_schema: meta/syslog
+  meta_schema_version: 1.0.0
+source: component-releases
