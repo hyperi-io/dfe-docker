@@ -68,6 +68,8 @@ def is_taken(*, host_ip: str, port: int, protocol: str) -> bool:
     kind = socket.SOCK_DGRAM if protocol == "udp" else socket.SOCK_STREAM
     family = socket.AF_INET6 if ":" in host_ip else socket.AF_INET
     with socket.socket(family, kind) as probe:
+        # A port the last stack left in TIME_WAIT is free to docker; only a live listener counts.
+        probe.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         try:
             probe.bind((host_ip, port))
         except OSError as exc:
