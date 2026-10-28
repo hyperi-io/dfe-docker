@@ -13,8 +13,7 @@ left open to other users is closed on the next `make init` without touching its
 owner or group bits; every rewrite reasserts the mode.
 """
 
-from __future__ import annotations
-
+import errno
 import os
 import stat
 from collections.abc import Iterator
@@ -25,11 +24,18 @@ import pytest
 import _common
 import init
 
-_SETTLED = "\n".join(f"{key}=already-minted-value" for key in init.GENERATED_SECRETS)
+_SETTLED = "\n".join(
+    f"{key}=already-minted-value" for key in init.GENERATED_SECRETS[".env"]
+)
 
 
 def _mode(path: Path) -> int:
     return stat.S_IMODE(path.stat().st_mode)
+
+
+def _refuse_chmod(*, fd: int, mode: int) -> None:
+    """Refuse a chmod as the kernel does for a group member who does not own the file."""
+    raise PermissionError(errno.EPERM, os.strerror(errno.EPERM))
 
 
 @pytest.fixture
@@ -76,6 +82,21 @@ def test_an_existing_dotenv_open_to_others_is_closed_and_keeps_its_group_bits(
     assert dotenv.read_text(encoding="utf-8") == _SETTLED + "\n"
 
 
+def test_an_existing_env_file_of_secrets_open_to_others_is_closed(
+    dotenv: Path, engine_env: Path, layout: Path, open_umask: None
+) -> None:
+    dotenv.write_text(_SETTLED + "\n", encoding="utf-8", newline="\n")
+    settled = "".join(
+        f"{key}=already-minted-value\n" for key in init.GENERATED_SECRETS["engine.env"]
+    )
+    engine_env.write_text(settled, encoding="utf-8", newline="\n")
+    engine_env.chmod(0o664)
+
+    assert init.main() == 0
+    assert _mode(engine_env) == 0o660
+    assert engine_env.read_text(encoding="utf-8") == settled
+
+
 def test_an_existing_private_dotenv_is_left_alone(
     dotenv: Path, layout: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
@@ -109,6 +130,19 @@ def test_write_private_narrows_an_existing_file_before_the_new_text_lands(
     assert chmod_watch.exposed(secret="new-secret-value", allowed=0o600) == []
     assert _mode(path) == 0o600
     assert path.read_text(encoding="utf-8") == "new-secret-value\n"
+
+
+def test_write_private_keeps_the_old_content_when_the_chmod_is_refused(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    path = tmp_path / "secret"
+    path.write_text("KEY=minted\n", encoding="utf-8")
+    path.chmod(0o664)
+    monkeypatch.setattr(_common.os, "fchmod", _refuse_chmod)
+
+    with pytest.raises(PermissionError):
+        _common.write_private(mode=0o660, path=path, text="KEY=replacement\n")
+    assert path.read_text(encoding="utf-8") == "KEY=minted\n"
 
 
 def test_a_group_writable_dotenv_stays_group_writable_when_rewritten(

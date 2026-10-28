@@ -13,26 +13,26 @@ Copies .env.example to .env and each env.example/<service>.env to env/<service>.
 
 Beyond a plain copy:
 
-Generated secrets. The keys in GENERATED_SECRETS have deterministic, committed defaults in docker-compose.yml, which means a stack that never ran this script is using a signing key and a database password anyone with the repo already knows. This script mints a random value for each - into a new .env, and topped up into an existing .env that predates the key. Compose cannot hard-fail on them (its interpolation is not profile-gated, so a `:?` would abort `make down` too, for services the operator may not even run), so the enforcement lives in the power-on self test: scripts/post.py refuses to pass while a default is still in place.
+Generated secrets. GENERATED_SECRETS names each secret by the file it lives in: .env for the ones compose interpolates, env/<component>.env for the ones a container reads under its own name. Unminted, each falls back to a committed default in docker-compose.yml or to its component's own, which means a stack that never ran this script is using a signing key and a database password anyone with the repo already knows. This script mints a random value for each - into a new file and topped up into an existing file that predates the key. Nothing in compose can require them. A `:?` is not profile-gated, so it would abort `make down` too. An env_file key has no such form. So the enforcement lives in the power-on self test: scripts/post.py refuses to pass while a default is still in place.
 
 Drift report. A re-run reports template keys that never reached .env. The copy is one-shot, so an operator who ran `make init` months ago otherwise never learns that .env.example grew a setting. Reporting is all it does - editing an operator's .env is theirs to do, not ours.
 
-The retention question. A NEW .env is asked, once and on a TTY only, for the default TTL every time-series table gets, and the answer lands as a live DFE_CLICKHOUSE_DEFAULT_TTL_DAYS line. The environment pre-answers it; a non-interactive run keeps the template's commented 90; an existing .env is never re-asked.
+The retention question. A NEW env/engine.env is asked, once and on a TTY only, for the default TTL every time-series table gets. The answer lands as a live DFE_CLICKHOUSE_DEFAULT_TTL_DAYS line. The environment pre-answers it, a non-interactive run keeps the template's commented 90 and an existing env/engine.env is never re-asked.
 
 The env/ directory. The engine writes env/<app>.custom.env into it, so it is made group-writable and setgid: the engine writes through the group compose adds it to, and every file it creates keeps the group Compose reads it as.
 
-File modes. A new .env and every new env/<service>.env are written at DOTENV_MODE whatever the template's own mode (DOTENV_CEILING in a setgid directory, a checkout shared with a daemon user), because the operator fills credentials into both.
+File modes. A new .env and every new env/<service>.env are written at DOTENV_MODE whatever the template's own mode (DOTENV_CEILING in a setgid directory, a checkout shared with a daemon user), because the operator fills credentials into both. An existing one is closed to other users on every run, its group bits kept.
 """
 
-from __future__ import annotations
-
 import argparse
+import collections
 import os
 import re
 import secrets
 import stat
 import string
 import sys
+from collections.abc import Iterable
 from pathlib import Path
 
 # Bytecode for the repo modules imported below goes to .tmp/pycache, as it does under make
@@ -41,6 +41,7 @@ sys.pycache_prefix = str(Path(__file__).resolve().parent.parent / ".tmp" / "pyca
 from _common import (  # noqa: E402
     DOTENV_FILE,
     DOTENV_TEMPLATE,
+    ENGINE_COMPONENT,
     ENV_DIR,
     ENV_TEMPLATE_DIR,
     _print,
@@ -49,8 +50,8 @@ from _common import (  # noqa: E402
 )
 
 # Secrets that must not be left at their weak/empty default. scripts/post.py
-# enforces them: DFE_UI_NEXTAUTH_SECRET, HYPERDX_DOCUMENTDB_PASSWORD,
-# HYPERDX_EXPRESS_SESSION_SECRET, HYPERDX_TOKEN_ENCRYPTION_KEY and each
+# enforces them: NEXTAUTH_SECRET, HYPERDX_DOCUMENTDB_PASSWORD,
+# EXPRESS_SESSION_SECRET, TOKEN_ENCRYPTION_KEY and each
 # DFE_<APP>_CLICKHOUSE_PASSWORD via its WEAK_SECRET_DEFAULTS service-map,
 # CLICKHOUSE_PASSWORD via its own external-CH check (its default is empty, not a
 # sentinel string), and DFE_AUTH_LOCAL_ADMIN_PASSWORD by logging in with it. Keep
@@ -60,7 +61,7 @@ from _common import (  # noqa: E402
 # app's ClickHouse user on it and the app connects with it.
 #
 # The deploy mints two logins: DFE_AUTH_LOCAL_ADMIN_PASSWORD is `admin`, issued with
-# a forced change at first login, which `make post` makes and records back in .env.
+# a forced change at first login, which `make post` records in env/engine.env.
 # DFE_AUTH_BREAKGLASS_PASSWORD is the recovery admin the engine hashes into the
 # deploy repo on first boot and ignores thereafter.
 # Neither is printed here; `make creds` is the hand-over.
@@ -87,28 +88,37 @@ _LEN_COOKIE = 32
 # HyperDX takes TOKEN_ENCRYPTION_KEY as 64 hex chars or base64 of exactly 32 bytes
 # and refuses to start on anything else; hex keeps it alphanumeric.
 _LEN_HEX_AES256 = 64
-_HEX_SECRETS = frozenset({"HYPERDX_TOKEN_ENCRYPTION_KEY"})
+_HEX_SECRETS = frozenset({"TOKEN_ENCRYPTION_KEY"})
 
-# Name -> length tier. DB passwords are the 128-bit credential tier; the dfe-ui
-# NextAuth, engine JWT and HyperDX session values are session-signing KEYS, so
-# they take the 256-bit tier.
+# File -> name -> length tier. DB passwords are the 128-bit credential tier, and
+# the dfe-ui NextAuth, engine JWT and HyperDX session values are session-signing
+# KEYS, so they take the 256-bit tier.
 GENERATED_SECRETS = {
-    # Keeper's digest identity: a changed value locks the server out of its own znodes.
-    "CLICKHOUSE_KEEPER_PASSWORD": _LEN_CREDENTIAL,
-    "CLICKHOUSE_PASSWORD": _LEN_CREDENTIAL,
-    "DFE_AUTH_BREAKGLASS_PASSWORD": _LEN_CREDENTIAL,
-    "DFE_AUTH_LOCAL_ADMIN_PASSWORD": _LEN_CREDENTIAL,
-    "DFE_HUNT_RUNNER_CLICKHOUSE_PASSWORD": _LEN_CREDENTIAL,
-    "DFE_LOADER_CLICKHOUSE_PASSWORD": _LEN_CREDENTIAL,
-    "DFE_OTEL_WRITER_CLICKHOUSE_PASSWORD": _LEN_CREDENTIAL,
-    "DFE_QUERY_READER_CLICKHOUSE_PASSWORD": _LEN_CREDENTIAL,
-    "HYPERDX_DOCUMENTDB_PASSWORD": _LEN_CREDENTIAL,
-    "DFE_API_JWT_SECRET": _LEN_KEY,
-    "DFE_UI_NEXTAUTH_SECRET": _LEN_KEY,
-    "HYPERDX_EXPRESS_SESSION_SECRET": _LEN_KEY,
-    "DFE_OAUTH2_PROXY_COOKIE_SECRET": _LEN_COOKIE,
-    "HYPERDX_TOKEN_ENCRYPTION_KEY": _LEN_HEX_AES256,
+    DOTENV_FILE.name: {
+        # Keeper's digest identity: a changed value locks the server out of its own znodes.
+        "CLICKHOUSE_KEEPER_PASSWORD": _LEN_CREDENTIAL,
+        "CLICKHOUSE_PASSWORD": _LEN_CREDENTIAL,
+        "DFE_HUNT_RUNNER_CLICKHOUSE_PASSWORD": _LEN_CREDENTIAL,
+        "DFE_LOADER_CLICKHOUSE_PASSWORD": _LEN_CREDENTIAL,
+        "DFE_OTEL_WRITER_CLICKHOUSE_PASSWORD": _LEN_CREDENTIAL,
+        "DFE_QUERY_READER_CLICKHOUSE_PASSWORD": _LEN_CREDENTIAL,
+        "HYPERDX_DOCUMENTDB_PASSWORD": _LEN_CREDENTIAL,
+        "DFE_OAUTH2_PROXY_COOKIE_SECRET": _LEN_COOKIE,
+    },
+    f"{ENGINE_COMPONENT}.env": {
+        "DFE_AUTH_BREAKGLASS_PASSWORD": _LEN_CREDENTIAL,
+        "DFE_AUTH_LOCAL_ADMIN_PASSWORD": _LEN_CREDENTIAL,
+        "DFE_API_JWT_SECRET": _LEN_KEY,
+    },
+    "hyperdx.env": {
+        "EXPRESS_SESSION_SECRET": _LEN_KEY,
+        "TOKEN_ENCRYPTION_KEY": _LEN_HEX_AES256,
+    },
+    "ui.env": {
+        "NEXTAUTH_SECRET": _LEN_KEY,
+    },
 }
+_SECRET_LENGTHS = collections.ChainMap(*GENERATED_SECRETS.values())
 
 # Matches a dotenv assignment: live (`KEY=value`) or a single-hash commented-out
 # setting (`# KEY=value`).
@@ -117,7 +127,7 @@ GENERATED_SECRETS = {
 # commented-out setting and `##` for prose, and the prose genuinely contains lines
 # like "## DFE_BIND_HOST=0.0.0.0. Do that knowingly..." mid-sentence. A looser
 # `#*` matched those, which is harmless for drift reporting but not for
-# _render_secrets: the day anyone writes `## DFE_UI_NEXTAUTH_SECRET=...` in a
+# _render_secrets: the day anyone writes `## NEXTAUTH_SECRET=...` in a
 # comment explaining the key, that documentation line would be replaced by a live
 # random assignment.
 _SETTING_RE = re.compile(r"^[ \t]*(?:#[ \t]?)?(?P<key>[A-Z][A-Z0-9_]*)[ \t]*=")
@@ -128,6 +138,7 @@ ENV_DIR_GROUP_BITS = stat.S_IRWXG | stat.S_ISGID
 # The retention every time-series table gets unless a source or a dfe-schemas
 # definition sets its own. Whole days; 0 disables the default TTL.
 RETENTION_KEY = "DFE_CLICKHOUSE_DEFAULT_TTL_DAYS"
+RETENTION_FILE = f"{ENGINE_COMPONENT}.env"
 RETENTION_DEFAULT = "90"
 _RETENTION_PROMPT = (
     f"Default retention for every time-series table, in days [{RETENTION_DEFAULT}]: "
@@ -142,7 +153,7 @@ def _generate_secret(length: int) -> str:
 
 def _mint(key: str) -> str:
     """Return a fresh value for one GENERATED_SECRETS key, in the format its consumer parses."""
-    length = GENERATED_SECRETS[key]
+    length = _SECRET_LENGTHS[key]
     if key in _HEX_SECRETS:
         return secrets.token_hex(length // 2)
     return _generate_secret(length)
@@ -177,9 +188,9 @@ def _all_keys(*, text: str) -> set[str]:
     return {key for line in text.splitlines() if (key := _setting_key(line=line))}
 
 
-def _render_secrets(*, text: str) -> str:
-    """Replace each GENERATED_SECRETS placeholder line with a live, randomly generated assignment."""
-    pending = set(GENERATED_SECRETS)
+def _render_secrets(*, keys: Iterable[str], text: str) -> str:
+    """Replace the placeholder line of each of `keys` with a live, randomly generated assignment."""
+    pending = set(keys)
     rendered = []
     for line in text.splitlines():
         key = _setting_key(line=line)
@@ -193,18 +204,22 @@ def _render_secrets(*, text: str) -> str:
     # a committed default.
     if pending:
         rendered.append("")
-        rendered.append("## Generated by `make init` - keep out of version control.")
+        rendered.append("## Generated by `make init` - keep out of version control")
         rendered.extend(f"{key}={_mint(key)}" for key in sorted(pending))
     return "\n".join(rendered) + "\n"
 
 
 def _create_dotenv(*, dst_path: Path, src_path: Path) -> None:
-    """Write a new .env from its template with generated secrets materialised."""
+    """Write a new .env or env/<service>.env from its template with its generated secrets materialised."""
+    keys = GENERATED_SECRETS.get(dst_path.name, {})
     template = src_path.read_text(encoding="utf-8")
-    write_dotenv(path=dst_path, text=_render_secrets(text=template))
+    write_dotenv(
+        path=dst_path,
+        text=_render_secrets(keys=keys, text=template) if keys else template,
+    )
     _print(
         header=_rel_path(path=dst_path),
-        msg=f"Created (generated {len(GENERATED_SECRETS)} secrets)",
+        msg=f"Created (generated {', '.join(sorted(keys))})" if keys else "Created",
     )
 
 
@@ -251,13 +266,13 @@ def _set_live(*, text: str, key: str, value: str) -> str:
         rendered.append(line)
     if not (found):
         rendered.append("")
-        rendered.append("## Set by `make init`.")
+        rendered.append("## Set by `make init`")
         rendered.append(f"{key}={value}")
     return "\n".join(rendered) + "\n"
 
 
 def _ask_retention(*, dotenv_path: Path) -> None:
-    """Write the retention answer into a NEW .env as a live line."""
+    """Write the retention answer into a NEW env/engine.env as a live line."""
     days = _retention_answer()
     if days is None:
         return
@@ -270,7 +285,7 @@ def _ask_retention(*, dotenv_path: Path) -> None:
 
 
 def _top_up_secrets(*, dotenv_path: Path) -> None:
-    """Give every GENERATED_SECRETS key a real value in an existing .env.
+    """Give each GENERATED_SECRETS key of an existing .env or env/<service>.env a real value.
 
     Two cases, because they need different repairs. A key the file never mentions
     is appended. A key present but EMPTY (`KEY=`) is rewritten in place - appending
@@ -278,7 +293,8 @@ def _top_up_secrets(*, dotenv_path: Path) -> None:
     duplicate key in an operator's .env is how the next person loses an hour.
     """
     text = dotenv_path.read_text(encoding="utf-8")
-    missing = sorted(set(GENERATED_SECRETS) - _live_keys(text=text))
+    keys = GENERATED_SECRETS.get(dotenv_path.name, {})
+    missing = sorted(set(keys) - _live_keys(text=text))
     if not (missing):
         return
 
@@ -294,9 +310,7 @@ def _top_up_secrets(*, dotenv_path: Path) -> None:
 
     if pending:
         rewritten.append("")
-        rewritten.append(
-            "## Generated by `make init` - the power-on self test fails without these."
-        )
+        rewritten.append("## Generated by `make init` - POST fails without these")
         rewritten.extend(f"{key}={_mint(key)}" for key in sorted(pending))
 
     write_dotenv(path=dotenv_path, text="\n".join(rewritten) + "\n")
@@ -357,7 +371,7 @@ def share_env_dir(*, env_dir: Path) -> None:
 
 
 def _close_dotenv_to_others(*, dotenv_path: Path) -> None:
-    """Drop every permission bit for others on an existing .env; owner and group are left as they are."""
+    """Drop every permission bit for others on an existing file of secrets, leaving owner and group as they are."""
     mode = stat.S_IMODE(dotenv_path.stat().st_mode)
     if not (mode & stat.S_IRWXO):
         return
@@ -376,13 +390,17 @@ def _close_dotenv_to_others(*, dotenv_path: Path) -> None:
 def _copy_if_absent(*, dst_path: Path, src_path: Path) -> None:
     """Copy src_path to dst_path unless dst_path already exists - report the outcome.
 
-    The copy is written at write_dotenv's mode, not the template's: the templates name cloud keys, client secrets and a broker password the operator fills in.
+    The copy is written at write_dotenv's mode, not the template's: the templates name cloud keys, client secrets and a broker password the operator fills in. An existing file is closed to others for the same reason. One that holds generated secrets is also topped up, as .env is.
     """
     if dst_path.exists():
         _print(header=_rel_path(path=dst_path), msg="Skipped (already exists)")
+        _close_dotenv_to_others(dotenv_path=dst_path)
+        if dst_path.name in GENERATED_SECRETS:
+            _top_up_secrets(dotenv_path=dst_path)
         return
-    write_dotenv(path=dst_path, text=src_path.read_text(encoding="utf-8"))
-    _print(header=_rel_path(path=dst_path), msg="Created")
+    _create_dotenv(dst_path=dst_path, src_path=src_path)
+    if dst_path.name == RETENTION_FILE:
+        _ask_retention(dotenv_path=dst_path)
 
 
 def main(*, argv: list[str] | None = None) -> int:
@@ -404,7 +422,6 @@ def main(*, argv: list[str] | None = None) -> int:
         _report_drift(dotenv_path=DOTENV_FILE, template_path=DOTENV_TEMPLATE)
     else:
         _create_dotenv(dst_path=DOTENV_FILE, src_path=DOTENV_TEMPLATE)
-        _ask_retention(dotenv_path=DOTENV_FILE)
 
     ENV_DIR.mkdir(exist_ok=True, parents=True)
     share_env_dir(env_dir=ENV_DIR)

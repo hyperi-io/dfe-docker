@@ -51,11 +51,13 @@ sys.pycache_prefix = str(Path(__file__).resolve().parent.parent / ".tmp" / "pyca
 import _stack_state  # noqa: E402
 import instances  # noqa: E402
 from _common import (  # noqa: E402
+    ENGINE_COMPONENT,
     FETCHER_SERVICE,
     PER_SOURCE_APP_KEYS,
     PER_SOURCE_APPS_VAR,
     REPO_ROOT,
     _load_dotenv,
+    _load_env_file,
     _print,
     _profile_mk_value,
     _rel_path,
@@ -64,6 +66,7 @@ from _common import (  # noqa: E402
 from _sources import hinted_services  # noqa: E402
 from build_dev_images import SRC_REMOTE_DEFAULT  # noqa: E402
 from post import (  # noqa: E402
+    ADMIN_PASSWORD_KEY,
     APP_CONFIG_DIR_KEY,
     ENGINE_SERVICE,
     TARGET_DB,
@@ -570,6 +573,7 @@ def _run(*, args: argparse.Namespace) -> int:
     """Run the demo against the running stack and return its exit code."""
     demo = load_demo(events=EVENTS_DIR, sources=SOURCES_DIR)
     environ = dict(os.environ)
+    _load_env_file(component=ENGINE_COMPONENT, keys=(ADMIN_PASSWORD_KEY,))
     _load_dotenv()
     if not (_resolved_services()):
         raise DemoError(

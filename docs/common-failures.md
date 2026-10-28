@@ -42,11 +42,7 @@ shortage of CPU.
 
 ## The self test fails on the console login
 
-`make post` logs in as `admin` with `DFE_AUTH_LOCAL_ADMIN_PASSWORD` from `.env`,
-the same value `make creds` prints. A 401 here means the running engine holds a
-different password from the one in `.env` -- a rotation applied to the store
-alone, say. Pass the current one on the command line, since the shell environment
-beats `.env`:
+`make post` logs in as `admin` with `DFE_AUTH_LOCAL_ADMIN_PASSWORD` from `env/engine.env`, the same value `make creds` prints. A 401 here means the running engine holds a different password from the one in `env/engine.env`: a rotation applied to the store alone, say. Pass the current one on the command line, since the shell environment beats `env/engine.env`:
 
 ```bash
 DFE_AUTH_LOCAL_ADMIN_PASSWORD='the rotated password' make post
@@ -76,8 +72,7 @@ docker compose exec dfe-engine printenv OTEL_EXPORTER_OTLP_ENDPOINT
 docker compose logs dfe-engine | grep "Metrics initialized"
 ```
 
-`backend=prometheus` on that last line means it is not pushing. The profile sets
-`DFE_ENGINE_METRICS_BACKEND=opentelemetry`; a value in `.env` overrides it.
+`backend=prometheus` on that last line means it is not pushing. Drop the `DFE_API_METRICS_BACKEND` line from `env/engine.env`, then `make up`.
 
 Every DFE app the profile runs should appear, dfe-ui aside. A service that is
 running but missing from the results IS a fault. The Rust services push whenever

@@ -1,0 +1,13 @@
+# Project:   dfe-docker
+# File:      resources/seed/accounts/ops.yaml
+# Purpose:   Starter admin account, so a fresh deploy has an admin besides the bootstrap one
+# Language:  YAML
+#
+# License:   BUSL-1.1
+# Copyright: (c) 2026 HYPERI PTY LIMITED
+
+# No password: `make accounts` mints one into env/engine.env and `make creds` hands it over
+username: ops
+email: ops@example.com
+groups:
+  - dfe-admins

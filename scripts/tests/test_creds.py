@@ -9,8 +9,9 @@
 """The access summary is the one place the minted admin password is printed.
 
 `make up` and `make dev` end with it, so its stdout is a build log as often as it
-is a terminal. These pin the branch: the value on a TTY, the .env key that holds
-it otherwise, and DFE_CREDS_SHOW=0 taking the second branch on a TTY too.
+is a terminal. These pin the branch: the value on a TTY, the env/engine.env key
+that holds it otherwise and DFE_CREDS_SHOW=0 taking the second branch on a TTY
+too.
 
 The break-glass and OIDC fixture passwords have no such branch on the terminal --
 they are named, never printed, and these pin that on both.
@@ -39,12 +40,35 @@ DFE_AUTH_LOCAL_ADMIN_NAME=admin
 DFE_AUTH_LOCAL_ADMIN_PASSWORD={_MINTED}
 DFE_AUTH_BREAKGLASS_PASSWORD=another-minted-value
 """
+_ENGINE_KEYS = (
+    "DFE_AUTH_BREAKGLASS_PASSWORD",
+    "DFE_AUTH_LOCAL_ADMIN_PASSWORD",
+    "DFE_SEED_ACCOUNT_",
+)
+_SEED_PASSWORD = "seed-account-minted-value"
+
+
+def _deploy(*, dotenv: Path, text: str) -> None:
+    """Write text's engine passwords to env/engine.env and the rest to .env, the split `make init` and `make accounts` write."""
+    lines = text.splitlines()
+    engine_env = dotenv.parent / "env" / "engine.env"
+    engine_env.parent.mkdir(exist_ok=True)
+    engine_env.write_text(
+        "".join(f"{line}\n" for line in lines if line.startswith(_ENGINE_KEYS)),
+        encoding="utf-8",
+        newline="\n",
+    )
+    dotenv.write_text(
+        "".join(f"{line}\n" for line in lines if not (line.startswith(_ENGINE_KEYS))),
+        encoding="utf-8",
+        newline="\n",
+    )
 
 
 def test_tty_prints_the_password(
     dotenv: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    dotenv.write_text(_ENV, encoding="utf-8", newline="\n")
+    _deploy(dotenv=dotenv, text=_ENV)
     monkeypatch.setattr("sys.stdout.isatty", lambda: True)
     monkeypatch.delenv("DFE_CREDS_SHOW", raising=False)
 
@@ -55,7 +79,7 @@ def test_tty_prints_the_password(
 def test_non_tty_prints_the_fetch_hint_instead(
     dotenv: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    dotenv.write_text(_ENV, encoding="utf-8", newline="\n")
+    _deploy(dotenv=dotenv, text=_ENV)
     monkeypatch.setattr("sys.stdout.isatty", lambda: False)
     monkeypatch.delenv("DFE_CREDS_SHOW", raising=False)
 
@@ -68,7 +92,7 @@ def test_non_tty_prints_the_fetch_hint_instead(
 def test_show_zero_hides_it_on_a_tty(
     dotenv: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    dotenv.write_text(_ENV, encoding="utf-8", newline="\n")
+    _deploy(dotenv=dotenv, text=_ENV)
     monkeypatch.setattr("sys.stdout.isatty", lambda: True)
     monkeypatch.setenv("DFE_CREDS_SHOW", "0")
 
@@ -81,7 +105,7 @@ def test_show_zero_hides_it_on_a_tty(
 def test_the_break_glass_password_is_never_printed(
     dotenv: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    dotenv.write_text(_ENV, encoding="utf-8", newline="\n")
+    _deploy(dotenv=dotenv, text=_ENV)
     monkeypatch.setattr("sys.stdout.isatty", lambda: True)
     monkeypatch.delenv("DFE_CREDS_SHOW", raising=False)
 
@@ -114,11 +138,10 @@ def test_show_password_rule(is_tty: bool, setting: str, expected: bool) -> None:
 def test_the_fixture_password_is_never_printed(
     dotenv: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    dotenv.write_text(
-        f"{_ENV}DFE_OIDC_FIXTURE_USER=dfe-test@dfe-oidc.test\n"
+    _deploy(
+        dotenv=dotenv,
+        text=f"{_ENV}DFE_OIDC_FIXTURE_USER=dfe-test@dfe-oidc.test\n"
         f"DFE_OIDC_FIXTURE_PASSWORD={_FIXTURE_PASSWORD}\n",
-        encoding="utf-8",
-        newline="\n",
     )
     monkeypatch.setattr("sys.stdout.isatty", lambda: True)
     monkeypatch.delenv("DFE_CREDS_SHOW", raising=False)
@@ -133,7 +156,7 @@ def test_the_fixture_password_is_never_printed(
 def test_write_leaves_a_0600_file_with_both_passwords(
     dotenv: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    dotenv.write_text(_ENV, encoding="utf-8", newline="\n")
+    _deploy(dotenv=dotenv, text=_ENV)
     monkeypatch.setattr("sys.stdout.isatty", lambda: False)
 
     assert creds.main(["--write"]) == 0
@@ -149,7 +172,7 @@ def test_write_leaves_a_0600_file_with_both_passwords(
 def test_the_terminal_summary_tells_the_operator_what_to_do_next(
     dotenv: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    dotenv.write_text(_ENV, encoding="utf-8", newline="\n")
+    _deploy(dotenv=dotenv, text=_ENV)
     monkeypatch.setattr("sys.stdout.isatty", lambda: True)
     monkeypatch.delenv("DFE_CREDS_SHOW", raising=False)
 
@@ -164,9 +187,9 @@ def test_the_terminal_summary_tells_the_operator_what_to_do_next(
 # The literals, not the constants: pinning the constant against itself would pass
 # whatever it drifted to, and drifting from dfe-infra is the failure to catch.
 def test_the_file_is_the_shape_dfe_infra_writes(dotenv: Path) -> None:
-    dotenv.write_text(_ENV, encoding="utf-8", newline="\n")
+    _deploy(dotenv=dotenv, text=_ENV)
 
-    body = creds.summary_markdown(values=creds._dotenv_values())
+    body = creds.summary_markdown(values=creds.access_values())
 
     assert body.startswith("# DFE access -- first login\n")
     assert "| Account | Username | Password |" in body
@@ -180,14 +203,27 @@ def test_the_file_is_the_shape_dfe_infra_writes(dotenv: Path) -> None:
     )
 
 
-def test_the_file_also_names_the_two_dotenv_keys(dotenv: Path) -> None:
+def test_the_file_also_names_the_two_engine_env_keys(dotenv: Path) -> None:
     """Deleting the file is the whole clean-up for dfe-infra, but not here."""
-    dotenv.write_text(_ENV, encoding="utf-8", newline="\n")
+    _deploy(dotenv=dotenv, text=_ENV)
 
-    body = creds.summary_markdown(values=creds._dotenv_values())
+    body = creds.summary_markdown(values=creds.access_values())
 
+    assert "Both are also in `env/engine.env`" in body
     assert "DFE_AUTH_LOCAL_ADMIN_PASSWORD" in body
     assert "DFE_AUTH_BREAKGLASS_PASSWORD" in body
+
+
+def test_a_password_an_older_dotenv_still_sets_is_not_handed_over(
+    dotenv: Path,
+) -> None:
+    dotenv.write_text(_ENV, encoding="utf-8", newline="\n")
+
+    body = creds.summary_markdown(values=creds.access_values())
+
+    assert _MINTED not in body
+    assert "another-minted-value" not in body
+    assert "NOT MINTED" in body
 
 
 def test_a_rerun_narrows_the_summary_before_the_new_passwords_land(
@@ -195,11 +231,11 @@ def test_a_rerun_narrows_the_summary_before_the_new_passwords_land(
 ) -> None:
     """A rerun over a summary someone widened must not write the new password wide."""
     rotated = "rotated-minted-value"
-    dotenv.write_text(_ENV, encoding="utf-8", newline="\n")
+    _deploy(dotenv=dotenv, text=_ENV)
     monkeypatch.setattr("sys.stdout.isatty", lambda: False)
     creds.main(["--write"])
     creds.ACCESS_SUMMARY_FILE.chmod(0o644)
-    dotenv.write_text(_ENV.replace(_MINTED, rotated), encoding="utf-8", newline="\n")
+    _deploy(dotenv=dotenv, text=_ENV.replace(_MINTED, rotated))
 
     creds.main(["--write"])
 
@@ -211,7 +247,7 @@ def test_a_rerun_narrows_the_summary_before_the_new_passwords_land(
 def test_without_write_no_file_is_left_behind(
     dotenv: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    dotenv.write_text(_ENV, encoding="utf-8", newline="\n")
+    _deploy(dotenv=dotenv, text=_ENV)
     monkeypatch.setattr("sys.stdout.isatty", lambda: False)
 
     assert creds.main([]) == 0
@@ -222,7 +258,7 @@ def test_without_write_no_file_is_left_behind(
 def test_an_unminted_password_says_so_rather_than_printing_blank(dotenv: Path) -> None:
     dotenv.write_text("DFE_ENV=dev\n", encoding="utf-8", newline="\n")
 
-    body = creds.summary_markdown(values=creds._dotenv_values())
+    body = creds.summary_markdown(values=creds.access_values())
 
     assert "NOT MINTED" in body
     assert "make init" in body
@@ -364,13 +400,12 @@ def test_both_summaries_hand_over_https_console_and_http_engine_under_console_tl
 
 
 def test_the_summary_hands_over_the_external_origin(dotenv: Path) -> None:
-    dotenv.write_text(
-        f"{_ENV}DFE_BIND_SCOPE=all\nDFE_EXTERNAL_ORIGIN=http://dfe.example.test\n",
-        encoding="utf-8",
-        newline="\n",
+    _deploy(
+        dotenv=dotenv,
+        text=f"{_ENV}DFE_BIND_SCOPE=all\nDFE_EXTERNAL_ORIGIN=http://dfe.example.test\n",
     )
 
-    body = creds.summary_markdown(values=creds._dotenv_values())
+    body = creds.summary_markdown(values=creds.access_values())
 
     assert "- Console: http://dfe.example.test:3000" in body
     assert "- Engine API: http://dfe.example.test:8003" in body
@@ -409,7 +444,7 @@ def test_a_dev_posture_never_reports_the_refusal(
     DFE_ENV=dev accepts the default password. Reporting otherwise sends the
     operator to rotate credentials on a stack that is running.
     """
-    dotenv.write_text(_DEFAULT_ENV, encoding="utf-8", newline="\n")
+    _deploy(dotenv=dotenv, text=_DEFAULT_ENV)
     monkeypatch.setattr("sys.stdout.isatty", lambda: is_tty)
     monkeypatch.delenv("DFE_CREDS_SHOW", raising=False)
 
@@ -425,13 +460,60 @@ def test_a_non_dev_posture_reports_the_refusal_either_way(
     is_tty: bool,
 ) -> None:
     """A stack that cannot boot is worth saying in a build log too."""
-    dotenv.write_text(
-        _DEFAULT_ENV.replace("DFE_ENV=dev", "DFE_ENV=production"),
-        encoding="utf-8",
-        newline="\n",
-    )
+    production = _DEFAULT_ENV.replace("DFE_ENV=dev", "DFE_ENV=production")
+    _deploy(dotenv=dotenv, text=production)
     monkeypatch.setattr("sys.stdout.isatty", lambda: is_tty)
     monkeypatch.delenv("DFE_CREDS_SHOW", raising=False)
 
     assert creds.main() == 0
     assert _REFUSAL in capsys.readouterr().out
+
+
+@pytest.fixture
+def seed_account(dotenv: Path, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> str:
+    """Return the env/engine.env key of `ops-team`, a seed account whose password `make accounts` recorded."""
+    accounts = tmp_path / "seed-accounts"
+    accounts.mkdir()
+    (accounts / "ops-team.yaml").write_text("username: ops-team\n", encoding="utf-8")
+    monkeypatch.setattr(creds, "_SEED_ACCOUNTS_DIR", accounts)
+    key = "DFE_SEED_ACCOUNT_OPS_TEAM_PASSWORD"
+    _deploy(dotenv=dotenv, text=f"{_ENV}{key}={_SEED_PASSWORD}\n")
+    return key
+
+
+def test_a_seed_account_password_prints_on_a_terminal(seed_account: str) -> None:
+    lines = creds.summary_lines(values=creds.access_values(), reveal=True)
+
+    assert f"    seed account ops-team / {_SEED_PASSWORD}" in lines
+
+
+def test_a_seed_account_password_is_named_not_printed_off_a_terminal(
+    seed_account: str,
+) -> None:
+    text = "\n".join(creds.summary_lines(values=creds.access_values(), reveal=False))
+
+    assert _SEED_PASSWORD not in text
+    assert (
+        f"    seed account ops-team / the value of {seed_account} in env/engine.env"
+    ) in text
+
+
+def test_the_file_carries_each_seed_account(seed_account: str) -> None:
+    body = creds.summary_markdown(values=creds.access_values())
+
+    assert f"| Seed account | `ops-team` | `{_SEED_PASSWORD}` |" in body
+    assert f"`{seed_account}`" in body
+
+
+def test_a_seed_account_with_no_recorded_password_is_not_handed_over(
+    dotenv: Path, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    accounts = tmp_path / "seed-accounts"
+    accounts.mkdir()
+    (accounts / "ops-team.yaml").write_text("username: ops-team\n", encoding="utf-8")
+    monkeypatch.setattr(creds, "_SEED_ACCOUNTS_DIR", accounts)
+    _deploy(dotenv=dotenv, text=_ENV)
+    values = creds.access_values()
+
+    assert "seed account" not in "\n".join(creds.summary_lines(values=values))
+    assert "Seed account" not in creds.summary_markdown(values=values)

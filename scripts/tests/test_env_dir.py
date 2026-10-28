@@ -62,7 +62,10 @@ def test_a_new_service_env_file_is_closed_to_other_users(env_dir: Path) -> None:
 
     created = env_dir / "engine.env"
     assert _mode(created) == _common.DOTENV_MODE
-    assert created.read_text(encoding="utf-8") == template.read_text(encoding="utf-8")
+    # The template's lines, then the secrets `make init` mints into this file
+    assert created.read_text(encoding="utf-8").startswith(
+        template.read_text(encoding="utf-8")
+    )
 
 
 def test_a_start_target_heals_an_env_dir_an_older_init_made(env_dir: Path) -> None:

@@ -30,8 +30,10 @@ from _common import COMPOSE_FILE, RENDERED_PROFILES, REPO_ROOT
 
 _ENGINE_SERVICE = "dfe-engine"
 _HYPERDX_SERVICE = "hyperdx"
-_SESSION_KEY = "HYPERDX_EXPRESS_SESSION_SECRET"
-_TOKEN_KEY = "HYPERDX_TOKEN_ENCRYPTION_KEY"
+_SESSION_KEY = "EXPRESS_SESSION_SECRET"
+_TOKEN_KEY = "TOKEN_ENCRYPTION_KEY"
+# The file `make init` mints HyperDX's own secrets into, which compose hands the container
+_HYPERDX_ENV = "hyperdx.env"
 # The hex form of the two the fork's tokenEncryption.ts parseEncryptionKey accepts.
 _HEX_AES256 = re.compile(r"[0-9a-f]{64}")
 _IN_STACK_HYPERDX = "http://hyperdx:8000"
@@ -199,18 +201,17 @@ def test_hyperdx_verifies_the_engines_token() -> None:
     assert _expand(template=environment["DFE_ENGINE_JWKS_URL"], values={}) == _JWKS_URL
 
 
-def test_hyperdx_signs_sessions_with_the_key_make_init_mints() -> None:
-    """Unset, the fork signs sessions with a key published in upstream's source."""
-    template = _service_environment(service=_HYPERDX_SERVICE)["EXPRESS_SESSION_SECRET"]
-    minted = init._mint(_SESSION_KEY)
+@pytest.mark.parametrize("key", [_SESSION_KEY, _TOKEN_KEY])
+def test_hyperdx_reads_each_key_make_init_mints_from_its_own_file(key: str) -> None:
+    # A compose `environment:` entry would outvote the minted value in env/hyperdx.env
+    assert key not in _service_environment(service=_HYPERDX_SERVICE)
+    assert key in init.GENERATED_SECRETS[_HYPERDX_ENV]
+    # Unset is exactly what `make post` refuses on HyperDX.
+    assert post.WEAK_SECRET_DEFAULTS[key] == ("", _HYPERDX_SERVICE)
 
-    assert init.GENERATED_SECRETS[_SESSION_KEY] >= 32
-    assert _expand(template=template, values={_SESSION_KEY: minted}) == minted
-    # The fallback compose runs on is exactly what `make post` refuses on HyperDX.
-    assert post.WEAK_SECRET_DEFAULTS[_SESSION_KEY] == (
-        _expand(template=template, values={}),
-        _HYPERDX_SERVICE,
-    )
+
+def test_the_session_key_is_a_signing_key() -> None:
+    assert init.GENERATED_SECRETS[_HYPERDX_ENV][_SESSION_KEY] >= 32
 
 
 def test_the_minted_token_key_is_one_hyperdx_parses() -> None:
@@ -221,30 +222,22 @@ def test_the_minted_token_key_is_one_hyperdx_parses() -> None:
     assert len(bytes.fromhex(minted)) == 32
 
 
-def test_hyperdx_encrypts_tokens_with_the_key_make_init_mints() -> None:
-    template = _service_environment(service=_HYPERDX_SERVICE)["TOKEN_ENCRYPTION_KEY"]
-    minted = init._mint(_TOKEN_KEY)
-
-    assert _expand(template=template, values={_TOKEN_KEY: minted}) == minted
-    # Empty reads as encryption off; a sentinel would read as a malformed key.
-    assert _expand(template=template, values={}) == ""
-    assert post.WEAK_SECRET_DEFAULTS[_TOKEN_KEY] == ("", _HYPERDX_SERVICE)
-
-
 @pytest.mark.parametrize("key", [_SESSION_KEY, _TOKEN_KEY])
-def test_an_env_that_predates_a_hyperdx_key_gets_one_and_keeps_it(
+def test_an_env_file_that_predates_a_hyperdx_key_gets_one_and_keeps_it(
     dotenv: Path, key: str
 ) -> None:
+    hyperdx_env = dotenv.parent / "env" / _HYPERDX_ENV
+    hyperdx_env.parent.mkdir()
     older = "".join(
         f"{other}=already-minted-value\n"
-        for other in init.GENERATED_SECRETS
+        for other in init.GENERATED_SECRETS[_HYPERDX_ENV]
         if other != key
     )
-    dotenv.write_text(older, encoding="utf-8", newline="\n")
+    hyperdx_env.write_text(older, encoding="utf-8", newline="\n")
 
-    init._top_up_secrets(dotenv_path=dotenv)
-    topped_up = dotenv.read_text(encoding="utf-8")
-    init._top_up_secrets(dotenv_path=dotenv)
+    init._top_up_secrets(dotenv_path=hyperdx_env)
+    topped_up = hyperdx_env.read_text(encoding="utf-8")
+    init._top_up_secrets(dotenv_path=hyperdx_env)
 
     assert topped_up.startswith(older)
     minted = [
@@ -252,8 +245,10 @@ def test_an_env_that_predates_a_hyperdx_key_gets_one_and_keeps_it(
         for line in topped_up.splitlines()
         if line.startswith(f"{key}=")
     ]
-    assert [len(value) for value in minted] == [init.GENERATED_SECRETS[key]]
-    assert dotenv.read_text(encoding="utf-8") == topped_up
+    assert [len(value) for value in minted] == [
+        init.GENERATED_SECRETS[_HYPERDX_ENV][key]
+    ]
+    assert hyperdx_env.read_text(encoding="utf-8") == topped_up
 
 
 def test_nothing_stamps_an_identity_hyperdx_no_longer_reads() -> None:
