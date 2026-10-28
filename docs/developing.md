@@ -511,6 +511,8 @@ dial ClickHouse on 8123/9000 whatever its host publish is. The
 `CLICKHOUSE_EXTERNAL_*_PORT` pair is not a host port; it is only for an
 external `CLICKHOUSE_HOST`.
 
+`make dev` and `make ci` try to bind every host port the resolved stack publishes before starting, and refuse with the variable to set for each one already taken (scripts/port_check.py).
+
 Beside another stack on the same daemon, ports are not enough, because every
 `container_name` is daemon-wide. Set `COMPOSE_PROJECT_NAME`, the ports above,
 and `DFE_E2E_COMPOSE_FILES` naming an extra compose file (`:`-separated) the

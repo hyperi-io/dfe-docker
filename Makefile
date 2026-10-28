@@ -515,6 +515,7 @@ endif
 # published images.
 .PHONY: dev
 dev: env-files dev-posture down storage-dirs ## Build local DFE images from source and start the dev stack (LOCAL="svc ..." builds only those; AUTH=real for a minted login; LIVE_UI=1 runs the console as `next dev` from DFE_SRC_ROOT/dfe-ui), then print the access summary. Clones the public component repos
+	python3 scripts/port_check.py -- $(DEV_FLAGS) $(PROFILE_FLAGS)
 	docker compose $(DEV_PULL_FLAGS) $(PROFILE_FLAGS) pull
 	$(if $(strip $(DEV_BUILD)),python3 scripts/build_dev_images.py $(DEV_OVERLAY_ARG) $(DEV_BUILD))
 	docker compose $(DEV_FLAGS) $(PROFILE_FLAGS) up -d $(ACTIVE_SERVICES)
@@ -534,6 +535,7 @@ dev-build: ## Build local DFE images from source (no start; honours LOCAL). Clon
 .PHONY: ci
 ci: env-files down storage-dirs  ## Pull and start infra and registry DFE images. Prints no credentials -- run `make creds` for those
 	@rm -f $(LOCAL_OVERLAY)
+	python3 scripts/port_check.py -- -f docker-compose.yml $(STORAGE_FLAGS) $(UI_FLAGS) $(PROFILE_FLAGS)
 	docker compose -f docker-compose.yml $(STORAGE_FLAGS) $(UI_FLAGS) $(PROFILE_FLAGS) pull
 	docker compose -f docker-compose.yml $(STORAGE_FLAGS) $(UI_FLAGS) $(PROFILE_FLAGS) pull $(ACTIVE_SERVICES)
 	docker compose -f docker-compose.yml $(STORAGE_FLAGS) $(UI_FLAGS) $(PROFILE_FLAGS) up -d $(ACTIVE_SERVICES)
