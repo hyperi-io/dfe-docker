@@ -985,6 +985,8 @@ services:
       # default until the stack replaces it.
       # docs/operating.md#only-the-console-authenticates----everything-else-is-bounded-by-that
       DFE_ENV: ${DFE_ENV:-production}
+      # The dfe-ui Playwright suite's /api/e2e routes, mounted only when this is true. `make e2e-posture` sets it.
+      DFE_E2E_SERVER: ${DFE_E2E_SERVER:-false}
       # A Compose stack is one operator with no forge: a hunt or rule written at
       # production+team lands on a review branch nothing can merge, and the
       # engine then 404s on the object it just accepted. solo commits to main.
