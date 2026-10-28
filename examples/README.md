@@ -17,10 +17,14 @@ Each directory here gets one common source into a local DFE and shows you the ro
 | [syslog](syslog/README.md) | Lines from `logger` and netcat | Syslog over TCP and UDP |
 | [beats](beats/README.md) | An nginx access log | Filebeat, shipping Lumberjack to dfe-receiver |
 | [aws](aws/README.md) | CloudTrail and CloudWatch Logs | dfe-fetcher polling your AWS account |
+| [otlp](otlp/README.md) | A JSON app log | An OpenTelemetry Collector exporting OTLP/HTTP |
+| [fluent-bit](fluent-bit/README.md) | A JSON app log | Fluent Bit's `forward` output |
+| [entra](entra/README.md) | Entra ID directory audit logs | dfe-fetcher polling Microsoft Graph |
+| [`make demo`](../docs/evaluating.md#raw-syslog-parsed-per-vendor) | Cisco ASA and FortiGate firewall logs | Raw syslog, parsed per vendor |
 
 ## Before any of them
 
-The Beats and AWS examples parse with dfe-transform-elastic, so run the `single-kafka` profile. Syslog works on any profile. [evaluating.md](../docs/evaluating.md) covers what each of these does, and `make up` ends with the self test, where `PASS` means data moves.
+The Beats and AWS examples and `make demo` parse with dfe-transform-elastic, so run the `single-kafka` profile. The rest work on any profile. [evaluating.md](../docs/evaluating.md) covers what each of these does, and `make up` ends with the self test, where `PASS` means data moves.
 
 ```bash
 make init
