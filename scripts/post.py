@@ -1178,7 +1178,7 @@ def _verify_loader_subscription() -> Claim:
             "subscription, so events reach the broker and stop there, or it never "
             "committed what it read. Read its resolved set with `docker compose logs "
             "dfe-loader` (grep 'Resolved Kafka topics') and see the `main_load` entry "
-            "in docs/troubleshooting.md"
+            "in docs/known-issues.md"
         )
         return Claim(asserted=True, failed=1)
     _print(msg=f"PASS  {LOADER_SERVICE} is fetching {', '.join(sorted(topics))}")

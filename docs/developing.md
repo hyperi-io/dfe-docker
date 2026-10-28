@@ -362,7 +362,7 @@ Two things about the runner worth knowing before you debug it:
   --wait` counts a container that EXITS as a failure even on exit 0, and the
   topic-init services are one-shots that must exit. Waiting on the profile sweeps
   them in and fails regardless of broker health.
-- **It deletes the `_load` sibling of every expected `_land` topic before each run.** Broker volumes outlive containers, so a `main_load` left by any transform run suppresses `main_land` for every non-transform loader thereafter. See [troubleshooting.md](troubleshooting.md#a-_load-topic-changes-what-the-loader-reads). Deleting it per run makes a run depend on the test definition, not on broker history.
+- **It deletes the `_load` sibling of every expected `_land` topic before each run.** Broker volumes outlive containers, so a `main_load` left by any transform run suppresses `main_land` for every non-transform loader thereafter. See [known-issues.md](known-issues.md#a-_load-topic-changes-what-the-loader-reads). Deleting it per run makes a run depend on the test definition, not on broker history.
 
 ### The dfe-ui Playwright suite -- one target on, one off
 
