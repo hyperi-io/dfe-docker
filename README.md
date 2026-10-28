@@ -19,7 +19,7 @@ can apply - read both if so.
 | Seeing whether DFE does what you need. A first look, a demo, a proof of concept. | **Evaluating** | [docs/evaluating.md](docs/evaluating.md) |
 | Running this where other people depend on it - one box, an edge site, a partner deployment. Small is still production. | **Operating** | [docs/operating.md](docs/operating.md) |
 | Working on dfe-receiver, dfe-loader, dfe-engine or another component, and using this stack as your test rig. | **Developing** | [docs/developing.md](docs/developing.md) |
-| Working out why a stack is misbehaving - yours or someone else's. | **Troubleshooting** | [docs/troubleshooting.md](docs/troubleshooting.md) |
+| Working out why a stack is misbehaving - yours or someone else's. | **Troubleshooting** | [docs/troubleshooting.md](docs/troubleshooting.md), then [known issues](docs/known-issues.md) and [common failures](docs/common-failures.md) |
 | Standing a deployment up, or moving one to a newer certified stack. | **Deploying** | [docs/deploying.md](docs/deploying.md) |
 | Asking what the stack reports about itself - health endpoints, self-telemetry, what a passing self test proves. | **Observability** | [docs/observability.md](docs/observability.md) |
 | Adding or changing a profile, and wanting to know which ones are yours to edit. | **Profiles** | [docs/profiles.md](docs/profiles.md) |

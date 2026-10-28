@@ -493,5 +493,7 @@ Every DFE app the profile runs pushes metrics and traces over OTLP, dfe-ui aside
 - [deploying.md](deploying.md) -- the dial, pinning, upgrading a running stack
 - [observability.md](observability.md) -- health surface, self-telemetry, the self test
 - [configuration.md](configuration.md) -- every variable, port and image
-- [troubleshooting.md](troubleshooting.md) -- reading stack state, known issues, common failures
+- [troubleshooting.md](troubleshooting.md) -- reading stack state
+- [known-issues.md](known-issues.md) -- open problems whose symptoms mislead
+- [common-failures.md](common-failures.md) -- the failures seen most often, by symptom
 - [architecture.md](architecture.md) -- components, transports, and how data moves

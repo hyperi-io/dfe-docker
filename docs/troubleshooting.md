@@ -1,7 +1,7 @@
 <!--
 Project:   dfe-docker
 File:      docs/troubleshooting.md
-Purpose:   Reading stack state, known issues, and common failure diagnosis
+Purpose:   Reading stack state, and the events-accepted and DLQ diagnoses
 Language:  Markdown
 
 License:   BUSL-1.1
@@ -13,15 +13,15 @@ Copyright: (c) 2026 HYPERI PTY LIMITED
 This applies to you if a stack is misbehaving and you need to find out why --
 yours or someone else's.
 
-Start with the state of the stack, then the known issues below, then the failure
-you are actually chasing. Several of the known issues produce symptoms that look
-like something else entirely, so read them before you go deep.
+Start with the state of the stack, then the [known issues](known-issues.md), then
+the [common failures](common-failures.md) for the one you are actually chasing. Several of the known issues produce symptoms
+that look like something else entirely, so read them before you go deep.
 
 ## Reading the stack's state
 
 `docker compose ps` (or `make ps`) is the first call. It shows which containers
 exist and their health, but only for the profile resolved from `.env` -- see the
-first known issue below, because a stray container from a previous profile will
+first [known issue](known-issues.md), because a stray container from a previous profile will
 not show up there while still holding its ports. `make ps` also warns about a
 per-source container whose source was deleted, which `make apply` removes.
 
@@ -60,88 +60,6 @@ ClickHouse, the broker, the proxies and HyperDX keep `json-file`, so
 `docker compose logs` still works on those. To put every service back on it, set
 `DFE_CONTAINER_LOGS_ENABLED=false` and restart. Every `docker compose logs
 dfe-*` below assumes you have.
-
-## Known issues
-
-These are real and open. Each one has a symptom that misleads.
-
-### Stray containers from a previous profile (fixed, but worth recognising)
-
-`make down` now runs `docker compose -f docker-compose.yml --profile "*" down
---remove-orphans`, so it tears down every profile and keeps volumes. Switching
-profiles no longer strands anything.
-
-On an older checkout it is still profile-scoped: switch from a profile with a receiver to one without and the old receiver keeps running, keeps answering on `:8080` and keeps its ports. The misleading part is that the stray is wired to a pipeline that is no longer running, so anything probing ports rather than asking the profile finds it and reports a data-path failure that is really a stale container. That is why `scripts/post.py` resolves its ingest edge from `.tmp/profile.mk` instead of probing.
-
-If you suspect strays, `docker ps` and compare uptimes -- a container minutes
-older than the rest is the giveaway.
-
-### `.env` shadows command-line environment variables through make
-
-The Makefile does `-include .env`. GNU make gives makefile assignments precedence
-over environment variables, and re-exports them to recipes. So for any key with a
-live (uncommented) assignment in `.env`, `VAR=x make ...` silently no-ops -- the
-child process sees the `.env` value.
-
-This was reproduced with a throwaway Makefile carrying the same `-include .env`,
-not against a target in this repo -- there is no `make show` here.
-
-This bites hardest after `make stack`, which writes live `*_VERSION` pins into
-`.env`, and after `make init`, which writes the generated secrets. Three ways
-around it:
-
-```bash
-make dev KAFKA_BACKEND=apache     # make command-line variable -- wins, exported
-KAFKA_BACKEND=apache make -e dev  # -e flips the precedence
-```
-
-...or edit `.env`, which is the durable answer.
-
-### A `_load` topic changes what the loader reads
-
-```mermaid
-flowchart LR
-    recv["dfe-receiver"] --> land["main_land"]
-    land --> vrl["dfe-transform-vrl"]
-    vrl --> load["main_load"]
-    land -.->|until main_load exists| ldr["dfe-loader<br/>loader/kafka.yaml"]
-    load -->|once it exists| ldr
-
-    classDef made fill:#009E73,color:#ffffff,stroke:#000000
-    classDef notmade fill:#D55E00,color:#ffffff,stroke:#000000
-    class land made
-    class load notmade
-```
-
-`config/loader/kafka.yaml` subscribes by `topic_regex: .*_(land|load)`. scalo drops `<base>_land` from the subscription whenever `<base>_load` exists. `dfe-engine` creates the bootstrap topic set `dfe-schemas` declares, which is `main_land` and the five DLQ topics, so `main_load` exists only once a transform first produces to it.
-
-Once a transform runs, the loader therefore reads `main_land` until that first write, then switches to `main_load`. The first records land twice: once raw, once transformed. Create the transform's `_load` topic before sending anything to avoid it. The e2e suite does, from each test's `expected_topics`.
-
-**Do not close this gap by adding `main_load` to the bootstrap topic set.**
-The loader auto-discovers topics and scalo suppresses `<base>_land` whenever
-`<base>_load` exists, on the reasoning that a `_load` topic means a transform has
-already produced the loadable form. Creating `main_load` on every Kafka profile
-therefore drops `main_land` from the subscription of every loader not running a
-transform, which is most of them. The symptom is maximally misleading: ingest
-returns 200, the receiver produces to `main_land`, the topic shows a rising
-high watermark, and no rows reach ClickHouse.
-
-Reverting the change does not restore a broker that already has the topic.
-`kafka-redpanda-data` and `kafka-apache-data` outlive the containers, so the topic
-persists and keeps suppressing `main_land` on every later run. Delete it:
-
-```bash
-docker compose exec kafka-redpanda rpk topic delete main_load -X brokers=kafka:9092
-```
-
-The e2e harness now does this for itself: `clean_topics` deletes the `_load`
-sibling of every expected `_land` topic, so a run depends on the test definition
-rather than on the broker's history.
-
-When the injected events do not land, `make post` asks the loader which topics it
-is fetching, so an empty subscription is reported as one. It cannot ask first: the
-loader publishes a topic's lag only once it has committed an offset there, which a
-stack started from empty volumes has not.
 
 ## Events are accepted but nothing lands
 
@@ -242,133 +160,10 @@ docker compose exec dfe-loader ls -la /var/spool/dfe/dlq/loader
 
 A row ClickHouse refuses with no working DLQ to take it is lost. The loader logs `No working DLQ` and counts it in `dfe_loader_rows_lost_total`, so any count there is data loss.
 
-## Common failures
-
-### A service is unhealthy but the data is landing
-
-Symptom: `docker compose ps` shows a DFE service unhealthy or perpetually
-starting, `docker inspect` reports `Health check exceeded timeout`, and yet
-events are flowing through that very service. Curl its port from inside the
-container and the connection is *accepted* instantly and then never answered --
-not refused, not reset, just silent. `/livez` and `/metrics` behave the same
-way, which rules out the readiness logic.
-
-That is Tokio worker-thread starvation, and the cause is the CPU ceiling.
-`available_parallelism()` reads the cgroup quota and floors it, so a ceiling
-under 2.0 gives the service one worker thread; scalo's Kafka `recv` polls
-synchronously and owns it; the HTTP server task never runs.
-
-```bash
-docker inspect --format '{{.HostConfig.NanoCpus}}' dfe-archiver   # 1500000000 = 1.5
-```
-
-Put `DFE_SERVICE_CPUS` back to 2.0 or above and recreate the service. To confirm
-the diagnosis without touching the ceiling, set `TOKIO_WORKER_THREADS=4` in
-`env/<service>.env` and recreate -- if it answers, it was starvation and not a
-shortage of CPU.
-
-`make check-compose` blocks a sub-2.0 ceiling on any service that gates on
-`/readyz`, so this should only reach you via a hand-edited override.
-
-### The self test fails on the console login
-
-`make post` logs in as `admin` with `DFE_AUTH_LOCAL_ADMIN_PASSWORD` from `.env`,
-the same value `make creds` prints. A 401 here means the running engine holds a
-different password from the one in `.env` -- a rotation applied to the store
-alone, say. Pass the current one on the command line, since the shell environment
-beats `.env`:
-
-```bash
-DFE_AUTH_LOCAL_ADMIN_PASSWORD='the rotated password' make post
-```
-
-### The self test fails on self-telemetry
-
-`make post` makes two claims on a profile running the collector, and the second
-is that the `dfe.otel_*` tables has rows newer than five minutes. Two distinct
-failures:
-
-**"no table readable"** -- the collector never wrote its schema, so it cannot
-reach ClickHouse. Its exporter creates the database and tables on startup, so an
-absent schema is a connection or credential fault, not a quiet one:
-
-```bash
-docker compose logs otel-collector
-docker compose exec clickhouse clickhouse-client --query "SHOW TABLES FROM default"
-```
-
-**"no rows newer than"** -- the tables exist and nothing is arriving, so nothing
-is exporting. Check that the endpoint actually reached the containers, and that
-the engine is on the OTel backend:
-
-```bash
-docker compose exec dfe-engine printenv OTEL_EXPORTER_OTLP_ENDPOINT
-docker compose logs dfe-engine | grep "Metrics initialized"
-```
-
-`backend=prometheus` on that last line means it is not pushing. The profile sets
-`DFE_ENGINE_METRICS_BACKEND=opentelemetry`; a value in `.env` overrides it.
-
-Every DFE app the profile runs should appear, dfe-ui aside. A service that is
-running but missing from the results IS a fault. The Rust services push whenever
-their
-`OTEL_EXPORTER_OTLP_ENDPOINT` is set, so check that env on the absent container
-the same way. Which components push, and since when, is in
-[observability.md](observability.md).
-
-### `port is already allocated`
-
-Usually something holding the broker's host port `19092`. The broker's in-network
-listener `9092` is not published, so a Kafka on the host's `9092` is not the cause.
-The stack and the e2e harness reach the broker over the Docker network alias
-`kafka:9092`, so any free host port works:
-
-```bash
-make test-e2e KAFKA_PLAINTEXT_HOST_PORT=29192
-```
-
-Note the argument position -- if that key is live in your `.env`, the
-`VAR=x make ...` form will not take. See the shadowing issue above.
-
-The gRPC-only tests need no broker at all:
-
-```bash
-make test-e2e E2E_TESTS="simple-receiver-to-loader-grpc rules-and-hunts"
-```
-
-Also check for a stray container from a previous profile before assuming the
-port belongs to something else.
-
-### Compose refuses to start: `is missing a value`
-
-The stack is unpinned. Image versions come from the DFE stack SSoT, not from
-defaults -- there is no silent `latest` fallback:
-
-```bash
-make stack VERSION=X.Y.Z
-```
-
-`make check-hardfail` asserts this property holds, by running compose with
-nothing set and requiring that it fails for the right reason. A green run proves
-the stack refuses to resolve with nothing set; it does not prove every single
-image is pinned, because compose aborts on the first missing variable.
-
-### `PyYAML is not installed in this interpreter`
-
-The e2e harness declares PyYAML and Playwright inline (PEP 723), locked in `scripts/test_e2e.py.lock`, and `make test-e2e` runs it through uv, which installs them. A bare `python3 scripts/test_e2e.py` skips that step:
-
-```bash
-make test-e2e
-uv run --locked --script scripts/test_e2e.py   # the same, without make
-```
-
-`The lockfile at uv.lock needs to be updated` from either means a pin in the script moved without its lock: run `uv lock --script scripts/test_e2e.py` and commit both.
-
-The power-on self test (`scripts/post.py`) has no such dependency -- it is
-stdlib-only and works on a bare machine.
-
 ## Related
 
+- [known-issues.md](known-issues.md) -- open problems whose symptoms mislead
+- [common-failures.md](common-failures.md) -- the failures seen most often, by symptom
 - [observability.md](observability.md) -- the health surface and what each endpoint proves
 - [operating.md](operating.md) -- auth position, exposure, limits, secrets
 - [configuration.md](configuration.md) -- every variable, port and image
