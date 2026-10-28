@@ -59,6 +59,10 @@ from _common import (  # noqa: E402
 
 COMPOSE_INSTANCES_FILE = REPO_ROOT / ".tmp" / "docker-compose.instances.yml"
 
+CONTAINER_LOGS_FILE = REPO_ROOT / "docker-compose.container-logs.yml"
+"""The overlay whose x-container-logs block every instance copies, since `extends` never reads an overlay."""
+CONTAINER_LOGS_ANCHOR = "x-container-logs:"
+
 INDEX_SUFFIX = ".instances"
 """What dfe-engine names its index (appmgmt/appconfig.py INSTANCE_INDEX_SUFFIX)."""
 
@@ -136,8 +140,25 @@ def service_name(service: str, instance: str) -> str:
     return f"{service}-{instance}"
 
 
+def container_logs_block(*, path: Path | None = None) -> list[str]:
+    """The overlay's x-container-logs anchor, copied line for line so an instance logs exactly as the committed services do."""
+    lines = (path or CONTAINER_LOGS_FILE).read_text(encoding="utf-8").splitlines()
+    start = next(
+        i for i, line in enumerate(lines) if line.startswith(CONTAINER_LOGS_ANCHOR)
+    )
+    end = start + 1
+    while end < len(lines) and (not lines[end].strip() or lines[end].startswith(" ")):
+        end += 1
+    return [*lines[start:end]]
+
+
 def _service_block(
-    service: str, instance: str, compose_file: str, *, image: str = ""
+    service: str,
+    instance: str,
+    compose_file: str,
+    *,
+    container_logs: bool = False,
+    image: str = "",
 ) -> list[str]:
     """One generated service: what differs from the app's committed definition.
 
@@ -175,6 +196,8 @@ def _service_block(
     if service in STATE_DIRS:
         variable, root = STATE_DIRS[service]
         lines.append(f"      {variable}: {root}/{name}")
+    if container_logs:
+        lines.append("    logging: *container-logs")
     lines += ["    ports: !reset []", "    depends_on:"]
     for dependency, condition in INSTANCE_DEPENDS_ON:
         lines += [
@@ -190,14 +213,25 @@ def fragment(
     instances: dict[str, list[str]],
     *,
     compose_file: str = "docker-compose.yml",
+    container_logs: bool = False,
     images: Mapping[str, str] | None = None,
 ) -> str:
-    """The whole compose fragment for the instances given, each app in ``images`` on the image it maps to."""
-    lines = [HEADER.rstrip("\n"), "services:"]
+    """The whole compose fragment for the instances given, each app in ``images`` on the image it maps to.
+
+    ``container_logs`` puts every instance on the log driver the container-logs overlay gives the committed services.
+    """
+    lines = [HEADER.rstrip("\n")]
+    if container_logs:
+        lines += [*container_logs_block(), ""]
+    lines.append("services:")
     for service in sorted(instances):
         for instance in instances[service]:
             lines += _service_block(
-                service, instance, compose_file, image=(images or {}).get(service, "")
+                service,
+                instance,
+                compose_file,
+                container_logs=container_logs,
+                image=(images or {}).get(service, ""),
             )
     return "\n".join(lines).rstrip("\n") + "\n"
 
@@ -234,6 +268,7 @@ def unknown_apps(
 def write(
     instances: dict[str, list[str]],
     *,
+    container_logs: bool = False,
     images: Mapping[str, str] | None = None,
     path: Path | None = None,
 ) -> bool:
@@ -247,7 +282,12 @@ def write(
     if not instances:
         target.unlink(missing_ok=True)
         return False
-    content = fragment(instances, compose_file=COMPOSE_FILE.name, images=images)
+    content = fragment(
+        instances,
+        compose_file=COMPOSE_FILE.name,
+        container_logs=container_logs,
+        images=images,
+    )
     if not target.is_file() or target.read_text(encoding="utf-8") != content:
         target.parent.mkdir(exist_ok=True, parents=True)
         target.write_text(content, encoding="utf-8", newline="\n")

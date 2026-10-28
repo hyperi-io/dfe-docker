@@ -345,7 +345,7 @@ Every profile declares `otel: true`, which starts a collector that takes the sta
 | `DFE_OTEL_COLLECTOR_LOG_LEVEL`                   | Collector's own log level                                                            | `warn`                                                              |
 | `DFE_OTEL_FLUENT_PORT`                           | Collector `fluent_forward` host port, where the daemon sends container stdout        | `24224`                                                             |
 | `DFE_CONTAINER_LOGS_ENABLED`                     | Ship DFE container stdout; `false` puts every service back on `json-file`            | `true`                                                              |
-| `DFE_CONTAINER_LOG_ADDRESS`                      | Where the DOCKER DAEMON sends it                                                     | `tcp://127.0.0.1:24224`                                             |
+| `DFE_CONTAINER_LOG_ADDRESS`                      | Where the DOCKER DAEMON sends it                                                     | `tcp://<DFE_BIND_HOST>:<DFE_OTEL_FLUENT_PORT>`                      |
 | `DFE_ENGINE_METRICS_BACKEND`                     | dfe-engine metrics backend; `opentelemetry` is dual (push + `/metrics`)              | `prometheus` (the profile sets `opentelemetry`)                     |
 
 ## HyperDX

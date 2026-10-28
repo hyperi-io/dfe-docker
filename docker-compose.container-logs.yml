@@ -17,12 +17,12 @@
 # privilege, and it tags each stream with the container name, so the collector
 # attributes ServiceName from a DECLARED name rather than a guessed one.
 #
-# THE TRADE: `docker compose logs` cannot read back a fluentd-driven stream, so
-# these services' logs are in `dfe.otel_logs` and in HyperDX rather than in the
-# CLI. Only DFE's own services move; ClickHouse, the broker, the proxies and
-# HyperDX keep json-file, because those are what an operator reads when the DFE
-# side is the thing that is broken. DFE_CONTAINER_LOGS_ENABLED=false puts every
-# service back on json-file.
+# Docker's dual logging keeps a local copy of each line, so `docker compose logs`
+# still reads these services back, as well as `dfe.otel_logs` and HyperDX. Only
+# DFE's own services move; ClickHouse, the broker, the proxies and HyperDX keep
+# json-file. DFE_CONTAINER_LOGS_ENABLED=false puts every service back on json-file.
+# The per-source instances scripts/instances.py generates carry the same options,
+# copied from the x-container-logs block below.
 #
 # fluentd-async is what keeps the collector off the startup path: without it
 # Docker REFUSES to create a container whose logging endpoint is unreachable, so
@@ -39,10 +39,10 @@
 x-container-logs: &container-logs
   driver: fluentd
   options:
-    # The port the collector actually publishes, not a fixed one: the driver
-    # dials a HOST port, so a second stack that moved DFE_OTEL_FLUENT_PORT would
-    # otherwise ship its containers' logs into the first stack's collector.
-    fluentd-address: ${DFE_CONTAINER_LOG_ADDRESS:-tcp://127.0.0.1:${DFE_OTEL_FLUENT_PORT:-24224}}
+    # The address the collector actually publishes on, not a fixed one: the driver
+    # dials a HOST address, so a second stack that moved DFE_OTEL_FLUENT_PORT or
+    # DFE_BIND_HOST would otherwise ship its containers' logs elsewhere.
+    fluentd-address: ${DFE_CONTAINER_LOG_ADDRESS:-tcp://${DFE_BIND_HOST:-127.0.0.1}:${DFE_OTEL_FLUENT_PORT:-24224}}
     fluentd-async: "true"
     # A line counts as delivered only once the collector acks it (see above).
     fluentd-request-ack: "true"

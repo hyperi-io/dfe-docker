@@ -167,10 +167,10 @@ That does not port: the files live under the daemon's data-root, which is not
 Desktop, and listing that directory needs root. The log driver needs no host path
 and no privilege.
 
-**`docker compose logs` cannot read back a fluentd-driven stream.** Only DFE's
-own services move onto the driver -- ClickHouse, the broker, the proxies and
-HyperDX keep `json-file`, because those are what you read when the DFE side is
-the thing that is broken. Put every service back with:
+**`docker compose logs` still reads these services.** Docker's dual logging keeps
+a local copy of each line, so the driver adds the collector without taking the CLI
+away. Only DFE's own services move onto the driver -- ClickHouse, the broker, the
+proxies and HyperDX keep `json-file`. Put every service back with:
 
 ```
 DFE_CONTAINER_LOGS_ENABLED=false
@@ -179,7 +179,7 @@ DFE_CONTAINER_LOGS_ENABLED=false
 | Variable | Default | Effect |
 |---|---|---|
 | `DFE_CONTAINER_LOGS_ENABLED` | `true` | ships DFE container stdout when a collector runs |
-| `DFE_CONTAINER_LOG_ADDRESS` | `tcp://127.0.0.1:24224` | where the DAEMON sends it |
+| `DFE_CONTAINER_LOG_ADDRESS` | `tcp://<DFE_BIND_HOST>:<DFE_OTEL_FLUENT_PORT>` | where the DAEMON sends it |
 | `DFE_OTEL_FLUENT_PORT` | `24224` | the collector's receiver, on `DFE_BIND_HOST` |
 
 The driver runs with `fluentd-async`, so a container starts whether or not the
