@@ -53,7 +53,7 @@ endif
 # any more (both sweep every profile), and requiring a resolvable profile to STOP
 # a stack is the same lockout the compose secret comments argue against -- set
 # DFE_PROFILE to something that does not exist and you could not tear down.
-BOOTSTRAP_GOALS := init env-files creds certs dev-posture help stack dial modes down clean demo-stop limits check check-compose check-hardfail check-dockerfile check-docs check-locks check-proxy check-python check-tests
+BOOTSTRAP_GOALS := init env-files creds certs dev-posture e2e-posture e2e-posture-off e2e-posture-check help stack dial modes down clean demo-stop limits check check-compose check-hardfail check-dockerfile check-docs check-locks check-proxy check-python check-tests
 
 # Resolve the active profile only when a goal actually needs the compose stack
 ifneq (,$(filter-out $(BOOTSTRAP_GOALS),$(or $(MAKECMDGOALS),help)))
@@ -453,6 +453,18 @@ endif
 .PHONY: dev-posture
 dev-posture: .env ## Put .env into the dev posture (DFE_ENV=dev, known admin password until the stack replaces it); AUTH=real mints one and writes a non-dev posture instead
 	@python3 scripts/dev_posture.py $(DEV_POSTURE_ARG)
+
+.PHONY: e2e-posture
+e2e-posture: .env ## Put .env into the posture the dfe-ui Playwright suite needs (DFE_ENV=test, the engine's e2e routes on), keeping the .env it replaces for e2e-posture-off
+	@python3 scripts/e2e_posture.py on
+
+.PHONY: e2e-posture-off
+e2e-posture-off: ## Put back the .env from before e2e-posture
+	@python3 scripts/e2e_posture.py off
+
+.PHONY: e2e-posture-check
+e2e-posture-check: ## Exit 1, naming what is missing, unless .env is in the e2e posture. The Playwright run calls it first
+	@python3 scripts/e2e_posture.py check
 
 # `make stack VERSION=X.Y.Z` pins the certified set. `make dial` writes the dial's
 # version.pin to DFE_STACK_VERSION in .env, so `make dial && make stack` pins

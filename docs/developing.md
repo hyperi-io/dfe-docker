@@ -364,6 +364,18 @@ Two things about the runner worth knowing before you debug it:
   them in and fails regardless of broker health.
 - **It deletes the `_load` sibling of every expected `_land` topic before each run.** Broker volumes outlive containers, so a `main_load` left by any transform run suppresses `main_land` for every non-transform loader thereafter. See [troubleshooting.md](troubleshooting.md#a-_load-topic-changes-what-the-loader-reads). Deleting it per run makes a run depend on the test definition, not on broker history.
 
+### The dfe-ui Playwright suite -- one target on, one off
+
+The suite seeds its fixtures through the engine's `/api/e2e` routes, which exist only with `DFE_E2E_SERVER=true`, and its seeders refuse anything but `DFE_ENV=test`.
+
+```bash
+make e2e-posture         # DFE_ENV=test, DFE_E2E_SERVER=true, the shipped admin password
+make e2e-posture-check   # exit 1 naming what is missing; the suite runs this first
+make e2e-posture-off     # put back the .env from before
+```
+
+`e2e-posture` copies the `.env` it replaces to `.env.pre-e2e` (0600) the first time, and `e2e-posture-off` restores it. It refuses (exit 2) on a `.env` that names a deployment, since it writes the shipped admin password over the real one. The engine reads `.env` when it starts, so recreate the stack after either switch.
+
 ### Rules and hunts -- exactly the matching events
 
 ```bash
