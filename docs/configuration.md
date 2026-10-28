@@ -240,7 +240,6 @@ The AWS **region** is not an environment variable: it is a literal in each sourc
 | `DFE_KAFKA_BOOTSTRAP_SERVERS`                    | The broker dfe-engine creates topics on and dfe-archiver, dfe-fetcher, dfe-loader, dfe-receiver, dfe-transform-elastic, dfe-transform-vector and dfe-transform-vrl read or write. Set it for an external broker | `kafka:9092`, the in-stack broker                                   |
 | `KAFKA_BACKEND`                                  | Kafka backend for `kafka` transport profiles                                         | `redpanda`                                                          |
 | `KAFKA_PLAINTEXT_HOST_PORT`                      | Kafka plaintext host port (host-facing)                                              | `19092`                                                             |
-| `KAFKA_PLAINTEXT_PORT`                           | Host publish of the broker's in-network listener; services in the stack dial `kafka:9092` whatever it says | `9092`                                                              |
 
 ### Apache Kafka
 
@@ -390,7 +389,6 @@ The same toggle points the engine at HyperDX: with it on, the engine receives `D
 | 9000  | ClickHouse           | Native protocol    |
 | 9090  | dfe-receiver         | Prometheus metrics |
 | 9091  | dfe-loader           | Prometheus metrics |
-| 9092  | Kafka (any backend)  | Plaintext          |
 | 9093  | dfe-archiver         | Prometheus metrics |
 | 13133 | otel-collector       | health_check       |
 | 19092 | Kafka (any backend)  | Plaintext host     |

@@ -227,7 +227,6 @@ services:
       - --kafka-addr=internal://0.0.0.0:9092,external://0.0.0.0:19092
       - --advertise-kafka-addr=internal://kafka:9092,external://${KAFKA_ADVERTISED_HOST:-localhost}:${KAFKA_PLAINTEXT_HOST_PORT:-19092}
     ports:
-      - ${DFE_BIND_HOST:-127.0.0.1}:${KAFKA_PLAINTEXT_PORT:-9092}:9092
       - ${DFE_BIND_HOST:-127.0.0.1}:${KAFKA_PLAINTEXT_HOST_PORT:-19092}:19092
     volumes:
       - kafka-redpanda-data:/var/lib/redpanda/data
@@ -275,7 +274,6 @@ services:
       KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: ${KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR:-1}
       KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: ${KAFKA_TRANSACTION_STATE_LOG_MIN_ISR:-1}
     ports:
-      - ${DFE_BIND_HOST:-127.0.0.1}:${KAFKA_PLAINTEXT_PORT:-9092}:9092
       - ${DFE_BIND_HOST:-127.0.0.1}:${KAFKA_PLAINTEXT_HOST_PORT:-19092}:19092
     volumes:
       - kafka-apache-data:/var/lib/kafka/data
