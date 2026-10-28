@@ -250,18 +250,16 @@ The DFE stack ships two default "it is working" e2e tests: (1) the core data pat
 
 ### Shared dev hosts (port collision)
 
-Kafka-transport tests start a broker that publishes to host ports `9092` and
-`19092`. On a shared host already running a Kafka/Redpanda on `9092` (e.g. an
-always-on dev daemon) that clashes. Two clean ways to run without the clash:
-
-- Remap the host ports. The harness only reaches the broker over the docker
-  network alias `kafka:9092`, so any free host port works:
+The broker publishes one host port, `19092`, for tools outside the containers. The in-network
+listener `kafka:9092` is not published, so an always-on Kafka or Redpanda on `9092` does not
+clash. If something already holds `19092`, remap it. The harness only reaches the broker over
+the docker network alias `kafka:9092`, so any free host port works:
 
   ```
-  make test-e2e KAFKA_PLAINTEXT_PORT=29092 KAFKA_PLAINTEXT_HOST_PORT=29192
+  make test-e2e KAFKA_PLAINTEXT_HOST_PORT=29192
   ```
 
-- Or run the gRPC-only tests, which need no broker at all:
+The gRPC-only tests need no broker at all:
 
   ```
   make test-e2e E2E_TESTS="simple-receiver-to-loader-grpc rules-and-hunts"
@@ -338,7 +336,7 @@ Two ways a green run says less than it looks:
 | Move the loader's `grpc.listen` off 6000, or confuse it with the receiver's 6000 | Keep the loader on container port 6000, published on host port 50051 | dfe-engine compiles every sender's loader endpoint as `dfe-loader:6000`, so a loader listening anywhere else drops every record behind an HTTP 202 with nothing logged. The receiver's 6000 is the external Vector protocol, off unless `DFE_RECEIVER_GRPC__ENABLED=true` and unpublished until its line in `docker-compose.yml` is uncommented. The loader's is the internal `DfeTransport/Push` and binds `DFE_BIND_HOST` (`127.0.0.1`). `scripts/tests/test_loader_grpc_port.py` fails the build on a mismatch |
 | Publish the UIs beyond loopback and leave `DFE_EXTERNAL_ORIGIN` alone | Set it to the address browsers actually use | `DFE_BIND_SCOPE=all` with a loopback origin builds HyperDX's frame-ancestors policy and every next-auth redirect from the wrong host, so the console comes up with its observability views blocked and sends logins to the wrong machine. The Makefile now refuses the combination (#108) |
 | Raise `REDPANDA_MEMORY` on its own | Raise `DFE_BROKER_MEMORY` above it | The broker gets at most the container limit less the host's `vm.min_free_kbytes`: `redpanda/start.sh` lowers `--memory` to that and logs a WARN naming the `DFE_BROKER_MEMORY` that restores it (`.env.example:229`, `.env.example:519`) |
-| Run Kafka-transport tests on a host that already has a broker on 9092 | `make test-e2e KAFKA_PLAINTEXT_PORT=29092 KAFKA_PLAINTEXT_HOST_PORT=29192`, or run the gRPC-only tests | The broker publishes 9092 and 19092 and collides with an always-on dev daemon (#36) |
+| Publish the broker's in-network listener `9092` to the host | Use the host listener on `19092` (`KAFKA_PLAINTEXT_HOST_PORT`) | `9092` advertises `kafka:9092`, which a host client can't resolve, and it collides with an always-on dev Kafka (#36) |
 | Set `DFE_UPDATE_WIPE_STATE=1` on a box that also sets `DFE_DATA_ROOT` | Leave `DFE_DATA_ROOT` unset if you rely on the wipe | `make clean` does not chain the storage overlay, so it removes the volume objects while the bind directories keep their contents and the wipe silently becomes a no-op (`ops/daemon-update/README.md`) |
 | Take the local `CLAUDE.md` as current | Read the file you are asking about | It is gitignored and unmaintained. It still names `dfe-operator` as the Kubernetes repo, claims `hyperi-hyperdx` floats on `:latest`, counts seven docs where there are nine, and points at a `scripts/deprecated/` directory that has been removed |
 

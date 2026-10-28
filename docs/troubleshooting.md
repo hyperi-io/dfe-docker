@@ -318,15 +318,16 @@ the same way. Which components push, and since when, is in
 
 ### `port is already allocated`
 
-Usually an always-on dev daemon holding `9092`. The stack and the e2e harness
-reach the broker over the Docker network alias `kafka:9092`, so any free host
-port works:
+Usually something holding the broker's host port `19092`. The broker's in-network
+listener `9092` is not published, so a Kafka on the host's `9092` is not the cause.
+The stack and the e2e harness reach the broker over the Docker network alias
+`kafka:9092`, so any free host port works:
 
 ```bash
-make test-e2e KAFKA_PLAINTEXT_PORT=29092 KAFKA_PLAINTEXT_HOST_PORT=29192
+make test-e2e KAFKA_PLAINTEXT_HOST_PORT=29192
 ```
 
-Note the argument position -- if those keys are live in your `.env`, the
+Note the argument position -- if that key is live in your `.env`, the
 `VAR=x make ...` form will not take. See the shadowing issue above.
 
 The gRPC-only tests need no broker at all:

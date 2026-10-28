@@ -476,11 +476,12 @@ network the first time. The rest need none.
 
 ## Port collisions on a shared dev host
 
-The broker publishes to host ports `9092` and `19092`. A shared dev box very often
-already runs a Kafka or Redpanda on `9092`.
+The broker publishes one host port, `19092`. A shared dev box very often already
+runs a Kafka or Redpanda on `9092`, and that does not clash, because the in-network
+listener `kafka:9092` is not published. If something holds `19092`, move it:
 
 ```bash
-make test-e2e KAFKA_PLAINTEXT_PORT=29092 KAFKA_PLAINTEXT_HOST_PORT=29192
+make test-e2e KAFKA_PLAINTEXT_HOST_PORT=29192
 ```
 
 Nothing inside the stack cares: every service and config addresses the broker over

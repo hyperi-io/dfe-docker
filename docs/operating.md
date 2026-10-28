@@ -125,7 +125,7 @@ Per-port, as published in `docker-compose.yml`:
 | 8003 | dfe-engine | ui | Config and schema API (container `:8000`) |
 | 8081 | kafka-ui | ui | Kafbat UI (container `:8080`) |
 | 8123 / 9000 | clickhouse | operator | HTTP and native protocol |
-| 9092 / 19092 | kafka (either backend) | operator | Plaintext listeners |
+| 19092 | kafka (either backend) | operator | Plaintext host listener |
 | 9090 | dfe-receiver | operator | Metrics and health |
 | 9091 | dfe-loader | operator | Metrics and health |
 | 9093 | dfe-archiver | operator | Metrics and health |
