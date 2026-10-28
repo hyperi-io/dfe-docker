@@ -766,6 +766,8 @@ services:
       DFE_RECEIVER_KAFKA_BROKERS: *kafka-brokers
       DFE_RECEIVER_VERSION_CHECK__ENABLED: ${DFE_VERSION_CHECK_ENABLED:-true}
       DFE_RECEIVER_VERSION_CHECK__SEND_INSTANCE_ID: ${DFE_VERSION_CHECK_SEND_INSTANCE_ID:-true}
+      # Empty on the Kafka tiers, which keep the cascade. file_only on direct gRPC, where no broker exists to try first.
+      DFE_RECEIVER_DLQ_MODE: ${DFE_RECEIVER_DLQ_MODE:-}
     depends_on:
       dfe-loader:
         condition: service_healthy
