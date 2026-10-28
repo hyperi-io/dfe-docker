@@ -27,6 +27,9 @@ volumes:
   fetcher-cursors:
     driver: local
     driver_opts: {type: none, o: bind, device: "${DFE_DATA_ROOT}/fetcher-cursors"}
+  transform-elastic-geoip:
+    driver: local
+    driver_opts: {type: none, o: bind, device: "${DFE_DATA_ROOT}/transform-elastic-geoip"}
   dfe-engine-config:
     driver: local
     driver_opts: {type: none, o: bind, device: "${DFE_DATA_ROOT}/engine-config"}

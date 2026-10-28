@@ -350,11 +350,12 @@ services:
     # into argv, so `sh -c` would receive only `chown` and the rest would land in
     # $0/$1/$2 -- which fails with "chown: missing operand".
     command:
-      - chown -R 1000:1000 /var/spool/dfe /var/data/archive /var/lib/dfe-fetcher
+      - chown -R 1000:1000 /var/spool/dfe /var/data/archive /var/lib/dfe-fetcher /var/lib/dfe/geoip
     volumes:
       - dlq-spool:/var/spool/dfe
       - archiver-data:/var/data/archive
       - fetcher-cursors:/var/lib/dfe-fetcher
+      - transform-elastic-geoip:/var/lib/dfe/geoip
     restart: "no"
 
   # Creates the directory dfe-receiver mounts out of the engine's volume, because
@@ -867,7 +868,10 @@ services:
       DFE_TRANSFORM_ELASTIC_VERSION_CHECK__ENABLED: ${DFE_VERSION_CHECK_ENABLED:-true}
       DFE_TRANSFORM_ELASTIC_VERSION_CHECK__SEND_INSTANCE_ID: ${DFE_VERSION_CHECK_SEND_INSTANCE_ID:-true}
     depends_on:
-      # No dlq-init here: this service does not mount dlq-spool.
+      # Hands the GeoIP volume to uid 1000 before the first download.
+      dlq-init:
+        condition: service_completed_successfully
+        required: false
       # The writer of the rendered config, so it must have written before this
       # container reads. `required: false` for the tiers that run no engine.
       dfe-engine:
@@ -875,6 +879,8 @@ services:
         required: false
     volumes:
       - dfe-app-config:/etc/dfe/apps:ro
+      # The image's root is read-only, and the GeoIP databases auto-download here.
+      - transform-elastic-geoip:/var/lib/dfe/geoip
     healthcheck:
       test: ["CMD", "curl", "-sf", "http://localhost:9090/livez"]
       interval: 10s
@@ -1721,6 +1727,7 @@ volumes:
   archiver-data:
   dlq-spool:
   fetcher-cursors:
+  transform-elastic-geoip:
   dfe-engine-config:
   dfe-engine-schemas:
   dfe-engine-content:

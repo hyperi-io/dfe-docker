@@ -61,7 +61,13 @@ IMAGE_CONSUMERS: dict[str, tuple[str, ...]] = {
 IMPLICIT_CONSUMERS: dict[str, tuple[str, ...]] = {
     "bearer-tokens-init": ("dfe-receiver",),
     "dfe-dashboards": ("hyperdx",),
-    "dlq-init": ("dfe-archiver", "dfe-fetcher", "dfe-loader", "dfe-receiver"),
+    "dlq-init": (
+        "dfe-archiver",
+        "dfe-fetcher",
+        "dfe-loader",
+        "dfe-receiver",
+        "dfe-transform-elastic",
+    ),
     "hyperdx-documentdb-tls": ("hyperdx-documentdb",),
 }
 RUST_COMPONENTS = [
