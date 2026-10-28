@@ -1,0 +1,26 @@
+# Project:   dfe-docker
+# File:      resources/demo/sources/package-registry-crates-io.yaml
+# Purpose:   A demo fetcher that pulls crates.io metadata for the crates hyperi-io publishes
+# Language:  YAML
+#
+# License:   BUSL-1.1
+# Copyright: (c) 2026 HYPERI PTY LIMITED
+
+description: Public crates.io metadata for the crates hyperi-io publishes
+display_name: Package registry - crates.io
+fetcher:
+  config:
+    crates:
+      - clickhouse-dfe
+      - factbook
+      - scalo
+    interval_secs: 60
+  source_type: crates_io
+  topic: own
+header:
+  type: common-header/timeseries
+  version: 1.0.1
+schema:
+  meta_schema: meta/syslog
+  meta_schema_version: 1.0.0
+source: package-registry-crates-io

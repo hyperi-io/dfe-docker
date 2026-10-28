@@ -622,8 +622,8 @@ print-ruff-version:
 
 .PHONY: check-python
 check-python: ## Lint the helper scripts (config in ruff.toml)
-	$(RUFF) check scripts/ ops/ resources/demo/samples/
-	$(RUFF) format --check scripts/ ops/ resources/demo/samples/
+	$(RUFF) check scripts/ ops/ resources/demo/events/
+	$(RUFF) format --check scripts/ ops/ resources/demo/events/
 
 # Pinned for the same reason RUFF is, and installed the same way in CI
 # (PYTEST=pytest). Unit tests over the helper scripts: they
@@ -807,7 +807,7 @@ DEMO_CONTAINER := $(PROXY_PROJECT)-demo-syslog-stream
 DEMO_PYTHON_IMAGE := python:3.14-slim-trixie@sha256:cd89c30eda26ee911a4611b18680086e0ea42e6f5f8cbe653d07fa7958c9cec8
 
 .PHONY: demo
-demo: env-files ## Stream live firewall syslog through the running stack, detected per line by dfe-transform-elastic into one table per vendor, until `make demo-stop` or a receiver restart (DEMO_RATE, DEMO_PROTOCOL=tcp|udp, DEV=1 for a `make dev` stack)
+demo: env-files ## Stream live firewall syslog through the running stack, detected per line by dfe-transform-elastic into one table per vendor beside two fetchers pulling into their own, until `make demo-stop` or a receiver restart (Sources in resources/demo/sources, DEMO_RATE, DEMO_PROTOCOL=tcp|udp, DEV=1 for a `make dev` stack)
 	@$(UV) run --locked --script ./scripts/demo.py --container '$(DEMO_CONTAINER)' --generator '$(DEMO_GENERATOR)' --image '$(DEMO_PYTHON_IMAGE)' --protocol '$(DEMO_PROTOCOL)' --rate '$(DEMO_RATE)' $(if $(strip $(DEV)),--dev)
 
 .PHONY: demo-stop

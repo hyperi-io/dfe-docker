@@ -1,0 +1,30 @@
+# Project:   dfe-docker
+# File:      resources/demo/sources/demo-syslog.yaml
+# Purpose:   The demo's agentless syslog intake, which detects each line's vendor and lands it in that vendor's table
+# Language:  YAML
+#
+# License:   BUSL-1.1
+# Copyright: (c) 2026 HYPERI PTY LIMITED
+
+description: Raw vendor syslog, each line detected and parsed by dfe-transform-elastic in agentless mode
+display_name: Demo syslog
+header:
+  type: common-header/timeseries
+  version: 1.0.1
+match:
+  field: _source
+  operator: equals
+  value: syslog
+schema:
+  meta_schema: meta/syslog
+  meta_schema_version: 1.0.0
+source: demo-syslog
+transform:
+  detect:
+    # Each vendor source's transform.variant
+    candidates:
+      - filebeat.cisco_asa.default
+      - filebeat.fortinet.default
+    unmatched: passthrough
+  engine: elastic
+  mode: agentless

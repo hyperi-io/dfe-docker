@@ -1,13 +1,13 @@
 #!/usr/bin/env python3
 #  Project:      dfe-docker
-#  File:         resources/demo/samples/generate.py
-#  Purpose:      Regenerate the demo's Cisco ASA and FortiGate sample sets
+#  File:         resources/demo/events/generate.py
+#  Purpose:      Regenerate the demo's Cisco ASA and FortiGate sample events
 #  Language:     Python
 #
 #  License:      BUSL-1.1
 #  Copyright:    (c) 2026 HYPERI PTY LIMITED
 
-"""Write cisco_asa/demo.log and fortinet/demo.log beside this file. Seeded, so a rerun writes the same bytes, on RFC 1918 and RFC 5737 addresses only."""
+"""Write cisco-asa/demo.log and fortinet/demo.log beside this file, one directory per demo source. Seeded, so a rerun writes the same bytes, on RFC 1918 and RFC 5737 addresses only."""
 
 import random
 from pathlib import Path
@@ -253,13 +253,13 @@ def _fortinet_lines(*, rng: random.Random) -> list[str]:
 
 def main() -> int:
     rng = random.Random(SEED)
-    for package, lines in (
-        ("cisco_asa", _asa_lines(rng=rng)),
+    for source, lines in (
+        ("cisco-asa", _asa_lines(rng=rng)),
         ("fortinet", _fortinet_lines(rng=rng)),
     ):
-        path = HERE / package / "demo.log"
+        path = HERE / source / "demo.log"
         path.parent.mkdir(exist_ok=True)
-        path.write_text("\n".join(lines) + "\n", encoding="utf-8", newline="\n")
+        path.write_text(data="\n".join(lines) + "\n", encoding="utf-8", newline="\n")
     return 0
 
 

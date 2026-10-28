@@ -1,0 +1,26 @@
+# Project:   dfe-docker
+# File:      resources/demo/sources/cisco-asa.yaml
+# Purpose:   The demo's Cisco ASA table, from its engine catalogue entry
+# Language:  YAML
+#
+# License:   BUSL-1.1
+# Copyright: (c) 2026 HYPERI PTY LIMITED
+
+description: The log data stream of the Elastic cisco_asa integration.
+display_name: cisco_asa.log
+from_catalogue_intake: receiver
+from_catalogue_item: cisco-asa
+match:
+  field: _source
+  operator: equals
+  value: cisco-asa
+schema:
+  additional_fields: additional/cisco_asa/log
+  derived_schema: derived/cisco_asa/log
+  meta_schema: meta/elastic/ecs
+source: cisco-asa
+# Only the table is used. Data is sourced from demo-syslog
+state: dormant
+transform:
+  engine: elastic
+  variant: filebeat.cisco_asa.default

@@ -92,7 +92,7 @@ genuinely so; a couple of seconds is normal.
 
 `make demo` streams Cisco ASA and FortiGate firewall logs into the running stack as raw syslog. dfe-transform-elastic works out which device sent each line, parses it and lands it in that vendor's own table. Palo Alto and Cisco IOS come back once [dfe-receiver#212](https://github.com/hyperi-io/dfe-receiver/issues/212) and [dfe-transform-elastic#133](https://github.com/hyperi-io/dfe-transform-elastic/issues/133) land.
 
-It needs a profile that runs dfe-transform-elastic, so set `DFE_PROFILE=single-kafka` or `DFE_PROFILE=single-grpc` in `.env` before `make ci`. Then:
+It needs a profile that runs dfe-transform-elastic per source, so set `DFE_PROFILE=single-kafka` or `DFE_PROFILE=single-grpc` in `.env` before `make ci`. Then:
 
 ```bash
 make demo                      # 20 lines a second over TCP, until you stop it or the receiver restarts
@@ -100,15 +100,23 @@ make demo DEMO_RATE=100        # replaces a running stream with a faster one
 make demo-stop                 # stops the stream, as does `make down`
 ```
 
-It creates the Sources in [`resources/demo/demo.yaml`](../resources/demo/demo.yaml) through the engine: a `demo-syslog` intake and the tables `dfe.cisco-asa` and `dfe.fortinet`. It turns on dfe-receiver's syslog listener (UDP and TCP on port 514) and recreates what that changes. Each vendor replays about 6,000 sample lines from [`resources/demo/samples/`](../resources/demo/samples/), ten minutes at the default rate before a line repeats, which `python3 resources/demo/samples/generate.py` regenerates. It returns once every vendor table has gained rows and leaves the stream running:
+It creates the Sources in [`resources/demo/sources/`](../resources/demo/sources/) through the engine, one `POST /sources` body per file: a `demo-syslog` intake, two fetchers and the tables `dfe.cisco-asa` and `dfe.fortinet`. `package-registry-crates-io` pulls crates.io metadata for the crates hyperi-io publishes and `component-releases` pulls the latest GitHub release of each public DFE component, so the stack shows pull beside the receiver's push. A Source the engine already holds is updated to its file where the two differ. It turns on dfe-receiver's syslog listener (UDP and TCP on port 514) and recreates what that changes.
+
+Each vendor replays about 6,000 sample lines from [`resources/demo/events/<source>/`](../resources/demo/events/), ten minutes at the default rate before a line repeats, which `python3 resources/demo/events/generate.py` regenerates. It returns once every vendor table has gained rows and leaves the stream running:
 
 ```text
 demo -   dfe.cisco-asa: +N rows
 demo -   dfe.fortinet: +N rows
 demo -   dfe.demo-syslog: +N rows
 demo -   dfe.main: +0 rows
+demo -   dfe.component-releases: 0 rows
+demo -   dfe.package-registry-crates-io: 0 rows
+demo - WARNING no rows in 'dfe.component-releases' yet. A fetcher's first poll waits 900s and none land when the stack has no egress to its upstream
+demo - WARNING no rows in 'dfe.package-registry-crates-io' yet. A fetcher's first poll waits 60s and none land when the stack has no egress to its upstream
 demo - PASS every vendor table gained rows, ready to query in the console or HyperDX. The stream runs until `make demo-stop` or a receiver restart
 ```
+
+A fetcher's first poll waits one interval, so `dfe.package-registry-crates-io` fills about a minute in. `dfe.component-releases` polls every 900 seconds to stay inside GitHub's 60 unauthenticated requests an hour, so it fills about 15 minutes in. The demo does not wait for either: an empty fetcher table only warns. A fetcher the profile cannot run or the engine cannot set up is skipped with a WARNING while the vendor demo runs on.
 
 `dfe.demo-syslog` holds the lines no detector claimed. The replay script comes from the dfe-transform-elastic release the stack pins, so the demo needs a release with agentless detection and stops before changing anything on one without it. A `make dev` stack takes `make demo DEV=1`, which reads the script from `DFE_SRC_ROOT` when that is set.
 
