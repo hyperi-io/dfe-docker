@@ -354,6 +354,7 @@ def _disabled_instances(*, found: Mapping[str, Sequence[str]]) -> str:
 
 def _instance_services(
     *,
+    container_logs: bool = False,
     enabled: Collection[str],
     local: Collection[str],
     profile: str,
@@ -364,6 +365,8 @@ def _instance_services(
     Only where the engine renders the app config: anywhere else the index is a
     leftover from a tier this checkout ran earlier, and declaring containers off
     it would start apps this profile does not run.
+
+    `container_logs` puts each instance on the log driver the committed services use, which `extends` would otherwise leave out.
 
     An instance of an app in `local` runs that app's local image, because `extends` reads the committed service and never the overlay that repoints it.
 
@@ -386,7 +389,7 @@ def _instance_services(
         _print(header=profile, msg=_disabled_instances(found=disabled))
     running = {app: names for app, names in found.items() if app in enabled}
     images = local_image_services(components=[app for app in running if app in local])
-    instances.write(images=images, instances=running)
+    instances.write(container_logs=container_logs, images=images, instances=running)
     return instances.services(instances=running)
 
 
@@ -738,6 +741,8 @@ def main(argv: Sequence[str] = ()) -> int:
         if args.local_per_source:
             local += source_apps
         instance_services = _instance_services(
+            container_logs=footprint["otel"]
+            and _env_truthy(default=True, name="DFE_CONTAINER_LOGS_ENABLED"),
             enabled=source_apps,
             local=local,
             profile=active_profile,

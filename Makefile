@@ -287,9 +287,8 @@ ifeq ($(strip $(DFE_INSTANCES_RESOLVED)),true)
     $(eval $(call chain_fragment,.tmp/docker-compose.instances.yml))
 endif
 
-# Container stdout to the collector. Off wherever the collector is, because the
-# fluentd driver cannot be read back by `docker compose logs` and would cost an
-# operator that with nothing collecting at the other end. Empty for the bootstrap
+# Container stdout to the collector. Off wherever the collector is not, because the
+# driver would queue lines for an endpoint nothing listens on. Empty for the bootstrap
 # goals, which reads as off -- the safe direction for a target that only stops a
 # stack or checks a file.
 DFE_CONTAINER_LOGS_ENABLED ?= true
