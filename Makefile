@@ -611,7 +611,7 @@ check-python: ## Lint the helper scripts (config in ruff.toml)
 # Pinned for the same reason RUFF is, and installed the same way in CI
 # (PYTEST=pytest). Unit tests over the helper scripts: they
 # touch a tmp_path .env and start nothing, so they belong with the static checks.
-PYTEST_VERSION := 9.1.1
+PYTEST_VERSION := 9.2.0
 # The seed tests parse resources/seed with the PyYAML scripts/seed.py pins. scripts/tests/test_script_locks.py holds the two pins equal
 PYYAML_VERSION := 6.0.3
 PYTEST ?= uvx --with pyyaml==$(PYYAML_VERSION) pytest@$(PYTEST_VERSION)
@@ -630,7 +630,7 @@ check-tests: ## Run the helper-script unit tests (scripts/tests)
 
 # Each inline-metadata script runs with `uv run --locked`, and Renovate's pep723 manager rewrites a pin but never its lock, so this fails a pin and lock that disagree.
 # Pinned and installed in CI the way RUFF is (LOCK_UV=uv).
-UV_VERSION := 0.13.0
+UV_VERSION := 0.13.6
 LOCK_UV ?= uvx uv@$(UV_VERSION)
 
 .PHONY: print-uv-version
@@ -670,11 +670,11 @@ check-docs: ## Assert every relative link in the docs set still resolves
 # blanket ignores. Suppressed findings tell you nothing; visible ones do.
 #
 # hadolint version tracks tools.hadolint in hyperi-ci's config/versions.yaml
-# (currently v2.14.0). We additionally pin the DIGEST, which that SSoT does not
+# (currently v2.15.1). We additionally pin the DIGEST, which that SSoT does not
 # yet do -- see hyperi-ci#66.
 .PHONY: check-dockerfile
 check-dockerfile: ## Lint the dev builder Dockerfile (hadolint gates on error severity)
-	docker run --rm -i hadolint/hadolint:v2.14.0@sha256:27086352fd5e1907ea2b934eb1023f217c5ae087992eb59fde121dce9c9ff21e hadolint --failure-threshold error - < docker/dfe-rust-builder.Dockerfile
+	docker run --rm -i hadolint/hadolint:v2.15.1@sha256:32dac94127fd60b7b7e3fbfc65e1383b9b5e25c9bfd7b8536de7a539fe68a12d hadolint --failure-threshold error - < docker/dfe-rust-builder.Dockerfile
 
 # Validate mode loads every listener, cluster and TLS context, so a config that would crash-loop either proxy fails here instead.
 #
@@ -787,7 +787,7 @@ DEMO_RATE ?= 20
 # The stream's container, one per compose project, so a second `make demo` replaces it and `make down` finds it.
 DEMO_CONTAINER := $(PROXY_PROJECT)-demo-syslog-stream
 # The generator is standard-library Python and dfe-transform-elastic's image has none, so it runs here, pinned like the hadolint image above.
-DEMO_PYTHON_IMAGE := python:3.14-slim-trixie@sha256:35caba83af2fe6da9a5d922f9b0156f21d1246a48278c58a08bd253303ba42e8
+DEMO_PYTHON_IMAGE := python:3.14-slim-trixie@sha256:cd89c30eda26ee911a4611b18680086e0ea42e6f5f8cbe653d07fa7958c9cec8
 
 .PHONY: demo
 demo: env-files ## Stream live firewall syslog through the running stack until `make demo-stop`, detected per line by dfe-transform-elastic and landed one table per vendor (DEMO_RATE, DEMO_PROTOCOL=tcp|udp; DEV=1 for a `make dev` stack). A second run replaces the stream
