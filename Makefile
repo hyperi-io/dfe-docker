@@ -22,6 +22,10 @@ export CLICKHOUSE_PASSWORD
 export CLICKHOUSE_URL
 export CLICKHOUSE_USERNAME
 
+# An inline comment on a pin leaves the spaces before the `#` in its value, and make
+# passes that padded value on to compose, which fails with "invalid reference format".
+$(foreach pin,$(filter DFE_%_VERSION DFE_%_VERSION_TAG,$(.VARIABLES)),$(eval $(pin) := $(strip $($(pin)))))
+
 # Host UID/GID passed to live-mode containers (docker-compose.live.yml) that
 # write to bind-mounted host dirs (dfe-engine config/schemas), so files are owned
 # by the host user rather than the image user and writes don't hit permission

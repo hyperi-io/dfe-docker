@@ -108,3 +108,76 @@ def test_the_start_gate_mints_env_where_env_dir_already_exists(checkout: Path) -
 
     assert result.returncode == 0, result.stderr
     assert (checkout / ".env").is_file()
+
+
+@pytest.mark.parametrize(
+    ("line", "name", "want"),
+    [
+        pytest.param(
+            "DFE_OTEL_COLLECTOR_VERSION=1.2.3   # note",
+            "DFE_OTEL_COLLECTOR_VERSION",
+            "1.2.3",
+            id="inline_comment",
+        ),
+        pytest.param(
+            "DFE_OTEL_COLLECTOR_VERSION=1.2.3\t# note",
+            "DFE_OTEL_COLLECTOR_VERSION",
+            "1.2.3",
+            id="tab_before_comment",
+        ),
+        pytest.param(
+            "DFE_STACK_VERSION=2.2.1  # pin",
+            "DFE_STACK_VERSION",
+            "2.2.1",
+            id="stack_pin",
+        ),
+        pytest.param(
+            "DFE_UI_VERSION_TAG=v1  # tag", "DFE_UI_VERSION_TAG", "v1", id="tag_pin"
+        ),
+        pytest.param(
+            "DFE_OTEL_COLLECTOR_VERSION=1.2.3",
+            "DFE_OTEL_COLLECTOR_VERSION",
+            "1.2.3",
+            id="no_comment",
+        ),
+    ],
+)
+def test_a_pin_with_an_inline_comment_reaches_compose_without_its_padding(
+    checkout: Path, line: str, name: str, want: str
+) -> None:
+    """A caller that loads .env into its own environment exports the pin padded, and make re-exports what it read."""
+    (checkout / ".env").write_text(f"{line}\n", encoding="utf-8")
+    (checkout / "probe.mk").write_text(
+        f"probe:\n\t@printf '[%s]' \"$${name}\"\n", encoding="utf-8"
+    )
+    environment = {
+        key: value
+        for key, value in os.environ.items()
+        if not key.startswith("DFE_")
+        and key not in ("MAKEFLAGS", "MAKELEVEL", "MFLAGS")
+    }
+    environment[name] = line.split("=", 1)[1].split("#")[0]
+
+    result = subprocess.run(
+        [
+            "make",
+            "--no-print-directory",
+            "BOOTSTRAP_GOALS=probe",
+            "-f",
+            "Makefile",
+            "-f",
+            "probe.mk",
+            "probe",
+        ],
+        cwd=checkout,
+        env=environment,
+        stdin=subprocess.DEVNULL,
+        capture_output=True,
+        encoding="utf-8",
+        errors="replace",
+        text=True,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert result.stdout == f"[{want}]"
