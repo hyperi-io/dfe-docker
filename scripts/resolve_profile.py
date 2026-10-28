@@ -95,6 +95,9 @@ IN_STACK_BROKER = "kafka:9092"
 STACK_PROFILE_VAR = "DFE_STACK_PROFILE"
 TRANSPORT_BUS_PRESENT_VAR = "DFE_TRANSPORT_BUS_PRESENT"
 TRANSPORT_DEFAULT_VAR = "DFE_TRANSPORT_DEFAULT"
+# The receiver's dead-letter backend. Unset keeps its cascade, Kafka first and the spool file behind it
+PROFILE_ENV_NAME = "profile.env"
+RECEIVER_DLQ_MODE_VAR = "DFE_RECEIVER_DLQ_MODE"
 
 # `make stack` pins dfe-ui as a container reference (tag@sha256:...), which is
 # what the image line needs and is not a version anyone reads. The engine reports
@@ -626,6 +629,23 @@ def engine_tier(
     }
 
 
+def profile_env(*, lines: Sequence[str]) -> str:
+    """The `export NAME := value` lines of profile.mk as a dotenv file, so a bare `docker compose --env-file .tmp/profile.env` gets what make hands it."""
+    out = []
+    for line in lines:
+        name, sep, value = line.removeprefix("export ").partition(" := ")
+        if not (sep) or not (name.startswith("DFE_")):
+            continue
+        if "'" in value:
+            escaped = (
+                value.replace("\\", "\\\\").replace('"', '\\"').replace("$", "\\$")
+            )
+            out.append(f'{name}="{escaped}"')
+        else:
+            out.append(f"{name}='{value}'")
+    return "\n".join(out) + "\n"
+
+
 def parse_yaml(*, text: str) -> dict[str, object]:
     """Parse a minimal YAML subset into nested dicts with string values."""
     root = {}
@@ -675,6 +695,11 @@ def per_source_apps(
             continue
         enabled.append(app)
     return enabled if renders else []
+
+
+def tier_receiver_dlq_mode(*, transport: str) -> str:
+    """The receiver's dead-letter backend: the spool file alone on direct gRPC, where no broker exists to try first, else unset for its cascade."""
+    return "" if transport == "kafka" else "file_only"
 
 
 def tier_broker(*, configured: str, transport: str) -> str:
@@ -788,6 +813,10 @@ def main(argv: Sequence[str] = ()) -> int:
         )
         lines += [f"export {name} := {value}" for name, value in tier.items()]
 
+        lines.append(
+            f"export {RECEIVER_DLQ_MODE_VAR} := {tier_receiver_dlq_mode(transport=transport)}"
+        )
+
         # The console version the engine reports. Emitted unconditionally, empty
         # when nothing is pinned, so the included file settles on every make pass.
         ui_ref = os.environ.get(UI_VERSION_ENV_VAR, "").strip()
@@ -895,8 +924,17 @@ def main(argv: Sequence[str] = ()) -> int:
         ):
             PROFILE_MK.parent.mkdir(exist_ok=True, parents=True)
             PROFILE_MK.write_text(new_content, encoding="utf-8")
+        # Same values for a bare `docker compose`, which never reads make's environment
+        env_content = profile_env(lines=lines)
+        profile_env_file = PROFILE_MK.with_name(PROFILE_ENV_NAME)
+        if (
+            not (profile_env_file.exists())
+            or profile_env_file.read_text(encoding="utf-8") != env_content
+        ):
+            profile_env_file.write_text(env_content, encoding="utf-8")
     except ProfileError as error:
         PROFILE_MK.unlink(missing_ok=True)
+        PROFILE_MK.with_name(PROFILE_ENV_NAME).unlink(missing_ok=True)
         _print(header=error.header, msg=error.msg)
         return 1
     return 0

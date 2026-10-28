@@ -165,7 +165,56 @@ class TestEngineTier:
         assert tier == case["expected"]
 
 
+class TestProfileEnv:
+    @pytest.mark.parametrize(
+        ("lines", "expected"),
+        [
+            (["export DFE_A := x y"], "DFE_A='x y'\n"),
+            (["export DFE_A := "], "DFE_A=''\n"),
+            (["export PROFILE_FLAGS := --profile a"], "\n"),
+            (["export DFE_A := it's $B"], 'DFE_A="it\'s \\$B"\n'),
+            (['export DFE_L := {"a":1}'], "DFE_L='{\"a\":1}'\n"),
+        ],
+    )
+    def test_renders_make_assignments_as_dotenv(
+        self, expected: str, lines: list[str]
+    ) -> None:
+        assert resolve_profile.profile_env(lines=lines) == expected
+
+    def test_a_bare_compose_run_gets_the_profile_values(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        _profile_mk(monkeypatch=monkeypatch, profile="slim-grpc", tmp_path=tmp_path)
+
+        text = (tmp_path / ".tmp" / "profile.env").read_text(encoding="utf-8")
+
+        assert "DFE_RECEIVER_CONFIG='receiver/grpc.yaml'" in text
+        assert "DFE_RECEIVER_DLQ_MODE='file_only'" in text
+
+
 class TestResolveProfile:
+    @pytest.mark.parametrize(
+        ("profile", "expected"),
+        [
+            ("slim-grpc", "file_only"),
+            ("single-grpc", "file_only"),
+            ("slim-kafka", ""),
+            ("single-kafka", ""),
+        ],
+    )
+    def test_the_receiver_dlq_skips_kafka_where_there_is_no_broker(
+        self,
+        expected: str,
+        monkeypatch: pytest.MonkeyPatch,
+        profile: str,
+        tmp_path: Path,
+    ) -> None:
+        values = _profile_mk(
+            monkeypatch=monkeypatch, profile=profile, tmp_path=tmp_path
+        )
+
+        assert values["DFE_RECEIVER_DLQ_MODE"] == expected
+
     @pytest.mark.parametrize(
         ("name", "replacement"), sorted(resolve_profile.RETIRED_PROFILES.items())
     )

@@ -310,7 +310,7 @@ A per-source instance such as `dfe-transform-vrl-<source>` reads its app's custo
 
 The engine alone writes `*.custom.env` and only for a service it renders. A key you set by hand goes in the operator's file. Earlier checkouts read `env/loader.custom.env` and its siblings, names the engine never wrote and nothing reads now: move any key you put there into `env/loader.env`.
 
-**A custom env write needs `make apply SERVICES=<service>`, not a restart.** Compose reads `env_file` when it creates a container, so `docker compose restart` keeps the environment the container already had. A bare `docker compose up -d` misses what make resolves from the profile, the broker address included.
+**A custom env write needs `make apply SERVICES=<service>`, not a restart.** Compose reads `env_file` when it creates a container, so `docker compose restart` keeps the environment the container already had. A bare `docker compose up -d` misses what make resolves from the profile, the broker address included. Add `--env-file .env --env-file .tmp/profile.env` to hand it the same values, once a `make` target has resolved the profile.
 
 The engine writes those files into the `env/` directory of the checkout it is
 started from: `DFE_DEPLOYMENT_APP_ENV_DIR` names it (`/app/app-env` inside the
