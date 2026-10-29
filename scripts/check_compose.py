@@ -1094,10 +1094,10 @@ def _log_driver_failures(*, config: dict) -> list[str]:
 def _dns_search_failures(*, config: dict) -> list[str]:
     """Return one message per service that keeps the host's DNS search domain."""
     return [
-        f"{name}: dns_search is {service.get('dns_search')!r}, so a bare name with no "
+        f"{name!r}: dns_search is {service.get('dns_search')!r}, so a bare name with no "
         "network alias resolves through the host's search domain to a host outside the stack"
         for name, service in sorted(config.get("services", {}).items())
-        if list(service.get("dns_search") or []) != ["."]
+        if list((service.get("dns_search")) or ([])) != ["."]
     ]
 
 

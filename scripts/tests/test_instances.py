@@ -412,8 +412,8 @@ def test_no_warning_while_every_instance_is_declared() -> None:
 
 
 def test_an_instance_copies_the_container_logs_block_when_asked() -> None:
-    # `extends` reads the committed service alone, so the overlay never reaches an instance.
-    text = instances.fragment({FETCHER: ["a", "b"]}, container_logs=True)
+    # `extends` reads the committed service alone, so the overlay never reaches an instance
+    text = instances.fragment(container_logs=True, instances={FETCHER: ["a", "b"]})
 
     block = "\n".join(instances.container_logs_block())
     assert "fluentd-request-ack" in block
@@ -422,7 +422,7 @@ def test_an_instance_copies_the_container_logs_block_when_asked() -> None:
 
 
 def test_an_instance_keeps_the_default_log_driver_otherwise() -> None:
-    text = instances.fragment({FETCHER: ["a"]})
+    text = instances.fragment(instances={FETCHER: ["a"]})
 
     assert "logging:" not in text
     assert "x-container-logs" not in text

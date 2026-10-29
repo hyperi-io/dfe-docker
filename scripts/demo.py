@@ -94,14 +94,14 @@ TRANSFORM_APP = "dfe-transform-elastic"
 TRANSFORM_REPO = "dfe-transform-elastic"
 TRANSFORM_VERSION_KEY = "DFE_TRANSFORM_ELASTIC_VERSION"
 RECEIVER_SERVICE = "dfe-receiver"
-# dfe-engine main reads the catalogue from its dfe-schemas wheel and older images from the seeded /app/schemas, so this tries both in that order
+# dfe-engine main reads the catalogue from its dfe-schemas wheel and older images from the seeded /app/schemas, so this tries both in that order, at any depth because newer wheels file each entry under its tag folder
 CATALOGUE_READ = "\n".join(
     (
         "import pathlib, sys, dfe_schemas",
         "name = sys.argv[1] + '.yaml'",
         "for root in (dfe_schemas.schemas_root(), pathlib.Path('/app/schemas')):",
-        "    path = root / 'catalogue' / name",
-        "    if path.is_file():",
+        "    path = next(iter(sorted((root / 'catalogue').rglob(name))), None)",
+        "    if path is not None:",
         "        sys.stdout.write(path.read_text(encoding='utf-8'))",
         "        break",
     )

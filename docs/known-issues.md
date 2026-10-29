@@ -23,25 +23,18 @@ profiles no longer strands anything.
 
 On an older checkout it is still profile-scoped: switch from a profile with a receiver to one without and the old receiver keeps running, keeps answering on `:8080` and keeps its ports. The misleading part is that the stray is wired to a pipeline that is no longer running, so anything probing ports rather than asking the profile finds it and reports a data-path failure that is really a stale container. That is why `scripts/post.py` resolves its ingest edge from `.tmp/profile.mk` instead of probing.
 
-If you suspect strays, `docker ps` and compare uptimes -- a container minutes
-older than the rest is the giveaway.
+If you suspect strays, `docker ps` and compare uptimes: a container minutes older than the rest is the giveaway.
 
 ## `.env` shadows command-line environment variables through make
 
-The Makefile does `-include .env`. GNU make gives makefile assignments precedence
-over environment variables, and re-exports them to recipes. So for any key with a
-live (uncommented) assignment in `.env`, `VAR=x make ...` silently no-ops -- the
-child process sees the `.env` value.
+The Makefile does `-include .env`. GNU make gives makefile assignments precedence over environment variables and re-exports them to recipes. So for any key with a live (uncommented) assignment in `.env`, `VAR=x make ...` silently no-ops: the child process sees the `.env` value.
 
-This was reproduced with a throwaway Makefile carrying the same `-include .env`,
-not against a target in this repo -- there is no `make show` here.
+This was reproduced with a throwaway Makefile carrying the same `-include .env`, not against a target in this repo, which has no `make show`.
 
-This bites hardest after `make stack`, which writes live `*_VERSION` pins into
-`.env`, and after `make init`, which writes the generated secrets. Three ways
-around it:
+This bites hardest after `make stack` writes live `*_VERSION` pins into `.env` and after `make init` writes the generated secrets. Three ways around it:
 
 ```bash
-make dev KAFKA_BACKEND=apache     # make command-line variable -- wins, exported
+make dev KAFKA_BACKEND=apache     # a make command-line variable wins and is exported
 KAFKA_BACKEND=apache make -e dev  # -e flips the precedence
 ```
 
@@ -67,14 +60,7 @@ flowchart LR
 
 Once a transform runs, the loader therefore reads `main_land` until that first write, then switches to `main_load`. The first records land twice: once raw, once transformed. Create the transform's `_load` topic before sending anything to avoid it. The e2e suite does, from each test's `expected_topics`.
 
-**Do not close this gap by adding `main_load` to the bootstrap topic set.**
-The loader auto-discovers topics and scalo suppresses `<base>_land` whenever
-`<base>_load` exists, on the reasoning that a `_load` topic means a transform has
-already produced the loadable form. Creating `main_load` on every Kafka profile
-therefore drops `main_land` from the subscription of every loader not running a
-transform, which is most of them. The symptom is maximally misleading: ingest
-returns 200, the receiver produces to `main_land`, the topic shows a rising
-high watermark, and no rows reach ClickHouse.
+**Do not close this gap by adding `main_load` to the bootstrap topic set.** The loader auto-discovers topics and scalo suppresses `<base>_land` whenever `<base>_load` exists, on the reasoning that a `_load` topic means a transform has already produced the loadable form. Creating `main_load` on every Kafka profile therefore drops `main_land` from the subscription of every loader not running a transform, which is most of them. The symptom is maximally misleading: ingest returns 200, the receiver produces to `main_land`, the topic shows a rising high watermark and no rows reach ClickHouse.
 
 Reverting the change does not restore a broker that already has the topic.
 `kafka-redpanda-data` and `kafka-apache-data` outlive the containers, so the topic

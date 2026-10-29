@@ -125,12 +125,42 @@ other profile may require an issuer.
 | `DFE_OAUTH2_PROXY_EXTERNAL_ORIGIN`               | Scheme and host only, no port, the OAuth redirect URLs are built from; overrides `DFE_EXTERNAL_ORIGIN` | follows `DFE_EXTERNAL_ORIGIN`                                       |
 | `DFE_OAUTH2_PROXY_VERSION`                       | Override the oauth2-proxy image pin; not SSoT-derived, keep the `tag@sha256` form    | pinned in `docker-compose.yml`                                      |
 
+### OIDC test-fixture login
+
+| Variable                                         | Use                                                                                  | Default                                                             |
+|--------------------------------------------------|--------------------------------------------------------------------------------------|---------------------------------------------------------------------|
+| `DFE_OIDC_FIXTURE_USER`                          | Throwaway login the console specs sign in with through an external provider. Nothing in the stack reads it. `make creds` prints it | `dfe-test@dfe-oidc.test`                                            |
+| `DFE_OIDC_FIXTURE_PASSWORD`                      | That login's password. The specs skip a provider without one                         | -                                                                   |
+| `DFE_OIDC_<PROVIDER>_FIXTURE_USER`, `_PASSWORD`  | A per-provider pair (DEX, ENTRA, GOOGLE, OKTA), which wins over the generic one      | -                                                                   |
+
 ### Image Registry
 
 | Variable                                         | Use                                                                                  | Default                                                             |
 |--------------------------------------------------|--------------------------------------------------------------------------------------|---------------------------------------------------------------------|
 | `DOCKER_DEFAULT_PLATFORM`                        | Image architecture to pull from docker (if not wanting automatic determination)      | -                                                                   |
 | `IMAGE_REGISTRY`                                 | OCI registry hosting published `dfe-*` images                                        | `ghcr.io/hyperi-io`                                                 |
+
+### Container names
+
+| Variable                                         | Use                                                                                  | Default                                                             |
+|--------------------------------------------------|--------------------------------------------------------------------------------------|---------------------------------------------------------------------|
+| `DFE_CONTAINER_PREFIX`                           | Prepended to every container name, for a second stack on this host. It changes names only, so set `COMPOSE_PROJECT_NAME` and new host ports with it | empty                                                               |
+
+### Resource limits
+
+Ceilings, not reservations, sized for the default profile on a 16 GB box. `make limits` prints the resolved values.
+
+| Variable                                         | Use                                                                                  | Default                                                             |
+|--------------------------------------------------|--------------------------------------------------------------------------------------|---------------------------------------------------------------------|
+| `DFE_BROKER_CPUS`                                | CPU ceiling of the broker                                                            | `1.5`                                                               |
+| `DFE_BROKER_MEMORY`                              | Memory ceiling of the broker. Keep it above `REDPANDA_MEMORY` or the broker is OOM-killed | `2560M`                                                             |
+| `DFE_CLICKHOUSE_CPUS`                            | CPU ceiling of ClickHouse                                                            | `2.0`                                                               |
+| `DFE_CLICKHOUSE_MEMORY`                          | Memory ceiling of ClickHouse                                                         | `3G`                                                                |
+| `DFE_HYPERDX_MEMORY`                             | Memory ceiling of HyperDX, which holds about 820 MiB for its first 100 s, over the service tier's | `2G`                                                                |
+| `DFE_SERVICE_CPUS`                               | CPU ceiling of the DFE components, the UI, Kafbat and HyperDX. Below 2.0 a scalo service gets one worker thread and stops answering its health check | `2.0`                                                               |
+| `DFE_SERVICE_MEMORY`                             | Memory ceiling of the same service tier                                              | `768M`                                                              |
+| `DFE_SIDECAR_CPUS`                               | CPU ceiling of kafka-init, dlq-init and dfe-proxy                                    | `0.5`                                                               |
+| `DFE_SIDECAR_MEMORY`                             | Memory ceiling of the same sidecars                                                  | `512M`                                                              |
 
 ### Dev Builds
 
@@ -140,6 +170,15 @@ other profile may require an issuer.
 | `DFE_SRC_REMOTE`                                 | Git base URL the managed cache clones component repos from                           | `https://github.com/hyperi-io`                                      |
 | `DFE_SRC_REF`                                    | Branch, tag or commit the managed cache builds                                       | `main`                                                              |
 | `DFE_SRC_CACHE`                                  | Location of the managed source cache                                                 | `~/.cache/dfe-docker/src`                                           |
+
+### Power-on self test
+
+| Variable                                         | Use                                                                                  | Default                                                             |
+|--------------------------------------------------|--------------------------------------------------------------------------------------|---------------------------------------------------------------------|
+| `DFE_POST_DATABASE`                              | Database the traced test events land in                                              | `dfe`                                                               |
+| `DFE_POST_ENABLED`                               | Run the self test after `make dev` and `make ci`. `make post` runs it by hand        | `true`                                                              |
+| `DFE_POST_HOST`                                  | Host the test reaches the published ports on                                         | `localhost`                                                         |
+| `DFE_POST_TABLE`                                 | Table the traced test events land in                                                 | `default`                                                           |
 
 ### DFE Components - General
 
@@ -166,6 +205,10 @@ Only `single-kafka` runs dfe-archiver, so archiving needs a Kafka profile ([prof
 | `DFE_FETCHER_PROMETHEUS_PORT`                    | Fetcher Prometheus port                                                              | `9094`                                                              |
 | `AWS_ACCESS_KEY_ID`                              | AWS access key. Goes in `env/fetcher.env`, NOT `.env` -- the fetcher config reads it via `env:`  | -                                    |
 | `AWS_SECRET_ACCESS_KEY`                          | AWS secret key. Same file as above                                                   | -                                                                   |
+| `AZURE_CLIENT_ID`                                | In `env/fetcher.env`. Client ID an Azure source names with `env:AZURE_CLIENT_ID`     | -                                                                   |
+| `AZURE_CLIENT_SECRET`                            | In `env/fetcher.env`. That client's secret, named the same way                       | -                                                                   |
+| `AZURE_SUBSCRIPTION_ID`                          | In `env/fetcher.env`. Subscription an Azure source reads                             | -                                                                   |
+| `AZURE_TENANT_ID`                                | In `env/fetcher.env`. Tenant the client belongs to                                   | -                                                                   |
 
 The AWS **region** is not an environment variable: it is a literal in each source's fetcher config (`region: us-west-2` in `resources/seed/sources/aws-*.yaml`), because only the two credential fields are `env:`-interpolated.
 
@@ -186,6 +229,7 @@ The AWS **region** is not an environment variable: it is a literal in each sourc
 | `DFE_RECEIVER_GRPC_PORT`                         | Receiver Vector gRPC port, published once its line in `docker-compose.yml` is uncommented | `6000`                                                              |
 | `DFE_RECEIVER_HEC_PORT`                          | Receiver HEC port                                                                    | `8088`                                                              |
 | `DFE_RECEIVER_HTTP_PORT`                         | Receiver HTTP port                                                                   | `8080`                                                              |
+| `DFE_RECEIVER_MAX_BODY_SIZE`                     | Largest record the receiver accepts in bytes, under every broker's 8 MiB message limit | `8000000`                                                           |
 | `DFE_RECEIVER_OTLP_GRPC_PORT`                    | Receiver OTLP gRPC port                                                              | `4317`                                                              |
 | `DFE_RECEIVER_OTLP_HTTP_PORT`                    | Receiver OTLP HTTP port                                                              | `4318`                                                              |
 | `DFE_RECEIVER_PROMETHEUS_PORT`                   | Receiver Prometheus port                                                             | `9090`                                                              |
@@ -217,6 +261,7 @@ The AWS **region** is not an environment variable: it is a literal in each sourc
 | Variable                                         | Use                                                                                  | Default                                                             |
 |--------------------------------------------------|--------------------------------------------------------------------------------------|---------------------------------------------------------------------|
 | `CLICKHOUSE_VERSION`                             | Version of ClickHouse to use                                                         | none -- `make stack` pins it from the DFE stack SSoT; unset is a hard-fail                |
+| `DFE_CLICKHOUSE_ENABLED`                         | Toggle to start the bundled ClickHouse. `false` with an external `CLICKHOUSE_HOST`, which alone does not skip it | unset, the profile decides                                          |
 | `CLICKHOUSE_HOST`                                | External ClickHouse host (skips Docker container)                                    | `clickhouse`                                                        |
 | `CLICKHOUSE_HTTP_PORT`                           | Host publish of the bundled ClickHouse's HTTP port; services in the stack dial 8123 whatever it says, so it is safe to move | `8123`                                                              |
 | `CLICKHOUSE_NATIVE_PORT`                         | Host publish of the bundled ClickHouse's native port; services in the stack dial 9000 whatever it says, so it is safe to move | `9000`                                                              |
@@ -238,6 +283,7 @@ The AWS **region** is not an environment variable: it is a literal in each sourc
 | Variable                                         | Use                                                                                  | Default                                                             |
 |--------------------------------------------------|--------------------------------------------------------------------------------------|---------------------------------------------------------------------|
 | `DFE_KAFKA_BOOTSTRAP_SERVERS`                    | The broker dfe-engine creates topics on and dfe-archiver, dfe-fetcher, dfe-loader, dfe-receiver, dfe-transform-elastic, dfe-transform-vector and dfe-transform-vrl read or write. Kafbat browses it too. Set it for an external broker | `kafka:9092`, the in-stack broker                                   |
+| `KAFKA_ADVERTISED_HOST`                          | Name the host listener advertises to clients off this box. Set it with `DFE_BIND_HOST=0.0.0.0` | `localhost`                                                         |
 | `KAFKA_BACKEND`                                  | Kafka backend for `kafka` transport profiles                                         | `redpanda`                                                          |
 | `KAFKA_PLAINTEXT_HOST_PORT`                      | Kafka plaintext host port (host-facing)                                              | `19092`                                                             |
 
@@ -253,6 +299,8 @@ The AWS **region** is not an environment variable: it is a literal in each sourc
 |--------------------------------------------------|--------------------------------------------------------------------------------------|---------------------------------------------------------------------|
 | `REDPANDA_VERSION`                               | Version of Redpanda to use                                                           | none -- `make stack` pins it from the DFE stack SSoT; unset is a hard-fail                |
 | `REDPANDA_MEMORY`                                | Memory for the Redpanda broker (Seastar reserves this up front); `redpanda/start.sh` lowers it to what the container limit leaves after the host's `vm.min_free_kbytes` | `1G`                                                                |
+| `REDPANDA_MODE`                                  | `dev-container` relaxes fsync to fit a 4 GB CI runner. A deploy sets `production` with real `REDPANDA_SMP` and `REDPANDA_MEMORY` | `dev-container`                                                     |
+| `REDPANDA_SMP`                                   | Cores the broker uses                                                                | `1`                                                                 |
 
 ### Kafka UI (Kafbat)
 
@@ -272,6 +320,15 @@ The AWS **region** is not an environment variable: it is a literal in each sourc
 | `DFE_ENGINE_CONTENT_DIR`                         | Path the content volume mounts on, holding the emitted contracts and the seed library | `/app/content`                                                      |
 | `DFE_UI_VERSION`                                 | Version of dfe-ui to use                                                             | none -- `make stack` pins it; unset is a hard-fail                                                            |
 | `DFE_UI_PORT`                                    | Port used by dfe-ui                                                                  | `3000`                                                              |
+| `DFE_PROXY_VERSION`                              | The `envoyproxy/envoy` tag dfe-proxy runs                                            | none, `make stack` pins it                                          |
+| `DFE_API_JWT_SECRET`                             | In `env/engine.env`. Signs the engine's session tokens, read by dfe-hunt-runner too  | generated by `make init`                                            |
+| `DFE_AUTH_BREAKGLASS_PASSWORD`                   | In `env/engine.env`. The `breakglass` recovery login, hashed into the deploy repo. `make creds` hands it over | generated by `make init`                                            |
+| `DFE_AUTH_LOCAL_ADMIN_PASSWORD`                  | In `env/engine.env`. The `admin` login. `make creds` hands it over                   | generated by `make init`                                            |
+| `DFE_GITOPS_ENABLED`                             | In `env/engine.env`. The local deploy repo, which keeps the break-glass login across a rebuild | `true`                                                              |
+| `DFE_GOOGLE_SA_JSON`                             | In `env/engine.env`. Google service-account JSON, named by a provider file's `groups.service_account_json_env` | -                                                                   |
+| `DFE_OIDC_<PROVIDER>_CLIENT_ID`, `_CLIENT_SECRET` | In `env/engine.env`. The engine's own OIDC client per provider (DEX, ENTRA, GOOGLE, OKTA), named by its file in `/app/config/auth/oidc-providers` | -                                                                   |
+| `SSL_CERT_FILE`                                  | In `env/engine.env`. A full CA bundle, for an IdP on a private CA                    | the image's bundle                                                  |
+| `NEXTAUTH_SECRET`                                | In `env/ui.env`. Signs the console's session                                         | generated by `make init`                                            |
 
 ### App contracts, and the custom environment the console writes
 
@@ -348,7 +405,9 @@ The same toggle points the engine at HyperDX: with it on, the engine receives `D
 | `DFE_HYPERDX_BASE_URL`                           | Where the ENGINE reaches HyperDX; name an external one here                          | `http://hyperdx:8000`                                               |
 | `DFE_HYPERDX_TEAM`                               | Team name when the token carries no group claim                                      | `dfe`                                                               |
 | `USAGE_STATS_ENABLED`                            | In `env/hyperdx.env`. `true` sends upstream HyperDX's usage stats to `in-otel.hyperdx.io`, a third party | `false`                                                             |
-| `NEXT_PUBLIC_THEME`                              | In `env/hyperdx.env`. UI theme                                                       | `dfe`                                                               |
+| `NEXT_PUBLIC_THEME`                              | In `env/hyperdx.env`. UI theme: `dfe`, `hyperdx` or `clickstack`                     | `dfe`                                                               |
+| `HYPERDX_API_KEY`                                | In `env/hyperdx.env`. Ships HyperDX's own logs over OTLP when set                    | unset                                                               |
+| `HYPERDX_LOG_LEVEL`                              | In `env/hyperdx.env`. HyperDX API log level                                          | `info`                                                              |
 | `HYPERDX_DOCUMENTDB_USER`                        | DocumentDB login HyperDX uses                                                        | `hyperdx`                                                           |
 | `HYPERDX_DOCUMENTDB_PASSWORD`                    | Password for that login                                                              | `hyperdx`                                                           |
 | `EXPRESS_SESSION_SECRET`                         | In `env/hyperdx.env`. Signs HyperDX's session cookie                                 | generated by `make init`, unset otherwise, which `make post` fails  |

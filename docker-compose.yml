@@ -54,10 +54,7 @@
 
 # =============================================================================
 # DNS search domain
-# A host inside a search domain (corp.example.com) passes it into every container,
-# so a bare name with no network alias, `kafka` on a stack without a broker,
-# resolves to that domain's host (the shared Kafka) and the app connects there
-# silently. `.` clears the search list: such a name fails to resolve instead.
+# `.` clears the search domain a host (corp.example.com) passes into every container, so a bare name with no network alias (`kafka` on a stack without a broker) fails to resolve instead of silently reaching that domain's host
 # =============================================================================
 x-no-dns-search: &no-dns-search ["."]
 
@@ -763,17 +760,17 @@ services:
       - path: env/dfe-receiver.custom.env
         required: false
     environment:
-      LOG_LEVEL: ${LOG_LEVEL:-info}
-      LOG_FORMAT: ${LOG_FORMAT:-text}
-      OTEL_EXPORTER_OTLP_ENDPOINT: ${DFE_OTEL_EXPORTER_ENDPOINT:-}
-      OTEL_SERVICE_NAME: dfe-receiver
+      # Empty on the Kafka tiers to keep the cascade, file_only on direct gRPC where no broker exists to try first
+      DFE_RECEIVER_DLQ_MODE: ${DFE_RECEIVER_DLQ_MODE:-}
       DFE_RECEIVER_KAFKA_BROKERS: *kafka-brokers
       # The DFE-wide record cap, under every broker's 8 MiB message limit
       DFE_RECEIVER_MAX_BODY_SIZE: ${DFE_RECEIVER_MAX_BODY_SIZE:-8000000}
       DFE_RECEIVER_VERSION_CHECK__ENABLED: ${DFE_VERSION_CHECK_ENABLED:-true}
       DFE_RECEIVER_VERSION_CHECK__SEND_INSTANCE_ID: ${DFE_VERSION_CHECK_SEND_INSTANCE_ID:-true}
-      # Empty on the Kafka tiers, which keep the cascade. file_only on direct gRPC, where no broker exists to try first.
-      DFE_RECEIVER_DLQ_MODE: ${DFE_RECEIVER_DLQ_MODE:-}
+      LOG_FORMAT: ${LOG_FORMAT:-text}
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+      OTEL_EXPORTER_OTLP_ENDPOINT: ${DFE_OTEL_EXPORTER_ENDPOINT:-}
+      OTEL_SERVICE_NAME: dfe-receiver
     depends_on:
       dfe-loader:
         condition: service_healthy
@@ -844,18 +841,18 @@ services:
       DFE_TRANSFORM_ELASTIC_VERSION_CHECK__ENABLED: ${DFE_VERSION_CHECK_ENABLED:-true}
       DFE_TRANSFORM_ELASTIC_VERSION_CHECK__SEND_INSTANCE_ID: ${DFE_VERSION_CHECK_SEND_INSTANCE_ID:-true}
     depends_on:
-      # Hands the GeoIP volume to uid 1000 before the first download.
-      dlq-init:
-        condition: service_completed_successfully
-        required: false
       # The writer of the rendered config, so it must have written before this
       # container reads. `required: false` for the tiers that run no engine.
       dfe-engine:
         condition: service_healthy
         required: false
+      # Hands the GeoIP volume to uid 1000 before the first download
+      dlq-init:
+        condition: service_completed_successfully
+        required: false
     volumes:
       - dfe-app-config:/etc/dfe/apps:ro
-      # The image's root is read-only, and the GeoIP databases auto-download here.
+      # A writable home for the auto-downloaded GeoIP databases, since the image's root is read-only
       - transform-elastic-geoip:/var/lib/dfe/geoip
     healthcheck:
       test: ["CMD", "curl", "-sf", "http://localhost:9090/livez"]
@@ -997,8 +994,6 @@ services:
       # default until the stack replaces it.
       # docs/operating.md#only-the-console-authenticates----everything-else-is-bounded-by-that
       DFE_ENV: ${DFE_ENV:-production}
-      # The dfe-ui Playwright suite's /api/e2e routes, mounted only when this is true. `make e2e-posture` sets it.
-      DFE_E2E_SERVER: ${DFE_E2E_SERVER:-false}
       # A Compose stack is one operator with no forge: a hunt or rule written at
       # production+team lands on a review branch nothing can merge, and the
       # engine then 404s on the object it just accepted. solo commits to main.
@@ -1646,23 +1641,23 @@ services:
 # unmounted one gets a fresh anonymous volume per container, which `make down`
 # strands and `make clean` cannot reach. check_compose.py holds the list.
 volumes:
-  clickhouse-data:
-  kafka-redpanda-data:
-  kafka-apache-data:
-  kafka-apache-secrets:
-  kafka-apache-config:
   archiver-data:
-  dlq-spool:
-  fetcher-cursors:
-  transform-elastic-geoip:
-  dfe-engine-config:
-  dfe-engine-schemas:
-  dfe-engine-content:
+  clickhouse-data:
   # What the engine renders each app's own config into, one directory per app.
   # Its own volume rather than a corner of dfe-engine-config, which also holds
   # the engine's JWT signing key and the deploy repo -- neither of which a
   # data-plane container has any business reading.
   dfe-app-config:
+  dfe-engine-config:
+  dfe-engine-content:
+  dfe-engine-schemas:
+  dlq-spool:
+  fetcher-cursors:
   hyperdx-dashboards:
   hyperdx-documentdb-data:
   hyperdx-documentdb-tls:
+  kafka-apache-config:
+  kafka-apache-data:
+  kafka-apache-secrets:
+  kafka-redpanda-data:
+  transform-elastic-geoip:

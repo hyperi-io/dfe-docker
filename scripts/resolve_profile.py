@@ -95,8 +95,8 @@ IN_STACK_BROKER = "kafka:9092"
 STACK_PROFILE_VAR = "DFE_STACK_PROFILE"
 TRANSPORT_BUS_PRESENT_VAR = "DFE_TRANSPORT_BUS_PRESENT"
 TRANSPORT_DEFAULT_VAR = "DFE_TRANSPORT_DEFAULT"
-# The receiver's dead-letter backend. Unset keeps its cascade, Kafka first and the spool file behind it
 PROFILE_ENV_NAME = "profile.env"
+# The receiver's dead-letter backend, unset to keep its cascade of Kafka first and the spool file behind it
 RECEIVER_DLQ_MODE_VAR = "DFE_RECEIVER_DLQ_MODE"
 
 # `make stack` pins dfe-ui as a container reference (tag@sha256:...), which is
@@ -362,8 +362,6 @@ def _instance_services(
     leftover from a tier this checkout ran earlier, and declaring containers off
     it would start apps this profile does not run.
 
-    `container_logs` puts each instance on the log driver the committed services use, which `extends` would otherwise leave out.
-
     An instance of an app in `local` runs that app's local image, because `extends` reads the committed service and never the overlay that repoints it.
 
     An instance of an app not in `enabled` is left out with a warning rather than failing the resolve, because dfe-engine has to start for its source to be deleted.
@@ -622,23 +620,6 @@ def engine_tier(
     }
 
 
-def profile_env(*, lines: Sequence[str]) -> str:
-    """The `export NAME := value` lines of profile.mk as a dotenv file, so a bare `docker compose --env-file .tmp/profile.env` gets what make hands it."""
-    out = []
-    for line in lines:
-        name, sep, value = line.removeprefix("export ").partition(" := ")
-        if not (sep) or not (name.startswith("DFE_")):
-            continue
-        if "'" in value:
-            escaped = (
-                value.replace("\\", "\\\\").replace('"', '\\"').replace("$", "\\$")
-            )
-            out.append(f'{name}="{escaped}"')
-        else:
-            out.append(f"{name}='{value}'")
-    return "\n".join(out) + "\n"
-
-
 def parse_yaml(*, text: str) -> dict[str, object]:
     """Parse a minimal YAML subset into nested dicts with string values."""
     root = {}
@@ -690,9 +671,21 @@ def per_source_apps(
     return enabled if renders else []
 
 
-def tier_receiver_dlq_mode(*, transport: str) -> str:
-    """The receiver's dead-letter backend: the spool file alone on direct gRPC, where no broker exists to try first, else unset for its cascade."""
-    return "" if transport == "kafka" else "file_only"
+def profile_env(*, lines: Sequence[str]) -> str:
+    """The `export NAME := value` lines of profile.mk as a dotenv file, so a bare `docker compose --env-file .tmp/profile.env` gets what make hands it."""
+    out = []
+    for line in lines:
+        name, sep, value = line.removeprefix("export ").partition(" := ")
+        if not (sep) or not (name.startswith("DFE_")):
+            continue
+        if "'" in value:
+            escaped = (
+                value.replace("\\", "\\\\").replace('"', '\\"').replace("$", "\\$")
+            )
+            out.append(f'{name}="{escaped}"')
+        else:
+            out.append(f"{name}='{value}'")
+    return "\n".join(out) + "\n"
 
 
 def tier_broker(*, configured: str, transport: str) -> str:
@@ -700,6 +693,11 @@ def tier_broker(*, configured: str, transport: str) -> str:
     if transport != "kafka":
         return ""
     return (configured.strip()) or (IN_STACK_BROKER)
+
+
+def tier_receiver_dlq_mode(*, transport: str) -> str:
+    """The receiver's dead-letter backend: the spool file alone on direct gRPC, where no broker exists to try first, else unset for its cascade."""
+    return "" if transport == "kafka" else "file_only"
 
 
 def main(argv: Sequence[str] = ()) -> int:
@@ -915,9 +913,8 @@ def main(argv: Sequence[str] = ()) -> int:
         # Same values for a bare `docker compose`, which never reads make's environment
         env_content = profile_env(lines=lines)
         profile_env_file = PROFILE_MK.with_name(PROFILE_ENV_NAME)
-        if (
-            not (profile_env_file.exists())
-            or profile_env_file.read_text(encoding="utf-8") != env_content
+        if not (profile_env_file.exists()) or (
+            profile_env_file.read_text(encoding="utf-8") != env_content
         ):
             profile_env_file.write_text(env_content, encoding="utf-8")
     except ProfileError as error:

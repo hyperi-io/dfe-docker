@@ -30,6 +30,13 @@ class EngineTierCase(TypedDict):
     renders: bool
 
 
+class ProfileEnvCase(TypedDict):
+    """The profile.mk lines and the dotenv text they render to."""
+
+    expected: str
+    lines: list[str]
+
+
 class ResolveProfileRefusalCase(TypedDict):
     """One profile name, the transport its entry declares and what the refusal says."""
 
@@ -97,6 +104,13 @@ ENGINE_TIER_CASES = [
         profile="single-grpc",
         renders=False,
     ),
+]
+PROFILE_ENV_CASES = [
+    ProfileEnvCase(expected="DFE_A='x y'\n", lines=["export DFE_A := x y"]),
+    ProfileEnvCase(expected="DFE_A=''\n", lines=["export DFE_A := "]),
+    ProfileEnvCase(expected="\n", lines=["export PROFILE_FLAGS := --profile a"]),
+    ProfileEnvCase(expected='DFE_A="it\'s \\$B"\n', lines=["export DFE_A := it's $B"]),
+    ProfileEnvCase(expected="DFE_L='{\"a\":1}'\n", lines=['export DFE_L := {"a":1}']),
 ]
 RESOLVE_PROFILE_REFUSAL_CASES = [
     ResolveProfileRefusalCase(
@@ -166,20 +180,9 @@ class TestEngineTier:
 
 
 class TestProfileEnv:
-    @pytest.mark.parametrize(
-        ("lines", "expected"),
-        [
-            (["export DFE_A := x y"], "DFE_A='x y'\n"),
-            (["export DFE_A := "], "DFE_A=''\n"),
-            (["export PROFILE_FLAGS := --profile a"], "\n"),
-            (["export DFE_A := it's $B"], 'DFE_A="it\'s \\$B"\n'),
-            (['export DFE_L := {"a":1}'], "DFE_L='{\"a\":1}'\n"),
-        ],
-    )
-    def test_renders_make_assignments_as_dotenv(
-        self, expected: str, lines: list[str]
-    ) -> None:
-        assert resolve_profile.profile_env(lines=lines) == expected
+    @pytest.mark.parametrize("case", PROFILE_ENV_CASES)
+    def test_matches_expected(self, case: ProfileEnvCase) -> None:
+        assert resolve_profile.profile_env(lines=case["lines"]) == case["expected"]
 
     def test_a_bare_compose_run_gets_the_profile_values(
         self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
@@ -204,10 +207,10 @@ class TestResolveProfile:
     )
     def test_the_receiver_dlq_skips_kafka_where_there_is_no_broker(
         self,
-        expected: str,
         monkeypatch: pytest.MonkeyPatch,
-        profile: str,
         tmp_path: Path,
+        profile: str,
+        expected: str,
     ) -> None:
         values = _profile_mk(
             monkeypatch=monkeypatch, profile=profile, tmp_path=tmp_path

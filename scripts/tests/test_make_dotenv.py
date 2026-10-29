@@ -145,7 +145,6 @@ def test_the_start_gate_mints_env_where_env_dir_already_exists(checkout: Path) -
 def test_a_pin_with_an_inline_comment_reaches_compose_without_its_padding(
     checkout: Path, line: str, name: str, want: str
 ) -> None:
-    """A caller that loads .env into its own environment exports the pin padded, and make re-exports what it read."""
     (checkout / ".env").write_text(f"{line}\n", encoding="utf-8")
     (checkout / "probe.mk").write_text(
         f"probe:\n\t@printf '[%s]' \"$${name}\"\n", encoding="utf-8"
@@ -153,9 +152,10 @@ def test_a_pin_with_an_inline_comment_reaches_compose_without_its_padding(
     environment = {
         key: value
         for key, value in os.environ.items()
-        if not key.startswith("DFE_")
+        if not (key.startswith("DFE_"))
         and key not in ("MAKEFLAGS", "MAKELEVEL", "MFLAGS")
     }
+    # A caller that loads .env into its own environment exports the pin padded, which make re-exports
     environment[name] = line.split("=", 1)[1].split("#")[0]
 
     result = subprocess.run(
@@ -169,14 +169,14 @@ def test_a_pin_with_an_inline_comment_reaches_compose_without_its_padding(
             "probe.mk",
             "probe",
         ],
-        cwd=checkout,
-        env=environment,
-        stdin=subprocess.DEVNULL,
         capture_output=True,
-        encoding="utf-8",
-        errors="replace",
-        text=True,
         check=False,
+        cwd=checkout,
+        encoding="utf-8",
+        env=environment,
+        errors="replace",
+        stdin=subprocess.DEVNULL,
+        text=True,
     )
 
     assert result.returncode == 0, result.stderr

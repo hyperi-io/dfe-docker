@@ -43,7 +43,7 @@ def held_port() -> Iterator[int]:
     ],
 )
 def test_variables_for_follows_env_then_default(env: dict, expected: dict) -> None:
-    assert port_check.variables_for(compose_text=COMPOSE, env=env) == expected
+    assert port_check._variables_for(compose_text=COMPOSE, env=env) == expected
 
 
 @pytest.mark.parametrize(
@@ -64,12 +64,14 @@ def test_variables_for_follows_env_then_default(env: dict, expected: dict) -> No
     ],
 )
 def test_published_ports(config: dict, expected: list) -> None:
-    assert port_check.published_ports(config=config) == expected
+    assert port_check._published_ports(config=config) == expected
 
 
 def test_conflicts_names_the_taken_port_and_its_variable(held_port: int) -> None:
     ports = [("clickhouse", "127.0.0.1", held_port, "tcp")]
-    lines = port_check.conflicts(ports=ports, names={held_port: "CLICKHOUSE_HTTP_PORT"})
+    lines = port_check._conflicts(
+        names={held_port: "CLICKHOUSE_HTTP_PORT"}, ports=ports
+    )
     assert len(lines) == 1
     assert "CLICKHOUSE_HTTP_PORT" in lines[0]
     assert str(held_port) in lines[0]
@@ -79,4 +81,6 @@ def test_conflicts_is_empty_for_a_free_port() -> None:
     with socket.socket() as probe:
         probe.bind(("127.0.0.1", 0))
         free = probe.getsockname()[1]
-    assert port_check.conflicts(ports=[("a", "127.0.0.1", free, "tcp")], names={}) == []
+    assert (
+        port_check._conflicts(names={}, ports=[("a", "127.0.0.1", free, "tcp")]) == []
+    )

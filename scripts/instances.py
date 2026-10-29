@@ -59,8 +59,8 @@ from _common import (  # noqa: E402
 
 COMPOSE_INSTANCES_FILE = REPO_ROOT / ".tmp" / "docker-compose.instances.yml"
 
+# The overlay whose x-container-logs block every instance copies, since `extends` never reads an overlay
 CONTAINER_LOGS_FILE = REPO_ROOT / "docker-compose.container-logs.yml"
-"""The overlay whose x-container-logs block every instance copies, since `extends` never reads an overlay."""
 CONTAINER_LOGS_ANCHOR = "x-container-logs:"
 
 INDEX_SUFFIX = ".instances"
@@ -142,12 +142,14 @@ def service_name(service: str, instance: str) -> str:
 
 def container_logs_block(*, path: Path | None = None) -> list[str]:
     """The overlay's x-container-logs anchor, copied line for line so an instance logs exactly as the committed services do."""
-    lines = (path or CONTAINER_LOGS_FILE).read_text(encoding="utf-8").splitlines()
+    lines = ((path) or (CONTAINER_LOGS_FILE)).read_text(encoding="utf-8").splitlines()
     start = next(
         i for i, line in enumerate(lines) if line.startswith(CONTAINER_LOGS_ANCHOR)
     )
     end = start + 1
-    while end < len(lines) and (not lines[end].strip() or lines[end].startswith(" ")):
+    while end < len(lines) and (
+        not (lines[end].strip()) or (lines[end].startswith(" "))
+    ):
         end += 1
     return [*lines[start:end]]
 
@@ -216,10 +218,7 @@ def fragment(
     container_logs: bool = False,
     images: Mapping[str, str] | None = None,
 ) -> str:
-    """The whole compose fragment for the instances given, each app in ``images`` on the image it maps to.
-
-    ``container_logs`` puts every instance on the log driver the container-logs overlay gives the committed services.
-    """
+    """The whole compose fragment for the instances given, each app in ``images`` on the image it maps to and, with ``container_logs``, on the log driver the overlay gives the committed services."""
     lines = [HEADER.rstrip("\n")]
     if container_logs:
         lines += [*container_logs_block(), ""]
@@ -227,11 +226,11 @@ def fragment(
     for service in sorted(instances):
         for instance in instances[service]:
             lines += _service_block(
-                service,
-                instance,
-                compose_file,
+                compose_file=compose_file,
                 container_logs=container_logs,
-                image=(images or {}).get(service, ""),
+                image=((images) or ({})).get(service, ""),
+                instance=instance,
+                service=service,
             )
     return "\n".join(lines).rstrip("\n") + "\n"
 
@@ -283,10 +282,10 @@ def write(
         target.unlink(missing_ok=True)
         return False
     content = fragment(
-        instances,
         compose_file=COMPOSE_FILE.name,
         container_logs=container_logs,
         images=images,
+        instances=instances,
     )
     if not target.is_file() or target.read_text(encoding="utf-8") != content:
         target.parent.mkdir(exist_ok=True, parents=True)

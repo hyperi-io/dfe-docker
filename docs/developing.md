@@ -367,17 +367,17 @@ Two things about the runner worth knowing before you debug it:
   them in and fails regardless of broker health.
 - **It deletes the `_load` sibling of every expected `_land` topic before each run.** Broker volumes outlive containers, so a `main_load` left by any transform run suppresses `main_land` for every non-transform loader thereafter. See [known-issues.md](known-issues.md#a-_load-topic-changes-what-the-loader-reads). Deleting it per run makes a run depend on the test definition, not on broker history.
 
-### The dfe-ui Playwright suite -- one target on, one off
+### The dfe-ui Playwright suite: one target on, one off
 
-The suite seeds its fixtures through the engine's `/api/e2e` routes, which exist only with `DFE_E2E_SERVER=true`, and its seeders refuse anything but `DFE_ENV=test`.
+The suite seeds its fixtures through the engine's `/api/e2e` routes, which exist only with `DFE_E2E_SERVER=true`. Its seeders refuse anything but `DFE_ENV=test`.
 
 ```bash
-make e2e-posture         # DFE_ENV=test, DFE_E2E_SERVER=true, the shipped admin password
-make e2e-posture-check   # exit 1 naming what is missing; the suite runs this first
-make e2e-posture-off     # put back the .env from before
+make e2e-posture         # DFE_ENV=test in .env, DFE_E2E_SERVER=true and the shipped admin password in env/engine.env
+make e2e-posture-check   # exit 1 naming what is missing, the suite runs this first
+make e2e-posture-off     # put back both files from before
 ```
 
-`e2e-posture` copies the `.env` it replaces to `.env.pre-e2e` (0600) the first time, and `e2e-posture-off` restores it. It refuses (exit 2) on a `.env` that names a deployment, since it writes the shipped admin password over the real one. The engine reads `.env` when it starts, so recreate the stack after either switch.
+`e2e-posture` copies each file it replaces to `<name>.pre-e2e` (0600) the first time and `e2e-posture-off` restores them. It refuses (exit 2) on a `.env` that names a deployment, since it writes the shipped admin password over the real one. The engine reads both files when it starts, so recreate the stack after either switch.
 
 ### Rules and hunts -- exactly the matching events
 
@@ -482,9 +482,7 @@ network the first time. The rest need none.
 
 ## Port collisions on a shared dev host
 
-The broker publishes one host port, `19092`. A shared dev box very often already
-runs a Kafka or Redpanda on `9092`, and that does not clash, because the in-network
-listener `kafka:9092` is not published. If something holds `19092`, move it:
+The broker publishes one host port, `19092`. A shared dev box very often already runs a Kafka or Redpanda on `9092`, which does not clash because the in-network listener `kafka:9092` is not published. If something holds `19092`, move it:
 
 ```bash
 make test-e2e KAFKA_PLAINTEXT_HOST_PORT=29192
@@ -505,7 +503,7 @@ dial ClickHouse on 8123/9000 whatever its host publish is. The
 `CLICKHOUSE_EXTERNAL_*_PORT` pair is not a host port; it is only for an
 external `CLICKHOUSE_HOST`.
 
-`make dev` and `make ci` try to bind every host port the resolved stack publishes before starting, and refuse with the variable to set for each one already taken (scripts/port_check.py).
+`make dev` and `make ci` try to bind every host port the resolved stack publishes before starting and refuse with the variable to set for each one already taken (scripts/port_check.py).
 
 Beside another stack on the same daemon, ports are not enough, because every
 `container_name` is daemon-wide. Set `COMPOSE_PROJECT_NAME`, the ports above,

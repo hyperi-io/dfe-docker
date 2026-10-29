@@ -743,7 +743,9 @@ def test_a_new_dfe_app_nobody_decided_for_fails(monkeypatch: pytest.MonkeyPatch)
         (["corp.example.com", "."], 1),
     ],
 )
-def test_a_service_must_clear_the_host_search_domain(dns_search, expected_failures):
+def test_a_service_must_clear_the_host_search_domain(
+    dns_search: list[str] | None, expected_failures: int
+) -> None:
     service = {} if dns_search is None else {"dns_search": dns_search}
     config = {"services": {"dfe-loader": service}}
 

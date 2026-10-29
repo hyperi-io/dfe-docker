@@ -22,8 +22,7 @@ export CLICKHOUSE_PASSWORD
 export CLICKHOUSE_URL
 export CLICKHOUSE_USERNAME
 
-# An inline comment on a pin leaves the spaces before the `#` in its value, and make
-# passes that padded value on to compose, which fails with "invalid reference format".
+# Strips the spaces an inline comment leaves before the `#` in a pin, which compose rejects as "invalid reference format"
 $(foreach pin,$(filter DFE_%_VERSION DFE_%_VERSION_TAG,$(.VARIABLES)),$(eval $(pin) := $(strip $($(pin)))))
 
 # Host UID/GID passed to live-mode containers (docker-compose.live.yml) that
@@ -287,10 +286,7 @@ ifeq ($(strip $(DFE_INSTANCES_RESOLVED)),true)
     $(eval $(call chain_fragment,.tmp/docker-compose.instances.yml))
 endif
 
-# Container stdout to the collector. Off wherever the collector is not, because the
-# driver would queue lines for an endpoint nothing listens on. Empty for the bootstrap
-# goals, which reads as off -- the safe direction for a target that only stops a
-# stack or checks a file.
+# Container stdout to the collector only where one runs, since the driver would queue lines for an endpoint nothing listens on (the bootstrap goals resolve empty, which reads as off)
 DFE_CONTAINER_LOGS_ENABLED ?= true
 ifeq ($(strip $(DFE_OTEL_RESOLVED))-$(strip $(DFE_CONTAINER_LOGS_ENABLED)),true-true)
     $(eval $(call chain_fragment,docker-compose.container-logs.yml))
@@ -458,15 +454,15 @@ dev-posture: env-files ## Put .env and env/engine.env into the dev posture (DFE_
 	@python3 scripts/dev_posture.py $(DEV_POSTURE_ARG)
 
 .PHONY: e2e-posture
-e2e-posture: .env ## Put .env into the posture the dfe-ui Playwright suite needs (DFE_ENV=test, the engine's e2e routes on), keeping the .env it replaces for e2e-posture-off
+e2e-posture: env-files ## Put .env and env/engine.env into the dfe-ui Playwright suite's posture (DFE_ENV=test, the engine's e2e routes on), keeping both originals for e2e-posture-off
 	@python3 scripts/e2e_posture.py on
 
 .PHONY: e2e-posture-off
-e2e-posture-off: ## Put back the .env from before e2e-posture
+e2e-posture-off: ## Put back the .env and env/engine.env from before e2e-posture
 	@python3 scripts/e2e_posture.py off
 
 .PHONY: e2e-posture-check
-e2e-posture-check: ## Exit 1, naming what is missing, unless .env is in the e2e posture. The Playwright run calls it first
+e2e-posture-check: ## Exit 1 naming what is missing unless the env files are in the e2e posture, which the Playwright run checks first
 	@python3 scripts/e2e_posture.py check
 
 # `make stack VERSION=X.Y.Z` pins the certified set. `make dial` writes the dial's
