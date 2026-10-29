@@ -125,7 +125,7 @@ _SECRET_LENGTHS = collections.ChainMap(*GENERATED_SECRETS.values())
 #
 # A SINGLE hash only, deliberately. This file's convention is `#` for a
 # commented-out setting and `##` for prose, and the prose genuinely contains lines
-# like "## DFE_BIND_HOST=0.0.0.0. Do that knowingly..." mid-sentence. A looser
+# like "## Name external clients connect to, with DFE_BIND_HOST=0.0.0.0". A looser
 # `#*` matched those, which is harmless for drift reporting but not for
 # _render_secrets: the day anyone writes `## NEXTAUTH_SECRET=...` in a
 # comment explaining the key, that documentation line would be replaced by a live
