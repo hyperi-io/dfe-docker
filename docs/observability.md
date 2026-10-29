@@ -165,10 +165,7 @@ That does not port: the files live under the daemon's data-root, which is not
 Desktop, and listing that directory needs root. The log driver needs no host path
 and no privilege.
 
-**`docker compose logs` still reads these services.** Docker's dual logging keeps
-a local copy of each line, so the driver adds the collector without taking the CLI
-away. Only DFE's own services move onto the driver -- ClickHouse, the broker, the
-proxies and HyperDX keep `json-file`. Put every service back with:
+**`docker compose logs` still reads these services.** Docker's dual logging keeps a local copy of each line, so the driver adds the collector without taking the CLI away. Only DFE's own services move onto the driver: ClickHouse, the broker, the proxies and HyperDX keep `json-file`. Put every service back with:
 
 ```
 DFE_CONTAINER_LOGS_ENABLED=false

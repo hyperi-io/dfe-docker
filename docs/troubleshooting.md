@@ -1,7 +1,7 @@
 <!--
 Project:   dfe-docker
 File:      docs/troubleshooting.md
-Purpose:   Reading stack state, and the events-accepted and DLQ diagnoses
+Purpose:   Reading stack state, then diagnosing accepted events that never land and the DLQ spool
 Language:  Markdown
 
 License:   BUSL-1.1
@@ -13,9 +13,7 @@ Copyright: (c) 2026 HYPERI PTY LIMITED
 This applies to you if a stack is misbehaving and you need to find out why --
 yours or someone else's.
 
-Start with the state of the stack, then the [known issues](known-issues.md), then
-the [common failures](common-failures.md) for the one you are actually chasing. Several of the known issues produce symptoms
-that look like something else entirely, so read them before you go deep.
+Start with the state of the stack, then the [known issues](known-issues.md), then the [common failures](common-failures.md) for the one you are actually chasing. Several of the known issues produce symptoms that look like something else entirely, so read them before you go deep.
 
 ## Reading the stack's state
 
@@ -46,18 +44,14 @@ the service key and are unaffected.
 
 ## Where a DFE service's logs are
 
-With self-monitoring on, DFE's own services log through Docker's `fluentd`
-driver, and `docker compose logs dfe-loader` still reads them back from the
-daemon's local copy. The same lines are in ClickHouse -- search the `otel_logs`
-source in HyperDX, or read them directly:
+With self-monitoring on, DFE's own services log through Docker's `fluentd` driver and `docker compose logs dfe-loader` still reads them back from the daemon's local copy. The same lines are in ClickHouse: search the `otel_logs` source in HyperDX or read them directly:
 
 ```bash
 docker exec dfe-clickhouse clickhouse-client --query \
   "SELECT Timestamp, Body FROM dfe.otel_logs WHERE ServiceName = 'dfe-loader' ORDER BY Timestamp DESC LIMIT 50"
 ```
 
-ClickHouse, the broker, the proxies and HyperDX keep `json-file`. To put every
-service back on it, set `DFE_CONTAINER_LOGS_ENABLED=false` and restart.
+ClickHouse, the broker, the proxies and HyperDX keep `json-file`. To put every service back on it, set `DFE_CONTAINER_LOGS_ENABLED=false` and restart.
 
 ## Events are accepted but nothing lands
 
@@ -160,8 +154,8 @@ A row ClickHouse refuses with no working DLQ to take it is lost. The loader logs
 
 ## Related
 
-- [known-issues.md](known-issues.md) -- open problems whose symptoms mislead
-- [common-failures.md](common-failures.md) -- the failures seen most often, by symptom
+- [known-issues.md](known-issues.md) - open problems whose symptoms mislead
+- [common-failures.md](common-failures.md) - the failures seen most often, by symptom
 - [observability.md](observability.md) -- the health surface and what each endpoint proves
 - [operating.md](operating.md) -- auth position, exposure, limits, secrets
 - [configuration.md](configuration.md) -- every variable, port and image
