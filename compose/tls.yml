@@ -1,0 +1,40 @@
+# Project:   dfe-docker
+# File:      compose/tls.yml
+# Purpose:   Serve the console and HyperDX over TLS and trust forwarded headers from dfe-proxy alone
+# Language:  YAML
+#
+# License:   BUSL-1.1
+# Copyright: (c) 2026 HYPERI PTY LIMITED
+
+# Chained by make when DFE_PROXY_TLS=true, once it has checked the certificate, the key and the https origins. Outside a dev posture the engine's OIDC cookies are Secure, so a sign-in on any host but localhost needs it
+services:
+  dfe-engine:
+    environment:
+      # dfe-proxy's address alone: under rootless Docker, Docker Desktop or the userland proxy every published-port caller arrives from the bridge gateway, so trusting that would let any of them forge X-Forwarded-For past the login throttle
+      DFE_API_FORWARDED_ALLOW_IPS: ${DFE_PROXY_IP:?chained by make, which derives it from DFE_NETWORK_SUBNET}
+
+  dfe-proxy:
+    # The make user, because the key stays 0600 and the image's own user (uid 101) cannot read it
+    user: "${DFE_DEV_UID:-1000}:${DFE_DEV_GID:-1000}"
+    networks:
+      default:
+        # The last host of DFE_NETWORK_SUBNET, which scripts/proxy_tls.py derives
+        ipv4_address: ${DFE_PROXY_IP:?chained by make, which derives it from DFE_NETWORK_SUBNET}
+    # The config mount shares its target with the base file's, so it replaces that one
+    volumes:
+      - ./config/proxy/envoy.tls.yaml:/etc/envoy/envoy.yaml:ro
+      - ${DFE_PROXY_CERT_DIR:?chained by make, which defaults it to ./certs}:/etc/envoy/certs:ro
+
+  dfe-hyperdx-proxy:
+    user: "${DFE_DEV_UID:-1000}:${DFE_DEV_GID:-1000}"
+    volumes:
+      - ./config/proxy/hyperdx.tls.yaml:/etc/envoy/envoy.yaml:ro
+      - ${DFE_PROXY_CERT_DIR:?chained by make, which defaults it to ./certs}:/etc/envoy/certs:ro
+
+networks:
+  default:
+    ipam:
+      config:
+        # Docker allocates every other container from the first half, so dfe-proxy's address is never taken
+        - subnet: ${DFE_NETWORK_SUBNET:?chained by make, which defaults it to 10.207.0.0/24}
+          ip_range: ${DFE_NETWORK_IP_RANGE:?chained by make, which derives it from DFE_NETWORK_SUBNET}

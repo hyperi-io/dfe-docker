@@ -281,7 +281,7 @@ def test_the_state_volume_moves_with_the_data_root(app: str) -> None:
     )
     overlay = _committed_block(
         name=volume,
-        text=(REPO_ROOT / "docker-compose.storage.yml").read_text(encoding="utf-8"),
+        text=(REPO_ROOT / "compose" / "storage.yml").read_text(encoding="utf-8"),
     )
     makefile = (REPO_ROOT / "Makefile").read_text(encoding="utf-8")
 

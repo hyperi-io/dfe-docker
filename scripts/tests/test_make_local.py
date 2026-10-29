@@ -24,7 +24,7 @@ import pytest
 REPO_ROOT = Path(__file__).resolve().parents[2]
 
 _BUILD = ["python3", "scripts/build_dev_images.py"]
-_RECORD = "docker-compose.local.yml"
+_RECORD = ".tmp/docker-compose.local.yml"
 _RESOLVER_ARGS = Path(".tmp") / "resolver-args"
 # What a goal that starts services adds, asserted apart from the LOCAL arguments.
 _USAGE = "--usage"
@@ -94,7 +94,6 @@ def _make(*, args: list[str], cwd: Path) -> subprocess.CompletedProcess:
     dropped = (
         "COMPOSE_FILE",
         "DEV",
-        "LIVE",
         "LIVE_UI",
         "LOCAL",
         "MAKEFLAGS",

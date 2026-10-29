@@ -8,6 +8,8 @@
 
 .DEFAULT_GOAL := help
 export PYTHONPYCACHEPREFIX := $(CURDIR)/.tmp/pycache
+# The parse writes generated compose files into .tmp/, which a fresh checkout lacks
+$(shell mkdir -p .tmp)
 
 # Read only when present, because make builds a missing include before any goal
 # and `make help` must not mint secrets. Goals that need .env depend on it.
@@ -25,27 +27,16 @@ export CLICKHOUSE_USERNAME
 # Strips the spaces an inline comment leaves before the `#` in a pin, which compose rejects as "invalid reference format"
 $(foreach pin,$(filter DFE_%_VERSION DFE_%_VERSION_TAG,$(.VARIABLES)),$(eval $(pin) := $(strip $($(pin)))))
 
-# Host UID/GID passed to live-mode containers (docker-compose.live.yml) that
-# write to bind-mounted host dirs (dfe-engine config/schemas), so files are owned
-# by the host user rather than the image user and writes don't hit permission
-# errors. The GID is also the group every stack adds to dfe-engine, which is how
-# it writes env/<app>.custom.env into the checkout.
+# The host user, which dfe-ui runs as under LIVE_UI=1, both proxies under console TLS and check-proxy's Envoy always, so what they write or read in the checkout stays its own. Its GID is also the group every stack adds to dfe-engine, which is how it writes env/<app>.custom.env into the checkout
 export DFE_DEV_UID := $(shell id -u)
 export DFE_DEV_GID := $(shell id -g)
 
-# Live-edit mode: `make dev LIVE=1` layers docker-compose.live.yml, which
-# bind-mounts dfe-engine config/schemas from DFE_SRC_ROOT so edits land without
-# a rebuild. COMPOSE_FILE chains the overlay for every plain `docker compose`
-# call this make run spawns; the targets that pass -f explicitly (ci, down,
-# clean) ignore COMPOSE_FILE by design, so the registry path stays untouched.
-# External data location: DFE_DATA_ROOT (env, else .env) rehomes every stateful
-# volume onto that path via docker-compose.storage.yml. STORAGE_FLAGS carries it
-# onto the explicit `-f` targets (ci, ci-pull), which must relocate storage too.
+# DFE_DATA_ROOT (env, else .env) rehomes every stateful volume onto that path via compose/storage.yml. STORAGE_FLAGS carries it onto the targets that pass -f themselves
 DFE_DATA_ROOT ?= $(shell sed -n 's/^DFE_DATA_ROOT=//p' .env 2>/dev/null)
 ifneq ($(strip $(DFE_DATA_ROOT)),)
     export DFE_DATA_ROOT
-    STORAGE_CHAIN := :docker-compose.storage.yml
-    STORAGE_FLAGS := -f docker-compose.storage.yml
+    STORAGE_CHAIN := :compose/storage.yml
+    STORAGE_FLAGS := -f compose/storage.yml
 endif
 
 # Goals that work without a resolved service profile. The check-* targets belong
@@ -76,25 +67,19 @@ ifneq (,$(filter-out $(BOOTSTRAP_GOALS),$(or $(MAKECMDGOALS),help)))
         endif
         ACTIVE_SERVICES := $(filter $(SERVICES),$(DFE_SERVICES))
     endif
-    # `make dev LOCAL="dfe-engine dfe-ui"` builds only those and keeps the rest
-    # on the registry pins: the build writes docker-compose.local.yml for the
-    # built components and the compose call names its files explicitly, which
-    # keeps the auto-loaded all-local override out. Empty LOCAL is plain dev.
+    # The overlay every dev compose call names, which the build writes to put what it built on `:local`. LOCAL="dfe-engine dfe-ui" builds only those
     LOCAL ?=
-    LOCAL_OVERLAY := docker-compose.local.yml
-    # The pull runs before the build writes any overlay, so it names none either
-    # way and resolves every image to its registry pin. The auto-loaded override
-    # otherwise sends it after a `:local` tag nothing has built yet, reached
-    # through an image consumer (dfe-hunt-runner runs dfe-engine's image), so it
-    # bites even when the profile holds no DFE service of its own.
-    # DEV_PULL_FLAGS and DEV_FLAGS expand at use time: UI_FLAGS is filled below.
+    LOCAL_OVERLAY := .tmp/docker-compose.local.yml
+    # Empty until a build writes it, so no dev chain names a missing file
+    $(if $(wildcard $(LOCAL_OVERLAY)),,$(file > $(LOCAL_OVERLAY),services: {}))
+    # Expanded at use time, since UI_FLAGS is filled below. The pull runs before the build, so it names no overlay and every image resolves to its registry pin
     DEV_PULL_FLAGS = -f docker-compose.yml $(STORAGE_FLAGS) $(UI_FLAGS) $(LIVE_UI_FLAGS)
+    DEV_FLAGS = -f docker-compose.yml -f $(LOCAL_OVERLAY) $(STORAGE_FLAGS) $(UI_FLAGS) $(LIVE_UI_FLAGS)
     # `LIVE_UI=1` runs dfe-ui from the checkout, so there is no dfe-ui image to build.
     LIVE_UI_SKIP := $(if $(strip $(LIVE_UI)),dfe-ui)
     ifeq ($(strip $(LOCAL)),)
-        # DFE_SERVICES names a per-source app's instances and never the app, so the apps the profile runs per source are built beside it. The build records what it made in the overlay file, which `make apply` reads to keep an instance on its local image
+        # DFE_SERVICES names a per-source app's instances and never the app, so the apps the profile runs per source are built beside it. The build records what it made in the overlay, which `make apply` reads to keep an instance on its local image
         DEV_BUILD := $(filter-out $(LIVE_UI_SKIP),$(ACTIVE_SERVICES)) $(DFE_PER_SOURCE_APPS)
-        DEV_FLAGS :=
         DEV_OVERLAY_ARG := --record $(LOCAL_OVERLAY)
     else
         # Validated against the buildable set rather than the resolved stack: a
@@ -116,14 +101,6 @@ ifneq (,$(filter-out $(BOOTSTRAP_GOALS),$(or $(MAKECMDGOALS),help)))
             $(error LIVE_UI=1 runs dfe-ui from your checkout with `next dev`, so there is no dfe-ui image to build. Drop dfe-ui from LOCAL)
         endif
         DEV_BUILD := $(LOCAL)
-        # The local overlay takes the committed override's slot, keeping the
-        # default chain's relative order so `LIVE=1` resolves the engine volumes
-        # the same way with and without LOCAL.
-        DEV_FLAGS = -f docker-compose.yml -f $(LOCAL_OVERLAY)
-        ifneq ($(strip $(LIVE)),)
-            DEV_FLAGS += -f docker-compose.live.yml
-        endif
-        DEV_FLAGS += $(STORAGE_FLAGS) $(UI_FLAGS) $(LIVE_UI_FLAGS)
         DEV_OVERLAY_ARG := --overlay $(LOCAL_OVERLAY)
     endif
 endif
@@ -139,12 +116,7 @@ endif
 # Ingest (DFE_INGRESS_BIND_HOST) and the operator ports (DFE_BIND_HOST) keep
 # their own audiences and are untouched by it.
 #
-# Every UI publishes by default. An opt-out drops that service's ports mapping,
-# which compose merging cannot do by override -- hence a `!reset` fragment per
-# UI, chained here the same way STORAGE_CHAIN chains the storage overlay.
-# DFE_INFRA_UIS_EXTERNAL=false is the kill switch: it unpublishes every
-# INFRA-class UI at once and beats their individual flags. dfe-ui and the engine
-# API are PRODUCT class and answer only to their own.
+# Every UI publishes by default. An opt-out drops that service's ports mapping, which compose merging cannot do by override, so make writes a `!reset` entry per unpublished service into one fragment and chains it the way STORAGE_CHAIN chains the storage overlay. DFE_INFRA_UIS_EXTERNAL=false is the kill switch: it unpublishes every INFRA-class UI at once and beats their individual flags. dfe-ui and the engine API are PRODUCT class and answer only to their own.
 #
 # Below the profile block because DFE_AUTH_RESOLVED comes from .tmp/profile.mk, so the profile key and the env var can never disagree about whether the auth proxies are in play. The bootstrap goals skip that include and read it empty, which is the auth-off branch, the safe direction for a target that only stops a stack or checks a file.
 # ---------------------------------------------------------------------------
@@ -251,32 +223,46 @@ endef
 
 UI_CHAIN :=
 UI_FLAGS :=
+
+# The services whose host ports the exposure dials take away. dfe-proxy carries the console and dfe-hyperdx-proxy both HyperDX origins
+UNPUBLISHED :=
 ifeq ($(strip $(DFE_UI_EXTERNAL)),false)
-    $(eval $(call chain_fragment,docker-compose.unpublish-dfe-ui.yml))
+    UNPUBLISHED += dfe-proxy
 endif
 ifeq ($(strip $(DFE_ENGINE_API_EXTERNAL)),false)
-    $(eval $(call chain_fragment,docker-compose.unpublish-engine-api.yml))
+    UNPUBLISHED += dfe-engine
 endif
 
 # Infra class. With the auth profile armed each infra UI moves BEHIND its
 # oauth2-proxy, so its own port is unpublished either way and the gate lands on
 # the proxy instead.
 ifeq ($(strip $(DFE_AUTH_RESOLVED)),true)
-    $(eval $(call chain_fragment,docker-compose.unpublish-kafbat.yml))
-    $(eval $(call chain_fragment,docker-compose.unpublish-hyperdx.yml))
+    UNPUBLISHED += kafka-ui dfe-hyperdx-proxy
     ifneq ($(KAFBAT_GATED),)
-        $(eval $(call chain_fragment,docker-compose.unpublish-auth-kafbat.yml))
+        UNPUBLISHED += oauth2-proxy-kafbat
     endif
     ifneq ($(HYPERDX_GATED),)
-        $(eval $(call chain_fragment,docker-compose.unpublish-auth-hyperdx.yml))
+        UNPUBLISHED += oauth2-proxy-hyperdx oauth2-proxy-hyperdx-api
     endif
 else
     ifneq ($(KAFBAT_GATED),)
-        $(eval $(call chain_fragment,docker-compose.unpublish-kafbat.yml))
+        UNPUBLISHED += kafka-ui
     endif
     ifneq ($(HYPERDX_GATED),)
-        $(eval $(call chain_fragment,docker-compose.unpublish-hyperdx.yml))
+        UNPUBLISHED += dfe-hyperdx-proxy
     endif
+endif
+
+# The line break $(file) writes between a fragment's lines
+define newline
+
+
+endef
+
+ifneq ($(strip $(UNPUBLISHED)),)
+    $(file > .tmp/docker-compose.unpublish.yml,# Generated by make$(newline)services:)
+    $(foreach service,$(UNPUBLISHED),$(file >> .tmp/docker-compose.unpublish.yml,  $(service):$(newline)    ports: !reset []))
+    $(eval $(call chain_fragment,.tmp/docker-compose.unpublish.yml))
 endif
 
 # One service per app instance dfe-engine has rendered a config for, generated
@@ -289,10 +275,10 @@ endif
 # Container stdout to the collector only where one runs, since the driver would queue lines for an endpoint nothing listens on (the bootstrap goals resolve empty, which reads as off)
 DFE_CONTAINER_LOGS_ENABLED ?= true
 ifeq ($(strip $(DFE_OTEL_RESOLVED))-$(strip $(DFE_CONTAINER_LOGS_ENABLED)),true-true)
-    $(eval $(call chain_fragment,docker-compose.container-logs.yml))
+    $(eval $(call chain_fragment,compose/container-logs.yml))
 endif
 
-# Live console edits: `make dev LIVE_UI=1` runs dfe-ui as `next dev` over DFE_SRC_ROOT/dfe-ui (docker-compose.live-ui.yml). It rides the dev paths only, like LIVE=1, so the registry goals (ci, up, apply without DEV) never run a dev server. It chains after the container-logs fragment because it puts dfe-ui back on the default log driver.
+# Live console edits: `make dev LIVE_UI=1` runs dfe-ui as `next dev` over DFE_SRC_ROOT/dfe-ui (compose/live-ui.yml). It rides the dev paths only, so the registry goals (ci, up, apply without DEV) never run a dev server. It chains after the container-logs fragment because it puts dfe-ui back on the default log driver.
 # The Node image comes from the checkout's own Dockerfile rather than a second pin here, read without a shell so a path with a quote in it stays a path.
 LIVE_UI_GOALS := dev dev-build apply apply-services
 ifneq ($(strip $(LIVE_UI)),)
@@ -303,8 +289,8 @@ ifneq ($(strip $(LIVE_UI)),)
     LIVE_UI_ORIGIN_HOST := $(call origin_host,DFE_EXTERNAL_ORIGIN)
     LIVE_UI_ORIGIN_NAME := $(and $(filter-out localhost [%,$(LIVE_UI_ORIGIN_HOST)),$(subst .,,$(subst 0,,$(subst 1,,$(subst 2,,$(subst 3,,$(subst 4,,$(subst 5,,$(subst 6,,$(subst 7,,$(subst 8,,$(subst 9,,$(LIVE_UI_ORIGIN_HOST)))))))))))))
     export DFE_UI_DEV_HOST := $(if $(LIVE_UI_ORIGIN_NAME),$(LIVE_UI_ORIGIN_HOST),0.0.0.0)
-    LIVE_UI_CHAIN := :docker-compose.live-ui.yml
-    LIVE_UI_FLAGS := -f docker-compose.live-ui.yml
+    LIVE_UI_CHAIN := :compose/live-ui.yml
+    LIVE_UI_FLAGS := -f compose/live-ui.yml
     # Refused here rather than at compose interpolation, which `make dev` reaches only after `down` has stopped the stack.
     ifneq (,$(filter $(LIVE_UI_GOALS),$(MAKECMDGOALS)))
         ifeq ($(strip $(DFE_UI_NODE_IMAGE)),)
@@ -316,7 +302,7 @@ endif
 # ---------------------------------------------------------------------------
 # Console TLS (opt-in)
 #
-# DFE_PROXY_TLS=true chains docker-compose.tls.yml, which serves the console, the HyperDX embed and both HyperDX origins over TLS with one certificate. Outside a dev posture the engine marks its OIDC cookies Secure, so a sign-in on any hostname but localhost needs it.
+# DFE_PROXY_TLS=true chains compose/tls.yml, which serves the console, the HyperDX embed and both HyperDX origins over TLS with one certificate. Outside a dev posture the engine marks its OIDC cookies Secure, so a sign-in on any hostname but localhost needs it.
 #
 # The engine trusts X-Forwarded-Proto from dfe-proxy's address alone, so that address is fixed: the last host of DFE_NETWORK_SUBNET, with every other container allocated from the first half. Make cannot do the address arithmetic, so scripts/proxy_tls.py does.
 # ---------------------------------------------------------------------------
@@ -338,7 +324,7 @@ ifeq ($(strip $(DFE_PROXY_TLS)),true)
     PROXY_NETWORK := $(shell python3 scripts/proxy_tls.py network '$(strip $(DFE_NETWORK_SUBNET))')
     export DFE_PROXY_IP := $(word 1,$(PROXY_NETWORK))
     export DFE_NETWORK_IP_RANGE := $(word 2,$(PROXY_NETWORK))
-    $(eval $(call chain_fragment,docker-compose.tls.yml))
+    $(eval $(call chain_fragment,compose/tls.yml))
 endif
 
 # Only the start goals need the certificate, for the reason ORIGIN_GOALS gives. The auth refusal is in the .tmp/profile.mk recipe instead, because it reads DFE_AUTH_RESOLVED and this pass may still hold the previous run's
@@ -376,10 +362,9 @@ certs: ## Mint a console TLS certificate for DFE_EXTERNAL_ORIGIN's host, localho
 	@$(CERT_DIR_REFUSAL)
 	@python3 scripts/proxy_tls.py mint --cert-dir '$(DFE_PROXY_CERT_DIR)' --host '$(or $(call origin_host,DFE_EXTERNAL_ORIGIN),localhost)'
 
-ifneq ($(strip $(LIVE)),)
-    export COMPOSE_FILE := docker-compose.yml:docker-compose.override.yml:docker-compose.live.yml$(STORAGE_CHAIN)$(UI_CHAIN)$(LIVE_UI_CHAIN)
-else ifneq ($(strip $(STORAGE_CHAIN))$(strip $(UI_CHAIN))$(strip $(LIVE_UI_CHAIN)),)
-    export COMPOSE_FILE := docker-compose.yml:docker-compose.override.yml$(STORAGE_CHAIN)$(UI_CHAIN)$(LIVE_UI_CHAIN)
+# What every plain `docker compose` call this make run spawns reads. The targets that pass -f themselves ignore it
+ifneq ($(strip $(STORAGE_CHAIN))$(strip $(UI_CHAIN))$(strip $(LIVE_UI_CHAIN)),)
+    export COMPOSE_FILE := docker-compose.yml$(STORAGE_CHAIN)$(UI_CHAIN)$(LIVE_UI_CHAIN)
 endif
 
 # The gated infra UIs go to the resolver, so the engine's admin links name only
@@ -496,7 +481,7 @@ modes: ## Show the deploy modes -- pinned vs track-latest -- and which one this 
 	@python3 scripts/show_modes.py
 
 # ---------------------------------------------------------------------------
-# Dev (builds from local source via docker-compose.override.yml)
+# Dev (builds local images from source)
 # ---------------------------------------------------------------------------
 
 # The bind directories must exist before the local volume driver mounts them.
@@ -524,7 +509,7 @@ dev-build: ## Build local DFE images from source (no start; honours LOCAL). Clon
 	$(if $(strip $(DEV_BUILD)),python3 scripts/build_dev_images.py $(DEV_OVERLAY_ARG) $(DEV_BUILD))
 
 # ---------------------------------------------------------------------------
-# CI / registry images (skips docker-compose.override.yml)
+# CI / registry images
 # ---------------------------------------------------------------------------
 
 # A registry stack runs no local image, so the record of the last dev build goes, or `make apply` would put an instance back on it.
@@ -657,14 +642,13 @@ check-locks: ## Assert each inline-metadata script's lock matches its pins (relo
 	$(LOCK_UV) lock --check --script scripts/test_e2e.py
 	$(LOCK_UV) lock --check --script scripts/test_flows.py
 
-# The resolved chain, for check-compose to compare the `make dev LOCAL=...` file
-# list against. Not a bootstrap goal: the chain depends on DFE_AUTH_RESOLVED.
+# The resolved chain, for check-compose to compare the `make dev` file list against. Not a bootstrap goal: the chain depends on DFE_AUTH_RESOLVED.
 .PHONY: print-compose-file
 print-compose-file:
 	@echo "COMPOSE_FILE=$(COMPOSE_FILE)"
 
 .PHONY: check-compose
-check-compose: ## Resolve compose on the registry, dev and live paths, both Kafka backends
+check-compose: ## Resolve compose on the registry, dev, LIVE_UI and LOCAL paths, both Kafka backends
 	@python3 scripts/check_compose.py
 
 .PHONY: check-hardfail

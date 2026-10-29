@@ -29,7 +29,7 @@ import init
 import instances
 from _common import COMPOSE_FILE, REPO_ROOT
 
-_FRAGMENTS = "-f docker-compose.yml -f docker-compose.override.yml"
+_FRAGMENTS = "-f docker-compose.yml -f .tmp/docker-compose.local.yml"
 _PROXY_DIR = REPO_ROOT / "config" / "proxy"
 
 # A service key in docker-compose.yml: two spaces in, alone on its line.
@@ -103,7 +103,7 @@ def test_it_reads_the_files_off_each_subcommand():
     )
 
     assert sorted(found) == ["pull", "up"]
-    assert found["up"] == [["docker-compose.yml", "docker-compose.override.yml"]]
+    assert found["up"] == [["docker-compose.yml", ".tmp/docker-compose.local.yml"]]
 
 
 def test_a_second_line_does_not_hide_the_first():
@@ -117,7 +117,7 @@ def test_a_second_line_does_not_hide_the_first():
 
     assert found["up"] == [
         ["docker-compose.yml"],
-        ["docker-compose.yml", "docker-compose.override.yml"],
+        ["docker-compose.yml", ".tmp/docker-compose.local.yml"],
     ]
 
 

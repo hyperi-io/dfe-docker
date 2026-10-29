@@ -146,7 +146,6 @@ def _make(
         "COMPOSE_FILE",
         "COMPOSE_PROJECT_NAME",
         "DEV",
-        "LIVE",
         "LIVE_UI",
         "LOCAL",
         "MAKEFLAGS",
@@ -461,7 +460,7 @@ def test_the_e2e_suites_start_on_the_tls_chain(goal: str, makefile: Path) -> Non
     result = _make(cwd=makefile, goal=goal, **_TLS_ON)
 
     assert result.returncode == 0, result.stderr
-    assert _e2e_chain(stdout=result.stdout) == ["docker-compose.tls.yml"]
+    assert _e2e_chain(stdout=result.stdout) == ["compose/tls.yml"]
 
 
 @pytest.mark.parametrize("goal", _E2E_GOALS)
@@ -474,9 +473,15 @@ def test_the_e2e_suites_take_the_exposure_opt_outs_under_tls(
 
     assert result.returncode == 0, result.stderr
     assert _e2e_chain(stdout=result.stdout) == [
-        "docker-compose.unpublish-kafbat.yml",
-        "docker-compose.unpublish-hyperdx.yml",
-        "docker-compose.tls.yml",
+        ".tmp/docker-compose.unpublish.yml",
+        "compose/tls.yml",
+    ]
+    fragment = (makefile / ".tmp" / "docker-compose.unpublish.yml").read_text(
+        encoding="utf-8"
+    )
+    assert re.findall(flags=re.MULTILINE, pattern=r"^  (\S+):$", string=fragment) == [
+        "kafka-ui",
+        "dfe-hyperdx-proxy",
     ]
 
 
@@ -533,7 +538,7 @@ def test_an_empty_dial_reads_as_false(makefile: Path) -> None:
 
     assert result.returncode == 0, result.stderr
     assert not ([guard for guard in _GUARDS if guard in result.stderr])
-    assert "docker-compose.tls.yml" not in chain.stdout
+    assert "compose/tls.yml" not in chain.stdout
 
 
 @pytest.mark.parametrize("goal", _UNGUARDED_GOALS)
@@ -574,7 +579,7 @@ def test_the_dial_chains_the_tls_overlay(
 ) -> None:
     result = _make(cwd=makefile, goal="print-compose-file", DFE_PROXY_TLS=tls)
 
-    assert ("docker-compose.tls.yml" in result.stdout) == chained
+    assert ("compose/tls.yml" in result.stdout) == chained
 
 
 @pytest.mark.parametrize(

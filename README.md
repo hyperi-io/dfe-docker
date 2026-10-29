@@ -280,8 +280,7 @@ dfe-docker stands the whole DFE suite up as one Docker Compose stack on a single
 | Path | What it holds |
 |---|---|
 | `docker-compose.yml` | Every service and every infrastructure profile. The one file `make ci` names explicitly |
-| `docker-compose.override.yml` | Auto-loaded by `docker compose`, so `make dev` builds from source; `make ci` passes `-f docker-compose.yml` to skip it |
-| `docker-compose.{live,storage,container-logs,unpublish-*}.yml` | Opt-in overlays the Makefile chains onto `COMPOSE_FILE` |
+| `compose/` | The opt-in overlays the Makefile chains: `live-ui`, `storage`, `tls` and `container-logs`. It writes the exposure opt-outs and the dev build's local images into `.tmp/` beside them |
 | `service_profiles.yaml` | Which DFE services start, the transport and the config each one mounts. Ships `active_profile: slim-grpc` |
 | `Makefile` | Every entry point, plus the profile, overlay and UI-exposure resolution that decides which compose files a target passes |
 | `scripts/resolve_profile.py` | Reads `service_profiles.yaml` and writes the generated `.tmp/profile.mk` the Makefile includes |

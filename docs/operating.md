@@ -185,19 +185,13 @@ Each UI carries a class, and the class decides what can take it dark:
 infra-class UI at once and beats their individual flags. The product UIs are
 exempt, so locking the ops surfaces down never takes the DFE UI with it.
 
-Both dials take effect through `make`, which resolves the scope into
-`DFE_UI_BIND_HOST` and chains a `docker-compose.unpublish-*.yml` fragment per
-opted-out UI. Compose merging can add a ports mapping but never remove one, so
-an opt-out has to arrive as a `!reset` fragment rather than an override. A raw
-`docker compose` outside `make` therefore publishes everything on loopback.
+Both dials take effect through `make`, which resolves the scope into `DFE_UI_BIND_HOST`, writes a `!reset` ports entry per opted-out UI into `.tmp/docker-compose.unpublish.yml` and chains it. Compose merging can add a ports mapping but never remove one, so an opt-out has to arrive as a `!reset` rather than an override. A raw `docker compose` outside `make` therefore publishes everything on loopback.
 
 Unpublishing leaves the container running and reachable on the compose network.
 It reduces the accidental surface; it is not access control, and only the console
 and HyperDX ask for a login.
 
-`make check-compose` asserts all of it: that every UI follows the scope on both
-addresses, that no ingest or backing-service port moves with it, and that each
-fragment drops only its own UI.
+`make check-compose` asserts all of it: that every UI follows the scope on both addresses, that no ingest or backing-service port moves with it, that each opt-out drops only its own UI and that the kill switch drops every infra UI.
 
 ## Gating the infra UIs with OIDC
 
@@ -414,12 +408,7 @@ dfe-schemas definition that declares its own TTL keeps it. The same knob is
 
 ### External data location
 
-ClickHouse and Kafka grow, and `/var/lib/docker` is rarely the disk sized for
-them. Set `DFE_DATA_ROOT` (in `.env` or the environment) and every volume above
-becomes a bind onto `${DFE_DATA_ROOT}/<name>` via `docker-compose.storage.yml`
--- the make targets create the directories and chain the overlay on every path,
-`make ci` included. The k8s charts parameterise the same choice through
-`storageClass` and size.
+ClickHouse and Kafka grow and `/var/lib/docker` is rarely the disk sized for them. Set `DFE_DATA_ROOT` (in `.env` or the environment) and every volume above becomes a bind onto `${DFE_DATA_ROOT}/<name>` via `compose/storage.yml`. The make targets create the directories and chain the overlay on every path, `make ci` included. The k8s charts parameterise the same choice through `storageClass` and size.
 
 Two consequences to know: switching an existing deployment does not migrate
 data between locations, and `make clean` removes the volume objects while the

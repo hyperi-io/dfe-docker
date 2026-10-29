@@ -54,7 +54,7 @@ if not target.is_file() or target.read_text(encoding="utf-8") != content:
 '''
 
 # What a developer's shell may carry that would change what make prints.
-_DROPPED = ("DEV", "LIVE", "LIVE_UI", "LOCAL", "MAKELEVEL", "MFLAGS", "SERVICES")
+_DROPPED = ("DEV", "LIVE_UI", "LOCAL", "MAKELEVEL", "MFLAGS", "SERVICES")
 
 
 @pytest.fixture

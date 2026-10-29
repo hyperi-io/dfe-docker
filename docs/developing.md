@@ -119,10 +119,7 @@ make dev    # build :local images from local component source, then start
 make ci     # pull the pinned GHCR images, then start
 ```
 
-`make dev` relies on `docker-compose.override.yml`, which is committed and
-auto-loaded by Compose with no flags. It repoints each DFE service at
-`<service>:local`. `make ci` passes `-f docker-compose.yml` explicitly, which
-skips the override and therefore uses registry images only.
+`make dev` builds the `:local` images, then starts with the overlay the build writes, `.tmp/docker-compose.local.yml`, which repoints each component it built at `<service>:local`. `make ci` names no overlay, so it runs registry images only.
 
 Both start targets run `make env-files` first: it asserts every
 `env.example/<service>.env` has a counterpart in `env/`, runs `make init` for the
@@ -161,10 +158,7 @@ from their own Dockerfile.
 A service that is not a locally buildable DFE component (ClickHouse, the broker,
 `kafka-ui`) is skipped with a message rather than failing the build.
 
-A service that runs a component's image under another name follows it:
-`dlq-init` runs the archiver image, `dfe-hunt-runner` and `dfe-dashboards` the
-engine image. The map is `IMAGE_CONSUMERS` in `scripts/build_dev_images.py`, and
-`make check-compose` asserts the override covers all of it.
+A service that runs a component's image under another name follows it: `dlq-init` runs the archiver image, `dfe-hunt-runner` and `dfe-dashboards` the engine image. The map is `IMAGE_CONSUMERS` in `scripts/build_dev_images.py` and `make check-compose` asserts the overlay a full build writes covers all of it.
 
 The `contract-<app>` one-shots are the deliberate
 exception: they emit an artefact of the PINNED release and stay on the registry
@@ -174,8 +168,7 @@ make a core-only profile compile the Rust components to emit a few files.
 Two of them can start without their component (`IMPLICIT_CONSUMERS`, same file):
 `dlq-init`, which a `depends_on` starts under every Rust app, and
 `dfe-dashboards`, which starts with `hyperdx` whether or not the engine runs.
-`make dev` builds the archiver or the engine for them even on a profile that runs
-neither, or the override points them at a `:local` tag the run never produced.
+`make dev` builds the archiver or the engine for them even on a profile that runs neither, so every DFE image its stack starts comes from source.
 
 ### Some from source, the rest pinned
 
@@ -183,11 +176,7 @@ neither, or the override points them at a `:local` tag the run never produced.
 make dev LOCAL="dfe-engine dfe-ui"   # build these two; everything else from GHCR
 ```
 
-The build writes `docker-compose.local.yml` (not committed) repointing only the
-named components and the services sharing their image at `:local`, and compose
-runs with explicit `-f` files so the all-local override stays out. `SERVICES`
-still filters what starts, `LIVE=1` still layers the engine bind-mounts, and a
-name outside the resolved stack is a hard error.
+The build writes `.tmp/docker-compose.local.yml` repointing only the named components and the services sharing their image at `:local`. `SERVICES` still filters what starts and a name outside the resolved stack is a hard error.
 
 ### Where it looks for your source
 
@@ -204,14 +193,6 @@ Source comes via git, never an assumed directory layout:
   those working trees as they stand, uncommitted changes included. This is the
   explicit replacement for the old sibling-checkout assumption -- nothing is
   inferred from where this repo happens to live.
-- **Live engine edits -- `make dev LIVE=1`.** Layers `docker-compose.live.yml`,
-  which bind-mounts `dfe-engine/config` and `dfe-engine/schemas` from
-  `DFE_SRC_ROOT` so engine config edits land without a rebuild. It hard-fails
-  when `DFE_SRC_ROOT` is unset, because a defaulted path would silently mount
-  empty directories over the engine's own config on any machine without that
-  layout. Note that with `DFE_SRC_ROOT` set, EVERY active component builds from
-  those checkouts -- live mode is "build and mount my local source", not an
-  engine-only switch.
 
 `make stack`'s local-render path is explicit the same way: it uses a dfe-infra
 checkout only when `DFE_INFRA_DIR` names one, and otherwise pulls the signed OCI
@@ -223,7 +204,7 @@ stack manifest.
 make dev LIVE_UI=1   # dfe-ui runs `next dev` over $DFE_SRC_ROOT/dfe-ui
 ```
 
-`LIVE_UI=1` layers `docker-compose.live-ui.yml`, which runs dfe-ui as `next dev` over your checkout instead of building its image. It still sits behind dfe-proxy on `DFE_UI_PORT`, so login, the engine API and the HyperDX embed work as they do on any stack. A saved edit reaches the browser through hot reload, which rides the websocket upgrade the proxy already allows. `docker compose logs -f dfe-ui` shows the dev server's output.
+`LIVE_UI=1` layers `compose/live-ui.yml`, which runs dfe-ui as `next dev` over your checkout instead of building its image. It still sits behind dfe-proxy on `DFE_UI_PORT`, so login, the engine API and the HyperDX embed work as they do on any stack. A saved edit reaches the browser through hot reload, which rides the websocket upgrade the proxy already allows. `docker compose logs -f dfe-ui` shows the dev server's output.
 
 The first start installs dependencies into the checkout, about 1 GB of yarn cache under its gitignored `.yarn/`; later starts install from that cache in seconds. Each route compiles on its first hit. The login page compiles as the dev server starts, so the first visit stays inside dfe-proxy's 15s route timeout.
 
@@ -328,13 +309,7 @@ make test-e2e
 make test-e2e E2E_TESTS="simple-receiver-to-loader-grpc simple-receiver-to-loader-kafka"
 ```
 
-`tests/e2e/e2e-tests.yaml` is the definition. A `global:` block sets the data file
-(`tests/e2e/data/events.jsonl`), the mode (`ci` builds `--no-cache --pull`; `dev`
-also loads the override file) and `persistent_services` -- only ClickHouse
-survives between tests, so each test runs its own config against a fresh broker.
-Each entry under `tests:` names a `service_profiles.yaml` profile, optionally
-`expected_topics` (created and cleaned per run, then verified) and
-`config_overrides` keyed by service name.
+`tests/e2e/e2e-tests.yaml` is the definition. A `global:` block sets the data file (`tests/e2e/data/events.jsonl`), the mode (`ci` runs the registry images, `dev` builds local ones and chains the overlay that build writes) and `persistent_services`. Only ClickHouse survives between tests, so each test runs its own config against a fresh broker. Each entry under `tests:` names a `service_profiles.yaml` profile, optionally `expected_topics` (created and cleaned per run, then verified) and `config_overrides` keyed by service name.
 
 The runner brings ClickHouse and `dfe-engine` up first and gates on the engine's
 health, because the engine provisions `dfe.main` and registers the schemas the
@@ -454,7 +429,7 @@ that is a finding about the console rather than about the pipeline.
 
 | Target | What it does |
 |---|---|
-| `make check-compose` | `docker compose config` on the registry, dev, live and `LOCAL=` paths, against both Kafka backends, plus the CPU floor and override-coverage assertions |
+| `make check-compose` | `docker compose config` on the registry, dev, `LIVE_UI=1` and `LOCAL=` paths, against both Kafka backends, plus the CPU floor and dev-overlay coverage assertions |
 | `make check-hardfail` | asserts an unpinned checkout refuses to resolve instead of pulling `latest` |
 | `make check-dockerfile` | hadolint on `docker/dfe-rust-builder.Dockerfile` |
 | `make check-docs` | asserts every relative link across the README and the five docs resolves |

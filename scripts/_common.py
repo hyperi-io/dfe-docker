@@ -123,11 +123,7 @@ DOTENV_TEMPLATE = REPO_ROOT / ".env.example"
 ENV_DIR = REPO_ROOT / "env"
 ENV_TEMPLATE_DIR = REPO_ROOT / "env.example"
 COMPOSE_FILE = REPO_ROOT / "docker-compose.yml"
-COMPOSE_LIVE_FILE = REPO_ROOT / "docker-compose.live.yml"
-COMPOSE_LIVE_UI_FILE = REPO_ROOT / "docker-compose.live-ui.yml"
-# Generated per run by `make dev LOCAL=...`, never committed.
-COMPOSE_LOCAL_FILE = REPO_ROOT / "docker-compose.local.yml"
-COMPOSE_OVERRIDE_FILE = REPO_ROOT / "docker-compose.override.yml"
+COMPOSE_LIVE_UI_FILE = REPO_ROOT / "compose" / "live-ui.yml"
 # Written by resolve_profile.py on every make run that needs the stack and included by the Makefile, so deleting .tmp/ costs nothing
 PROFILE_MK = REPO_ROOT / ".tmp" / "profile.mk"
 RUST_BUILDER = REPO_ROOT / "docker" / "dfe-rust-builder.Dockerfile"

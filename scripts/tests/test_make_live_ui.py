@@ -19,8 +19,8 @@ import pytest
 REPO_ROOT = Path(__file__).resolve().parents[2]
 
 _BUILD = ["python3", "scripts/build_dev_images.py"]
-_CONTAINER_LOGS = "docker-compose.container-logs.yml"
-_LIVE_UI = "docker-compose.live-ui.yml"
+_CONTAINER_LOGS = "compose/container-logs.yml"
+_LIVE_UI = "compose/live-ui.yml"
 _NODE_IMAGE = "node:24-trixie-slim@sha256:0123456789abcdef"
 _PROBE = "probe-node-image"
 
@@ -76,7 +76,6 @@ def _make(
     dropped = (
         "COMPOSE_FILE",
         "DEV",
-        "LIVE",
         "LIVE_UI",
         "LOCAL",
         "MAKEFLAGS",
@@ -185,11 +184,12 @@ def test_live_ui_off_chains_no_overlay(checkout: Path) -> None:
     assert _LIVE_UI not in _chain(result=result)
 
 
-def test_live_ui_rides_the_local_dev_path_pull_and_start(
-    checkout: Path, src_root: Path
+@pytest.mark.parametrize("local", ["", "dfe-engine"])
+def test_live_ui_rides_the_dev_path_pull_and_start(
+    checkout: Path, src_root: Path, local: str
 ) -> None:
     result = _make(
-        args=["-n", "dev", "LIVE_UI=1", "LOCAL=dfe-engine", f"DFE_SRC_ROOT={src_root}"],
+        args=["-n", "dev", "LIVE_UI=1", f"LOCAL={local}", f"DFE_SRC_ROOT={src_root}"],
         cwd=checkout,
     )
 

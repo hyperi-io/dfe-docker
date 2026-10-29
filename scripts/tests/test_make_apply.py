@@ -77,7 +77,6 @@ def _dry_run(*, cwd: Path, args: list[str]) -> list[list[str]]:
     """The command lines one goal prints under -n, each split as the shell would."""
     dropped = (
         "DEV",
-        "LIVE",
         "LIVE_UI",
         "LOCAL",
         "MAKEFLAGS",
