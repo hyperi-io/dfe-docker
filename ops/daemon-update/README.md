@@ -52,11 +52,7 @@ already guards with `applied == latest`.
 
 It deletes everything - ClickHouse, Kafka, the DLQ spool, HyperDX and the engine's config volume. That last one does not come back: the image ships an EMPTY `/app/config`, so sources, orgs and locally created accounts are gone for good. Only the two logins return, both from `env/engine.env`. The engine issues `admin` again from `DFE_AUTH_LOCAL_ADMIN_PASSWORD`, with a forced change at first login. It hashes `breakglass` from `DFE_AUTH_BREAKGLASS_PASSWORD` into the new deploy repo, which needs `DFE_GITOPS_ENABLED=true` there too. `make orgs` and `make accounts` create the seed orgs and accounts again. Pin both passwords to known values on a box running this, rather than letting `make init` mint random ones you never see.
 
-One trap. With `DFE_DATA_ROOT` set, docker-compose.storage.yml turns every volume
-into a bind onto that path, and `make clean` does not chain that overlay - it
-removes the volume objects while the directories keep their contents. The wipe
-silently degrades to a no-op. Leave `DFE_DATA_ROOT` unset on a box that relies on
-this flag.
+One trap. With `DFE_DATA_ROOT` set, `compose/storage.yml` turns every volume into a bind onto that path and `make clean` does not chain that overlay: it removes the volume objects while the directories keep their contents. The wipe silently degrades to a no-op. Leave `DFE_DATA_ROOT` unset on a box that relies on this flag.
 
 ## Files
 

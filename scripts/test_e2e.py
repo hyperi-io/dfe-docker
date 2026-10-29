@@ -95,7 +95,7 @@ from _pipeline import (  # noqa: E402
     poll_until,
     post_all,
 )
-from build_dev_images import local_image_services  # noqa: E402
+from build_dev_images import local_image_services, overlay_components  # noqa: E402
 
 
 # ==============================================================================
@@ -117,8 +117,8 @@ SUITE_ENV_DIR = TMP_DIR / "env"
 # - Supported config values
 # ------------------------------------------------------------------------------
 MODES = ["dev", "ci"]
-# Chained in dev mode, where it repoints each committed service at its local build
-DEV_OVERRIDE_FILE = "docker-compose.override.yml"
+# Written by this run's dev build and chained in dev mode, putting what it built on its local image
+DEV_OVERLAY_FILE = TMP_DIR / "docker-compose.local.yml"
 DEFAULTS = {
     "data_file": "tests/e2e/data/events.jsonl",
     "mode": "ci",
@@ -845,10 +845,13 @@ def build_images(mode, dfe_services):
         services_str = f"'{dfe_services[0]}'"
     LOGGER.info(f"Building images from local source for {services_str}...")
 
+    TMP_DIR.mkdir(parents=True, exist_ok=True)
     build_result = run_cmd(
         [
             sys.executable,
             str(Path(__file__).resolve().parent / "build_dev_images.py"),
+            "--record",
+            str(DEV_OVERLAY_FILE),
             *dfe_services,
         ],
         capture=not (LOG_LEVEL == "DEBUG"),
@@ -922,8 +925,8 @@ def stack_up(mode, test, services):
     compose_files = ["-f", "docker-compose.yml"]
     if mode not in MODES:
         error(f"Unknown mode: '{mode}'. Supported modes: '{MODES}'")
-    elif mode == "dev" and (PROJECT_DIR / DEV_OVERRIDE_FILE).exists():
-        compose_files += ["-f", DEV_OVERRIDE_FILE]
+    elif mode == "dev" and DEV_OVERLAY_FILE.exists():
+        compose_files += ["-f", str(DEV_OVERLAY_FILE)]
 
     for extra in os.environ.get(EXTRA_COMPOSE_FILES_ENV_VAR, "").split(os.pathsep):
         if extra.strip():
@@ -3811,12 +3814,13 @@ def start_instances(
         return None
 
     fragment = TMP_DIR / f"docker-compose.{RUN_ID}.{test.name}.instances.yml"
-    # `extends` reads the committed service, never the dev override's local image
-    images = (
-        local_image_services(components=sorted(found))
-        if (DEV_OVERRIDE_FILE in files)
-        else {}
+    # `extends` reads the committed service, never the dev overlay, so an instance of an app the dev build made gets its local image here
+    built = (
+        overlay_components(path=DEV_OVERLAY_FILE)
+        if (str(DEV_OVERLAY_FILE) in files)
+        else []
     )
+    images = local_image_services(components=sorted(set(found) & set(built)))
     instances.write(
         env_dir=SUITE_ENV_DIR, images=images, instances=found, path=fragment
     )

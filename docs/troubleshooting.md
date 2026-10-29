@@ -138,11 +138,7 @@ Three ways that arrangement fails:
    the warning.
 2. uid 1000 is hard-coded and nothing verifies it, so an image that renumbers
    appuser breaks the DLQ silently.
-3. In dev mode `docker-compose.override.yml` maps dlq-init to
-   `dfe-archiver:local`, so `make dev` builds the archiver from source even on
-   profiles that run no archiver. `make dev LOCAL=...` without `dfe-archiver` in
-   the list leaves dlq-init on the **registry** image instead, which needs GHCR
-   access and a pinned `DFE_ARCHIVER_VERSION`.
+3. In dev mode dlq-init runs `dfe-archiver:local`, so `make dev` builds the archiver from source even on profiles that run no archiver. `make dev LOCAL=...` without `dfe-archiver` in the list leaves dlq-init on the **registry** image instead, which needs GHCR access and a pinned `DFE_ARCHIVER_VERSION`.
 
 **Files under `/var/spool/dfe/dlq` mean events were accepted and then could not be delivered.** They are evidence, not noise: read them to see what was rejected and why. On a gRPC profile, where there is no broker, the loader writes its own dead letters there, under `dlq/loader/`. On a Kafka profile it writes them to the `dfe_loader_dlq` topic, which Kafbat on `:8081` shows, and to that file only when the broker does not take them.
 

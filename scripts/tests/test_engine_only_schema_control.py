@@ -55,7 +55,7 @@ COMPOSE = REPO_ROOT / "docker-compose.yml"
 # The trees that deploy or operate the stack.
 SWEPT = (
     "docker-compose.yml",
-    "docker-compose.override.yml",
+    "compose",
     "scripts",
     "config",
     "ops",

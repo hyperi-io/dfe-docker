@@ -166,7 +166,7 @@ Ceilings, not reservations, sized for the default profile on a 16 GB box. `make 
 
 | Variable                                         | Use                                                                                  | Default                                                             |
 |--------------------------------------------------|--------------------------------------------------------------------------------------|---------------------------------------------------------------------|
-| `DFE_SRC_ROOT`                                   | Directory holding your local `dfe-*` checkouts; set = build (and `LIVE=1` mount, `LIVE_UI=1` run `next dev` over) those instead of the git cache | unset (git cache)                                 |
+| `DFE_SRC_ROOT`                                   | Directory holding your local `dfe-*` checkouts. Set, the build (and `LIVE_UI=1`'s `next dev`) uses those instead of the git cache | unset (git cache)                                 |
 | `DFE_SRC_REMOTE`                                 | Git base URL the managed cache clones component repos from                           | `https://github.com/hyperi-io`                                      |
 | `DFE_SRC_REF`                                    | Branch, tag or commit the managed cache builds                                       | `main`                                                              |
 | `DFE_SRC_CACHE`                                  | Location of the managed source cache                                                 | `~/.cache/dfe-docker/src`                                           |

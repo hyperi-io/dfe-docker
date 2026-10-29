@@ -60,7 +60,7 @@ from _common import (  # noqa: E402
 COMPOSE_INSTANCES_FILE = REPO_ROOT / ".tmp" / "docker-compose.instances.yml"
 
 # The overlay whose x-container-logs block every instance copies, since `extends` never reads an overlay
-CONTAINER_LOGS_FILE = REPO_ROOT / "docker-compose.container-logs.yml"
+CONTAINER_LOGS_FILE = REPO_ROOT / "compose" / "container-logs.yml"
 CONTAINER_LOGS_ANCHOR = "x-container-logs:"
 
 INDEX_SUFFIX = ".instances"

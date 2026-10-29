@@ -64,8 +64,8 @@ def checkout(tmp_path: Path) -> Path:
     return root
 
 
-def _ui_chain(*, checkout: Path, settings: dict[str, str]) -> list[str]:
-    """The exposure fragments `make print-compose-file` chains for `settings`."""
+def _unpublish_fragment(*, checkout: Path, settings: dict[str, str]) -> str | None:
+    """The unpublish fragment `make print-compose-file` chains for `settings`, None when it chains none."""
     environment = {
         key: value
         for key, value in os.environ.items()
@@ -87,8 +87,10 @@ def _ui_chain(*, checkout: Path, settings: dict[str, str]) -> list[str]:
     line = next(
         line for line in result.stdout.splitlines() if line.startswith("COMPOSE_FILE=")
     )
-    files = line.removeprefix("COMPOSE_FILE=").split(":")
-    return [name for name in files if name.startswith("docker-compose.unpublish-")]
+    name = check_compose._UNPUBLISH_FRAGMENT
+    if name not in line.removeprefix("COMPOSE_FILE=").split(":"):
+        return None
+    return (checkout / name).read_text(encoding="utf-8")
 
 
 @pytest.mark.parametrize(
@@ -122,11 +124,11 @@ def test_the_hyperdx_dials_govern_the_embed_and_leave_the_console(
 ) -> None:
     if shutil.which("docker") is None:
         pytest.skip("`docker compose config` renders the model this asserts on")
-    fragments = _ui_chain(checkout=checkout, settings=settings)
+    fragment = _unpublish_fragment(checkout=checkout, settings=settings)
     environ, _ = check_compose._check_env()
 
     model = check_compose._config_json(
-        env=environ, files=[check_compose.COMPOSE_FILE.name, *fragments]
+        env=environ, files=[check_compose.COMPOSE_FILE.name], fragment=fragment
     )
 
     assert model is not None

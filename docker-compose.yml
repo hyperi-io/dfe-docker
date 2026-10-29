@@ -46,10 +46,10 @@
 #   DFE_PROFILE=single-kafka make dev  # Override profile
 #   KAFKA_BACKEND=apache make dev    # Override Kafka backend
 #
-# Dev build from source (requires docker-compose.override.yml - auto-loaded):
+# Dev build from source (chains the overlay the build writes, .tmp/docker-compose.local.yml):
 #   make dev
 #
-# CI / registry images only (skip override):
+# CI / registry images only:
 #   docker compose -f docker-compose.yml --profile clickhouse --profile kafka-redpanda up -d dfe-loader
 
 # =============================================================================

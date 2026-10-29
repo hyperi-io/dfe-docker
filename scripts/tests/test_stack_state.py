@@ -22,7 +22,7 @@ import _stack_state
 import check_compose
 import proxy_tls
 
-_FILES = "/opt/dfe/docker-compose.yml,/opt/dfe/docker-compose.tls.yml"
+_FILES = "/opt/dfe/docker-compose.yml,/opt/dfe/compose/tls.yml"
 
 
 def _document(
@@ -92,7 +92,7 @@ def test_the_restore_names_the_project_directory_files_and_profiles() -> None:
         "-f",
         "/opt/dfe/docker-compose.yml",
         "-f",
-        "/opt/dfe/docker-compose.tls.yml",
+        "/opt/dfe/compose/tls.yml",
         "--profile",
         "clickhouse",
         "--profile",
@@ -143,8 +143,8 @@ def test_a_compose_file_that_is_gone_is_left_out_and_named() -> None:
     )
 
     assert restore.config_files == ("/opt/dfe/docker-compose.yml",)
-    assert restore.missing == ("/opt/dfe/docker-compose.tls.yml",)
-    assert "/opt/dfe/docker-compose.tls.yml" not in restore.command()
+    assert restore.missing == ("/opt/dfe/compose/tls.yml",)
+    assert "/opt/dfe/compose/tls.yml" not in restore.command()
 
 
 # A deleted source's transform and the receiver, both created while the
