@@ -52,6 +52,7 @@ startup gate, so anything others wait on must report READINESS.
 |---|---|---|
 | dfe-loader | `/readyz` | receiver and fetcher wait on it |
 | dfe-engine | `/readyz` | loader and proxy wait on it, and it provisions their schema |
+| dfe-proxy, dfe-hyperdx-proxy | Envoy admin `/ready` on 9901 | no curl in the image, so bash `/dev/tcp` sends the request |
 | everything else | `/livez` | nothing gates on them |
 | otel-collector | none | distroless, so nothing inside can probe `:13133` |
 

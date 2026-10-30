@@ -174,8 +174,8 @@ flowchart TD
 | Compose profile | Services |
 |---|---|
 | `clickhouse` | `clickhouse` |
-| `kafka-redpanda` | `kafka-redpanda` |
 | `kafka-apache` | `kafka-apache` |
+| `kafka-redpanda` | `kafka-redpanda` |
 | `kafka-ui` | `kafka-ui` (Kafbat) |
 | `dfe` | `dlq-init`, `bearer-tokens-init`, archiver, fetcher, loader, receiver, every transform instance |
 | `core` | `dfe-engine`, `dfe-ui`, `dfe-proxy` |
@@ -201,8 +201,8 @@ ordering.
 
 ## The Kafka backend is swappable
 
-Two brokers, mutually exclusive, chosen by `KAFKA_BACKEND` (`redpanda` default,
-`apache` opt-in). Both expose the network alias `kafka` on the same ports, so
+Two brokers, mutually exclusive, chosen by `KAFKA_BACKEND` (`apache` opt-in,
+`redpanda` default). Both expose the network alias `kafka` on the same ports, so
 every config addresses `kafka:9092` and nothing downstream knows which is running.
 
 Compose interpolates every service before profiles filter anything, so

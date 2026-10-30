@@ -244,16 +244,14 @@ than starting a proxy that redirects nowhere.
 
 ## Resource limits: four tiers, ceilings not reservations
 
-Every service declares `deploy.resources.limits`, which `docker compose up`
-honours outside Swarm. An unlimited service on a single box is how one runaway
-container takes the host down.
+Every service extends a tier in `compose/limits.yml` for its `deploy.resources.limits`, which `docker compose up` honours outside Swarm. An unlimited service on a single box is how one runaway container takes the host down.
 
 | Tier | Applies to |
 |---|---|
 | `DFE_CLICKHOUSE_*` | clickhouse |
-| `DFE_BROKER_*` | kafka-redpanda, kafka-apache |
+| `DFE_BROKER_*` | kafka-apache, kafka-redpanda |
 | `DFE_SERVICE_*` | the DFE components, engine, UI, kafka-ui, HyperDX, its DocumentDB store. HyperDX's memory is `DFE_HYPERDX_MEMORY` |
-| `DFE_SIDECAR_*` | dlq-init, bearer-tokens-init, dfe-dashboards, hyperdx-documentdb-tls, dfe-proxy |
+| `DFE_SIDECAR_*` | the init and contract one-shots, dfe-dashboards, hyperdx-documentdb-tls, both Envoy proxies, otel-collector and the oauth2-proxy gates |
 
 For the actual values and totals, ask the stack rather than this page:
 
@@ -303,6 +301,16 @@ from a shortage of CPU.
 `/readyz`, so you cannot ship this by accident. If you need the ceiling lower
 than the floor, the fix belongs upstream in scalo (its Kafka `recv` wants
 `spawn_blocking` or a `StreamConsumer`), not in your `.env`.
+
+## Containers ignore the host's DNS search domain
+
+Each limit tier extends `base` in `compose/base.yml`, whose `dns_search: ["."]` clears the search domain the host passes into every container. A bare name with no alias (`kafka` on a stack without a broker) then fails to resolve instead of reaching a host on that domain.
+
+## One-shots run before their apps
+
+`compose/one-shots.yml`, which `docker-compose.yml` includes, holds every container that runs once and exits: dlq-init, bearer-tokens-init, the `contract-<app>` emitters, dfe-dashboards, hyperdx-documentdb-tls and a `config-check-<app>` for dfe-archiver, dfe-loader and dfe-receiver.
+
+Each config check runs its app's own `config-check` with the image, environment and config file the app is about to start with, once the engine has rendered that file, and the app starts only after it passes. A broken config therefore stops `make up`, `make dev`, `make ci` and `make apply` with the app's own error instead of leaving the app in a restart loop. A key the app does not know still passes, because the apps ignore unknown keys.
 
 ## Redpanda ships in developer mode
 
@@ -383,12 +391,12 @@ Never commit `.env`.
 
 ## Persistence: what survives, and what `make clean` destroys
 
-These named volumes hold all durable state:
+These named volumes hold all durable state. Every path an image declares a VOLUME gets one, so a down and up never strands an anonymous volume:
 
 | Volume | Holds |
 |---|---|
 | `clickhouse-data` | The ClickHouse warehouse (`/var/lib/clickhouse`) |
-| `kafka-redpanda-data` / `kafka-apache-data` | Broker log and offsets, per backend |
+| `kafka-apache-data` / `kafka-redpanda-data` | Broker log and offsets, per backend |
 | `kafka-apache-secrets` / `kafka-apache-config` | Apache Kafka's TLS and property-file inputs, empty unless a deployment supplies them |
 | `archiver-data` | dfe-archiver output (`/var/data/archive`) |
 | `dlq-spool` | Shared dead-letter spool (`/var/spool/dfe`) |
@@ -400,8 +408,7 @@ These named volumes hold all durable state:
 
 `make down` stops containers and leaves every volume intact. `make clean` runs
 `docker compose --profile "*" down -v --remove-orphans` -- the `-v` deletes all
-of them, which now includes the warehouse. It always removed volumes; what changed
-is that ClickHouse data is in one.
+of them, the warehouse included.
 
 ### Retention
 
@@ -444,7 +451,7 @@ DFE_POST_ENABLED=false make ci   # opt out
 
 It is opt-**out**. A self test you have to remember to run is not a self test.
 Tunables: `DFE_POST_HOST` (default `localhost`), `DFE_POST_DATABASE` (`dfe`),
-`DFE_POST_TABLE` (`default`).
+`DFE_POST_TABLE` (`main`).
 
 A PASS proves exactly this: the ingest edge accepted three events, and within 60
 seconds at least three rows carrying that run's unique marker were readable in

@@ -111,8 +111,16 @@ other half of the picture.
 dfe-fetcher, dfe-loader and dfe-receiver. All four run as non-root `appuser` (uid
 1000), and none of the images pre-creates that path, so Docker creates the
 mountpoint owned by root and no service can write inside it. The `dlq-init`
-one-shot (`chown -R 1000:1000 /var/spool/dfe /var/data/archive /var/lib/dfe-fetcher`) fixes that before
+one-shot (`chown -R 1000:1000` over the spool, the archive, the fetcher cursors and the GeoIP store) fixes that before
 the services start.
+
+## An app stops at its config check
+
+`service "config-check-dfe-loader" didn't complete successfully: exit 1` means the loader's config failed its own check, and the loader was never started. `docker compose logs config-check-dfe-loader` shows the app's error. Fix the config, then run `make apply SERVICES=dfe-loader`, which runs the check again first.
+
+## The receiver's bearer-token mount
+
+dfe-receiver mounts `.secrets/ingest/bearer-tokens` from the `dfe-engine-config` volume as a subpath, which Docker refuses when the path does not exist. The `bearer-tokens-init` one-shot creates it first, as uid 1000 and owner-only like the engine's other secrets.
 
 `archiver-data`, mounted at `/var/data/archive`, has the same problem and the same
 fix. Without it every archive write fails with `Permission denied (os error 13)`,

@@ -63,7 +63,7 @@ Once a transform runs, the loader therefore reads `main_land` until that first w
 **Do not close this gap by adding `main_load` to the bootstrap topic set.** The loader auto-discovers topics and scalo suppresses `<base>_land` whenever `<base>_load` exists, on the reasoning that a `_load` topic means a transform has already produced the loadable form. Creating `main_load` on every Kafka profile therefore drops `main_land` from the subscription of every loader not running a transform, which is most of them. The symptom is maximally misleading: ingest returns 200, the receiver produces to `main_land`, the topic shows a rising high watermark and no rows reach ClickHouse.
 
 Reverting the change does not restore a broker that already has the topic.
-`kafka-redpanda-data` and `kafka-apache-data` outlive the containers, so the topic
+`kafka-apache-data` and `kafka-redpanda-data` outlive the containers, so the topic
 persists and keeps suppressing `main_land` on every later run. Delete it:
 
 ```bash

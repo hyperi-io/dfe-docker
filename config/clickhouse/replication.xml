@@ -26,7 +26,7 @@
     <tcp_port>9181</tcp_port>
   </keeper_server>
 
-  <!-- This server's place in the dfe cluster -->
+  <!-- This server's place in the dfe cluster. Replicated databases also record the hostname, which compose fixes at `clickhouse` so a recreate leaves no stale replica -->
   <macros>
     <cluster>dfe</cluster>
     <replica>r1</replica>
