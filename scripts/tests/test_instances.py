@@ -21,7 +21,7 @@ from pathlib import Path
 import pytest
 
 import instances
-from _common import COMPOSE_FILE, REPO_ROOT
+from _common import COMPOSE_FILE, COMPOSE_ONE_SHOTS_FILE, REPO_ROOT
 
 FETCHER = "dfe-fetcher"
 VRL = "dfe-transform-vrl"
@@ -264,7 +264,9 @@ def test_the_state_volume_is_made_writable_before_the_app_starts(app: str) -> No
     # Docker creates the mountpoint root-owned and the app runs as uid 1000.
     _, root = instances.STATE_DIRS[app]
     compose = COMPOSE_FILE.read_text(encoding="utf-8")
-    init = _committed_block(name="dlq-init", text=compose)
+    init = _committed_block(
+        name="dlq-init", text=COMPOSE_ONE_SHOTS_FILE.read_text(encoding="utf-8")
+    )
 
     assert _volume_at(block=init, target=root) == _volume_at(
         block=_committed_block(name=app, text=compose), target=root

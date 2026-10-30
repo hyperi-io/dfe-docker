@@ -1,40 +1,40 @@
 # Project:   dfe-docker
 # File:      compose/storage.yml
-# Purpose:   Rehome every stateful volume onto DFE_DATA_ROOT, a disk you chose instead of /var/lib/docker
+# Purpose:   Rehome the stateful volumes onto DFE_DATA_ROOT
 # Language:  YAML
 #
 # License:   BUSL-1.1
 # Copyright: (c) 2026 HYPERI PTY LIMITED
 
-# Chained by make when DFE_DATA_ROOT is set. Switching migrates no data and `make clean` removes the volume objects while the directories keep their contents
+# Chained when DFE_DATA_ROOT is set. Switching migrates no data
 volumes:
   archiver-data:
     driver: local
-    driver_opts: {type: none, o: bind, device: "${DFE_DATA_ROOT}/archiver"}
+    driver_opts: {device: "${DFE_DATA_ROOT}/archiver", o: bind, type: none}
   clickhouse-data:
     driver: local
-    driver_opts: {type: none, o: bind, device: "${DFE_DATA_ROOT}/clickhouse"}
+    driver_opts: {device: "${DFE_DATA_ROOT}/clickhouse", o: bind, type: none}
   dfe-engine-config:
     driver: local
-    driver_opts: {type: none, o: bind, device: "${DFE_DATA_ROOT}/engine-config"}
+    driver_opts: {device: "${DFE_DATA_ROOT}/engine-config", o: bind, type: none}
   dfe-engine-schemas:
     driver: local
-    driver_opts: {type: none, o: bind, device: "${DFE_DATA_ROOT}/engine-schemas"}
+    driver_opts: {device: "${DFE_DATA_ROOT}/engine-schemas", o: bind, type: none}
   dlq-spool:
     driver: local
-    driver_opts: {type: none, o: bind, device: "${DFE_DATA_ROOT}/dlq-spool"}
+    driver_opts: {device: "${DFE_DATA_ROOT}/dlq-spool", o: bind, type: none}
   fetcher-cursors:
     driver: local
-    driver_opts: {type: none, o: bind, device: "${DFE_DATA_ROOT}/fetcher-cursors"}
+    driver_opts: {device: "${DFE_DATA_ROOT}/fetcher-cursors", o: bind, type: none}
   hyperdx-documentdb-data:
     driver: local
-    driver_opts: {type: none, o: bind, device: "${DFE_DATA_ROOT}/hyperdx-documentdb"}
+    driver_opts: {device: "${DFE_DATA_ROOT}/hyperdx-documentdb", o: bind, type: none}
   kafka-apache-data:
     driver: local
-    driver_opts: {type: none, o: bind, device: "${DFE_DATA_ROOT}/kafka-apache"}
+    driver_opts: {device: "${DFE_DATA_ROOT}/kafka-apache", o: bind, type: none}
   kafka-redpanda-data:
     driver: local
-    driver_opts: {type: none, o: bind, device: "${DFE_DATA_ROOT}/kafka-redpanda"}
+    driver_opts: {device: "${DFE_DATA_ROOT}/kafka-redpanda", o: bind, type: none}
   transform-elastic-geoip:
     driver: local
     driver_opts: {device: "${DFE_DATA_ROOT}/transform-elastic-geoip", o: bind, type: none}

@@ -9,13 +9,15 @@
 """The broker's in-network listener, 9092, stays off the host and 19092 is its only publish."""
 
 import re
+import shutil
 from collections.abc import Callable
 
 import pytest
 
-from _common import COMPOSE_FILE
+import check_compose
+from _common import COMPOSE_FILE, COMPOSE_PART_FILES
 
-# The two broker services' host publish lines, container port last, read as text since these tests run without PyYAML
+# A broker host publish line, container port last, read as text so the variable name survives
 _PUBLISH = re.compile(
     r"^\s+- \$\{DFE_BIND_HOST:-127\.0\.0\.1\}:\$\{(?P<key>\w+):-\d+\}:(?P<port>\d+)\s*$",
     flags=re.M,
@@ -23,13 +25,16 @@ _PUBLISH = re.compile(
 
 
 def _broker_publishes() -> list[tuple[str, str]]:
-    """The (variable, container port) of each broker host publish in docker-compose.yml."""
-    compose = COMPOSE_FILE.read_text(encoding="utf-8")
-    return [
-        (match["key"], match["port"])
-        for match in _PUBLISH.finditer(compose)
-        if match["key"].startswith("KAFKA_")
-    ]
+    """The (variable, container port) of each broker host publish line in the compose file and its templates."""
+    published = []
+    for path in (COMPOSE_FILE, *COMPOSE_PART_FILES):
+        text = path.read_text(encoding="utf-8")
+        published.extend(
+            (match["key"], match["port"])
+            for match in _PUBLISH.finditer(text)
+            if match["key"].startswith("KAFKA_")
+        )
+    return published
 
 
 def _not_in_network_port(*, entry: tuple[str, str]) -> bool:
@@ -62,5 +67,23 @@ def test_the_broker_does_not_publish(what: str, holds: Callable[..., bool]) -> N
     )
 
 
-def test_each_broker_backend_publishes_the_host_listener_once() -> None:
-    assert _broker_publishes() == [("KAFKA_PLAINTEXT_HOST_PORT", "19092")] * 2
+@pytest.fixture(scope="module")
+def services() -> dict[str, dict]:
+    """The rendered stack with both Kafka backends on."""
+    if shutil.which("docker") is None:
+        pytest.skip("`docker compose config` renders the model these assert on")
+    env, _ = check_compose._check_env()
+    config = check_compose._config_json(
+        env=env,
+        extra_profiles=check_compose._KAFKA_BACKENDS,
+        files=[COMPOSE_FILE.name],
+    )
+    assert config is not None, "the registry compose path did not resolve"
+    return config["services"]
+
+
+@pytest.mark.parametrize("broker", check_compose._KAFKA_BACKENDS)
+def test_each_broker_backend_publishes_the_host_listener_once(
+    services: dict[str, dict], broker: str
+) -> None:
+    assert [port["target"] for port in services[broker]["ports"]] == [19092]

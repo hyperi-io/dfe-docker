@@ -1,0 +1,27 @@
+
+# Project:   dfe-docker
+# File:      compose/contract.yml
+# Purpose:   The one-shot that emits each app's contract
+# Language:  YAML
+#
+# License:   BUSL-1.1
+# Copyright: (c) 2026 HYPERI PTY LIMITED
+
+services:
+  contract:
+    extends: {file: limits.yml, service: limits-sidecar}
+    profiles: ["core"]
+    user: "0:0"
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        if "$$CONTRACT_APP" config-schema --dir "/app/content/contract/$$CONTRACT_APP"; then
+          printf '{"app":"%s","ref":"%s","emitted_at":"%s"}\n' \
+            "$$CONTRACT_APP" "$$CONTRACT_REF" "$$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+            > "/app/content/contract/$$CONTRACT_APP/source.json"
+        else
+          echo "contract: $$CONTRACT_APP emitted nothing, so the engine reports its contract absent" >&2
+        fi
+    volumes:
+      - dfe-engine-content:/app/content
+    restart: "no"

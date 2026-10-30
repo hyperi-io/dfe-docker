@@ -99,9 +99,12 @@ sys.pycache_prefix = str(Path(__file__).resolve().parent.parent / ".tmp" / "pyca
 import _envoy  # noqa: E402
 import instances  # noqa: E402
 import proxy_tls  # noqa: E402
+import resolve_profile  # noqa: E402
 from _common import (  # noqa: E402
     COMPOSE_FILE,
     COMPOSE_LIVE_UI_FILE,
+    COMPOSE_PART_FILES,
+    CONFIG_CHECK_PREFIX,
     CUSTOM_ENV_SUFFIX,
     DOTENV_FILE,
     DOTENV_TEMPLATE,
@@ -149,15 +152,18 @@ _PATH_KEY_SUFFIXES = ("_ROOT", "_DIR", "_PATH")
 # Profiles are opt-in, so an unprofiled run checks almost nothing. `dfe` and
 # `core` carry the services this repo exists to ship.
 _BASE_PROFILES = ("clickhouse", "dfe", "core", "hyperdx", "kafka-ui", "otel")
-_KAFKA_BACKENDS = ("kafka-redpanda", "kafka-apache")
+_KAFKA_BACKENDS = ("kafka-apache", "kafka-redpanda")
+# The backend a model renders unless a caller adds the other
+_KAFKA_DEFAULT_BACKEND = resolve_profile.SERVICE_KAFKA_OPTIONS[
+    resolve_profile.SERVICE_KAFKA_DEFAULT
+]
 
 # Tokio sizes its worker pool from `available_parallelism()`, which reads the
 # cgroup CPU quota and FLOORS it. A ceiling under 2.0 therefore leaves a scalo
 # service with a single worker thread, and its synchronous Kafka poll loop owns
 # that thread -- so the operator surface (/livez, /readyz, /metrics) accepts
 # connections and answers none of them while the data path keeps working.
-# Observed on dfe-archiver at 1.5; see the x-limits-service comment in
-# docker-compose.yml for the A/B that proved it.
+# Observed on dfe-archiver at 1.5 (docs/operating.md#dfe_service_cpus-has-a-floor-of-20-and-it-is-not-about-speed).
 #
 # Keyed off the health path rather than a service list so a service added later is
 # covered without anyone remembering this file exists. Both `*z` paths count: the
@@ -607,7 +613,7 @@ def _config_json(
         cmd += ["-f", path]
     if fragment is not None:
         cmd += ["-f", "-"]
-    for profile in [*_BASE_PROFILES, _KAFKA_BACKENDS[0], *extra_profiles]:
+    for profile in [*_BASE_PROFILES, _KAFKA_DEFAULT_BACKEND, *extra_profiles]:
         cmd += ["--profile", profile]
     cmd += ["config", "--format", "json"]
     result = subprocess.run(
@@ -640,6 +646,11 @@ def _scratch_config(
     with tempfile.TemporaryDirectory() as scratch:
         compose = Path(scratch) / COMPOSE_FILE.name
         shutil.copyfile(COMPOSE_FILE, compose)
+        # The files it extends or includes, at the same paths relative to it
+        for part in COMPOSE_PART_FILES:
+            copy = Path(scratch) / part.relative_to(REPO_ROOT)
+            copy.parent.mkdir(exist_ok=True)
+            shutil.copyfile(dst=copy, src=part)
         env_dir = Path(scratch) / ENV_DIR.name
         env_dir.mkdir()
         for name, text in env_files.items():
@@ -1357,7 +1368,7 @@ def _image_volume_model(*, env: dict[str, str]) -> dict | None:
     return _config_json(
         env=env,
         files=[COMPOSE_FILE.name],
-        extra_profiles=(_KAFKA_BACKENDS[1], _AUTH_PROFILE),
+        extra_profiles=(*_KAFKA_BACKENDS, _AUTH_PROFILE),
     )
 
 
@@ -1533,7 +1544,8 @@ def _custom_env_mismatches(*, services: dict) -> list[str]:
     ``<service>.custom.env`` into env/ for each service it renders, an instance
     being ``<app>-<instance>``. A service reading any other custom name reads a
     file nothing writes, and one whose own file is not last lets a later file
-    outvote a key the operator set through the console.
+    outvote a key the operator set through the console. A config check reads its
+    app's files, as that is the environment the app starts with.
     """
     failures = []
     for name, service in sorted(services.items()):
@@ -1544,9 +1556,17 @@ def _custom_env_mismatches(*, services: dict) -> list[str]:
             if key.startswith(_SENTINEL_READ)
         )
         last = environment.get(_SENTINEL_LAST)
-        app = (service.get("labels") or {}).get(instances.INSTANCE_LABEL, "")
+        checked = (
+            name.removeprefix(CONFIG_CHECK_PREFIX)
+            if name.startswith(CONFIG_CHECK_PREFIX)
+            else ""
+        )
+        labels = (service.get("labels")) or ({})
+        app = (labels.get(instances.INSTANCE_LABEL, "")) or (checked)
+        # The service whose custom env file this one reads as its own
+        owner = (checked) or (name)
         rendered = name in SERVICE_CONFIG_FILE or app in SERVICE_CONFIG_FILE
-        writable = {f"{n}{CUSTOM_ENV_SUFFIX}" for n in (name, app) if n and rendered}
+        writable = {f"{n}{CUSTOM_ENV_SUFFIX}" for n in (owner, app) if n and rendered}
         for file in read:
             if file not in writable:
                 failures.append(
@@ -1556,7 +1576,7 @@ def _custom_env_mismatches(*, services: dict) -> list[str]:
                 )
         if not rendered:
             continue
-        own = f"{name}{CUSTOM_ENV_SUFFIX}"
+        own = f"{owner}{CUSTOM_ENV_SUFFIX}"
         if own not in read:
             failures.append(
                 f"{name}: reads no {ENV_DIR.name}/{own}, so a key set through "

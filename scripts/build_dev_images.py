@@ -42,19 +42,21 @@ IMAGE_TAG = "local"
 # Compose services that run a component's image under another name; a local
 # build must repoint all of them or the stack runs two builds of one component.
 IMAGE_CONSUMERS: dict[str, tuple[str, ...]] = {
-    "dfe-archiver": ("dlq-init",),
+    "dfe-archiver": ("config-check-dfe-archiver", "dlq-init"),
     "dfe-engine": (
         "bearer-tokens-init",
         "dfe-dashboards",
         "dfe-hunt-runner",
         "hyperdx-documentdb-tls",
     ),
+    "dfe-loader": ("config-check-dfe-loader",),
+    "dfe-receiver": ("config-check-dfe-receiver",),
 }
 # The IMAGE_CONSUMERS a stack can start without their component, mapped to the
 # services whose `depends_on` starts them (hyperdx runs with the engine off).
 # Plain `make dev` builds their component too, so every DFE image its stack starts comes from source
 IMPLICIT_CONSUMERS: dict[str, tuple[str, ...]] = {
-    "bearer-tokens-init": ("dfe-receiver",),
+    "bearer-tokens-init": ("config-check-dfe-receiver", "dfe-receiver"),
     "dfe-dashboards": ("hyperdx",),
     "dlq-init": (
         "dfe-archiver",

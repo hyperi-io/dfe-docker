@@ -1,0 +1,19 @@
+
+# Project:   dfe-docker
+# File:      compose/dfe-app.yml
+# Purpose:   The settings the data-plane apps on /livez share
+# Language:  YAML
+#
+# License:   BUSL-1.1
+# Copyright: (c) 2026 HYPERI PTY LIMITED
+
+services:
+  dfe-app:
+    extends: {file: limits.yml, service: limits-service}
+    profiles: ["dfe"]
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://localhost:9090/livez"]
+      interval: 10s
+      timeout: 3s
+      retries: 5

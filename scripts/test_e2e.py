@@ -245,16 +245,16 @@ TEST_CONFIG = Path(
 # Kafka Backend
 # - Mirrors scripts/resolve_profile.py: KAFKA_BACKEND selects BOTH the compose
 #   profile and the broker service for kafka-transport tests. Profile name and
-#   service name are identical (service 'kafka-redpanda' lives in profile
-#   'kafka-redpanda'; likewise 'kafka-apache'). The in-network alias is always
+#   service name are identical (service 'kafka-apache' lives in profile
+#   'kafka-apache'; likewise 'kafka-redpanda'). The in-network alias is always
 #   'kafka:9092', so downstream services and `--bootstrap-server` address that,
 #   but `docker compose exec` needs the real SERVICE name -> KAFKA_SERVICE.
 #   Unknown backend falls back to redpanda (the stack default).
 # ------------------------------------------------------------------------------
 KAFKA_BACKEND = os.environ.get("KAFKA_BACKEND", "redpanda").strip().lower()
 KAFKA_BACKEND_PROFILES = {
-    "redpanda": "kafka-redpanda",
     "apache": "kafka-apache",
+    "redpanda": "kafka-redpanda",
 }
 KAFKA_BACKEND_PROFILE = KAFKA_BACKEND_PROFILES.get(KAFKA_BACKEND, "kafka-redpanda")
 KAFKA_SERVICE = KAFKA_BACKEND_PROFILE

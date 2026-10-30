@@ -242,8 +242,8 @@ RETIRED_PROFILES = {
 
 SERVICE_KAFKA_DEFAULT = "redpanda"
 SERVICE_KAFKA_OPTIONS = {
-    "redpanda": "kafka-redpanda",
     "apache": "kafka-apache",
+    "redpanda": "kafka-redpanda",
 }
 SERVICE_TO_CONFIG_VAR = {
     "dfe-archiver": "DFE_ARCHIVER_CONFIG",

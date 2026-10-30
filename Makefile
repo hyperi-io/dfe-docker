@@ -494,7 +494,7 @@ modes: ## Show the deploy modes -- pinned vs track-latest -- and which one this 
 .PHONY: storage-dirs
 storage-dirs:
 ifneq ($(strip $(DFE_DATA_ROOT)),)
-	@mkdir -p $(addprefix $(DFE_DATA_ROOT)/,clickhouse kafka-redpanda kafka-apache archiver dlq-spool fetcher-cursors transform-elastic-geoip engine-config engine-schemas hyperdx-documentdb)
+	@mkdir -p $(addprefix $(DFE_DATA_ROOT)/,clickhouse kafka-apache kafka-redpanda archiver dlq-spool fetcher-cursors transform-elastic-geoip engine-config engine-schemas hyperdx-documentdb)
 endif
 
 # `dev` and `dev-build` clone the component repos from github.com/hyperi-io,
@@ -546,6 +546,9 @@ else
     APPLY_FLAGS = -f docker-compose.yml $(STORAGE_FLAGS) $(UI_FLAGS)
 endif
 
+# The apps with a config-check-<app> in compose/one-shots.yml, which a --no-deps recreate would skip
+CONFIG_CHECKED_APPS := dfe-archiver dfe-loader dfe-receiver
+
 .PHONY: apply
 apply: env-files storage-dirs ## Create or recreate the named services after a config write, removing the containers of deleted sources (SERVICES="svc ..."; DEV=1 for a `make dev` stack), the command dfe-engine's hints name. With no SERVICES it only removes, for after a source is deleted
 	@$(MAKE) --no-print-directory apply-services
@@ -556,6 +559,7 @@ apply-services:
 	@python3 scripts/instances.py --prune -- $(APPLY_FLAGS) $(PROFILE_FLAGS)
 # The engine names no command after a delete, and an empty SERVICES would recreate the whole stack.
 ifneq ($(strip $(SERVICES)),)
+	@for check in $(addprefix config-check-,$(filter $(CONFIG_CHECKED_APPS),$(ACTIVE_SERVICES))); do docker compose $(APPLY_FLAGS) $(PROFILE_FLAGS) run --rm --no-deps "$$check" || exit 1; done
 	docker compose $(APPLY_FLAGS) $(PROFILE_FLAGS) up -d --force-recreate --no-deps $(ACTIVE_SERVICES)
 endif
 # An added or removed instance moves the CPU limits the collector reports and compose recreates it only when they did

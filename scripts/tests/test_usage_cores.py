@@ -24,7 +24,7 @@ import yaml
 import check_compose
 import resolve_profile
 import usage_cores
-from _common import COMPOSE_FILE, CONFIG_DIR, REPO_ROOT
+from _common import COMPOSE_FILE, COMPOSE_PART_FILES, CONFIG_DIR, REPO_ROOT
 
 _COLLECTOR_CONFIG = CONFIG_DIR / "otel-collector" / "config.yaml"
 _COLLECTOR_SERVICE = "otel-collector"
@@ -266,10 +266,10 @@ def test_only_the_root_compose_file_sets_a_cpu_limit() -> None:
     # The limits are read from docker-compose.yml and the instances fragment, so an overlay setting cpus would move a limit the usage rollup never sees
     overlays = sorted(
         path
-        for path in REPO_ROOT.glob("docker-compose*.yml")
-        if path.name != COMPOSE_FILE.name
+        for path in (REPO_ROOT / "compose").glob("*.yml")
+        if path not in COMPOSE_PART_FILES
     )
-    assert overlays, "the glob matched no compose overlay"
+    assert overlays, "compose/ holds no overlay"
     for path in overlays:
         text = path.read_text(encoding="utf-8")
         assert not re.search(r"^\s*cpus\s*:", text, re.MULTILINE), path.name

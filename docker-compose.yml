@@ -6,198 +6,53 @@
 # License:   BUSL-1.1
 # Copyright: (c) 2026 HYPERI PTY LIMITED
 #
-# Profile        | Services                            | Notes                                     |
-# ---------------|-------------------------------------|-------------------------------------------|
-# clickhouse     | clickhouse                          |                                           |
-# kafka-redpanda | kafka-redpanda                      | Redpanda (default); BSL -- see README      |
-# kafka-apache   | kafka-apache                        | Apache Kafka (opt-in); Apache-2.0 only     |
-# kafka-ui       | kafka-ui                            |                                           |
-# otel           | otel-collector                      | self-monitoring; opt-in                   |
-# auth           | oauth2-proxy-* (3)                  | edge OIDC + group check; opt-in           |
+# Profile        | Services
+# ---------------|----------------------------------------------
+# clickhouse     | clickhouse
+# kafka-apache   | kafka-apache, the Apache-2.0 broker
+# kafka-redpanda | kafka-redpanda, the default broker
+# kafka-ui       | kafka-ui
+# otel           | otel-collector
+# auth           | the three oauth2-proxy-* gates
+# dfe            | the data-plane apps and their init one-shots
+# core           | engine, hunt runner, UI, proxy and contracts
+# hyperdx        | hyperdx and its store, proxy and dashboards
 #
-# The kafka-* profiles are mutually exclusive: all three share the network alias `kafka`, and downstream
-# configs always address `kafka:9092`.
-#
-# Topics and ClickHouse objects are NOT created here. dfe-schemas declares them and dfe-engine applies
-# them at its own startup, reporting healthy only once that pass converged -- which is what every
-# `depends_on: dfe-engine: service_healthy` below is waiting for.
-#
-# DFE services carry profiles too -- `dfe`, `core`, `hyperdx`, `otel`. WHICH of them start is a second,
-# independent selection made by service_profiles.yaml, which also sets their config paths.
-#
-# Three host-binding variables, split by audience: DFE_INGRESS_BIND_HOST (ingest, 0.0.0.0), DFE_UI_BIND_HOST
-# (every web UI, from the DFE_BIND_SCOPE dial, 127.0.0.1) and DFE_BIND_HOST (operators, 127.0.0.1).
-# docs/operating.md#port-exposure-is-split-by-audience.
-#
-# Every DFE service serves `/livez`, `/readyz` and `/metrics` and nothing else -- the retired aliases 404.
-# A HEALTHCHECK uses `/livez` EXCEPT where a `depends_on` gates on it, which is why dfe-loader and
-# dfe-engine use `/readyz`. docs/troubleshooting.md#which-path-each-healthcheck-uses-and-why-it-differs.
-#
-# Every service declares deploy.resources.limits, in four tiers. `make limits` prints the resolved numbers;
-# docs/operating.md#resource-limits-four-tiers-ceilings-not-reservations explains the sizing.
-#
-# Every DFE app runs a release check at startup, ON unless .env says otherwise. DFE_VERSION_CHECK_ENABLED=false
-# turns it off in all of them and DFE_VERSION_CHECK_SEND_INSTANCE_ID=false keeps it without the install id.
-# Each app reads scalo's key under its own cascade prefix, so each service maps the one dial onto its spelling.
-# docs/configuration.md#release-check.
-#
-# Quick start:
-#   make dev                         # Uses active_profile from service_profiles.yaml
-#   DFE_PROFILE=single-kafka make dev  # Override profile
-#   KAFKA_BACKEND=apache make dev    # Override Kafka backend
-#
-# Dev build from source (chains the overlay the build writes, .tmp/docker-compose.local.yml):
-#   make dev
-#
-# CI / registry images only:
-#   docker compose -f docker-compose.yml --profile clickhouse --profile kafka-redpanda up -d dfe-loader
+# Start it with make, which applies service_profiles.yaml
+# Bindings: docs/operating.md#port-exposure-is-split-by-audience
+# Release check: docs/configuration.md#release-check
 
-# =============================================================================
-# DNS search domain
-# `.` clears the search domain a host (corp.example.com) passes into every container, so a bare name with no network alias (`kafka` on a stack without a broker) fails to resolve instead of silently reaching that domain's host
-# =============================================================================
-x-no-dns-search: &no-dns-search ["."]
-
-# =============================================================================
-# Resource limit tiers
-# Anchors, not services -- the `x-` prefix keeps Compose from treating them as one.
-# =============================================================================
-
-# Sized for a 16 GB box running the DEFAULT profile. No totals written down here
-# -- `make limits` computes them from the resolved config and cannot drift.
-x-limits-clickhouse: &limits-clickhouse
-  resources:
-    limits:
-      cpus: "${DFE_CLICKHOUSE_CPUS:-2.0}"
-      memory: ${DFE_CLICKHOUSE_MEMORY:-3G}
-
-# Redpanda subtracts the HOST's vm.min_free_kbytes from this limit before it
-# checks --memory. redpanda/start.sh lowers --memory to what fits, and this
-# headroom keeps the full 1G on any host whose reserve is under 1536M.
-x-limits-broker: &limits-broker
-  resources:
-    limits:
-      cpus: "${DFE_BROKER_CPUS:-1.5}"
-      memory: ${DFE_BROKER_MEMORY:-2560M}
-
-# 2.0 CPUs is a FLOOR, not a sizing estimate. Below it Tokio gives a scalo service
-# one worker thread, the Kafka poll loop owns it, and the whole observability port
-# goes dark while the data path keeps working. `make check-compose` enforces it.
-# docs/operating.md#dfe_service_cpus-has-a-floor-of-20-and-it-is-not-about-speed
-x-limits-service: &limits-service
-  resources:
-    limits:
-      cpus: "${DFE_SERVICE_CPUS:-2.0}"
-      memory: ${DFE_SERVICE_MEMORY:-768M}
-
-# HyperDX takes the service tier's CPUs but not its memory.
-# On node 24 its four Node processes hold about 820 MiB for the first 100 s after a start, so 768M OOM-kills it in a loop.
-# 2G is the limit the Kubernetes hyperdx chart gives the same image.
-x-limits-hyperdx: &limits-hyperdx
-  resources:
-    limits:
-      cpus: "${DFE_SERVICE_CPUS:-2.0}"
-      memory: ${DFE_HYPERDX_MEMORY:-2G}
-
-# 512M rather than less: a sidecar's whole job is to exit cleanly, and a tighter
-# cap risks an OOM kill on one.
-x-limits-sidecar: &limits-sidecar
-  resources:
-    limits:
-      cpus: "${DFE_SIDECAR_CPUS:-0.5}"
-      memory: ${DFE_SIDECAR_MEMORY:-512M}
-
-# =============================================================================
-# oauth2-proxy shared settings (the opt-in `auth` profile)
-#
-# One OIDC identity and one cookie secret across every infra-UI proxy, so a
-# single sign-in covers all of them. They gate on the SAME groups, so sharing a
-# session is the intent rather than a leak. Cookies ignore PORT, which is what
-# lets the HyperDX app and its API sit on one session across two origins.
-#
-# EVERY key here takes a default and none of them is a hard-fail, which is
-# load-bearing: compose interpolates the whole file BEFORE it filters by profile,
-# so a hard-fail key inside a profiled service aborts a stack that never asked
-# for that profile. dfe-docker may not require an OIDC issuer to start, so the
-# "issuer is missing" check lives in resolve_profile.py, which runs only when the
-# auth footprint actually resolves ON.
-# =============================================================================
-x-oauth2-proxy-env: &oauth2-proxy-env
-  OAUTH2_PROXY_PROVIDER: oidc
-  OAUTH2_PROXY_OIDC_ISSUER_URL: ${DFE_OIDC_ISSUER_URL:-}
-  OAUTH2_PROXY_CLIENT_ID: ${DFE_OIDC_CLIENT_ID:-}
-  OAUTH2_PROXY_CLIENT_SECRET: ${DFE_OIDC_CLIENT_SECRET:-}
-  # The group check, not authn alone. Plural env name because --allowed-group is
-  # a list flag. Setting it makes the generic OIDC provider request the `groups`
-  # scope implicitly, so there is no separate scope dial to keep in step.
-  OAUTH2_PROXY_ALLOWED_GROUPS: ${DFE_OIDC_ALLOWED_GROUPS:-dfe-infra,dfe-admin}
-  # `*` because the group check is the gate. Narrowing by email domain as well
-  # is a deployment's choice, not a default.
-  OAUTH2_PROXY_EMAIL_DOMAINS: ${DFE_OIDC_EMAIL_DOMAINS:-*}
-  OAUTH2_PROXY_COOKIE_SECRET: ${DFE_OAUTH2_PROXY_COOKIE_SECRET:-}
-  # Blank = a host-only cookie, which is what shares one session across the
-  # infra UIs on a single box. Name it only for a real multi-host deployment.
-  OAUTH2_PROXY_COOKIE_DOMAINS: ${DFE_OAUTH2_PROXY_COOKIE_DOMAIN:-}
-  # Compose serves plain HTTP, so a Secure cookie would never be sent back and
-  # every sign-in would loop. Behind real TLS, set this true.
-  OAUTH2_PROXY_COOKIE_SECURE: ${DFE_OAUTH2_PROXY_COOKIE_SECURE:-false}
-  OAUTH2_PROXY_HTTP_ADDRESS: 0.0.0.0:4180
-  OAUTH2_PROXY_SKIP_PROVIDER_BUTTON: "true"
-
-# =============================================================================
-# Health probes for the DFE Rust apps
-# Their images ship bash and no curl or wget, so these are the image's own HEALTHCHECK: a GET over bash's /dev/tcp.
-# =============================================================================
-x-probe-livez: &probe-livez ["CMD", "bash", "-c", "exec 3<>/dev/tcp/localhost/9090 && printf 'GET /livez HTTP/1.0\\r\\n\\r\\n' >&3 && read -r _ code _ <&3 && [ \"$$code\" = 200 ]"]
-x-probe-readyz: &probe-readyz ["CMD", "bash", "-c", "exec 3<>/dev/tcp/localhost/9090 && printf 'GET /readyz HTTP/1.0\\r\\n\\r\\n' >&3 && read -r _ code _ <&3 && [ \"$$code\" = 200 ]"]
-
-# Every scalo app passes APP_ENV through from .env, and `make dev` writes `development` there. An unset APP_ENV stays unset, because scalo-rs reads an empty one as the environment name.
-
-# Every DFE app's stop_grace_period is its deployment contract's termination_grace_seconds (45, the Vector transform 90), because Docker's 10 s default kills a drain mid-flush.
-
-# =============================================================================
-# Where the DFE apps reach Kafka, as resolve_profile.py resolves DFE_KAFKA_BOOTSTRAP_SERVERS: empty on a profile without Kafka
-# =============================================================================
-x-kafka-brokers: &kafka-brokers ${DFE_KAFKA_BOOTSTRAP_SERVERS:-}
+include:
+  - path: compose/one-shots.yml
+    project_directory: .
 
 services:
 
-  # ===========================================================================
+  # ============================================================
   # ClickHouse
-  # Set CLICKHOUSE_HOST in .env to use an external instance.
-  # Ports bind DFE_BIND_HOST (loopback by default): an unauthenticated analytics
-  # database on 0.0.0.0 is fine on a laptop and an open database anywhere else.
-  # ===========================================================================
+  # ============================================================
 
   clickhouse:
     image: clickhouse/clickhouse-server:${CLICKHOUSE_VERSION:?run 'make stack VERSION=X.Y.Z' to pin CLICKHOUSE_VERSION}
     container_name: ${DFE_CONTAINER_PREFIX:-}dfe-clickhouse
-    dns_search: *no-dns-search
-    # Fixed, because the Replicated database leaves a stale host id behind on every recreate
     hostname: clickhouse
     profiles: ["clickhouse"]
     restart: unless-stopped
-    deploy: *limits-clickhouse
+    extends: {file: compose/limits.yml, service: limits-clickhouse}
     ports:
-      # Host publish only: every service on the network dials 8123/9000 directly.
       - ${DFE_BIND_HOST:-127.0.0.1}:${CLICKHOUSE_HTTP_PORT:-8123}:8123
       - ${DFE_BIND_HOST:-127.0.0.1}:${CLICKHOUSE_NATIVE_PORT:-9000}:9000
     environment:
       CLICKHOUSE_DB: ${CLICKHOUSE_DB:-default}
-      CLICKHOUSE_USER: ${CLICKHOUSE_USERNAME:-default}
-      CLICKHOUSE_PASSWORD: ${CLICKHOUSE_PASSWORD:-}
       CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT: 1
-      # Read by replication.xml. Required: a server started on `dfe:` exits 231 once a real password lands
+      CLICKHOUSE_PASSWORD: ${CLICKHOUSE_PASSWORD:-}
+      CLICKHOUSE_USER: ${CLICKHOUSE_USERNAME:-default}
       DFE_KEEPER_IDENTITY: dfe:${CLICKHOUSE_KEEPER_PASSWORD:?run 'make init' to mint CLICKHOUSE_KEEPER_PASSWORD}
     volumes:
       - clickhouse-data:/var/lib/clickhouse
-      # access_control_improvements is only read from config.d
       - ./config/clickhouse/server-custom.xml:/etc/clickhouse-server/config.d/dfe-custom.xml:ro
-      # What dfe-engine's Replicated DDL needs from a self-hosted server
       - ./config/clickhouse/replication.xml:/etc/clickhouse-server/config.d/dfe-replication.xml:ro
-      # Replaces the image's file of that name, which opens every port on every interface
       - ./config/clickhouse/listen.xml:/etc/clickhouse-server/config.d/docker_related_config.xml:ro
-      # The image logs at trace and keeps system log tables with no TTL
       - ./config/clickhouse/server-logger.xml:/etc/clickhouse-server/config.d/dfe-logger.xml:ro
       - ./config/clickhouse/system-logs.xml:/etc/clickhouse-server/config.d/dfe-system-logs.xml:ro
     healthcheck:
@@ -205,36 +60,45 @@ services:
       interval: 5s
       timeout: 5s
       retries: 10
-    ulimits:
-      nofile:
-        soft: 262144
-        hard: 262144
 
-  # ===========================================================================
-  # Kafka (Redpanda)
-  # Default Kafka-API broker (mutually exclusive with other kafka-* services)
-  #
-  # LICENCE: the core is BSL, not OSS. Set KAFKA_BACKEND=apache if a
-  # per-deployment check does not come back clean.
-  # docs/operating.md#kafka-backend-licensing-is-a-human-decision
-  #
-  # `--mode=dev-container` is Redpanda's DEVELOPER mode, not a production one.
-  # docs/operating.md#redpanda-ships-in-developer-mode
-  # ===========================================================================
+  # ============================================================
+  # Kafka
+  # ============================================================
+
+  kafka-apache:
+    image: apache/kafka:${APACHE_KAFKA_VERSION:?run 'make stack VERSION=X.Y.Z' to pin APACHE_KAFKA_VERSION}
+    container_name: ${DFE_CONTAINER_PREFIX:-}dfe-kafka-apache
+    profiles: ["kafka-apache"]
+    extends: {file: compose/kafka.yml, service: kafka}
+    environment:
+      CLUSTER_ID: dfe-docker-dev-cluster-01
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:9092,PLAINTEXT_HOST://${KAFKA_ADVERTISED_HOST:-localhost}:${KAFKA_PLAINTEXT_HOST_PORT:-19092}
+      KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
+      KAFKA_CONTROLLER_QUORUM_VOTERS: 1@kafka:29092
+      KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: "0"
+      KAFKA_LISTENERS: PLAINTEXT://:9092,PLAINTEXT_HOST://:19092,CONTROLLER://:29092
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT
+      KAFKA_NODE_ID: "1"
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: "1"
+      KAFKA_PROCESS_ROLES: broker,controller
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: "1"
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: "1"
+    volumes:
+      - kafka-apache-data:/var/lib/kafka/data
+      - kafka-apache-secrets:/etc/kafka/secrets
+      - kafka-apache-config:/mnt/shared/config
+    healthcheck:
+      test: ["CMD-SHELL", "/opt/kafka/bin/kafka-broker-api-versions.sh --bootstrap-server localhost:9092 > /dev/null 2>&1"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 15s
 
   kafka-redpanda:
     image: docker.redpanda.com/redpandadata/redpanda:${REDPANDA_VERSION:?run 'make stack VERSION=X.Y.Z' to pin REDPANDA_VERSION}
     container_name: ${DFE_CONTAINER_PREFIX:-}dfe-kafka-redpanda
-    dns_search: *no-dns-search
     profiles: ["kafka-redpanda"]
-    restart: unless-stopped
-    deploy: *limits-broker
-    networks:
-      default:
-        aliases:
-          - kafka
-    # redpanda/start.sh appends --memory: REDPANDA_MEMORY, lowered to what the
-    # container limit holds once this host's kernel reserve is taken off.
+    extends: {file: compose/kafka.yml, service: kafka}
     entrypoint: ["/bin/bash", "/usr/local/bin/dfe-redpanda-start.sh"]
     environment:
       REDPANDA_MEMORY: ${REDPANDA_MEMORY:-1G}
@@ -245,8 +109,6 @@ services:
       - --smp=${REDPANDA_SMP:-1}
       - --kafka-addr=internal://0.0.0.0:9092,external://0.0.0.0:19092
       - --advertise-kafka-addr=internal://kafka:9092,external://${KAFKA_ADVERTISED_HOST:-localhost}:${KAFKA_PLAINTEXT_HOST_PORT:-19092}
-    ports:
-      - ${DFE_BIND_HOST:-127.0.0.1}:${KAFKA_PLAINTEXT_HOST_PORT:-19092}:19092
     volumes:
       - kafka-redpanda-data:/var/lib/redpanda/data
       - ./redpanda/start.sh:/usr/local/bin/dfe-redpanda-start.sh:ro
@@ -257,383 +119,52 @@ services:
       retries: 10
       start_period: 15s
 
-  # ===========================================================================
-  # Apache Kafka
-  # Opt-in Kafka alternative (mutually exclusive with other kafka-* services)
-  # ===========================================================================
-
-  kafka-apache:
-    image: apache/kafka:${APACHE_KAFKA_VERSION:?run 'make stack VERSION=X.Y.Z' to pin APACHE_KAFKA_VERSION}
-    container_name: ${DFE_CONTAINER_PREFIX:-}dfe-kafka-apache
-    dns_search: *no-dns-search
-    profiles: ["kafka-apache"]
-    restart: unless-stopped
-    deploy: *limits-broker
-    networks:
-      default:
-        aliases:
-          - kafka
-    environment:
-      CLUSTER_ID: dfe-docker-dev-cluster-01
-      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:9092,PLAINTEXT_HOST://${KAFKA_ADVERTISED_HOST:-localhost}:${KAFKA_PLAINTEXT_HOST_PORT:-19092}
-      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "true"
-      KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
-      KAFKA_CONTROLLER_QUORUM_VOTERS: 1@kafka:29092
-      KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: "0"
-      KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
-      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT
-      KAFKA_LISTENERS: PLAINTEXT://:9092,PLAINTEXT_HOST://:19092,CONTROLLER://:29092
-      KAFKA_NODE_ID: "1"
-      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: "1"
-      KAFKA_PROCESS_ROLES: broker,controller
-      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: "1"
-      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: "1"
-    ports:
-      - ${DFE_BIND_HOST:-127.0.0.1}:${KAFKA_PLAINTEXT_HOST_PORT:-19092}:19092
-    volumes:
-      - kafka-apache-data:/var/lib/kafka/data
-      # The image declares these as VOLUMEs too, empty unless a deployment
-      # supplies TLS material or property files. Named, so no down/up strands one.
-      - kafka-apache-secrets:/etc/kafka/secrets
-      - kafka-apache-config:/mnt/shared/config
-    healthcheck:
-      test: ["CMD-SHELL", "/opt/kafka/bin/kafka-broker-api-versions.sh --bootstrap-server localhost:9092 > /dev/null 2>&1"]
-      interval: 5s
-      timeout: 5s
-      retries: 10
-      start_period: 15s
-
-  # ===========================================================================
+  # ============================================================
   # Kafka UI
-  # Opt-in UI for Kafka cluster.
-  # ===========================================================================
+  # ============================================================
 
   kafka-ui:
     image: ghcr.io/kafbat/kafka-ui:${KAFBAT_VERSION:?run 'make stack VERSION=X.Y.Z' to pin KAFBAT_VERSION}
     container_name: ${DFE_CONTAINER_PREFIX:-}dfe-kafka-ui
-    dns_search: *no-dns-search
     profiles: ["kafka-ui"]
     restart: unless-stopped
-    # Service tier, not sidecar: kafbat is a Spring Boot JVM, and the JVM sizes its
-    # heap as a percentage of the container limit. On the 512M sidecar tier that
-    # leaves roughly 128M of heap, and an OOM kill under `restart: unless-stopped`
-    # becomes a restart loop rather than a clean failure.
-    deploy: *limits-service
+    extends: {file: compose/limits.yml, service: limits-service}
     ports:
-      # A web UI, so it binds DFE_UI_BIND_HOST (the DFE_BIND_SCOPE dial), and it
-      # is INFRA class -- DFE_INFRA_UIS_EXTERNAL=false unpublishes it along with
-      # HyperDX. docs/operating.md#port-exposure-is-split-by-audience
       - ${DFE_UI_BIND_HOST:-127.0.0.1}:${KAFBAT_PORT:-8081}:8080
     environment:
-      DYNAMIC_CONFIG_ENABLED: "true"
       KAFKA_CLUSTERS_0_BOOTSTRAPSERVERS: ${DFE_KAFKA_BOOTSTRAP_SERVERS:-kafka:9092}
       KAFKA_CLUSTERS_0_NAME: dfe-local
 
-  # ===========================================================================
-  # dlq-init
-  # Makes the shared DLQ spool, the archive volume and the fetcher cursors
-  # writable by the services that use them: Docker creates each mountpoint
-  # root-owned and every consumer runs as uid 1000, so without this dfe-archiver
-  # crash-loops on its eager DLQ writer and fails every archive write.
-  #
-  # Three sharp edges -- `required: false` means a FAILED dlq-init only warns,
-  # uid 1000 is hard-coded, and no profile names this service, so dev mode builds
-  # the archiver for it. docs/troubleshooting.md#the-dlq-spool
-  # ===========================================================================
-
-  dlq-init:
-    image: ${IMAGE_REGISTRY:-ghcr.io/hyperi-io}/dfe-archiver:${DFE_ARCHIVER_VERSION:?run 'make stack VERSION=X.Y.Z' to pin DFE_ARCHIVER_VERSION}
-    container_name: ${DFE_CONTAINER_PREFIX:-}dfe-dlq-init
-    dns_search: *no-dns-search
-    profiles: ["dfe"]
-    deploy: *limits-sidecar
-    user: "0:0"
-    entrypoint: ["/bin/sh", "-c"]
-    # A LIST with one element, not a bare scalar. Compose splits a scalar command
-    # into argv, so `sh -c` would receive only `chown` and the rest would land in
-    # $0/$1/$2 -- which fails with "chown: missing operand".
-    command:
-      - chown -R 1000:1000 /var/spool/dfe /var/data/archive /var/lib/dfe-fetcher /var/lib/dfe/geoip
-    volumes:
-      - dlq-spool:/var/spool/dfe
-      - archiver-data:/var/data/archive
-      - fetcher-cursors:/var/lib/dfe-fetcher
-      - transform-elastic-geoip:/var/lib/dfe/geoip
-    restart: "no"
-
-  # Creates the bearer-token directory dfe-receiver mounts as the engine's uid 1000, since Docker refuses a missing volume subpath
-  bearer-tokens-init:
-    image: ${IMAGE_REGISTRY:-ghcr.io/hyperi-io}/dfe-engine:${DFE_ENGINE_VERSION:?run 'make stack VERSION=X.Y.Z' to pin DFE_ENGINE_VERSION}
-    container_name: ${DFE_CONTAINER_PREFIX:-}dfe-bearer-tokens-init
-    dns_search: *no-dns-search
-    profiles: ["dfe"]
-    deploy: *limits-sidecar
-    user: "1000:1000"
-    entrypoint: ["/bin/sh", "-c"]
-    # A list of one for the reason dlq-init's command gives, owner-only like the engine's own secrets
-    command:
-      - umask 077 && mkdir -p /app/config/.secrets/ingest/bearer-tokens
-    volumes:
-      - dfe-engine-config:/app/config
-    restart: "no"
-
-  # ===========================================================================
-  # contract-<app>
-  # One one-shot per app, running that app's OWN pinned image: `config-schema`
-  # writes the config schema and capability catalogue of the exact binary this
-  # stack runs into dfe-engine-content, and the engine reads them back at
-  # /contract/<app>. The Kubernetes tier does the same with one init container
-  # per app (dfe-infra #305).
-  #
-  # An app that cannot emit must not wedge the engine. scalo exits non-zero when
-  # it fails to WRITE, so the command wraps the call and logs instead, and the
-  # engine's depends_on carries `required: false` on top of that. It emits into
-  # <app>.new and swaps that in whole, and a failure removes the last release's
-  # contract too, since the volume outlives it.
-  #
-  # source.json names the ref that produced the directory: a contract is a
-  # property of one digest and none of the four files says which.
-  #
-  # These stay on the registry pin in dev -- the committed override repoints the
-  # app services and not these, so a local build's contract is the pin's.
-  # ===========================================================================
-
-  contract-dfe-archiver:
-    image: ${IMAGE_REGISTRY:-ghcr.io/hyperi-io}/dfe-archiver:${DFE_ARCHIVER_VERSION:?run 'make stack VERSION=X.Y.Z' to pin DFE_ARCHIVER_VERSION}
-    container_name: ${DFE_CONTAINER_PREFIX:-}dfe-contract-dfe-archiver
-    dns_search: *no-dns-search
-    profiles: ["core"]
-    deploy: *limits-sidecar
-    # Root because an empty named volume lands root-owned at a path no image
-    # creates, and the engine only ever reads this directory.
-    user: "0:0"
-    entrypoint: ["/bin/sh", "-c"]
-    environment:
-      # The ref this contract came from. The image line above hard-fails on an
-      # unset pin, so it never renders empty.
-      CONTRACT_REF: ${IMAGE_REGISTRY:-ghcr.io/hyperi-io}/dfe-archiver:${DFE_ARCHIVER_VERSION:-}
-    # A LIST with one element, for the reason dlq-init's command gives.
-    command:
-      - |
-        rm -rf /app/content/contract/dfe-archiver.new
-        if dfe-archiver config-schema --dir /app/content/contract/dfe-archiver.new &&
-          printf '{"app":"dfe-archiver","ref":"%s","emitted_at":"%s"}\n' \
-            "$$CONTRACT_REF" "$$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
-            > /app/content/contract/dfe-archiver.new/source.json; then
-          rm -rf /app/content/contract/dfe-archiver && mv /app/content/contract/dfe-archiver.new /app/content/contract/dfe-archiver
-        else
-          rm -rf /app/content/contract/dfe-archiver.new /app/content/contract/dfe-archiver
-          echo "contract: dfe-archiver emitted nothing, so the engine reports its contract absent" >&2
-        fi
-    volumes:
-      - dfe-engine-content:/app/content
-    restart: "no"
-
-  contract-dfe-fetcher:
-    image: ${IMAGE_REGISTRY:-ghcr.io/hyperi-io}/dfe-fetcher:${DFE_FETCHER_VERSION:?run 'make stack VERSION=X.Y.Z' to pin DFE_FETCHER_VERSION}
-    container_name: ${DFE_CONTAINER_PREFIX:-}dfe-contract-dfe-fetcher
-    dns_search: *no-dns-search
-    profiles: ["core"]
-    deploy: *limits-sidecar
-    # Root because an empty named volume lands root-owned at a path no image
-    # creates, and the engine only ever reads this directory.
-    user: "0:0"
-    entrypoint: ["/bin/sh", "-c"]
-    environment:
-      CONTRACT_REF: ${IMAGE_REGISTRY:-ghcr.io/hyperi-io}/dfe-fetcher:${DFE_FETCHER_VERSION:-}
-    command:
-      - |
-        rm -rf /app/content/contract/dfe-fetcher.new
-        if dfe-fetcher config-schema --dir /app/content/contract/dfe-fetcher.new &&
-          printf '{"app":"dfe-fetcher","ref":"%s","emitted_at":"%s"}\n' \
-            "$$CONTRACT_REF" "$$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
-            > /app/content/contract/dfe-fetcher.new/source.json; then
-          rm -rf /app/content/contract/dfe-fetcher && mv /app/content/contract/dfe-fetcher.new /app/content/contract/dfe-fetcher
-        else
-          rm -rf /app/content/contract/dfe-fetcher.new /app/content/contract/dfe-fetcher
-          echo "contract: dfe-fetcher emitted nothing, so the engine reports its contract absent" >&2
-        fi
-    volumes:
-      - dfe-engine-content:/app/content
-    restart: "no"
-
-  contract-dfe-loader:
-    image: ${IMAGE_REGISTRY:-ghcr.io/hyperi-io}/dfe-loader:${DFE_LOADER_VERSION:?run 'make stack VERSION=X.Y.Z' to pin DFE_LOADER_VERSION}
-    container_name: ${DFE_CONTAINER_PREFIX:-}dfe-contract-dfe-loader
-    dns_search: *no-dns-search
-    profiles: ["core"]
-    deploy: *limits-sidecar
-    # Root because an empty named volume lands root-owned at a path no image
-    # creates, and the engine only ever reads this directory.
-    user: "0:0"
-    entrypoint: ["/bin/sh", "-c"]
-    environment:
-      CONTRACT_REF: ${IMAGE_REGISTRY:-ghcr.io/hyperi-io}/dfe-loader:${DFE_LOADER_VERSION:-}
-    command:
-      - |
-        rm -rf /app/content/contract/dfe-loader.new
-        if dfe-loader config-schema --dir /app/content/contract/dfe-loader.new &&
-          printf '{"app":"dfe-loader","ref":"%s","emitted_at":"%s"}\n' \
-            "$$CONTRACT_REF" "$$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
-            > /app/content/contract/dfe-loader.new/source.json; then
-          rm -rf /app/content/contract/dfe-loader && mv /app/content/contract/dfe-loader.new /app/content/contract/dfe-loader
-        else
-          rm -rf /app/content/contract/dfe-loader.new /app/content/contract/dfe-loader
-          echo "contract: dfe-loader emitted nothing, so the engine reports its contract absent" >&2
-        fi
-    volumes:
-      - dfe-engine-content:/app/content
-    restart: "no"
-
-  contract-dfe-receiver:
-    image: ${IMAGE_REGISTRY:-ghcr.io/hyperi-io}/dfe-receiver:${DFE_RECEIVER_VERSION:?run 'make stack VERSION=X.Y.Z' to pin DFE_RECEIVER_VERSION}
-    container_name: ${DFE_CONTAINER_PREFIX:-}dfe-contract-dfe-receiver
-    dns_search: *no-dns-search
-    profiles: ["core"]
-    deploy: *limits-sidecar
-    # Root because an empty named volume lands root-owned at a path no image
-    # creates, and the engine only ever reads this directory.
-    user: "0:0"
-    entrypoint: ["/bin/sh", "-c"]
-    environment:
-      CONTRACT_REF: ${IMAGE_REGISTRY:-ghcr.io/hyperi-io}/dfe-receiver:${DFE_RECEIVER_VERSION:-}
-    command:
-      - |
-        rm -rf /app/content/contract/dfe-receiver.new
-        if dfe-receiver config-schema --dir /app/content/contract/dfe-receiver.new &&
-          printf '{"app":"dfe-receiver","ref":"%s","emitted_at":"%s"}\n' \
-            "$$CONTRACT_REF" "$$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
-            > /app/content/contract/dfe-receiver.new/source.json; then
-          rm -rf /app/content/contract/dfe-receiver && mv /app/content/contract/dfe-receiver.new /app/content/contract/dfe-receiver
-        else
-          rm -rf /app/content/contract/dfe-receiver.new /app/content/contract/dfe-receiver
-          echo "contract: dfe-receiver emitted nothing, so the engine reports its contract absent" >&2
-        fi
-    volumes:
-      - dfe-engine-content:/app/content
-    restart: "no"
-
-  contract-dfe-transform-elastic:
-    image: ${IMAGE_REGISTRY:-ghcr.io/hyperi-io}/dfe-transform-elastic:${DFE_TRANSFORM_ELASTIC_VERSION:?run 'make stack VERSION=X.Y.Z' to pin DFE_TRANSFORM_ELASTIC_VERSION}
-    container_name: ${DFE_CONTAINER_PREFIX:-}dfe-contract-dfe-transform-elastic
-    dns_search: *no-dns-search
-    profiles: ["core"]
-    deploy: *limits-sidecar
-    # Root because an empty named volume lands root-owned at a path no image
-    # creates, and the engine only ever reads this directory.
-    user: "0:0"
-    entrypoint: ["/bin/sh", "-c"]
-    environment:
-      CONTRACT_REF: ${IMAGE_REGISTRY:-ghcr.io/hyperi-io}/dfe-transform-elastic:${DFE_TRANSFORM_ELASTIC_VERSION:-}
-    command:
-      - |
-        rm -rf /app/content/contract/dfe-transform-elastic.new
-        if dfe-transform-elastic config-schema --dir /app/content/contract/dfe-transform-elastic.new &&
-          printf '{"app":"dfe-transform-elastic","ref":"%s","emitted_at":"%s"}\n' \
-            "$$CONTRACT_REF" "$$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
-            > /app/content/contract/dfe-transform-elastic.new/source.json; then
-          rm -rf /app/content/contract/dfe-transform-elastic && mv /app/content/contract/dfe-transform-elastic.new /app/content/contract/dfe-transform-elastic
-        else
-          rm -rf /app/content/contract/dfe-transform-elastic.new /app/content/contract/dfe-transform-elastic
-          echo "contract: dfe-transform-elastic emitted nothing, so the engine reports its contract absent" >&2
-        fi
-    volumes:
-      - dfe-engine-content:/app/content
-    restart: "no"
-
-  contract-dfe-transform-vector:
-    image: ${IMAGE_REGISTRY:-ghcr.io/hyperi-io}/dfe-transform-vector:${DFE_TRANSFORM_VECTOR_VERSION:?run 'make stack VERSION=X.Y.Z' to pin DFE_TRANSFORM_VECTOR_VERSION}
-    container_name: ${DFE_CONTAINER_PREFIX:-}dfe-contract-dfe-transform-vector
-    dns_search: *no-dns-search
-    profiles: ["core"]
-    deploy: *limits-sidecar
-    # Root because an empty named volume lands root-owned at a path no image
-    # creates, and the engine only ever reads this directory.
-    user: "0:0"
-    entrypoint: ["/bin/sh", "-c"]
-    environment:
-      CONTRACT_REF: ${IMAGE_REGISTRY:-ghcr.io/hyperi-io}/dfe-transform-vector:${DFE_TRANSFORM_VECTOR_VERSION:-}
-    command:
-      - |
-        rm -rf /app/content/contract/dfe-transform-vector.new
-        if dfe-transform-vector config-schema --dir /app/content/contract/dfe-transform-vector.new &&
-          printf '{"app":"dfe-transform-vector","ref":"%s","emitted_at":"%s"}\n' \
-            "$$CONTRACT_REF" "$$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
-            > /app/content/contract/dfe-transform-vector.new/source.json; then
-          rm -rf /app/content/contract/dfe-transform-vector && mv /app/content/contract/dfe-transform-vector.new /app/content/contract/dfe-transform-vector
-        else
-          rm -rf /app/content/contract/dfe-transform-vector.new /app/content/contract/dfe-transform-vector
-          echo "contract: dfe-transform-vector emitted nothing, so the engine reports its contract absent" >&2
-        fi
-    volumes:
-      - dfe-engine-content:/app/content
-    restart: "no"
-
-  contract-dfe-transform-vrl:
-    image: ${IMAGE_REGISTRY:-ghcr.io/hyperi-io}/dfe-transform-vrl:${DFE_TRANSFORM_VRL_VERSION:?run 'make stack VERSION=X.Y.Z' to pin DFE_TRANSFORM_VRL_VERSION}
-    container_name: ${DFE_CONTAINER_PREFIX:-}dfe-contract-dfe-transform-vrl
-    dns_search: *no-dns-search
-    profiles: ["core"]
-    deploy: *limits-sidecar
-    # Root because an empty named volume lands root-owned at a path no image
-    # creates, and the engine only ever reads this directory.
-    user: "0:0"
-    entrypoint: ["/bin/sh", "-c"]
-    environment:
-      CONTRACT_REF: ${IMAGE_REGISTRY:-ghcr.io/hyperi-io}/dfe-transform-vrl:${DFE_TRANSFORM_VRL_VERSION:-}
-    command:
-      - |
-        rm -rf /app/content/contract/dfe-transform-vrl.new
-        if dfe-transform-vrl config-schema --dir /app/content/contract/dfe-transform-vrl.new &&
-          printf '{"app":"dfe-transform-vrl","ref":"%s","emitted_at":"%s"}\n' \
-            "$$CONTRACT_REF" "$$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
-            > /app/content/contract/dfe-transform-vrl.new/source.json; then
-          rm -rf /app/content/contract/dfe-transform-vrl && mv /app/content/contract/dfe-transform-vrl.new /app/content/contract/dfe-transform-vrl
-        else
-          rm -rf /app/content/contract/dfe-transform-vrl.new /app/content/contract/dfe-transform-vrl
-          echo "contract: dfe-transform-vrl emitted nothing, so the engine reports its contract absent" >&2
-        fi
-    volumes:
-      - dfe-engine-content:/app/content
-    restart: "no"
-
-  # ===========================================================================
-  # dfe-archiver
-  # Reads the landing topics off the broker (config/archiver/kafka.yaml). No gRPC profile runs it.
-  # ===========================================================================
+  # ============================================================
+  # dfe-archiver: archives the topics, never on a gRPC profile
+  # ============================================================
 
   dfe-archiver:
     image: ${IMAGE_REGISTRY:-ghcr.io/hyperi-io}/dfe-archiver:${DFE_ARCHIVER_VERSION:?run 'make stack VERSION=X.Y.Z' to pin DFE_ARCHIVER_VERSION}
     container_name: ${DFE_CONTAINER_PREFIX:-}dfe-archiver
-    dns_search: *no-dns-search
-    profiles: ["dfe"]
-    restart: unless-stopped
-    stop_grace_period: 45s
-    deploy: *limits-service
+    extends: {file: compose/dfe-app.yml, service: dfe-app}
     ports:
       - ${DFE_BIND_HOST:-127.0.0.1}:${DFE_ARCHIVER_PROMETHEUS_PORT:-9093}:9090
     env_file:
       - path: env/archiver.env
         required: false
-      # The custom keys the engine writes for this app, AFTER the file above so
-      # a custom key wins. Compose reads env_file at up-time, so a write needs
-      # `docker compose up -d dfe-archiver` and a restart keeps the old values.
+      # The engine's keys, which win. Apply them with up -d
       - path: env/dfe-archiver.custom.env
         required: false
     environment:
-      LOG_LEVEL: ${LOG_LEVEL:-info}
-      LOG_FORMAT: ${LOG_FORMAT:-text}
-      # Empty exports nothing -- scalo's own rule, and the stack default.
-      OTEL_EXPORTER_OTLP_ENDPOINT: ${DFE_OTEL_EXPORTER_ENDPOINT:-}
-      OTEL_SERVICE_NAME: dfe-archiver
-      APP_ENV:
-      # The archiver's cascade prefix is ARCHIVER, not DFE_ARCHIVER.
+      # Its cascade prefix is ARCHIVER, not DFE_ARCHIVER
       ARCHIVER_VERSION_CHECK__ENABLED: ${DFE_VERSION_CHECK_ENABLED:-true}
       ARCHIVER_VERSION_CHECK__SEND_INSTANCE_ID: ${DFE_VERSION_CHECK_SEND_INSTANCE_ID:-true}
-      KAFKA_BROKERS: *kafka-brokers
+      KAFKA_BROKERS: ${DFE_KAFKA_BOOTSTRAP_SERVERS:-}
+      LOG_FORMAT: ${LOG_FORMAT:-text}
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+      # Empty exports nothing, scalo's rule and the default
+      OTEL_EXPORTER_OTLP_ENDPOINT: ${DFE_OTEL_EXPORTER_ENDPOINT:-}
+      OTEL_SERVICE_NAME: dfe-archiver
     depends_on:
-      # The writer of the rendered config below, so it must have written before
-      # this container reads. `required: false` for the tiers that run no engine.
+      config-check-dfe-archiver:
+        condition: service_completed_successfully
+      # Writes this app's config, on the tiers that run it
       dfe-engine:
         condition: service_healthy
         required: false
@@ -641,61 +172,46 @@ services:
         condition: service_completed_successfully
         required: false
     working_dir: /home/appuser
-    # The engine renders this app's config from the sources on the tiers that run
-    # it; everywhere else the committed file below is what it reads.
+    # The engine's rendered config, else the committed file
     command: ["--config", "${DFE_ARCHIVER_CONFIG_FILE:-/etc/dfe/archiver.yaml}"]
     volumes:
       - ./config/${DFE_ARCHIVER_CONFIG:-archiver/kafka.yaml}:/etc/dfe/archiver.yaml:ro
       - dfe-app-config:/etc/dfe/apps:ro
       - archiver-data:/var/data/archive
       - dlq-spool:/var/spool/dfe
-    healthcheck:
-      test: *probe-livez
-      interval: 10s
-      timeout: 3s
-      retries: 5
 
-  # ===========================================================================
-  # dfe-fetcher
-  # No profile starts this service: each per-source instance scripts/instances.py generates extends it and names its own rendered config.
-  # ===========================================================================
+  # ============================================================
+  # dfe-fetcher: only its per-source instances run
+  # ============================================================
 
   dfe-fetcher:
     image: ${IMAGE_REGISTRY:-ghcr.io/hyperi-io}/dfe-fetcher:${DFE_FETCHER_VERSION:?run 'make stack VERSION=X.Y.Z' to pin DFE_FETCHER_VERSION}
     container_name: ${DFE_CONTAINER_PREFIX:-}dfe-fetcher
-    dns_search: *no-dns-search
-    profiles: ["dfe"]
-    restart: unless-stopped
-    stop_grace_period: 45s
-    deploy: *limits-service
+    extends: {file: compose/dfe-app.yml, service: dfe-app}
     ports:
       - ${DFE_INGRESS_BIND_HOST:-0.0.0.0}:${DFE_FETCHER_INGEST_PORT:-8082}:8080
       - ${DFE_BIND_HOST:-127.0.0.1}:${DFE_FETCHER_PROMETHEUS_PORT:-9094}:9090
     env_file:
       - path: env/fetcher.env
         required: false
-      # The custom keys the engine writes for this app; an up -d applies them,
-      # a restart keeps the environment the container already has.
       - path: env/dfe-fetcher.custom.env
         required: false
     environment:
-      LOG_LEVEL: ${LOG_LEVEL:-info}
-      LOG_FORMAT: ${LOG_FORMAT:-text}
-      OTEL_EXPORTER_OTLP_ENDPOINT: ${DFE_OTEL_EXPORTER_ENDPOINT:-}
-      OTEL_SERVICE_NAME: dfe-fetcher
-      APP_ENV:
+      # One per service. instances.py sets each instance's
+      DFE_FETCHER_CURSOR__DIRECTORY: /var/lib/dfe-fetcher/dfe-fetcher
+      # Its producer broker, which the rendered config lacks
+      DFE_FETCHER_KAFKA_BROKERS: ${DFE_KAFKA_BOOTSTRAP_SERVERS:-}
       DFE_FETCHER_VERSION_CHECK__ENABLED: ${DFE_VERSION_CHECK_ENABLED:-true}
       DFE_FETCHER_VERSION_CHECK__SEND_INSTANCE_ID: ${DFE_VERSION_CHECK_SEND_INSTANCE_ID:-true}
-      # One directory per fetcher service; scripts/instances.py sets each instance's.
-      DFE_FETCHER_CURSOR__DIRECTORY: /var/lib/dfe-fetcher/dfe-fetcher
-      # The broker the fetcher produces to, because the config the engine renders names none
-      DFE_FETCHER_KAFKA_BROKERS: *kafka-brokers
+      LOG_FORMAT: ${LOG_FORMAT:-text}
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+      OTEL_EXPORTER_OTLP_ENDPOINT: ${DFE_OTEL_EXPORTER_ENDPOINT:-}
+      OTEL_SERVICE_NAME: dfe-fetcher
     depends_on:
-      dfe-loader:
+      dfe-engine:
         condition: service_healthy
         required: false
-      # The writer of the rendered config, so it must have written before this container reads. `required: false` for the tiers that run no engine
-      dfe-engine:
+      dfe-loader:
         condition: service_healthy
         required: false
       dlq-init:
@@ -705,43 +221,33 @@ services:
       - dfe-app-config:/etc/dfe/apps:ro
       - dlq-spool:/var/spool/dfe
       - fetcher-cursors:/var/lib/dfe-fetcher
-    healthcheck:
-      test: *probe-livez
-      interval: 10s
-      timeout: 3s
-      retries: 5
 
-  # ===========================================================================
+  # ============================================================
   # dfe-loader
-  # Defined before dfe-receiver so receiver can depend_on loader (gRPC path).
-  # ===========================================================================
+  # ============================================================
 
   dfe-loader:
     image: ${IMAGE_REGISTRY:-ghcr.io/hyperi-io}/dfe-loader:${DFE_LOADER_VERSION:?run 'make stack VERSION=X.Y.Z' to pin DFE_LOADER_VERSION}
     container_name: ${DFE_CONTAINER_PREFIX:-}dfe-loader
-    dns_search: *no-dns-search
     profiles: ["dfe"]
     restart: unless-stopped
-    stop_grace_period: 45s
-    deploy: *limits-service
+    extends: {file: compose/limits.yml, service: limits-service}
     ports:
       - ${DFE_BIND_HOST:-127.0.0.1}:${DFE_LOADER_PROMETHEUS_PORT:-9091}:9090
-      # Receiver push, on 50051 so host 6000 stays the receiver's
+      # Receiver push. Host 6000 is the receiver's
       - ${DFE_BIND_HOST:-127.0.0.1}:${DFE_LOADER_GRPC_PORT:-50051}:6000
     env_file:
       - path: env/loader.env
         required: false
-      # Keys the engine writes for this app, applied by `up -d` not a restart
       - path: env/dfe-loader.custom.env
         required: false
     environment:
-      # The ClickHouse dfe-engine dials, container port included (#75)
+      # The engine's ClickHouse, container port (#75)
       DFE_LOADER_CLICKHOUSE_HOSTS: ${CLICKHOUSE_HOST:-clickhouse}:${CLICKHOUSE_EXTERNAL_HTTP_PORT:-8123}
-      # Its own user, which the engine creates: inserts and schema reads only
+      # Its own user: inserts and schema reads only
       DFE_LOADER_CLICKHOUSE_PASSWORD: ${DFE_LOADER_CLICKHOUSE_PASSWORD:-}
       DFE_LOADER_CLICKHOUSE_USERNAME: dfe_loader
-      DFE_LOADER_KAFKA_BROKERS: *kafka-brokers
-      APP_ENV:
+      DFE_LOADER_KAFKA_BROKERS: ${DFE_KAFKA_BOOTSTRAP_SERVERS:-}
       DFE_LOADER_VERSION_CHECK__ENABLED: ${DFE_VERSION_CHECK_ENABLED:-true}
       DFE_LOADER_VERSION_CHECK__SEND_INSTANCE_ID: ${DFE_VERSION_CHECK_SEND_INSTANCE_ID:-true}
       LOG_FORMAT: ${LOG_FORMAT:-text}
@@ -752,42 +258,38 @@ services:
       clickhouse:
         condition: service_healthy
         required: false
-      # Tables and topics exist once it is healthy, else events dead-letter
+      config-check-dfe-loader:
+        condition: service_completed_successfully
+      # Healthy means tables and topics exist
       dfe-engine:
         condition: service_healthy
         required: false
       dlq-init:
         condition: service_completed_successfully
         required: false
-    # The engine's rendered config on its tiers, else the committed file below
     command: ["--config", "${DFE_LOADER_CONFIG_FILE:-/etc/dfe/loader.yaml}"]
     volumes:
       - ./config/${DFE_LOADER_CONFIG:-loader/kafka.yaml}:/etc/dfe/loader.yaml:ro
       - dfe-app-config:/etc/dfe/apps:ro
       - dlq-spool:/var/spool/dfe
     healthcheck:
-      test: *probe-readyz
+      test: ["CMD", "curl", "-sf", "http://localhost:9090/readyz"]
       interval: 10s
       timeout: 3s
       retries: 5
 
-  # ===========================================================================
+  # ============================================================
   # dfe-receiver
-  # ===========================================================================
+  # ============================================================
 
   dfe-receiver:
     image: ${IMAGE_REGISTRY:-ghcr.io/hyperi-io}/dfe-receiver:${DFE_RECEIVER_VERSION:?run 'make stack VERSION=X.Y.Z' to pin DFE_RECEIVER_VERSION}
     container_name: ${DFE_CONTAINER_PREFIX:-}dfe-receiver
-    dns_search: *no-dns-search
-    profiles: ["dfe"]
-    restart: unless-stopped
-    stop_grace_period: 45s
-    deploy: *limits-service
+    extends: {file: compose/dfe-app.yml, service: dfe-app}
     ports:
-      # 8080 (HTTP) is the ingest port external clients push to, so it binds DFE_INGRESS_BIND_HOST. 9090 is for operators.
       - ${DFE_INGRESS_BIND_HOST:-0.0.0.0}:${DFE_RECEIVER_HTTP_PORT:-8080}:8080
       - ${DFE_BIND_HOST:-127.0.0.1}:${DFE_RECEIVER_PROMETHEUS_PORT:-9090}:9090
-      # Uncomment to expose additional ingest protocols. The Vector protocol on 6000 also listens only with DFE_RECEIVER_GRPC__ENABLED=true:
+      # Uncomment for more protocols. 6000 needs GRPC__ENABLED
       # - ${DFE_INGRESS_BIND_HOST:-0.0.0.0}:${DFE_RECEIVER_GRPC_PORT:-6000}:6000
       # - ${DFE_INGRESS_BIND_HOST:-0.0.0.0}:${DFE_RECEIVER_BEATS_PORT:-5044}:5044
       # - ${DFE_INGRESS_BIND_HOST:-0.0.0.0}:${DFE_RECEIVER_HEC_PORT:-8088}:8088
@@ -796,16 +298,13 @@ services:
     env_file:
       - path: env/receiver.env
         required: false
-      # The custom keys the engine writes for this app; an up -d applies them,
-      # a restart keeps the environment the container already has.
       - path: env/dfe-receiver.custom.env
         required: false
     environment:
-      APP_ENV:
-      # Empty on the Kafka tiers to keep the cascade, file_only on direct gRPC where no broker exists to try first
+      # Empty keeps the cascade, file_only on direct gRPC
       DFE_RECEIVER_DLQ_MODE: ${DFE_RECEIVER_DLQ_MODE:-}
-      DFE_RECEIVER_KAFKA_BROKERS: *kafka-brokers
-      # The DFE-wide record cap, under every broker's 8 MiB message limit
+      DFE_RECEIVER_KAFKA_BROKERS: ${DFE_KAFKA_BOOTSTRAP_SERVERS:-}
+      # DFE-wide record cap, under every broker's 8 MiB limit
       DFE_RECEIVER_MAX_BODY_SIZE: ${DFE_RECEIVER_MAX_BODY_SIZE:-8000000}
       DFE_RECEIVER_VERSION_CHECK__ENABLED: ${DFE_VERSION_CHECK_ENABLED:-true}
       DFE_RECEIVER_VERSION_CHECK__SEND_INSTANCE_ID: ${DFE_VERSION_CHECK_SEND_INSTANCE_ID:-true}
@@ -814,339 +313,231 @@ services:
       OTEL_EXPORTER_OTLP_ENDPOINT: ${DFE_OTEL_EXPORTER_ENDPOINT:-}
       OTEL_SERVICE_NAME: dfe-receiver
     depends_on:
-      dfe-loader:
+      # The bearer-token mount needs its directory
+      bearer-tokens-init:
+        condition: service_completed_successfully
+      config-check-dfe-receiver:
+        condition: service_completed_successfully
+      dfe-engine:
         condition: service_healthy
         required: false
-      # The writer of the rendered config below, so it must have written before
-      # this container reads. `required: false` for the tiers that run no engine.
-      dfe-engine:
+      dfe-loader:
         condition: service_healthy
         required: false
       dlq-init:
         condition: service_completed_successfully
         required: false
-      # The bearer-token mount below cannot start without its directory
-      bearer-tokens-init:
-        condition: service_completed_successfully
-    # The engine renders this app's config from the sources on the tiers that run
-    # it; everywhere else the committed file below is what it reads.
     command: ["--config", "${DFE_RECEIVER_CONFIG_FILE:-/etc/dfe-receiver/config.yaml}"]
     volumes:
       - ./config/${DFE_RECEIVER_CONFIG:-receiver/kafka.yaml}:/etc/dfe-receiver/config.yaml:ro
       - dfe-app-config:/etc/dfe/apps:ro
       - dlq-spool:/var/spool/dfe
-      # The bearer tokens the engine writes per listener, a directory so a rewrite reaches the running receiver
+      # Per-listener bearer tokens, a dir so rewrites land live
       - type: volume
         source: dfe-engine-config
         target: /var/run/secrets/dfe/ingest-bearer-tokens
         read_only: true
         volume:
           subpath: .secrets/ingest/bearer-tokens
-      # Uncomment to enable TLS on gRPC inbound (:6000):
+      # Uncomment to enable TLS on gRPC inbound (:6000)
       # - ./certs/dev/receiver.crt:/etc/ssl/receiver.crt:ro
       # - ./certs/dev/receiver.key:/etc/ssl/receiver.key:ro
-    healthcheck:
-      test: *probe-livez
-      interval: 10s
-      timeout: 3s
-      retries: 5
 
-  # ===========================================================================
-  # dfe-transform-elastic
-  # Its transforms are compiled in, picked by `source.name` or per event in agentless mode, so nothing mounts beside its config
-  #
-  # dfe-engine starts one instance per source, each extending this service.
-  # ===========================================================================
+  # ============================================================
+  # dfe-transform-elastic: one instance per source extends it
+  # ============================================================
 
   dfe-transform-elastic:
     image: ${IMAGE_REGISTRY:-ghcr.io/hyperi-io}/dfe-transform-elastic:${DFE_TRANSFORM_ELASTIC_VERSION:?run 'make stack VERSION=X.Y.Z' to pin DFE_TRANSFORM_ELASTIC_VERSION}
     container_name: ${DFE_CONTAINER_PREFIX:-}dfe-transform-elastic
-    dns_search: *no-dns-search
-    profiles: ["dfe"]
-    restart: unless-stopped
-    stop_grace_period: 45s
-    deploy: *limits-service
+    extends: {file: compose/dfe-app.yml, service: dfe-app}
     ports:
       - ${DFE_BIND_HOST:-127.0.0.1}:${DFE_TRANSFORM_ELASTIC_PROMETHEUS_PORT:-9099}:9090
     env_file:
       - path: env/transform-elastic.env
         required: false
-      # The custom keys the engine writes for this app; an up -d applies them,
-      # a restart keeps the environment the container already has.
       - path: env/dfe-transform-elastic.custom.env
         required: false
     environment:
-      LOG_LEVEL: ${LOG_LEVEL:-info}
-      LOG_FORMAT: ${LOG_FORMAT:-text}
-      OTEL_EXPORTER_OTLP_ENDPOINT: ${DFE_OTEL_EXPORTER_ENDPOINT:-}
-      OTEL_SERVICE_NAME: dfe-transform-elastic
-      APP_ENV:
-      DFE_TRANSFORM_ELASTIC_SOURCE_BROKERS: *kafka-brokers
+      DFE_TRANSFORM_ELASTIC_SOURCE_BROKERS: ${DFE_KAFKA_BOOTSTRAP_SERVERS:-}
       DFE_TRANSFORM_ELASTIC_VERSION_CHECK__ENABLED: ${DFE_VERSION_CHECK_ENABLED:-true}
       DFE_TRANSFORM_ELASTIC_VERSION_CHECK__SEND_INSTANCE_ID: ${DFE_VERSION_CHECK_SEND_INSTANCE_ID:-true}
+      LOG_FORMAT: ${LOG_FORMAT:-text}
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+      OTEL_EXPORTER_OTLP_ENDPOINT: ${DFE_OTEL_EXPORTER_ENDPOINT:-}
+      OTEL_SERVICE_NAME: dfe-transform-elastic
     depends_on:
-      # The writer of the rendered config, so it must have written before this
-      # container reads. `required: false` for the tiers that run no engine.
       dfe-engine:
         condition: service_healthy
         required: false
-      # Hands the GeoIP volume to uid 1000 before the first download
+      # Chowns the GeoIP volume before the first download
       dlq-init:
         condition: service_completed_successfully
         required: false
+    # Its transforms are compiled in, so only its config mounts
     volumes:
       - dfe-app-config:/etc/dfe/apps:ro
-      # A writable home for the auto-downloaded GeoIP databases, since the image's root is read-only
+      # Writable GeoIP downloads, as the image root is read-only
       - transform-elastic-geoip:/var/lib/dfe/geoip
-    healthcheck:
-      test: *probe-livez
-      interval: 10s
-      timeout: 3s
-      retries: 5
 
-  # ===========================================================================
-  # dfe-transform-vector
-  #
-  # One metrics port: 9090 carries the scalo surface AND the `vector_*` series,
-  # which the wrapper scrapes off the `prometheus_exporter` sink and merges into
-  # the scalo registry (dfe-transform-vector#70). The sink still listens on 9598,
-  # loopback-only inside the container, and is published nowhere.
-  #
-  # dfe-engine starts one instance per source, each extending this service.
-  # ===========================================================================
+  # ============================================================
+  # dfe-transform-vector: one instance per source extends it
+  # ============================================================
 
   dfe-transform-vector:
     image: ${IMAGE_REGISTRY:-ghcr.io/hyperi-io}/dfe-transform-vector:${DFE_TRANSFORM_VECTOR_VERSION:?run 'make stack VERSION=X.Y.Z' to pin DFE_TRANSFORM_VECTOR_VERSION}
     container_name: ${DFE_CONTAINER_PREFIX:-}dfe-transform-vector
-    dns_search: *no-dns-search
-    profiles: ["dfe"]
-    restart: unless-stopped
-    stop_grace_period: 90s
-    deploy: *limits-service
+    extends: {file: compose/dfe-app.yml, service: dfe-app}
+    # 9090 also carries vector_* (dfe-transform-vector#70)
     ports:
       - ${DFE_BIND_HOST:-127.0.0.1}:${DFE_TRANSFORM_VECTOR_PROMETHEUS_PORT:-9095}:9090
       - ${DFE_BIND_HOST:-127.0.0.1}:${DFE_TRANSFORM_VECTOR_API_PORT:-8686}:8686
     env_file:
       - path: env/transform-vector.env
         required: false
-      # The custom keys the engine writes for this app; an up -d applies them,
-      # a restart keeps the environment the container already has.
       - path: env/dfe-transform-vector.custom.env
         required: false
     environment:
-      LOG_LEVEL: ${LOG_LEVEL:-info}
-      LOG_FORMAT: ${LOG_FORMAT:-text}
-      OTEL_EXPORTER_OTLP_ENDPOINT: ${DFE_OTEL_EXPORTER_ENDPOINT:-}
-      OTEL_SERVICE_NAME: dfe-transform-vector
-      APP_ENV:
-      DFE_TRANSFORM_SINK_BROKERS: *kafka-brokers
-      DFE_TRANSFORM_SOURCE_BROKERS: *kafka-brokers
-      # Vector and vrl share the prefix DFE_TRANSFORM, and elastic has its own.
+      DFE_TRANSFORM_SINK_BROKERS: ${DFE_KAFKA_BOOTSTRAP_SERVERS:-}
+      DFE_TRANSFORM_SOURCE_BROKERS: ${DFE_KAFKA_BOOTSTRAP_SERVERS:-}
+      # Shared with vrl. elastic has its own prefix
       DFE_TRANSFORM_VERSION_CHECK__ENABLED: ${DFE_VERSION_CHECK_ENABLED:-true}
       DFE_TRANSFORM_VERSION_CHECK__SEND_INSTANCE_ID: ${DFE_VERSION_CHECK_SEND_INSTANCE_ID:-true}
+      LOG_FORMAT: ${LOG_FORMAT:-text}
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+      OTEL_EXPORTER_OTLP_ENDPOINT: ${DFE_OTEL_EXPORTER_ENDPOINT:-}
+      OTEL_SERVICE_NAME: dfe-transform-vector
     depends_on:
-      # No dlq-init here: this service does not mount dlq-spool.
-      # The writer of the rendered config and the topic authority: dfe-engine creates the declared topic set at its own startup, so a transform started first subscribes to nothing. `required: false` for the tiers that run no engine.
+      # Creates the topics, else a transform subscribes to none
       dfe-engine:
         condition: service_healthy
         required: false
     volumes:
-      # The bundled pipeline names its enrichment table by an absolute path (dfe-transform-vector pipelines/filebeat/README.md), so the table has to be mounted there. A pipeline that cannot open it fails `vector validate` with exit 78 and an empty stderr
+      # The bundled pipeline's absolute enrichment table path
       - ./resources/enrichment:/etc/dfe-transform-vector/data:ro
       - dfe-app-config:/etc/dfe/apps:ro
-    healthcheck:
-      test: *probe-livez
-      interval: 10s
-      timeout: 3s
-      retries: 5
 
-  # ===========================================================================
-  # dfe-transform-vrl
-  # dfe-engine starts one instance per source, each extending this service. It uploads the enrichment tables its programs read.
-  # ===========================================================================
+  # ============================================================
+  # dfe-transform-vrl: one instance per source extends it
+  # ============================================================
 
   dfe-transform-vrl:
     image: ${IMAGE_REGISTRY:-ghcr.io/hyperi-io}/dfe-transform-vrl:${DFE_TRANSFORM_VRL_VERSION:?run 'make stack VERSION=X.Y.Z' to pin DFE_TRANSFORM_VRL_VERSION}
     container_name: ${DFE_CONTAINER_PREFIX:-}dfe-transform-vrl
-    dns_search: *no-dns-search
-    profiles: ["dfe"]
-    restart: unless-stopped
-    stop_grace_period: 45s
-    deploy: *limits-service
+    extends: {file: compose/dfe-app.yml, service: dfe-app}
     ports:
       - ${DFE_BIND_HOST:-127.0.0.1}:${DFE_TRANSFORM_VRL_PROMETHEUS_PORT:-9096}:9090
     env_file:
       - path: env/transform-vrl.env
         required: false
-      # The custom keys the engine writes for this app; an up -d applies them,
-      # a restart keeps the environment the container already has.
       - path: env/dfe-transform-vrl.custom.env
         required: false
     environment:
-      LOG_LEVEL: ${LOG_LEVEL:-info}
-      LOG_FORMAT: ${LOG_FORMAT:-text}
-      OTEL_EXPORTER_OTLP_ENDPOINT: ${DFE_OTEL_EXPORTER_ENDPOINT:-}
-      OTEL_SERVICE_NAME: dfe-transform-vrl
-      APP_ENV:
-      DFE_TRANSFORM_SINK_BROKERS: *kafka-brokers
-      DFE_TRANSFORM_SOURCE_BROKERS: *kafka-brokers
+      DFE_TRANSFORM_SINK_BROKERS: ${DFE_KAFKA_BOOTSTRAP_SERVERS:-}
+      DFE_TRANSFORM_SOURCE_BROKERS: ${DFE_KAFKA_BOOTSTRAP_SERVERS:-}
       DFE_TRANSFORM_VERSION_CHECK__ENABLED: ${DFE_VERSION_CHECK_ENABLED:-true}
       DFE_TRANSFORM_VERSION_CHECK__SEND_INSTANCE_ID: ${DFE_VERSION_CHECK_SEND_INSTANCE_ID:-true}
+      LOG_FORMAT: ${LOG_FORMAT:-text}
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+      OTEL_EXPORTER_OTLP_ENDPOINT: ${DFE_OTEL_EXPORTER_ENDPOINT:-}
+      OTEL_SERVICE_NAME: dfe-transform-vrl
     depends_on:
-      # No dlq-init here: this service does not mount dlq-spool.
-      # The writer of the rendered config, so it must have written before this container reads. `required: false` for the tiers that run no engine.
       dfe-engine:
         condition: service_healthy
         required: false
+    # The engine uploads the enrichment tables its programs read
     volumes:
       - dfe-app-config:/etc/dfe/apps:ro
-    healthcheck:
-      test: *probe-livez
-      interval: 10s
-      timeout: 3s
-      retries: 5
 
-  # ===========================================================================
-  # dfe-engine
-  # dfe-schemas rides INSIDE this image: /app/schemas is baked into dfe-engine
-  # (pinned by DFE_ENGINE_VERSION) and seeds the dfe-engine-schemas named volume
-  # on first run; the engine auto-creates the CH objects at startup. So a pinned
-  # stack needs no separate dfe-schemas docker pin -- DFE_ENGINE_VERSION covers it.
-  # ===========================================================================
+  # ============================================================
+  # dfe-engine: applies dfe-schemas before it reports healthy
+  # ============================================================
 
+  # DFE_ENGINE_VERSION also pins the dfe-schemas it carries
   dfe-engine:
     image: ${IMAGE_REGISTRY:-ghcr.io/hyperi-io}/dfe-engine:${DFE_ENGINE_VERSION:?run 'make stack VERSION=X.Y.Z' to pin DFE_ENGINE_VERSION}
     container_name: ${DFE_CONTAINER_PREFIX:-}dfe-engine
-    dns_search: *no-dns-search
     profiles: ["core"]
     restart: unless-stopped
-    deploy: *limits-service
-    # The engine runs as UID 1000 and ./env belongs to the operator, so it writes
-    # there through the operator's group; `make` exports DFE_DEV_GID.
+    extends: {file: compose/limits.yml, service: limits-service}
+    # The operator's group, so it can write ./env
     group_add:
       - "${DFE_DEV_GID:-1000}"
+    # PRODUCT class: only DFE_ENGINE_API_EXTERNAL unpublishes it
     ports:
-      # dfe-proxy reaches the engine over the docker network; this host mapping
-      # is for direct API work. PRODUCT class -- it is the API the UI consumes --
-      # so it binds DFE_UI_BIND_HOST and only DFE_ENGINE_API_EXTERNAL=false takes
-      # it dark, never the infra kill switch.
       - ${DFE_UI_BIND_HOST:-127.0.0.1}:${DFE_ENGINE_PORT:-8003}:8000
     env_file:
       - path: env/engine.env
         required: false
     environment:
-      # The engine refuses to start at `production` without real auth, which is
-      # what an unset DFE_ENV should get: `make init` mints a password, so the
-      # refusal only ever catches a stack that has no credential to speak of.
-      # `make dev` writes DFE_ENV=dev for a tyre-kick that logs in on the shipped
-      # default until the stack replaces it.
-      # docs/operating.md#only-the-console-authenticates----everything-else-is-bounded-by-that
-      DFE_ENV: ${DFE_ENV:-production}
-      # A Compose stack is one operator with no forge: a hunt or rule written at
-      # production+team lands on a review branch nothing can merge, and the
-      # engine then 404s on the object it just accepted. solo commits to main.
-      DFE_GITOPS_MODE: ${DFE_GITOPS_MODE:-solo}
-      # Names the fetch command the engine puts on the login page: `make creds`.
-      DFE_DEPLOYMENT_TARGET: docker
-      # The tier this stack runs, by the manifest's name: the engine seeds the
-      # profile's default app instances from it and reports it as its profile.
-      DFE_PROFILE: ${DFE_STACK_PROFILE:-docker-slim}
-      # The certified stack `make stack` pinned this deployment from. Compose has
-      # no deploy repo for the engine to read pins out of, so this is the only
-      # thing /system/deployment can tell the console footer.
-      DFE_STACK_VERSION: ${DFE_STACK_VERSION:-}
-      # The console version /system/version reports. resolve_profile strips the
-      # digest off the ui pin, because a container reference is not a version.
-      DFE_UI_VERSION: ${DFE_UI_VERSION_TAG:-}
-      # The transport the tier's stages are bound to, which resolve_profile exports
-      # from the profile. The defaults are slim-grpc's.
-      DFE_TRANSPORT_DEFAULT: ${DFE_TRANSPORT_DEFAULT:-direct}
-      DFE_TRANSPORT_BUS_PRESENT: ${DFE_TRANSPORT_BUS_PRESENT:-false}
-      # The broker the engine creates a source's topics on: the in-stack one on a
-      # kafka tier unless .env names another, and nothing on a direct tier.
-      DFE_KAFKA_BOOTSTRAP_SERVERS: ${DFE_KAFKA_BOOTSTRAP_SERVERS:-}
-      # The everyday admin's name, whose password env/engine.env holds with the recovery admin's and the OIDC session key
-      DFE_AUTH_LOCAL_ADMIN_NAME: ${DFE_AUTH_LOCAL_ADMIN_NAME:-admin}
-      # The deploy repo the break-glass hash and the governance settings live in.
-      # Local-only here: no repo_url, so nothing is pushed anywhere. It sits inside
-      # the config volume because a volume mounted on a path the image does not own
-      # lands root-owned and the engine runs as UID 1000.
-      DFE_GITOPS_LOCAL_PATH: /app/config/deploy-repo
-      # HyperDX's control surface: the engine fans the sources it deploys onto
-      # every HyperDX team. Both follow the resolved footprint
-      # (scripts/resolve_profile.py), so one DFE_HYPERDX_ENABLED governs the
-      # HyperDX containers and the engine that drives them.
-      DFE_HYPERDX_ENABLED: ${DFE_HYPERDX_RESOLVED:-false}
-      DFE_HYPERDX_BASE_URL: ${DFE_HYPERDX_RESOLVED_BASE_URL:-}
-      # The infra UIs this stack runs and publishes, as the console's admin links.
-      # resolve_profile.py builds the list from the footprint and the exposure
-      # dials, so a UI the dials take off the host is not offered.
+      # The console's links to the published infra UIs
       DFE_ADMIN_LINKS: ${DFE_ADMIN_LINKS_RESOLVED:-}
-      DFE_CLICKHOUSE_HOST: ${CLICKHOUSE_HOST:-clickhouse}
-      # The bundled ClickHouse listens on 8123/9000 whatever its host publish is,
-      # so only an external CLICKHOUSE_HOST sets these ports (#75).
-      DFE_CLICKHOUSE_PORT: ${CLICKHOUSE_EXTERNAL_HTTP_PORT:-8123}
-      DFE_CLICKHOUSE_NATIVE_PORT: ${CLICKHOUSE_EXTERNAL_NATIVE_PORT:-9000}
+      # Where contracts land, empty where no config renders
+      DFE_APP_CONTRACT_DIR: ${DFE_ENGINE_CONTRACT_DIR-${DFE_ENGINE_CONTENT_DIR:-/app/content}/contract}
+      # The everyday admin, whose password is in env/engine.env
+      DFE_AUTH_LOCAL_ADMIN_NAME: ${DFE_AUTH_LOCAL_ADMIN_NAME:-admin}
       DFE_CLICKHOUSE_DATABASE: ${CLICKHOUSE_DB:-default}
-      DFE_CLICKHOUSE_USERNAME: ${CLICKHOUSE_USERNAME:-default}
-      DFE_CLICKHOUSE_PASSWORD: ${CLICKHOUSE_PASSWORD:-}
-      DFE_CLICKHOUSE_SECURE: ${CLICKHOUSE_SECURE:-false}
-      # The passwords the engine gives each app's own user: the same values each
-      # app below connects with, minted by `make init`. Only the engine holds the
-      # admin password above.
+      DFE_CLICKHOUSE_HOST: ${CLICKHOUSE_HOST:-clickhouse}
+      # App users' passwords, the ones each app connects with
       DFE_CLICKHOUSE_HUNT_RUNNER_PASSWORD: ${DFE_HUNT_RUNNER_CLICKHOUSE_PASSWORD:-}
       DFE_CLICKHOUSE_LOADER_PASSWORD: ${DFE_LOADER_CLICKHOUSE_PASSWORD:-}
-      DFE_CLICKHOUSE_QUERY_READER_PASSWORD: ${DFE_QUERY_READER_CLICKHOUSE_PASSWORD:-}
+      # Container ports, set only for an external ClickHouse
+      DFE_CLICKHOUSE_NATIVE_PORT: ${CLICKHOUSE_EXTERNAL_NATIVE_PORT:-9000}
       DFE_CLICKHOUSE_OTEL_WRITER_PASSWORD: ${DFE_OTEL_WRITER_CLICKHOUSE_PASSWORD:-}
-      # Where the engine renders each app's own config, which is the Compose
-      # stand-in for the ConfigMap an app's chart renders on Kubernetes. Empty
-      # turns the writer off, which is every tier whose apps read a committed
-      # config instead. The apps mount the same volume read-only, at their own
-      # path, which is what the MOUNT value names.
-      DFE_DEPLOYMENT_APP_CONFIG_DIR: ${DFE_ENGINE_APP_CONFIG_DIR:-}
-      DFE_DEPLOYMENT_APP_CONFIG_BASE_DIR: ${DFE_ENGINE_APP_CONFIG_BASE_DIR:-}
-      DFE_DEPLOYMENT_APP_CONFIG_MOUNT: ${DFE_APP_CONFIG_MOUNT:-/etc/dfe/apps}
+      DFE_CLICKHOUSE_PASSWORD: ${CLICKHOUSE_PASSWORD:-}
+      DFE_CLICKHOUSE_PORT: ${CLICKHOUSE_EXTERNAL_HTTP_PORT:-8123}
+      DFE_CLICKHOUSE_QUERY_READER_PASSWORD: ${DFE_QUERY_READER_CLICKHOUSE_PASSWORD:-}
+      DFE_CLICKHOUSE_SECURE: ${CLICKHOUSE_SECURE:-false}
+      DFE_CLICKHOUSE_USERNAME: ${CLICKHOUSE_USERNAME:-default}
       DFE_CONFIG_DIR: /app/config
-      # Onto the config VOLUME, because the engine mints its ES384 JWT signing
-      # key here on first use: left on the container filesystem it is remade on
-      # every recreate, and every session issued before it stops verifying.
-      DFE_SECRETS_PATH: /app/config/.secrets
-      DFE_SCHEMAS_DIR: /app/schemas
-      # Transform templates another repo ships, which the engine seeds its
-      # library from at startup. Nothing writes it on Compose
-      # yet -- the contract one-shots fill the sibling directory, not this one --
-      # and an empty directory is a no-op.
-      DFE_LIBRARY_SEED_DIR: ${DFE_ENGINE_CONTENT_DIR:-/app/content}/library
-      # Where the contract one-shots write, one directory per app, on the same
-      # volume. resolve_profile.py sets it EMPTY on a tier the engine renders no
-      # app config for; unset (compose run without make) keeps the volume's path.
-      DFE_APP_CONTRACT_DIR: ${DFE_ENGINE_CONTRACT_DIR-${DFE_ENGINE_CONTENT_DIR:-/app/content}/contract}
-      # Where the engine writes env/<service>.custom.env, the sibling of the app
-      # config directory above. A literal, because it names the bind mount below
-      # and the two have to stay the same path -- and that path is the host tree,
-      # so a write here changes the operator's checkout.
+      # The ConfigMap stand-in. Empty turns the writer off
+      DFE_DEPLOYMENT_APP_CONFIG_BASE_DIR: ${DFE_ENGINE_APP_CONFIG_BASE_DIR:-}
+      DFE_DEPLOYMENT_APP_CONFIG_DIR: ${DFE_ENGINE_APP_CONFIG_DIR:-}
+      DFE_DEPLOYMENT_APP_CONFIG_MOUNT: ${DFE_APP_CONFIG_MOUNT:-/etc/dfe/apps}
+      # Where custom.env files land, the ./env mount below
       DFE_DEPLOYMENT_APP_ENV_DIR: /app/app-env
+      # Names `make creds` on the login page
+      DFE_DEPLOYMENT_TARGET: docker
+      # production refuses to start without real auth
+      DFE_ENV: ${DFE_ENV:-production}
+      # A local-only deploy repo on the config volume
+      DFE_GITOPS_LOCAL_PATH: /app/config/deploy-repo
+      # solo, since Compose has no forge to merge a review
+      DFE_GITOPS_MODE: ${DFE_GITOPS_MODE:-solo}
+      # Follows the footprint, like the HyperDX containers
+      DFE_HYPERDX_BASE_URL: ${DFE_HYPERDX_RESOLVED_BASE_URL:-}
+      DFE_HYPERDX_ENABLED: ${DFE_HYPERDX_RESOLVED:-false}
+      # Where it creates topics, nothing on a direct tier
+      DFE_KAFKA_BOOTSTRAP_SERVERS: ${DFE_KAFKA_BOOTSTRAP_SERVERS:-}
+      # Template seeds nothing writes on Compose yet
+      DFE_LIBRARY_SEED_DIR: ${DFE_ENGINE_CONTENT_DIR:-/app/content}/library
+      # The tier name, which seeds its default app instances
+      DFE_PROFILE: ${DFE_STACK_PROFILE:-docker-slim}
+      DFE_SCHEMAS_DIR: /app/schemas
+      # On the volume, so the JWT key survives a recreate
+      DFE_SECRETS_PATH: /app/config/.secrets
+      # The certified stack, for the console footer
+      DFE_STACK_VERSION: ${DFE_STACK_VERSION:-}
+      # From the profile. Defaults are slim-grpc's
+      DFE_TRANSPORT_BUS_PRESENT: ${DFE_TRANSPORT_BUS_PRESENT:-false}
+      DFE_TRANSPORT_DEFAULT: ${DFE_TRANSPORT_DEFAULT:-direct}
+      # The console version, the ui pin without its digest
+      DFE_UI_VERSION: ${DFE_UI_VERSION_TAG:-}
       # The engine pushes its metrics here
       OTEL_EXPORTER_OTLP_ENDPOINT: ${DFE_OTEL_EXPORTER_ENDPOINT:-}
       OTEL_SERVICE_NAME: dfe-engine
-      APP_ENV:
-      # scalo-py reads the key bare, whatever the process prefix (DFE_API) is.
+      # scalo-py reads the key bare, whatever the prefix
       VERSION_CHECK__ENABLED: ${DFE_VERSION_CHECK_ENABLED:-true}
       VERSION_CHECK__SEND_INSTANCE_ID: ${DFE_VERSION_CHECK_SEND_INSTANCE_ID:-true}
     volumes:
       - dfe-engine-config:/app/config
       - dfe-engine-schemas:/app/schemas
       - dfe-engine-content:${DFE_ENGINE_CONTENT_DIR:-/app/content}
-      # The only writer of this volume; every app mounts it read-only.
+      # Its only writer, every app mounts it read-only
       - dfe-app-config:/app/app-config
-      # The per-service env files, READ-WRITE: the engine writes a service's
-      # custom keys to env/<service>.custom.env, and compose reads env_file off
-      # the host tree rather than a volume. It is the operator's checkout being
-      # written.
+      # Read-write: the engine writes env/<service>.custom.env
       - ./env:/app/app-env
-      # Each app's base config, as THIS tier committed it. The instance overlay
-      # is merged over it, so the broker, the warehouse credentials and the spool
-      # stay with the deployment rather than being written into the deploy repo.
+      # Each app's base config, under the instance overlay
       - ./config/${DFE_ARCHIVER_CONFIG:-archiver/kafka.yaml}:/app/app-config-base/dfe-archiver.yaml:ro
       - ./config/${DFE_LOADER_CONFIG:-loader/kafka.yaml}:/app/app-config-base/dfe-loader.yaml:ro
       - ./config/${DFE_RECEIVER_CONFIG:-receiver/kafka.yaml}:/app/app-config-base/dfe-receiver.yaml:ro
@@ -1154,20 +545,7 @@ services:
       clickhouse:
         condition: service_healthy
         required: false
-      # The engine creates the declared bootstrap topics at its own startup, so
-      # it is the only service that needs the broker before it runs. One of the
-      # two is enabled by compose profile and the other is absent, which is what
-      # `required: false` is for -- as is the grpc tier, which runs neither.
-      # This edge is also what pulls the broker up at all: it is not in
-      # ACTIVE_SERVICES, so it starts as somebody's dependency or not at all.
-      kafka-redpanda:
-        condition: service_healthy
-        required: false
-      kafka-apache:
-        condition: service_healthy
-        required: false
-      # Each app's contract, emitted before the engine reads it. `required:
-      # false` for the tiers that run no such app, and a FAILED emit only warns.
+      # Contracts first. A failed emit only warns
       contract-dfe-archiver:
         condition: service_completed_successfully
         required: false
@@ -1189,307 +567,201 @@ services:
       contract-dfe-transform-vrl:
         condition: service_completed_successfully
         required: false
+      # It creates the topics, so this edge starts the broker
+      kafka-apache:
+        condition: service_healthy
+        required: false
+      kafka-redpanda:
+        condition: service_healthy
+        required: false
     working_dir: /home/appuser
     healthcheck:
-      # Readiness, same reasoning as the header: depends_on gates on it.
       test: ["CMD", "curl", "-sf", "http://localhost:8000/readyz"]
       interval: 10s
       timeout: 3s
-      # A removed engine's schema lease (twice the 180 s bootstrap wait) plus a first start's table creation
+      # A dead engine's lease (2 x 180 s) plus table creation
       start_period: 540s
       retries: 5
 
-  # ===========================================================================
-  # dfe-hunt-runner -- the pull-based hunt executor (engine image, own process).
-  # One instance per stack, the same shape the Kubernetes chart runs. It reads
-  # the hunt and rule YAML the engine governs off the engine's config volume,
-  # so a hunt created through the UI is picked up on the next poll.
-  # ===========================================================================
+  # ============================================================
+  # dfe-hunt-runner: the pull-based hunt executor
+  # ============================================================
 
+  # One per stack, reading the hunts the engine governs
   dfe-hunt-runner:
     image: ${IMAGE_REGISTRY:-ghcr.io/hyperi-io}/dfe-engine:${DFE_ENGINE_VERSION:?run 'make stack VERSION=X.Y.Z' to pin DFE_ENGINE_VERSION}
     container_name: ${DFE_CONTAINER_PREFIX:-}dfe-hunt-runner
-    dns_search: *no-dns-search
     profiles: ["core"]
     restart: unless-stopped
-    deploy: *limits-service
-    # The image's entrypoint is the engine CLI; the runner is its own console script.
+    extends: {file: compose/limits.yml, service: limits-service}
+    # The runner is its own console script in the image
     entrypoint: ["dfe-hunt-runner"]
-    # --reload-every 1 is what makes "picked up on the next poll" true: the default
-    # re-reads the hunt dir every 20 ticks, which is five minutes at this poll.
+    # Rereads the hunt dir every poll, not every 20 ticks
     command: ["run", "--poll", "15", "--cap", "8", "--reload-every", "1"]
-    # The engine's file, because the runner builds the same DFESettings and refuses to start without its DFE_API_JWT_SECRET
+    # The engine's, as the runner needs its DFE_API_JWT_SECRET
     env_file:
       - path: env/engine.env
         required: false
     environment:
-      DFE_ENV: ${DFE_ENV:-production}
-      # Container ports whatever the host publish is, as for dfe-engine (#75).
-      DFE_CLICKHOUSE_HOST: ${CLICKHOUSE_HOST:-clickhouse}
-      DFE_CLICKHOUSE_PORT: ${CLICKHOUSE_EXTERNAL_HTTP_PORT:-8123}
-      DFE_CLICKHOUSE_NATIVE_PORT: ${CLICKHOUSE_EXTERNAL_NATIVE_PORT:-9000}
       DFE_CLICKHOUSE_DATABASE: ${CLICKHOUSE_DB:-default}
-      # Its own user, not the admin account: the worker runs INSERT ... SELECT
-      # built from rule text, and dfe_hunt_runner can reach nothing but the data
-      # database. The engine names the user, so it is not a dial.
-      DFE_CLICKHOUSE_USERNAME: dfe_hunt_runner
+      DFE_CLICKHOUSE_HOST: ${CLICKHOUSE_HOST:-clickhouse}
+      # Container ports, as for dfe-engine (#75)
+      DFE_CLICKHOUSE_NATIVE_PORT: ${CLICKHOUSE_EXTERNAL_NATIVE_PORT:-9000}
       DFE_CLICKHOUSE_PASSWORD: ${DFE_HUNT_RUNNER_CLICKHOUSE_PASSWORD:-}
+      DFE_CLICKHOUSE_PORT: ${CLICKHOUSE_EXTERNAL_HTTP_PORT:-8123}
       DFE_CLICKHOUSE_SECURE: ${CLICKHOUSE_SECURE:-false}
+      # Its own user, as it runs SQL built from rule text
+      DFE_CLICKHOUSE_USERNAME: dfe_hunt_runner
       DFE_CONFIG_DIR: /app/config
-      # Same volume as the API's, so both read the one signing key.
-      DFE_SECRETS_PATH: /app/config/.secrets
-      # The engine governs hunts and rules in the deploy repo it clones into the
-      # shared config volume, so the runner reads that working tree; a runner
-      # pointed at the bare config dir polls a directory nothing writes.
+      DFE_ENV: ${DFE_ENV:-production}
+      # The deploy repo the engine governs hunts and rules in
       DFE_HUNTS_DIR: /app/config/deploy-repo/config/hunts
       DFE_HUNTS_RULES_DIR: /app/config/deploy-repo/config/rules
       DFE_SCHEMAS_DIR: /app/schemas
+      # The API's volume, so both read one signing key
+      DFE_SECRETS_PATH: /app/config/.secrets
       OTEL_EXPORTER_OTLP_ENDPOINT: ${DFE_OTEL_EXPORTER_ENDPOINT:-}
       OTEL_SERVICE_NAME: dfe-hunt-runner
-      APP_ENV:
     volumes:
       - dfe-engine-config:/app/config
       - dfe-engine-schemas:/app/schemas
     depends_on:
-      dfe-engine:
-        condition: service_healthy
       clickhouse:
         condition: service_healthy
         required: false
-    # The runner has no HTTP listener, so the engine image's HEALTHCHECK (:9090/livez)
-    # can never pass here. Liveness is the ClickHouse lease the runner renews.
+      dfe-engine:
+        condition: service_healthy
+    # No HTTP listener. Liveness is its ClickHouse lease
     healthcheck:
       disable: true
     working_dir: /home/appuser
 
-  # ===========================================================================
+  # ============================================================
   # dfe-ui
-  # ===========================================================================
+  # ============================================================
 
   dfe-ui:
     image: ${IMAGE_REGISTRY:-ghcr.io/hyperi-io}/dfe-ui:${DFE_UI_VERSION:?run 'make stack VERSION=X.Y.Z' to pin DFE_UI_VERSION}
     container_name: ${DFE_CONTAINER_PREFIX:-}dfe-ui
-    dns_search: *no-dns-search
     profiles: ["core"]
     restart: unless-stopped
-    deploy: *limits-service
+    extends: {file: compose/limits.yml, service: limits-service}
     env_file:
       - path: env/ui.env
         required: false
     environment:
       HYPERDX_PORT: ${DFE_HYPERDX_EMBED_PORT:-8091}
-      # The engine on the compose network, for the console's server-side calls
+      # The engine, for the console's server-side calls
       INTERNAL_API_URL: http://dfe-engine:8000
-      # Every absolute URL next-auth builds, the post-logout redirect included.
-      # Unset, it resolves to a hardcoded http://localhost:3000 and every logout
-      # leaves the origin the browser arrived on -- so this always carries a
-      # value, and DFE_EXTERNAL_ORIGIN is what an operator moves.
+      # Unset, logout lands on http://localhost:3000
       NEXTAUTH_URL: ${DFE_EXTERNAL_ORIGIN:-http://localhost}:${DFE_UI_PORT:-3000}
-      # The UI's exporter has no gRPC transport, so it takes the collector's HTTP port.
+      # No gRPC exporter, so the collector's HTTP port
       OTEL_EXPORTER_OTLP_ENDPOINT: ${DFE_OTEL_EXPORTER_HTTP_ENDPOINT:-}
       OTEL_EXPORTER_OTLP_PROTOCOL: http/protobuf
       OTEL_SERVICE_NAME: dfe-ui
+    # node's fetch on /livez, as the image ships no curl
     healthcheck:
-      # The image ships no curl; node's own fetch does it. `/livez` is a real
-      # endpoint here -- an unknown path returns the 200 app shell, so probing
-      # `/` proved only that Node was listening.
       test: ["CMD", "node", "-e", "fetch('http://localhost:3000/livez').then((r) => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))"]
       interval: 10s
       timeout: 3s
       start_period: 30s
       retries: 5
 
-  # ===========================================================================
-  # dfe-proxy
-  #
-  # THE product entrypoint. Its oauth2/jwt_authn filters chain in when dfe-engine
-  # becomes the OIDC provider -- opt-in, scoped to this origin, and no profile may
-  # require an issuer to start.
-  # docs/operating.md#only-the-console-authenticates----everything-else-is-bounded-by-that
-  # ===========================================================================
+  # ============================================================
+  # dfe-proxy: the product entrypoint
+  # ============================================================
 
+  # Chains in OIDC filters when dfe-engine is the provider
   dfe-proxy:
     image: envoyproxy/envoy:${DFE_PROXY_VERSION:?run 'make stack VERSION=X.Y.Z' to pin DFE_PROXY_VERSION}
     container_name: ${DFE_CONTAINER_PREFIX:-}dfe-proxy
-    dns_search: *no-dns-search
     profiles: ["core"]
-    restart: unless-stopped
-    deploy: *limits-sidecar
+    extends: {file: compose/envoy.yml, service: envoy}
     ports:
-      # The DFE UI -- this is the one users reach. PRODUCT class: it binds
-      # DFE_UI_BIND_HOST (the DFE_BIND_SCOPE dial) and the infra kill switch
-      # never covers it, so only DFE_UI_EXTERNAL=false takes it dark.
+      # The console: only DFE_UI_EXTERNAL=false unpublishes it
       - ${DFE_UI_BIND_HOST:-127.0.0.1}:${DFE_UI_PORT:-3000}:8080
-      # HyperDX, re-served with frame-ancestors rewritten so the UI can iframe
-      # it. The app's own port stays infra class on the hyperdx service, and
-      # HyperDX's flags drop this one too (docker-compose.unpublish-hyperdx-embed.yml).
+      # HyperDX, re-served with frame-ancestors for the iframe
       - ${DFE_UI_BIND_HOST:-127.0.0.1}:${DFE_HYPERDX_EMBED_PORT:-8091}:8091
     environment:
-      # Every origin the console may be framed from, space-separated for the
-      # frame-ancestors source list in config/proxy/envoy.yaml. An operator on the
-      # box reads the console on loopback whatever the deployment publishes it as,
-      # so both loopback forms stay in the list alongside the external origin. A
-      # repeated entry is inert -- a source list is a set.
+      # Origins that may frame the console, loopback included
       DFE_HYPERDX_EMBED_ANCESTOR: http://localhost:${DFE_UI_PORT:-3000} http://127.0.0.1:${DFE_UI_PORT:-3000} ${DFE_HYPERDX_APP_URL:-${DFE_EXTERNAL_ORIGIN:-http://localhost}}:${DFE_UI_PORT:-3000}
     volumes:
       - ./config/proxy/envoy.yaml:/etc/envoy/envoy.yaml:ro
     depends_on:
-      dfe-ui:
-        condition: service_healthy
-        required: false
       dfe-engine:
         condition: service_healthy
         required: false
-    healthcheck:
-      # The image ships no curl/wget; drive the local admin /ready over
-      # bash's /dev/tcp (admin binds 127.0.0.1 only, never published).
-      test: ["CMD", "bash", "-c", "exec 3<>/dev/tcp/127.0.0.1/9901 && printf 'GET /ready HTTP/1.1\\r\\nHost: localhost\\r\\nConnection: close\\r\\n\\r\\n' >&3 && grep -q LIVE <&3"]
-      interval: 10s
-      timeout: 3s
-      start_period: 10s
-      retries: 5
+      dfe-ui:
+        condition: service_healthy
+        required: false
 
-  # ===========================================================================
-  # otel-collector
-  # The stack's own telemetry, opt-in via DFE_OTEL_ENABLED. Its OTLP ports are
-  # NOT published: self-monitoring stays on the compose network, and 4317/4318
-  # on the host belong to dfe-receiver's ingest. docs/operating.md#self-monitoring
-  # ===========================================================================
+  # ============================================================
+  # otel-collector: self-monitoring, opt-in by DFE_OTEL_ENABLED
+  # ============================================================
 
+  # OTLP stays internal: host 4317/4318 are the receiver's
   otel-collector:
     image: otel/opentelemetry-collector-contrib:${DFE_OTEL_COLLECTOR_VERSION:?run 'make stack VERSION=X.Y.Z' to pin DFE_OTEL_COLLECTOR_VERSION}
     container_name: ${DFE_CONTAINER_PREFIX:-}dfe-otel-collector
-    dns_search: *no-dns-search
     profiles: ["otel"]
     restart: unless-stopped
-    deploy: *limits-sidecar
+    extends: {file: compose/limits.yml, service: limits-sidecar}
     command: ["--config=/etc/otelcol/config.yaml"]
     ports:
-      # The health_check extension. Operator surface, and the only way in: the
-      # image is distroless, so a HEALTHCHECK has no client to probe it with.
+      # health_check, the only probe on a distroless image
       - ${DFE_BIND_HOST:-127.0.0.1}:${DFE_OTEL_HEALTH_PORT:-13133}:13133
-      # Container stdout, in. Published because the DOCKER DAEMON connects to it,
-      # and the daemon is on the host rather than on the compose network.
+      # Container stdout, from the Docker daemon on the host
       - ${DFE_BIND_HOST:-127.0.0.1}:${DFE_OTEL_FLUENT_PORT:-24224}:24224
     environment:
-      # Container port whatever the host publish is, as for dfe-engine (#75).
       CLICKHOUSE_HOST: ${CLICKHOUSE_HOST:-clickhouse}
-      CLICKHOUSE_PORT: ${CLICKHOUSE_EXTERNAL_NATIVE_PORT:-9000}
-      # Its own user, not the admin account: dfe_otel_writer writes the otel
-      # tables and reads server health. The engine names the user.
-      CLICKHOUSE_USERNAME: dfe_otel_writer
       CLICKHOUSE_PASSWORD: ${DFE_OTEL_WRITER_CLICKHOUSE_PASSWORD:-}
-      DFE_OTEL_DATABASE: ${DFE_OTEL_DATABASE:-dfe}
+      # Container port, as for dfe-engine (#75)
+      CLICKHOUSE_PORT: ${CLICKHOUSE_EXTERNAL_NATIVE_PORT:-9000}
+      # Its own user, for the otel tables and server health
+      CLICKHOUSE_USERNAME: dfe_otel_writer
       DFE_OTEL_COLLECTOR_LOG_LEVEL: ${DFE_OTEL_COLLECTOR_LOG_LEVEL:-warn}
-      # Resolved by `make` for the usage rollup (scripts/usage_cores.py) and cores deployed reads as not measured without them
+      DFE_OTEL_DATABASE: ${DFE_OTEL_DATABASE:-dfe}
+      # Resolved by make for the usage rollup's cores
       DFE_USAGE_CPU_LIMITS: ${DFE_USAGE_CPU_LIMITS:-}
       DFE_USAGE_NODE_NAME: ${DFE_USAGE_NODE_NAME:-docker-host}
     volumes:
       - ./config/otel-collector/config.yaml:/etc/otelcol/config.yaml:ro
-      # host_metrics counts the docker host's CPUs through its /proc, the one host path the cpu scraper reads
+      # The host's CPUs, for host_metrics' cpu scraper
       - /proc:/hostfs/proc:ro
     depends_on:
       clickhouse:
         condition: service_healthy
         required: false
-      # The exporter runs with create_schema=false, so the otel tables have to
-      # exist before it sends its first batch. dfe-engine applies them at its own
-      # startup and reports healthy only once that pass converged.
+      # create_schema=false, so the engine makes the tables
       dfe-engine:
         condition: service_healthy
         required: false
-    # No HEALTHCHECK: the image is distroless (no shell, no curl, no wget), so
-    # there is nothing in it to probe :13133 with. Nothing gates on the
-    # collector, so an always-passing probe would only look like cover.
+    # No healthcheck: nothing in the image can probe it
 
-  # ===========================================================================
-  # HyperDX (observability UI)
-  # Opt-in via DFE_HYPERDX_ENABLED
-  # ===========================================================================
+  # ============================================================
+  # HyperDX: opt-in by DFE_HYPERDX_ENABLED
+  # ============================================================
 
-  # dfe-engine is the SSoT for the dashboard CONTENT; this copies it out of the
-  # engine image into a volume HyperDX's own provisioner reads, so there is one
-  # copy of a dashboard in the product and bumping the engine pin ships new ones.
-  # The k8s hyperdx chart runs the identical command as an init container.
-  dfe-dashboards:
-    image: ${IMAGE_REGISTRY:-ghcr.io/hyperi-io}/dfe-engine:${DFE_ENGINE_VERSION:?run 'make stack VERSION=X.Y.Z' to pin DFE_ENGINE_VERSION}
-    container_name: ${DFE_CONTAINER_PREFIX:-}dfe-dashboards
-    dns_search: *no-dns-search
-    profiles: ["hyperdx"]
-    deploy: *limits-sidecar
-    # A fresh named volume mounted at a path the image does not create is owned by
-    # root, and the engine image runs as uid 1000 -- so this one-shot writes as
-    # root. It reaches no network and no host path, and exits after seven files.
-    user: "0:0"
-    # Overriding the entrypoint bypasses `dfe-engine run`, so no config, no
-    # secrets store and no database is touched.
-    entrypoint: ["python"]
-    command: ["-m", "dfe_engine.hyperdx.dashboards", "--out", "/etc/hyperdx/dashboards"]
-    volumes:
-      - hyperdx-dashboards:/etc/hyperdx/dashboards
-    restart: "no"
-
-  # Mints the CA and the certificate hyperdx-documentdb serves, with the engine image's openssl
-  hyperdx-documentdb-tls:
-    image: ${IMAGE_REGISTRY:-ghcr.io/hyperi-io}/dfe-engine:${DFE_ENGINE_VERSION:?run 'make stack VERSION=X.Y.Z' to pin DFE_ENGINE_VERSION}
-    container_name: ${DFE_CONTAINER_PREFIX:-}dfe-hyperdx-documentdb-tls
-    dns_search: *no-dns-search
-    profiles: ["hyperdx"]
-    deploy: *limits-sidecar
-    # Root because an empty named volume lands root-owned at a path no image creates
-    user: "0:0"
-    entrypoint: ["/bin/sh", "-c"]
-    # A list of one for the reason dlq-init's command gives, keeping a pair with 30 days left so a restart never moves the CA
-    command:
-      - |
-        set -eu
-        umask 077
-        cd /tls
-        if ! { [ -s ca/ca.crt ] && [ -s server/tls.key ] && [ -s server/tls.crt ] \
-            && openssl x509 -checkend 2592000 -noout -in server/tls.crt >/dev/null; }; then
-          rm -rf ca server ca.key ca.srl server.csr server.ext
-          mkdir ca server
-          openssl req -x509 -newkey ec -pkeyopt ec_paramgen_curve:P-384 -nodes -sha384 -days 3650 \
-            -subj /CN=dfe-hyperdx-documentdb-ca \
-            -addext basicConstraints=critical,CA:TRUE -addext keyUsage=critical,keyCertSign,cRLSign \
-            -keyout ca.key -out ca/ca.crt
-          openssl req -new -newkey ec -pkeyopt ec_paramgen_curve:P-384 -nodes -sha384 \
-            -subj /CN=hyperdx-documentdb -keyout server/tls.key -out server.csr
-          printf '%s\n' basicConstraints=critical,CA:FALSE keyUsage=critical,digitalSignature \
-            extendedKeyUsage=serverAuth subjectAltName=DNS:hyperdx-documentdb > server.ext
-          openssl x509 -req -in server.csr -CA ca/ca.crt -CAkey ca.key -CAcreateserial -CAserial ca.srl \
-            -days 3650 -sha384 -extfile server.ext -out server/tls.crt
-          rm -f ca.key ca.srl server.csr server.ext
-        fi
-        # HyperDX reads the CA and documentdb-local the pair, both as uid 1000
-        chmod 0755 ca
-        chmod 0644 ca/ca.crt
-        chown -R 1000:1000 server
-    volumes:
-      - hyperdx-documentdb-tls:/tls
-    restart: "no"
-
-  # HyperDX's document store: PostgreSQL with the DocumentDB extensions and their Mongo-wire gateway in one container
+  # HyperDX's store, PostgreSQL behind a Mongo-wire gateway
   hyperdx-documentdb:
     image: ghcr.io/documentdb/documentdb/documentdb-local:${HYPERDX_DOCUMENTDB_VERSION:-pg18-1.0.0@sha256:03aef53ed72cd3007236f8ce1b4ef7a0c958dbbce1519074b85d8a3e10be89a5}
     container_name: ${DFE_CONTAINER_PREFIX:-}dfe-hyperdx-documentdb
-    dns_search: *no-dns-search
     profiles: ["hyperdx"]
     restart: unless-stopped
-    # The image takes no PostgreSQL memory settings, so initdb's 128MB shared_buffers run inside this limit
-    deploy: *limits-service
+    # initdb's 128MB shared_buffers run inside this limit
+    extends: {file: compose/limits.yml, service: limits-service}
     environment:
-      USERNAME: ${HYPERDX_DOCUMENTDB_USER:-hyperdx}
-      # `make init` generates this, not a `:?` hard-fail because one would abort even `make down`
-      PASSWORD: ${HYPERDX_DOCUMENTDB_PASSWORD:-hyperdx}
-      # The gateway refuses plain connections and serves the minted certificate
-      TLS_MODE: requireTLS
+      # The minted pair. requireTLS refuses plain clients
       CERT_PATH: /etc/documentdb/tls/tls.crt
-      KEY_FILE: /etc/documentdb/tls/tls.key
-      # On by default upstream: it reports to a third party at start and hourly
+      # On upstream, reporting to a third party hourly
       DOCUMENTDB_USAGE_TELEMETRY: "false"
+      KEY_FILE: /etc/documentdb/tls/tls.key
+      # Minted by `make init`, as a `:?` breaks `make down`
+      PASSWORD: ${HYPERDX_DOCUMENTDB_PASSWORD:-hyperdx}
+      TLS_MODE: requireTLS
+      USERNAME: ${HYPERDX_DOCUMENTDB_USER:-hyperdx}
     volumes:
-      # The image's VOLUME, which a fresh volume fills with the pre-initialised cluster so the first start skips initdb
+      # Pre-initialised, so the first start skips initdb
       - hyperdx-documentdb-data:/data
       - type: volume
         source: hyperdx-documentdb-tls
@@ -1501,7 +773,7 @@ services:
       hyperdx-documentdb-tls:
         condition: service_completed_successfully
     healthcheck:
-      # The image's own probe, retuned from its 30s interval and 600s start period to gate startup
+      # The image's own probe, retuned to gate startup
       test: ["CMD", "/usr/local/bin/documentdb-healthcheck"]
       interval: 5s
       timeout: 10s
@@ -1509,51 +781,36 @@ services:
       retries: 10
 
   hyperdx:
-    # Pinned from the stack SSoT like every other image: the fork now publishes,
-    # so `make stack` renders DFE_HYPERDX_VERSION from versions.yaml
-    # (content.dfe-hyperdx). Fail-loud `:?` -- no floating `latest`.
-    # Same image name the k8s chart pulls; ghcr.io/hyperi-io/hyperi-hyperdx does not exist.
-    # Digest-pinned like the rest: versions.yaml carries digests.dfe-hyperdx, which
-    # the render appends as tag@sha256.
+    # Digest-pinned by `make stack`, as in the Kubernetes chart
     image: ${IMAGE_REGISTRY:-ghcr.io/hyperi-io}/dfe-hyperdx:${DFE_HYPERDX_VERSION:?run 'make stack VERSION=X.Y.Z' to pin DFE_HYPERDX_VERSION}
     container_name: ${DFE_CONTAINER_PREFIX:-}dfe-hyperdx
-    dns_search: *no-dns-search
     profiles: ["hyperdx"]
     restart: unless-stopped
-    deploy: *limits-hyperdx
-    # No published ports: dfe-hyperdx-proxy carries both origins, so the infra
-    # exposure dials and the `auth` profile govern one service.
+    extends: {file: compose/limits.yml, service: limits-hyperdx}
+    # No ports: dfe-hyperdx-proxy carries both origins
     env_file:
       - path: env/hyperdx.env
         required: false
     environment:
-      # The engine is the issuer here as it is on Kubernetes: HyperDX verifies its ES384 token against the engine's JWKS, taking it from a Bearer header or the dfe_token cookie the console mirrors. It asks the engine for each team's ClickHouse connection
+      DASHBOARD_PROVISIONER_ALL_TEAMS: "true"
+      # Starts the provisioner, which reruns each minute
+      DASHBOARD_PROVISIONER_DIR: /etc/hyperdx/dashboards
+      # Skips a dashboard whose source the team lacks
+      DASHBOARD_PROVISIONER_REQUIRE_REFS: "true"
+      # Where a token with no group claim lands
+      DFE_AUTH_DEFAULT_TEAM: ${DFE_HYPERDX_TEAM:-dfe}
+      # Verifies the engine's ES384 token against its JWKS
       DFE_AUTH_MODE: oidc-proxy
       DFE_ENGINE_JWKS_URL: ${DFE_ENGINE_JWKS_URL:-http://dfe-engine:8000/.well-known/jwks.json}
-      # The team a token carrying no group claim lands in.
-      DFE_AUTH_DEFAULT_TEAM: ${DFE_HYPERDX_TEAM:-dfe}
-      # Setting the directory is what starts the provisioner: entry.prod.sh
-      # launches the provision-dashboards task only when it is present. It then
-      # re-runs on a one-minute cron, which is how a team created after startup
-      # still gets its dashboards.
-      DASHBOARD_PROVISIONER_DIR: /etc/hyperdx/dashboards
-      DASHBOARD_PROVISIONER_ALL_TEAMS: "true"
-      # Skip a dashboard whose source the team does not hold, rather than writing
-      # it with dead tiles.
-      DASHBOARD_PROVISIONER_REQUIRE_REFS: "true"
+      FRONTEND_URL: ${DFE_HYPERDX_APP_URL:-${DFE_EXTERNAL_ORIGIN:-http://localhost}}:${DFE_HYPERDX_APP_PORT:-8090}
+      # Container ports dfe-proxy dials by name (#32)
       HYPERDX_API_PORT: 8000
-      # Container ports, both constants, because dfe-proxy dials them by name on
-      # the compose network. DFE_HYPERDX_APP_PORT is the HOST binding only, so
-      # moving it no longer moves the port the proxy has to find (#32).
       HYPERDX_APP_PORT: 8090
       HYPERDX_APP_URL: ${DFE_HYPERDX_APP_URL:-${DFE_EXTERNAL_ORIGIN:-http://localhost}}
-      FRONTEND_URL: ${DFE_HYPERDX_APP_URL:-${DFE_EXTERNAL_ORIGIN:-http://localhost}}:${DFE_HYPERDX_APP_PORT:-8090}
-      # Link-back origin so the embedded HyperDX opens a created rule in the DFE
-      # UI (served by dfe-proxy on DFE_UI_PORT), not the HyperDX origin. Matches
-      # the k8s hyperdx chart. next-runtime-env reads it per request.
-      NEXT_PUBLIC_DFE_UI_BASE_URL: ${DFE_HYPERDX_APP_URL:-${DFE_EXTERNAL_ORIGIN:-http://localhost}}:${DFE_UI_PORT:-3000}
-      # Mongo wire protocol to DocumentDB's gateway over TLS checked against the minted CA, with a SCRAM-SHA-256 login
+      # The gateway, over TLS with a SCRAM-SHA-256 login
       MONGO_URI: mongodb://${HYPERDX_DOCUMENTDB_USER:-hyperdx}:${HYPERDX_DOCUMENTDB_PASSWORD:-hyperdx}@hyperdx-documentdb:10260/hyperdx?tls=true&tlsCAFile=/etc/dfe/documentdb-ca/ca.crt&authMechanism=SCRAM-SHA-256
+      # Where the embedded HyperDX opens a created rule
+      NEXT_PUBLIC_DFE_UI_BASE_URL: ${DFE_HYPERDX_APP_URL:-${DFE_EXTERNAL_ORIGIN:-http://localhost}}:${DFE_UI_PORT:-3000}
     volumes:
       - hyperdx-dashboards:/etc/hyperdx/dashboards:ro
       # The CA alone, never the gateway's key beside it
@@ -1564,17 +821,15 @@ services:
         volume:
           subpath: ca
     depends_on:
-      hyperdx-documentdb:
-        condition: service_healthy
       clickhouse:
         condition: service_healthy
         required: false
-      # The provisioner reads the directory on startup, so the engine has to have
-      # written it first. Not `required` -- a stack without the engine image still
-      # starts HyperDX, it just provisions nothing.
+      # Its dashboards first, optional without the engine
       dfe-dashboards:
         condition: service_completed_successfully
         required: false
+      hyperdx-documentdb:
+        condition: service_healthy
     healthcheck:
       test: ["CMD", "node", "-e", "fetch('http://localhost:8000/health').then((r) => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))"]
       interval: 10s
@@ -1582,122 +837,75 @@ services:
       start_period: 30s
       retries: 5
 
-  # HyperDX's edge. It carries the two HyperDX host ports (config/proxy/hyperdx.yaml)
-  # so that one service answers to the infra exposure dials and the `auth` profile.
+  # HyperDX's edge: both host ports behind one service
   dfe-hyperdx-proxy:
     image: envoyproxy/envoy:${DFE_PROXY_VERSION:?run 'make stack VERSION=X.Y.Z' to pin DFE_PROXY_VERSION}
     container_name: ${DFE_CONTAINER_PREFIX:-}dfe-hyperdx-proxy
-    dns_search: *no-dns-search
     profiles: ["hyperdx"]
-    restart: unless-stopped
-    deploy: *limits-sidecar
+    extends: {file: compose/envoy.yml, service: envoy}
+    # INFRA class: DFE_INFRA_UIS_EXTERNAL=false unpublishes both
     ports:
-      # INFRA class, both origins: DFE_INFRA_UIS_EXTERNAL=false unpublishes them.
       - ${DFE_UI_BIND_HOST:-127.0.0.1}:${DFE_HYPERDX_APP_PORT:-8090}:8090
       - ${DFE_UI_BIND_HOST:-127.0.0.1}:${DFE_HYPERDX_API_PORT:-8000}:8000
     volumes:
       - ./config/proxy/hyperdx.yaml:/etc/envoy/envoy.yaml:ro
-    healthcheck:
-      # The image ships no curl/wget; drive the local admin /ready over
-      # bash's /dev/tcp (admin binds 127.0.0.1 only, never published).
-      test: ["CMD", "bash", "-c", "exec 3<>/dev/tcp/127.0.0.1/9901 && printf 'GET /ready HTTP/1.1\\r\\nHost: localhost\\r\\nConnection: close\\r\\n\\r\\n' >&3 && grep -q LIVE <&3"]
-      interval: 10s
-      timeout: 3s
-      start_period: 10s
-      retries: 5
 
-  # ===========================================================================
-  # oauth2-proxy -- edge OIDC + group check for the INFRA UIs
-  #
-  # The docker half of the dual-mode auth seam: k8s gates infra routes at the
-  # Envoy edge, compose has no Gateway, so each infra UI gets a proxy in front
-  # of it. OFF by default and behind its own `auth` profile, because no dfe-docker
-  # profile may require an OIDC issuer to exist.
-  #
-  # With the profile armed the Makefile chains the kafbat and hyperdx unpublish
-  # fragments, so those UIs stop reaching the host directly and these take over
-  # their ports -- same port numbers, a gate in front. Turn the infra class off
-  # and the PROXIES go dark with the UIs: a gated door is still a door.
-  #
-  # It gates PAGE ACCESS ONLY. Neither UI learns who signed in here: HyperDX identifies a caller by the engine token.
-  # docs/operating.md#gating-the-infra-uis-with-oidc
-  # ===========================================================================
+  # ============================================================
+  # oauth2-proxy: OIDC and group check in front of the infra UIs
+  # ============================================================
 
+  # See docs/operating.md#gating-the-infra-uis-with-oidc
   oauth2-proxy-kafbat:
     image: quay.io/oauth2-proxy/oauth2-proxy:${DFE_OAUTH2_PROXY_VERSION:-v7.15.5@sha256:8498b0d0ef0a7b29686414000a08aee467f02d0299c9ed1e006a8f33fc017916}
     container_name: ${DFE_CONTAINER_PREFIX:-}dfe-oauth2-proxy-kafbat
-    dns_search: *no-dns-search
-    profiles: ["auth"]
-    restart: unless-stopped
-    deploy: *limits-sidecar
+    extends: {file: compose/oauth2-proxy.yml, service: oauth2-proxy}
+    # kafbat's port, which make unpublishes for this gate
     ports:
       - ${DFE_UI_BIND_HOST:-127.0.0.1}:${KAFBAT_PORT:-8081}:4180
     environment:
-      <<: *oauth2-proxy-env
-      OAUTH2_PROXY_UPSTREAMS: http://kafka-ui:8080
       OAUTH2_PROXY_REDIRECT_URL: ${DFE_OAUTH2_PROXY_EXTERNAL_ORIGIN:-${DFE_EXTERNAL_ORIGIN:-http://localhost}}:${KAFBAT_PORT:-8081}/oauth2/callback
+      OAUTH2_PROXY_UPSTREAMS: http://kafka-ui:8080
     depends_on:
       kafka-ui:
         condition: service_started
         required: false
 
+  # Gates page access only, HyperDX reads the engine token
   oauth2-proxy-hyperdx:
     image: quay.io/oauth2-proxy/oauth2-proxy:${DFE_OAUTH2_PROXY_VERSION:-v7.15.5@sha256:8498b0d0ef0a7b29686414000a08aee467f02d0299c9ed1e006a8f33fc017916}
     container_name: ${DFE_CONTAINER_PREFIX:-}dfe-oauth2-proxy-hyperdx
-    dns_search: *no-dns-search
-    profiles: ["auth"]
-    restart: unless-stopped
-    deploy: *limits-sidecar
+    extends: {file: compose/oauth2-proxy.yml, service: oauth2-proxy}
     ports:
       - ${DFE_UI_BIND_HOST:-127.0.0.1}:${DFE_HYPERDX_APP_PORT:-8090}:4180
     environment:
-      <<: *oauth2-proxy-env
-      OAUTH2_PROXY_UPSTREAMS: http://hyperdx:8090
       OAUTH2_PROXY_REDIRECT_URL: ${DFE_OAUTH2_PROXY_EXTERNAL_ORIGIN:-${DFE_EXTERNAL_ORIGIN:-http://localhost}}:${DFE_HYPERDX_APP_PORT:-8090}/oauth2/callback
+      OAUTH2_PROXY_UPSTREAMS: http://hyperdx:8090
     depends_on:
       hyperdx:
         condition: service_healthy
         required: false
 
-  # The SECOND HyperDX origin, and an OPERATOR one: the browser calls the API at
-  # a relative /api/* under the app, which the Next.js server proxies on container
-  # loopback, so nothing in the page depends on this port. It is gated all the
-  # same because the API answers the same questions the app does. One oauth2-proxy
-  # serves exactly one --http-address, hence a second service. Same cookie secret
-  # and name as the app proxy above, and cookies are not port-scoped, so signing
-  # in at the app authorises this one too.
+  # The API origin, covered by the app's sign-in cookie
   oauth2-proxy-hyperdx-api:
     image: quay.io/oauth2-proxy/oauth2-proxy:${DFE_OAUTH2_PROXY_VERSION:-v7.15.5@sha256:8498b0d0ef0a7b29686414000a08aee467f02d0299c9ed1e006a8f33fc017916}
     container_name: ${DFE_CONTAINER_PREFIX:-}dfe-oauth2-proxy-hyperdx-api
-    dns_search: *no-dns-search
-    profiles: ["auth"]
-    restart: unless-stopped
-    deploy: *limits-sidecar
+    extends: {file: compose/oauth2-proxy.yml, service: oauth2-proxy}
     ports:
       - ${DFE_UI_BIND_HOST:-127.0.0.1}:${DFE_HYPERDX_API_PORT:-8000}:4180
     environment:
-      <<: *oauth2-proxy-env
-      OAUTH2_PROXY_UPSTREAMS: http://hyperdx:8000
-      OAUTH2_PROXY_REDIRECT_URL: ${DFE_OAUTH2_PROXY_EXTERNAL_ORIGIN:-${DFE_EXTERNAL_ORIGIN:-http://localhost}}:${DFE_HYPERDX_API_PORT:-8000}/oauth2/callback
-      # Host header and every upstream response header pass through untouched
-      # (--pass-host-header defaults true), so HyperDX's own CORS headers reach
-      # the browser exactly as the API sent them.
+      # Passes HyperDX's CORS headers through untouched
       OAUTH2_PROXY_PASS_HOST_HEADER: "true"
+      OAUTH2_PROXY_REDIRECT_URL: ${DFE_OAUTH2_PROXY_EXTERNAL_ORIGIN:-${DFE_EXTERNAL_ORIGIN:-http://localhost}}:${DFE_HYPERDX_API_PORT:-8000}/oauth2/callback
+      OAUTH2_PROXY_UPSTREAMS: http://hyperdx:8000
     depends_on:
       hyperdx:
         condition: service_healthy
         required: false
 
-# Every path an image declares as a VOLUME is mounted from one of these: an
-# unmounted one gets a fresh anonymous volume per container, which `make down`
-# strands and `make clean` cannot reach. check_compose.py holds the list.
 volumes:
   archiver-data:
   clickhouse-data:
-  # What the engine renders each app's own config into, one directory per app.
-  # Its own volume rather than a corner of dfe-engine-config, which also holds
-  # the engine's JWT signing key and the deploy repo -- neither of which a
-  # data-plane container has any business reading.
+  # Apart from dfe-engine-config and its JWT key
   dfe-app-config:
   dfe-engine-config:
   dfe-engine-content:

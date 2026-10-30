@@ -123,6 +123,21 @@ DOTENV_TEMPLATE = REPO_ROOT / ".env.example"
 ENV_DIR = REPO_ROOT / "env"
 ENV_TEMPLATE_DIR = REPO_ROOT / "env.example"
 COMPOSE_FILE = REPO_ROOT / "docker-compose.yml"
+# The run-once containers COMPOSE_FILE includes
+COMPOSE_ONE_SHOTS_FILE = REPO_ROOT / "compose" / "one-shots.yml"
+# The one-shot that checks an app's config before it starts is this prefix and the app's name
+CONFIG_CHECK_PREFIX = "config-check-"
+# The files COMPOSE_FILE extends or includes, never chained as an overlay
+COMPOSE_PART_FILES = (
+    REPO_ROOT / "compose" / "base.yml",
+    REPO_ROOT / "compose" / "contract.yml",
+    REPO_ROOT / "compose" / "dfe-app.yml",
+    REPO_ROOT / "compose" / "envoy.yml",
+    REPO_ROOT / "compose" / "kafka.yml",
+    REPO_ROOT / "compose" / "limits.yml",
+    REPO_ROOT / "compose" / "oauth2-proxy.yml",
+    COMPOSE_ONE_SHOTS_FILE,
+)
 COMPOSE_LIVE_UI_FILE = REPO_ROOT / "compose" / "live-ui.yml"
 # Written by resolve_profile.py on every make run that needs the stack and included by the Makefile, so deleting .tmp/ costs nothing
 PROFILE_MK = REPO_ROOT / ".tmp" / "profile.mk"

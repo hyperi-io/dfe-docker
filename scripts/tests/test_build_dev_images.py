@@ -19,10 +19,14 @@ import re
 from pathlib import Path
 
 import build_dev_images
-from _common import COMPOSE_FILE
+from _common import COMPOSE_FILE, COMPOSE_ONE_SHOTS_FILE
 
 _SERVICE_KEY_RE = re.compile(r"^  ([A-Za-z0-9._-]+):$")
 _IMAGE_RE = re.compile(r"^    image: (.+)$")
+# A one-shot that runs its app's image by extending the app
+_EXTENDS_APP_RE = re.compile(
+    r"^    extends: \{file: docker-compose\.yml, service: ([A-Za-z0-9._-]+)\}$"
+)
 _DEPENDS_ON_RE = re.compile(r"^    depends_on:$")
 _DEPENDENCY_RE = re.compile(r"^      (?:- )?([A-Za-z0-9._-]+):?$")
 _REGISTRY_IMAGE_RE = re.compile(r"^\$\{IMAGE_REGISTRY:-[^}]*\}/([a-z0-9-]+):")
@@ -45,6 +49,8 @@ def _services(path: Path) -> dict[str, dict[str, object]]:
             continue
         elif image := _IMAGE_RE.match(line):
             current["image"] = image.group(1)
+        elif extended := _EXTENDS_APP_RE.match(line):
+            current["extends"] = extended.group(1)
         elif _DEPENDS_ON_RE.match(line):
             in_depends_on = True
         elif in_depends_on and (dependency := _DEPENDENCY_RE.match(line)):
@@ -57,9 +63,13 @@ def _services(path: Path) -> dict[str, dict[str, object]]:
 def _runners(*, component: str) -> set[str]:
     """Return every compose service that runs component's registry image, pinned one-shots aside."""
     image = build_dev_images.SERVICE_REPO_DIRS.get(component, component)
+    services = {**_services(COMPOSE_FILE), **_services(COMPOSE_ONE_SHOTS_FILE)}
     runners = set()
-    for service, config in _services(COMPOSE_FILE).items():
-        match = _REGISTRY_IMAGE_RE.match(str(config.get("image", "")))
+    for service, config in services.items():
+        extended = services.get(str(config.get("extends", "")), {})
+        match = _REGISTRY_IMAGE_RE.match(
+            str(config.get("image", extended.get("image", "")))
+        )
         if match and match.group(1) == image and not _PINNED_ONE_SHOT_RE.match(service):
             runners.add(service)
     return runners

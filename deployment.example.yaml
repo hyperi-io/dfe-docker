@@ -55,7 +55,7 @@ secrets:
 ## docker-vm knobs. Each maps to one .env key; a blank/absent field leaves the
 ## .env default in place.
 docker:
-  kafka_backend: redpanda   # redpanda | apache
+  kafka_backend: redpanda   # apache | redpanda
   kafbat_enabled: "true"
   core_enabled: "true"
   hyperdx_enabled: "false"

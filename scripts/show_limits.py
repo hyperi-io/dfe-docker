@@ -41,7 +41,7 @@ from _common import (  # noqa: E402
     _resolved_services,
 )
 
-_MUTUALLY_EXCLUSIVE = ("kafka-redpanda", "kafka-apache")
+_MUTUALLY_EXCLUSIVE = ("kafka-apache", "kafka-redpanda")
 
 
 def _limits(service: dict) -> tuple[int, str]:
