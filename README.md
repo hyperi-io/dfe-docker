@@ -3,11 +3,15 @@
 [![Build Status](https://github.com/hyperi-io/dfe-docker/actions/workflows/ci.yml/badge.svg)](https://github.com/hyperi-io/dfe-docker/actions)
 [![License](https://img.shields.io/badge/license-BUSL--1.1-blue)](https://github.com/hyperi-io/dfe-docker/blob/main/LICENSE)
 
-> The whole DFE stack on one host, pinned to a certified release rather than
-> whatever the tags point at today. Every image is `tag@sha256`, and the compose
-> file refuses to start if a pin is missing.
+The whole DFE stack on one host with Docker Compose, for a single box, an edge site, a partner deployment or a developer's test rig. It is a supported production target for small environments, beside the Kubernetes path in dfe-infra.
 
-Docker Compose deployment packaging for HyperI Data Fusion Engine.
+## What it gives you
+
+- `make stack`, which writes every image pin with its digest from a certified DFE stack release. With a pin unset the stack refuses to start rather than pull `latest`, but compose does not check that a hand-edited pin carries a digest.
+- `make up` from the registry images, or `make dev` to build chosen components from source.
+- Kafka or Redpanda as the broker, and opt-in overlays for TLS, storage and an oauth2-proxy `auth` profile.
+- `make post`, which checks the running stack moves data end to end, every claim the active profile can make, and fails a run that asserted nothing. `DFE_POST_ENABLED=false` switches it off and it then exits 0. `make creds` prints the console URL and admin login, with the password on a TTY only (anywhere else it names the `.env` key).
+- Seed sources, rules and hunts loaded into a running engine with `make sources`, `make rules` and `make hunts`.
 
 ## Start here: which of these are you?
 
