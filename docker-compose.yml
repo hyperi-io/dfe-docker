@@ -148,6 +148,17 @@ x-oauth2-proxy-env: &oauth2-proxy-env
   OAUTH2_PROXY_SKIP_PROVIDER_BUTTON: "true"
 
 # =============================================================================
+# Health probes for the DFE Rust apps
+# Their images ship bash and no curl or wget, so these are the image's own HEALTHCHECK: a GET over bash's /dev/tcp.
+# =============================================================================
+x-probe-livez: &probe-livez ["CMD", "bash", "-c", "exec 3<>/dev/tcp/localhost/9090 && printf 'GET /livez HTTP/1.0\\r\\n\\r\\n' >&3 && read -r _ code _ <&3 && [ \"$$code\" = 200 ]"]
+x-probe-readyz: &probe-readyz ["CMD", "bash", "-c", "exec 3<>/dev/tcp/localhost/9090 && printf 'GET /readyz HTTP/1.0\\r\\n\\r\\n' >&3 && read -r _ code _ <&3 && [ \"$$code\" = 200 ]"]
+
+# Every scalo app passes APP_ENV through from .env, and `make dev` writes `development` there. An unset APP_ENV stays unset, because scalo-rs reads an empty one as the environment name.
+
+# Every DFE app's stop_grace_period is its deployment contract's termination_grace_seconds (45, the Vector transform 90), because Docker's 10 s default kills a drain mid-flush.
+
+# =============================================================================
 # Where the DFE apps reach Kafka, as resolve_profile.py resolves DFE_KAFKA_BOOTSTRAP_SERVERS: empty on a profile without Kafka
 # =============================================================================
 x-kafka-brokers: &kafka-brokers ${DFE_KAFKA_BOOTSTRAP_SERVERS:-}
@@ -589,6 +600,7 @@ services:
     dns_search: *no-dns-search
     profiles: ["dfe"]
     restart: unless-stopped
+    stop_grace_period: 45s
     deploy: *limits-service
     ports:
       - ${DFE_BIND_HOST:-127.0.0.1}:${DFE_ARCHIVER_PROMETHEUS_PORT:-9093}:9090
@@ -606,6 +618,7 @@ services:
       # Empty exports nothing -- scalo's own rule, and the stack default.
       OTEL_EXPORTER_OTLP_ENDPOINT: ${DFE_OTEL_EXPORTER_ENDPOINT:-}
       OTEL_SERVICE_NAME: dfe-archiver
+      APP_ENV:
       # The archiver's cascade prefix is ARCHIVER, not DFE_ARCHIVER.
       ARCHIVER_VERSION_CHECK__ENABLED: ${DFE_VERSION_CHECK_ENABLED:-true}
       ARCHIVER_VERSION_CHECK__SEND_INSTANCE_ID: ${DFE_VERSION_CHECK_SEND_INSTANCE_ID:-true}
@@ -629,7 +642,7 @@ services:
       - archiver-data:/var/data/archive
       - dlq-spool:/var/spool/dfe
     healthcheck:
-      test: ["CMD", "curl", "-sf", "http://localhost:9090/livez"]
+      test: *probe-livez
       interval: 10s
       timeout: 3s
       retries: 5
@@ -645,6 +658,7 @@ services:
     dns_search: *no-dns-search
     profiles: ["dfe"]
     restart: unless-stopped
+    stop_grace_period: 45s
     deploy: *limits-service
     ports:
       - ${DFE_INGRESS_BIND_HOST:-0.0.0.0}:${DFE_FETCHER_INGEST_PORT:-8082}:8080
@@ -661,6 +675,7 @@ services:
       LOG_FORMAT: ${LOG_FORMAT:-text}
       OTEL_EXPORTER_OTLP_ENDPOINT: ${DFE_OTEL_EXPORTER_ENDPOINT:-}
       OTEL_SERVICE_NAME: dfe-fetcher
+      APP_ENV:
       DFE_FETCHER_VERSION_CHECK__ENABLED: ${DFE_VERSION_CHECK_ENABLED:-true}
       DFE_FETCHER_VERSION_CHECK__SEND_INSTANCE_ID: ${DFE_VERSION_CHECK_SEND_INSTANCE_ID:-true}
       # One directory per fetcher service; scripts/instances.py sets each instance's.
@@ -683,7 +698,7 @@ services:
       - dlq-spool:/var/spool/dfe
       - fetcher-cursors:/var/lib/dfe-fetcher
     healthcheck:
-      test: ["CMD", "curl", "-sf", "http://localhost:9090/livez"]
+      test: *probe-livez
       interval: 10s
       timeout: 3s
       retries: 5
@@ -699,6 +714,7 @@ services:
     dns_search: *no-dns-search
     profiles: ["dfe"]
     restart: unless-stopped
+    stop_grace_period: 45s
     deploy: *limits-service
     ports:
       # 6000 is the INTERNAL DfeTransport/Push surface (receiver -> loader), not
@@ -725,6 +741,7 @@ services:
       LOG_FORMAT: ${LOG_FORMAT:-text}
       OTEL_EXPORTER_OTLP_ENDPOINT: ${DFE_OTEL_EXPORTER_ENDPOINT:-}
       OTEL_SERVICE_NAME: dfe-loader
+      APP_ENV:
       DFE_LOADER_VERSION_CHECK__ENABLED: ${DFE_VERSION_CHECK_ENABLED:-true}
       DFE_LOADER_VERSION_CHECK__SEND_INSTANCE_ID: ${DFE_VERSION_CHECK_SEND_INSTANCE_ID:-true}
     depends_on:
@@ -750,7 +767,7 @@ services:
       - dfe-app-config:/etc/dfe/apps:ro
       - dlq-spool:/var/spool/dfe
     healthcheck:
-      test: ["CMD", "curl", "-sf", "http://localhost:9090/readyz"]
+      test: *probe-readyz
       interval: 10s
       timeout: 3s
       retries: 5
@@ -765,6 +782,7 @@ services:
     dns_search: *no-dns-search
     profiles: ["dfe"]
     restart: unless-stopped
+    stop_grace_period: 45s
     deploy: *limits-service
     ports:
       # 8080 (HTTP) is the ingest port external clients push to, so it binds DFE_INGRESS_BIND_HOST. 9090 is for operators.
@@ -788,6 +806,7 @@ services:
       LOG_FORMAT: ${LOG_FORMAT:-text}
       OTEL_EXPORTER_OTLP_ENDPOINT: ${DFE_OTEL_EXPORTER_ENDPOINT:-}
       OTEL_SERVICE_NAME: dfe-receiver
+      APP_ENV:
       # The DFE-wide record cap, under every broker's 8 MiB message limit.
       DFE_RECEIVER_MAX_BODY_SIZE: ${DFE_RECEIVER_MAX_BODY_SIZE:-8000000}
       DFE_RECEIVER_KAFKA_BROKERS: *kafka-brokers
@@ -830,7 +849,7 @@ services:
       # - ./certs/dev/receiver.crt:/etc/ssl/receiver.crt:ro
       # - ./certs/dev/receiver.key:/etc/ssl/receiver.key:ro
     healthcheck:
-      test: ["CMD", "curl", "-sf", "http://localhost:9090/livez"]
+      test: *probe-livez
       interval: 10s
       timeout: 3s
       retries: 5
@@ -851,6 +870,7 @@ services:
     dns_search: *no-dns-search
     profiles: ["dfe"]
     restart: unless-stopped
+    stop_grace_period: 45s
     deploy: *limits-service
     ports:
       - ${DFE_BIND_HOST:-127.0.0.1}:${DFE_TRANSFORM_ELASTIC_PROMETHEUS_PORT:-9099}:9090
@@ -866,6 +886,7 @@ services:
       LOG_FORMAT: ${LOG_FORMAT:-text}
       OTEL_EXPORTER_OTLP_ENDPOINT: ${DFE_OTEL_EXPORTER_ENDPOINT:-}
       OTEL_SERVICE_NAME: dfe-transform-elastic
+      APP_ENV:
       DFE_TRANSFORM_ELASTIC_SOURCE_BROKERS: *kafka-brokers
       DFE_TRANSFORM_ELASTIC_VERSION_CHECK__ENABLED: ${DFE_VERSION_CHECK_ENABLED:-true}
       DFE_TRANSFORM_ELASTIC_VERSION_CHECK__SEND_INSTANCE_ID: ${DFE_VERSION_CHECK_SEND_INSTANCE_ID:-true}
@@ -884,7 +905,7 @@ services:
       # The image's root is read-only, and the GeoIP databases auto-download here.
       - transform-elastic-geoip:/var/lib/dfe/geoip
     healthcheck:
-      test: ["CMD", "curl", "-sf", "http://localhost:9090/livez"]
+      test: *probe-livez
       interval: 10s
       timeout: 3s
       retries: 5
@@ -906,6 +927,7 @@ services:
     dns_search: *no-dns-search
     profiles: ["dfe"]
     restart: unless-stopped
+    stop_grace_period: 90s
     deploy: *limits-service
     ports:
       - ${DFE_BIND_HOST:-127.0.0.1}:${DFE_TRANSFORM_VECTOR_PROMETHEUS_PORT:-9095}:9090
@@ -922,6 +944,7 @@ services:
       LOG_FORMAT: ${LOG_FORMAT:-text}
       OTEL_EXPORTER_OTLP_ENDPOINT: ${DFE_OTEL_EXPORTER_ENDPOINT:-}
       OTEL_SERVICE_NAME: dfe-transform-vector
+      APP_ENV:
       DFE_TRANSFORM_SINK_BROKERS: *kafka-brokers
       DFE_TRANSFORM_SOURCE_BROKERS: *kafka-brokers
       # Vector and vrl share the prefix DFE_TRANSFORM, and elastic has its own.
@@ -938,7 +961,7 @@ services:
       - ./resources/enrichment:/etc/dfe-transform-vector/data:ro
       - dfe-app-config:/etc/dfe/apps:ro
     healthcheck:
-      test: ["CMD", "curl", "-sf", "http://localhost:9090/livez"]
+      test: *probe-livez
       interval: 10s
       timeout: 3s
       retries: 5
@@ -954,6 +977,7 @@ services:
     dns_search: *no-dns-search
     profiles: ["dfe"]
     restart: unless-stopped
+    stop_grace_period: 45s
     deploy: *limits-service
     ports:
       - ${DFE_BIND_HOST:-127.0.0.1}:${DFE_TRANSFORM_VRL_PROMETHEUS_PORT:-9096}:9090
@@ -969,6 +993,7 @@ services:
       LOG_FORMAT: ${LOG_FORMAT:-text}
       OTEL_EXPORTER_OTLP_ENDPOINT: ${DFE_OTEL_EXPORTER_ENDPOINT:-}
       OTEL_SERVICE_NAME: dfe-transform-vrl
+      APP_ENV:
       DFE_TRANSFORM_SINK_BROKERS: *kafka-brokers
       DFE_TRANSFORM_SOURCE_BROKERS: *kafka-brokers
       DFE_TRANSFORM_VERSION_CHECK__ENABLED: ${DFE_VERSION_CHECK_ENABLED:-true}
@@ -982,7 +1007,7 @@ services:
     volumes:
       - dfe-app-config:/etc/dfe/apps:ro
     healthcheck:
-      test: ["CMD", "curl", "-sf", "http://localhost:9090/livez"]
+      test: *probe-livez
       interval: 10s
       timeout: 3s
       retries: 5
@@ -1131,6 +1156,7 @@ services:
       DFE_DEPLOYMENT_APP_ENV_DIR: /app/app-env
       OTEL_EXPORTER_OTLP_ENDPOINT: ${DFE_OTEL_EXPORTER_ENDPOINT:-}
       OTEL_SERVICE_NAME: dfe-engine
+      APP_ENV:
       # scalo's CLI falls back to the prometheus backend, so the endpoint alone
       # exports nothing. `opentelemetry` is dual -- OTLP push AND /metrics.
       DFE_API_METRICS_BACKEND: ${DFE_ENGINE_METRICS_BACKEND:-prometheus}
@@ -1252,6 +1278,7 @@ services:
       DFE_SCHEMAS_DIR: ${DFE_ENGINE_SCHEMAS_DIR:-/app/schemas}
       OTEL_EXPORTER_OTLP_ENDPOINT: ${DFE_OTEL_EXPORTER_ENDPOINT:-}
       OTEL_SERVICE_NAME: dfe-hunt-runner
+      APP_ENV:
     volumes:
       - dfe-engine-config:${DFE_ENGINE_CONFIG_DIR:-/app/config}
       - dfe-engine-schemas:${DFE_ENGINE_SCHEMAS_DIR:-/app/schemas}

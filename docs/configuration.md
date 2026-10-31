@@ -147,6 +147,7 @@ other profile may require an issuer.
 |--------------------------------------------------|--------------------------------------------------------------------------------------|---------------------------------------------------------------------|
 | `LOG_LEVEL`                                      | Log level (trace\|debug\|info\|warn\|error)                                          | `info`                                                              |
 | `LOG_FORMAT`                                     | Log format                                                                           | `text`                                                              |
+| `APP_ENV`                                        | Environment every scalo app runs in. Unset, they default to `development`. `make dev` writes `development` | unset                                                               |
 
 ### DFE Archiver
 

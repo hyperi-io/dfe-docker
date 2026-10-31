@@ -396,6 +396,10 @@ _DFE_OWNED_SERVICES = {
     "dfe-ui",
 }
 
+# The DFE services whose image ships curl, and the probe tools the other images lack.
+_IMAGES_WITH_CURL = {"dfe-engine"}
+_PROBE_TOOLS = ("curl", "wget")
+
 # Each app reads the release-check dial under its own scalo prefix, and scalo-py reads it bare.
 # dfe-ui and the hunt runner start no check.
 _VERSION_CHECK_ENABLED_KEY = "DFE_VERSION_CHECK_ENABLED"
@@ -554,6 +558,29 @@ def _retired_health_failures(*, config: dict) -> list[str]:
                     f"{name}: healthcheck targets the retired {retired} -- it 404s on "
                     "the pinned image; use /livez or /readyz"
                 )
+    return failures
+
+
+def _absent_probe_failures(*, config: dict) -> list[str]:
+    """Return one message per DFE service whose healthcheck runs curl or wget.
+
+    Only dfe-engine's Python image ships curl. The Rust apps and dfe-ui ship
+    neither, so a probe that execs one fails on every run and the container
+    reads unhealthy for good while it serves traffic.
+    """
+    failures = []
+    for name, service in sorted(config.get("services", {}).items()):
+        if name not in _DFE_OWNED_SERVICES or name in _IMAGES_WITH_CURL:
+            continue
+        words = " ".join(
+            str(part) for part in service.get("healthcheck", {}).get("test") or []
+        ).split()
+        failures.extend(
+            f"{name}: healthcheck runs {tool}, which the image does not ship; "
+            "probe with bash's /dev/tcp (x-probe-livez) or the runtime's own client"
+            for tool in _PROBE_TOOLS
+            if tool in words
+        )
     return failures
 
 
@@ -830,7 +857,9 @@ def _health_cpu_failures(*, env: dict[str, str], files: list[str]) -> list[str]:
     if config is None:
         return []
 
-    failures = _retired_health_failures(config=config)
+    failures = _retired_health_failures(config=config) + _absent_probe_failures(
+        config=config
+    )
     for name, service in sorted(config.get("services", {}).items()):
         test = service.get("healthcheck", {}).get("test") or []
         if not (any(path in str(part) for part in test for path in _HEALTH_PATHS)):
@@ -1947,7 +1976,9 @@ def _checks() -> int:
         msg=f"Every health-checked service carries at least {_MIN_HEALTH_CPUS} CPUs "
         f"on all {len(paths)} path(s)"
     )
-    _print(msg="No healthcheck targets a retired health path")
+    _print(
+        msg="No healthcheck targets a retired health path or runs a tool its image lacks"
+    )
 
     credential_failures, credential_made = _credential_failures(env=env)
     for message in credential_failures:

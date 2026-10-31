@@ -26,7 +26,8 @@ that says `production` belongs to a deployment, and quietly downgrading its post
 and overwriting its admin password is not something a build target gets to do.
 `--real` never refuses, because it destroys nothing.
 
-Only those two keys are touched; everything else in .env is left as it stands. The
+The tyre-kick also writes APP_ENV=development, which compose passes to every scalo
+app. No other key is touched; everything else in .env is left as it stands. The
 minted password a tyre-kick overwrites is unrecoverable once it is gone, so the file
 it replaces is copied to `.env.bak-<utc>` first, 0600 like the credentials in it, and
 the path is printed. Nothing to change means nothing is written and no backup is
@@ -64,6 +65,8 @@ from init import GENERATED_SECRETS, _generate_secret, _setting_key  # noqa: E402
 _DEV_ENV = "dev"
 _REAL_ENV = "production"
 _POSTURE_KEY = "DFE_ENV"
+_APP_ENV_KEY = "APP_ENV"
+_DEV_APP_ENV = "development"
 # Exit code for the refusal, distinct from 1 (no .env at all) so a caller can tell
 # "you are not a dev box" from "you have not run make init".
 _REFUSED = 2
@@ -108,7 +111,7 @@ def _wanted_real(*, values: dict[str, str]) -> dict[str, str]:
 
 def _wanted_tyre_kick(*, values: dict[str, str]) -> dict[str, str]:
     """The keys the tyre-kick assigns, keeping a password a dev stack already replaced."""
-    wanted = {_POSTURE_KEY: _DEV_ENV}
+    wanted = {_POSTURE_KEY: _DEV_ENV, _APP_ENV_KEY: _DEV_APP_ENV}
     already_dev = is_dev_posture(values.get(_POSTURE_KEY, ""))
     replaced = not (default_admin_password(values.get(_ADMIN_PASSWORD_KEY, "")))
     if not (already_dev and replaced):

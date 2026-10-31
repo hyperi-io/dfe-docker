@@ -22,6 +22,7 @@ import shutil
 from pathlib import Path
 
 import pytest
+import yaml
 
 import check_compose
 import init
@@ -703,3 +704,51 @@ def test_a_service_must_clear_the_host_search_domain(dns_search, expected_failur
 
     assert len(failures) == expected_failures
     assert all("dfe-loader" in failure for failure in failures)
+
+
+_CURL_PROBE = ["CMD", "curl", "-sf", "http://localhost:9090/livez"]
+_BASH_PROBE = ["CMD", "bash", "-c", "exec 3<>/dev/tcp/localhost/9090"]
+
+
+@pytest.mark.parametrize(
+    ("service", "test", "expected_failures"),
+    [
+        ("dfe-loader", _BASH_PROBE, 0),
+        ("dfe-loader", _CURL_PROBE, 1),
+        ("dfe-receiver", ["CMD-SHELL", "wget -q http://localhost:9090/livez"], 1),
+        ("dfe-ui", _CURL_PROBE, 1),
+        ("dfe-engine", _CURL_PROBE, 0),
+        ("clickhouse", _CURL_PROBE, 0),
+    ],
+)
+def test_a_dfe_probe_runs_only_a_tool_its_image_ships(service, test, expected_failures):
+    config = {"services": {service: {"healthcheck": {"test": test}}}}
+
+    failures = check_compose._absent_probe_failures(config=config)
+
+    assert len(failures) == expected_failures
+
+
+def test_the_committed_probes_run_no_tool_the_rust_images_lack():
+    compose = yaml.safe_load(COMPOSE_FILE.read_text(encoding="utf-8"))
+
+    assert check_compose._absent_probe_failures(config=compose) == []
+
+
+# Each app's deployment contract termination_grace_seconds, which its drain is sized to.
+_TERMINATION_GRACE_SECONDS = {
+    "dfe-archiver": 45,
+    "dfe-fetcher": 45,
+    "dfe-loader": 45,
+    "dfe-receiver": 45,
+    "dfe-transform-elastic": 45,
+    "dfe-transform-vector": 90,
+    "dfe-transform-vrl": 45,
+}
+
+
+@pytest.mark.parametrize(("service", "seconds"), _TERMINATION_GRACE_SECONDS.items())
+def test_a_dfe_app_gets_the_stop_grace_its_contract_asks_for(service, seconds):
+    compose = yaml.safe_load(COMPOSE_FILE.read_text(encoding="utf-8"))
+
+    assert compose["services"][service]["stop_grace_period"] == f"{seconds}s"
