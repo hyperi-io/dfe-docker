@@ -1,0 +1,44 @@
+# Project:   dfe-docker
+# File:      examples/otlp/otel-collector.yaml
+# Purpose:   OpenTelemetry Collector tailing a JSON app log and exporting it over OTLP to dfe-receiver
+# Language:  YAML
+#
+# License:   BUSL-1.1
+# Copyright: (c) 2026 HYPERI PTY LIMITED
+
+receivers:
+  file_log:
+    include: [/samples/checkout.log]
+    start_at: beginning
+    operators:
+      - type: json_parser
+        timestamp:
+          parse_from: attributes.time
+          layout_type: gotime
+          layout: "2006-01-02T15:04:05Z07:00"
+        severity:
+          parse_from: attributes.level
+      # The parsed message becomes the record's body, as an OTel SDK would send it.
+      - type: move
+        from: attributes.msg
+        to: body
+
+processors:
+  resource:
+    attributes:
+      - key: service.name
+        value: checkout
+        action: upsert
+  batch: {}
+
+exporters:
+  otlp_http:
+    endpoint: http://dfe-receiver:4318
+    compression: none
+
+service:
+  pipelines:
+    logs:
+      receivers: [file_log]
+      processors: [resource, batch]
+      exporters: [otlp_http]
