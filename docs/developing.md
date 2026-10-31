@@ -99,7 +99,7 @@ The engine **refuses to start** on an empty or `changeme`
 check-compose` asserts the compose file never hands it one, so that is caught
 before a container crash-loops.
 
-`make dev` is the exception and says so: it writes the known default password and `DFE_ENV=dev` into `.env`, because a dev loop should not need a lookup to log in. The engine accepts the default in that posture and makes the admin replace it at first login, and a `.env` already on a dev posture keeps the replacement `make post` recorded. It **refuses** (exit 2) to run when `.env` already declares a non-dev `DFE_ENV` -- downgrading a deployment's posture and overwriting its admin password is not a build target's call. Start that stack with `make up`.
+`make dev` is the exception and says so: it writes the known default password, `DFE_ENV=dev` and `APP_ENV=development` (the environment every scalo app runs in) into `.env`, because a dev loop should not need a lookup to log in. The engine accepts the default in that posture and makes the admin replace it at first login, and a `.env` already on a dev posture keeps the replacement `make post` recorded. It **refuses** (exit 2) to run when `.env` already declares a non-dev `DFE_ENV` -- downgrading a deployment's posture and overwriting its admin password is not a build target's call. Start that stack with `make up`.
 
 When it does rewrite, it copies the file it replaced to `.env.bak-<utc>` first,
 mode 0600, and prints the path: a minted password is gone once overwritten. A run
