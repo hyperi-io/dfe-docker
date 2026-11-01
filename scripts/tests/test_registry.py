@@ -232,3 +232,53 @@ def test_the_manifest_repo_honours_the_override(
 
     monkeypatch.setenv("DFE_STACK_MANIFEST_REPO", "registry.local/mirror/dfe-stack")
     assert _registry.manifest_repo() == "registry.local/mirror/dfe-stack"
+
+
+_DIGEST = "sha256:" + "0f" * 32
+
+
+@pytest.mark.parametrize(
+    "stdout",
+    [
+        '{"digest": "sha256:short"}',
+        '{"digest": "sha256:' + "0F" * 32 + '"}',
+        '{"digest": "sha512:' + "0f" * 64 + '"}',
+        '{"digest": ""}',
+        '{"digest": 7}',
+        '{"mediaType": "application/vnd.oci.image.manifest.v1+json"}',
+        "not json",
+    ],
+    ids=[
+        "short",
+        "uppercase",
+        "other-algorithm",
+        "empty",
+        "not-a-string",
+        "missing",
+        "unreadable",
+    ],
+)
+def test_a_digest_not_of_the_sha256_shape_is_refused(
+    monkeypatch: pytest.MonkeyPatch, stdout: str
+) -> None:
+    _fixed_descriptor(stdout, monkeypatch)
+
+    with pytest.raises(_registry.RegistryError, match="returned no digest"):
+        _registry.resolve_digest(reference=f"{_MANIFEST}:2.2.1")
+
+
+def test_a_sha256_digest_is_returned(monkeypatch: pytest.MonkeyPatch) -> None:
+    _fixed_descriptor(f'{{"digest": "{_DIGEST}", "size": 512}}', monkeypatch)
+
+    assert _registry.resolve_digest(reference=f"{_MANIFEST}:2.2.1") == _DIGEST
+
+
+def _fixed_descriptor(stdout: str, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(_registry, "_require_oras", lambda: None)
+    monkeypatch.setattr(
+        _registry,
+        "_run",
+        lambda *, cmd: _registry.subprocess.CompletedProcess(
+            args=cmd, returncode=0, stdout=stdout, stderr=""
+        ),
+    )

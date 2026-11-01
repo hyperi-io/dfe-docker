@@ -107,6 +107,8 @@ A box on the track-latest daemon has two users. The service user (`dfe`) runs th
 - **Start an update on demand.** A polkit rule lets members of the service user's group start, stop and restart `dfe-docker-update.service` and `dfe-docker-proof.service`. `systemctl start dfe-docker-update.service` runs the timer's tick as `dfe` and waits for it. Add `--no-block` to return at once and follow with `journalctl -u dfe-docker-update -f`. The tick takes the newest tag in the signed stack-manifest repository, not a git branch, so a cycle moves the version by publishing one and starting the unit.
 - **Work in the checkout directly.** The checkout is group-writable with the setgid bit, `UMask=0002` makes the service's own files match, and `.env` is group read/write and closed to others. The operator can `git pull` and start the proof with `systemctl start dfe-docker-proof.service` as themselves, and read it with `journalctl -u dfe-docker-proof` from the `adm` group. Without console TLS they can also run `make stack VERSION=X.Y.Z`, `make ci` and `make post` directly. With it, `make` stops, because the proxies run as the user who runs make and `DFE_PROXY_CERT_DIR` is readable by the service user only, so those targets run through the units or as the service user. Use this path for a version the manifest does not list as newest.
 
+The tick runs `make stack`, which checks the manifest's signature with cosign, or cosign's pinned image through Docker. `DFE_STACK_VERIFY=false` in the checkout's `.env` turns the check off for a box that can run neither, and the timer's runs read it there too.
+
 Secret files go no wider than group read/write. `.env`, `.env.*`, `access-summary.md` and everything in `env/` are never open to others, and a rewrite by either user keeps the group-write bit it finds.
 
 **Converting an existing install.** Once, as a user with sudo, from the box's own checkout:
@@ -159,13 +161,12 @@ an upgraded stack that runs `make init` (to pick up new `.env.example` keys) get
 a real password. ClickHouse stores the default-user credential in its data volume
 on first init, so a pre-existing `clickhouse-data` volume still expects the OLD
 (blank) password and the loader/engine/HyperDX now authenticate with the new one
--- every query fails `Authentication failed`. Two ways through:
-
-- Keep the old behaviour: set `CLICKHOUSE_PASSWORD=` (blank) in `.env` before
-  starting. `make init` only tops up a MISSING key, so an explicit blank is kept.
-- Adopt the password: set the ClickHouse default user to the generated value once
-  (`ALTER USER default IDENTIFIED BY '<value>'` against the running instance, or
-  recreate the volume if it holds nothing you need), then restart the stack.
+-- every query fails `Authentication failed`. A blank password is no way back:
+`make init` rewrites an empty `CLICKHOUSE_PASSWORD=` with a generated one, and
+`make post` fails a stack still on it. Adopt the generated password instead: set
+the ClickHouse default user to it once (`ALTER USER default IDENTIFIED BY
+'<value>'` against the running instance, or recreate the volume if it holds
+nothing you need), then restart the stack.
 
 A fresh deployment has neither problem -- the volume is created with the generated
 password from the start.

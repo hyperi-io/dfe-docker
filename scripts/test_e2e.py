@@ -107,6 +107,8 @@ from build_dev_images import local_image_services  # noqa: E402
 PROJECT_DIR = Path(__file__).resolve().parent.parent
 RUN_ID = f"e2e-{datetime.now(timezone.utc).strftime('%Y%m%d%H%M%S')}"
 TMP_DIR = PROJECT_DIR / ".tmp" / "e2e" / RUN_ID
+# The test engine's custom keys and instance indexes, kept out of the found stack's env/
+SUITE_ENV_DIR = TMP_DIR / "env"
 
 # ------------------------------------------------------------------------------
 # Config Related
@@ -910,7 +912,7 @@ def stack_up(mode, test, services):
     # The engine renders over the configs this test's profile commits, not make's
     engine_volumes = (
         _sources.engine_base_volumes(services=test.services) if (test.sources) else []
-    )
+    ) + [_sources.app_env_volume(env_dir=SUITE_ENV_DIR)]
     override_file = generate_compose_override(
         engine_environment=test.engine_environment,
         engine_volumes=engine_volumes,
@@ -928,6 +930,18 @@ def stack_up(mode, test, services):
         if extra.strip():
             compose_files += ["-f", extra.strip()]
     compose_files += ["-f", override_file]
+    env_override = TMP_DIR / f"docker-compose.{RUN_ID}.env.yaml"
+    env_override.write_text(
+        _sources.suite_env_override(
+            compose_text=(PROJECT_DIR / "docker-compose.yml").read_text(
+                encoding="utf-8"
+            ),
+            env_dir=SUITE_ENV_DIR,
+        ),
+        encoding="utf-8",
+        newline="\n",
+    )
+    compose_files += ["-f", str(env_override)]
 
     # Kafka first: dfe-engine on Kafka stays unready until the broker holds its dead-letter topics.
     # The loader fails on startup if no matching topics exist on the broker.
@@ -1268,6 +1282,109 @@ def expected_hashes(found):
 
 
 # ------------------------------------------------------------------------------
+# Found Project
+# - The compose project the found stack resolves to
+# ------------------------------------------------------------------------------
+def found_project():
+    result = run_cmd(
+        [
+            "docker",
+            "compose",
+            "-f",
+            "docker-compose.yml",
+            "config",
+            "--no-interpolate",
+            "--format",
+            "json",
+        ],
+        capture=True,
+    )
+    try:
+        name = json.loads(result.stdout or "{}").get("name", "")
+    except ValueError:
+        name = ""
+    if (result.returncode != 0) or not (name):
+        error(
+            msg=f"compose could not name this checkout's project, so nothing was stopped: {(result.stderr or '').strip()}"
+        )
+    return name
+
+
+# ------------------------------------------------------------------------------
+# Isolate Suite
+# - Test stacks get a project of their own, as their topic deletes would erase the found broker's records
+# ------------------------------------------------------------------------------
+def isolate_suite(project):
+    # Group-writable and setgid: the engine writes here as UID 1000 through the make user's group.
+    SUITE_ENV_DIR.mkdir(parents=True, exist_ok=True)
+    SUITE_ENV_DIR.chmod(0o2770)
+    taken = daemon_subnets() if os.environ.get("DFE_NETWORK_SUBNET", "").strip() else []
+    os.environ.update(
+        _stack_state.suite_environ(os.environ, project=project, taken=taken)
+    )
+    # .env belongs to the found stack, so a password rotated on a test engine stays in memory.
+    post.RECORD_ROTATION = False
+    suite_project = os.environ["COMPOSE_PROJECT_NAME"]
+    LOGGER.info(f"Test stacks run as compose project '{suite_project}'")
+    return suite_project
+
+
+# ------------------------------------------------------------------------------
+# Daemon Subnets
+# - The IPv4 subnets every network on the daemon holds, none when docker cannot list them
+# ------------------------------------------------------------------------------
+def daemon_subnets():
+    listing = run_cmd(args=["docker", "network", "ls", "-q"], capture=True)
+    ids = (listing.stdout or "").split()
+    if (listing.returncode != 0) or not (ids):
+        LOGGER.warning(
+            "docker listed no networks, so the suite's subnet is checked against none"
+        )
+        return []
+    inspected = run_cmd(args=["docker", "network", "inspect", *ids], capture=True)
+    return _stack_state.network_subnets(inspected.stdout or "")
+
+
+# ------------------------------------------------------------------------------
+# End Isolation
+# - Points `docker compose` back at the found project
+# ------------------------------------------------------------------------------
+def end_isolation():
+    post.RECORD_ROTATION = True
+    for key in ("COMPOSE_PROJECT_NAME", "DFE_CONTAINER_PREFIX"):
+        if key in FOUND_ENVIRON:
+            os.environ[key] = FOUND_ENVIRON[key]
+        else:
+            os.environ.pop(key, None)
+
+
+# ------------------------------------------------------------------------------
+# Suite Down
+# - Removes the suite's project and its volumes, named so it never reaches the found one
+# ------------------------------------------------------------------------------
+def suite_down(suite_project):
+    LOGGER.info(f"Removing compose project '{suite_project}' and its volumes...")
+    result = run_cmd(
+        [
+            "docker",
+            "compose",
+            "--project-name",
+            suite_project,
+            "--profile",
+            "*",
+            "down",
+            "--volumes",
+            "--remove-orphans",
+        ],
+        capture=not (LOG_LEVEL == "DEBUG"),
+    )
+    if result.returncode != 0:
+        LOGGER.warning(
+            f"Compose project '{suite_project}' was not removed: {(result.stderr or result.stdout or '').strip()}"
+        )
+
+
+# ------------------------------------------------------------------------------
 # Put Back
 # - Leaves the project as the run found it: the test stack down, then each service
 #   that was running, or had run to completion, started again from the compose
@@ -1276,9 +1393,11 @@ def expected_hashes(found):
 # - A service those files no longer define stays down, as a deleted source's
 #   instance does once its fragment is gone
 # ------------------------------------------------------------------------------
-def put_back(ctx, found, expected):
+def put_back(ctx, found, expected, suite_project):
     print()
-    stack_down()
+    if suite_project:
+        suite_down(suite_project)
+    end_isolation()
 
     left_out = set()
     for found_restore in _stack_state.restores(found, exists=os.path.exists):
@@ -3648,7 +3767,9 @@ def await_index(*, ctx: TestContext, test: TestCase) -> dict[str, list[str]] | N
     found = poll_until(
         done=_complete,
         interval=SOURCE_POLL_SECONDS,
-        predicate=functools.partial(_sources.indexed, sources=test.sources),
+        predicate=functools.partial(
+            _sources.indexed, env_dir=SUITE_ENV_DIR, sources=test.sources
+        ),
         timeout=SOURCE_INDEX_TIMEOUT,
     )
     missing = _sources.unindexed(found=found, sources=test.sources)
@@ -3697,7 +3818,9 @@ def start_instances(
         if (DEV_OVERRIDE_FILE in files)
         else {}
     )
-    instances.write(images=images, instances=found, path=fragment)
+    instances.write(
+        env_dir=SUITE_ENV_DIR, images=images, instances=found, path=fragment
+    )
     if not (run.swapped):
         run.compose_file = os.environ.get("COMPOSE_FILE")
         run.swapped = True
@@ -3913,7 +4036,9 @@ def remove_sources(*, ctx: TestContext, run: SourceRun, test: TestCase) -> None:
     listed = poll_until(
         done=_gone,
         interval=SOURCE_POLL_SECONDS,
-        predicate=functools.partial(_sources.indexed, sources=run.made),
+        predicate=functools.partial(
+            _sources.indexed, env_dir=SUITE_ENV_DIR, sources=run.made
+        ),
         timeout=SOURCE_INDEX_TIMEOUT,
     )
     for app, names in sorted(listed.items()):
@@ -4287,11 +4412,19 @@ def run_suite(ctx, mode, tests, persistent_services):
     if change:
         error(msg=f"Nothing was stopped: {change}")
     expected = expected_hashes(found)
+    project = found_project()
+    # A killed run leaves its suite project behind, holding the host ports and its old volumes.
+    suite_down(
+        _stack_state.suite_environ(os.environ, project=project)["COMPOSE_PROJECT_NAME"]
+    )
+    suite_project = None
     signal.signal(signal.SIGTERM, lambda signum, frame: sys.exit(128 + signum))
     try:
+        # Every service, ClickHouse too: the suite's own takes its host ports.
         if stack_is_up():
             print()
-            stack_down(persistent_services)
+            stack_down()
+        suite_project = isolate_suite(project)
 
         # Build only the DFE services the selected tests need, each source's app among them
         needed = set()
@@ -4302,7 +4435,7 @@ def run_suite(ctx, mode, tests, persistent_services):
         for test in tests:
             run_test(ctx, mode, test, persistent_services)
     finally:
-        put_back(ctx, found, expected)
+        put_back(ctx, found, expected, suite_project)
 
 
 # ==============================================================================

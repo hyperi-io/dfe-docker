@@ -63,6 +63,7 @@ import datetime
 import functools
 import json
 import os
+import re
 import stat
 import subprocess
 import sys
@@ -86,8 +87,8 @@ from _common import (  # noqa: E402
     _load_dotenv,
     _print,
     _profile_mk_value,
-    _resolved_services,
 )
+from _common import _resolved_services as _profile_services  # noqa: E402
 from _pipeline import (  # noqa: E402
     MARKER_EXPRESSIONS,
     _decoded,
@@ -289,8 +290,15 @@ HUNT_EVENTS = {
 # router in place; nothing here waits on a deploy controller. The window is
 # built from those parts in `_routing_timeout_seconds`.
 ROUTING_SERVICES = ("dfe-engine", "dfe-receiver", "dfe-loader")
-# One name for every run, so a run that dies before its cleanup leaves at most one set behind, which the next run removes first.
-ROUTING_SOURCE = "postroute"
+# False keeps a password POST rotates in this process alone: the e2e suite's engines are thrown away, and .env is the found stack's.
+RECORD_ROTATION = True
+# The services `make` was given in SERVICES, set by the post target, empty for the whole profile.
+POST_SERVICES_ENV = "DFE_POST_SERVICES"
+# A name of the run's own, so the claim only ever removes a source it created. Lowercase letters and digits, which both the engine and an unquoted ClickHouse identifier accept.
+ROUTING_SOURCE_PREFIX = "postroute"
+ROUTING_SOURCE_PATTERN = re.compile(rf"{ROUTING_SOURCE_PREFIX}[0-9a-f]{{8}}")
+# A routing source or table of that shape this old was left by a run that died before its cleanup. Well past the longest a run holds one, as two runs can overlap on one stack.
+ROUTING_STALE_AFTER_SECONDS = 3600
 RECEIVER_CONFIG_POLL_SECONDS = 5.0
 ROUTING_INTERVAL_SECONDS = 3.0
 # The engine deletes a source's two topics before it answers, each delete allowed
@@ -890,13 +898,8 @@ def _otel_reporting_services(*, database: str) -> set[str]:
     return {line.strip() for line in raw.splitlines() if line.strip()}
 
 
-def _unapplied_instances(*, services: list[str]) -> set[str]:
-    """The per-source services among these that this compose project holds no container for, running or stopped."""
-    # An index a profile switch left behind names instances this profile does not run.
-    declared = set(instances.services(instances=instances.declared())) & set(services)
-    if not (declared):
-        return set()
-    # Without the container list none can be shown missing, so every instance stays expected.
+def _compose_services() -> set[str] | None:
+    """The services this compose project holds a container for, running or stopped, or None when compose cannot say."""
     try:
         result = subprocess.run(
             args=["docker", "compose", "ps", "--all", "--format", "{{.Service}}"],
@@ -908,10 +911,38 @@ def _unapplied_instances(*, services: list[str]) -> set[str]:
             timeout=API_EXEC_MARGIN_SECONDS,
         )
     except (OSError, subprocess.TimeoutExpired):
-        return set()
+        return None
     if result.returncode != 0:
+        return None
+    return set(result.stdout.split())
+
+
+def _resolved_services() -> list[str]:
+    """The profile's services, narrowed to those this project started when `make` was given SERVICES.
+
+    `make ci SERVICES=...` starts the named services and their dependencies, so a
+    claim over the rest of the profile would wait on a container nobody started.
+    """
+    services = _profile_services()
+    if not (os.environ.get(POST_SERVICES_ENV, "").strip()):
+        return services
+    started = _compose_services()
+    if started is None:
+        return services
+    return [service for service in services if service in started]
+
+
+def _unapplied_instances(*, services: list[str]) -> set[str]:
+    """The per-source services among these that this compose project holds no container for, running or stopped."""
+    # An index a profile switch left behind names instances this profile does not run.
+    declared = set(instances.services(instances=instances.declared())) & set(services)
+    if not (declared):
         return set()
-    return declared - set(result.stdout.split())
+    # Without the container list none can be shown missing, so every instance stays expected.
+    started = _compose_services()
+    if started is None:
+        return set()
+    return declared - started
 
 
 def _verify_service_metrics(*, database: str) -> int:
@@ -1185,11 +1216,20 @@ def _verify_loader_subscription() -> Claim:
     return HELD
 
 
-def _create_routed_source(*, base: str, name: str, token: str) -> str:
-    """Create and deploy a source with a rule of its own. Returns '' or the fault.
+def _routing_source_name() -> str:
+    """Return a routing source name no other run or operator holds."""
+    return f"{ROUTING_SOURCE_PREFIX}{os.urandom(4).hex()}"
+
+
+def _create_routed_source(*, base: str, name: str, token: str) -> tuple[bool, str]:
+    """Create and deploy a source with a rule of its own.
 
     The deploy is what makes the source live: it creates the landing table, ensures
     the topic and pushes the compiled routing into the apps' overlays.
+
+    Returns:
+        Whether the engine stored the source, which makes it this run's to remove,
+        and '' or the fault.
     """
     status, body = _api_post_json(
         f"{base}/sources",
@@ -1202,16 +1242,21 @@ def _create_routed_source(*, base: str, name: str, token: str) -> str:
         },
         token=token,
     )
+    # 202 is stored with the apps not yet following, which still makes it ours.
+    created = status in (201, 202)
     if status != 201:
-        return f"POST /sources returned HTTP {status}: {body}"
+        return created, f"POST /sources returned HTTP {status}: {body}"
     status, body = _api_post_json(f"{base}/sources/{name}/deploy", {}, token=token)
     if status != 200 or not (isinstance(body, dict) and body.get("applied")):
-        return f"POST /sources/{name}/deploy returned HTTP {status}: {body}"
+        return created, f"POST /sources/{name}/deploy returned HTTP {status}: {body}"
     if body.get("apps_sync_error"):
-        return f"the apps could not follow the source: {body['apps_sync_error']}"
+        return (
+            created,
+            f"the apps could not follow the source: {body['apps_sync_error']}",
+        )
     for hint in body.get("restart_required") or []:
         _print(msg=f"      {hint}")
-    return ""
+    return created, ""
 
 
 def _verify_routing_applied(*, database: str) -> Claim:
@@ -1247,13 +1292,14 @@ def _verify_routing_applied(*, database: str) -> Claim:
         )
         return Claim(asserted=True, failed=1)
 
-    name = ROUTING_SOURCE
-    _remove_routed_source(base=base, database=database, name=name, token=token)
+    _sweep_stale_routing(base=base, database=database, token=token)
+    name = _routing_source_name()
     _print(msg=f"Creating source {name!r} and posting one event that matches its rule")
-    fault = _create_routed_source(base=base, name=name, token=token)
+    created, fault = _create_routed_source(base=base, name=name, token=token)
     if fault:
         _print(msg=f"FAIL  {fault}")
-        _remove_routed_source(base=base, database=database, name=name, token=token)
+        if created:
+            _remove_routed_source(base=base, database=database, name=name, token=token)
         return Claim(asserted=True, failed=1)
 
     try:
@@ -1281,8 +1327,13 @@ def _remove_routed_source(*, base: str, database: str, name: str, token: str) ->
     if not (removed):
         _print(msg=f"      note: {database}.{name} is kept while its source remains")
         return
-    # Only a name this claim makes, so the drop can never reach another table.
-    if name != ROUTING_SOURCE:
+    _drop_routing_table(database=database, name=name)
+
+
+def _drop_routing_table(*, database: str, name: str) -> None:
+    """Drop one routing table, saying so when it does not go."""
+    # Only a name of the shape this claim makes, so the drop can never reach another table.
+    if not (ROUTING_SOURCE_PATTERN.fullmatch(name)):
         return
     dropped, answer = ch_execute(
         f"DROP TABLE IF EXISTS {database}.{name} SYNC",
@@ -1291,6 +1342,66 @@ def _remove_routed_source(*, base: str, database: str, name: str, token: str) ->
     if not (dropped):
         refusal = answer.splitlines()[0] if answer else "no answer"
         _print(msg=f"      note: {database}.{name} was not dropped: {refusal}")
+
+
+def _stale(*, at: float | None, now: float) -> bool:
+    """Whether a routing resource written at `at` was left by a run that died."""
+    return at is not None and now - at >= ROUTING_STALE_AFTER_SECONDS
+
+
+def _routing_sources(*, base: str, token: str) -> dict[str, float | None] | None:
+    """Every routing source the engine holds, with when it was last written, or None when it cannot say."""
+    try:
+        status, body = _api_get_json(
+            f"{base}/sources?search={ROUTING_SOURCE_PREFIX}&per_page=-1", token=token
+        )
+    except ApiUnreachable:
+        return None
+    if status != 200 or not (isinstance(body, dict)):
+        return None
+    sources: dict[str, float | None] = {}
+    for item in body.get("items") or []:
+        name = str(item.get("name") or "")
+        if not (ROUTING_SOURCE_PATTERN.fullmatch(name)):
+            continue
+        try:
+            sources[name] = datetime.datetime.fromisoformat(
+                str(item.get("updated_at") or "")
+            ).timestamp()
+        except ValueError:
+            sources[name] = None
+    return sources
+
+
+def _sweep_stale_routing(*, base: str, database: str, token: str) -> None:
+    """Remove the routing sources and tables runs that died before their cleanup left.
+
+    A source or table is swept only when its name has the claim's own shape and it
+    is older than ROUTING_STALE_AFTER_SECONDS, so another run's live source stays.
+    """
+    sources = _routing_sources(base=base, token=token)
+    if sources is None:
+        _print(
+            msg="      note: the engine did not list its sources, so none were swept"
+        )
+        return
+    now = time.time()
+    for name, at in sorted(sources.items()):
+        if _stale(at=at, now=now):
+            _print(msg=f"      removing source {name!r}, left by an earlier run")
+            _remove_routed_source(base=base, database=database, name=name, token=token)
+    rows = ch_query(
+        "SELECT name, toUnixTimestamp(metadata_modification_time) FROM system.tables "
+        f"WHERE database = '{escape_literal(database)}' "
+        f"AND match(name, '^{ROUTING_SOURCE_PATTERN.pattern}$')"
+    )
+    for row in rows.splitlines():
+        name, _, at = row.partition("\t")
+        if name in sources or not (at.strip().isdigit()):
+            continue
+        if _stale(at=float(at), now=now):
+            _print(msg=f"      dropping {database}.{name}, left by an earlier run")
+            _drop_routing_table(database=database, name=name)
 
 
 def _routing_timeout_seconds(*, bus: bool) -> float:
@@ -1573,6 +1684,17 @@ def _without_passwords(text: str, new: str, current: str) -> str:
     return masked.replace(current, "<current password>") if current else masked
 
 
+def _logs_in(*, base: str, username: str, password: str) -> bool:
+    """Whether `password` still logs `username` in, False when the engine does not answer."""
+    try:
+        token, status, _ = _request_token(
+            base=base, username=username, password=password
+        )
+    except ApiUnreachable:
+        return False
+    return status == 200 and bool(token)
+
+
 def _replace_issued_password(
     *, base: str, key: str, token: str, username: str, current: str
 ) -> Login:
@@ -1580,27 +1702,38 @@ def _replace_issued_password(
 
     The new password reaches .env BEFORE the engine is asked to take it, so a
     change the engine applied is never one nothing recorded. When the engine did
-    not take it, .env is put back as it was.
+    not take it, .env is put back as it was. With RECORD_ROTATION off, .env is
+    never touched and the new password lives in this process's environment.
     """
     replacement = _generate_secret(GENERATED_SECRETS[ADMIN_PASSWORD_KEY])
     dotenv = DOTENV_FILE.resolve()
-    try:
-        original = dotenv.read_text(encoding="utf-8")
-        _replace_file(
-            path=dotenv, text=_dotenv_with(text=original, key=key, value=replacement)
+    original = ""
+    kept = f"{DOTENV_FILE.name} keeps the new one as {key}"
+    if RECORD_ROTATION:
+        try:
+            original = dotenv.read_text(encoding="utf-8")
+            _replace_file(
+                path=dotenv,
+                text=_dotenv_with(text=original, key=key, value=replacement),
+            )
+        except OSError as error:
+            return Login(
+                "",
+                200,
+                username,
+                f"{username!r} must replace the password it was issued, and {key} cannot "
+                f"be recorded in {DOTENV_FILE.name} ({error.strerror}) -- nothing was changed",
+            )
+        _print(
+            msg=f"      {username!r} is on an issued password -- replacing it, with the new "
+            f"one recorded as {key} in {DOTENV_FILE.name}"
         )
-    except OSError as error:
-        return Login(
-            "",
-            200,
-            username,
-            f"{username!r} must replace the password it was issued, and {key} cannot "
-            f"be recorded in {DOTENV_FILE.name} ({error.strerror}) -- nothing was changed",
+    else:
+        kept = "this run keeps the new one in its own environment"
+        _print(
+            msg=f"      {username!r} is on an issued password -- replacing it for this "
+            f"run only, leaving {DOTENV_FILE.name} as it is"
         )
-    _print(
-        msg=f"      {username!r} is on an issued password -- replacing it, with the new "
-        f"one recorded as {key} in {DOTENV_FILE.name}"
-    )
 
     try:
         status, body = _api_post_json(
@@ -1629,15 +1762,31 @@ def _replace_issued_password(
     except ApiUnreachable as error:
         new_token, new_status, still_required, login_fault = "", 0, False, str(error)
 
+    if (
+        login_fault
+        and change_fault
+        and not (_logs_in(base=base, username=username, password=current))
+    ):
+        # Neither password is known to work, so the engine may hold the new one.
+        os.environ[key] = replacement
+        fault = (
+            f"{username!r} must replace the password it was issued, and neither the "
+            f"change nor a login settled which one the engine holds: {change_fault} -- "
+            f"{kept}"
+        )
+        if ACCESS_SUMMARY_FILE.is_file():
+            fault += f", and {ACCESS_SUMMARY_FILE.name} still holds the old one"
+        return Login("", 200, username, _without_passwords(fault, replacement, current))
     if login_fault and change_fault:
         restored = ""
-        try:
-            _replace_file(path=dotenv, text=original)
-        except OSError as error:
-            restored = (
-                f" -- and {DOTENV_FILE.name} could not be put back ({error.strerror}), "
-                f"so its {key} names a password the engine does not hold"
-            )
+        if RECORD_ROTATION:
+            try:
+                _replace_file(path=dotenv, text=original)
+            except OSError as error:
+                restored = (
+                    f" -- and {DOTENV_FILE.name} could not be put back ({error.strerror}), "
+                    f"so its {key} names a password the engine does not hold"
+                )
         fault = (
             f"{username!r} must replace the password it was issued and the engine did "
             f"not take the new one: {change_fault}{restored}"
@@ -1645,7 +1794,8 @@ def _replace_issued_password(
         return Login("", 200, username, _without_passwords(fault, replacement, current))
 
     os.environ[key] = replacement
-    _refresh_access_summary()
+    if RECORD_ROTATION:
+        _refresh_access_summary()
     if login_fault:
         fault = f"{username!r} replaced the password it was issued, but {login_fault}"
         return Login("", 200, username, _without_passwords(fault, replacement, current))
@@ -1656,10 +1806,12 @@ def _replace_issued_password(
             username,
             f"{username!r} took a new password and the engine still requires a change",
         )
-    _print(
-        msg=f"      {username!r} replaced the password it was issued -- {key} in "
-        f"{DOTENV_FILE.name} holds the new one"
+    held = (
+        f"{key} in {DOTENV_FILE.name} holds the new one"
+        if RECORD_ROTATION
+        else f"this run's environment holds the new one, and {DOTENV_FILE.name} is unchanged"
     )
+    _print(msg=f"      {username!r} replaced the password it was issued -- {held}")
     return Login(new_token, new_status, username, "")
 
 

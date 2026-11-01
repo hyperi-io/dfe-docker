@@ -54,6 +54,8 @@ ENGINE_SETTINGS = {
 }
 # Where a source's upload fixtures live, relative to the repo root
 FIXTURE_DIR = Path("tests") / "e2e"
+# Where dfe-engine writes each service's custom keys and each app's instance index (docker-compose.yml dfe-engine `volumes`)
+APP_ENV_MOUNT = "/app/app-env"
 # The service each engine restart hint names (dfe-engine appmgmt/appconfig.py APPLY_COMMAND)
 HINT_SERVICE = re.compile(r"SERVICES=(\S+)")
 LAND_SUFFIX = "_land"
@@ -335,11 +337,36 @@ def hinted_services(*, replies: Sequence[object]) -> list[str]:
     return named
 
 
-def indexed(*, sources: Sequence[Source]) -> dict[str, list[str]]:
-    """The sources dfe-engine's instance index lists now, by app, the shape scripts/instances.py writes a fragment from."""
+def app_env_volume(*, env_dir: Path) -> str:
+    """The mount giving dfe-engine `env_dir` as the tree it writes custom keys and instance indexes into."""
+    return f"{env_dir}:{APP_ENV_MOUNT}"
+
+
+def suite_env_override(*, compose_text: str, env_dir: Path) -> str:
+    """A compose override giving each app the custom keys in `env_dir` in place of the checkout's.
+
+    Each app's `env_file` list is restated with `!override`, the operator's own
+    env file kept and the engine-written `env/<app>.custom.env` moved to `env_dir`.
+    """
+    lines = ["services:"]
+    for name, paths in sorted(instances.committed_env_files(compose_text).items()):
+        if not (any(path.endswith(instances.CUSTOM_ENV_SUFFIX) for path in paths)):
+            continue
+        lines += [f"  {name}:", "    env_file: !override"]
+        for path in instances.env_files_in(paths, env_dir=env_dir):
+            lines += [f"      - path: {path}", "        required: false"]
+    return "\n".join(lines) + "\n"
+
+
+def indexed(
+    *, sources: Sequence[Source], env_dir: Path | None = None
+) -> dict[str, list[str]]:
+    """The sources dfe-engine's instance index in `env_dir` lists now, by app, the shape scripts/instances.py writes a fragment from."""
     found = {}
     for source in sources:
-        listed = instances.read_index(path=instances.index_file(service=source.app))
+        listed = instances.read_index(
+            path=instances.index_file(service=source.app, env_dir=env_dir)
+        )
         if source.name in listed:
             found.setdefault(source.app, []).append(source.name)
     return found

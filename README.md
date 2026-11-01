@@ -53,6 +53,7 @@ See [docs/architecture.md](docs/architecture.md).
 - Python 3
 - [`uv`](https://docs.astral.sh/uv/) - only for the seed targets (`make sources`, `make rules`, `make hunts`, `make events`), `make demo` and the e2e tests.
 - [`oras`](https://oras.land) - `make stack` and `make check-proxy` read the signed OCI stack-manifest through it. Not needed if you render from a local dfe-infra checkout (`DFE_INFRA_DIR`).
+- [`cosign`](https://docs.sigstore.dev/cosign/system_config/installation/) - optional. The same two targets check the manifest's signature with it, and run it as a digest-pinned container through Docker when it is not installed. `DFE_STACK_VERIFY=false` skips the check, and `DFE_STACK_SIGNER_IDENTITY` and `DFE_STACK_SIGNER_ISSUER` name the signer of a manifest repo of your own. All three are read from the environment, then `.env`.
 - [`gh`](https://cli.github.com), logged in - only for `DFE_STACK_REPIN_IMAGES=1`,
   which reads each component's GitHub releases through it.
 

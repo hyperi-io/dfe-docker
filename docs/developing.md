@@ -53,8 +53,10 @@ re-run. It does two things beyond the copy:
 `make stack VERSION=X.Y.Z[-rc.N]` writes the `*_VERSION` pins into `.env` from the
 DFE stack SSoT. It uses a local dfe-infra checkout only when `DFE_INFRA_DIR`
 names one (`scripts/dfe-stack render --target docker --stack VERSION`), and
-otherwise does an `oras pull` of `ghcr.io/hyperi-io/dfe-stack-manifest:VERSION`.
-If neither is available it fails loudly -- there is no silent `latest`. Only
+otherwise resolves `ghcr.io/hyperi-io/dfe-stack-manifest:VERSION` to a digest,
+checks with `cosign verify` that dfe-infra's release workflow signed it, and
+pulls that digest with `oras`. With no `cosign` installed, it runs cosign's
+digest-pinned image through Docker. If neither is available it fails loudly -- there is no silent `latest`. Only
 `*_VERSION` keys are rewritten; your ports, hosts, credentials and profile
 survive the merge.
 
@@ -329,6 +331,13 @@ make test-e2e E2E_TESTS="simple-receiver-to-loader-grpc simple-receiver-to-loade
 (`tests/e2e/data/events.jsonl`), the mode (`ci` builds `--no-cache --pull`; `dev`
 also loads the override file) and `persistent_services` -- only ClickHouse
 survives between tests, so each test runs its own config against a fresh broker.
+The test stacks run as a compose project of their own, `<project>-e2e`, with
+`e2e-` before every container name, so no test reaches the volumes of the stack
+it found. Its engine writes custom keys and instance indexes under
+`.tmp/e2e/<run>/env` rather than `env/`, and its apps read their custom keys
+from there too. That project and its volumes are
+removed when the run ends, and again when the next run starts, in case a killed
+run left them.
 Each entry under `tests:` names a `service_profiles.yaml` profile, optionally
 `expected_topics` (created and cleaned per run, then verified) and
 `config_overrides` keyed by service name.
@@ -350,11 +359,11 @@ files from an earlier run never count.
 
 The data file goes to the ingest edge 16 requests at a time. The receiver answers each request once the loader has flushed it, so one at a time costs a flush per event.
 
-The suite stops whatever stack the project is running, so it reads the project first, along with the config hash compose gives each service from its files and environment at that moment. On every way out, a failure or a SIGTERM included, it starts each service that was running or had run to completion again, from the compose files it was started from. A last verdict fails if one comes back on a config hash other than the one compose gave at the start.
+The suite stops whatever stack the project is running, since both publish the same host ports, so it reads the project first, along with the config hash compose gives each service from its files and environment at that moment. On every way out, a failure or a SIGTERM included, it starts each service that was running or had run to completion again, from the compose files it was started from. A last verdict fails if one comes back on a config hash other than the one compose gave at the start.
 
 A container keeps the hash it was created with, so one whose `.env` or compose file has changed since is named in a warning and comes back on the current config. `make ci` leaves the engine that way whenever `make post` rotates the admin password into `.env`. Run the suite as the user that started the stack: `make` writes that user's GID into the engine's config, and under console TLS its UID and GID into both proxies', so another user shows up in that warning.
 
-Under [console TLS](configuration.md#console-tls-opt-in) each test's stack chains the fragments `make ci` does, the exposure opt-outs and container logs included. The console checks go to `https://<DFE_EXTERNAL_ORIGIN host>:<DFE_UI_PORT>` and verify its certificate by chain and name, against `DFE_PROXY_CA_BUNDLE` when a private CA signed it. A certificate that does not verify fails the check with the variable to change.
+Under [console TLS](configuration.md#console-tls-opt-in) each test's stack chains the fragments `make ci` does, the exposure opt-outs and container logs included. Its network takes the same-size subnet beside `DFE_NETWORK_SUBNET`, so a found network left behind cannot block it. The console checks go to `https://<DFE_EXTERNAL_ORIGIN host>:<DFE_UI_PORT>` and verify its certificate by chain and name, against `DFE_PROXY_CA_BUNDLE` when a private CA signed it. A certificate that does not verify fails the check with the variable to change.
 
 Two things about the runner worth knowing before you debug it:
 

@@ -17,6 +17,7 @@ The repin itself is asserted against fixed releases and digests, so what is pinn
 `--print KEY` is how `make check-proxy` finds the Envoy on a checkout with no `.env`, so it runs on the same stand-in `oras` and must leave `.env` as it found it.
 """
 
+import hashlib
 import json
 import re
 import shutil
@@ -190,23 +191,51 @@ def test_the_discovery_words_are_the_two_the_makefile_documents() -> None:
     assert set(_registry.DISCOVERY_WORDS.values()) <= set(_registry.PRERELEASES)
 
 
-# A stand-in for `oras` at the process boundary: it answers `repo tags` and
-# `pull` from fixed data, logs every argv, and refuses any other call.
+# Stand-ins for `oras` and `cosign` at the process boundary. `oras` answers
+# `repo tags`, `resolve` and `pull` from fixed data, and pulls by digest only.
+# `cosign` passes a verify unless the test has written a refusal. Each logs
+# every argv to one shared log, and refuses any other call.
 _FAKE_ORAS = """#!{python}
-import json, pathlib, sys
+import hashlib, json, pathlib, sys
 args = sys.argv[1:]
 with open({log!r}, "a", encoding="utf-8") as fh:
-    fh.write(json.dumps(args) + "\\n")
+    fh.write(json.dumps(["oras", *args]) + "\\n")
+tags = pathlib.Path({tags!r})
 if args[:2] == ["repo", "tags"]:
-    print(pathlib.Path({tags!r}).read_text(encoding="utf-8"))
-elif args[:1] == ["pull"]:
+    print(tags.read_text(encoding="utf-8"))
+elif args[:3] == ["manifest", "fetch", "--descriptor"]:
+    tag = args[-1].rsplit(":", 1)[1]
+    print(json.dumps({{"digest": "sha256:" + hashlib.sha256(tag.encode()).hexdigest()}}))
+elif args[:1] == ["pull"] and "@sha256:" in args[-1]:
+    digest = args[-1].rsplit("@", 1)[1]
+    names = [t for t in tags.read_text(encoding="utf-8").split() if not t.startswith("sha256-")]
+    version = next(t for t in names if "sha256:" + hashlib.sha256(t.encode()).hexdigest() == digest)
     out = pathlib.Path(args[args.index("--output") + 1])
-    version = args[-1].rsplit(":", 1)[1]
     fragment = pathlib.Path({fragment!r}).read_text(encoding="utf-8")
     (out / f"dfe-env-{{version}}.txt").write_text(fragment, encoding="utf-8")
 else:
     sys.exit(2)
 """
+
+# `docker` stands in the same way, accepting only a `run` of the pinned cosign image.
+_FAKE_COSIGN = """#!{python}
+import json, pathlib, sys
+args = sys.argv[1:]
+with open({log!r}, "a", encoding="utf-8") as fh:
+    fh.write(json.dumps([{tool!r}, *args]) + "\\n")
+refusal = pathlib.Path({refusal!r})
+lead = {lead!r}
+if args[: len(lead)] != lead or args[len(lead) : len(lead) + 1] != ["verify"]:
+    sys.exit(2)
+if refusal.exists():
+    print(refusal.read_text(encoding="utf-8"), file=sys.stderr)
+    sys.exit(1)
+"""
+
+
+def _digest_of(tag: str) -> str:
+    return "sha256:" + hashlib.sha256(tag.encode()).hexdigest()
+
 
 # The stack-manifest's real tag shape: semver beside `sha256-<digest>` tags.
 _MANIFEST_TAGS = "2.1.0\n2.2.0-rc.12\nsha256-99ba56dfc0cc\n2.2.0-rc.13\n"
@@ -222,24 +251,31 @@ _FRAGMENT = (
 def anonymous_oras(
     tmp_path: Path, dotenv: Path, monkeypatch: pytest.MonkeyPatch
 ) -> Path:
-    """A PATH holding only a fake `oras`, no `gh`, no GitHub token; returns its call log."""
+    """A PATH holding only a fake `oras` and `cosign`, no `gh`, no GitHub token; returns their call log."""
     bindir = tmp_path / "bin"
     bindir.mkdir()
     log = tmp_path / "oras-calls.jsonl"
     (tmp_path / "tags.txt").write_text(_MANIFEST_TAGS, encoding="utf-8")
     (tmp_path / "fragment.txt").write_text(_FRAGMENT, encoding="utf-8")
-    oras = bindir / "oras"
-    oras.write_text(
-        _FAKE_ORAS.format(
+    stand_ins = {
+        "oras": _FAKE_ORAS.format(
             python=sys.executable,
             log=str(log),
             tags=str(tmp_path / "tags.txt"),
             fragment=str(tmp_path / "fragment.txt"),
         ),
-        encoding="utf-8",
-        newline="\n",
-    )
-    oras.chmod(0o755)
+        "cosign": _FAKE_COSIGN.format(
+            python=sys.executable,
+            lead=[],
+            log=str(log),
+            refusal=str(tmp_path / "cosign-refuses.txt"),
+            tool="cosign",
+        ),
+    }
+    for name, script in stand_ins.items():
+        path = bindir / name
+        path.write_text(script, encoding="utf-8", newline="\n")
+        path.chmod(0o755)
     monkeypatch.setenv("PATH", str(bindir))
     for name in (
         "GH_TOKEN",
@@ -248,6 +284,9 @@ def anonymous_oras(
         "DFE_INFRA_DIR",
         "DFE_STACK_MANIFEST_REPO",
         "DFE_STACK_ENV_MEMBER",
+        stack.VERIFY_ENV,
+        stack.SIGNER_IDENTITY_ENV,
+        stack.SIGNER_ISSUER_ENV,
         stack.REPIN_ENV,
     ):
         monkeypatch.delenv(name, raising=False)
@@ -274,8 +313,16 @@ def test_a_discovery_word_resolves_with_no_gh_and_no_token(
 
     log = anonymous_oras.read_text(encoding="utf-8")
     calls = [json.loads(line) for line in log.splitlines()]
-    assert [call[:2] for call in calls] == [["repo", "tags"], ["pull", "--output"]]
+    pinned = f"{_registry.DEFAULT_MANIFEST_REPO}@{_digest_of(expected)}"
+    assert [call[:3] for call in calls] == [
+        ["oras", "repo", "tags"],
+        ["oras", "manifest", "fetch"],
+        ["cosign", "verify", "--certificate-identity"],
+        ["oras", "pull", "--output"],
+    ]
     assert calls[1][-1] == f"{_registry.DEFAULT_MANIFEST_REPO}:{expected}"
+    assert calls[2][-1] == pinned
+    assert calls[3][-1] == pinned
     written = dotenv.read_text(encoding="utf-8")
     assert f"DFE_ENGINE_VERSION=v1.22.8@sha256:{'a' * 64}" in written
     assert f"DFE_STACK_VERSION={word}  # resolved {expected}\n" in written
@@ -335,8 +382,11 @@ def test_print_writes_one_pin_value_and_leaves_env_alone(
     assert capsys.readouterr().out == f"v1.22.8@sha256:{'a' * 64}\n"
     log = anonymous_oras.read_text(encoding="utf-8")
     calls = [json.loads(s=line) for line in log.splitlines()]
+    pinned = f"{_registry.DEFAULT_MANIFEST_REPO}@{_digest_of('2.2.0-rc.13')}"
     assert [call[-1] for call in calls] == [
-        f"{_registry.DEFAULT_MANIFEST_REPO}:2.2.0-rc.13"
+        f"{_registry.DEFAULT_MANIFEST_REPO}:2.2.0-rc.13",
+        pinned,
+        pinned,
     ]
     assert dotenv.read_text(encoding="utf-8") == "HTTP_PORT=8080\n"
 
@@ -359,7 +409,12 @@ def test_print_with_no_version_reads_the_stack_the_example_dial_pins(
     assert capsys.readouterr().out == f"25.8@sha256:{'b' * 64}\n"
     log = anonymous_oras.read_text(encoding="utf-8")
     calls = [json.loads(s=line) for line in log.splitlines()]
-    assert [call[-1] for call in calls] == [f"{_registry.DEFAULT_MANIFEST_REPO}:2.1.0"]
+    pinned = f"{_registry.DEFAULT_MANIFEST_REPO}@{_digest_of('2.1.0')}"
+    assert [call[-1] for call in calls] == [
+        f"{_registry.DEFAULT_MANIFEST_REPO}:2.1.0",
+        pinned,
+        pinned,
+    ]
 
 
 def test_print_refuses_a_key_the_stack_does_not_pin(
@@ -384,3 +439,190 @@ def test_the_committed_dial_pins_a_stack_version() -> None:
     assert re.fullmatch(
         pattern=r"\d+\.\d+\.\d+(-[0-9A-Za-z.]+)?", string=stack._dial_pin()
     )
+
+
+def _calls(log: Path) -> list[list[str]]:
+    return [json.loads(line) for line in log.read_text(encoding="utf-8").splitlines()]
+
+
+# How each runner starts cosign: the one on PATH, else the pinned image through docker.
+_RUNNERS = {
+    "path": ["cosign"],
+    "container": ["docker", "run", "--rm", stack.COSIGN_IMAGE],
+}
+
+
+def _use_runner(*, runner: str, tmp_path: Path) -> None:
+    """Leave cosign on PATH, or swap it for a docker that runs only the pinned image."""
+    if runner == "path":
+        return
+    bindir = tmp_path / "bin"
+    (bindir / "cosign").unlink()
+    docker = bindir / "docker"
+    docker.write_text(
+        _FAKE_COSIGN.format(
+            python=sys.executable,
+            lead=_RUNNERS["container"][1:],
+            log=str(tmp_path / "oras-calls.jsonl"),
+            refusal=str(tmp_path / "cosign-refuses.txt"),
+            tool="docker",
+        ),
+        encoding="utf-8",
+        newline="\n",
+    )
+    docker.chmod(0o755)
+
+
+@pytest.mark.parametrize("runner", sorted(_RUNNERS))
+def test_the_manifest_is_verified_against_the_release_workflow_identity(
+    anonymous_oras: Path, monkeypatch: pytest.MonkeyPatch, runner: str, tmp_path: Path
+) -> None:
+    """A signature by anyone else, or a re-pointed tag, must not become the pins, whichever runner checks it."""
+    _use_runner(runner=runner, tmp_path=tmp_path)
+    monkeypatch.setattr(sys, "argv", ["stack.py", "2.2.0-rc.13"])
+
+    assert stack.main() == 0
+
+    lead = _RUNNERS[runner]
+    verify = next(call for call in _calls(anonymous_oras) if call[0] == lead[0])
+    assert verify == [
+        *lead,
+        "verify",
+        "--certificate-identity",
+        stack.DEFAULT_SIGNER_IDENTITY,
+        "--certificate-oidc-issuer",
+        stack.DEFAULT_SIGNER_ISSUER,
+        f"{_registry.DEFAULT_MANIFEST_REPO}@{_digest_of('2.2.0-rc.13')}",
+    ]
+
+
+@pytest.mark.parametrize("runner", sorted(_RUNNERS))
+def test_a_manifest_that_fails_verification_is_never_pulled(
+    anonymous_oras: Path,
+    capsys: pytest.CaptureFixture[str],
+    dotenv: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    runner: str,
+    tmp_path: Path,
+) -> None:
+    _use_runner(runner=runner, tmp_path=tmp_path)
+    (tmp_path / "cosign-refuses.txt").write_text("no matching signatures", "utf-8")
+    monkeypatch.setattr(sys, "argv", ["stack.py", "2.2.0-rc.13"])
+
+    assert stack.main() == 1
+
+    assert "no matching signatures" in capsys.readouterr().err
+    assert all(call[:2] != ["oras", "pull"] for call in _calls(anonymous_oras))
+    assert dotenv.read_text(encoding="utf-8") == "HTTP_PORT=8080\n"
+
+
+@pytest.mark.parametrize(
+    ("verify", "pulled"),
+    [
+        pytest.param("", False, id="refused"),
+        pytest.param("false", True, id="opted-out"),
+    ],
+)
+def test_a_host_without_cosign_or_docker_pulls_only_when_verification_is_off(
+    anonymous_oras: Path,
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    verify: str,
+    pulled: bool,
+) -> None:
+    (tmp_path / "bin" / "cosign").unlink()
+    if verify:
+        monkeypatch.setenv(stack.VERIFY_ENV, verify)
+    monkeypatch.setattr(sys, "argv", ["stack.py", "2.2.0-rc.13"])
+
+    assert stack.main() == (0 if pulled else 1)
+
+    err = capsys.readouterr().err
+    assert stack.VERIFY_ENV in err
+    assert (
+        any(call[:2] == ["oras", "pull"] for call in _calls(anonymous_oras)) == pulled
+    )
+
+
+@pytest.mark.parametrize(
+    ("dotenv_line", "environ", "pulled"),
+    [
+        pytest.param(f"{stack.VERIFY_ENV}=false", {}, True, id="dotenv-off"),
+        pytest.param(
+            f"{stack.VERIFY_ENV}=false",
+            {stack.VERIFY_ENV: "true"},
+            False,
+            id="env-wins",
+        ),
+        pytest.param("", {}, False, id="unset"),
+    ],
+)
+def test_the_verify_setting_is_read_from_dotenv_under_the_environment(
+    anonymous_oras: Path,
+    dotenv: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    dotenv_line: str,
+    environ: dict[str, str],
+    pulled: bool,
+) -> None:
+    """`make` reads .env without exporting it, so stack.py reads the file itself."""
+    (tmp_path / "bin" / "cosign").unlink()
+    dotenv.write_text(f"HTTP_PORT=8080\n{dotenv_line}\n", encoding="utf-8")
+    for key, value in environ.items():
+        monkeypatch.setenv(key, value)
+    monkeypatch.setattr(
+        sys, "argv", ["stack.py", "--print", "CLICKHOUSE_VERSION", "2.2.0-rc.13"]
+    )
+
+    assert stack.main() == (0 if pulled else 1)
+    assert (
+        any(call[:2] == ["oras", "pull"] for call in _calls(anonymous_oras)) == pulled
+    )
+
+
+def test_a_signer_named_in_dotenv_is_the_one_verified(
+    anonymous_oras: Path, dotenv: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    identity = (
+        "https://github.com/example/stack/.github/workflows/release.yml@refs/heads/main"
+    )
+    dotenv.write_text(
+        f"{stack.SIGNER_IDENTITY_ENV}={identity}\n"
+        f"{stack.SIGNER_ISSUER_ENV}=https://issuer.example\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(
+        sys, "argv", ["stack.py", "--print", "CLICKHOUSE_VERSION", "2.2.0-rc.13"]
+    )
+
+    assert stack.main() == 0
+
+    verify = next(call for call in _calls(anonymous_oras) if call[0] == "cosign")
+    assert verify[2:6] == [
+        "--certificate-identity",
+        identity,
+        "--certificate-oidc-issuer",
+        "https://issuer.example",
+    ]
+
+
+def test_a_refused_signature_names_the_ref_the_signer_and_the_escape(
+    anonymous_oras: Path,
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    (tmp_path / "cosign-refuses.txt").write_text("no matching signatures", "utf-8")
+    monkeypatch.setattr(sys, "argv", ["stack.py", "2.2.0-rc.13"])
+
+    assert stack.main() == 1
+
+    err = capsys.readouterr().err
+    pinned = f"{_registry.DEFAULT_MANIFEST_REPO}@{_digest_of('2.2.0-rc.13')}"
+    assert (
+        f"could not verify {pinned} against {stack.DEFAULT_SIGNER_IDENTITY}: "
+        "no matching signatures"
+    ) in err
+    assert f"{stack.VERIFY_ENV}=false" in err

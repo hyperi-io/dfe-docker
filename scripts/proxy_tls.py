@@ -50,7 +50,7 @@ _P384_KEY = (
     "-sha384",
 )
 # Private (RFC 1918) space only, so the pinned network can never shadow a routable address.
-_PRIVATE = tuple(
+PRIVATE_BLOCKS = tuple(
     ipaddress.IPv4Network(block)
     for block in ("10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16")
 )
@@ -224,7 +224,7 @@ def derive(*, subnet: str) -> tuple[str, str]:
     Raises ValueError for anything but the network address of a private /16 to /24.
     """
     network = ipaddress.IPv4Network(subnet)
-    if not (any(network.subnet_of(block) for block in _PRIVATE)):
+    if not (any(network.subnet_of(block) for block in PRIVATE_BLOCKS)):
         raise ValueError(
             f"{network} is outside private address space (10.0.0.0/8, 172.16.0.0/12 or 192.168.0.0/16)"
         )

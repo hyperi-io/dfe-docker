@@ -474,6 +474,7 @@ def test_the_e2e_suites_take_the_exposure_opt_outs_under_tls(
 
     assert result.returncode == 0, result.stderr
     assert _e2e_chain(stdout=result.stdout) == [
+        "docker-compose.unpublish-hyperdx-embed.yml",
         "docker-compose.unpublish-kafbat.yml",
         "docker-compose.unpublish-hyperdx.yml",
         "docker-compose.tls.yml",

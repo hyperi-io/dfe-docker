@@ -402,7 +402,9 @@ services:
   #
   # An app that cannot emit must not wedge the engine. scalo exits non-zero when
   # it fails to WRITE, so the command wraps the call and logs instead, and the
-  # engine's depends_on carries `required: false` on top of that.
+  # engine's depends_on carries `required: false` on top of that. It emits into
+  # <app>.new and swaps that in whole, and a failure removes the last release's
+  # contract too, since the volume outlives it.
   #
   # source.json names the ref that produced the directory: a contract is a
   # property of one digest and none of the four files says which.
@@ -428,11 +430,14 @@ services:
     # A LIST with one element, for the reason dlq-init's command gives.
     command:
       - |
-        if dfe-archiver config-schema --dir /app/content/contract/dfe-archiver; then
+        rm -rf /app/content/contract/dfe-archiver.new
+        if dfe-archiver config-schema --dir /app/content/contract/dfe-archiver.new &&
           printf '{"app":"dfe-archiver","ref":"%s","emitted_at":"%s"}\n' \
             "$$CONTRACT_REF" "$$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
-            > /app/content/contract/dfe-archiver/source.json
+            > /app/content/contract/dfe-archiver.new/source.json; then
+          rm -rf /app/content/contract/dfe-archiver && mv /app/content/contract/dfe-archiver.new /app/content/contract/dfe-archiver
         else
+          rm -rf /app/content/contract/dfe-archiver.new /app/content/contract/dfe-archiver
           echo "contract: dfe-archiver emitted nothing, so the engine reports its contract absent" >&2
         fi
     volumes:
@@ -453,11 +458,14 @@ services:
       CONTRACT_REF: ${IMAGE_REGISTRY:-ghcr.io/hyperi-io}/dfe-fetcher:${DFE_FETCHER_VERSION:-}
     command:
       - |
-        if dfe-fetcher config-schema --dir /app/content/contract/dfe-fetcher; then
+        rm -rf /app/content/contract/dfe-fetcher.new
+        if dfe-fetcher config-schema --dir /app/content/contract/dfe-fetcher.new &&
           printf '{"app":"dfe-fetcher","ref":"%s","emitted_at":"%s"}\n' \
             "$$CONTRACT_REF" "$$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
-            > /app/content/contract/dfe-fetcher/source.json
+            > /app/content/contract/dfe-fetcher.new/source.json; then
+          rm -rf /app/content/contract/dfe-fetcher && mv /app/content/contract/dfe-fetcher.new /app/content/contract/dfe-fetcher
         else
+          rm -rf /app/content/contract/dfe-fetcher.new /app/content/contract/dfe-fetcher
           echo "contract: dfe-fetcher emitted nothing, so the engine reports its contract absent" >&2
         fi
     volumes:
@@ -478,11 +486,14 @@ services:
       CONTRACT_REF: ${IMAGE_REGISTRY:-ghcr.io/hyperi-io}/dfe-loader:${DFE_LOADER_VERSION:-}
     command:
       - |
-        if dfe-loader config-schema --dir /app/content/contract/dfe-loader; then
+        rm -rf /app/content/contract/dfe-loader.new
+        if dfe-loader config-schema --dir /app/content/contract/dfe-loader.new &&
           printf '{"app":"dfe-loader","ref":"%s","emitted_at":"%s"}\n' \
             "$$CONTRACT_REF" "$$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
-            > /app/content/contract/dfe-loader/source.json
+            > /app/content/contract/dfe-loader.new/source.json; then
+          rm -rf /app/content/contract/dfe-loader && mv /app/content/contract/dfe-loader.new /app/content/contract/dfe-loader
         else
+          rm -rf /app/content/contract/dfe-loader.new /app/content/contract/dfe-loader
           echo "contract: dfe-loader emitted nothing, so the engine reports its contract absent" >&2
         fi
     volumes:
@@ -503,11 +514,14 @@ services:
       CONTRACT_REF: ${IMAGE_REGISTRY:-ghcr.io/hyperi-io}/dfe-receiver:${DFE_RECEIVER_VERSION:-}
     command:
       - |
-        if dfe-receiver config-schema --dir /app/content/contract/dfe-receiver; then
+        rm -rf /app/content/contract/dfe-receiver.new
+        if dfe-receiver config-schema --dir /app/content/contract/dfe-receiver.new &&
           printf '{"app":"dfe-receiver","ref":"%s","emitted_at":"%s"}\n' \
             "$$CONTRACT_REF" "$$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
-            > /app/content/contract/dfe-receiver/source.json
+            > /app/content/contract/dfe-receiver.new/source.json; then
+          rm -rf /app/content/contract/dfe-receiver && mv /app/content/contract/dfe-receiver.new /app/content/contract/dfe-receiver
         else
+          rm -rf /app/content/contract/dfe-receiver.new /app/content/contract/dfe-receiver
           echo "contract: dfe-receiver emitted nothing, so the engine reports its contract absent" >&2
         fi
     volumes:
@@ -528,11 +542,14 @@ services:
       CONTRACT_REF: ${IMAGE_REGISTRY:-ghcr.io/hyperi-io}/dfe-transform-elastic:${DFE_TRANSFORM_ELASTIC_VERSION:-}
     command:
       - |
-        if dfe-transform-elastic config-schema --dir /app/content/contract/dfe-transform-elastic; then
+        rm -rf /app/content/contract/dfe-transform-elastic.new
+        if dfe-transform-elastic config-schema --dir /app/content/contract/dfe-transform-elastic.new &&
           printf '{"app":"dfe-transform-elastic","ref":"%s","emitted_at":"%s"}\n' \
             "$$CONTRACT_REF" "$$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
-            > /app/content/contract/dfe-transform-elastic/source.json
+            > /app/content/contract/dfe-transform-elastic.new/source.json; then
+          rm -rf /app/content/contract/dfe-transform-elastic && mv /app/content/contract/dfe-transform-elastic.new /app/content/contract/dfe-transform-elastic
         else
+          rm -rf /app/content/contract/dfe-transform-elastic.new /app/content/contract/dfe-transform-elastic
           echo "contract: dfe-transform-elastic emitted nothing, so the engine reports its contract absent" >&2
         fi
     volumes:
@@ -553,11 +570,14 @@ services:
       CONTRACT_REF: ${IMAGE_REGISTRY:-ghcr.io/hyperi-io}/dfe-transform-vector:${DFE_TRANSFORM_VECTOR_VERSION:-}
     command:
       - |
-        if dfe-transform-vector config-schema --dir /app/content/contract/dfe-transform-vector; then
+        rm -rf /app/content/contract/dfe-transform-vector.new
+        if dfe-transform-vector config-schema --dir /app/content/contract/dfe-transform-vector.new &&
           printf '{"app":"dfe-transform-vector","ref":"%s","emitted_at":"%s"}\n' \
             "$$CONTRACT_REF" "$$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
-            > /app/content/contract/dfe-transform-vector/source.json
+            > /app/content/contract/dfe-transform-vector.new/source.json; then
+          rm -rf /app/content/contract/dfe-transform-vector && mv /app/content/contract/dfe-transform-vector.new /app/content/contract/dfe-transform-vector
         else
+          rm -rf /app/content/contract/dfe-transform-vector.new /app/content/contract/dfe-transform-vector
           echo "contract: dfe-transform-vector emitted nothing, so the engine reports its contract absent" >&2
         fi
     volumes:
@@ -578,11 +598,14 @@ services:
       CONTRACT_REF: ${IMAGE_REGISTRY:-ghcr.io/hyperi-io}/dfe-transform-vrl:${DFE_TRANSFORM_VRL_VERSION:-}
     command:
       - |
-        if dfe-transform-vrl config-schema --dir /app/content/contract/dfe-transform-vrl; then
+        rm -rf /app/content/contract/dfe-transform-vrl.new
+        if dfe-transform-vrl config-schema --dir /app/content/contract/dfe-transform-vrl.new &&
           printf '{"app":"dfe-transform-vrl","ref":"%s","emitted_at":"%s"}\n' \
             "$$CONTRACT_REF" "$$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
-            > /app/content/contract/dfe-transform-vrl/source.json
+            > /app/content/contract/dfe-transform-vrl.new/source.json; then
+          rm -rf /app/content/contract/dfe-transform-vrl && mv /app/content/contract/dfe-transform-vrl.new /app/content/contract/dfe-transform-vrl
         else
+          rm -rf /app/content/contract/dfe-transform-vrl.new /app/content/contract/dfe-transform-vrl
           echo "contract: dfe-transform-vrl emitted nothing, so the engine reports its contract absent" >&2
         fi
     volumes:
@@ -1355,7 +1378,8 @@ services:
       # never covers it, so only DFE_UI_EXTERNAL=false takes it dark.
       - ${DFE_UI_BIND_HOST:-127.0.0.1}:${DFE_UI_PORT:-3000}:8080
       # HyperDX, re-served with frame-ancestors rewritten so the UI can iframe
-      # it. The app's own port stays infra class on the hyperdx service.
+      # it. The app's own port stays infra class on the hyperdx service, and
+      # HyperDX's flags drop this one too (docker-compose.unpublish-hyperdx-embed.yml).
       - ${DFE_UI_BIND_HOST:-127.0.0.1}:${DFE_HYPERDX_EMBED_PORT:-8091}:8091
     environment:
       # Every origin the console may be framed from, space-separated for the

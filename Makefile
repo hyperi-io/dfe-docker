@@ -252,6 +252,10 @@ endef
 
 UI_CHAIN :=
 UI_FLAGS :=
+# The console's HyperDX embed goes with HyperDX, auth or not. Chained before the DFE UI's own fragment, whose reset then drops the console port this one keeps.
+ifneq ($(HYPERDX_GATED),)
+    $(eval $(call chain_fragment,docker-compose.unpublish-hyperdx-embed.yml))
+endif
 ifeq ($(strip $(DFE_UI_EXTERNAL)),false)
     $(eval $(call chain_fragment,docker-compose.unpublish-dfe-ui.yml))
 endif
@@ -769,7 +773,7 @@ proof: ## Unattended acceptance: test-e2e, restore the stack (make ci), then tes
 
 .PHONY: post
 post: ## Prove the RUNNING stack moves data end to end (DFE_POST_ENABLED=false to skip)
-	@python3 ./scripts/post.py
+	@env DFE_POST_SERVICES='$(strip $(SERVICES))' python3 ./scripts/post.py
 
 # ---------------------------------------------------------------------------
 # Seed

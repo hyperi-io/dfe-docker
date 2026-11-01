@@ -78,3 +78,64 @@ def test_no_other_service_is_moved_off_grpc() -> None:
         assert not any(
             line.startswith("OTEL_EXPORTER_OTLP_PROTOCOL") for line in lines
         ), name
+
+
+def _resolved(*, tmp_path, monkeypatch, environ: dict[str, str]) -> dict[str, str]:
+    """Run the resolver and read back the assignments it wrote."""
+    written = tmp_path / ".tmp" / "profile.mk"
+    monkeypatch.setattr(resolve_profile, "PROFILE_MK", written)
+    for key in (
+        resolve_profile.OTEL_ENDPOINT_ENV_VAR,
+        resolve_profile.OTEL_HTTP_ENDPOINT_ENV_VAR,
+        resolve_profile.OTEL_ENGINE_BACKEND_ENV_VAR,
+        resolve_profile.OTEL_ENABLED_ENV_VAR,
+    ):
+        monkeypatch.delenv(key, raising=False)
+    for key, value in environ.items():
+        monkeypatch.setenv(key, value)
+    assert resolve_profile.main() == 0
+    values: dict[str, str] = {}
+    for line in written.read_text(encoding="utf-8").splitlines():
+        name, _, value = line.partition(":=")
+        values[name.replace("export", "").strip()] = value.strip()
+    return values
+
+
+@pytest.mark.parametrize(
+    ("environ", "endpoint", "http", "backend"),
+    [
+        pytest.param(
+            {"DFE_OTEL_ENABLED": "true"},
+            "http://otel-collector:4317",
+            "http://otel-collector:4318",
+            "opentelemetry",
+            id="bundled",
+        ),
+        pytest.param(
+            {
+                "DFE_OTEL_ENABLED": "false",
+                "DFE_OTEL_EXPORTER_ENDPOINT": "https://collector.example.test:4317",
+            },
+            "https://collector.example.test:4317",
+            "https://collector.example.test:4318",
+            "opentelemetry",
+            id="external-only",
+        ),
+        pytest.param({"DFE_OTEL_ENABLED": "false"}, "", "", "", id="none"),
+    ],
+)
+def test_every_service_follows_whichever_otlp_endpoint_is_configured(
+    tmp_path,
+    monkeypatch,
+    dotenv,
+    environ: dict[str, str],
+    endpoint: str,
+    http: str,
+    backend: str,
+) -> None:
+    """An external collector with the bundled one off still gets the engine and the UI."""
+    values = _resolved(tmp_path=tmp_path, monkeypatch=monkeypatch, environ=environ)
+
+    assert values[resolve_profile.OTEL_ENDPOINT_ENV_VAR] == endpoint
+    assert values[resolve_profile.OTEL_HTTP_ENDPOINT_ENV_VAR] == http
+    assert values[resolve_profile.OTEL_ENGINE_BACKEND_ENV_VAR] == backend

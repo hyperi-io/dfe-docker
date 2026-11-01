@@ -13,9 +13,14 @@ containers come back, from which compose files, and when the project counts as
 different from how it was found.
 """
 
+import ipaddress
+import shutil
+
 import pytest
 
 import _stack_state
+import check_compose
+import proxy_tls
 
 _FILES = "/opt/dfe/docker-compose.yml,/opt/dfe/docker-compose.tls.yml"
 
@@ -384,3 +389,108 @@ def test_a_run_that_would_move_the_stack_names_the_profile_to_rerun_with(
         f"the stack runs profile 'single-grpc' but these make flags give {given!r}. "
         "Rerun with DFE_PROFILE=single-grpc"
     )
+
+
+def _rendered(environ: dict[str, str]) -> dict:
+    """The interpolated compose model for `environ`, every profile on."""
+    if shutil.which("docker") is None:
+        pytest.skip("`docker compose config` renders the model these assert on")
+    model = check_compose._config_json(
+        env=environ, files=[check_compose.COMPOSE_FILE.name]
+    )
+    assert model is not None, "the registry compose path did not resolve"
+    return model
+
+
+@pytest.mark.parametrize("prefix", ["", "second-"], ids=["no-prefix", "prefixed"])
+def test_the_suite_stacks_share_no_volume_or_container_with_the_stack_it_found(
+    prefix: str,
+) -> None:
+    """A test deletes its topics, so its broker must never be the found stack's."""
+    environ, _ = check_compose._check_env()
+    environ.pop("COMPOSE_PROJECT_NAME", None)
+    environ["DFE_CONTAINER_PREFIX"] = prefix
+    found = _rendered(environ)
+
+    suite = _rendered(_stack_state.suite_environ(environ, project=found["name"]))
+
+    found_volumes = {volume["name"] for volume in found["volumes"].values()}
+    suite_volumes = {volume["name"] for volume in suite["volumes"].values()}
+    found_names = {svc["container_name"] for svc in found["services"].values()}
+    suite_names = {svc["container_name"] for svc in suite["services"].values()}
+    assert suite["name"] != found["name"]
+    assert found_volumes.isdisjoint(suite_volumes)
+    assert found_names.isdisjoint(suite_names)
+
+
+@pytest.mark.parametrize(
+    "taken",
+    [["10.207.0.0/24"], ["10.207.0.0/24", "10.207.1.0/24", "10.206.255.0/24"]],
+    ids=["neighbour-free", "neighbours-taken"],
+)
+def test_under_console_tls_the_suite_network_takes_a_subnet_of_its_own(
+    taken: list[str],
+) -> None:
+    """Neither a found network left behind nor any other network may hold the subnet the suite's network needs."""
+    environ, _ = check_compose._check_env()
+    environ.pop("COMPOSE_PROJECT_NAME", None)
+    subnet = "10.207.0.0/24"
+    proxy_ip, ip_range = proxy_tls.derive(subnet=subnet)
+    environ |= {
+        "DFE_NETWORK_SUBNET": subnet,
+        "DFE_PROXY_IP": proxy_ip,
+        "DFE_NETWORK_IP_RANGE": ip_range,
+        "DFE_PROXY_CERT_DIR": "./certs",
+    }
+    files = [check_compose.COMPOSE_FILE.name, "docker-compose.tls.yml"]
+    if shutil.which("docker") is None:
+        pytest.skip("`docker compose config` renders the model these assert on")
+    found = check_compose._config_json(env=environ, files=files)
+    assert found is not None
+
+    suite = check_compose._config_json(
+        env=_stack_state.suite_environ(environ, project=found["name"], taken=taken),
+        files=files,
+    )
+
+    assert suite is not None
+    found_pool = found["networks"]["default"]["ipam"]["config"][0]
+    suite_pool = suite["networks"]["default"]["ipam"]["config"][0]
+    suite_net = ipaddress.IPv4Network(suite_pool["subnet"])
+    assert not suite_net.overlaps(ipaddress.IPv4Network(found_pool["subnet"]))
+    assert not any(suite_net.overlaps(ipaddress.IPv4Network(net)) for net in taken)
+    assert suite_net.prefixlen == 24
+    proxy = suite["services"]["dfe-proxy"]["networks"]["default"]["ipv4_address"]
+    assert ipaddress.IPv4Address(proxy) in suite_net
+    assert ipaddress.IPv4Network(suite_pool["ip_range"]).subnet_of(suite_net)
+
+
+def test_no_free_subnet_is_named_rather_than_overlapped() -> None:
+    environ = {"DFE_NETWORK_SUBNET": "192.168.0.0/16"}
+
+    with pytest.raises(ValueError, match="no free private subnet"):
+        _stack_state.suite_environ(environ, project="dfe", taken=["192.168.0.0/16"])
+
+
+@pytest.mark.parametrize(
+    ("inspected", "subnets"),
+    [
+        (
+            '[{"IPAM": {"Config": [{"Subnet": "172.18.0.0/16", "Gateway": "172.18.0.1"}]}},'
+            ' {"IPAM": {"Config": [{"Subnet": "fd00::/64"}, {"Subnet": "10.98.7.0/24"}]}}]',
+            ["172.18.0.0/16", "10.98.7.0/24"],
+        ),
+        ('[{"IPAM": {"Config": null}}, {"IPAM": {}}, {}]', []),
+        ("", []),
+        ("not json", []),
+    ],
+    ids=["ipv4-pools", "no-pools", "no-networks", "unreadable"],
+)
+def test_the_daemon_networks_give_their_ipv4_subnets(
+    inspected: str, subnets: list[str]
+) -> None:
+    assert _stack_state.network_subnets(inspected) == subnets
+
+
+def test_without_console_tls_the_suite_pins_no_subnet() -> None:
+    assert "DFE_NETWORK_SUBNET" not in _stack_state.suite_environ({}, project="dfe")
