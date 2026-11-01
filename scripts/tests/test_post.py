@@ -1254,15 +1254,45 @@ def test_a_source_delete_with_no_answer_keeps_the_table_and_does_not_raise(
     assert statements == []
 
 
-class _RoutingEngine:
-    """An engine that already holds an operator's source, recording what POST does."""
+def _ago(seconds: float) -> float:
+    return datetime.datetime.now(datetime.UTC).timestamp() - seconds
 
-    def __init__(self, *, create_status: int) -> None:
+
+class _RoutingEngine:
+    """An engine that already holds an operator's source, recording what POST does.
+
+    `sources` maps each source to the Unix second it was last written, and
+    `tables` each table of the routing database to the second its metadata was.
+    """
+
+    def __init__(
+        self,
+        *,
+        create_status: int,
+        sources: dict[str, float | None] | None = None,
+        tables: dict[str, float] | None = None,
+    ) -> None:
         self.create_status = create_status
-        self.sources = {"postroute"}
+        self.sources = {"postroute": _ago(7200)} if sources is None else dict(sources)
+        self.tables = dict(tables or {})
         self.created: list[str] = []
         self.deleted: list[str] = []
         self.statements: list[str] = []
+
+    def get_json(self, url: str, token: str = "", timeout: int = 30):
+        items = [
+            {
+                "name": name,
+                "updated_at": ""
+                if written is None
+                else datetime.datetime.fromtimestamp(written, datetime.UTC).isoformat(),
+            }
+            for name, written in self.sources.items()
+        ]
+        return 200, {"items": items}
+
+    def query(self, sql: str, **kwargs) -> str:
+        return "\n".join(f"{name}\t{int(at)}" for name, at in self.tables.items())
 
     def post_json(self, url: str, payload: dict, token: str = "", timeout: int = 30):
         if url.endswith("/deploy"):
@@ -1271,14 +1301,14 @@ class _RoutingEngine:
             return 409, {"detail": {"code": "conflict"}}
         if self.create_status not in (201, 202):
             return self.create_status, {"detail": {"code": "validation_error"}}
-        self.sources.add(payload["source"])
+        self.sources[payload["source"]] = _ago(0)
         self.created.append(payload["source"])
         return self.create_status, {"source": payload["source"]}
 
     def delete(self, url: str, token: str = "", timeout: int = 10) -> int:
         name = url.rsplit("/", 1)[-1]
         self.deleted.append(name)
-        self.sources.discard(name)
+        self.sources.pop(name, None)
         return 204
 
     def execute(self, sql: str, *, timeout: int) -> tuple[bool, str]:
@@ -1287,9 +1317,11 @@ class _RoutingEngine:
 
 
 def _routing_engine(
-    monkeypatch: pytest.MonkeyPatch, *, create_status: int = 201
+    monkeypatch: pytest.MonkeyPatch, *, create_status: int = 201, **state
 ) -> _RoutingEngine:
-    engine = _RoutingEngine(create_status=create_status)
+    engine = _RoutingEngine(create_status=create_status, **state)
+    monkeypatch.setattr(post, "_api_get_json", engine.get_json)
+    monkeypatch.setattr(post, "ch_query", engine.query)
     monkeypatch.setattr(post, "_profile_mk_value", lambda *, key: "/etc/dfe/apps")
     monkeypatch.setattr(post, "_resolved_services", lambda: list(post.ROUTING_SERVICES))
     monkeypatch.setattr(post, "login", lambda *, base: post.Login("t", 200, "u", ""))
@@ -1332,6 +1364,54 @@ def test_each_routing_run_makes_a_source_of_its_own(
 
     assert len(set(engine.created)) == 2
     assert all(post.ROUTING_SOURCE_PATTERN.fullmatch(n) for n in engine.created)
+
+
+@pytest.mark.parametrize(
+    ("source", "written", "swept"),
+    [
+        pytest.param("postroute0badf00d", _ago(7200), True, id="stale"),
+        pytest.param("postroutecafe0001", _ago(60), False, id="another-run-in-flight"),
+        pytest.param("postroute0badf00d", None, False, id="age-unknown"),
+        pytest.param("postroute", _ago(7200), False, id="operator-name"),
+        pytest.param("postroute0BADF00D", _ago(7200), False, id="not-the-shape"),
+    ],
+)
+def test_a_routing_run_sweeps_only_stale_sources_of_its_own_shape(
+    monkeypatch: pytest.MonkeyPatch, source: str, written: float | None, swept: bool
+) -> None:
+    engine = _routing_engine(monkeypatch, sources={source: written})
+
+    post._verify_routing_applied(database="dfe")
+
+    assert (source not in engine.sources) == swept
+    assert (f"dfe.{source} SYNC" in " ".join(engine.statements)) == swept
+
+
+@pytest.mark.parametrize(
+    ("table", "written", "swept"),
+    [
+        pytest.param("postroutedeadbeef", _ago(7200), True, id="stale-orphan"),
+        pytest.param("postroutedeadbeef", _ago(60), False, id="fresh-orphan"),
+        pytest.param("postroute", _ago(7200), False, id="operator-name"),
+    ],
+)
+def test_a_routing_run_drops_only_stale_tables_no_source_holds(
+    monkeypatch: pytest.MonkeyPatch, table: str, written: float, swept: bool
+) -> None:
+    engine = _routing_engine(monkeypatch, sources={}, tables={table: written})
+
+    post._verify_routing_applied(database="dfe")
+
+    assert (f"dfe.{table} SYNC" in " ".join(engine.statements)) == swept
+
+
+def test_the_sweep_waits_out_the_longest_a_run_holds_its_source() -> None:
+    longest = (
+        post._routing_timeout_seconds(bus=True)
+        + 2 * post.ROUTING_DELETE_TIMEOUT_SECONDS
+    )
+
+    assert post.ROUTING_STALE_AFTER_SECONDS > 2 * longest
 
 
 def _reported(monkeypatch: pytest.MonkeyPatch, *, names: set[str]) -> list[str]:

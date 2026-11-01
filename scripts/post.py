@@ -293,6 +293,8 @@ ROUTING_SERVICES = ("dfe-engine", "dfe-receiver", "dfe-loader")
 # A name of the run's own, so the claim only ever removes a source it created. Lowercase letters and digits, which both the engine and an unquoted ClickHouse identifier accept.
 ROUTING_SOURCE_PREFIX = "postroute"
 ROUTING_SOURCE_PATTERN = re.compile(rf"{ROUTING_SOURCE_PREFIX}[0-9a-f]{{8}}")
+# A routing source or table of that shape this old was left by a run that died before its cleanup. Well past the longest a run holds one, as two runs can overlap on one stack.
+ROUTING_STALE_AFTER_SECONDS = 3600
 RECEIVER_CONFIG_POLL_SECONDS = 5.0
 ROUTING_INTERVAL_SECONDS = 3.0
 # The engine deletes a source's two topics before it answers, each delete allowed
@@ -1263,6 +1265,7 @@ def _verify_routing_applied(*, database: str) -> Claim:
         )
         return Claim(asserted=True, failed=1)
 
+    _sweep_stale_routing(base=base, database=database, token=token)
     name = _routing_source_name()
     _print(msg=f"Creating source {name!r} and posting one event that matches its rule")
     created, fault = _create_routed_source(base=base, name=name, token=token)
@@ -1297,6 +1300,11 @@ def _remove_routed_source(*, base: str, database: str, name: str, token: str) ->
     if not (removed):
         _print(msg=f"      note: {database}.{name} is kept while its source remains")
         return
+    _drop_routing_table(database=database, name=name)
+
+
+def _drop_routing_table(*, database: str, name: str) -> None:
+    """Drop one routing table, saying so when it does not go."""
     # Only a name of the shape this claim makes, so the drop can never reach another table.
     if not (ROUTING_SOURCE_PATTERN.fullmatch(name)):
         return
@@ -1307,6 +1315,66 @@ def _remove_routed_source(*, base: str, database: str, name: str, token: str) ->
     if not (dropped):
         refusal = answer.splitlines()[0] if answer else "no answer"
         _print(msg=f"      note: {database}.{name} was not dropped: {refusal}")
+
+
+def _stale(*, at: float | None, now: float) -> bool:
+    """Whether a routing resource written at `at` was left by a run that died."""
+    return at is not None and now - at >= ROUTING_STALE_AFTER_SECONDS
+
+
+def _routing_sources(*, base: str, token: str) -> dict[str, float | None] | None:
+    """Every routing source the engine holds, with when it was last written, or None when it cannot say."""
+    try:
+        status, body = _api_get_json(
+            f"{base}/sources?search={ROUTING_SOURCE_PREFIX}&per_page=-1", token=token
+        )
+    except ApiUnreachable:
+        return None
+    if status != 200 or not (isinstance(body, dict)):
+        return None
+    sources: dict[str, float | None] = {}
+    for item in body.get("items") or []:
+        name = str(item.get("name") or "")
+        if not (ROUTING_SOURCE_PATTERN.fullmatch(name)):
+            continue
+        try:
+            sources[name] = datetime.datetime.fromisoformat(
+                str(item.get("updated_at") or "")
+            ).timestamp()
+        except ValueError:
+            sources[name] = None
+    return sources
+
+
+def _sweep_stale_routing(*, base: str, database: str, token: str) -> None:
+    """Remove the routing sources and tables runs that died before their cleanup left.
+
+    A source or table is swept only when its name has the claim's own shape and it
+    is older than ROUTING_STALE_AFTER_SECONDS, so another run's live source stays.
+    """
+    sources = _routing_sources(base=base, token=token)
+    if sources is None:
+        _print(
+            msg="      note: the engine did not list its sources, so none were swept"
+        )
+        return
+    now = time.time()
+    for name, at in sorted(sources.items()):
+        if _stale(at=at, now=now):
+            _print(msg=f"      removing source {name!r}, left by an earlier run")
+            _remove_routed_source(base=base, database=database, name=name, token=token)
+    rows = ch_query(
+        "SELECT name, toUnixTimestamp(metadata_modification_time) FROM system.tables "
+        f"WHERE database = '{escape_literal(database)}' "
+        f"AND match(name, '^{ROUTING_SOURCE_PATTERN.pattern}$')"
+    )
+    for row in rows.splitlines():
+        name, _, at = row.partition("\t")
+        if name in sources or not (at.strip().isdigit()):
+            continue
+        if _stale(at=float(at), now=now):
+            _print(msg=f"      dropping {database}.{name}, left by an earlier run")
+            _drop_routing_table(database=database, name=name)
 
 
 def _routing_timeout_seconds(*, bus: bool) -> float:

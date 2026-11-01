@@ -221,8 +221,7 @@ Of the host's own metrics only its CPUs are collected, for the usage readings.
 - **Routing**, where the engine renders the tier's app config. A source created
   through the API reaches the running receiver, and a record matching its rule
   lands in a table of its own. The source is named for the run (`postroute`
-  and 8 hex digits), so the claim never touches a source it did not create. The source is deleted afterwards and then that
-  table is dropped, because the engine's source delete leaves the table.
+  and 8 hex digits) and deleted afterwards, then its table is dropped, because the engine's source delete leaves the table. A run first sweeps that shape's sources and tables older than an hour, which a killed run left.
 
 Once every claim has run, the three ingest rows are deleted: a lightweight `DELETE`, or a mutation (`ALTER TABLE ... DELETE`) on a table whose projections refuse one. A delete that does not finish within 60s is reported, never failed.
 
