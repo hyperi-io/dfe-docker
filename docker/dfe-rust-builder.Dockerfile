@@ -10,7 +10,7 @@
 # scripts/build_dev_images.py stages the component's source into a clean context (minus target/.git) and builds this with BINARY set, exporting just the compiled binary.
 # The runtime image is then built from the component's own Dockerfile (single source of truth) with that binary in context - so this file owns the build, the component owns the runtime.
 #
-# Post-scalo-2.10: components depend on the published `scalo` crate (no local hyperi-rustlib), so there are no sibling-dep COPYs or Cargo.toml rewrites. rdkafka uses dynamic-linking against librdkafka-dev from the Confluent apt repo, matching the runtime image's Confluent librdkafka1 soname (mirrors hyperi-ci's build recipe).
+# librdkafka, OpenSSL, zstd and zlib link statically from hyperi-ci's static-libs prefix, as `build.rust.static_libs` does in CI, so the runtime image installs none of them.
 
 # Pin an EXPLICIT Rust version, not `latest`. The digest alone makes the image
 # immutable, but Renovate re-pins whatever `latest` currently points at, so a
@@ -21,43 +21,38 @@
 ARG RUST_IMAGE=rust:1.99-trixie@sha256:53766005847cbe02c3f59bfa49c1c4bb16695f2c9e5829c3d576a15406f5e733
 FROM ${RUST_IMAGE} AS builder
 
-# Default `sh -c` does not fail a pipeline when an EARLY stage fails -- only the
-# last command's status counts. The Confluent key install below is `curl | gpg`,
-# so without pipefail a failed download would still write a valid-looking (empty)
-# keyring and the build would carry on to a confusing apt error. (hadolint DL4006)
+# Default `sh -c` fails a pipeline only on its last command, so a failed step piped into the digest check below would pass unseen. (hadolint DL4006)
 SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 
-# The Confluent apt suite below is `bookworm` on a trixie base. That is a
-# deliberate cross-release install, not a stale copy-paste: Confluent publishes no
-# trixie suite (checked 2026-07-20 -- the newest Debian suite they ship is
-# bookworm). librdkafka-dev is a C library against glibc, and trixie's glibc is
-# backward compatible with bookworm's, so the bookworm build links fine. Revisit
-# the day a trixie suite appears.
-#
-# DL3008 (pin apt versions) fires here and is deliberately NOT actioned, and
-# deliberately NOT suppressed either -- it stays visible as a warning. The gate
-# is `--failure-threshold error`, matching the house gate, so a warning informs
-# without blocking; an `# hadolint ignore=` pragma would delete the information
-# instead.
-#
-# Why we do not pin: reproducibility here comes from ARG RUST_IMAGE being
-# DIGEST-pinned, so the digest already fixes the package set and per-package apt
-# pins restate it in a second place that can disagree. They also rot badly --
-# Debian drops superseded point versions from the archive, so a pinned version
-# becomes an unbuildable image the moment a security update lands, turning a
-# security patch into a build break. If RUST_IMAGE ever stops being
-# digest-pinned, that reasoning stops holding.
+# mold because the apps' .cargo/config.toml links with -fuse-ld=mold on x86_64.
+# DL3008 (pin apt versions) stays a visible warning, neither actioned nor suppressed: the digest-pinned RUST_IMAGE already fixes the package set, and Debian drops superseded point versions, so a per-package pin turns the next security update into a build break.
 RUN apt-get update && apt-get install -y --no-install-recommends \
-        ca-certificates curl gnupg pkg-config \
-        libssl-dev libsasl2-dev libzstd-dev libclang-dev cmake build-essential \
+        ca-certificates curl pkg-config \
+        libclang-dev cmake build-essential mold \
         protobuf-compiler libprotobuf-dev \
-    && curl -fsSL https://packages.confluent.io/clients/deb/archive.key \
-       | gpg --dearmor -o /usr/share/keyrings/confluent-clients.gpg \
-    && echo "deb [signed-by=/usr/share/keyrings/confluent-clients.gpg] \
-       https://packages.confluent.io/clients/deb bookworm main" \
-       > /etc/apt/sources.list.d/confluent-clients.list \
-    && apt-get update && apt-get install -y --no-install-recommends librdkafka-dev \
     && rm -rf /var/lib/apt/lists/*
+
+# hyperi-ci's pinned `static_libs_release` (src/hyperi_ci/config/versions.yaml): the tag and the sha256 of each arch's archive move together.
+ARG STATIC_LIBS_TAG=static-libs-rdkafka2.16.0-openssl3.5.9-f87f317c3a39
+ARG STATIC_LIBS_SHA256_AMD64=e00ca47ad334607e4ce4231506bc5ec3c16cd33293c60946ebb5b31d65a6236d
+ARG STATIC_LIBS_SHA256_ARM64=bb0724afe40bb2d2b983f647c62bf62d73bc6b219227f336fcf5014c9c320f0e
+ARG TARGETARCH
+RUN case "${TARGETARCH}" in \
+        amd64) triple=x86_64-unknown-linux-gnu sha256="${STATIC_LIBS_SHA256_AMD64}" ;; \
+        arm64) triple=aarch64-unknown-linux-gnu sha256="${STATIC_LIBS_SHA256_ARM64}" ;; \
+        *) echo "no static-libs archive for ${TARGETARCH}" >&2; exit 1 ;; \
+    esac \
+    && curl -fsSL -o /tmp/static-libs.tar.gz \
+       "https://github.com/hyperi-io/hyperi-ci/releases/download/${STATIC_LIBS_TAG}/hyperi-static-libs-${triple}.tar.gz" \
+    && echo "${sha256}  /tmp/static-libs.tar.gz" | sha256sum -c - \
+    && tar -xzf /tmp/static-libs.tar.gz -C /opt \
+    && rm /tmp/static-libs.tar.gz
+
+# The variables hyperi-ci's static_libs.link_env sets. The prefix wins over the base image's own libssl-dev.
+ENV PKG_CONFIG_PATH=/opt/hyperi-static-libs/lib/pkgconfig \
+    RDKAFKA_STATIC=1 \
+    OPENSSL_STATIC=1 \
+    OPENSSL_DIR=/opt/hyperi-static-libs
 
 WORKDIR /build
 
@@ -75,7 +70,10 @@ COPY . .
 ARG BINARY
 RUN --mount=type=cache,target=/cache/cargo-target \
     CARGO_TARGET_DIR=/cache/cargo-target cargo build --release \
-    && cp "/cache/cargo-target/release/${BINARY}" /out
+    && cp "/cache/cargo-target/release/${BINARY}" /out \
+    && if readelf -d /out | grep -E 'NEEDED.*\[(librdkafka|libssl|libcrypto|libsasl2|libcurl|libz|libzstd)\.'; then \
+        echo "${BINARY} still links a C library the runtime image does not install" >&2; exit 1; \
+    fi
 
 # Export stage: the bare binary, so the component's own Dockerfile can package it.
 FROM scratch AS export
