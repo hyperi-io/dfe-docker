@@ -217,13 +217,15 @@ else:
     sys.exit(2)
 """
 
+# `docker` stands in the same way, accepting only a `run` of the pinned cosign image.
 _FAKE_COSIGN = """#!{python}
 import json, pathlib, sys
 args = sys.argv[1:]
 with open({log!r}, "a", encoding="utf-8") as fh:
-    fh.write(json.dumps(["cosign", *args]) + "\\n")
+    fh.write(json.dumps([{tool!r}, *args]) + "\\n")
 refusal = pathlib.Path({refusal!r})
-if args[:1] != ["verify"]:
+lead = {lead!r}
+if args[: len(lead)] != lead or args[len(lead) : len(lead) + 1] != ["verify"]:
     sys.exit(2)
 if refusal.exists():
     print(refusal.read_text(encoding="utf-8"), file=sys.stderr)
@@ -264,8 +266,10 @@ def anonymous_oras(
         ),
         "cosign": _FAKE_COSIGN.format(
             python=sys.executable,
+            lead=[],
             log=str(log),
             refusal=str(tmp_path / "cosign-refuses.txt"),
+            tool="cosign",
         ),
     }
     for name, script in stand_ins.items():
@@ -440,17 +444,48 @@ def _calls(log: Path) -> list[list[str]]:
     return [json.loads(line) for line in log.read_text(encoding="utf-8").splitlines()]
 
 
+# How each runner starts cosign: the one on PATH, else the pinned image through docker.
+_RUNNERS = {
+    "path": ["cosign"],
+    "container": ["docker", "run", "--rm", stack.COSIGN_IMAGE],
+}
+
+
+def _use_runner(*, runner: str, tmp_path: Path) -> None:
+    """Leave cosign on PATH, or swap it for a docker that runs only the pinned image."""
+    if runner == "path":
+        return
+    bindir = tmp_path / "bin"
+    (bindir / "cosign").unlink()
+    docker = bindir / "docker"
+    docker.write_text(
+        _FAKE_COSIGN.format(
+            python=sys.executable,
+            lead=_RUNNERS["container"][1:],
+            log=str(tmp_path / "oras-calls.jsonl"),
+            refusal=str(tmp_path / "cosign-refuses.txt"),
+            tool="docker",
+        ),
+        encoding="utf-8",
+        newline="\n",
+    )
+    docker.chmod(0o755)
+
+
+@pytest.mark.parametrize("runner", sorted(_RUNNERS))
 def test_the_manifest_is_verified_against_the_release_workflow_identity(
-    anonymous_oras: Path, monkeypatch: pytest.MonkeyPatch
+    anonymous_oras: Path, monkeypatch: pytest.MonkeyPatch, runner: str, tmp_path: Path
 ) -> None:
-    """A signature by anyone else, or a re-pointed tag, must not become the pins."""
+    """A signature by anyone else, or a re-pointed tag, must not become the pins, whichever runner checks it."""
+    _use_runner(runner=runner, tmp_path=tmp_path)
     monkeypatch.setattr(sys, "argv", ["stack.py", "2.2.0-rc.13"])
 
     assert stack.main() == 0
 
-    verify = next(call for call in _calls(anonymous_oras) if call[0] == "cosign")
+    lead = _RUNNERS[runner]
+    verify = next(call for call in _calls(anonymous_oras) if call[0] == lead[0])
     assert verify == [
-        "cosign",
+        *lead,
         "verify",
         "--certificate-identity",
         stack.DEFAULT_SIGNER_IDENTITY,
@@ -460,13 +495,16 @@ def test_the_manifest_is_verified_against_the_release_workflow_identity(
     ]
 
 
+@pytest.mark.parametrize("runner", sorted(_RUNNERS))
 def test_a_manifest_that_fails_verification_is_never_pulled(
     anonymous_oras: Path,
     capsys: pytest.CaptureFixture[str],
     dotenv: Path,
     monkeypatch: pytest.MonkeyPatch,
+    runner: str,
     tmp_path: Path,
 ) -> None:
+    _use_runner(runner=runner, tmp_path=tmp_path)
     (tmp_path / "cosign-refuses.txt").write_text("no matching signatures", "utf-8")
     monkeypatch.setattr(sys, "argv", ["stack.py", "2.2.0-rc.13"])
 
@@ -484,7 +522,7 @@ def test_a_manifest_that_fails_verification_is_never_pulled(
         pytest.param("false", True, id="opted-out"),
     ],
 )
-def test_a_host_without_cosign_pulls_only_when_verification_is_turned_off(
+def test_a_host_without_cosign_or_docker_pulls_only_when_verification_is_off(
     anonymous_oras: Path,
     capsys: pytest.CaptureFixture[str],
     monkeypatch: pytest.MonkeyPatch,

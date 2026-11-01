@@ -55,7 +55,8 @@ DFE stack SSoT. It uses a local dfe-infra checkout only when `DFE_INFRA_DIR`
 names one (`scripts/dfe-stack render --target docker --stack VERSION`), and
 otherwise resolves `ghcr.io/hyperi-io/dfe-stack-manifest:VERSION` to a digest,
 checks with `cosign verify` that dfe-infra's release workflow signed it, and
-pulls that digest with `oras`. If neither is available it fails loudly -- there is no silent `latest`. Only
+pulls that digest with `oras`. With no `cosign` installed, it runs cosign's
+digest-pinned image through Docker. If neither is available it fails loudly -- there is no silent `latest`. Only
 `*_VERSION` keys are rewritten; your ports, hosts, credentials and profile
 survive the merge.
 

@@ -42,8 +42,9 @@ Transport is EXPLICIT-LOCAL-FIRST, OCI-DEFAULT:
    (``ghcr.io/hyperi-io/dfe-stack-manifest:VERSION``) to its digest, check with
    ``cosign verify`` that dfe-infra's release workflow signed that digest, then
    ``oras pull`` it by digest and read its ``dfe-env-VERSION.txt`` member. This
-   is the air-gap / CI path. ``DFE_STACK_VERIFY=false`` skips the signature
-   check on a host with no cosign, and still pulls by digest.
+   is the air-gap / CI path. cosign runs from PATH, else as a digest-pinned
+   container through docker. ``DFE_STACK_VERIFY=false`` skips the signature
+   check, and still pulls by digest.
 3. Neither available -> fail loudly. We never silently fall back to ``latest``.
 
 The rendered fragment is the source of truth for the pins. This tool only
@@ -109,6 +110,8 @@ DEFAULT_SIGNER_IDENTITY = "https://github.com/hyperi-io/dfe-infra/.github/workfl
 DEFAULT_SIGNER_ISSUER = "https://token.actions.githubusercontent.com"
 SIGNER_IDENTITY_ENV = "DFE_STACK_SIGNER_IDENTITY"
 SIGNER_ISSUER_ENV = "DFE_STACK_SIGNER_ISSUER"
+# cosign for a host with docker and no cosign: the release cosign-installer v4.1.2 installs, pinned by digest.
+COSIGN_IMAGE = "gcr.io/projectsigstore/cosign:v3.0.6@sha256:de9c65609e6bde17e6b48de485ee788407c9502fa08b8f4459f595b21f56cd00"
 # `false` pulls an unverified manifest, still by digest, for a host that cannot run cosign.
 VERIFY_ENV = "DFE_STACK_VERIFY"
 
@@ -185,6 +188,18 @@ def _resolve_digest(ref: str) -> str:
     return digest
 
 
+def _cosign() -> list[str]:
+    """The command that runs cosign: the one on PATH, else the pinned image through docker."""
+    if shutil.which("cosign") is not None:
+        return ["cosign"]
+    if shutil.which("docker") is not None:
+        return ["docker", "run", "--rm", COSIGN_IMAGE]
+    raise StackError(
+        "neither `cosign` nor `docker` is installed, so the stack manifest's "
+        f"signature cannot be checked -- set {VERIFY_ENV}=false to pull it unverified"
+    )
+
+
 def _verify_signature(pinned: str) -> None:
     """Refuse a manifest the release workflow did not sign, unless verification is off."""
     if os.environ.get(VERIFY_ENV, "").strip().lower() == "false":
@@ -192,18 +207,14 @@ def _verify_signature(pinned: str) -> None:
             msg=f"WARNING {VERIFY_ENV}=false: {pinned} is pulled without a signature check"
         )
         return
-    if shutil.which("cosign") is None:
-        raise StackError(
-            f"`cosign` is not installed, so the stack manifest's signature cannot be "
-            f"checked -- install cosign, or set {VERIFY_ENV}=false to pull it unverified"
-        )
+    cosign = _cosign()
     identity = (
         os.environ.get(SIGNER_IDENTITY_ENV, "").strip() or DEFAULT_SIGNER_IDENTITY
     )
     issuer = os.environ.get(SIGNER_ISSUER_ENV, "").strip() or DEFAULT_SIGNER_ISSUER
     out = _run(
         [
-            "cosign",
+            *cosign,
             "verify",
             "--certificate-identity",
             identity,
