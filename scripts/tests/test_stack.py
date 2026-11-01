@@ -542,3 +542,86 @@ def test_a_host_without_cosign_or_docker_pulls_only_when_verification_is_off(
     assert (
         any(call[:2] == ["oras", "pull"] for call in _calls(anonymous_oras)) == pulled
     )
+
+
+@pytest.mark.parametrize(
+    ("dotenv_line", "environ", "pulled"),
+    [
+        pytest.param(f"{stack.VERIFY_ENV}=false", {}, True, id="dotenv-off"),
+        pytest.param(
+            f"{stack.VERIFY_ENV}=false",
+            {stack.VERIFY_ENV: "true"},
+            False,
+            id="env-wins",
+        ),
+        pytest.param("", {}, False, id="unset"),
+    ],
+)
+def test_the_verify_setting_is_read_from_dotenv_under_the_environment(
+    anonymous_oras: Path,
+    dotenv: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    dotenv_line: str,
+    environ: dict[str, str],
+    pulled: bool,
+) -> None:
+    """`make` reads .env without exporting it, so stack.py reads the file itself."""
+    (tmp_path / "bin" / "cosign").unlink()
+    dotenv.write_text(f"HTTP_PORT=8080\n{dotenv_line}\n", encoding="utf-8")
+    for key, value in environ.items():
+        monkeypatch.setenv(key, value)
+    monkeypatch.setattr(
+        sys, "argv", ["stack.py", "--print", "CLICKHOUSE_VERSION", "2.2.0-rc.13"]
+    )
+
+    assert stack.main() == (0 if pulled else 1)
+    assert (
+        any(call[:2] == ["oras", "pull"] for call in _calls(anonymous_oras)) == pulled
+    )
+
+
+def test_a_signer_named_in_dotenv_is_the_one_verified(
+    anonymous_oras: Path, dotenv: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    identity = (
+        "https://github.com/example/stack/.github/workflows/release.yml@refs/heads/main"
+    )
+    dotenv.write_text(
+        f"{stack.SIGNER_IDENTITY_ENV}={identity}\n"
+        f"{stack.SIGNER_ISSUER_ENV}=https://issuer.example\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(
+        sys, "argv", ["stack.py", "--print", "CLICKHOUSE_VERSION", "2.2.0-rc.13"]
+    )
+
+    assert stack.main() == 0
+
+    verify = next(call for call in _calls(anonymous_oras) if call[0] == "cosign")
+    assert verify[2:6] == [
+        "--certificate-identity",
+        identity,
+        "--certificate-oidc-issuer",
+        "https://issuer.example",
+    ]
+
+
+def test_a_refused_signature_names_the_ref_the_signer_and_the_escape(
+    anonymous_oras: Path,
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    (tmp_path / "cosign-refuses.txt").write_text("no matching signatures", "utf-8")
+    monkeypatch.setattr(sys, "argv", ["stack.py", "2.2.0-rc.13"])
+
+    assert stack.main() == 1
+
+    err = capsys.readouterr().err
+    pinned = f"{_registry.DEFAULT_MANIFEST_REPO}@{_digest_of('2.2.0-rc.13')}"
+    assert (
+        f"could not verify {pinned} against {stack.DEFAULT_SIGNER_IDENTITY}: "
+        "no matching signatures"
+    ) in err
+    assert f"{stack.VERIFY_ENV}=false" in err

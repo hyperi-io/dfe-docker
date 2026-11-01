@@ -188,6 +188,11 @@ def _resolve_digest(ref: str) -> str:
     return digest
 
 
+def _setting(key: str) -> str:
+    """One stack.py setting: the environment, else .env, which `make` reads without exporting."""
+    return os.environ.get(key, "").strip() or _dotenv_values().get(key, "").strip()
+
+
 def _cosign() -> list[str]:
     """The command that runs cosign: the one on PATH, else the pinned image through docker."""
     if shutil.which("cosign") is not None:
@@ -202,16 +207,14 @@ def _cosign() -> list[str]:
 
 def _verify_signature(pinned: str) -> None:
     """Refuse a manifest the release workflow did not sign, unless verification is off."""
-    if os.environ.get(VERIFY_ENV, "").strip().lower() == "false":
+    if _setting(VERIFY_ENV).lower() == "false":
         _print(
             msg=f"WARNING {VERIFY_ENV}=false: {pinned} is pulled without a signature check"
         )
         return
     cosign = _cosign()
-    identity = (
-        os.environ.get(SIGNER_IDENTITY_ENV, "").strip() or DEFAULT_SIGNER_IDENTITY
-    )
-    issuer = os.environ.get(SIGNER_ISSUER_ENV, "").strip() or DEFAULT_SIGNER_ISSUER
+    identity = _setting(SIGNER_IDENTITY_ENV) or DEFAULT_SIGNER_IDENTITY
+    issuer = _setting(SIGNER_ISSUER_ENV) or DEFAULT_SIGNER_ISSUER
     out = _run(
         [
             *cosign,
@@ -225,7 +228,10 @@ def _verify_signature(pinned: str) -> None:
     )
     if out.returncode != 0:
         detail = out.stderr.strip() or out.stdout.strip()
-        raise StackError(f"{pinned} is not signed by {identity}: {detail}")
+        raise StackError(
+            f"could not verify {pinned} against {identity}: {detail} -- set "
+            f"{VERIFY_ENV}=false to pull it unverified"
+        )
 
 
 def _render_oci(version: str) -> str:
