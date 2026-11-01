@@ -161,13 +161,12 @@ an upgraded stack that runs `make init` (to pick up new `.env.example` keys) get
 a real password. ClickHouse stores the default-user credential in its data volume
 on first init, so a pre-existing `clickhouse-data` volume still expects the OLD
 (blank) password and the loader/engine/HyperDX now authenticate with the new one
--- every query fails `Authentication failed`. Two ways through:
-
-- Keep the old behaviour: set `CLICKHOUSE_PASSWORD=` (blank) in `.env` before
-  starting. `make init` only tops up a MISSING key, so an explicit blank is kept.
-- Adopt the password: set the ClickHouse default user to the generated value once
-  (`ALTER USER default IDENTIFIED BY '<value>'` against the running instance, or
-  recreate the volume if it holds nothing you need), then restart the stack.
+-- every query fails `Authentication failed`. A blank password is no way back:
+`make init` rewrites an empty `CLICKHOUSE_PASSWORD=` with a generated one, and
+`make post` fails a stack still on it. Adopt the generated password instead: set
+the ClickHouse default user to it once (`ALTER USER default IDENTIFIED BY
+'<value>'` against the running instance, or recreate the volume if it holds
+nothing you need), then restart the stack.
 
 A fresh deployment has neither problem -- the volume is created with the generated
 password from the start.
