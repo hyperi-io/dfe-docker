@@ -22,6 +22,7 @@ the source text is not the thing to assert about.
 
 import os
 import shutil
+import subprocess
 from collections.abc import Iterator
 from pathlib import Path
 
@@ -132,8 +133,8 @@ def test_an_app_that_cannot_emit_does_not_stop_the_engine(
     """scalo exits non-zero on a write it cannot make, hence the wrapper."""
     command = "".join(services[f"contract-{app}"]["command"])
 
-    assert f"{app} config-schema --dir {_CONTRACT_ROOT}/{app}" in command
-    assert command.lstrip().startswith("if ")
+    assert f"{app} config-schema --dir {_CONTRACT_ROOT}/{app}.new" in command
+    assert "\nif " in command
     assert "else" in command
     assert services[f"contract-{app}"]["entrypoint"] == ["/bin/sh", "-c"]
 
@@ -149,7 +150,7 @@ def test_the_contract_names_the_ref_that_produced_it(
     assert emitter["environment"]["CONTRACT_REF"] == services[app]["image"]
     assert "CONTRACT_REF" in command
     assert f'"app":"{app}"' in command
-    assert f"{_CONTRACT_ROOT}/{app}/source.json" in command
+    assert f"{_CONTRACT_ROOT}/{app}.new/source.json" in command
 
 
 def test_the_engine_waits_for_every_contract_and_requires_none(
@@ -299,3 +300,55 @@ def test_the_contract_key_is_written_whatever_the_answer(
     values = _resolved(profile, tmp_path, monkeypatch)
 
     assert resolve_profile.ENGINE_CONTRACT_DIR_VAR in values
+
+
+_FAKE_APP = """#!/bin/sh
+# Stands in for the app binary: `config-schema --dir D` writes one file, or fails as told.
+[ -n "$FAKE_FAIL" ] && exit 1
+mkdir -p "$3" && echo new > "$3/schema.json"
+"""
+
+
+@pytest.mark.parametrize(
+    ("fails", "left"),
+    [
+        pytest.param(False, ["schema.json", "source.json"], id="emits"),
+        pytest.param(True, None, id="fails"),
+    ],
+)
+@pytest.mark.parametrize("app", _APPS)
+def test_an_emission_replaces_the_last_one_whole_or_leaves_none(
+    app: str,
+    services: dict[str, dict],
+    tmp_path: Path,
+    fails: bool,
+    left: list[str] | None,
+) -> None:
+    """The volume outlives the release, so a failed emission must not leave the last one."""
+    if shutil.which("sh") is None:
+        pytest.skip("the emitter's command is a POSIX shell script")
+    content = tmp_path / "content"
+    published = content / "contract" / app
+    published.mkdir(parents=True)
+    (published / "stale.json").write_text("old", encoding="utf-8")
+    bindir = tmp_path / "bin"
+    bindir.mkdir()
+    (bindir / app).write_text(_FAKE_APP, encoding="utf-8")
+    (bindir / app).chmod(0o755)
+    emitter = services[f"contract-{app}"]
+    script = "".join(emitter["command"]).replace(_CONTENT_MOUNT, str(content))
+    environment = {
+        "PATH": f"{bindir}{os.pathsep}{os.environ['PATH']}",
+        "CONTRACT_REF": "ref",
+        **({"FAKE_FAIL": "1"} if fails else {}),
+    }
+
+    result = subprocess.run(
+        ["sh", "-c", script], capture_output=True, env=environment, text=True
+    )
+
+    assert result.returncode == 0, result.stderr
+    if left is None:
+        assert not published.exists()
+    else:
+        assert sorted(path.name for path in published.iterdir()) == left
