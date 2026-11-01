@@ -773,7 +773,7 @@ proof: ## Unattended acceptance: test-e2e, restore the stack (make ci), then tes
 
 .PHONY: post
 post: ## Prove the RUNNING stack moves data end to end (DFE_POST_ENABLED=false to skip)
-	@python3 ./scripts/post.py
+	@env DFE_POST_SERVICES='$(strip $(SERVICES))' python3 ./scripts/post.py
 
 # ---------------------------------------------------------------------------
 # Seed

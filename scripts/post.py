@@ -87,8 +87,8 @@ from _common import (  # noqa: E402
     _load_dotenv,
     _print,
     _profile_mk_value,
-    _resolved_services,
 )
+from _common import _resolved_services as _profile_services  # noqa: E402
 from _pipeline import (  # noqa: E402
     MARKER_EXPRESSIONS,
     _decoded,
@@ -290,6 +290,8 @@ HUNT_EVENTS = {
 # router in place; nothing here waits on a deploy controller. The window is
 # built from those parts in `_routing_timeout_seconds`.
 ROUTING_SERVICES = ("dfe-engine", "dfe-receiver", "dfe-loader")
+# The services `make` was given in SERVICES, set by the post target, empty for the whole profile.
+POST_SERVICES_ENV = "DFE_POST_SERVICES"
 # A name of the run's own, so the claim only ever removes a source it created. Lowercase letters and digits, which both the engine and an unquoted ClickHouse identifier accept.
 ROUTING_SOURCE_PREFIX = "postroute"
 ROUTING_SOURCE_PATTERN = re.compile(rf"{ROUTING_SOURCE_PREFIX}[0-9a-f]{{8}}")
@@ -894,13 +896,8 @@ def _otel_reporting_services(*, database: str) -> set[str]:
     return {line.strip() for line in raw.splitlines() if line.strip()}
 
 
-def _unapplied_instances(*, services: list[str]) -> set[str]:
-    """The per-source services among these that this compose project holds no container for, running or stopped."""
-    # An index a profile switch left behind names instances this profile does not run.
-    declared = set(instances.services(instances=instances.declared())) & set(services)
-    if not (declared):
-        return set()
-    # Without the container list none can be shown missing, so every instance stays expected.
+def _compose_services() -> set[str] | None:
+    """The services this compose project holds a container for, running or stopped, or None when compose cannot say."""
     try:
         result = subprocess.run(
             args=["docker", "compose", "ps", "--all", "--format", "{{.Service}}"],
@@ -912,10 +909,38 @@ def _unapplied_instances(*, services: list[str]) -> set[str]:
             timeout=API_EXEC_MARGIN_SECONDS,
         )
     except (OSError, subprocess.TimeoutExpired):
-        return set()
+        return None
     if result.returncode != 0:
+        return None
+    return set(result.stdout.split())
+
+
+def _resolved_services() -> list[str]:
+    """The profile's services, narrowed to those this project started when `make` was given SERVICES.
+
+    `make ci SERVICES=...` starts the named services and their dependencies, so a
+    claim over the rest of the profile would wait on a container nobody started.
+    """
+    services = _profile_services()
+    if not (os.environ.get(POST_SERVICES_ENV, "").strip()):
+        return services
+    started = _compose_services()
+    if started is None:
+        return services
+    return [service for service in services if service in started]
+
+
+def _unapplied_instances(*, services: list[str]) -> set[str]:
+    """The per-source services among these that this compose project holds no container for, running or stopped."""
+    # An index a profile switch left behind names instances this profile does not run.
+    declared = set(instances.services(instances=instances.declared())) & set(services)
+    if not (declared):
         return set()
-    return declared - set(result.stdout.split())
+    # Without the container list none can be shown missing, so every instance stays expected.
+    started = _compose_services()
+    if started is None:
+        return set()
+    return declared - started
 
 
 def _verify_service_metrics(*, database: str) -> int:

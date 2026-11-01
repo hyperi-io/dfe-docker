@@ -1479,3 +1479,63 @@ def test_a_profile_without_the_runner_is_not_asked_for_its_metrics(
 
     assert asked == []
     assert "dfe-hunt-runner is not in the active profile" in capsys.readouterr().err
+
+
+@pytest.mark.parametrize(
+    ("selected", "started", "expected"),
+    [
+        pytest.param(
+            "",
+            None,
+            ["dfe-engine", "dfe-loader", "dfe-receiver", "dfe-ui"],
+            id="whole-profile",
+        ),
+        pytest.param(
+            "dfe-loader dfe-ui",
+            {"dfe-engine", "dfe-loader", "dfe-ui", "clickhouse"},
+            ["dfe-engine", "dfe-loader", "dfe-ui"],
+            id="subset-and-its-dependencies",
+        ),
+        pytest.param(
+            "dfe-loader dfe-ui",
+            None,
+            ["dfe-engine", "dfe-loader", "dfe-receiver", "dfe-ui"],
+            id="containers-unreadable",
+        ),
+    ],
+)
+def test_a_subset_start_scopes_post_to_what_it_started(
+    monkeypatch: pytest.MonkeyPatch,
+    selected: str,
+    started: set[str] | None,
+    expected: list[str],
+) -> None:
+    """`make ci SERVICES=...` starts a subset, and POST waits only on what is there."""
+    monkeypatch.setattr(
+        post,
+        "_profile_services",
+        lambda: ["dfe-engine", "dfe-loader", "dfe-receiver", "dfe-ui"],
+        raising=False,
+    )
+    monkeypatch.setattr(post, "_compose_services", lambda: started, raising=False)
+    monkeypatch.setenv("DFE_POST_SERVICES", selected)
+
+    assert post._resolved_services() == expected
+
+
+def test_a_subset_without_the_receiver_has_no_ingest_edge_to_wait_on(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        post,
+        "_profile_services",
+        lambda: ["dfe-engine", "dfe-loader", "dfe-receiver"],
+        raising=False,
+    )
+    monkeypatch.setattr(
+        post, "_compose_services", lambda: {"dfe-engine", "dfe-loader"}, raising=False
+    )
+    monkeypatch.setenv("DFE_POST_SERVICES", "dfe-loader")
+
+    with pytest.raises(post.NoIngestComponent):
+        post._ingest_target(table="main")
