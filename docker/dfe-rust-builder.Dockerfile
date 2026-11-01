@@ -24,7 +24,7 @@ FROM ${RUST_IMAGE} AS builder
 # Default `sh -c` fails a pipeline only on its last command, so a failed step piped into the digest check below would pass unseen. (hadolint DL4006)
 SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 
-# mold because the apps' .cargo/config.toml links with -fuse-ld=mold on x86_64.
+# mold because the apps' .cargo/config.toml link with -fuse-ld=mold (x86_64, and aarch64 for transform-elastic).
 # DL3008 (pin apt versions) stays a visible warning, neither actioned nor suppressed: the digest-pinned RUST_IMAGE already fixes the package set, and Debian drops superseded point versions, so a per-package pin turns the next security update into a build break.
 RUN apt-get update && apt-get install -y --no-install-recommends \
         ca-certificates curl pkg-config \
@@ -42,7 +42,7 @@ RUN case "${TARGETARCH}" in \
         arm64) triple=aarch64-unknown-linux-gnu sha256="${STATIC_LIBS_SHA256_ARM64}" ;; \
         *) echo "no static-libs archive for ${TARGETARCH}" >&2; exit 1 ;; \
     esac \
-    && curl -fsSL -o /tmp/static-libs.tar.gz \
+    && curl -fsSL --retry 3 -o /tmp/static-libs.tar.gz \
        "https://github.com/hyperi-io/hyperi-ci/releases/download/${STATIC_LIBS_TAG}/hyperi-static-libs-${triple}.tar.gz" \
     && echo "${sha256}  /tmp/static-libs.tar.gz" | sha256sum -c - \
     && tar -xzf /tmp/static-libs.tar.gz -C /opt \
@@ -71,8 +71,10 @@ ARG BINARY
 RUN --mount=type=cache,target=/cache/cargo-target \
     CARGO_TARGET_DIR=/cache/cargo-target cargo build --release \
     && cp "/cache/cargo-target/release/${BINARY}" /out \
-    && if readelf -d /out | grep -E 'NEEDED.*\[(librdkafka|libssl|libcrypto|libsasl2|libcurl|libz|libzstd)\.'; then \
-        echo "${BINARY} still links a C library the runtime image does not install" >&2; exit 1; \
+    && needed="$(readelf -d /out | sed -n 's/.*(NEEDED).*\[\(.*\)\]/\1/p')" \
+    && extra="$(printf '%s\n' "${needed}" | grep -v -E '^(libc|libm|libgcc_s|libpthread|libdl|librt)\.so\.[0-9]+$|^ld-linux-(x86-64|aarch64)\.so\.[0-9]+$' || true)" \
+    && if [ -n "${extra}" ]; then \
+        echo "${BINARY} links C libraries outside the libc set: ${extra}" >&2; exit 1; \
     fi
 
 # Export stage: the bare binary, so the component's own Dockerfile can package it.
