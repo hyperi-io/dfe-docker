@@ -332,7 +332,9 @@ also loads the override file) and `persistent_services` -- only ClickHouse
 survives between tests, so each test runs its own config against a fresh broker.
 The test stacks run as a compose project of their own, `<project>-e2e`, with
 `e2e-` before every container name, so no test reaches the volumes of the stack
-it found. That project and its volumes are removed when the run ends.
+it found. Its engine writes custom keys and instance indexes under
+`.tmp/e2e/<run>/env` rather than `env/`. That project and its volumes are
+removed when the run ends.
 Each entry under `tests:` names a `service_profiles.yaml` profile, optionally
 `expected_topics` (created and cleaned per run, then verified) and
 `config_overrides` keyed by service name.

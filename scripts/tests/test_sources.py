@@ -11,6 +11,7 @@
 The engine names each source's instance `dfe-transform-<engine>-<source>`, binds it on the bus to `<source>_land` under a consumer group of the same name, then reads back the requests the suite sends it. The committed e2e-tests.yaml is read too, so a source test the suite would refuse fails here first.
 """
 
+import shutil
 from pathlib import Path
 from typing import TypedDict
 
@@ -19,6 +20,7 @@ import yaml
 
 import _pipeline
 import _sources
+import check_compose
 import instances
 import resolve_profile
 from _common import COMPOSE_FILE, REPO_ROOT, SERVICE_PROFILES_FILE
@@ -1319,3 +1321,48 @@ class TestUploadRequests:
 
     def test_a_source_with_no_files_uploads_nothing(self, tmp_path: Path) -> None:
         assert _sources.upload_requests(project_dir=tmp_path, source=VECTOR) == []
+
+
+class TestSuiteEnvTree:
+    """The suite's engine writes its instance index and custom keys outside the checkout's env/."""
+
+    def test_the_engine_mounts_the_env_tree_it_is_given(self, tmp_path: Path) -> None:
+        if shutil.which("docker") is None:
+            pytest.skip("`docker compose config` renders the model this asserts on")
+        env_dir = tmp_path / "suite-env"
+        override = "services:\n" + _sources.engine_override(
+            environment={},
+            service="dfe-engine",
+            volumes=[_sources.app_env_volume(env_dir=env_dir)],
+        )
+        environ, _ = check_compose._check_env()
+
+        model = check_compose._config_json(
+            env=environ, files=[COMPOSE_FILE.name], fragment=override
+        )
+
+        assert model is not None
+        mounts = {
+            volume["target"]: volume.get("source", "")
+            for volume in model["services"]["dfe-engine"]["volumes"]
+        }
+        assert mounts[_sources.APP_ENV_MOUNT] == str(env_dir)
+
+    def test_an_instance_reads_its_custom_keys_from_that_tree(
+        self, tmp_path: Path
+    ) -> None:
+        env_dir = tmp_path / "suite-env"
+
+        text = instances.fragment({"dfe-transform-vrl": ["e2evrl"]}, env_dir=env_dir)
+
+        assert f"path: {env_dir}/dfe-transform-vrl-e2evrl.custom.env" in text
+        assert f"path: {instances.ENV_DIR.name}/" not in text
+
+    def test_the_index_is_read_from_that_tree(self, tmp_path: Path) -> None:
+        env_dir = tmp_path / "suite-env"
+        env_dir.mkdir()
+        (env_dir / "dfe-transform-vrl.instances").write_text("e2evrl\n", "utf-8")
+
+        assert _sources.indexed(sources=[VRL], env_dir=env_dir) == {
+            "dfe-transform-vrl": ["e2evrl"]
+        }

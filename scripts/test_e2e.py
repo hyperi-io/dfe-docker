@@ -107,6 +107,8 @@ from build_dev_images import local_image_services  # noqa: E402
 PROJECT_DIR = Path(__file__).resolve().parent.parent
 RUN_ID = f"e2e-{datetime.now(timezone.utc).strftime('%Y%m%d%H%M%S')}"
 TMP_DIR = PROJECT_DIR / ".tmp" / "e2e" / RUN_ID
+# The test engine's custom keys and instance indexes, kept out of the found stack's env/
+SUITE_ENV_DIR = TMP_DIR / "env"
 
 # ------------------------------------------------------------------------------
 # Config Related
@@ -910,7 +912,7 @@ def stack_up(mode, test, services):
     # The engine renders over the configs this test's profile commits, not make's
     engine_volumes = (
         _sources.engine_base_volumes(services=test.services) if (test.sources) else []
-    )
+    ) + [_sources.app_env_volume(env_dir=SUITE_ENV_DIR)]
     override_file = generate_compose_override(
         engine_environment=test.engine_environment,
         engine_volumes=engine_volumes,
@@ -1301,6 +1303,9 @@ def found_project():
 # - Test stacks get a project of their own, as their topic deletes would erase the found broker's records
 # ------------------------------------------------------------------------------
 def isolate_suite(project):
+    # Group-writable and setgid: the engine writes here as UID 1000 through the make user's group.
+    SUITE_ENV_DIR.mkdir(parents=True, exist_ok=True)
+    SUITE_ENV_DIR.chmod(0o2770)
     os.environ.update(_stack_state.suite_environ(os.environ, project=project))
     suite_project = os.environ["COMPOSE_PROJECT_NAME"]
     LOGGER.info(f"Test stacks run as compose project '{suite_project}'")
@@ -3728,7 +3733,9 @@ def await_index(*, ctx: TestContext, test: TestCase) -> dict[str, list[str]] | N
     found = poll_until(
         done=_complete,
         interval=SOURCE_POLL_SECONDS,
-        predicate=functools.partial(_sources.indexed, sources=test.sources),
+        predicate=functools.partial(
+            _sources.indexed, env_dir=SUITE_ENV_DIR, sources=test.sources
+        ),
         timeout=SOURCE_INDEX_TIMEOUT,
     )
     missing = _sources.unindexed(found=found, sources=test.sources)
@@ -3777,7 +3784,9 @@ def start_instances(
         if (DEV_OVERRIDE_FILE in files)
         else {}
     )
-    instances.write(images=images, instances=found, path=fragment)
+    instances.write(
+        env_dir=SUITE_ENV_DIR, images=images, instances=found, path=fragment
+    )
     if not (run.swapped):
         run.compose_file = os.environ.get("COMPOSE_FILE")
         run.swapped = True
@@ -3993,7 +4002,9 @@ def remove_sources(*, ctx: TestContext, run: SourceRun, test: TestCase) -> None:
     listed = poll_until(
         done=_gone,
         interval=SOURCE_POLL_SECONDS,
-        predicate=functools.partial(_sources.indexed, sources=run.made),
+        predicate=functools.partial(
+            _sources.indexed, env_dir=SUITE_ENV_DIR, sources=run.made
+        ),
         timeout=SOURCE_INDEX_TIMEOUT,
     )
     for app, names in sorted(listed.items()):

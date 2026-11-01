@@ -158,6 +158,7 @@ def _service_block(
     compose_file: str,
     *,
     container_logs: bool = False,
+    env_dir: Path | None = None,
     image: str = "",
 ) -> list[str]:
     """One generated service: what differs from the app's committed definition.
@@ -188,7 +189,7 @@ def _service_block(
         f"      {INSTANCE_LABEL}: {service}",
         f'    command: ["--config", "{config}"]',
         "    env_file:",
-        f"      - path: {ENV_DIR.name}/{name}{CUSTOM_ENV_SUFFIX}",
+        f"      - path: {env_dir or ENV_DIR.name}/{name}{CUSTOM_ENV_SUFFIX}",
         "        required: false",
         "    environment:",
         f"      OTEL_SERVICE_NAME: {name}",
@@ -214,11 +215,12 @@ def fragment(
     *,
     compose_file: str = "docker-compose.yml",
     container_logs: bool = False,
+    env_dir: Path | None = None,
     images: Mapping[str, str] | None = None,
 ) -> str:
     """The whole compose fragment for the instances given, each app in ``images`` on the image it maps to.
 
-    ``container_logs`` puts every instance on the log driver the container-logs overlay gives the committed services.
+    ``container_logs`` puts every instance on the log driver the container-logs overlay gives the committed services. ``env_dir`` is the tree each instance reads its custom keys from, the checkout's env/ when none is given.
     """
     lines = [HEADER.rstrip("\n")]
     if container_logs:
@@ -231,6 +233,7 @@ def fragment(
                 instance,
                 compose_file,
                 container_logs=container_logs,
+                env_dir=env_dir,
                 image=(images or {}).get(service, ""),
             )
     return "\n".join(lines).rstrip("\n") + "\n"
@@ -269,6 +272,7 @@ def write(
     instances: dict[str, list[str]],
     *,
     container_logs: bool = False,
+    env_dir: Path | None = None,
     images: Mapping[str, str] | None = None,
     path: Path | None = None,
 ) -> bool:
@@ -286,6 +290,7 @@ def write(
         instances,
         compose_file=COMPOSE_FILE.name,
         container_logs=container_logs,
+        env_dir=env_dir,
         images=images,
     )
     if not target.is_file() or target.read_text(encoding="utf-8") != content:

@@ -54,6 +54,8 @@ ENGINE_SETTINGS = {
 }
 # Where a source's upload fixtures live, relative to the repo root
 FIXTURE_DIR = Path("tests") / "e2e"
+# Where dfe-engine writes each service's custom keys and each app's instance index (docker-compose.yml dfe-engine `volumes`)
+APP_ENV_MOUNT = "/app/app-env"
 # The service each engine restart hint names (dfe-engine appmgmt/appconfig.py APPLY_COMMAND)
 HINT_SERVICE = re.compile(r"SERVICES=(\S+)")
 LAND_SUFFIX = "_land"
@@ -335,11 +337,20 @@ def hinted_services(*, replies: Sequence[object]) -> list[str]:
     return named
 
 
-def indexed(*, sources: Sequence[Source]) -> dict[str, list[str]]:
-    """The sources dfe-engine's instance index lists now, by app, the shape scripts/instances.py writes a fragment from."""
+def app_env_volume(*, env_dir: Path) -> str:
+    """The mount giving dfe-engine `env_dir` as the tree it writes custom keys and instance indexes into."""
+    return f"{env_dir}:{APP_ENV_MOUNT}"
+
+
+def indexed(
+    *, sources: Sequence[Source], env_dir: Path | None = None
+) -> dict[str, list[str]]:
+    """The sources dfe-engine's instance index in `env_dir` lists now, by app, the shape scripts/instances.py writes a fragment from."""
     found = {}
     for source in sources:
-        listed = instances.read_index(path=instances.index_file(service=source.app))
+        listed = instances.read_index(
+            path=instances.index_file(service=source.app, env_dir=env_dir)
+        )
         if source.name in listed:
             found.setdefault(source.app, []).append(source.name)
     return found
