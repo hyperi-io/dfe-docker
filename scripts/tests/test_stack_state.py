@@ -13,12 +13,14 @@ containers come back, from which compose files, and when the project counts as
 different from how it was found.
 """
 
+import ipaddress
 import shutil
 
 import pytest
 
 import _stack_state
 import check_compose
+import proxy_tls
 
 _FILES = "/opt/dfe/docker-compose.yml,/opt/dfe/docker-compose.tls.yml"
 
@@ -419,3 +421,39 @@ def test_the_suite_stacks_share_no_volume_or_container_with_the_stack_it_found(
     assert suite["name"] != found["name"]
     assert found_volumes.isdisjoint(suite_volumes)
     assert found_names.isdisjoint(suite_names)
+
+
+def test_under_console_tls_the_suite_network_takes_a_subnet_of_its_own() -> None:
+    """A found network left behind must not hold the subnet the suite's network needs."""
+    environ, _ = check_compose._check_env()
+    environ.pop("COMPOSE_PROJECT_NAME", None)
+    subnet = "10.207.0.0/24"
+    proxy_ip, ip_range = proxy_tls.derive(subnet=subnet)
+    environ |= {
+        "DFE_NETWORK_SUBNET": subnet,
+        "DFE_PROXY_IP": proxy_ip,
+        "DFE_NETWORK_IP_RANGE": ip_range,
+        "DFE_PROXY_CERT_DIR": "./certs",
+    }
+    files = [check_compose.COMPOSE_FILE.name, "docker-compose.tls.yml"]
+    if shutil.which("docker") is None:
+        pytest.skip("`docker compose config` renders the model these assert on")
+    found = check_compose._config_json(env=environ, files=files)
+    assert found is not None
+
+    suite = check_compose._config_json(
+        env=_stack_state.suite_environ(environ, project=found["name"]), files=files
+    )
+
+    assert suite is not None
+    found_pool = found["networks"]["default"]["ipam"]["config"][0]
+    suite_pool = suite["networks"]["default"]["ipam"]["config"][0]
+    suite_net = ipaddress.IPv4Network(suite_pool["subnet"])
+    assert not suite_net.overlaps(ipaddress.IPv4Network(found_pool["subnet"]))
+    proxy = suite["services"]["dfe-proxy"]["networks"]["default"]["ipv4_address"]
+    assert ipaddress.IPv4Address(proxy) in suite_net
+    assert ipaddress.IPv4Network(suite_pool["ip_range"]).subnet_of(suite_net)
+
+
+def test_without_console_tls_the_suite_pins_no_subnet() -> None:
+    assert "DFE_NETWORK_SUBNET" not in _stack_state.suite_environ({}, project="dfe")

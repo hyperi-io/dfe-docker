@@ -23,9 +23,12 @@ and judges what comes back against that.
 """
 
 import dataclasses
+import ipaddress
 from collections import defaultdict
 from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass
+
+import proxy_tls
 
 SERVICE_LABEL = "com.docker.compose.service"
 PROJECT_LABEL = "com.docker.compose.project"
@@ -259,11 +262,35 @@ def suite_environ(environ: Mapping[str, str], *, project: str) -> dict[str, str]
     compose project of their own, which gives them their own volumes and network,
     and a container prefix of their own, since container names are daemon-wide.
     """
-    return {
+    suite = {
         **environ,
         "COMPOSE_PROJECT_NAME": f"{project}{SUITE_PROJECT_SUFFIX}",
         "DFE_CONTAINER_PREFIX": f"{SUITE_CONTAINER_PREFIX}{environ.get('DFE_CONTAINER_PREFIX', '')}",
     }
+    found_subnet = environ.get("DFE_NETWORK_SUBNET", "").strip()
+    if found_subnet:
+        subnet = _neighbour_subnet(found_subnet)
+        suite["DFE_PROXY_IP"], suite["DFE_NETWORK_IP_RANGE"] = proxy_tls.derive(
+            subnet=subnet
+        )
+        suite["DFE_NETWORK_SUBNET"] = subnet
+    return suite
+
+
+def _neighbour_subnet(found: str) -> str:
+    """The same-size private subnet next to the found one, so a found network left behind cannot block the suite's."""
+    network = ipaddress.IPv4Network(found)
+    for base in (
+        network.broadcast_address + 1,
+        network.network_address - network.num_addresses,
+    ):
+        candidate = ipaddress.IPv4Network(f"{base}/{network.prefixlen}")
+        try:
+            proxy_tls.derive(subnet=str(candidate))
+        except ValueError:
+            continue
+        return str(candidate)
+    raise ValueError(f"no private subnet beside {found} for the suite's network")
 
 
 def restores(

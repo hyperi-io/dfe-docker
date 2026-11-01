@@ -362,7 +362,7 @@ The suite stops whatever stack the project is running, since both publish the sa
 
 A container keeps the hash it was created with, so one whose `.env` or compose file has changed since is named in a warning and comes back on the current config. `make ci` leaves the engine that way whenever `make post` rotates the admin password into `.env`. Run the suite as the user that started the stack: `make` writes that user's GID into the engine's config, and under console TLS its UID and GID into both proxies', so another user shows up in that warning.
 
-Under [console TLS](configuration.md#console-tls-opt-in) each test's stack chains the fragments `make ci` does, the exposure opt-outs and container logs included. The console checks go to `https://<DFE_EXTERNAL_ORIGIN host>:<DFE_UI_PORT>` and verify its certificate by chain and name, against `DFE_PROXY_CA_BUNDLE` when a private CA signed it. A certificate that does not verify fails the check with the variable to change.
+Under [console TLS](configuration.md#console-tls-opt-in) each test's stack chains the fragments `make ci` does, the exposure opt-outs and container logs included. Its network takes the same-size subnet beside `DFE_NETWORK_SUBNET`, so a found network left behind cannot block it. The console checks go to `https://<DFE_EXTERNAL_ORIGIN host>:<DFE_UI_PORT>` and verify its certificate by chain and name, against `DFE_PROXY_CA_BUNDLE` when a private CA signed it. A certificate that does not verify fails the check with the variable to change.
 
 Two things about the runner worth knowing before you debug it:
 
