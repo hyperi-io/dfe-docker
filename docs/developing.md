@@ -155,8 +155,9 @@ flowchart LR
 ```
 
 **This repo owns the build; the component owns the runtime.** The shared builder
-image is where the toolchain, the Confluent `librdkafka-dev` and the pinned Rust
-version live, so every component compiles the same way. Packaging then goes
+image is where the toolchain, hyperi-ci's static C library prefix (librdkafka,
+OpenSSL, zstd, zlib) and the pinned Rust version live, so every component compiles
+the same way and its runtime image installs none of those libraries. Packaging then goes
 through the component's own committed `Dockerfile` with the binary in context, so
 the runtime image you test is the one the component ships.
 
