@@ -1355,7 +1355,8 @@ services:
       # never covers it, so only DFE_UI_EXTERNAL=false takes it dark.
       - ${DFE_UI_BIND_HOST:-127.0.0.1}:${DFE_UI_PORT:-3000}:8080
       # HyperDX, re-served with frame-ancestors rewritten so the UI can iframe
-      # it. The app's own port stays infra class on the hyperdx service.
+      # it. The app's own port stays infra class on the hyperdx service, and
+      # HyperDX's flags drop this one too (docker-compose.unpublish-hyperdx-embed.yml).
       - ${DFE_UI_BIND_HOST:-127.0.0.1}:${DFE_HYPERDX_EMBED_PORT:-8091}:8091
     environment:
       # Every origin the console may be framed from, space-separated for the

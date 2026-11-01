@@ -1,0 +1,22 @@
+# Project:   dfe-docker
+# File:      docker-compose.unpublish-hyperdx-embed.yml
+# Purpose:   Unpublish the console's HyperDX embed port, keeping the console's own
+# Language:  YAML
+#
+# License:   BUSL-1.1
+# Copyright: (c) 2026 HYPERI PTY LIMITED
+#
+# NOT auto-loaded. The Makefile chains it when HyperDX is gated off, by
+# DFE_HYPERDX_UI_EXTERNAL=false or the DFE_INFRA_UIS_EXTERNAL kill switch, ahead
+# of docker-compose.unpublish-dfe-ui.yml, so DFE_UI_EXTERNAL=false still drops all.
+#
+# The embed serves HyperDX itself, so HyperDX's dials cover it. The auth profile
+# does not: an OIDC redirect cannot complete inside the console's frame.
+#
+# Compose drops one ports entry only by restating the rest, so the console line
+# repeats docker-compose.yml's and changes with it.
+
+services:
+  dfe-proxy:
+    ports: !override
+      - ${DFE_UI_BIND_HOST:-127.0.0.1}:${DFE_UI_PORT:-3000}:8080

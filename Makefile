@@ -252,6 +252,10 @@ endef
 
 UI_CHAIN :=
 UI_FLAGS :=
+# The console's HyperDX embed goes with HyperDX, auth or not. Chained before the DFE UI's own fragment, whose reset then drops the console port this one keeps.
+ifneq ($(HYPERDX_GATED),)
+    $(eval $(call chain_fragment,docker-compose.unpublish-hyperdx-embed.yml))
+endif
 ifeq ($(strip $(DFE_UI_EXTERNAL)),false)
     $(eval $(call chain_fragment,docker-compose.unpublish-dfe-ui.yml))
 endif

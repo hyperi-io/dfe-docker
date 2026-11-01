@@ -119,6 +119,7 @@ Per-port, as published in `docker-compose.yml`:
 | Host port | Service | Binds | Purpose |
 |---|---|---|---|
 | 3000 | dfe-proxy | ui | UI, plus `/api/v1/*` to the engine |
+| 8091 | dfe-proxy | ui | HyperDX, as the console frames it |
 | 8080 | dfe-receiver | ingress | HTTP ingest |
 | 8090 | dfe-hyperdx-proxy | ui | HyperDX app UI |
 | 8000 | dfe-hyperdx-proxy | ui | HyperDX API |
@@ -185,6 +186,10 @@ Each UI carries a class, and the class decides what can take it dark:
 infra-class UI at once and beats their individual flags. The product UIs are
 exempt, so locking the ops surfaces down never takes the DFE UI with it.
 
+The console frames HyperDX from dfe-proxy's `:8091`, so HyperDX's two flags
+unpublish that port too, and the console's own `:3000` stays. Switching HyperDX
+off this way takes the console's observability views dark.
+
 Both dials take effect through `make`, which resolves the scope into
 `DFE_UI_BIND_HOST` and chains a `docker-compose.unpublish-*.yml` fragment per
 opted-out UI. Compose merging can add a ports mapping but never remove one, so
@@ -202,10 +207,16 @@ fragment drops only its own UI.
 ## Gating the infra UIs with OIDC
 
 `DFE_AUTH_ENABLED=true` arms the `auth` profile, which puts an oauth2-proxy in
-front of each infra UI. Reaching Kafbat or HyperDX then needs an OIDC sign-in
-**and** membership of one of `DFE_OIDC_ALLOWED_GROUPS` (`dfe-infra`,
-`dfe-admin` by default). The group check is the gate -- authentication alone is
-not, which is the same rule the Kubernetes tier applies at the Envoy edge.
+front of each infra UI. Reaching Kafbat, or HyperDX on `:8090` and `:8000`, then
+needs an OIDC sign-in **and** membership of one of `DFE_OIDC_ALLOWED_GROUPS`
+(`dfe-infra`, `dfe-admin` by default). The group check is the gate --
+authentication alone is not, which is the same rule the Kubernetes tier applies
+at the Envoy edge.
+
+The embed on `:8091` stays outside that gate, as the Kubernetes tier's HyperDX
+route does. An OIDC redirect cannot complete inside the console's frame, and
+HyperDX authenticates each caller itself from the console's `dfe_token`. So any
+console user reaches HyperDX through the embed, group or not.
 
 Three proxies, one per origin, because oauth2-proxy serves a single listener and
 HyperDX is one UI across two origins:
