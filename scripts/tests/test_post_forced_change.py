@@ -463,3 +463,48 @@ def test_a_refused_login_skips_the_hunt_claim_once_the_admin_is_retired(
 
     assert claim == post.SKIPPED
     assert "SKIP  the bootstrap admin is retired" in capsys.readouterr().err
+
+
+def test_a_change_with_no_answer_and_no_login_after_keeps_the_new_password(
+    issued: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """With neither answer the engine may hold the new password, so .env keeps it."""
+    engine = _Engine(password=_ISSUED, sends_flag=True)
+    calls: list[str] = []
+
+    def _applied_then_silent(
+        url: str, payload: dict, token: str = "", timeout: int = 30
+    ):
+        calls.append(url)
+        if len(calls) == 1:
+            return engine.post_json(url, payload, token=token, timeout=timeout)
+        if url.endswith(post.CHANGE_PASSWORD_PATH):
+            engine.post_json(url, payload, token=token, timeout=timeout)
+        raise post.ApiUnreachable(f"POST {url} from dfe-engine: timed out")
+
+    monkeypatch.setattr(post, "_api_post_json", _applied_then_silent)
+
+    login = post.login(base=_BASE)
+
+    assert login.token == ""
+    assert _recorded(issued) == engine.password != _ISSUED
+
+
+def test_a_lost_change_the_engine_did_not_take_puts_dotenv_back(
+    issued: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The issued password still logs in, which settles that the change never landed."""
+    engine = _Engine(password=_ISSUED, sends_flag=True)
+
+    def _lost(url: str, payload: dict, token: str = "", timeout: int = 30):
+        if url.endswith(post.CHANGE_PASSWORD_PATH):
+            raise post.ApiUnreachable(f"POST {url} from dfe-engine: timed out")
+        return engine.post_json(url, payload, token=token, timeout=timeout)
+
+    monkeypatch.setattr(post, "_api_post_json", _lost)
+
+    login = post.login(base=_BASE)
+
+    assert login.token == ""
+    assert issued.read_text(encoding="utf-8") == _ENV
+    assert engine.password == _ISSUED

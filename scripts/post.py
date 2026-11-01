@@ -1657,6 +1657,17 @@ def _without_passwords(text: str, new: str, current: str) -> str:
     return masked.replace(current, "<current password>") if current else masked
 
 
+def _logs_in(*, base: str, username: str, password: str) -> bool:
+    """Whether `password` still logs `username` in, False when the engine does not answer."""
+    try:
+        token, status, _ = _request_token(
+            base=base, username=username, password=password
+        )
+    except ApiUnreachable:
+        return False
+    return status == 200 and bool(token)
+
+
 def _replace_issued_password(
     *, base: str, key: str, token: str, username: str, current: str
 ) -> Login:
@@ -1713,6 +1724,19 @@ def _replace_issued_password(
     except ApiUnreachable as error:
         new_token, new_status, still_required, login_fault = "", 0, False, str(error)
 
+    if (
+        login_fault
+        and change_fault
+        and not (_logs_in(base=base, username=username, password=current))
+    ):
+        # Neither password is known to work, so the engine may hold the new one.
+        os.environ[key] = replacement
+        fault = (
+            f"{username!r} must replace the password it was issued, and neither the "
+            f"change nor a login settled which one the engine holds: {change_fault} -- "
+            f"{DOTENV_FILE.name} keeps the new one as {key}"
+        )
+        return Login("", 200, username, _without_passwords(fault, replacement, current))
     if login_fault and change_fault:
         restored = ""
         try:
