@@ -1,0 +1,5 @@
+{"timestamp":"2026-10-28T09:10:00Z","level":"info","msg":"stock count started","warehouse":"syd-1"}
+{"timestamp":"2026-10-28T09:10:04Z","level":"info","msg":"sku counted","warehouse":"syd-1","sku":"sku-551","count":2}
+{"timestamp":"2026-10-28T09:10:05Z","level":"warn","msg":"count mismatch","warehouse":"syd-1","sku":"sku-551","expected":5}
+{"timestamp":"2026-10-28T09:10:09Z","level":"info","msg":"sku counted","warehouse":"syd-1","sku":"sku-812","count":40}
+{"timestamp":"2026-10-28T09:10:12Z","level":"info","msg":"stock count finished","warehouse":"syd-1","skus":2}
