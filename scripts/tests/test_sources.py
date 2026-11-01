@@ -1357,7 +1357,8 @@ class TestSuiteEnvTree:
         text = instances.fragment({"dfe-transform-vrl": ["e2evrl"]}, env_dir=env_dir)
 
         assert f"path: {env_dir}/dfe-transform-vrl-e2evrl.custom.env" in text
-        assert f"path: {instances.ENV_DIR.name}/" not in text
+        assert f"path: {env_dir}/dfe-transform-vrl.custom.env" in text
+        assert not re.search(rf"path: {instances.ENV_DIR.name}/\S+\.custom\.env", text)
 
     def test_the_index_is_read_from_that_tree(self, tmp_path: Path) -> None:
         env_dir = tmp_path / "suite-env"
@@ -1372,8 +1373,16 @@ class TestSuiteEnvTree:
 class TestSuiteCustomKeys:
     """The suite's apps take the custom keys their own engine wrote, never the found stack's."""
 
+    @pytest.mark.parametrize(
+        ("service", "keys"),
+        [
+            ("dfe-loader", {"SUITE_KEY": "suite"}),
+            ("dfe-loader-a", {"SUITE_KEY": "suite", "INSTANCE_KEY": "instance"}),
+        ],
+        ids=["app", "per-source instance"],
+    )
     def test_the_apps_read_custom_keys_from_the_suite_tree(
-        self, tmp_path: Path
+        self, tmp_path: Path, service: str, keys: dict[str, str]
     ) -> None:
         if shutil.which("docker") is None:
             pytest.skip("`docker compose config` renders the model this asserts on")
@@ -1383,6 +1392,11 @@ class TestSuiteCustomKeys:
         suite_env = tmp_path / "suite-env"
         suite_env.mkdir()
         (suite_env / "dfe-loader.custom.env").write_text("SUITE_KEY=suite\n", "utf-8")
+        (suite_env / "dfe-loader-a.custom.env").write_text(
+            "INSTANCE_KEY=instance\n", "utf-8"
+        )
+        fragment = tmp_path / "instances.yml"
+        instances.write({"dfe-loader": ["a"]}, env_dir=suite_env, path=fragment)
         made_dir = not found.parent.exists()
         found.parent.mkdir(parents=True, exist_ok=True)
         found.write_text("FOUND_KEY=found\n", encoding="utf-8")
@@ -1393,7 +1407,9 @@ class TestSuiteCustomKeys:
             )
             environ, _ = check_compose._check_env()
             model = check_compose._config_json(
-                env=environ, files=[COMPOSE_FILE.name], fragment=override
+                env=environ,
+                files=[COMPOSE_FILE.name, str(fragment)],
+                fragment=override,
             )
         finally:
             found.unlink()
@@ -1401,9 +1417,9 @@ class TestSuiteCustomKeys:
                 found.parent.rmdir()
 
         assert model is not None
-        loader = model["services"]["dfe-loader"]["environment"]
-        assert loader.get("SUITE_KEY") == "suite"
-        assert "FOUND_KEY" not in loader
+        environment = model["services"][service]["environment"]
+        assert {key: environment.get(key) for key in keys} == keys
+        assert "FOUND_KEY" not in environment
 
     def test_every_app_with_custom_keys_is_covered(self, tmp_path: Path) -> None:
         text = COMPOSE_FILE.read_text(encoding="utf-8")
