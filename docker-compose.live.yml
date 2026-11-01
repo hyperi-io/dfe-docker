@@ -16,6 +16,10 @@
 # The user/HOME overrides exist for the mounts: the engine writes into the
 # bind-mounted host dirs, so it runs as the host user (DFE_DEV_UID/GID are
 # exported by the Makefile) rather than the image user.
+#
+# Every other reader of the engine's config tree mounts the same host dirs: the
+# hunt runner reads the hunts the engine writes, bearer-tokens-init makes the
+# token directory, and dfe-receiver reads the bearer tokens out of it.
 
 services:
   dfe-engine:
@@ -26,3 +30,18 @@ services:
     volumes:
       - ${DFE_SRC_ROOT:?set DFE_SRC_ROOT to the directory holding your dfe-engine checkout (live mode builds and mounts local source)}/dfe-engine/config:${DFE_ENGINE_CONFIG_DIR:-/app/config}
       - ${DFE_SRC_ROOT:?set DFE_SRC_ROOT to the directory holding your dfe-engine checkout (live mode builds and mounts local source)}/dfe-engine/schemas:${DFE_ENGINE_SCHEMAS_DIR:-/app/schemas}
+
+  dfe-hunt-runner:
+    user: "${DFE_DEV_UID:-1000}:${DFE_DEV_GID:-1000}"
+    volumes:
+      - ${DFE_SRC_ROOT:?set DFE_SRC_ROOT to the directory holding your dfe-engine checkout (live mode builds and mounts local source)}/dfe-engine/config:${DFE_ENGINE_CONFIG_DIR:-/app/config}
+      - ${DFE_SRC_ROOT:?set DFE_SRC_ROOT to the directory holding your dfe-engine checkout (live mode builds and mounts local source)}/dfe-engine/schemas:${DFE_ENGINE_SCHEMAS_DIR:-/app/schemas}
+
+  bearer-tokens-init:
+    user: "${DFE_DEV_UID:-1000}:${DFE_DEV_GID:-1000}"
+    volumes:
+      - ${DFE_SRC_ROOT:?set DFE_SRC_ROOT to the directory holding your dfe-engine checkout (live mode builds and mounts local source)}/dfe-engine/config:${DFE_ENGINE_CONFIG_DIR:-/app/config}
+
+  dfe-receiver:
+    volumes:
+      - ${DFE_SRC_ROOT:?set DFE_SRC_ROOT to the directory holding your dfe-engine checkout (live mode builds and mounts local source)}/dfe-engine/config/.secrets/ingest/bearer-tokens:/var/run/secrets/dfe/ingest-bearer-tokens:ro

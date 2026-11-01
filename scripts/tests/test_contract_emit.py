@@ -352,3 +352,40 @@ def test_an_emission_replaces_the_last_one_whole_or_leaves_none(
         assert not published.exists()
     else:
         assert sorted(path.name for path in published.iterdir()) == left
+
+
+def _mounts(service: dict) -> dict[str, str]:
+    return {
+        volume["target"]: (
+            f"{volume.get('source', '')}/{volume['volume']['subpath']}"
+            if volume.get("volume", {}).get("subpath")
+            else volume.get("source", "")
+        )
+        for volume in service.get("volumes") or []
+    }
+
+
+def test_live_mode_gives_every_reader_of_the_engine_config_the_same_tree() -> None:
+    """The engine writes hunts and bearer tokens to the checkout, so their readers mount it too."""
+    if shutil.which("docker") is None:
+        pytest.skip("`docker compose config` renders the model these assert on")
+    env, _ = check_compose._check_env()
+    config = check_compose._config_json(
+        env=env, files=[check_compose.COMPOSE_FILE.name, "docker-compose.live.yml"]
+    )
+    assert config is not None
+    services = config["services"]
+    engine = _mounts(services[_ENGINE_SERVICE])
+    live_config = engine["/app/config"]
+    assert live_config.startswith("/")
+
+    for reader in ("dfe-hunt-runner", "bearer-tokens-init"):
+        mounts = _mounts(services[reader])
+        assert mounts["/app/config"] == live_config, reader
+    assert (
+        _mounts(services["dfe-hunt-runner"])["/app/schemas"] == engine["/app/schemas"]
+    )
+    assert (
+        _mounts(services["dfe-receiver"])["/var/run/secrets/dfe/ingest-bearer-tokens"]
+        == f"{live_config}/.secrets/ingest/bearer-tokens"
+    )
