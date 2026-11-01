@@ -334,7 +334,8 @@ survives between tests, so each test runs its own config against a fresh broker.
 The test stacks run as a compose project of their own, `<project>-e2e`, with
 `e2e-` before every container name, so no test reaches the volumes of the stack
 it found. Its engine writes custom keys and instance indexes under
-`.tmp/e2e/<run>/env` rather than `env/`. That project and its volumes are
+`.tmp/e2e/<run>/env` rather than `env/`, and its apps read their custom keys
+from there too. That project and its volumes are
 removed when the run ends, and again when the next run starts, in case a killed
 run left them.
 Each entry under `tests:` names a `service_profiles.yaml` profile, optionally

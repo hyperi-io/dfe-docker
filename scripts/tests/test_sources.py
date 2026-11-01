@@ -11,6 +11,7 @@
 The engine names each source's instance `dfe-transform-<engine>-<source>`, binds it on the bus to `<source>_land` under a consumer group of the same name, then reads back the requests the suite sends it. The committed e2e-tests.yaml is read too, so a source test the suite would refuse fails here first.
 """
 
+import re
 import shutil
 from pathlib import Path
 from typing import TypedDict
@@ -1366,3 +1367,51 @@ class TestSuiteEnvTree:
         assert _sources.indexed(sources=[VRL], env_dir=env_dir) == {
             "dfe-transform-vrl": ["e2evrl"]
         }
+
+
+class TestSuiteCustomKeys:
+    """The suite's apps take the custom keys their own engine wrote, never the found stack's."""
+
+    def test_the_apps_read_custom_keys_from_the_suite_tree(
+        self, tmp_path: Path
+    ) -> None:
+        if shutil.which("docker") is None:
+            pytest.skip("`docker compose config` renders the model this asserts on")
+        found = REPO_ROOT / "env" / "dfe-loader.custom.env"
+        if found.exists():
+            pytest.skip(f"{found} already exists in this checkout")
+        suite_env = tmp_path / "suite-env"
+        suite_env.mkdir()
+        (suite_env / "dfe-loader.custom.env").write_text("SUITE_KEY=suite\n", "utf-8")
+        made_dir = not found.parent.exists()
+        found.parent.mkdir(parents=True, exist_ok=True)
+        found.write_text("FOUND_KEY=found\n", encoding="utf-8")
+        try:
+            override = _sources.suite_env_override(
+                compose_text=COMPOSE_FILE.read_text(encoding="utf-8"),
+                env_dir=suite_env,
+            )
+            environ, _ = check_compose._check_env()
+            model = check_compose._config_json(
+                env=environ, files=[COMPOSE_FILE.name], fragment=override
+            )
+        finally:
+            found.unlink()
+            if made_dir:
+                found.parent.rmdir()
+
+        assert model is not None
+        loader = model["services"]["dfe-loader"]["environment"]
+        assert loader.get("SUITE_KEY") == "suite"
+        assert "FOUND_KEY" not in loader
+
+    def test_every_app_with_custom_keys_is_covered(self, tmp_path: Path) -> None:
+        text = COMPOSE_FILE.read_text(encoding="utf-8")
+        override = _sources.suite_env_override(compose_text=text, env_dir=tmp_path)
+
+        apps = set(re.findall(r"path: env/([a-z-]+)\.custom\.env", text))
+        assert apps
+        for app in apps:
+            assert f"path: {tmp_path}/{app}.custom.env" in override
+        assert "path: env/dfe-loader.custom.env" not in override
+        assert "path: env/loader.env" in override

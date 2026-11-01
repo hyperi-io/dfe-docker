@@ -930,6 +930,18 @@ def stack_up(mode, test, services):
         if extra.strip():
             compose_files += ["-f", extra.strip()]
     compose_files += ["-f", override_file]
+    env_override = TMP_DIR / f"docker-compose.{RUN_ID}.env.yaml"
+    env_override.write_text(
+        _sources.suite_env_override(
+            compose_text=(PROJECT_DIR / "docker-compose.yml").read_text(
+                encoding="utf-8"
+            ),
+            env_dir=SUITE_ENV_DIR,
+        ),
+        encoding="utf-8",
+        newline="\n",
+    )
+    compose_files += ["-f", str(env_override)]
 
     # Kafka first: dfe-engine on Kafka stays unready until the broker holds its dead-letter topics.
     # The loader fails on startup if no matching topics exist on the broker.
