@@ -1774,6 +1774,8 @@ def _replace_issued_password(
             f"change nor a login settled which one the engine holds: {change_fault} -- "
             f"{kept}"
         )
+        if ACCESS_SUMMARY_FILE.is_file():
+            fault += f", and {ACCESS_SUMMARY_FILE.name} still holds the old one"
         return Login("", 200, username, _without_passwords(fault, replacement, current))
     if login_fault and change_fault:
         restored = ""
@@ -1804,10 +1806,12 @@ def _replace_issued_password(
             username,
             f"{username!r} took a new password and the engine still requires a change",
         )
-    _print(
-        msg=f"      {username!r} replaced the password it was issued -- {key} in "
-        f"{DOTENV_FILE.name} holds the new one"
+    held = (
+        f"{key} in {DOTENV_FILE.name} holds the new one"
+        if RECORD_ROTATION
+        else f"this run's environment holds the new one, and {DOTENV_FILE.name} is unchanged"
     )
+    _print(msg=f"      {username!r} replaced the password it was issued -- {held}")
     return Login(new_token, new_status, username, "")
 
 

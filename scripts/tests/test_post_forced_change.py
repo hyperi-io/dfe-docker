@@ -469,6 +469,8 @@ def test_a_change_with_no_answer_and_no_login_after_keeps_the_new_password(
     issued: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """With neither answer the engine may hold the new password, so .env keeps it."""
+    summary = issued.parent / "access-summary.md"
+    summary.write_text(f"| Admin | `admin` | `{_ISSUED}` |\n", encoding="utf-8")
     engine = _Engine(password=_ISSUED, sends_flag=True)
     calls: list[str] = []
 
@@ -488,6 +490,8 @@ def test_a_change_with_no_answer_and_no_login_after_keeps_the_new_password(
 
     assert login.token == ""
     assert _recorded(issued) == engine.password != _ISSUED
+    assert "access-summary.md still holds the old one" in login.fault
+    assert _ISSUED in summary.read_text(encoding="utf-8")
 
 
 def test_a_lost_change_the_engine_did_not_take_puts_dotenv_back(
@@ -525,3 +529,27 @@ def test_a_run_that_records_nothing_leaves_dotenv_alone_and_still_logs_in(
     assert again.fault == ""
     assert issued.read_text(encoding="utf-8") == _ENV
     assert post.os.environ[post.ADMIN_PASSWORD_KEY] == engine.password != _ISSUED
+
+
+@pytest.mark.parametrize(
+    ("record", "where"),
+    [
+        (True, f"{post.ADMIN_PASSWORD_KEY} in .env holds the new one"),
+        (False, "this run's environment holds the new one, and .env is unchanged"),
+    ],
+    ids=["recorded", "this-run-only"],
+)
+def test_the_replacement_names_where_the_new_password_is(
+    issued: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    record: bool,
+    where: str,
+) -> None:
+    _serve(monkeypatch, _Engine(password=_ISSUED, sends_flag=True))
+    monkeypatch.setattr(post, "RECORD_ROTATION", record)
+
+    assert post.login(base=_BASE).fault == ""
+
+    out = capsys.readouterr()
+    assert where in out.out + out.err
