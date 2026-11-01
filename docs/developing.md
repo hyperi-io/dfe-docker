@@ -53,8 +53,9 @@ re-run. It does two things beyond the copy:
 `make stack VERSION=X.Y.Z[-rc.N]` writes the `*_VERSION` pins into `.env` from the
 DFE stack SSoT. It uses a local dfe-infra checkout only when `DFE_INFRA_DIR`
 names one (`scripts/dfe-stack render --target docker --stack VERSION`), and
-otherwise does an `oras pull` of `ghcr.io/hyperi-io/dfe-stack-manifest:VERSION`.
-If neither is available it fails loudly -- there is no silent `latest`. Only
+otherwise resolves `ghcr.io/hyperi-io/dfe-stack-manifest:VERSION` to a digest,
+checks with `cosign verify` that dfe-infra's release workflow signed it, and
+pulls that digest with `oras`. If neither is available it fails loudly -- there is no silent `latest`. Only
 `*_VERSION` keys are rewritten; your ports, hosts, credentials and profile
 survive the merge.
 

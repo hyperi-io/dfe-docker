@@ -38,9 +38,12 @@ Transport is EXPLICIT-LOCAL-FIRST, OCI-DEFAULT:
 1. A local dfe-infra checkout, ONLY when ``DFE_INFRA_DIR`` names one (no
    implicit sibling probe): run ``scripts/dfe-stack render --target docker
    --stack VERSION`` and read its stdout fragment.
-2. Else pull the signed OCI stack-manifest artifact
-   (``ghcr.io/hyperi-io/dfe-stack-manifest:VERSION`` via ``oras pull``) and read
-   its ``dfe-env-VERSION.txt`` member. This is the air-gap / CI path.
+2. Else resolve the OCI stack-manifest tag
+   (``ghcr.io/hyperi-io/dfe-stack-manifest:VERSION``) to its digest, check with
+   ``cosign verify`` that dfe-infra's release workflow signed that digest, then
+   ``oras pull`` it by digest and read its ``dfe-env-VERSION.txt`` member. This
+   is the air-gap / CI path. ``DFE_STACK_VERIFY=false`` skips the signature
+   check on a host with no cosign, and still pulls by digest.
 3. Neither available -> fail loudly. We never silently fall back to ``latest``.
 
 The rendered fragment is the source of truth for the pins. This tool only
@@ -100,6 +103,14 @@ STACK_VERSION_KEY = "DFE_STACK_VERSION"
 # component repo and so is never part of the default `latest` / `rc` path.
 REPIN_ENV = "DFE_STACK_REPIN_IMAGES"
 _TRUTHY = {"1", "true", "yes", "on"}
+
+# dfe-infra's release workflow signs each stack manifest keyless through GitHub OIDC, so its certificate names that workflow on main. A manifest repo moved by DFE_STACK_MANIFEST_REPO names its own signer through the two overrides.
+DEFAULT_SIGNER_IDENTITY = "https://github.com/hyperi-io/dfe-infra/.github/workflows/release.yml@refs/heads/main"
+DEFAULT_SIGNER_ISSUER = "https://token.actions.githubusercontent.com"
+SIGNER_IDENTITY_ENV = "DFE_STACK_SIGNER_IDENTITY"
+SIGNER_ISSUER_ENV = "DFE_STACK_SIGNER_ISSUER"
+# `false` pulls an unverified manifest, still by digest, for a host that cannot run cosign.
+VERIFY_ENV = "DFE_STACK_VERIFY"
 
 # A compose image line for an image WE publish: the registry default is captured
 # so `.env` need not set IMAGE_REGISTRY for the repo to be known.
@@ -164,8 +175,50 @@ def _render_local(infra_dir: Path, version: str) -> str:
     return out.stdout
 
 
+def _resolve_digest(ref: str) -> str:
+    """Return the digest a manifest tag names now, so every later step reads one artefact."""
+    out = _run(["oras", "resolve", ref])
+    digest = out.stdout.strip()
+    if out.returncode != 0 or not (re.fullmatch(r"sha256:[0-9a-f]{64}", digest)):
+        detail = out.stderr.strip() or digest
+        raise StackError(f"oras resolve {ref} failed: {detail}")
+    return digest
+
+
+def _verify_signature(pinned: str) -> None:
+    """Refuse a manifest the release workflow did not sign, unless verification is off."""
+    if os.environ.get(VERIFY_ENV, "").strip().lower() == "false":
+        _print(
+            msg=f"WARNING {VERIFY_ENV}=false: {pinned} is pulled without a signature check"
+        )
+        return
+    if shutil.which("cosign") is None:
+        raise StackError(
+            f"`cosign` is not installed, so the stack manifest's signature cannot be "
+            f"checked -- install cosign, or set {VERIFY_ENV}=false to pull it unverified"
+        )
+    identity = (
+        os.environ.get(SIGNER_IDENTITY_ENV, "").strip() or DEFAULT_SIGNER_IDENTITY
+    )
+    issuer = os.environ.get(SIGNER_ISSUER_ENV, "").strip() or DEFAULT_SIGNER_ISSUER
+    out = _run(
+        [
+            "cosign",
+            "verify",
+            "--certificate-identity",
+            identity,
+            "--certificate-oidc-issuer",
+            issuer,
+            pinned,
+        ]
+    )
+    if out.returncode != 0:
+        detail = out.stderr.strip() or out.stdout.strip()
+        raise StackError(f"{pinned} is not signed by {identity}: {detail}")
+
+
 def _render_oci(version: str) -> str:
-    """Pull the signed OCI stack manifest and read its .env member (air-gap path)."""
+    """Pull the stack manifest by digest, once its signature checks, and read its .env member (air-gap path)."""
     if shutil.which("oras") is None:
         raise StackError(
             "no local dfe-infra checkout found and `oras` is not installed -- "
@@ -173,18 +226,19 @@ def _render_oci(version: str) -> str:
             "dfe-infra checkout, or install oras)"
         )
     repo = manifest_repo()
-    ref = f"{repo}:{version}"
+    pinned = f"{repo}@{_resolve_digest(f'{repo}:{version}')}"
+    _verify_signature(pinned)
     member = (
         os.environ.get("DFE_STACK_ENV_MEMBER", "").strip() or f"dfe-env-{version}.txt"
     )
     with tempfile.TemporaryDirectory(prefix="dfe-stack-") as tmp:
-        out = _run(["oras", "pull", "--output", tmp, ref])
+        out = _run(["oras", "pull", "--output", tmp, pinned])
         if out.returncode != 0:
             detail = out.stderr.strip() or out.stdout.strip()
-            raise StackError(f"oras pull {ref} failed: {detail}")
+            raise StackError(f"oras pull {pinned} failed: {detail}")
         member_path = Path(tmp) / member
         if not member_path.is_file():
-            raise StackError(f"OCI manifest {ref} has no member {member!r}")
+            raise StackError(f"OCI manifest {pinned} has no member {member!r}")
         return member_path.read_text(encoding="utf-8", errors="replace")
 
 
