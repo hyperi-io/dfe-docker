@@ -110,8 +110,8 @@ DEFAULT_SIGNER_IDENTITY = "https://github.com/hyperi-io/dfe-infra/.github/workfl
 DEFAULT_SIGNER_ISSUER = "https://token.actions.githubusercontent.com"
 SIGNER_IDENTITY_ENV = "DFE_STACK_SIGNER_IDENTITY"
 SIGNER_ISSUER_ENV = "DFE_STACK_SIGNER_ISSUER"
-# cosign for a host with docker and no cosign: the release cosign-installer v4.1.2 installs, pinned by digest.
-COSIGN_IMAGE = "gcr.io/projectsigstore/cosign:v3.0.6@sha256:de9c65609e6bde17e6b48de485ee788407c9502fa08b8f4459f595b21f56cd00"
+# cosign for a host with docker and no cosign, pinned by digest. A verifier need not match the signer's cosign version.
+COSIGN_IMAGE = "gcr.io/projectsigstore/cosign:v3.1.4@sha256:0f06154836d2de34f887a5c273506d52ca43edaa1d9e53e6510fa78a48f69c2d"
 # `false` pulls an unverified manifest, still by digest, for a host that cannot run cosign.
 VERIFY_ENV = "DFE_STACK_VERIFY"
 
