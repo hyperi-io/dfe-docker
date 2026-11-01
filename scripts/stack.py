@@ -178,16 +178,6 @@ def _render_local(infra_dir: Path, version: str) -> str:
     return out.stdout
 
 
-def _resolve_digest(ref: str) -> str:
-    """Return the digest a manifest tag names now, so every later step reads one artefact."""
-    out = _run(["oras", "resolve", ref])
-    digest = out.stdout.strip()
-    if out.returncode != 0 or not (re.fullmatch(r"sha256:[0-9a-f]{64}", digest)):
-        detail = out.stderr.strip() or digest
-        raise StackError(f"oras resolve {ref} failed: {detail}")
-    return digest
-
-
 def _setting(key: str) -> str:
     """One stack.py setting: the environment, else .env, which `make` reads without exporting."""
     return os.environ.get(key, "").strip() or _dotenv_values().get(key, "").strip()
@@ -243,7 +233,7 @@ def _render_oci(version: str) -> str:
             "dfe-infra checkout, or install oras)"
         )
     repo = manifest_repo()
-    pinned = f"{repo}@{_resolve_digest(f'{repo}:{version}')}"
+    pinned = f"{repo}@{resolve_digest(reference=f'{repo}:{version}')}"
     _verify_signature(pinned)
     member = (
         os.environ.get("DFE_STACK_ENV_MEMBER", "").strip() or f"dfe-env-{version}.txt"

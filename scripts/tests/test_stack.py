@@ -203,9 +203,9 @@ with open({log!r}, "a", encoding="utf-8") as fh:
 tags = pathlib.Path({tags!r})
 if args[:2] == ["repo", "tags"]:
     print(tags.read_text(encoding="utf-8"))
-elif args[:1] == ["resolve"]:
+elif args[:3] == ["manifest", "fetch", "--descriptor"]:
     tag = args[-1].rsplit(":", 1)[1]
-    print("sha256:" + hashlib.sha256(tag.encode()).hexdigest())
+    print(json.dumps({{"digest": "sha256:" + hashlib.sha256(tag.encode()).hexdigest()}}))
 elif args[:1] == ["pull"] and "@sha256:" in args[-1]:
     digest = args[-1].rsplit("@", 1)[1]
     names = [t for t in tags.read_text(encoding="utf-8").split() if not t.startswith("sha256-")]
@@ -316,10 +316,11 @@ def test_a_discovery_word_resolves_with_no_gh_and_no_token(
     pinned = f"{_registry.DEFAULT_MANIFEST_REPO}@{_digest_of(expected)}"
     assert [call[:3] for call in calls] == [
         ["oras", "repo", "tags"],
-        ["oras", "resolve", f"{_registry.DEFAULT_MANIFEST_REPO}:{expected}"],
+        ["oras", "manifest", "fetch"],
         ["cosign", "verify", "--certificate-identity"],
         ["oras", "pull", "--output"],
     ]
+    assert calls[1][-1] == f"{_registry.DEFAULT_MANIFEST_REPO}:{expected}"
     assert calls[2][-1] == pinned
     assert calls[3][-1] == pinned
     written = dotenv.read_text(encoding="utf-8")
