@@ -335,7 +335,8 @@ The test stacks run as a compose project of their own, `<project>-e2e`, with
 `e2e-` before every container name, so no test reaches the volumes of the stack
 it found. Its engine writes custom keys and instance indexes under
 `.tmp/e2e/<run>/env` rather than `env/`. That project and its volumes are
-removed when the run ends.
+removed when the run ends, and again when the next run starts, in case a killed
+run left them.
 Each entry under `tests:` names a `service_profiles.yaml` profile, optionally
 `expected_topics` (created and cleaned per run, then verified) and
 `config_overrides` keyed by service name.

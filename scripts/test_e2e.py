@@ -4379,6 +4379,10 @@ def run_suite(ctx, mode, tests, persistent_services):
         error(msg=f"Nothing was stopped: {change}")
     expected = expected_hashes(found)
     project = found_project()
+    # A killed run leaves its suite project behind, holding the host ports and its old volumes.
+    suite_down(
+        _stack_state.suite_environ(os.environ, project=project)["COMPOSE_PROJECT_NAME"]
+    )
     suite_project = None
     signal.signal(signal.SIGTERM, lambda signum, frame: sys.exit(128 + signum))
     try:
