@@ -1319,6 +1319,8 @@ def isolate_suite(project):
     SUITE_ENV_DIR.mkdir(parents=True, exist_ok=True)
     SUITE_ENV_DIR.chmod(0o2770)
     os.environ.update(_stack_state.suite_environ(os.environ, project=project))
+    # .env belongs to the found stack, so a password rotated on a test engine stays in memory.
+    post.RECORD_ROTATION = False
     suite_project = os.environ["COMPOSE_PROJECT_NAME"]
     LOGGER.info(f"Test stacks run as compose project '{suite_project}'")
     return suite_project
@@ -1329,6 +1331,7 @@ def isolate_suite(project):
 # - Points `docker compose` back at the found project
 # ------------------------------------------------------------------------------
 def end_isolation():
+    post.RECORD_ROTATION = True
     for key in ("COMPOSE_PROJECT_NAME", "DFE_CONTAINER_PREFIX"):
         if key in FOUND_ENVIRON:
             os.environ[key] = FOUND_ENVIRON[key]

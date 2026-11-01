@@ -290,6 +290,8 @@ HUNT_EVENTS = {
 # router in place; nothing here waits on a deploy controller. The window is
 # built from those parts in `_routing_timeout_seconds`.
 ROUTING_SERVICES = ("dfe-engine", "dfe-receiver", "dfe-loader")
+# False keeps a password POST rotates in this process alone: the e2e suite's engines are thrown away, and .env is the found stack's.
+RECORD_ROTATION = True
 # The services `make` was given in SERVICES, set by the post target, empty for the whole profile.
 POST_SERVICES_ENV = "DFE_POST_SERVICES"
 # A name of the run's own, so the claim only ever removes a source it created. Lowercase letters and digits, which both the engine and an unquoted ClickHouse identifier accept.
@@ -1700,27 +1702,38 @@ def _replace_issued_password(
 
     The new password reaches .env BEFORE the engine is asked to take it, so a
     change the engine applied is never one nothing recorded. When the engine did
-    not take it, .env is put back as it was.
+    not take it, .env is put back as it was. With RECORD_ROTATION off, .env is
+    never touched and the new password lives in this process's environment.
     """
     replacement = _generate_secret(GENERATED_SECRETS[ADMIN_PASSWORD_KEY])
     dotenv = DOTENV_FILE.resolve()
-    try:
-        original = dotenv.read_text(encoding="utf-8")
-        _replace_file(
-            path=dotenv, text=_dotenv_with(text=original, key=key, value=replacement)
+    original = ""
+    kept = f"{DOTENV_FILE.name} keeps the new one as {key}"
+    if RECORD_ROTATION:
+        try:
+            original = dotenv.read_text(encoding="utf-8")
+            _replace_file(
+                path=dotenv,
+                text=_dotenv_with(text=original, key=key, value=replacement),
+            )
+        except OSError as error:
+            return Login(
+                "",
+                200,
+                username,
+                f"{username!r} must replace the password it was issued, and {key} cannot "
+                f"be recorded in {DOTENV_FILE.name} ({error.strerror}) -- nothing was changed",
+            )
+        _print(
+            msg=f"      {username!r} is on an issued password -- replacing it, with the new "
+            f"one recorded as {key} in {DOTENV_FILE.name}"
         )
-    except OSError as error:
-        return Login(
-            "",
-            200,
-            username,
-            f"{username!r} must replace the password it was issued, and {key} cannot "
-            f"be recorded in {DOTENV_FILE.name} ({error.strerror}) -- nothing was changed",
+    else:
+        kept = "this run keeps the new one in its own environment"
+        _print(
+            msg=f"      {username!r} is on an issued password -- replacing it for this "
+            f"run only, leaving {DOTENV_FILE.name} as it is"
         )
-    _print(
-        msg=f"      {username!r} is on an issued password -- replacing it, with the new "
-        f"one recorded as {key} in {DOTENV_FILE.name}"
-    )
 
     try:
         status, body = _api_post_json(
@@ -1759,18 +1772,19 @@ def _replace_issued_password(
         fault = (
             f"{username!r} must replace the password it was issued, and neither the "
             f"change nor a login settled which one the engine holds: {change_fault} -- "
-            f"{DOTENV_FILE.name} keeps the new one as {key}"
+            f"{kept}"
         )
         return Login("", 200, username, _without_passwords(fault, replacement, current))
     if login_fault and change_fault:
         restored = ""
-        try:
-            _replace_file(path=dotenv, text=original)
-        except OSError as error:
-            restored = (
-                f" -- and {DOTENV_FILE.name} could not be put back ({error.strerror}), "
-                f"so its {key} names a password the engine does not hold"
-            )
+        if RECORD_ROTATION:
+            try:
+                _replace_file(path=dotenv, text=original)
+            except OSError as error:
+                restored = (
+                    f" -- and {DOTENV_FILE.name} could not be put back ({error.strerror}), "
+                    f"so its {key} names a password the engine does not hold"
+                )
         fault = (
             f"{username!r} must replace the password it was issued and the engine did "
             f"not take the new one: {change_fault}{restored}"
@@ -1778,7 +1792,8 @@ def _replace_issued_password(
         return Login("", 200, username, _without_passwords(fault, replacement, current))
 
     os.environ[key] = replacement
-    _refresh_access_summary()
+    if RECORD_ROTATION:
+        _refresh_access_summary()
     if login_fault:
         fault = f"{username!r} replaced the password it was issued, but {login_fault}"
         return Login("", 200, username, _without_passwords(fault, replacement, current))

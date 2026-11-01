@@ -508,3 +508,20 @@ def test_a_lost_change_the_engine_did_not_take_puts_dotenv_back(
     assert login.token == ""
     assert issued.read_text(encoding="utf-8") == _ENV
     assert engine.password == _ISSUED
+
+
+def test_a_run_that_records_nothing_leaves_dotenv_alone_and_still_logs_in(
+    issued: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The e2e suite's engine is thrown away, so its rotated password must not reach the found .env."""
+    engine = _serve(monkeypatch, _Engine(password=_ISSUED, sends_flag=True))
+    monkeypatch.setattr(post, "RECORD_ROTATION", False, raising=False)
+
+    login = post.login(base=_BASE)
+    again = post.login(base=_BASE)
+
+    assert login.fault == ""
+    assert login.token
+    assert again.fault == ""
+    assert issued.read_text(encoding="utf-8") == _ENV
+    assert post.os.environ[post.ADMIN_PASSWORD_KEY] == engine.password != _ISSUED

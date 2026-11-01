@@ -68,6 +68,28 @@ def test_a_leftover_suite_project_is_removed_before_any_test(
     assert steps.index(leftover) < steps.index("test") < steps.index("put_back")
 
 
+def test_isolation_keeps_a_rotated_password_out_of_dotenv_until_it_ends(
+    monkeypatch: pytest.MonkeyPatch, tmp_path
+) -> None:
+    monkeypatch.setattr(test_e2e, "SUITE_ENV_DIR", tmp_path / "suite-env")
+    monkeypatch.setattr(test_e2e.post, "RECORD_ROTATION", True)
+    for key in (
+        "COMPOSE_PROJECT_NAME",
+        "DFE_CONTAINER_PREFIX",
+        "DFE_NETWORK_SUBNET",
+        "DFE_PROXY_IP",
+        "DFE_NETWORK_IP_RANGE",
+    ):
+        monkeypatch.delenv(key, raising=False)
+
+    test_e2e.isolate_suite("dfe")
+    isolated = test_e2e.post.RECORD_ROTATION
+    test_e2e.end_isolation()
+
+    assert isolated is False
+    assert test_e2e.post.RECORD_ROTATION is True
+
+
 class _Test:
     """The fields run_suite reads off a test case."""
 
