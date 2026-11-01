@@ -1268,6 +1268,84 @@ def expected_hashes(found):
 
 
 # ------------------------------------------------------------------------------
+# Found Project
+# - The compose project the found stack resolves to
+# ------------------------------------------------------------------------------
+def found_project():
+    result = run_cmd(
+        [
+            "docker",
+            "compose",
+            "-f",
+            "docker-compose.yml",
+            "config",
+            "--no-interpolate",
+            "--format",
+            "json",
+        ],
+        capture=True,
+    )
+    try:
+        name = json.loads(result.stdout or "{}").get("name", "")
+    except ValueError:
+        name = ""
+    if (result.returncode != 0) or not (name):
+        error(
+            msg=f"compose could not name this checkout's project, so nothing was stopped: {(result.stderr or '').strip()}"
+        )
+    return name
+
+
+# ------------------------------------------------------------------------------
+# Isolate Suite
+# - Test stacks get a project of their own, as their topic deletes would erase the found broker's records
+# ------------------------------------------------------------------------------
+def isolate_suite(project):
+    os.environ.update(_stack_state.suite_environ(os.environ, project=project))
+    suite_project = os.environ["COMPOSE_PROJECT_NAME"]
+    LOGGER.info(f"Test stacks run as compose project '{suite_project}'")
+    return suite_project
+
+
+# ------------------------------------------------------------------------------
+# End Isolation
+# - Points `docker compose` back at the found project
+# ------------------------------------------------------------------------------
+def end_isolation():
+    for key in ("COMPOSE_PROJECT_NAME", "DFE_CONTAINER_PREFIX"):
+        if key in FOUND_ENVIRON:
+            os.environ[key] = FOUND_ENVIRON[key]
+        else:
+            os.environ.pop(key, None)
+
+
+# ------------------------------------------------------------------------------
+# Suite Down
+# - Removes the suite's project and its volumes, named so it never reaches the found one
+# ------------------------------------------------------------------------------
+def suite_down(suite_project):
+    LOGGER.info(f"Removing compose project '{suite_project}' and its volumes...")
+    result = run_cmd(
+        [
+            "docker",
+            "compose",
+            "--project-name",
+            suite_project,
+            "--profile",
+            "*",
+            "down",
+            "--volumes",
+            "--remove-orphans",
+        ],
+        capture=not (LOG_LEVEL == "DEBUG"),
+    )
+    if result.returncode != 0:
+        LOGGER.warning(
+            f"Compose project '{suite_project}' was not removed: {(result.stderr or result.stdout or '').strip()}"
+        )
+
+
+# ------------------------------------------------------------------------------
 # Put Back
 # - Leaves the project as the run found it: the test stack down, then each service
 #   that was running, or had run to completion, started again from the compose
@@ -1276,9 +1354,11 @@ def expected_hashes(found):
 # - A service those files no longer define stays down, as a deleted source's
 #   instance does once its fragment is gone
 # ------------------------------------------------------------------------------
-def put_back(ctx, found, expected):
+def put_back(ctx, found, expected, suite_project):
     print()
-    stack_down()
+    if suite_project:
+        suite_down(suite_project)
+    end_isolation()
 
     left_out = set()
     for found_restore in _stack_state.restores(found, exists=os.path.exists):
@@ -4287,11 +4367,15 @@ def run_suite(ctx, mode, tests, persistent_services):
     if change:
         error(msg=f"Nothing was stopped: {change}")
     expected = expected_hashes(found)
+    project = found_project()
+    suite_project = None
     signal.signal(signal.SIGTERM, lambda signum, frame: sys.exit(128 + signum))
     try:
+        # Every service, ClickHouse too: the suite's own takes its host ports.
         if stack_is_up():
             print()
-            stack_down(persistent_services)
+            stack_down()
+        suite_project = isolate_suite(project)
 
         # Build only the DFE services the selected tests need, each source's app among them
         needed = set()
@@ -4302,7 +4386,7 @@ def run_suite(ctx, mode, tests, persistent_services):
         for test in tests:
             run_test(ctx, mode, test, persistent_services)
     finally:
-        put_back(ctx, found, expected)
+        put_back(ctx, found, expected, suite_project)
 
 
 # ==============================================================================

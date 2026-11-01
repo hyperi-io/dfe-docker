@@ -13,9 +13,12 @@ containers come back, from which compose files, and when the project counts as
 different from how it was found.
 """
 
+import shutil
+
 import pytest
 
 import _stack_state
+import check_compose
 
 _FILES = "/opt/dfe/docker-compose.yml,/opt/dfe/docker-compose.tls.yml"
 
@@ -384,3 +387,35 @@ def test_a_run_that_would_move_the_stack_names_the_profile_to_rerun_with(
         f"the stack runs profile 'single-grpc' but these make flags give {given!r}. "
         "Rerun with DFE_PROFILE=single-grpc"
     )
+
+
+def _rendered(environ: dict[str, str]) -> dict:
+    """The interpolated compose model for `environ`, every profile on."""
+    if shutil.which("docker") is None:
+        pytest.skip("`docker compose config` renders the model these assert on")
+    model = check_compose._config_json(
+        env=environ, files=[check_compose.COMPOSE_FILE.name]
+    )
+    assert model is not None, "the registry compose path did not resolve"
+    return model
+
+
+@pytest.mark.parametrize("prefix", ["", "second-"], ids=["no-prefix", "prefixed"])
+def test_the_suite_stacks_share_no_volume_or_container_with_the_stack_it_found(
+    prefix: str,
+) -> None:
+    """A test deletes its topics, so its broker must never be the found stack's."""
+    environ, _ = check_compose._check_env()
+    environ.pop("COMPOSE_PROJECT_NAME", None)
+    environ["DFE_CONTAINER_PREFIX"] = prefix
+    found = _rendered(environ)
+
+    suite = _rendered(_stack_state.suite_environ(environ, project=found["name"]))
+
+    found_volumes = {volume["name"] for volume in found["volumes"].values()}
+    suite_volumes = {volume["name"] for volume in suite["volumes"].values()}
+    found_names = {svc["container_name"] for svc in found["services"].values()}
+    suite_names = {svc["container_name"] for svc in suite["services"].values()}
+    assert suite["name"] != found["name"]
+    assert found_volumes.isdisjoint(suite_volumes)
+    assert found_names.isdisjoint(suite_names)

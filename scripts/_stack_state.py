@@ -35,6 +35,10 @@ ENVIRONMENT_FILE_LABEL = "com.docker.compose.project.environment_file"
 CONFIG_HASH_LABEL = "com.docker.compose.config-hash"
 ONEOFF_LABEL = "com.docker.compose.oneoff"
 
+# What the suite adds to the found project's name and to its container prefix.
+SUITE_PROJECT_SUFFIX = "-e2e"
+SUITE_CONTAINER_PREFIX = "e2e-"
+
 # The tier and transport dfe-engine runs with, the variable make exports each from and compose's default
 _ENGINE_SETTINGS = (
     ("DFE_PROFILE", "DFE_STACK_PROFILE", "docker-slim"),
@@ -246,6 +250,20 @@ def profile_change(
         return ""
     found = _profile_name(settings=running)
     return f"the stack runs profile {found!r} but these make flags give {_profile_name(settings=wanted)!r}. Rerun with DFE_PROFILE={found}"
+
+
+def suite_environ(environ: Mapping[str, str], *, project: str) -> dict[str, str]:
+    """The environment the suite runs its test stacks under, apart from `project`.
+
+    A test deletes and creates topics on its broker, so the suite's stacks get a
+    compose project of their own, which gives them their own volumes and network,
+    and a container prefix of their own, since container names are daemon-wide.
+    """
+    return {
+        **environ,
+        "COMPOSE_PROJECT_NAME": f"{project}{SUITE_PROJECT_SUFFIX}",
+        "DFE_CONTAINER_PREFIX": f"{SUITE_CONTAINER_PREFIX}{environ.get('DFE_CONTAINER_PREFIX', '')}",
+    }
 
 
 def restores(
