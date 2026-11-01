@@ -306,14 +306,17 @@ _FAKE_APP = """#!/bin/sh
 # Stands in for the app binary: `config-schema --dir D` writes one file, or fails as told.
 [ -n "$FAKE_FAIL" ] && exit 1
 mkdir -p "$3" && echo new > "$3/schema.json"
+# Leaves D unwritable, so the emitter's own source.json cannot be written into it.
+[ -z "$FAKE_READ_ONLY" ] || chmod a-w "$3"
 """
 
 
 @pytest.mark.parametrize(
-    ("fails", "left"),
+    ("fake", "left"),
     [
-        pytest.param(False, ["schema.json", "source.json"], id="emits"),
-        pytest.param(True, None, id="fails"),
+        pytest.param({}, ["schema.json", "source.json"], id="emits"),
+        pytest.param({"FAKE_FAIL": "1"}, None, id="fails"),
+        pytest.param({"FAKE_READ_ONLY": "1"}, None, id="source-unwritable"),
     ],
 )
 @pytest.mark.parametrize("app", _APPS)
@@ -321,12 +324,14 @@ def test_an_emission_replaces_the_last_one_whole_or_leaves_none(
     app: str,
     services: dict[str, dict],
     tmp_path: Path,
-    fails: bool,
+    fake: dict[str, str],
     left: list[str] | None,
 ) -> None:
     """The volume outlives the release, so a failed emission must not leave the last one."""
     if shutil.which("sh") is None:
         pytest.skip("the emitter's command is a POSIX shell script")
+    if "FAKE_READ_ONLY" in fake and os.geteuid() == 0:
+        pytest.skip("root writes into a read-only directory")
     content = tmp_path / "content"
     published = content / "contract" / app
     published.mkdir(parents=True)
@@ -340,12 +345,15 @@ def test_an_emission_replaces_the_last_one_whole_or_leaves_none(
     environment = {
         "PATH": f"{bindir}{os.pathsep}{os.environ['PATH']}",
         "CONTRACT_REF": "ref",
-        **({"FAKE_FAIL": "1"} if fails else {}),
+        **fake,
     }
 
     result = subprocess.run(
         ["sh", "-c", script], capture_output=True, env=environment, text=True
     )
+    staged = content / "contract" / f"{app}.new"
+    if staged.exists():
+        staged.chmod(0o755)
 
     assert result.returncode == 0, result.stderr
     if left is None:

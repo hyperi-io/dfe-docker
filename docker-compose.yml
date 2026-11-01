@@ -431,10 +431,10 @@ services:
     command:
       - |
         rm -rf /app/content/contract/dfe-archiver.new
-        if dfe-archiver config-schema --dir /app/content/contract/dfe-archiver.new; then
+        if dfe-archiver config-schema --dir /app/content/contract/dfe-archiver.new &&
           printf '{"app":"dfe-archiver","ref":"%s","emitted_at":"%s"}\n' \
             "$$CONTRACT_REF" "$$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
-            > /app/content/contract/dfe-archiver.new/source.json
+            > /app/content/contract/dfe-archiver.new/source.json; then
           rm -rf /app/content/contract/dfe-archiver && mv /app/content/contract/dfe-archiver.new /app/content/contract/dfe-archiver
         else
           rm -rf /app/content/contract/dfe-archiver.new /app/content/contract/dfe-archiver
@@ -459,10 +459,10 @@ services:
     command:
       - |
         rm -rf /app/content/contract/dfe-fetcher.new
-        if dfe-fetcher config-schema --dir /app/content/contract/dfe-fetcher.new; then
+        if dfe-fetcher config-schema --dir /app/content/contract/dfe-fetcher.new &&
           printf '{"app":"dfe-fetcher","ref":"%s","emitted_at":"%s"}\n' \
             "$$CONTRACT_REF" "$$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
-            > /app/content/contract/dfe-fetcher.new/source.json
+            > /app/content/contract/dfe-fetcher.new/source.json; then
           rm -rf /app/content/contract/dfe-fetcher && mv /app/content/contract/dfe-fetcher.new /app/content/contract/dfe-fetcher
         else
           rm -rf /app/content/contract/dfe-fetcher.new /app/content/contract/dfe-fetcher
@@ -487,10 +487,10 @@ services:
     command:
       - |
         rm -rf /app/content/contract/dfe-loader.new
-        if dfe-loader config-schema --dir /app/content/contract/dfe-loader.new; then
+        if dfe-loader config-schema --dir /app/content/contract/dfe-loader.new &&
           printf '{"app":"dfe-loader","ref":"%s","emitted_at":"%s"}\n' \
             "$$CONTRACT_REF" "$$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
-            > /app/content/contract/dfe-loader.new/source.json
+            > /app/content/contract/dfe-loader.new/source.json; then
           rm -rf /app/content/contract/dfe-loader && mv /app/content/contract/dfe-loader.new /app/content/contract/dfe-loader
         else
           rm -rf /app/content/contract/dfe-loader.new /app/content/contract/dfe-loader
@@ -515,10 +515,10 @@ services:
     command:
       - |
         rm -rf /app/content/contract/dfe-receiver.new
-        if dfe-receiver config-schema --dir /app/content/contract/dfe-receiver.new; then
+        if dfe-receiver config-schema --dir /app/content/contract/dfe-receiver.new &&
           printf '{"app":"dfe-receiver","ref":"%s","emitted_at":"%s"}\n' \
             "$$CONTRACT_REF" "$$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
-            > /app/content/contract/dfe-receiver.new/source.json
+            > /app/content/contract/dfe-receiver.new/source.json; then
           rm -rf /app/content/contract/dfe-receiver && mv /app/content/contract/dfe-receiver.new /app/content/contract/dfe-receiver
         else
           rm -rf /app/content/contract/dfe-receiver.new /app/content/contract/dfe-receiver
@@ -543,10 +543,10 @@ services:
     command:
       - |
         rm -rf /app/content/contract/dfe-transform-elastic.new
-        if dfe-transform-elastic config-schema --dir /app/content/contract/dfe-transform-elastic.new; then
+        if dfe-transform-elastic config-schema --dir /app/content/contract/dfe-transform-elastic.new &&
           printf '{"app":"dfe-transform-elastic","ref":"%s","emitted_at":"%s"}\n' \
             "$$CONTRACT_REF" "$$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
-            > /app/content/contract/dfe-transform-elastic.new/source.json
+            > /app/content/contract/dfe-transform-elastic.new/source.json; then
           rm -rf /app/content/contract/dfe-transform-elastic && mv /app/content/contract/dfe-transform-elastic.new /app/content/contract/dfe-transform-elastic
         else
           rm -rf /app/content/contract/dfe-transform-elastic.new /app/content/contract/dfe-transform-elastic
@@ -571,10 +571,10 @@ services:
     command:
       - |
         rm -rf /app/content/contract/dfe-transform-vector.new
-        if dfe-transform-vector config-schema --dir /app/content/contract/dfe-transform-vector.new; then
+        if dfe-transform-vector config-schema --dir /app/content/contract/dfe-transform-vector.new &&
           printf '{"app":"dfe-transform-vector","ref":"%s","emitted_at":"%s"}\n' \
             "$$CONTRACT_REF" "$$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
-            > /app/content/contract/dfe-transform-vector.new/source.json
+            > /app/content/contract/dfe-transform-vector.new/source.json; then
           rm -rf /app/content/contract/dfe-transform-vector && mv /app/content/contract/dfe-transform-vector.new /app/content/contract/dfe-transform-vector
         else
           rm -rf /app/content/contract/dfe-transform-vector.new /app/content/contract/dfe-transform-vector
@@ -599,10 +599,10 @@ services:
     command:
       - |
         rm -rf /app/content/contract/dfe-transform-vrl.new
-        if dfe-transform-vrl config-schema --dir /app/content/contract/dfe-transform-vrl.new; then
+        if dfe-transform-vrl config-schema --dir /app/content/contract/dfe-transform-vrl.new &&
           printf '{"app":"dfe-transform-vrl","ref":"%s","emitted_at":"%s"}\n' \
             "$$CONTRACT_REF" "$$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
-            > /app/content/contract/dfe-transform-vrl.new/source.json
+            > /app/content/contract/dfe-transform-vrl.new/source.json; then
           rm -rf /app/content/contract/dfe-transform-vrl && mv /app/content/contract/dfe-transform-vrl.new /app/content/contract/dfe-transform-vrl
         else
           rm -rf /app/content/contract/dfe-transform-vrl.new /app/content/contract/dfe-transform-vrl
