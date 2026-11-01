@@ -98,7 +98,7 @@ ALLOWED_LINES = {
     ("scripts/post.py", 'f"DROP TABLE IF EXISTS {database}.{name} SYNC",'),
     (
         "scripts/tests/test_post.py",
-        'assert statements == ["DROP TABLE IF EXISTS dfe.postroute SYNC"]',
+        'assert statements == ["DROP TABLE IF EXISTS dfe.postroute1a2b3c4d SYNC"]',
     ),
 }
 

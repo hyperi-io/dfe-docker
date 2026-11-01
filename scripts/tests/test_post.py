@@ -1166,6 +1166,10 @@ def test_the_rows_are_deleted_after_the_console_reads_them_back(
     assert calls.index("_verify_ui_query") < calls.index("_cleanup")
 
 
+# A name of the shape the routing claim gives its own source.
+_ROUTED = "postroute1a2b3c4d"
+
+
 def _stub_routed_removal(
     monkeypatch: pytest.MonkeyPatch, delete
 ) -> tuple[list[tuple[str, int]], list[str]]:
@@ -1193,16 +1197,16 @@ def test_the_routing_table_is_dropped_once_its_source_is_gone(
     deletes, statements = _stub_routed_removal(monkeypatch, lambda: status)
 
     post._remove_routed_source(
-        base="http://engine/api/v1", database="dfe", name="postroute", token="t"
+        base="http://engine/api/v1", database="dfe", name=_ROUTED, token="t"
     )
 
     assert deletes == [
         (
-            "http://engine/api/v1/sources/postroute",
+            f"http://engine/api/v1/sources/{_ROUTED}",
             post.ROUTING_DELETE_TIMEOUT_SECONDS,
         )
     ]
-    assert statements == ["DROP TABLE IF EXISTS dfe.postroute SYNC"]
+    assert statements == ["DROP TABLE IF EXISTS dfe.postroute1a2b3c4d SYNC"]
 
 
 def test_the_routing_table_stays_while_its_source_remains(
@@ -1211,14 +1215,18 @@ def test_the_routing_table_stays_while_its_source_remains(
     _, statements = _stub_routed_removal(monkeypatch, lambda: 500)
 
     post._remove_routed_source(
-        base="http://engine/api/v1", database="dfe", name="postroute", token="t"
+        base="http://engine/api/v1", database="dfe", name=_ROUTED, token="t"
     )
 
     assert statements == []
-    assert "dfe.postroute is kept while its source remains" in (capsys.readouterr().err)
+    assert f"dfe.{_ROUTED} is kept while its source remains" in (
+        capsys.readouterr().err
+    )
 
 
-@pytest.mark.parametrize("name", ["main", "postroute1a2b3c4d", "postroute; x"])
+@pytest.mark.parametrize(
+    "name", ["main", "postroute", "postroute1a2b3c4dx", "postroute; x"]
+)
 def test_a_table_this_claim_did_not_name_is_never_dropped(
     monkeypatch: pytest.MonkeyPatch, name: str
 ) -> None:
@@ -1240,10 +1248,90 @@ def test_a_source_delete_with_no_answer_keeps_the_table_and_does_not_raise(
     _, statements = _stub_routed_removal(monkeypatch, _unanswered)
 
     post._remove_routed_source(
-        base="http://engine/api/v1", database="dfe", name="postroute", token="t"
+        base="http://engine/api/v1", database="dfe", name=_ROUTED, token="t"
     )
 
     assert statements == []
+
+
+class _RoutingEngine:
+    """An engine that already holds an operator's source, recording what POST does."""
+
+    def __init__(self, *, create_status: int) -> None:
+        self.create_status = create_status
+        self.sources = {"postroute"}
+        self.created: list[str] = []
+        self.deleted: list[str] = []
+        self.statements: list[str] = []
+
+    def post_json(self, url: str, payload: dict, token: str = "", timeout: int = 30):
+        if url.endswith("/deploy"):
+            return 200, {"applied": True}
+        if payload["source"] in self.sources:
+            return 409, {"detail": {"code": "conflict"}}
+        if self.create_status not in (201, 202):
+            return self.create_status, {"detail": {"code": "validation_error"}}
+        self.sources.add(payload["source"])
+        self.created.append(payload["source"])
+        return self.create_status, {"source": payload["source"]}
+
+    def delete(self, url: str, token: str = "", timeout: int = 10) -> int:
+        name = url.rsplit("/", 1)[-1]
+        self.deleted.append(name)
+        self.sources.discard(name)
+        return 204
+
+    def execute(self, sql: str, *, timeout: int) -> tuple[bool, str]:
+        self.statements.append(sql)
+        return True, ""
+
+
+def _routing_engine(
+    monkeypatch: pytest.MonkeyPatch, *, create_status: int = 201
+) -> _RoutingEngine:
+    engine = _RoutingEngine(create_status=create_status)
+    monkeypatch.setattr(post, "_profile_mk_value", lambda *, key: "/etc/dfe/apps")
+    monkeypatch.setattr(post, "_resolved_services", lambda: list(post.ROUTING_SERVICES))
+    monkeypatch.setattr(post, "login", lambda *, base: post.Login("t", 200, "u", ""))
+    monkeypatch.setattr(post, "_api_post_json", engine.post_json)
+    monkeypatch.setattr(post, "_api_delete", engine.delete)
+    monkeypatch.setattr(post, "ch_execute", engine.execute)
+    monkeypatch.setattr(post, "_await_routed_row", lambda *, database, name: 0)
+    return engine
+
+
+@pytest.mark.parametrize(
+    ("create_status", "failed"),
+    [
+        pytest.param(201, 0, id="created"),
+        pytest.param(202, 1, id="stored-apps-behind"),
+        pytest.param(422, 1, id="refused"),
+    ],
+)
+def test_the_routing_claim_removes_only_the_source_it_created(
+    monkeypatch: pytest.MonkeyPatch, create_status: int, failed: int
+) -> None:
+    engine = _routing_engine(monkeypatch, create_status=create_status)
+
+    claim = post._verify_routing_applied(database="dfe")
+
+    assert claim.failed == failed
+    assert "postroute" in engine.sources
+    assert engine.deleted == engine.created
+    dropped = [sql.removesuffix(" SYNC").rsplit(" ", 1)[1] for sql in engine.statements]
+    assert dropped == [f"dfe.{name}" for name in engine.created]
+
+
+def test_each_routing_run_makes_a_source_of_its_own(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    engine = _routing_engine(monkeypatch)
+
+    post._verify_routing_applied(database="dfe")
+    post._verify_routing_applied(database="dfe")
+
+    assert len(set(engine.created)) == 2
+    assert all(post.ROUTING_SOURCE_PATTERN.fullmatch(n) for n in engine.created)
 
 
 def _reported(monkeypatch: pytest.MonkeyPatch, *, names: set[str]) -> list[str]:

@@ -63,6 +63,7 @@ import datetime
 import functools
 import json
 import os
+import re
 import stat
 import subprocess
 import sys
@@ -289,8 +290,9 @@ HUNT_EVENTS = {
 # router in place; nothing here waits on a deploy controller. The window is
 # built from those parts in `_routing_timeout_seconds`.
 ROUTING_SERVICES = ("dfe-engine", "dfe-receiver", "dfe-loader")
-# One name for every run, so a run that dies before its cleanup leaves at most one set behind, which the next run removes first.
-ROUTING_SOURCE = "postroute"
+# A name of the run's own, so the claim only ever removes a source it created. Lowercase letters and digits, which both the engine and an unquoted ClickHouse identifier accept.
+ROUTING_SOURCE_PREFIX = "postroute"
+ROUTING_SOURCE_PATTERN = re.compile(rf"{ROUTING_SOURCE_PREFIX}[0-9a-f]{{8}}")
 RECEIVER_CONFIG_POLL_SECONDS = 5.0
 ROUTING_INTERVAL_SECONDS = 3.0
 # The engine deletes a source's two topics before it answers, each delete allowed
@@ -1185,11 +1187,20 @@ def _verify_loader_subscription() -> Claim:
     return HELD
 
 
-def _create_routed_source(*, base: str, name: str, token: str) -> str:
-    """Create and deploy a source with a rule of its own. Returns '' or the fault.
+def _routing_source_name() -> str:
+    """Return a routing source name no other run or operator holds."""
+    return f"{ROUTING_SOURCE_PREFIX}{os.urandom(4).hex()}"
+
+
+def _create_routed_source(*, base: str, name: str, token: str) -> tuple[bool, str]:
+    """Create and deploy a source with a rule of its own.
 
     The deploy is what makes the source live: it creates the landing table, ensures
     the topic and pushes the compiled routing into the apps' overlays.
+
+    Returns:
+        Whether the engine stored the source, which makes it this run's to remove,
+        and '' or the fault.
     """
     status, body = _api_post_json(
         f"{base}/sources",
@@ -1202,16 +1213,21 @@ def _create_routed_source(*, base: str, name: str, token: str) -> str:
         },
         token=token,
     )
+    # 202 is stored with the apps not yet following, which still makes it ours.
+    created = status in (201, 202)
     if status != 201:
-        return f"POST /sources returned HTTP {status}: {body}"
+        return created, f"POST /sources returned HTTP {status}: {body}"
     status, body = _api_post_json(f"{base}/sources/{name}/deploy", {}, token=token)
     if status != 200 or not (isinstance(body, dict) and body.get("applied")):
-        return f"POST /sources/{name}/deploy returned HTTP {status}: {body}"
+        return created, f"POST /sources/{name}/deploy returned HTTP {status}: {body}"
     if body.get("apps_sync_error"):
-        return f"the apps could not follow the source: {body['apps_sync_error']}"
+        return (
+            created,
+            f"the apps could not follow the source: {body['apps_sync_error']}",
+        )
     for hint in body.get("restart_required") or []:
         _print(msg=f"      {hint}")
-    return ""
+    return created, ""
 
 
 def _verify_routing_applied(*, database: str) -> Claim:
@@ -1247,13 +1263,13 @@ def _verify_routing_applied(*, database: str) -> Claim:
         )
         return Claim(asserted=True, failed=1)
 
-    name = ROUTING_SOURCE
-    _remove_routed_source(base=base, database=database, name=name, token=token)
+    name = _routing_source_name()
     _print(msg=f"Creating source {name!r} and posting one event that matches its rule")
-    fault = _create_routed_source(base=base, name=name, token=token)
+    created, fault = _create_routed_source(base=base, name=name, token=token)
     if fault:
         _print(msg=f"FAIL  {fault}")
-        _remove_routed_source(base=base, database=database, name=name, token=token)
+        if created:
+            _remove_routed_source(base=base, database=database, name=name, token=token)
         return Claim(asserted=True, failed=1)
 
     try:
@@ -1281,8 +1297,8 @@ def _remove_routed_source(*, base: str, database: str, name: str, token: str) ->
     if not (removed):
         _print(msg=f"      note: {database}.{name} is kept while its source remains")
         return
-    # Only a name this claim makes, so the drop can never reach another table.
-    if name != ROUTING_SOURCE:
+    # Only a name of the shape this claim makes, so the drop can never reach another table.
+    if not (ROUTING_SOURCE_PATTERN.fullmatch(name)):
         return
     dropped, answer = ch_execute(
         f"DROP TABLE IF EXISTS {database}.{name} SYNC",
