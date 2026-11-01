@@ -1318,12 +1318,31 @@ def isolate_suite(project):
     # Group-writable and setgid: the engine writes here as UID 1000 through the make user's group.
     SUITE_ENV_DIR.mkdir(parents=True, exist_ok=True)
     SUITE_ENV_DIR.chmod(0o2770)
-    os.environ.update(_stack_state.suite_environ(os.environ, project=project))
+    taken = daemon_subnets() if os.environ.get("DFE_NETWORK_SUBNET", "").strip() else []
+    os.environ.update(
+        _stack_state.suite_environ(os.environ, project=project, taken=taken)
+    )
     # .env belongs to the found stack, so a password rotated on a test engine stays in memory.
     post.RECORD_ROTATION = False
     suite_project = os.environ["COMPOSE_PROJECT_NAME"]
     LOGGER.info(f"Test stacks run as compose project '{suite_project}'")
     return suite_project
+
+
+# ------------------------------------------------------------------------------
+# Daemon Subnets
+# - The IPv4 subnets every network on the daemon holds, none when docker cannot list them
+# ------------------------------------------------------------------------------
+def daemon_subnets():
+    listing = run_cmd(args=["docker", "network", "ls", "-q"], capture=True)
+    ids = (listing.stdout or "").split()
+    if (listing.returncode != 0) or not (ids):
+        LOGGER.warning(
+            "docker listed no networks, so the suite's subnet is checked against none"
+        )
+        return []
+    inspected = run_cmd(args=["docker", "network", "inspect", *ids], capture=True)
+    return _stack_state.network_subnets(inspected.stdout or "")
 
 
 # ------------------------------------------------------------------------------

@@ -12,6 +12,8 @@ The suite's steps around the stacks are stood in for at the suite's own function
 boundaries, and every command it would run is recorded in order.
 """
 
+import ipaddress
+import json
 import subprocess
 
 import pytest
@@ -88,6 +90,35 @@ def test_isolation_keeps_a_rotated_password_out_of_dotenv_until_it_ends(
 
     assert isolated is False
     assert test_e2e.post.RECORD_ROTATION is True
+
+
+def test_the_suite_network_avoids_every_subnet_the_daemon_holds(
+    monkeypatch: pytest.MonkeyPatch, tmp_path
+) -> None:
+    held = ["10.207.0.0/24", "10.207.1.0/24", "10.206.255.0/24"]
+
+    def _run_cmd(args, capture=False, cwd=None):
+        out = (
+            "a\nb\nc\n"
+            if args[2] == "ls"
+            else json.dumps(
+                [{"IPAM": {"Config": [{"Subnet": subnet}]}} for subnet in held]
+            )
+        )
+        return subprocess.CompletedProcess(args=args, returncode=0, stdout=out)
+
+    monkeypatch.setattr(test_e2e, "run_cmd", _run_cmd)
+    monkeypatch.setattr(test_e2e, "SUITE_ENV_DIR", tmp_path / "suite-env")
+    for key in ("COMPOSE_PROJECT_NAME", "DFE_CONTAINER_PREFIX", "DFE_PROXY_IP"):
+        monkeypatch.delenv(key, raising=False)
+    monkeypatch.setenv("DFE_NETWORK_SUBNET", "10.207.0.0/24")
+    monkeypatch.setenv("DFE_NETWORK_IP_RANGE", "10.207.0.0/25")
+
+    test_e2e.isolate_suite("dfe")
+    test_e2e.end_isolation()
+
+    subnet = ipaddress.IPv4Network(test_e2e.os.environ["DFE_NETWORK_SUBNET"])
+    assert not any(subnet.overlaps(ipaddress.IPv4Network(net)) for net in held)
 
 
 class _Test:

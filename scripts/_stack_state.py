@@ -24,6 +24,7 @@ and judges what comes back against that.
 
 import dataclasses
 import ipaddress
+import json
 from collections import defaultdict
 from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass
@@ -255,12 +256,16 @@ def profile_change(
     return f"the stack runs profile {found!r} but these make flags give {_profile_name(settings=wanted)!r}. Rerun with DFE_PROFILE={found}"
 
 
-def suite_environ(environ: Mapping[str, str], *, project: str) -> dict[str, str]:
+def suite_environ(
+    environ: Mapping[str, str], *, project: str, taken: Iterable[str] = ()
+) -> dict[str, str]:
     """The environment the suite runs its test stacks under, apart from `project`.
 
     A test deletes and creates topics on its broker, so the suite's stacks get a
     compose project of their own, which gives them their own volumes and network,
     and a container prefix of their own, since container names are daemon-wide.
+    Under console TLS its network takes a subnet clear of the found one and of
+    every subnet in `taken`.
     """
     suite = {
         **environ,
@@ -269,7 +274,7 @@ def suite_environ(environ: Mapping[str, str], *, project: str) -> dict[str, str]
     }
     found_subnet = environ.get("DFE_NETWORK_SUBNET", "").strip()
     if found_subnet:
-        subnet = _neighbour_subnet(found_subnet)
+        subnet = _free_subnet(found_subnet, taken=taken)
         suite["DFE_PROXY_IP"], suite["DFE_NETWORK_IP_RANGE"] = proxy_tls.derive(
             subnet=subnet
         )
@@ -277,20 +282,44 @@ def suite_environ(environ: Mapping[str, str], *, project: str) -> dict[str, str]
     return suite
 
 
-def _neighbour_subnet(found: str) -> str:
-    """The same-size private subnet next to the found one, so a found network left behind cannot block the suite's."""
+def _free_subnet(found: str, *, taken: Iterable[str]) -> str:
+    """The same-size private subnet nearest the found one that overlaps neither it nor any in `taken`."""
     network = ipaddress.IPv4Network(found)
-    for base in (
-        network.broadcast_address + 1,
-        network.network_address - network.num_addresses,
+    used = [network, *(ipaddress.IPv4Network(net) for net in taken)]
+    block = next((b for b in proxy_tls.PRIVATE_BLOCKS if network.subnet_of(b)), None)
+    candidates = list(block.subnets(new_prefix=network.prefixlen)) if block else []
+    for candidate in sorted(
+        candidates,
+        key=lambda net: abs(int(net.network_address) - int(network.network_address)),
     ):
-        candidate = ipaddress.IPv4Network(f"{base}/{network.prefixlen}")
+        if any(candidate.overlaps(net) for net in used):
+            continue
         try:
             proxy_tls.derive(subnet=str(candidate))
         except ValueError:
             continue
         return str(candidate)
-    raise ValueError(f"no private subnet beside {found} for the suite's network")
+    raise ValueError(
+        f"no free private subnet the size of {found} for the suite's network"
+    )
+
+
+def network_subnets(inspected: str) -> list[str]:
+    """The IPv4 subnets in `docker network inspect` output, none when it does not parse."""
+    try:
+        networks = json.loads(inspected)
+    except ValueError:
+        return []
+    subnets = []
+    for network in networks if isinstance(networks, list) else []:
+        for pool in ((network or {}).get("IPAM") or {}).get("Config") or []:
+            subnet = (pool or {}).get("Subnet", "")
+            try:
+                if isinstance(ipaddress.ip_network(subnet), ipaddress.IPv4Network):
+                    subnets.append(subnet)
+            except ValueError:
+                continue
+    return subnets
 
 
 def restores(

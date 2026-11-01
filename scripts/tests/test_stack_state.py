@@ -423,8 +423,15 @@ def test_the_suite_stacks_share_no_volume_or_container_with_the_stack_it_found(
     assert found_names.isdisjoint(suite_names)
 
 
-def test_under_console_tls_the_suite_network_takes_a_subnet_of_its_own() -> None:
-    """A found network left behind must not hold the subnet the suite's network needs."""
+@pytest.mark.parametrize(
+    "taken",
+    [["10.207.0.0/24"], ["10.207.0.0/24", "10.207.1.0/24", "10.206.255.0/24"]],
+    ids=["neighbour-free", "neighbours-taken"],
+)
+def test_under_console_tls_the_suite_network_takes_a_subnet_of_its_own(
+    taken: list[str],
+) -> None:
+    """Neither a found network left behind nor any other network may hold the subnet the suite's network needs."""
     environ, _ = check_compose._check_env()
     environ.pop("COMPOSE_PROJECT_NAME", None)
     subnet = "10.207.0.0/24"
@@ -442,7 +449,8 @@ def test_under_console_tls_the_suite_network_takes_a_subnet_of_its_own() -> None
     assert found is not None
 
     suite = check_compose._config_json(
-        env=_stack_state.suite_environ(environ, project=found["name"]), files=files
+        env=_stack_state.suite_environ(environ, project=found["name"], taken=taken),
+        files=files,
     )
 
     assert suite is not None
@@ -450,9 +458,38 @@ def test_under_console_tls_the_suite_network_takes_a_subnet_of_its_own() -> None
     suite_pool = suite["networks"]["default"]["ipam"]["config"][0]
     suite_net = ipaddress.IPv4Network(suite_pool["subnet"])
     assert not suite_net.overlaps(ipaddress.IPv4Network(found_pool["subnet"]))
+    assert not any(suite_net.overlaps(ipaddress.IPv4Network(net)) for net in taken)
+    assert suite_net.prefixlen == 24
     proxy = suite["services"]["dfe-proxy"]["networks"]["default"]["ipv4_address"]
     assert ipaddress.IPv4Address(proxy) in suite_net
     assert ipaddress.IPv4Network(suite_pool["ip_range"]).subnet_of(suite_net)
+
+
+def test_no_free_subnet_is_named_rather_than_overlapped() -> None:
+    environ = {"DFE_NETWORK_SUBNET": "192.168.0.0/16"}
+
+    with pytest.raises(ValueError, match="no free private subnet"):
+        _stack_state.suite_environ(environ, project="dfe", taken=["192.168.0.0/16"])
+
+
+@pytest.mark.parametrize(
+    ("inspected", "subnets"),
+    [
+        (
+            '[{"IPAM": {"Config": [{"Subnet": "172.18.0.0/16", "Gateway": "172.18.0.1"}]}},'
+            ' {"IPAM": {"Config": [{"Subnet": "fd00::/64"}, {"Subnet": "10.98.7.0/24"}]}}]',
+            ["172.18.0.0/16", "10.98.7.0/24"],
+        ),
+        ('[{"IPAM": {"Config": null}}, {"IPAM": {}}, {}]', []),
+        ("", []),
+        ("not json", []),
+    ],
+    ids=["ipv4-pools", "no-pools", "no-networks", "unreadable"],
+)
+def test_the_daemon_networks_give_their_ipv4_subnets(
+    inspected: str, subnets: list[str]
+) -> None:
+    assert _stack_state.network_subnets(inspected) == subnets
 
 
 def test_without_console_tls_the_suite_pins_no_subnet() -> None:
