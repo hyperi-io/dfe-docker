@@ -300,7 +300,6 @@ def engine_environment(*, profile_name: str, transport: str) -> dict[str, str]:
     """
     tier = resolve_profile.engine_tier(
         configured_broker="",
-        content_dir=resolve_profile.ENGINE_CONTENT_DIR,
         profile_name=profile_name,
         renders=True,
         transport=transport,

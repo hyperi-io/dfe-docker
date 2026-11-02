@@ -66,6 +66,7 @@ from _common import (  # noqa: E402
 from _sources import hinted_services  # noqa: E402
 from build_dev_images import SRC_REMOTE_DEFAULT  # noqa: E402
 from post import (  # noqa: E402
+    ADMIN_NAME_KEY,
     ADMIN_PASSWORD_KEY,
     APP_CONFIG_DIR_KEY,
     ENGINE_SERVICE,
@@ -573,7 +574,9 @@ def _run(*, args: argparse.Namespace) -> int:
     """Run the demo against the running stack and return its exit code."""
     demo = load_demo(events=EVENTS_DIR, sources=SOURCES_DIR)
     environ = dict(os.environ)
-    _load_env_file(component=ENGINE_COMPONENT, keys=(ADMIN_PASSWORD_KEY,))
+    _load_env_file(
+        component=ENGINE_COMPONENT, keys=(ADMIN_NAME_KEY, ADMIN_PASSWORD_KEY)
+    )
     _load_dotenv()
     if not (_resolved_services()):
         raise DemoError(

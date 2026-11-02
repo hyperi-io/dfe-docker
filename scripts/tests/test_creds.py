@@ -42,6 +42,7 @@ DFE_AUTH_BREAKGLASS_PASSWORD=another-minted-value
 """
 _ENGINE_KEYS = (
     "DFE_AUTH_BREAKGLASS_PASSWORD",
+    "DFE_AUTH_LOCAL_ADMIN_NAME",
     "DFE_AUTH_LOCAL_ADMIN_PASSWORD",
     "DFE_SEED_ACCOUNT_",
 )
@@ -63,6 +64,29 @@ def _deploy(*, dotenv: Path, text: str) -> None:
         encoding="utf-8",
         newline="\n",
     )
+
+
+@pytest.mark.parametrize(
+    ("engine_line", "expected"),
+    [
+        pytest.param(
+            "DFE_AUTH_LOCAL_ADMIN_NAME=ops\n", "ops", id="engine-file-names-it"
+        ),
+        pytest.param("", "admin", id="unset-falls-back"),
+    ],
+)
+def test_the_summary_takes_the_admin_name_from_the_engine_file_not_dotenv(
+    dotenv: Path, engine_line: str, expected: str
+) -> None:
+    _deploy(
+        dotenv=dotenv, text=f"{engine_line}DFE_AUTH_LOCAL_ADMIN_PASSWORD={_MINTED}\n"
+    )
+    dotenv.write_text("DFE_AUTH_LOCAL_ADMIN_NAME=stale\n", encoding="utf-8")
+
+    printed = "\n".join(creds.summary_lines(values=creds.access_values()))
+
+    assert f"login        {expected} /" in printed
+    assert "stale" not in printed
 
 
 def test_tty_prints_the_password(

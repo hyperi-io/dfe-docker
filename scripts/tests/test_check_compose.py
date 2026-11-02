@@ -361,7 +361,6 @@ def _dialling(*, host: str, http: str, native: str) -> dict:
     engine_keys = {
         "DFE_CLICKHOUSE_HOST": host,
         "DFE_CLICKHOUSE_PORT": http,
-        "DFE_CLICKHOUSE_NATIVE_PORT": native,
     }
     return {
         "services": {

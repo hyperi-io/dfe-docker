@@ -388,84 +388,53 @@ services:
     profiles: ["core"]
     restart: unless-stopped
     extends: {file: compose/limits.yml, service: limits-service}
-    # The operator's group, so it can write ./env
     group_add:
       - "${DFE_DEV_GID:-1000}"
-    # PRODUCT class: only DFE_ENGINE_API_EXTERNAL unpublishes it
     ports:
       - ${DFE_UI_BIND_HOST:-127.0.0.1}:${DFE_ENGINE_PORT:-8003}:8000
     env_file:
       - path: env/engine.env
         required: false
     environment:
-      # The console's links to the published infra UIs
       DFE_ADMIN_LINKS: ${DFE_ADMIN_LINKS_RESOLVED:-}
-      # Where contracts land, empty where no config renders
-      DFE_APP_CONTRACT_DIR: ${DFE_ENGINE_CONTRACT_DIR-${DFE_ENGINE_CONTENT_DIR:-/app/content}/contract}
-      # The everyday admin, whose password is in env/engine.env
-      DFE_AUTH_LOCAL_ADMIN_NAME: ${DFE_AUTH_LOCAL_ADMIN_NAME:-admin}
+      DFE_APP_CONTRACT_DIR: ${DFE_ENGINE_CONTRACT_DIR-/app/content/contract}
       DFE_CLICKHOUSE_DATABASE: ${CLICKHOUSE_DB:-default}
       DFE_CLICKHOUSE_HOST: ${CLICKHOUSE_HOST:-clickhouse}
-      # App users' passwords, the ones each app connects with
       DFE_CLICKHOUSE_HUNT_RUNNER_PASSWORD: ${DFE_HUNT_RUNNER_CLICKHOUSE_PASSWORD:-}
       DFE_CLICKHOUSE_LOADER_PASSWORD: ${DFE_LOADER_CLICKHOUSE_PASSWORD:-}
-      # Container ports, set only for an external ClickHouse
-      DFE_CLICKHOUSE_NATIVE_PORT: ${CLICKHOUSE_EXTERNAL_NATIVE_PORT:-9000}
       DFE_CLICKHOUSE_OTEL_WRITER_PASSWORD: ${DFE_OTEL_WRITER_CLICKHOUSE_PASSWORD:-}
       DFE_CLICKHOUSE_PASSWORD: ${CLICKHOUSE_PASSWORD:-}
       DFE_CLICKHOUSE_PORT: ${CLICKHOUSE_EXTERNAL_HTTP_PORT:-8123}
       DFE_CLICKHOUSE_QUERY_READER_PASSWORD: ${DFE_QUERY_READER_CLICKHOUSE_PASSWORD:-}
       DFE_CLICKHOUSE_SECURE: ${CLICKHOUSE_SECURE:-false}
       DFE_CLICKHOUSE_USERNAME: ${CLICKHOUSE_USERNAME:-default}
-      DFE_CONFIG_DIR: /app/config
-      # The ConfigMap stand-in. Empty turns the writer off
       DFE_DEPLOYMENT_APP_CONFIG_BASE_DIR: ${DFE_ENGINE_APP_CONFIG_BASE_DIR:-}
       DFE_DEPLOYMENT_APP_CONFIG_DIR: ${DFE_ENGINE_APP_CONFIG_DIR:-}
       DFE_DEPLOYMENT_APP_CONFIG_MOUNT: ${DFE_APP_CONFIG_MOUNT:-/etc/dfe/apps}
-      # Where custom.env files land, the ./env mount below
       DFE_DEPLOYMENT_APP_ENV_DIR: /app/app-env
-      # Names `make creds` on the login page
       DFE_DEPLOYMENT_TARGET: docker
-      # production refuses to start without real auth
       DFE_ENV: ${DFE_ENV:-production}
-      # A local-only deploy repo on the config volume
       DFE_GITOPS_LOCAL_PATH: /app/config/deploy-repo
-      # solo, since Compose has no forge to merge a review
-      DFE_GITOPS_MODE: ${DFE_GITOPS_MODE:-solo}
-      # Follows the footprint, like the HyperDX containers
+      DFE_GITOPS_MODE: solo
       DFE_HYPERDX_BASE_URL: ${DFE_HYPERDX_RESOLVED_BASE_URL:-}
       DFE_HYPERDX_ENABLED: ${DFE_HYPERDX_RESOLVED:-false}
-      # Where it creates topics, nothing on a direct tier
       DFE_KAFKA_BOOTSTRAP_SERVERS: ${DFE_KAFKA_BOOTSTRAP_SERVERS:-}
-      # Template seeds nothing writes on Compose yet
-      DFE_LIBRARY_SEED_DIR: ${DFE_ENGINE_CONTENT_DIR:-/app/content}/library
-      # The tier name, which seeds its default app instances
       DFE_PROFILE: ${DFE_STACK_PROFILE:-docker-slim}
-      DFE_SCHEMAS_DIR: /app/schemas
-      # On the volume, so the JWT key survives a recreate
       DFE_SECRETS_PATH: /app/config/.secrets
-      # The certified stack, for the console footer
       DFE_STACK_VERSION: ${DFE_STACK_VERSION:-}
-      # From the profile. Defaults are slim-grpc's
       DFE_TRANSPORT_BUS_PRESENT: ${DFE_TRANSPORT_BUS_PRESENT:-false}
       DFE_TRANSPORT_DEFAULT: ${DFE_TRANSPORT_DEFAULT:-direct}
-      # The console version, the ui pin without its digest
       DFE_UI_VERSION: ${DFE_UI_VERSION_TAG:-}
-      # The engine pushes its metrics here
       OTEL_EXPORTER_OTLP_ENDPOINT: ${DFE_OTEL_EXPORTER_ENDPOINT:-}
       OTEL_SERVICE_NAME: dfe-engine
-      # scalo-py reads the key bare, whatever the prefix
       VERSION_CHECK__ENABLED: ${DFE_VERSION_CHECK_ENABLED:-true}
       VERSION_CHECK__SEND_INSTANCE_ID: ${DFE_VERSION_CHECK_SEND_INSTANCE_ID:-true}
     volumes:
       - dfe-engine-config:/app/config
       - dfe-engine-schemas:/app/schemas
-      - dfe-engine-content:${DFE_ENGINE_CONTENT_DIR:-/app/content}
-      # Its only writer, every app mounts it read-only
+      - dfe-engine-content:/app/content
       - dfe-app-config:/app/app-config
-      # Read-write: the engine writes env/<service>.custom.env
       - ./env:/app/app-env
-      # Each app's base config, under the instance overlay
       - ./config/${DFE_ARCHIVER_CONFIG:-archiver/kafka.yaml}:/app/app-config-base/dfe-archiver.yaml:ro
       - ./config/${DFE_LOADER_CONFIG:-loader/kafka.yaml}:/app/app-config-base/dfe-loader.yaml:ro
       - ./config/${DFE_RECEIVER_CONFIG:-receiver/kafka.yaml}:/app/app-config-base/dfe-receiver.yaml:ro
@@ -473,7 +442,6 @@ services:
       clickhouse:
         condition: service_healthy
         required: false
-      # Contracts first. A failed emit only warns
       contract-dfe-archiver:
         condition: service_completed_successfully
         required: false
@@ -495,19 +463,16 @@ services:
       contract-dfe-transform-vrl:
         condition: service_completed_successfully
         required: false
-      # It creates the topics, so this edge starts the broker
       kafka-apache:
         condition: service_healthy
         required: false
       kafka-redpanda:
         condition: service_healthy
         required: false
-    working_dir: /home/appuser
     healthcheck:
       test: ["CMD", "curl", "-sf", "http://localhost:8000/readyz"]
       interval: 10s
       timeout: 3s
-      # A dead engine's lease (2 x 180 s) plus table creation
       start_period: 540s
       retries: 5
 
@@ -533,19 +498,15 @@ services:
     environment:
       DFE_CLICKHOUSE_DATABASE: ${CLICKHOUSE_DB:-default}
       DFE_CLICKHOUSE_HOST: ${CLICKHOUSE_HOST:-clickhouse}
-      # Container ports, as for dfe-engine (#75)
-      DFE_CLICKHOUSE_NATIVE_PORT: ${CLICKHOUSE_EXTERNAL_NATIVE_PORT:-9000}
       DFE_CLICKHOUSE_PASSWORD: ${DFE_HUNT_RUNNER_CLICKHOUSE_PASSWORD:-}
       DFE_CLICKHOUSE_PORT: ${CLICKHOUSE_EXTERNAL_HTTP_PORT:-8123}
       DFE_CLICKHOUSE_SECURE: ${CLICKHOUSE_SECURE:-false}
       # Its own user, as it runs SQL built from rule text
       DFE_CLICKHOUSE_USERNAME: dfe_hunt_runner
-      DFE_CONFIG_DIR: /app/config
       DFE_ENV: ${DFE_ENV:-production}
       # The deploy repo the engine governs hunts and rules in
       DFE_HUNTS_DIR: /app/config/deploy-repo/config/hunts
       DFE_HUNTS_RULES_DIR: /app/config/deploy-repo/config/rules
-      DFE_SCHEMAS_DIR: /app/schemas
       # The API's volume, so both read one signing key
       DFE_SECRETS_PATH: /app/config/.secrets
       OTEL_EXPORTER_OTLP_ENDPOINT: ${DFE_OTEL_EXPORTER_ENDPOINT:-}
@@ -562,7 +523,6 @@ services:
     # No HTTP listener. Liveness is its ClickHouse lease
     healthcheck:
       disable: true
-    working_dir: /home/appuser
 
   # ============================================================
   # dfe-ui

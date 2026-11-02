@@ -265,9 +265,7 @@ APP_CONFIG_MOUNT = "/etc/dfe/apps"
 # can require the mount beside the path, rather than the path alone.
 APP_CONFIG_VOLUME = "dfe-app-config"
 # Where the contract one-shots write each app's container contract, and where the
-# engine reads it back from. It hangs off the content volume's own mount, so an
-# operator who moves that path moves both halves together.
-ENGINE_CONTENT_DIR_VAR = "DFE_ENGINE_CONTENT_DIR"
+# engine reads it back from, under the content volume's mount.
 ENGINE_CONTENT_DIR = "/app/content"
 ENGINE_CONTRACT_DIR_VAR = "DFE_ENGINE_CONTRACT_DIR"
 ENGINE_CONTRACT_SUBDIR = "contract"
@@ -592,7 +590,6 @@ def _parse_args(argv: Sequence[str]) -> argparse.Namespace:
 def engine_tier(
     *,
     configured_broker: str,
-    content_dir: str,
     profile_name: str,
     renders: bool,
     transport: str,
@@ -610,7 +607,7 @@ def engine_tier(
             configured=configured_broker, transport=transport
         ),
         ENGINE_CONTRACT_DIR_VAR: (
-            f"{content_dir}/{ENGINE_CONTRACT_SUBDIR}" if renders else ""
+            f"{ENGINE_CONTENT_DIR}/{ENGINE_CONTRACT_SUBDIR}" if renders else ""
         ),
         # docker-slim or docker-single, which the engine seeds its default app instances from and reports as its deployment profile
         STACK_PROFILE_VAR: f"docker-{profile_name.partition('-')[0]}",
@@ -796,8 +793,6 @@ def main(argv: Sequence[str] = ()) -> int:
         # What the engine is told about this tier, each line emitted unconditionally and empty where it does not apply, so the included file settles. .env may name another broker and move the content volume's mount
         tier = engine_tier(
             configured_broker=os.environ.get(ENGINE_BROKER_ENV_VAR, ""),
-            content_dir=(os.environ.get(ENGINE_CONTENT_DIR_VAR, "").strip())
-            or (ENGINE_CONTENT_DIR),
             profile_name=active_profile,
             renders=renders,
             transport=transport,

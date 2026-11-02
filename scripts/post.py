@@ -253,7 +253,8 @@ HYPERDX_NETWORK_BASE = "http://dfe-hyperdx-proxy:8000"
 # the request itself is given.
 API_EXEC_MARGIN_SECONDS = 10
 
-# Where the console password is read from, and where a forced change writes the new one back.
+# The console login's name, and its password, which a forced change writes back to the same file.
+ADMIN_NAME_KEY = "DFE_AUTH_LOCAL_ADMIN_NAME"
 ADMIN_PASSWORD_KEY = "DFE_AUTH_LOCAL_ADMIN_PASSWORD"
 # The owner's own password change, the one call the engine serves an account that
 # is still on the password it was issued.
@@ -1617,7 +1618,7 @@ class Login(typing.NamedTuple):
 
 def _console_credential() -> tuple[str, str]:
     """Return (username, password) for POST's login, which is the bootstrap admin's."""
-    username = os.environ.get("DFE_AUTH_LOCAL_ADMIN_NAME", "admin").strip() or "admin"
+    username = os.environ.get(ADMIN_NAME_KEY, "admin").strip() or "admin"
     return username, os.environ.get(ADMIN_PASSWORD_KEY, "").strip()
 
 
@@ -2535,7 +2536,9 @@ def login(base: str) -> Login:
 
 
 def main() -> int:
-    _load_env_file(component=ENGINE_COMPONENT, keys=(ADMIN_PASSWORD_KEY,))
+    _load_env_file(
+        component=ENGINE_COMPONENT, keys=(ADMIN_NAME_KEY, ADMIN_PASSWORD_KEY)
+    )
     _load_dotenv()
 
     if not (_enabled()):

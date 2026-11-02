@@ -195,7 +195,9 @@ RESTORE_TIMEOUT_SECONDS = 300
 #   services it found are started again under.
 # ------------------------------------------------------------------------------
 FOUND_ENVIRON = dict(os.environ)
-_load_env_file(component=ENGINE_COMPONENT, keys=(post.ADMIN_PASSWORD_KEY,))
+_load_env_file(
+    component=ENGINE_COMPONENT, keys=(post.ADMIN_NAME_KEY, post.ADMIN_PASSWORD_KEY)
+)
 _load_dotenv()
 _use_mounted_configs(environ=os.environ)
 

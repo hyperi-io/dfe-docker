@@ -60,6 +60,7 @@ from _common import (  # noqa: E402
 from _pipeline import env_or  # noqa: E402
 
 PROJECT_DIR = Path(__file__).resolve().parent.parent
+_ADMIN_NAME_KEY = "DFE_AUTH_LOCAL_ADMIN_NAME"
 _ADMIN_PASSWORD_KEY = "DFE_AUTH_LOCAL_ADMIN_PASSWORD"
 # Container names are daemon-wide and DFE_CONTAINER_PREFIX moves them, so the
 # archiver is reached through compose.
@@ -301,7 +302,7 @@ def _suite_env(
             # all pin `database: dfe`), never DFE_OTEL_DATABASE's.
             "DFE_E2E_CH_DB": env_or("DFE_E2E_CH_DB", "dfe"),
             "DFE_E2E_ENGINE_URL": engine_url,
-            "DFE_E2E_ENGINE_USER": env_or("DFE_AUTH_LOCAL_ADMIN_NAME", "admin"),
+            "DFE_E2E_ENGINE_USER": env_or(_ADMIN_NAME_KEY, "admin"),
             "DFE_E2E_ENGINE_PASSWORD": password,
             "DFE_E2E_ADMIN_PASSWORD": password,
         }
@@ -361,7 +362,9 @@ def main(argv: list[str] | None = None) -> int:
     # set it by hand, because a raw `docker compose` gets the loopback default).
     ui_bind = os.environ.get("DFE_UI_BIND_HOST", "").strip()
     found = dict(os.environ)
-    _load_env_file(component=ENGINE_COMPONENT, keys=(_ADMIN_PASSWORD_KEY,))
+    _load_env_file(
+        component=ENGINE_COMPONENT, keys=(_ADMIN_NAME_KEY, _ADMIN_PASSWORD_KEY)
+    )
     _load_dotenv()
     infra = _infra_repo(args.infra_repo)
     engine = _engine_repo(args.engine_repo)

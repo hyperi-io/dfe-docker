@@ -302,17 +302,9 @@ _CREDENTIAL_CASES: tuple[tuple[str, str, str, bool], ...] = (
 
 # Each service that dials ClickHouse from inside the stack, by the environment keys
 # carrying the host, HTTP port and native port it dials (None where it uses none).
-_CLICKHOUSE_DIALLERS: dict[str, tuple[str, str | None, str]] = {
-    "dfe-engine": (
-        "DFE_CLICKHOUSE_HOST",
-        "DFE_CLICKHOUSE_PORT",
-        "DFE_CLICKHOUSE_NATIVE_PORT",
-    ),
-    "dfe-hunt-runner": (
-        "DFE_CLICKHOUSE_HOST",
-        "DFE_CLICKHOUSE_PORT",
-        "DFE_CLICKHOUSE_NATIVE_PORT",
-    ),
+_CLICKHOUSE_DIALLERS: dict[str, tuple[str, str | None, str | None]] = {
+    "dfe-engine": ("DFE_CLICKHOUSE_HOST", "DFE_CLICKHOUSE_PORT", None),
+    "dfe-hunt-runner": ("DFE_CLICKHOUSE_HOST", "DFE_CLICKHOUSE_PORT", None),
     "otel-collector": ("CLICKHOUSE_HOST", None, "CLICKHOUSE_PORT"),
 }
 # Each service that takes its ClickHouse address as one `host:HTTP port` key

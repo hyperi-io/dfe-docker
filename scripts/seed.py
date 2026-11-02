@@ -68,6 +68,7 @@ from _common import (  # noqa: E402
 from _pipeline import ch_int, escape_literal, http_post  # noqa: E402
 from init import _LEN_CREDENTIAL, _generate_secret  # noqa: E402
 from post import (  # noqa: E402
+    ADMIN_NAME_KEY,
     ADMIN_PASSWORD_KEY,
     APP_CONFIG_DIR_KEY,
     TARGET_DB,
@@ -580,7 +581,9 @@ def main() -> int:
         help="what to seed: one kind of object, hunts with their rules, accounts with their orgs or events to send",
     )
     kinds = TARGETS[parser.parse_args().target]
-    _load_env_file(component=ENGINE_COMPONENT, keys=(ADMIN_PASSWORD_KEY,))
+    _load_env_file(
+        component=ENGINE_COMPONENT, keys=(ADMIN_NAME_KEY, ADMIN_PASSWORD_KEY)
+    )
     _load_dotenv()
     if not (_resolved_services()):
         _print(

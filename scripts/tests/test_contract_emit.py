@@ -81,7 +81,6 @@ def _resolved(
     """Run the resolver for one profile and read back the assignments it wrote, its caller holding the `dotenv` fixture so the developer's .env changes nothing."""
     written = tmp_path / ".tmp" / "profile.mk"
     monkeypatch.setattr(resolve_profile, "PROFILE_MK", written)
-    monkeypatch.delenv(resolve_profile.ENGINE_CONTENT_DIR_VAR, raising=False)
     monkeypatch.setitem(os.environ, "DFE_PROFILE", profile)
     assert resolve_profile.main() == 0
     values: dict[str, str] = {}

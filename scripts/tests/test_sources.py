@@ -1066,7 +1066,6 @@ class TestEngineTransport:
     def test_agrees_with_the_tier_the_profile_exports(self, transport: str) -> None:
         tier = resolve_profile.engine_tier(
             configured_broker="",
-            content_dir="",
             profile_name=f"slim-{transport}",
             renders=False,
             transport=transport,

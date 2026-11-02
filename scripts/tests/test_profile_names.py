@@ -21,10 +21,9 @@ from _common import RENDERED_PROFILES, SERVICE_PROFILES_FILE
 
 
 class EngineTierCase(TypedDict):
-    """The broker and content directory a tier is configured with, whether the engine renders there and what it is told."""
+    """The broker a tier is configured with, whether the engine renders there and what it is told."""
 
     configured_broker: str
-    content_dir: str
     expected: dict[str, str]
     profile: str
     renders: bool
@@ -62,7 +61,6 @@ _RENDERED_PATHS = {
 ENGINE_TIER_CASES = [
     EngineTierCase(
         configured_broker="",
-        content_dir="/app/content",
         expected={
             **_RENDERED_PATHS,
             "DFE_ENGINE_CONTRACT_DIR": "/app/content/contract",
@@ -76,10 +74,9 @@ ENGINE_TIER_CASES = [
     ),
     EngineTierCase(
         configured_broker=" broker.example.invalid:9092 ",
-        content_dir="/srv/content",
         expected={
             **_RENDERED_PATHS,
-            "DFE_ENGINE_CONTRACT_DIR": "/srv/content/contract",
+            "DFE_ENGINE_CONTRACT_DIR": "/app/content/contract",
             "DFE_KAFKA_BOOTSTRAP_SERVERS": "broker.example.invalid:9092",
             "DFE_STACK_PROFILE": "docker-slim",
             "DFE_TRANSPORT_BUS_PRESENT": "true",
@@ -90,7 +87,6 @@ ENGINE_TIER_CASES = [
     ),
     EngineTierCase(
         configured_broker="broker.example.invalid:9092",
-        content_dir="/app/content",
         expected={
             "DFE_APP_CONFIG_MOUNT": "/etc/dfe/apps",
             "DFE_ENGINE_APP_CONFIG_BASE_DIR": "",
@@ -170,7 +166,6 @@ class TestEngineTier:
     def test_matches_expected(self, case: EngineTierCase) -> None:
         tier = resolve_profile.engine_tier(
             configured_broker=case["configured_broker"],
-            content_dir=case["content_dir"],
             profile_name=case["profile"],
             renders=case["renders"],
             transport=case["profile"].partition("-")[2],

@@ -214,10 +214,10 @@ def fixture_lines(*, values: dict[str, str]) -> list[str]:
 
 
 def access_values() -> dict[str, str]:
-    """Return .env's values with both logins' and each seed account's password as env/engine.env, the file compose hands the engine, sets them."""
+    """Return .env's values with the admin's name, both logins' and each seed account's password as env/engine.env, the file compose hands the engine, sets them."""
     values = _dotenv_values()
     engine = _env_file_values(component=ENGINE_COMPONENT)
-    keys = [_ADMIN_PASSWORD_KEY, _BREAKGLASS_PASSWORD_KEY]
+    keys = [_ADMIN_NAME_KEY, _ADMIN_PASSWORD_KEY, _BREAKGLASS_PASSWORD_KEY]
     keys += [seed_password_key(username=username) for username in _seed_usernames()]
     for key in keys:
         values[key] = engine.get(key, "")
