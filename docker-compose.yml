@@ -378,7 +378,7 @@ services:
       - dfe-app-config:/etc/dfe/apps:ro
 
   # ============================================================
-  # dfe-engine: applies dfe-schemas before it reports healthy
+  # dfe-engine
   # ============================================================
 
   # DFE_ENGINE_VERSION also pins the dfe-schemas it carries
@@ -478,7 +478,7 @@ services:
       retries: 5
 
   # ============================================================
-  # dfe-hunt-runner: the pull-based hunt executor
+  # dfe-hunt-runner
   # ============================================================
 
   dfe-hunt-runner:
@@ -529,15 +529,10 @@ services:
         required: false
     environment:
       HYPERDX_PORT: ${DFE_HYPERDX_EMBED_PORT:-8091}
-      # The engine, for the console's server-side calls
       INTERNAL_API_URL: http://dfe-engine:8000
-      # Unset, logout lands on http://localhost:3000
       NEXTAUTH_URL: ${DFE_EXTERNAL_ORIGIN:-http://localhost}:${DFE_UI_PORT:-3000}
-      # No gRPC exporter, so the collector's HTTP port
       OTEL_EXPORTER_OTLP_ENDPOINT: ${DFE_OTEL_EXPORTER_HTTP_ENDPOINT:-}
       OTEL_EXPORTER_OTLP_PROTOCOL: http/protobuf
-      OTEL_SERVICE_NAME: dfe-ui
-    # node's fetch on /livez, as the image ships no curl
     healthcheck:
       test: ["CMD", "node", "-e", "fetch('http://localhost:3000/livez').then((r) => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))"]
       interval: 10s
@@ -546,7 +541,7 @@ services:
       retries: 5
 
   # ============================================================
-  # dfe-proxy: the product entrypoint
+  # dfe-proxy
   # ============================================================
 
   # Chains in OIDC filters when dfe-engine is the provider
@@ -556,12 +551,9 @@ services:
     profiles: ["core"]
     extends: {file: compose/envoy.yml, service: envoy}
     ports:
-      # The console: only DFE_UI_EXTERNAL=false unpublishes it
       - ${DFE_UI_BIND_HOST:-127.0.0.1}:${DFE_UI_PORT:-3000}:8080
-      # HyperDX, re-served with frame-ancestors for the iframe
       - ${DFE_UI_BIND_HOST:-127.0.0.1}:${DFE_HYPERDX_EMBED_PORT:-8091}:8091
     environment:
-      # Origins that may frame the console, loopback included
       DFE_HYPERDX_EMBED_ANCESTOR: http://localhost:${DFE_UI_PORT:-3000} http://127.0.0.1:${DFE_UI_PORT:-3000} ${DFE_HYPERDX_APP_URL:-${DFE_EXTERNAL_ORIGIN:-http://localhost}}:${DFE_UI_PORT:-3000}
     volumes:
       - ./config/proxy/envoy.yaml:/etc/envoy/envoy.yaml:ro
@@ -574,10 +566,9 @@ services:
         required: false
 
   # ============================================================
-  # otel-collector: self-monitoring, opt-in by DFE_OTEL_ENABLED
+  # otel-collector
   # ============================================================
 
-  # OTLP stays internal: host 4317/4318 are the receiver's
   otel-collector:
     image: otel/opentelemetry-collector-contrib:${DFE_OTEL_COLLECTOR_VERSION:?run 'make stack VERSION=X.Y.Z' to pin DFE_OTEL_COLLECTOR_VERSION}
     container_name: ${DFE_CONTAINER_PREFIX:-}dfe-otel-collector
@@ -586,35 +577,27 @@ services:
     extends: {file: compose/limits.yml, service: limits-sidecar}
     command: ["--config=/etc/otelcol/config.yaml"]
     ports:
-      # health_check, the only probe on a distroless image
       - ${DFE_BIND_HOST:-127.0.0.1}:${DFE_OTEL_HEALTH_PORT:-13133}:13133
-      # Container stdout, from the Docker daemon on the host
       - ${DFE_BIND_HOST:-127.0.0.1}:${DFE_OTEL_FLUENT_PORT:-24224}:24224
     environment:
       CLICKHOUSE_HOST: ${CLICKHOUSE_HOST:-clickhouse}
       CLICKHOUSE_PASSWORD: ${DFE_OTEL_WRITER_CLICKHOUSE_PASSWORD:-}
-      # Container port, as for dfe-engine (#75)
       CLICKHOUSE_PORT: ${CLICKHOUSE_EXTERNAL_NATIVE_PORT:-9000}
-      # Its own user, for the otel tables and server health
       CLICKHOUSE_USERNAME: dfe_otel_writer
       DFE_OTEL_COLLECTOR_LOG_LEVEL: ${DFE_OTEL_COLLECTOR_LOG_LEVEL:-warn}
       DFE_OTEL_DATABASE: ${DFE_OTEL_DATABASE:-dfe}
-      # Resolved by make for the usage rollup's cores
       DFE_USAGE_CPU_LIMITS: ${DFE_USAGE_CPU_LIMITS:-}
       DFE_USAGE_NODE_NAME: ${DFE_USAGE_NODE_NAME:-docker-host}
     volumes:
       - ./config/otel-collector/config.yaml:/etc/otelcol/config.yaml:ro
-      # The host's CPUs, for host_metrics' cpu scraper
       - /proc:/hostfs/proc:ro
     depends_on:
       clickhouse:
         condition: service_healthy
         required: false
-      # create_schema=false, so the engine makes the tables
       dfe-engine:
         condition: service_healthy
         required: false
-    # No healthcheck: nothing in the image can probe it
 
   # ============================================================
   # HyperDX: opt-in by DFE_HYPERDX_ENABLED
