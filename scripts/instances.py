@@ -135,9 +135,9 @@ def declared(*, env_dir: Path | None = None) -> dict[str, list[str]]:
     return found
 
 
-def committed_env_files(compose_text: str) -> dict[str, list[str]]:
+def committed_env_files(*, compose_text: str) -> dict[str, list[str]]:
     """Each committed service's env_file paths under env/, in the order docker-compose.yml lists them."""
-    files: dict[str, list[str]] = {}
+    files = {}
     service = ""
     for line in compose_text.splitlines():
         key = _COMPOSE_SERVICE_KEY_RE.match(line)
@@ -150,7 +150,7 @@ def committed_env_files(compose_text: str) -> dict[str, list[str]]:
     return files
 
 
-def env_files_in(paths: list[str], *, env_dir: Path) -> list[str]:
+def env_files_in(*, env_dir: Path, paths: list[str]) -> list[str]:
     """``paths`` with each engine-written custom env file moved to ``env_dir``, the operator's own kept."""
     return [
         f"{env_dir}/{Path(path).name}" if path.endswith(CUSTOM_ENV_SUFFIX) else path
@@ -225,7 +225,7 @@ def _service_block(
         lines += ["    env_file:", f"      - path: {own}", "        required: false"]
     else:
         lines.append("    env_file: !override")
-        for path in [*env_files_in(inherited or [], env_dir=env_dir), own]:
+        for path in [*env_files_in(env_dir=env_dir, paths=((inherited) or ([]))), own]:
             lines += [f"      - path: {path}", "        required: false"]
     lines += [
         "    environment:",
@@ -264,7 +264,9 @@ def fragment(
         lines += [*container_logs_block(), ""]
     lines.append("services:")
     committed = (
-        committed_env_files((REPO_ROOT / compose_file).read_text(encoding="utf-8"))
+        committed_env_files(
+            compose_text=(REPO_ROOT / compose_file).read_text(encoding="utf-8")
+        )
         if env_dir is not None
         else {}
     )

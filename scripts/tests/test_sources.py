@@ -1383,8 +1383,9 @@ class TestSuiteCustomKeys:
         [
             ("dfe-loader", {"SUITE_KEY": "suite"}),
             ("dfe-loader-a", {"SUITE_KEY": "suite", "INSTANCE_KEY": "instance"}),
+            ("config-check-dfe-loader", {"SUITE_KEY": "suite"}),
         ],
-        ids=["app", "per-source instance"],
+        ids=["app", "per-source instance", "config check"],
     )
     def test_the_apps_read_custom_keys_from_the_suite_tree(
         self, tmp_path: Path, service: str, keys: dict[str, str]

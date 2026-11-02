@@ -1324,7 +1324,7 @@ def isolate_suite(project):
     os.environ.update(
         _stack_state.suite_environ(os.environ, project=project, taken=taken)
     )
-    # .env belongs to the found stack, so a password rotated on a test engine stays in memory.
+    # env/engine.env belongs to the found stack, so a password rotated on a test engine stays in memory.
     post.RECORD_ROTATION = False
     suite_project = os.environ["COMPOSE_PROJECT_NAME"]
     LOGGER.info(f"Test stacks run as compose project '{suite_project}'")

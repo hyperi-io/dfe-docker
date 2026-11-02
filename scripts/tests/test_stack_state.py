@@ -442,7 +442,7 @@ def test_under_console_tls_the_suite_network_takes_a_subnet_of_its_own(
         "DFE_NETWORK_IP_RANGE": ip_range,
         "DFE_PROXY_CERT_DIR": "./certs",
     }
-    files = [check_compose.COMPOSE_FILE.name, "docker-compose.tls.yml"]
+    files = [check_compose.COMPOSE_FILE.name, "compose/tls.yml"]
     if shutil.which("docker") is None:
         pytest.skip("`docker compose config` renders the model these assert on")
     found = check_compose._config_json(env=environ, files=files)

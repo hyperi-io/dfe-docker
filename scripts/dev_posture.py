@@ -26,7 +26,13 @@ that says `production` belongs to a deployment, and quietly downgrading its post
 and overwriting its admin password is not something a build target gets to do.
 `--real` never refuses, because it destroys nothing.
 
-The tyre-kick also writes APP_ENV=development to .env, which compose passes to every scalo app. No other key is touched, so everything else in either file is left as it stands. The minted password a tyre-kick overwrites is unrecoverable once it is gone, so each file it rewrites is first copied beside itself to `<name>.bak-<utc>`, 0600 like the credentials in it. The path is printed. Nothing to change means nothing is written and no backup is made, which keeps a `make dev` loop from littering the checkout with copies.
+Only those two keys are touched, DFE_ENV in .env and the password in
+env/engine.env. Everything else in either file is left as it stands. The minted
+password a tyre-kick overwrites is unrecoverable once it is gone, so each file it
+rewrites is first copied beside itself to `<name>.bak-<utc>`, 0600 like the
+credentials in it. The path is printed. Nothing to change means nothing is
+written and no backup is made, which keeps a `make dev` loop from littering the
+checkout with copies.
 """
 
 import argparse
@@ -60,8 +66,6 @@ from init import _mint, _setting_key  # noqa: E402
 _DEV_ENV = "dev"
 _REAL_ENV = "production"
 _POSTURE_KEY = "DFE_ENV"
-_APP_ENV_KEY = "APP_ENV"
-_DEV_APP_ENV = "development"
 # Exit code for the refusal, distinct from 1 (no .env at all) so a caller can tell
 # "you are not a dev box" from "you have not run make init".
 _REFUSED = 2
@@ -116,7 +120,7 @@ def _wanted_real(*, values: dict[str, str]) -> dict[str, str]:
 
 def _wanted_tyre_kick(*, values: dict[str, str]) -> dict[str, str]:
     """The keys the tyre-kick assigns, keeping a password a dev stack already replaced."""
-    wanted = {_POSTURE_KEY: _DEV_ENV, _APP_ENV_KEY: _DEV_APP_ENV}
+    wanted = {_POSTURE_KEY: _DEV_ENV}
     already_dev = is_dev_posture(values.get(_POSTURE_KEY, ""))
     replaced = not (default_admin_password(values.get(_ADMIN_PASSWORD_KEY, "")))
     if not (already_dev and replaced):
@@ -173,15 +177,11 @@ def main(*, argv: list[str] | None = None) -> int:
     )
 
     changes = []
-    for path, keys in (
-        (DOTENV_FILE, (_APP_ENV_KEY, _POSTURE_KEY)),
-        (engine_env, (_ADMIN_PASSWORD_KEY,)),
-    ):
-        file_wanted = {key: wanted[key] for key in keys if key in wanted}
-        if not (file_wanted):
+    for path, key in ((DOTENV_FILE, _POSTURE_KEY), (engine_env, _ADMIN_PASSWORD_KEY)):
+        if key not in wanted:
             continue
         text = path.read_text(encoding="utf-8")
-        rewritten = _rewrite(banner=banner, text=text, wanted=file_wanted)
+        rewritten = _rewrite(banner=banner, text=text, wanted={key: wanted[key]})
         if rewritten != text:
             changes.append((path, text, rewritten))
     if not (changes):

@@ -26,6 +26,9 @@ The sections follow [.env.example](../.env.example): stack-wide settings first, 
 
 | Variable                                         | Use                                                                                  | Default                                                             |
 |--------------------------------------------------|--------------------------------------------------------------------------------------|---------------------------------------------------------------------|
+| `DFE_STACK_SIGNER_IDENTITY`                      | Certificate identity `make stack` requires of the manifest's signature               | dfe-infra's release workflow on main                                |
+| `DFE_STACK_SIGNER_ISSUER`                        | OIDC issuer `make stack` requires of that signature                                  | `https://token.actions.githubusercontent.com`                       |
+| `DFE_STACK_VERIFY`                               | `false` pulls the stack manifest without checking its signature                      | `true`                                                              |
 | `DOCKER_DEFAULT_PLATFORM`                        | Image architecture to pull from docker (if not wanting automatic determination)      | -                                                                   |
 | `IMAGE_REGISTRY`                                 | OCI registry hosting published `dfe-*` images                                        | `ghcr.io/hyperi-io`                                                 |
 
@@ -147,7 +150,6 @@ Ceilings, not reservations, sized for the default profile on a 16 GB box. `make 
 |--------------------------------------------------|--------------------------------------------------------------------------------------|---------------------------------------------------------------------|
 | `LOG_LEVEL`                                      | Log level (trace\|debug\|info\|warn\|error)                                          | `info`                                                              |
 | `LOG_FORMAT`                                     | Log format                                                                           | `text`                                                              |
-| `APP_ENV`                                        | Environment every scalo app runs in, passed through from `.env` and left unset when `.env` has none, because scalo-rs reads an empty one as the environment name. Unset, the apps default to `development`. `make dev` writes `development` | unset                                                               |
 | `DFE_OTEL_EXPORTER_ENDPOINT`                     | Where services push; empty exports nothing                                           | empty (the profile points it at the bundled collector)              |
 
 The DFE Rust images ship bash and no curl or wget, so their compose healthchecks are the image's own HEALTHCHECK: a GET over bash's `/dev/tcp`. `check-compose` rejects curl or wget in a DFE service whose image lacks it. Each app's `stop_grace_period` is its deployment contract's `termination_grace_seconds`, 45 s and 90 s for the Vector transform, because Docker's 10 s default kills a drain mid-flush.
@@ -397,14 +399,7 @@ other profile may require an issuer.
 
 ## App contracts, and the custom environment the console writes
 
-The console's app settings page reports what an app can be configured with, and
-it reads that from the app itself rather than from a list the engine carries. One
-`contract-<app>` one-shot per app runs that app's pinned image, writes its config
-schema and capability catalogue into the shared content volume as root, since a fresh named volume lands root-owned, beside a `source.json` naming the image it ran, and exits; the
-engine reads them at `DFE_APP_CONTRACT_DIR`. An app that cannot emit leaves its
-contract absent and the engine starts anyway, so a settings page with nothing on
-it for one app means that app's one-shot logged a failure -- `docker compose logs
-contract-<app>`.
+The console's app settings page reports what an app can be configured with and reads that from the app itself rather than from a list the engine carries. One `contract-<app>` one-shot per app runs that app's pinned image, writes its config schema and capability catalogue into the shared content volume as root, since a fresh named volume lands root-owned, beside a `source.json` naming the image it ran, and exits. The engine reads them at `DFE_APP_CONTRACT_DIR`. The one-shot emits into `<app>.new` and swaps that in whole, because the volume outlives a release. An app that cannot emit leaves its contract absent, last release's included. The engine starts anyway, so a settings page with nothing on it for one app means that app's one-shot logged a failure: `docker compose logs contract-<app>`.
 
 A setting the app's own schema does not declare is written as an environment variable instead, into a file named for the Compose service: `env/dfe-loader.custom.env`, beside the `env/loader.env` that `make init` creates. Each app reads both, the custom file second, so a custom key beats the same key in the operator's file. The `environment:` block in `docker-compose.yml` beats both, which is what keeps a custom key from taking over the broker address or the warehouse credentials. Neither file has to exist.
 

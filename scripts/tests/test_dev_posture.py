@@ -37,7 +37,7 @@ DFE_ENV=production
 DFE_AUTH_LOCAL_ADMIN_PASSWORD={_MINTED}
 DFE_UI_PORT=3000
 """
-_DEV_BOX = _DEPLOYMENT.replace("production", "dev") + "APP_ENV=development\n"
+_DEV_BOX = _DEPLOYMENT.replace("production", "dev")
 # What a tyre-kick leaves behind, and so what `make dev AUTH=real` is asked to
 # repair: a dev posture running on the shipped default.
 _TYRE_KICKED = _DEV_BOX.replace(_MINTED, "changeme")
@@ -109,7 +109,6 @@ def test_the_rewrite_sets_both_keys_and_leaves_the_rest(dotenv: Path) -> None:
     assert dev_posture.main(argv=[]) == 0
     dotenv_text, engine_text = _state(dotenv=dotenv)
     assert "DFE_ENV=dev" in dotenv_text
-    assert "APP_ENV=development" in dotenv_text
     assert "DFE_UI_PORT=3000" in dotenv_text
     assert "DFE_AUTH_LOCAL_ADMIN_PASSWORD=changeme" in engine_text
     assert _MINTED not in dotenv_text + engine_text

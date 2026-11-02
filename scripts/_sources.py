@@ -24,6 +24,8 @@ from urllib.parse import quote
 import instances
 import resolve_profile
 from _common import (
+    COMPOSE_ONE_SHOTS_FILE,
+    CONFIG_CHECK_PREFIX,
     FALSY,
     PER_SOURCE_APP_KEYS,
     SERVICE_CONFIG_FILE,
@@ -345,16 +347,20 @@ def app_env_volume(*, env_dir: Path) -> str:
 def suite_env_override(*, compose_text: str, env_dir: Path) -> str:
     """A compose override giving each app the custom keys in `env_dir` in place of the checkout's.
 
-    Each app's `env_file` list is restated with `!override`, the operator's own
-    env file kept and the engine-written `env/<app>.custom.env` moved to `env_dir`.
+    Each app's `env_file` list is restated with `!override`, the operator's own env file kept and the engine-written `env/<app>.custom.env` moved to `env_dir`. An app's config check gets the same list, as its `extends` reads the committed file.
     """
     lines = ["services:"]
-    for name, paths in sorted(instances.committed_env_files(compose_text).items()):
+    one_shots = COMPOSE_ONE_SHOTS_FILE.read_text(encoding="utf-8")
+    for name, paths in sorted(
+        instances.committed_env_files(compose_text=compose_text).items()
+    ):
         if not (any(path.endswith(instances.CUSTOM_ENV_SUFFIX) for path in paths)):
             continue
-        lines += [f"  {name}:", "    env_file: !override"]
-        for path in instances.env_files_in(paths, env_dir=env_dir):
-            lines += [f"      - path: {path}", "        required: false"]
+        check = f"{CONFIG_CHECK_PREFIX}{name}"
+        for service in [name, check] if f"\n  {check}:\n" in one_shots else [name]:
+            lines += [f"  {service}:", "    env_file: !override"]
+            for path in instances.env_files_in(env_dir=env_dir, paths=paths):
+                lines += [f"      - path: {path}", "        required: false"]
     return "\n".join(lines) + "\n"
 
 

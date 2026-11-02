@@ -465,8 +465,8 @@ def test_a_refused_login_skips_the_hunt_claim_once_the_admin_is_retired(
 def test_a_change_with_no_answer_and_no_login_after_keeps_the_new_password(
     issued: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """With neither answer the engine may hold the new password, so .env keeps it."""
-    summary = issued.parent / "access-summary.md"
+    """With neither answer the engine may hold the new password, so env/engine.env keeps it."""
+    summary = post.ACCESS_SUMMARY_FILE
     summary.write_text(f"| Admin | `admin` | `{_ISSUED}` |\n", encoding="utf-8")
     engine = _Engine(password=_ISSUED, sends_flag=True)
     calls: list[str] = []
@@ -514,7 +514,7 @@ def test_a_lost_change_the_engine_did_not_take_puts_dotenv_back(
 def test_a_run_that_records_nothing_leaves_dotenv_alone_and_still_logs_in(
     issued: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """The e2e suite's engine is thrown away, so its rotated password must not reach the found .env."""
+    """The e2e suite's engine is thrown away, so its rotated password must not reach the found env/engine.env."""
     engine = _serve(monkeypatch, _Engine(password=_ISSUED, sends_flag=True))
     monkeypatch.setattr(post, "RECORD_ROTATION", False, raising=False)
 
@@ -531,8 +531,11 @@ def test_a_run_that_records_nothing_leaves_dotenv_alone_and_still_logs_in(
 @pytest.mark.parametrize(
     ("record", "where"),
     [
-        (True, f"{post.ADMIN_PASSWORD_KEY} in .env holds the new one"),
-        (False, "this run's environment holds the new one, and .env is unchanged"),
+        (True, f"{post.ADMIN_PASSWORD_KEY} in env/engine.env holds the new one"),
+        (
+            False,
+            "this run's environment holds the new one and env/engine.env is unchanged",
+        ),
     ],
     ids=["recorded", "this-run-only"],
 )

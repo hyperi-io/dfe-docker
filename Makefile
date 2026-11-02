@@ -259,7 +259,7 @@ define newline
 
 endef
 
-# The console's HyperDX embed goes with HyperDX, auth or not, keeping the console's line. dfe-proxy's own reset drops both, and a second key would be duplicate YAML
+# The console's HyperDX embed goes with HyperDX, auth or not, keeping the console's line. dfe-proxy's own reset drops both and a second key would be duplicate YAML
 EMBED_UNPUBLISHED := $(if $(filter dfe-proxy,$(UNPUBLISHED)),,$(HYPERDX_GATED))
 
 ifneq ($(strip $(UNPUBLISHED))$(EMBED_UNPUBLISHED),)

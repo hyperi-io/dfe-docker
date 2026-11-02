@@ -254,7 +254,7 @@ services:
       - dfe-app-config:/etc/dfe/apps:ro
       - dlq-spool:/var/spool/dfe
     healthcheck:
-      test: ["CMD", "curl", "-sf", "http://localhost:9090/readyz"]
+      test: ["CMD", "bash", "-c", "exec 3<>/dev/tcp/localhost/9090 && printf 'GET /readyz HTTP/1.0\\r\\n\\r\\n' >&3 && read -r _ code _ <&3 && [ \"$$code\" = 200 ]"]
 
   # ============================================================
   # dfe-receiver
@@ -360,6 +360,7 @@ services:
     image: ${IMAGE_REGISTRY:-ghcr.io/hyperi-io}/dfe-transform-vector:${DFE_TRANSFORM_VECTOR_VERSION:?run 'make stack VERSION=X.Y.Z' to pin DFE_TRANSFORM_VECTOR_VERSION}
     container_name: ${DFE_CONTAINER_PREFIX:-}dfe-transform-vector
     extends: {file: compose/dfe-app.yml, service: dfe-app}
+    stop_grace_period: 90s
     # 9090 also carries vector_* (dfe-transform-vector#70)
     ports:
       - ${DFE_BIND_HOST:-127.0.0.1}:${DFE_TRANSFORM_VECTOR_PROMETHEUS_PORT:-9095}:9090

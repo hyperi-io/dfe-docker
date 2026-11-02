@@ -294,7 +294,7 @@ HUNT_EVENTS = {
 # router in place; nothing here waits on a deploy controller. The window is
 # built from those parts in `_routing_timeout_seconds`.
 ROUTING_SERVICES = ("dfe-engine", "dfe-receiver", "dfe-loader")
-# False keeps a password POST rotates in this process alone: the e2e suite's engines are thrown away, and env/engine.env is the found stack's.
+# False keeps a password POST rotates in this process alone: the e2e suite's engines are thrown away and env/engine.env is the found stack's.
 RECORD_ROTATION = True
 # The services `make` was given in SERVICES, set by the post target, empty for the whole profile.
 POST_SERVICES_ENV = "DFE_POST_SERVICES"
@@ -1824,7 +1824,7 @@ def _replace_issued_password(
     held = (
         f"{key} in {shown} holds the new one"
         if RECORD_ROTATION
-        else f"this run's environment holds the new one, and {shown} is unchanged"
+        else f"this run's environment holds the new one and {shown} is unchanged"
     )
     _print(msg=f"      {username!r} replaced the password it was issued -- {held}")
     return Login(new_token, new_status, username, "")

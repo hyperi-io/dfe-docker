@@ -37,9 +37,9 @@ DISCOVERY_WORDS = {"latest": "fallback", "rc": "include"}
 # What `latest_tag` does with a pre-release tag.
 PRERELEASES = ("exclude", "fallback", "include")
 
-# X.Y.Z with an optional `v` prefix and an optional -rc.N / -beta.N suffix.
 # The only digest a pin carries: anything else is not the manifest it names.
 _DIGEST = re.compile(r"sha256:[0-9a-f]{64}")
+# X.Y.Z with an optional `v` prefix and an optional -rc.N / -beta.N suffix.
 _SEMVER = re.compile(
     r"^v?(?P<major>\d+)\.(?P<minor>\d+)\.(?P<patch>\d+)(?:-(?P<pre>[0-9A-Za-z.-]+))?$"
 )

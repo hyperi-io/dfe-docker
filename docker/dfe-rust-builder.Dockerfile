@@ -35,7 +35,7 @@ RUN case "${TARGETARCH}" in \
     && tar -xzf /tmp/static-libs.tar.gz -C /opt \
     && rm /tmp/static-libs.tar.gz
 
-# hyperi-ci's static_libs.link_env, and the prefix wins over the base image's libssl-dev
+# hyperi-ci's static_libs.link_env. The prefix wins over the base image's libssl-dev
 ENV PKG_CONFIG_PATH=/opt/hyperi-static-libs/lib/pkgconfig \
     RDKAFKA_STATIC=1 \
     OPENSSL_STATIC=1 \

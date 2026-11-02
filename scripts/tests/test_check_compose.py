@@ -22,7 +22,6 @@ import shutil
 from pathlib import Path
 
 import pytest
-import yaml
 
 import _common
 import check_compose
@@ -779,26 +778,35 @@ def test_a_dfe_probe_runs_only_a_tool_its_image_ships(service, test, expected_fa
     assert len(failures) == expected_failures
 
 
-def test_the_committed_probes_run_no_tool_the_rust_images_lack():
-    compose = yaml.safe_load(COMPOSE_FILE.read_text(encoding="utf-8"))
+@pytest.fixture(scope="module")
+def resolved_model() -> dict:
+    """The interpolated model, because the apps' probes and grace come from `extends`."""
+    if shutil.which("docker") is None:
+        pytest.skip("`docker compose config` renders the model these assert on")
+    env, _ = check_compose._check_env()
+    model = check_compose._config_json(env=env, files=[COMPOSE_FILE.name])
+    assert model is not None, "the registry compose path did not resolve"
+    return model
 
-    assert check_compose._absent_probe_failures(config=compose) == []
+
+def test_the_committed_probes_run_no_tool_the_rust_images_lack(resolved_model):
+    assert check_compose._absent_probe_failures(config=resolved_model) == []
 
 
-# Each app's deployment contract termination_grace_seconds, which its drain is sized to.
-_TERMINATION_GRACE_SECONDS = {
-    "dfe-archiver": 45,
-    "dfe-fetcher": 45,
-    "dfe-loader": 45,
-    "dfe-receiver": 45,
-    "dfe-transform-elastic": 45,
-    "dfe-transform-vector": 90,
-    "dfe-transform-vrl": 45,
+# Each app's deployment contract termination_grace_seconds, as `docker compose config` writes the duration
+_TERMINATION_GRACE = {
+    "dfe-archiver": "45s",
+    "dfe-fetcher": "45s",
+    "dfe-loader": "45s",
+    "dfe-receiver": "45s",
+    "dfe-transform-elastic": "45s",
+    "dfe-transform-vector": "1m30s",
+    "dfe-transform-vrl": "45s",
 }
 
 
-@pytest.mark.parametrize(("service", "seconds"), _TERMINATION_GRACE_SECONDS.items())
-def test_a_dfe_app_gets_the_stop_grace_its_contract_asks_for(service, seconds):
-    compose = yaml.safe_load(COMPOSE_FILE.read_text(encoding="utf-8"))
-
-    assert compose["services"][service]["stop_grace_period"] == f"{seconds}s"
+@pytest.mark.parametrize(("service", "grace"), _TERMINATION_GRACE.items())
+def test_a_dfe_app_gets_the_stop_grace_its_contract_asks_for(
+    resolved_model, service, grace
+):
+    assert resolved_model["services"][service]["stop_grace_period"] == grace

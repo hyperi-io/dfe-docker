@@ -15,11 +15,14 @@ services:
     entrypoint: ["/bin/sh", "-c"]
     command:
       - |
-        if "$$CONTRACT_APP" config-schema --dir "/app/content/contract/$$CONTRACT_APP"; then
+        rm -rf "/app/content/contract/$$CONTRACT_APP.new"
+        if "$$CONTRACT_APP" config-schema --dir "/app/content/contract/$$CONTRACT_APP.new" &&
           printf '{"app":"%s","ref":"%s","emitted_at":"%s"}\n' \
             "$$CONTRACT_APP" "$$CONTRACT_REF" "$$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
-            > "/app/content/contract/$$CONTRACT_APP/source.json"
+            > "/app/content/contract/$$CONTRACT_APP.new/source.json"; then
+          rm -rf "/app/content/contract/$$CONTRACT_APP" && mv "/app/content/contract/$$CONTRACT_APP.new" "/app/content/contract/$$CONTRACT_APP"
         else
+          rm -rf "/app/content/contract/$$CONTRACT_APP.new" "/app/content/contract/$$CONTRACT_APP"
           echo "contract: $$CONTRACT_APP emitted nothing, so the engine reports its contract absent" >&2
         fi
     volumes:

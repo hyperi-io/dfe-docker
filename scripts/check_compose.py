@@ -200,7 +200,7 @@ _EXPOSED = {
     "DFE_KAFBAT_UI_EXTERNAL": "true",
     "DFE_UI_EXTERNAL": "true",
 }
-# The fragment make writes from the exposure dials, one `!reset` ports entry per unpublished service
+# The fragment make writes from the exposure dials, one ports entry per service they change
 _UNPUBLISH_FRAGMENT = ".tmp/docker-compose.unpublish.yml"
 
 # The two addresses DFE_BIND_SCOPE resolves to, localhost first (the default).
@@ -578,7 +578,7 @@ def _absent_probe_failures(*, config: dict) -> list[str]:
         ).split()
         failures.extend(
             f"{name}: healthcheck runs {tool}, which the image does not ship; "
-            "probe with bash's /dev/tcp (x-probe-livez) or the runtime's own client"
+            "probe with bash's /dev/tcp or the runtime's own client"
             for tool in _PROBE_TOOLS
             if tool in words
         )
