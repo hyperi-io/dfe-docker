@@ -145,7 +145,7 @@ before upgrading if it matters.
 
 **Most published ports moved from `0.0.0.0` to `127.0.0.1`.** Anything
 reaching this box from elsewhere -- a remote `clickhouse-client`, a Prometheus
-scrape of `:9090-9096`, a colleague's browser -- gets `connection refused` with
+scrape of `:9090-9093`, a colleague's browser -- gets `connection refused` with
 no hint as to why. `DFE_BIND_HOST=0.0.0.0` restores the old behaviour, having
 read the auth section above.
 

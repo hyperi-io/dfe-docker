@@ -399,7 +399,7 @@ These named volumes hold all durable state. Every path an image declares a VOLUM
 | `archiver-data` | dfe-archiver output (`/var/data/archive`) |
 | `dlq-spool` | Shared dead-letter spool (`/var/spool/dfe`) |
 | `fetcher-cursors` | dfe-fetcher cursors (`/var/lib/dfe-fetcher`), one directory per fetcher service |
-| `transform-elastic-geoip` | dfe-transform-elastic's GeoIP databases (`/var/lib/dfe/geoip`), downloaded on first start |
+| `transform-elastic-geoip` | dfe-transform-elastic's GeoIP databases (`/var/lib/dfe/geoip`), downloaded on first start to a volume because the image root is read-only |
 | `dfe-engine-config` / `dfe-engine-schemas` | Engine config and schemas, seeded from the engine image on first run |
 | `hyperdx-documentdb-data` | HyperDX metadata store, DocumentDB's PostgreSQL cluster (`/data`) |
 | `hyperdx-documentdb-tls` | The CA and gateway certificate `hyperdx-documentdb-tls` mints, renewed when it nears expiry |

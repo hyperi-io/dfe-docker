@@ -17,10 +17,6 @@
 # dfe            | the data-plane apps and their init one-shots
 # core           | engine, hunt runner, UI, proxy and contracts
 # hyperdx        | hyperdx and its store, proxy and dashboards
-#
-# Start it with make, which applies service_profiles.yaml
-# Bindings: docs/operating.md#port-exposure-is-split-by-audience
-# Release check: docs/configuration.md#release-check
 
 include:
   - path: compose/one-shots.yml
@@ -306,8 +302,6 @@ services:
     image: ${IMAGE_REGISTRY:-ghcr.io/hyperi-io}/dfe-transform-elastic:${DFE_TRANSFORM_ELASTIC_VERSION:?run 'make stack VERSION=X.Y.Z' to pin DFE_TRANSFORM_ELASTIC_VERSION}
     container_name: ${DFE_CONTAINER_PREFIX:-}dfe-transform-elastic
     extends: {file: compose/dfe-app.yml, service: dfe-app}
-    ports:
-      - ${DFE_BIND_HOST:-127.0.0.1}:${DFE_TRANSFORM_ELASTIC_PROMETHEUS_PORT:-9099}:9090
     env_file:
       - path: env/transform-elastic.env
         required: false
@@ -322,14 +316,11 @@ services:
       dfe-engine:
         condition: service_healthy
         required: false
-      # Chowns the GeoIP volume before the first download
       dlq-init:
         condition: service_completed_successfully
         required: false
-    # Its transforms are compiled in, so only its config mounts
     volumes:
       - dfe-app-config:/etc/dfe/apps:ro
-      # Writable GeoIP downloads, as the image root is read-only
       - transform-elastic-geoip:/var/lib/dfe/geoip
 
   # ============================================================
@@ -341,10 +332,6 @@ services:
     container_name: ${DFE_CONTAINER_PREFIX:-}dfe-transform-vector
     extends: {file: compose/dfe-app.yml, service: dfe-app}
     stop_grace_period: 90s
-    # 9090 also carries vector_* (dfe-transform-vector#70)
-    ports:
-      - ${DFE_BIND_HOST:-127.0.0.1}:${DFE_TRANSFORM_VECTOR_PROMETHEUS_PORT:-9095}:9090
-      - ${DFE_BIND_HOST:-127.0.0.1}:${DFE_TRANSFORM_VECTOR_API_PORT:-8686}:8686
     env_file:
       - path: env/transform-vector.env
         required: false
@@ -353,17 +340,14 @@ services:
     environment:
       DFE_TRANSFORM_SINK_BROKERS: ${DFE_KAFKA_BOOTSTRAP_SERVERS:-}
       DFE_TRANSFORM_SOURCE_BROKERS: ${DFE_KAFKA_BOOTSTRAP_SERVERS:-}
-      # Shared with vrl. elastic has its own prefix
       DFE_TRANSFORM_VERSION_CHECK__ENABLED: ${DFE_VERSION_CHECK_ENABLED:-true}
       DFE_TRANSFORM_VERSION_CHECK__SEND_INSTANCE_ID: ${DFE_VERSION_CHECK_SEND_INSTANCE_ID:-true}
       OTEL_SERVICE_NAME: dfe-transform-vector
     depends_on:
-      # Creates the topics, else a transform subscribes to none
       dfe-engine:
         condition: service_healthy
         required: false
     volumes:
-      # The bundled pipeline's absolute enrichment table path
       - ./resources/enrichment:/etc/dfe-transform-vector/data:ro
       - dfe-app-config:/etc/dfe/apps:ro
 
@@ -375,8 +359,6 @@ services:
     image: ${IMAGE_REGISTRY:-ghcr.io/hyperi-io}/dfe-transform-vrl:${DFE_TRANSFORM_VRL_VERSION:?run 'make stack VERSION=X.Y.Z' to pin DFE_TRANSFORM_VRL_VERSION}
     container_name: ${DFE_CONTAINER_PREFIX:-}dfe-transform-vrl
     extends: {file: compose/dfe-app.yml, service: dfe-app}
-    ports:
-      - ${DFE_BIND_HOST:-127.0.0.1}:${DFE_TRANSFORM_VRL_PROMETHEUS_PORT:-9096}:9090
     env_file:
       - path: env/transform-vrl.env
         required: false
@@ -392,7 +374,6 @@ services:
       dfe-engine:
         condition: service_healthy
         required: false
-    # The engine uploads the enrichment tables its programs read
     volumes:
       - dfe-app-config:/etc/dfe/apps:ro
 

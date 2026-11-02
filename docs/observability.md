@@ -29,7 +29,8 @@ aimed at one.
 
 | Service | Host port | Notes |
 |---|---|---|
-| dfe-receiver / loader / archiver / fetcher / transforms | 9090, 9091, 9093-9096 | all three paths |
+| dfe-receiver / loader / archiver | 9090, 9091, 9093 | all three paths |
+| dfe-fetcher and transform instances | none | all three paths on container port 9090, over the Docker network |
 | dfe-engine | 8003 | `/metrics` is on its container's own 9090, unpublished |
 | dfe-ui | none | all three on `:3000`, alongside the app |
 | dfe-proxy | 3000 | `/livez`, answered by Envoy itself |
