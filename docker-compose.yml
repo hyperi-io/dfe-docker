@@ -397,6 +397,7 @@ services:
         required: false
     environment:
       DFE_ADMIN_LINKS: ${DFE_ADMIN_LINKS_RESOLVED:-}
+      DFE_API_JWT_SECRET: ${DFE_API_JWT_SECRET:-}
       DFE_APP_CONTRACT_DIR: ${DFE_ENGINE_CONTRACT_DIR-/app/content/contract}
       DFE_CLICKHOUSE_DATABASE: ${CLICKHOUSE_DB:-default}
       DFE_CLICKHOUSE_HOST: ${CLICKHOUSE_HOST:-clickhouse}
@@ -480,47 +481,36 @@ services:
   # dfe-hunt-runner: the pull-based hunt executor
   # ============================================================
 
-  # One per stack, reading the hunts the engine governs
   dfe-hunt-runner:
     image: ${IMAGE_REGISTRY:-ghcr.io/hyperi-io}/dfe-engine:${DFE_ENGINE_VERSION:?run 'make stack VERSION=X.Y.Z' to pin DFE_ENGINE_VERSION}
     container_name: ${DFE_CONTAINER_PREFIX:-}dfe-hunt-runner
     profiles: ["core"]
     restart: unless-stopped
     extends: {file: compose/limits.yml, service: limits-service}
-    # The runner is its own console script in the image
     entrypoint: ["dfe-hunt-runner"]
-    # Rereads the hunt dir every poll, not every 20 ticks
-    command: ["run", "--poll", "15", "--cap", "8", "--reload-every", "1"]
-    # The engine's, as the runner needs its DFE_API_JWT_SECRET
-    env_file:
-      - path: env/engine.env
-        required: false
+    command: ["run", "--reload-every", "1"]
     environment:
+      DFE_API_JWT_SECRET: ${DFE_API_JWT_SECRET:-}
       DFE_CLICKHOUSE_DATABASE: ${CLICKHOUSE_DB:-default}
       DFE_CLICKHOUSE_HOST: ${CLICKHOUSE_HOST:-clickhouse}
       DFE_CLICKHOUSE_PASSWORD: ${DFE_HUNT_RUNNER_CLICKHOUSE_PASSWORD:-}
       DFE_CLICKHOUSE_PORT: ${CLICKHOUSE_EXTERNAL_HTTP_PORT:-8123}
       DFE_CLICKHOUSE_SECURE: ${CLICKHOUSE_SECURE:-false}
-      # Its own user, as it runs SQL built from rule text
       DFE_CLICKHOUSE_USERNAME: dfe_hunt_runner
       DFE_ENV: ${DFE_ENV:-production}
-      # The deploy repo the engine governs hunts and rules in
       DFE_HUNTS_DIR: /app/config/deploy-repo/config/hunts
       DFE_HUNTS_RULES_DIR: /app/config/deploy-repo/config/rules
-      # The API's volume, so both read one signing key
       DFE_SECRETS_PATH: /app/config/.secrets
       OTEL_EXPORTER_OTLP_ENDPOINT: ${DFE_OTEL_EXPORTER_ENDPOINT:-}
       OTEL_SERVICE_NAME: dfe-hunt-runner
     volumes:
       - dfe-engine-config:/app/config
-      - dfe-engine-schemas:/app/schemas
     depends_on:
       clickhouse:
         condition: service_healthy
         required: false
       dfe-engine:
         condition: service_healthy
-    # No HTTP listener. Liveness is its ClickHouse lease
     healthcheck:
       disable: true
 

@@ -37,7 +37,6 @@ _SERVICE_KEY_RE = re.compile(r"^  ([A-Za-z0-9._-]+):$", re.MULTILINE)
 # Each service whose own settings live in an env/<component>.env, mapped to that file
 _COMPONENT_ENV_FILES = {
     "dfe-engine": "engine.env",
-    "dfe-hunt-runner": "engine.env",
     "dfe-ui": "ui.env",
     "hyperdx": "hyperdx.env",
 }
@@ -95,6 +94,13 @@ def test_each_component_reads_the_env_file_its_settings_live_in(dotenv: Path) ->
         assert environment.get(f"{_READ_FROM}{Path(name).stem.upper()}") == name, (
             service
         )
+    # It runs SQL built from rule text, so it holds none of the engine's logins
+    assert not (
+        any(
+            key.startswith(_READ_FROM)
+            for key in config["services"]["dfe-hunt-runner"]["environment"]
+        )
+    )
 
 
 def test_it_reads_the_files_off_each_subcommand():

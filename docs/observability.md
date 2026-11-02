@@ -125,7 +125,7 @@ Every profile declares `otel: true`. `DFE_OTEL_ENABLED=false` turns it off.
 | `DFE_OTEL_EXPORTER_ENDPOINT` | empty | where services push -- **empty exports nothing** |
 | `DFE_OTEL_DATABASE` | `dfe` | database the collector writes |
 | `DFE_OTEL_HEALTH_PORT` | `13133` | the `health_check` extension |
-| `DFE_API_METRICS_BACKEND` in `env/engine.env` | `opentelemetry` | makes dfe-engine and the hunt runner push. `prometheus` serves `/metrics` only |
+| `DFE_API_METRICS_BACKEND` in `env/engine.env` | `opentelemetry` | makes dfe-engine push. `prometheus` serves `/metrics` only |
 
 The endpoint picks the shape. Enabling the profile points services at the bundled
 collector. Name your own endpoint and they push there instead, which is how you
@@ -141,7 +141,7 @@ edge -- data coming in from your estate, pointing the other way.
 |---|---|---|
 | the six Rust services | metrics and traces, when built against scalo >= 2.10.11 | scalo's `metrics` feature pulls `otel-metrics` and `otel-tracing`, so OTLP export is on by default (scalo-rs#30) |
 | dfe-engine | metrics and traces, on the `opentelemetry` backend `env/engine.env` ships | scalo-py has an exporter. Its CLI defaults the backend to `opentelemetry` from v2.29.14 (scalo-py#11) |
-| dfe-hunt-runner | metrics, as `dfe_hunt_*` | it has no listener to scrape and the `opentelemetry` backend it reads from `env/engine.env` pushes on `OTEL_EXPORTER_OTLP_ENDPOINT` alone |
+| dfe-hunt-runner | metrics, as `dfe_hunt_*` | it has no listener to scrape and its default `opentelemetry` backend pushes on `OTEL_EXPORTER_OTLP_ENDPOINT` alone |
 | dfe-ui | no metrics | `@opentelemetry/api` only, no SDK. Serves `/metrics` on `:3000` |
 | every DFE service | LOGS, via Docker's log driver | nothing in the stack exports logs over OTLP, so stdout is shipped instead -- see below |
 

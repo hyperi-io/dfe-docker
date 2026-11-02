@@ -102,7 +102,7 @@ SERVICE_TO_RENDERED_CONFIG_VAR = {
 # The suffix of the env file dfe-engine writes into env/ for one Compose service,
 # `<app>` or `<app>-<instance>` (appmgmt/appconfig.py CUSTOM_ENV_SUFFIX).
 CUSTOM_ENV_SUFFIX = ".custom.env"
-# The env/<component>.env compose hands dfe-engine and dfe-hunt-runner
+# The env/<component>.env compose hands dfe-engine
 ENGINE_COMPONENT = "engine"
 
 # Repo constants

@@ -1048,7 +1048,6 @@ def _only_this_app_password_in_play(
 
 # Each env/<component>.env secret POST enforces and the service that reads it
 _ENV_FILE_SECRETS = {
-    "DFE_API_JWT_SECRET": "dfe-engine",
     "EXPRESS_SESSION_SECRET": "hyperdx",
     "NEXTAUTH_SECRET": "dfe-ui",
     "TOKEN_ENCRYPTION_KEY": "hyperdx",
@@ -1082,10 +1081,7 @@ def test_the_engines_published_jwt_placeholder_fails_the_self_test(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     _only_the_runner_password_in_play(monkeypatch, ["dfe-engine"])
-    engine_env = _common.ENV_DIR / "engine.env"
-    engine_env.write_text(
-        "DFE_API_JWT_SECRET=dev-secret-key-change-in-production\n", encoding="utf-8"
-    )
+    monkeypatch.setenv("DFE_API_JWT_SECRET", "dev-secret-key-change-in-production")
 
     assert post._weak_secrets() == [
         ("DFE_API_JWT_SECRET", "dev-secret-key-change-in-production")

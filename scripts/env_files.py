@@ -24,6 +24,8 @@ starts stacks rather than editing their config.
 It also widens env/ to group-writable and setgid where `make init` predates
 that, because the engine writes each app's custom env file there.
 
+A secret that moved into .env is carried there too, because a start target runs no `make init` once every file exists and the engine would otherwise start without it.
+
 Silent when nothing is missing, nothing has drifted and env/ is already shared.
 """
 
@@ -43,7 +45,7 @@ from _common import (  # noqa: E402
     _print,
     _rel_path,
 )
-from init import drift_keys, share_env_dir  # noqa: E402
+from init import MOVED_SECRETS, _top_up_secrets, drift_keys, share_env_dir  # noqa: E402
 from init import main as init_main  # noqa: E402
 
 
@@ -81,6 +83,8 @@ def _report_drift(*, include_dotenv: bool) -> None:
 
 
 def main() -> int:
+    if DOTENV_FILE.is_file():
+        _top_up_secrets(dotenv_path=DOTENV_FILE, only=MOVED_SECRETS)
     missing = _missing_files()
     if missing:
         _print(msg=f"env/ is missing {', '.join(missing)} -- running `make init`")
