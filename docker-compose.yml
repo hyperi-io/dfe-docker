@@ -148,9 +148,9 @@ services:
       - path: env/dfe-archiver.custom.env
         required: false
     environment:
-      ARCHIVER_VERSION_CHECK__ENABLED: ${DFE_VERSION_CHECK_ENABLED:-true}
-      ARCHIVER_VERSION_CHECK__SEND_INSTANCE_ID: ${DFE_VERSION_CHECK_SEND_INSTANCE_ID:-true}
-      KAFKA_BROKERS: ${DFE_KAFKA_BOOTSTRAP_SERVERS:-}
+      DFE_ARCHIVER_KAFKA_BROKERS: ${DFE_KAFKA_BOOTSTRAP_SERVERS:-}
+      DFE_ARCHIVER_VERSION_CHECK__ENABLED: ${DFE_VERSION_CHECK_ENABLED:-true}
+      DFE_ARCHIVER_VERSION_CHECK__SEND_INSTANCE_ID: ${DFE_VERSION_CHECK_SEND_INSTANCE_ID:-true}
       OTEL_SERVICE_NAME: dfe-archiver
     depends_on:
       config-check-dfe-archiver:

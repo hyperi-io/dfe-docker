@@ -665,11 +665,11 @@ def test_an_app_that_defaults_the_check_off_fails():
     ]
 
 
-def test_the_archiver_is_read_under_its_short_prefix_not_dfe_archiver():
+def test_the_archiver_is_read_under_dfe_archiver_not_its_old_prefix():
     config = _checking()
     environment = config["services"]["dfe-archiver"]["environment"]
-    environment["DFE_ARCHIVER_VERSION_CHECK__ENABLED"] = environment.pop(
-        "ARCHIVER_VERSION_CHECK__ENABLED"
+    environment["ARCHIVER_VERSION_CHECK__ENABLED"] = environment.pop(
+        "DFE_ARCHIVER_VERSION_CHECK__ENABLED"
     )
 
     failures = check_compose._version_check_mismatches(
@@ -677,7 +677,7 @@ def test_the_archiver_is_read_under_its_short_prefix_not_dfe_archiver():
     )
 
     assert failures == [
-        "dfe-archiver: ARCHIVER_VERSION_CHECK__ENABLED=unset, want true"
+        "dfe-archiver: DFE_ARCHIVER_VERSION_CHECK__ENABLED=unset, want true"
     ]
 
 

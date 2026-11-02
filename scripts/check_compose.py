@@ -395,7 +395,7 @@ _PROBE_TOOLS = ("curl", "wget")
 _VERSION_CHECK_ENABLED_KEY = "DFE_VERSION_CHECK_ENABLED"
 _VERSION_CHECK_ID_KEY = "DFE_VERSION_CHECK_SEND_INSTANCE_ID"
 _VERSION_CHECK_PREFIXES = {
-    "dfe-archiver": "ARCHIVER_",
+    "dfe-archiver": "DFE_ARCHIVER_",
     "dfe-engine": "",
     "dfe-fetcher": "DFE_FETCHER_",
     "dfe-loader": "DFE_LOADER_",
