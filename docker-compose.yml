@@ -642,10 +642,9 @@ services:
       OTEL_EXPORTER_OTLP_ENDPOINT: ${DFE_OTEL_EXPORTER_ENDPOINT:-}
       OTEL_SERVICE_NAME: dfe-archiver
       APP_ENV:
-      # The archiver's cascade prefix is ARCHIVER, not DFE_ARCHIVER.
-      ARCHIVER_VERSION_CHECK__ENABLED: ${DFE_VERSION_CHECK_ENABLED:-true}
-      ARCHIVER_VERSION_CHECK__SEND_INSTANCE_ID: ${DFE_VERSION_CHECK_SEND_INSTANCE_ID:-true}
-      KAFKA_BROKERS: *kafka-brokers
+      DFE_ARCHIVER_VERSION_CHECK__ENABLED: ${DFE_VERSION_CHECK_ENABLED:-true}
+      DFE_ARCHIVER_VERSION_CHECK__SEND_INSTANCE_ID: ${DFE_VERSION_CHECK_SEND_INSTANCE_ID:-true}
+      DFE_ARCHIVER_KAFKA_BROKERS: *kafka-brokers
     depends_on:
       # The writer of the rendered config below, so it must have written before
       # this container reads. `required: false` for the tiers that run no engine.
