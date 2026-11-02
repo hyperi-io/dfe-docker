@@ -1,4 +1,4 @@
-#!/usr/bin/env -S uv run --locked --script
+#!/usr/bin/env python3
 #  Project:      dfe-docker
 #  File:         scripts/demo.py
 #  Purpose:      Send live vendor syslog through the running stack, detected per line by dfe-transform-elastic and landed one table per vendor
@@ -7,16 +7,9 @@
 #  License:      BUSL-1.1
 #  Copyright:    (c) 2026 HYPERI PTY LIMITED
 
-# /// script
-# requires-python = ">=3.12"
-# dependencies = [
-#     "pyyaml==6.0.3",
-# ]
-# ///
-
 """Run the agentless syslog demo against the RUNNING stack.
 
-The Sources come from resources/demo/demo.yaml. Each vendor table is its engine catalogue entry, created and deployed for its table, then set dormant so no per-vendor transform runs. The intake is one agentless dfe-transform-elastic Source on the receiver's syslog listener, its detect candidates the vendors' catalogue variants. The receiver's syslog listener, UDP and TCP on 514, is switched on through the engine, and `make apply` recreates what the engine says has to change.
+The Sources come from resources/demo/demo.toml. Each vendor table is its engine catalogue entry, created and deployed for its table, then set dormant so no per-vendor transform runs. The intake is one agentless dfe-transform-elastic Source on the receiver's syslog listener, its detect candidates the vendors' catalogue variants. The receiver's syslog listener, UDP and TCP on 514, is switched on through the engine, and `make apply` recreates what the engine says has to change.
 
 The generator is dfe-transform-elastic's own replay script and fixtures, fetched shallow at the tag DFE_TRANSFORM_ELASTIC_VERSION pins so the lines match the detector that runs, or read from DFE_SRC_ROOT/dfe-transform-elastic when that is set. A vendor with a sample set under resources/demo/samples/<package>/ replays that instead of its fixtures. It runs detached in a pinned Python container on the stack's network, looping raw syslog at dfe-receiver until `make demo-stop` or `make down` removes it, and a second run replaces it. The run returns once every vendor table has gained rows, and fails, stopping the stream, when one gains none.
 
@@ -33,11 +26,10 @@ import shutil
 import subprocess
 import sys
 import time
+import tomllib
 import typing
 from pathlib import Path
 from urllib.parse import quote
-
-import yaml
 
 # Bytecode for the repo modules imported below goes to .tmp/pycache, as it does under make
 sys.pycache_prefix = str(Path(__file__).resolve().parent.parent / ".tmp" / "pycache")
@@ -68,7 +60,7 @@ from post import (  # noqa: E402
 )
 from seed import ENGINE_FAULTS, SeedError, _token, deploy_fault  # noqa: E402
 
-DEMO_FILE = REPO_ROOT / "resources" / "demo" / "demo.yaml"
+DEMO_FILE = REPO_ROOT / "resources" / "demo" / "demo.toml"
 TRANSFORM_APP = "dfe-transform-elastic"
 TRANSFORM_REPO = "dfe-transform-elastic"
 TRANSFORM_VERSION_KEY = "DFE_TRANSFORM_ELASTIC_VERSION"
@@ -100,7 +92,7 @@ class DemoError(Exception):
 
 
 class Demo(typing.NamedTuple):
-    """What resources/demo/demo.yaml defines."""
+    """What resources/demo/demo.toml defines."""
 
     intake: dict
     sources: list[str]
@@ -499,9 +491,9 @@ def _stop_stream(*, container: str) -> None:
 def load_demo(*, path: Path) -> Demo:
     """Read the intake body and the vendor tables from the demo file."""
     try:
-        doc = yaml.safe_load(path.read_text(encoding="utf-8"))
-    except (OSError, yaml.YAMLError) as error:
-        raise DemoError(f"{path.name} is not readable YAML: {error}") from error
+        doc = tomllib.loads(path.read_text(encoding="utf-8"))
+    except (OSError, tomllib.TOMLDecodeError) as error:
+        raise DemoError(f"{path.name} is not readable TOML: {error}") from error
     intake = doc.get("intake") if isinstance(doc, dict) else None
     sources = doc.get("sources") if isinstance(doc, dict) else None
     if not (isinstance(intake, dict)) or not (isinstance(intake.get("source"), str)):

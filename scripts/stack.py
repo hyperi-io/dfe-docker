@@ -42,8 +42,8 @@ Transport is EXPLICIT-LOCAL-FIRST, OCI-DEFAULT:
    (``ghcr.io/hyperi-io/dfe-stack-manifest:VERSION``) to its digest, check with
    ``cosign verify`` that dfe-infra's release workflow signed that digest, then
    ``oras pull`` it by digest and read its ``dfe-env-VERSION.txt`` member. This
-   is the air-gap / CI path. cosign runs from PATH, else as a digest-pinned
-   container through docker. ``DFE_STACK_VERIFY=false`` skips the signature
+   is the air-gap / CI path. cosign and oras run from PATH, else as digest-pinned
+   containers through docker. ``DFE_STACK_VERIFY=false`` skips the signature
    check, and still pulls by digest.
 3. Neither available -> fail loudly. We never silently fall back to ``latest``.
 
@@ -81,7 +81,9 @@ from _registry import (  # noqa: E402
     RegistryError,
     latest_release,
     latest_tag,
+    OUT_DIR,
     manifest_repo,
+    oras_command,
     resolve_digest,
 )
 
@@ -226,12 +228,6 @@ def _verify_signature(pinned: str) -> None:
 
 def _render_oci(version: str) -> str:
     """Pull the stack manifest by digest, once its signature checks, and read its .env member (air-gap path)."""
-    if shutil.which("oras") is None:
-        raise StackError(
-            "no local dfe-infra checkout found and `oras` is not installed -- "
-            "cannot pull the OCI stack manifest (set DFE_INFRA_DIR to a "
-            "dfe-infra checkout, or install oras)"
-        )
     repo = manifest_repo()
     pinned = f"{repo}@{resolve_digest(reference=f'{repo}:{version}')}"
     _verify_signature(pinned)
@@ -239,7 +235,10 @@ def _render_oci(version: str) -> str:
         os.environ.get("DFE_STACK_ENV_MEMBER", "").strip() or f"dfe-env-{version}.txt"
     )
     with tempfile.TemporaryDirectory(prefix="dfe-stack-") as tmp:
-        out = _run(["oras", "pull", "--output", tmp, pinned])
+        oras = oras_command(mount=Path(tmp))
+        # Under docker the image writes to its own mount point, not the host path
+        target = OUT_DIR if oras[0] == "docker" else tmp
+        out = _run([*oras, "pull", "--output", target, pinned])
         if out.returncode != 0:
             detail = out.stderr.strip() or out.stdout.strip()
             raise StackError(f"oras pull {pinned} failed: {detail}")
