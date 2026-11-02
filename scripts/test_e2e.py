@@ -137,7 +137,7 @@ SERVICE_PROFILES_FILE = Path(__file__).resolve().parent.parent / "service_profil
 SERVICE_CONFIG_MOUNTS = {
     "dfe-archiver": "/etc/dfe/archiver.yaml",
     "dfe-loader": "/etc/dfe/loader.yaml",
-    "dfe-receiver": "/etc/dfe-receiver/config.yaml",
+    "dfe-receiver": "/etc/dfe/receiver.yaml",
 }
 
 KNOWN_DFE_SERVICES = set(SERVICE_CONFIG_MOUNTS.keys())

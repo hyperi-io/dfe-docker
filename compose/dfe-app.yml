@@ -12,6 +12,10 @@ services:
     extends: {file: limits.yml, service: limits-service}
     profiles: ["dfe"]
     restart: unless-stopped
+    environment:
+      LOG_FORMAT: ${LOG_FORMAT:-text}
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+      OTEL_EXPORTER_OTLP_ENDPOINT: ${DFE_OTEL_EXPORTER_ENDPOINT:-}
     healthcheck:
       test: ["CMD", "curl", "-sf", "http://localhost:9090/livez"]
       interval: 10s

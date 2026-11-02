@@ -78,6 +78,7 @@ services:
       KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: "0"
       KAFKA_LISTENERS: PLAINTEXT://:9092,PLAINTEXT_HOST://:19092,CONTROLLER://:29092
       KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT
+      KAFKA_LOG_DIRS: /var/lib/kafka/data
       KAFKA_NODE_ID: "1"
       KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: "1"
       KAFKA_PROCESS_ROLES: broker,controller
@@ -136,7 +137,7 @@ services:
       KAFKA_CLUSTERS_0_NAME: dfe-local
 
   # ============================================================
-  # dfe-archiver: archives the topics, never on a gRPC profile
+  # dfe-archiver
   # ============================================================
 
   dfe-archiver:
@@ -148,31 +149,22 @@ services:
     env_file:
       - path: env/archiver.env
         required: false
-      # The engine's keys, which win. Apply them with up -d
       - path: env/dfe-archiver.custom.env
         required: false
     environment:
-      # Its cascade prefix is ARCHIVER, not DFE_ARCHIVER
       ARCHIVER_VERSION_CHECK__ENABLED: ${DFE_VERSION_CHECK_ENABLED:-true}
       ARCHIVER_VERSION_CHECK__SEND_INSTANCE_ID: ${DFE_VERSION_CHECK_SEND_INSTANCE_ID:-true}
       KAFKA_BROKERS: ${DFE_KAFKA_BOOTSTRAP_SERVERS:-}
-      LOG_FORMAT: ${LOG_FORMAT:-text}
-      LOG_LEVEL: ${LOG_LEVEL:-info}
-      # Empty exports nothing, scalo's rule and the default
-      OTEL_EXPORTER_OTLP_ENDPOINT: ${DFE_OTEL_EXPORTER_ENDPOINT:-}
       OTEL_SERVICE_NAME: dfe-archiver
     depends_on:
       config-check-dfe-archiver:
         condition: service_completed_successfully
-      # Writes this app's config, on the tiers that run it
       dfe-engine:
         condition: service_healthy
         required: false
       dlq-init:
         condition: service_completed_successfully
         required: false
-    working_dir: /home/appuser
-    # The engine's rendered config, else the committed file
     command: ["--config", "${DFE_ARCHIVER_CONFIG_FILE:-/etc/dfe/archiver.yaml}"]
     volumes:
       - ./config/${DFE_ARCHIVER_CONFIG:-archiver/kafka.yaml}:/etc/dfe/archiver.yaml:ro
@@ -188,9 +180,6 @@ services:
     image: ${IMAGE_REGISTRY:-ghcr.io/hyperi-io}/dfe-fetcher:${DFE_FETCHER_VERSION:?run 'make stack VERSION=X.Y.Z' to pin DFE_FETCHER_VERSION}
     container_name: ${DFE_CONTAINER_PREFIX:-}dfe-fetcher
     extends: {file: compose/dfe-app.yml, service: dfe-app}
-    ports:
-      - ${DFE_INGRESS_BIND_HOST:-0.0.0.0}:${DFE_FETCHER_INGEST_PORT:-8082}:8080
-      - ${DFE_BIND_HOST:-127.0.0.1}:${DFE_FETCHER_PROMETHEUS_PORT:-9094}:9090
     env_file:
       - path: env/fetcher.env
         required: false
@@ -203,9 +192,6 @@ services:
       DFE_FETCHER_KAFKA_BROKERS: ${DFE_KAFKA_BOOTSTRAP_SERVERS:-}
       DFE_FETCHER_VERSION_CHECK__ENABLED: ${DFE_VERSION_CHECK_ENABLED:-true}
       DFE_FETCHER_VERSION_CHECK__SEND_INSTANCE_ID: ${DFE_VERSION_CHECK_SEND_INSTANCE_ID:-true}
-      LOG_FORMAT: ${LOG_FORMAT:-text}
-      LOG_LEVEL: ${LOG_LEVEL:-info}
-      OTEL_EXPORTER_OTLP_ENDPOINT: ${DFE_OTEL_EXPORTER_ENDPOINT:-}
       OTEL_SERVICE_NAME: dfe-fetcher
     depends_on:
       dfe-engine:
@@ -229,9 +215,7 @@ services:
   dfe-loader:
     image: ${IMAGE_REGISTRY:-ghcr.io/hyperi-io}/dfe-loader:${DFE_LOADER_VERSION:?run 'make stack VERSION=X.Y.Z' to pin DFE_LOADER_VERSION}
     container_name: ${DFE_CONTAINER_PREFIX:-}dfe-loader
-    profiles: ["dfe"]
-    restart: unless-stopped
-    extends: {file: compose/limits.yml, service: limits-service}
+    extends: {file: compose/dfe-app.yml, service: dfe-app}
     ports:
       - ${DFE_BIND_HOST:-127.0.0.1}:${DFE_LOADER_PROMETHEUS_PORT:-9091}:9090
       # Receiver push. Host 6000 is the receiver's
@@ -250,9 +234,6 @@ services:
       DFE_LOADER_KAFKA_BROKERS: ${DFE_KAFKA_BOOTSTRAP_SERVERS:-}
       DFE_LOADER_VERSION_CHECK__ENABLED: ${DFE_VERSION_CHECK_ENABLED:-true}
       DFE_LOADER_VERSION_CHECK__SEND_INSTANCE_ID: ${DFE_VERSION_CHECK_SEND_INSTANCE_ID:-true}
-      LOG_FORMAT: ${LOG_FORMAT:-text}
-      LOG_LEVEL: ${LOG_LEVEL:-info}
-      OTEL_EXPORTER_OTLP_ENDPOINT: ${DFE_OTEL_EXPORTER_ENDPOINT:-}
       OTEL_SERVICE_NAME: dfe-loader
     depends_on:
       clickhouse:
@@ -274,9 +255,6 @@ services:
       - dlq-spool:/var/spool/dfe
     healthcheck:
       test: ["CMD", "curl", "-sf", "http://localhost:9090/readyz"]
-      interval: 10s
-      timeout: 3s
-      retries: 5
 
   # ============================================================
   # dfe-receiver
@@ -308,9 +286,6 @@ services:
       DFE_RECEIVER_MAX_BODY_SIZE: ${DFE_RECEIVER_MAX_BODY_SIZE:-8000000}
       DFE_RECEIVER_VERSION_CHECK__ENABLED: ${DFE_VERSION_CHECK_ENABLED:-true}
       DFE_RECEIVER_VERSION_CHECK__SEND_INSTANCE_ID: ${DFE_VERSION_CHECK_SEND_INSTANCE_ID:-true}
-      LOG_FORMAT: ${LOG_FORMAT:-text}
-      LOG_LEVEL: ${LOG_LEVEL:-info}
-      OTEL_EXPORTER_OTLP_ENDPOINT: ${DFE_OTEL_EXPORTER_ENDPOINT:-}
       OTEL_SERVICE_NAME: dfe-receiver
     depends_on:
       # The bearer-token mount needs its directory
@@ -327,9 +302,9 @@ services:
       dlq-init:
         condition: service_completed_successfully
         required: false
-    command: ["--config", "${DFE_RECEIVER_CONFIG_FILE:-/etc/dfe-receiver/config.yaml}"]
+    command: ["--config", "${DFE_RECEIVER_CONFIG_FILE:-/etc/dfe/receiver.yaml}"]
     volumes:
-      - ./config/${DFE_RECEIVER_CONFIG:-receiver/kafka.yaml}:/etc/dfe-receiver/config.yaml:ro
+      - ./config/${DFE_RECEIVER_CONFIG:-receiver/kafka.yaml}:/etc/dfe/receiver.yaml:ro
       - dfe-app-config:/etc/dfe/apps:ro
       - dlq-spool:/var/spool/dfe
       # Per-listener bearer tokens, a dir so rewrites land live
@@ -362,9 +337,6 @@ services:
       DFE_TRANSFORM_ELASTIC_SOURCE_BROKERS: ${DFE_KAFKA_BOOTSTRAP_SERVERS:-}
       DFE_TRANSFORM_ELASTIC_VERSION_CHECK__ENABLED: ${DFE_VERSION_CHECK_ENABLED:-true}
       DFE_TRANSFORM_ELASTIC_VERSION_CHECK__SEND_INSTANCE_ID: ${DFE_VERSION_CHECK_SEND_INSTANCE_ID:-true}
-      LOG_FORMAT: ${LOG_FORMAT:-text}
-      LOG_LEVEL: ${LOG_LEVEL:-info}
-      OTEL_EXPORTER_OTLP_ENDPOINT: ${DFE_OTEL_EXPORTER_ENDPOINT:-}
       OTEL_SERVICE_NAME: dfe-transform-elastic
     depends_on:
       dfe-engine:
@@ -403,9 +375,6 @@ services:
       # Shared with vrl. elastic has its own prefix
       DFE_TRANSFORM_VERSION_CHECK__ENABLED: ${DFE_VERSION_CHECK_ENABLED:-true}
       DFE_TRANSFORM_VERSION_CHECK__SEND_INSTANCE_ID: ${DFE_VERSION_CHECK_SEND_INSTANCE_ID:-true}
-      LOG_FORMAT: ${LOG_FORMAT:-text}
-      LOG_LEVEL: ${LOG_LEVEL:-info}
-      OTEL_EXPORTER_OTLP_ENDPOINT: ${DFE_OTEL_EXPORTER_ENDPOINT:-}
       OTEL_SERVICE_NAME: dfe-transform-vector
     depends_on:
       # Creates the topics, else a transform subscribes to none
@@ -437,9 +406,6 @@ services:
       DFE_TRANSFORM_SOURCE_BROKERS: ${DFE_KAFKA_BOOTSTRAP_SERVERS:-}
       DFE_TRANSFORM_VERSION_CHECK__ENABLED: ${DFE_VERSION_CHECK_ENABLED:-true}
       DFE_TRANSFORM_VERSION_CHECK__SEND_INSTANCE_ID: ${DFE_VERSION_CHECK_SEND_INSTANCE_ID:-true}
-      LOG_FORMAT: ${LOG_FORMAT:-text}
-      LOG_LEVEL: ${LOG_LEVEL:-info}
-      OTEL_EXPORTER_OTLP_ENDPOINT: ${DFE_OTEL_EXPORTER_ENDPOINT:-}
       OTEL_SERVICE_NAME: dfe-transform-vrl
     depends_on:
       dfe-engine:

@@ -50,7 +50,7 @@ services:
   config-check-dfe-receiver:
     extends: {file: docker-compose.yml, service: dfe-receiver}
     container_name: ${DFE_CONTAINER_PREFIX:-}dfe-config-check-dfe-receiver
-    command: ["--config", "${DFE_RECEIVER_CONFIG_FILE:-/etc/dfe-receiver/config.yaml}", "config-check"]
+    command: ["--config", "${DFE_RECEIVER_CONFIG_FILE:-/etc/dfe/receiver.yaml}", "config-check"]
     depends_on: !override
       bearer-tokens-init:
         condition: service_completed_successfully
