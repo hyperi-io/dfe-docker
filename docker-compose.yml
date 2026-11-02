@@ -186,9 +186,7 @@ services:
       - path: env/dfe-fetcher.custom.env
         required: false
     environment:
-      # One per service. instances.py sets each instance's
       DFE_FETCHER_CURSOR__DIRECTORY: /var/lib/dfe-fetcher/dfe-fetcher
-      # Its producer broker, which the rendered config lacks
       DFE_FETCHER_KAFKA_BROKERS: ${DFE_KAFKA_BOOTSTRAP_SERVERS:-}
       DFE_FETCHER_VERSION_CHECK__ENABLED: ${DFE_VERSION_CHECK_ENABLED:-true}
       DFE_FETCHER_VERSION_CHECK__SEND_INSTANCE_ID: ${DFE_VERSION_CHECK_SEND_INSTANCE_ID:-true}
@@ -218,17 +216,13 @@ services:
     extends: {file: compose/dfe-app.yml, service: dfe-app}
     ports:
       - ${DFE_BIND_HOST:-127.0.0.1}:${DFE_LOADER_PROMETHEUS_PORT:-9091}:9090
-      # Receiver push. Host 6000 is the receiver's
-      - ${DFE_BIND_HOST:-127.0.0.1}:${DFE_LOADER_GRPC_PORT:-50051}:6000
     env_file:
       - path: env/loader.env
         required: false
       - path: env/dfe-loader.custom.env
         required: false
     environment:
-      # The engine's ClickHouse, container port (#75)
       DFE_LOADER_CLICKHOUSE_HOSTS: ${CLICKHOUSE_HOST:-clickhouse}:${CLICKHOUSE_EXTERNAL_HTTP_PORT:-8123}
-      # Its own user: inserts and schema reads only
       DFE_LOADER_CLICKHOUSE_PASSWORD: ${DFE_LOADER_CLICKHOUSE_PASSWORD:-}
       DFE_LOADER_CLICKHOUSE_USERNAME: dfe_loader
       DFE_LOADER_KAFKA_BROKERS: ${DFE_KAFKA_BOOTSTRAP_SERVERS:-}
@@ -241,7 +235,6 @@ services:
         required: false
       config-check-dfe-loader:
         condition: service_completed_successfully
-      # Healthy means tables and topics exist
       dfe-engine:
         condition: service_healthy
         required: false
@@ -267,28 +260,19 @@ services:
     ports:
       - ${DFE_INGRESS_BIND_HOST:-0.0.0.0}:${DFE_RECEIVER_HTTP_PORT:-8080}:8080
       - ${DFE_BIND_HOST:-127.0.0.1}:${DFE_RECEIVER_PROMETHEUS_PORT:-9090}:9090
-      # Uncomment for more protocols. 6000 needs GRPC__ENABLED
-      # - ${DFE_INGRESS_BIND_HOST:-0.0.0.0}:${DFE_RECEIVER_GRPC_PORT:-6000}:6000
-      # - ${DFE_INGRESS_BIND_HOST:-0.0.0.0}:${DFE_RECEIVER_BEATS_PORT:-5044}:5044
-      # - ${DFE_INGRESS_BIND_HOST:-0.0.0.0}:${DFE_RECEIVER_HEC_PORT:-8088}:8088
-      # - ${DFE_INGRESS_BIND_HOST:-0.0.0.0}:${DFE_RECEIVER_OTLP_GRPC_PORT:-4317}:4317
-      # - ${DFE_INGRESS_BIND_HOST:-0.0.0.0}:${DFE_RECEIVER_OTLP_HTTP_PORT:-4318}:4318
     env_file:
       - path: env/receiver.env
         required: false
       - path: env/dfe-receiver.custom.env
         required: false
     environment:
-      # Empty keeps the cascade, file_only on direct gRPC
       DFE_RECEIVER_DLQ_MODE: ${DFE_RECEIVER_DLQ_MODE:-}
       DFE_RECEIVER_KAFKA_BROKERS: ${DFE_KAFKA_BOOTSTRAP_SERVERS:-}
-      # DFE-wide record cap, under every broker's 8 MiB limit
       DFE_RECEIVER_MAX_BODY_SIZE: ${DFE_RECEIVER_MAX_BODY_SIZE:-8000000}
       DFE_RECEIVER_VERSION_CHECK__ENABLED: ${DFE_VERSION_CHECK_ENABLED:-true}
       DFE_RECEIVER_VERSION_CHECK__SEND_INSTANCE_ID: ${DFE_VERSION_CHECK_SEND_INSTANCE_ID:-true}
       OTEL_SERVICE_NAME: dfe-receiver
     depends_on:
-      # The bearer-token mount needs its directory
       bearer-tokens-init:
         condition: service_completed_successfully
       config-check-dfe-receiver:
@@ -307,16 +291,12 @@ services:
       - ./config/${DFE_RECEIVER_CONFIG:-receiver/kafka.yaml}:/etc/dfe/receiver.yaml:ro
       - dfe-app-config:/etc/dfe/apps:ro
       - dlq-spool:/var/spool/dfe
-      # Per-listener bearer tokens, a dir so rewrites land live
       - type: volume
         source: dfe-engine-config
         target: /var/run/secrets/dfe/ingest-bearer-tokens
         read_only: true
         volume:
           subpath: .secrets/ingest/bearer-tokens
-      # Uncomment to enable TLS on gRPC inbound (:6000)
-      # - ./certs/dev/receiver.crt:/etc/ssl/receiver.crt:ro
-      # - ./certs/dev/receiver.key:/etc/ssl/receiver.key:ro
 
   # ============================================================
   # dfe-transform-elastic: one instance per source extends it

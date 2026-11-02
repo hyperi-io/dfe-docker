@@ -257,7 +257,6 @@ The AWS **region** is not an environment variable: it is a literal in each sourc
 |--------------------------------------------------|--------------------------------------------------------------------------------------|---------------------------------------------------------------------|
 | `DFE_LOADER_VERSION`                             | Version of dfe-loader to use                                                         | none -- `make stack` pins it; unset is a hard-fail                                                            |
 | `DFE_LOADER_PROMETHEUS_PORT`                     | Loader Prometheus port                                                               | `9091`                                                              |
-| `DFE_LOADER_GRPC_PORT`                           | Host port for the loader's gRPC Push listener (container port 6000)                  | `50051`                                                             |
 | `DFE_LOADER_CLICKHOUSE_PASSWORD`                 | Password of `dfe_loader`, the loader's own ClickHouse user, which the engine creates on it | generated                                                           |
 
 ### DFE Receiver
@@ -265,14 +264,18 @@ The AWS **region** is not an environment variable: it is a literal in each sourc
 | Variable                                         | Use                                                                                  | Default                                                             |
 |--------------------------------------------------|--------------------------------------------------------------------------------------|---------------------------------------------------------------------|
 | `DFE_RECEIVER_VERSION`                           | Version of dfe-receiver to use                                                       | none -- `make stack` pins it; unset is a hard-fail                                                            |
-| `DFE_RECEIVER_BEATS_PORT`                        | Receiver Beats port                                                                  | `5044`                                                              |
-| `DFE_RECEIVER_GRPC_PORT`                         | Receiver Vector gRPC port, published once its line in `docker-compose.yml` is uncommented | `6000`                                                              |
-| `DFE_RECEIVER_HEC_PORT`                          | Receiver HEC port                                                                    | `8088`                                                              |
+| `DFE_RECEIVER_BEATS_PORT`                        | Host port for the receiver's Beats listener (container port 5044)                   | unset, unpublished                                                  |
+| `DFE_RECEIVER_GRPC_PORT`                         | Host port for the receiver's Vector gRPC listener (container port 6000)             | unset, unpublished                                                  |
+| `DFE_RECEIVER_HEC_PORT`                          | Host port for the receiver's HEC listener (container port 8088)                     | unset, unpublished                                                  |
 | `DFE_RECEIVER_HTTP_PORT`                         | Receiver HTTP port                                                                   | `8080`                                                              |
 | `DFE_RECEIVER_MAX_BODY_SIZE`                     | Largest record the receiver accepts in bytes, under every broker's 8 MiB message limit | `8000000`                                                           |
-| `DFE_RECEIVER_OTLP_GRPC_PORT`                    | Receiver OTLP gRPC port                                                              | `4317`                                                              |
-| `DFE_RECEIVER_OTLP_HTTP_PORT`                    | Receiver OTLP HTTP port                                                              | `4318`                                                              |
+| `DFE_RECEIVER_OTLP_GRPC_PORT`                    | Host port for the receiver's OTLP gRPC listener (container port 4317)               | unset, unpublished                                                  |
+| `DFE_RECEIVER_OTLP_HTTP_PORT`                    | Host port for the receiver's OTLP HTTP listener (container port 4318)               | unset, unpublished                                                  |
 | `DFE_RECEIVER_PROMETHEUS_PORT`                   | Receiver Prometheus port                                                             | `9090`                                                              |
+
+Setting a listener's port key publishes it through a fragment `make` writes, so a raw `docker compose` outside `make` does not publish it. The listener still has to be enabled in the receiver's config, such as `DFE_RECEIVER_GRPC__ENABLED=true` in `env/receiver.env`.
+
+`make` also sets `DFE_RECEIVER_DLQ_MODE` from the profile: `file_only` on a direct gRPC profile and empty on Kafka, which keeps the receiver's `cascade` default.
 
 ### DFE Transform Elastic
 
@@ -434,9 +437,8 @@ The engine runs as its image's user, not yours, so the two meet on a group. `mak
 | 9093  | dfe-archiver         | Prometheus metrics |
 | 13133 | otel-collector       | health_check       |
 | 19092 | Kafka (any backend)  | Plaintext host     |
-| 50051 | dfe-loader           | gRPC Push, container port 6000 |
 
-Additional receiver ports (commented out by default in docker-compose.yml): 4317 (OTLP gRPC), 4318 (OTLP HTTP), 5044 (Beats), 6000 (Vector gRPC, which also needs `DFE_RECEIVER_GRPC__ENABLED=true`), 8088 (HEC).
+The receiver's other listeners publish once their port key is set: 4317 (OTLP gRPC), 4318 (OTLP HTTP), 5044 (Beats), 6000 (Vector gRPC) and 8088 (HEC).
 
 dfe-fetcher and the transforms run one instance per source. An instance publishes no host port.
 

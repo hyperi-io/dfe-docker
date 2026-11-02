@@ -131,18 +131,14 @@ Per-port, as published in `docker-compose.yml`:
 | 9091 | dfe-loader | operator | Metrics and health |
 | 9093 | dfe-archiver | operator | Metrics and health |
 | 13133 | otel-collector | operator | `health_check` extension |
-| 50051 | dfe-loader | operator | Internal `DfeTransport/Push` gRPC, container port 6000 |
 
-dfe-fetcher and the three transforms run one instance per source. An instance publishes no host port, so their ingest, Vector API and metrics ports are reached over the Docker network. The receiver's Vector protocol on 6000 publishes only once its line in `docker-compose.yml` is uncommented.
+dfe-fetcher and the three transforms run one instance per source. An instance publishes no host port, so their ingest, Vector API and metrics ports are reached over the Docker network. dfe-loader's `DfeTransport/Push` listener on 6000 is too. The receiver's Vector protocol on 6000 publishes only once `DFE_RECEIVER_GRPC_PORT` is set.
 
 `dfe-ui`, `hyperdx` and `hyperdx-documentdb` publish no host
 ports at all -- they are reached over the Docker network, HyperDX through the
 proxy that holds both its origins. The collector publishes only `24224`, which the
 DOCKER DAEMON sends container stdout to; its OTLP ports stay on the Compose
-network. The receiver's OTLP
-(`4317`, `4318`), Beats (`5044`) and HEC (`8088`) mappings are present but
-commented out; uncomment them to expose those ingest protocols. Note that those
-`4317`/`4318` are the receiver's *ingest* edge, not the collector's.
+network. The receiver's OTLP (`4317`, `4318`), Beats (`5044`) and HEC (`8088`) listeners publish once their port key is set in `.env`. Those `4317`/`4318` are the receiver's *ingest* edge, not the collector's.
 
 Setting `DFE_BIND_HOST=0.0.0.0` opens every operator port at once, including a
 ClickHouse whose `CLICKHOUSE_PASSWORD` defaults to empty and which runs with
@@ -311,6 +307,8 @@ Each limit tier extends `base` in `compose/base.yml`, whose `dns_search: ["."]` 
 `compose/one-shots.yml`, which `docker-compose.yml` includes, holds every container that runs once and exits: dlq-init, bearer-tokens-init, the `contract-<app>` emitters, dfe-dashboards, hyperdx-documentdb-tls and a `config-check-<app>` for dfe-archiver, dfe-loader and dfe-receiver.
 
 Each config check runs its app's own `config-check` with the image, environment and config file the app is about to start with, once the engine has rendered that file, and the app starts only after it passes. A broken config therefore stops `make up`, `make dev`, `make ci` and `make apply` with the app's own error instead of leaving the app in a restart loop. A key the app does not know still passes, because the apps ignore unknown keys.
+
+The apps then wait on a healthy dfe-engine, because healthy means their tables and topics exist.
 
 ## Redpanda ships in developer mode
 

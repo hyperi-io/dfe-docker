@@ -120,7 +120,7 @@ the services start.
 
 ## The receiver's bearer-token mount
 
-dfe-receiver mounts `.secrets/ingest/bearer-tokens` from the `dfe-engine-config` volume as a subpath, which Docker refuses when the path does not exist. The `bearer-tokens-init` one-shot creates it first, as uid 1000 and owner-only like the engine's other secrets.
+dfe-receiver mounts `.secrets/ingest/bearer-tokens` from the `dfe-engine-config` volume as a subpath, which Docker refuses when the path does not exist. The `bearer-tokens-init` one-shot creates it first, as uid 1000 and owner-only like the engine's other secrets. It is a directory mount so the engine's token rewrites reach the running receiver.
 
 `archiver-data`, mounted at `/var/data/archive`, has the same problem and the same
 fix. Without it every archive write fails with `Permission denied (os error 13)`,

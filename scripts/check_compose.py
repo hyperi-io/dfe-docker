@@ -254,6 +254,7 @@ _FRAGMENT_DIALS = {
     "DFE_UI_EXTERNAL": "false",
     "DFE_ENGINE_API_EXTERNAL": "false",
     "DFE_PROXY_TLS": "true",
+    "DFE_RECEIVER_BEATS_PORT": "5044",
 }
 # Console TLS refuses to start beside the auth profile, so `make dev` runs once per side, each held to the chain its own dials produce. The TLS run also needs what that refusal and the TLS precheck look for: an https origin and a certificate pair openssl accepts.
 _DEV_PATH_CERT_DIR = REPO_ROOT / ".tmp" / "compose-check-certs"

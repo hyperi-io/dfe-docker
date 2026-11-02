@@ -147,10 +147,10 @@ flowchart LR
 
 | Container port | Host port | Owner | Protocol | Audience | Binds |
 |---|---|---|---|---|---|
-| 6000 | none, 6000 once its `docker-compose.yml` line is uncommented | dfe-receiver | Vector protocol, an ingest source that listens only with `DFE_RECEIVER_GRPC__ENABLED=true` | external clients | `DFE_INGRESS_BIND_HOST` (`0.0.0.0`) |
-| 6000 | 50051 | dfe-loader | `DfeTransport/Push`, internal transport | receiver, fetcher, the transforms | `DFE_BIND_HOST` (`127.0.0.1`) |
+| 6000 | none, until `DFE_RECEIVER_GRPC_PORT` is set | dfe-receiver | Vector protocol, an ingest source that listens only with `DFE_RECEIVER_GRPC__ENABLED=true` | external clients | `DFE_INGRESS_BIND_HOST` (`0.0.0.0`) |
+| 6000 | none | dfe-loader | `DfeTransport/Push`, internal transport | receiver, fetcher, the transforms | the compose network |
 
-Every Push listener in the suite answers on 6000, and dfe-engine compiles each sender's endpoint against that port. The loader publishes on host port 50051, which leaves 6000 for the receiver's listener. The binding split is the tell: the receiver's listener is meant to be reachable, the loader's is not.
+Every Push listener in the suite answers on 6000 and dfe-engine compiles each sender's endpoint against that port. The receiver's listener is meant to be reachable from outside the stack. The loader's is not, so it publishes no host port.
 
 ## Two independent selectors decide what runs
 
@@ -217,7 +217,7 @@ Dev builds fetch source into a managed git cache, or from your own checkouts whe
 
 | Repo | Language | Role | Profile |
 |---|---|---|---|
-| `dfe-receiver` | Rust | Push ingest. HTTP `:8080` published, Vector gRPC `:6000`, OTLP, Beats and HEC commented out | `dfe` |
+| `dfe-receiver` | Rust | Push ingest. HTTP `:8080` published, Vector gRPC `:6000`, OTLP, Beats and HEC published once their port key is set | `dfe` |
 | `dfe-fetcher` | Rust | Pull ingest from vendor APIs | `dfe` |
 | `dfe-loader` | Rust | Writes ClickHouse; hosts `DfeTransport/Push` | `dfe` |
 | `dfe-archiver` | Rust | Archive sink (filesystem, S3, MinIO, GCS, Azure Blob) | `dfe` |
