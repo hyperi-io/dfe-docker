@@ -23,7 +23,9 @@ import json
 
 import pytest
 
+import _common
 import _pipeline
+import init
 import post
 
 _HOST_URL = "http://localhost:8003/api/v1/auth/login"
@@ -875,7 +877,13 @@ def test_the_hunt_runs_for_an_org_it_makes_and_removes(
 def test_an_org_the_engine_holds_is_read_for_its_tenant_and_left_in_place(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    held = {"post": {"name": "post", "display_name": "Post", "org_ids": ["acme"]}}
+    held = {
+        post.HUNT_CUSTOMER: {
+            "name": post.HUNT_CUSTOMER,
+            "display_name": "Default",
+            "org_ids": ["acme"],
+        }
+    }
     stack = _hunt_stack(monkeypatch, detected=["matching-000"], orgs=held)
 
     assert _hunt_claim() == post.HELD
@@ -975,10 +983,13 @@ _RUNNER_PASSWORD_KEY = "DFE_HUNT_RUNNER_CLICKHOUSE_PASSWORD"
 def _only_the_runner_password_in_play(
     monkeypatch: pytest.MonkeyPatch, services: list[str]
 ) -> None:
-    """The bundled ClickHouse with its admin password set, and these services running."""
+    """The bundled ClickHouse with its admin password set, every env/<component>.env secret minted and these services running."""
     monkeypatch.setattr(post, "_resolved_services", lambda: services)
     monkeypatch.delenv("CLICKHOUSE_HOST", raising=False)
     monkeypatch.setenv("CLICKHOUSE_PASSWORD", "aMintedAdminValue123")
+    # Minted into .env since it moved out of env/engine.env, so the environment carries it
+    monkeypatch.setenv("DFE_API_JWT_SECRET", "aMintedSigningValue123")
+    _mint_env_file_secrets()
 
 
 def test_an_unset_hunt_runner_password_fails_the_self_test(
@@ -1015,6 +1026,19 @@ _APP_PASSWORDS = {
 }
 
 
+def _mint_env_file_secrets(*, skip: str = "") -> None:
+    """Write every env/<component>.env secret `make init` mints, but `skip`, into the throwaway env/."""
+    _common.ENV_DIR.mkdir(exist_ok=True)
+    for name, keys in init.GENERATED_SECRETS.items():
+        if name == ".env":
+            continue
+        (_common.ENV_DIR / name).write_text(
+            "".join(f"{key}=aMintedOtherValue123\n" for key in keys if key != skip),
+            encoding="utf-8",
+            newline="\n",
+        )
+
+
 def _only_this_app_password_in_play(
     monkeypatch: pytest.MonkeyPatch, key: str, service: str
 ) -> None:
@@ -1022,6 +1046,48 @@ def _only_this_app_password_in_play(
     _only_the_runner_password_in_play(monkeypatch, ["dfe-engine", service])
     for other in post.WEAK_SECRET_DEFAULTS:
         monkeypatch.setenv(other, "aMintedOtherValue123")
+
+
+# Each env/<component>.env secret POST enforces and the service that reads it
+_ENV_FILE_SECRETS = {
+    "EXPRESS_SESSION_SECRET": "hyperdx",
+    "NEXTAUTH_SECRET": "dfe-ui",
+    "TOKEN_ENCRYPTION_KEY": "hyperdx",
+}
+
+
+@pytest.mark.parametrize(("key", "service"), sorted(_ENV_FILE_SECRETS.items()))
+def test_an_env_file_secret_is_read_from_its_file_not_the_environment(
+    monkeypatch: pytest.MonkeyPatch, key: str, service: str
+) -> None:
+    _only_this_app_password_in_play(
+        key="HYPERDX_DOCUMENTDB_PASSWORD", monkeypatch=monkeypatch, service=service
+    )
+    _mint_env_file_secrets(skip=key)
+
+    assert [name for name, _value in post._weak_secrets()] == [key]
+
+
+@pytest.mark.parametrize(("key", "service"), sorted(_ENV_FILE_SECRETS.items()))
+def test_a_minted_env_file_secret_passes(
+    monkeypatch: pytest.MonkeyPatch, key: str, service: str
+) -> None:
+    _only_this_app_password_in_play(
+        key="HYPERDX_DOCUMENTDB_PASSWORD", monkeypatch=monkeypatch, service=service
+    )
+
+    assert post._weak_secrets() == []
+
+
+def test_the_engines_published_jwt_placeholder_fails_the_self_test(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _only_the_runner_password_in_play(monkeypatch, ["dfe-engine"])
+    monkeypatch.setenv("DFE_API_JWT_SECRET", "dev-secret-key-change-in-production")
+
+    assert post._weak_secrets() == [
+        ("DFE_API_JWT_SECRET", "dev-secret-key-change-in-production")
+    ]
 
 
 @pytest.mark.parametrize(("key", "service"), sorted(_APP_PASSWORDS.items()))

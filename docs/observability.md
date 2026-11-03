@@ -29,7 +29,8 @@ aimed at one.
 
 | Service | Host port | Notes |
 |---|---|---|
-| dfe-receiver / loader / archiver / fetcher / transforms | 9090, 9091, 9093-9096 | all three paths |
+| dfe-receiver / loader / archiver | 9090, 9091, 9093 | all three paths |
+| dfe-fetcher and transform instances | none | all three paths on container port 9090, over the Docker network |
 | dfe-engine | 8003 | `/metrics` is on its container's own 9090, unpublished |
 | dfe-ui | none | all three on `:3000`, alongside the app |
 | dfe-proxy | 3000 | `/livez`, answered by Envoy itself |
@@ -52,6 +53,7 @@ startup gate, so anything others wait on must report READINESS.
 |---|---|---|
 | dfe-loader | `/readyz` | receiver and fetcher wait on it |
 | dfe-engine | `/readyz` | loader and proxy wait on it, and it provisions their schema |
+| dfe-proxy, dfe-hyperdx-proxy | Envoy admin `/ready` on 9901 | no curl in the image, so bash `/dev/tcp` sends the request |
 | everything else | `/livez` | nothing gates on them |
 | otel-collector | none | distroless, so nothing inside can probe `:13133` |
 
@@ -93,15 +95,13 @@ managed ClickHouse included. The `prometheus` receiver scrapes the collector's o
 `service.telemetry` endpoint on loopback, which is what puts queue depth and
 refused/failed counts (`otelcol_*`) into the same pipeline as everything else.
 
-Between them they are what the pre-canned DFE ClickHouse Health and DFE Pipeline
-Health dashboards read. Without them those dashboards render empty here while
-working on Kubernetes.
+`sql_query` and `prometheus` are what the pre-canned DFE ClickHouse Health and DFE Pipeline Health dashboards read. Without them those dashboards render empty here while working on Kubernetes.
 
 `/metrics` is a SEPARATE pathway, for anything that scrapes. This repo ships
 nothing that does. Enabling push does not disable it: a Prometheus estate and a
 HyperDX estate are both served.
 
-dfe-engine's Overview counts cores from the usage rollup dfe-schemas declares, and that rollup reads the Kubernetes shape. So the collector reports Compose in it:
+dfe-engine's Overview counts cores from the usage rollup dfe-schemas declares. That rollup reads the Kubernetes shape, so the collector reports Compose in it:
 
 | Reading | Where it comes from here | Table |
 |---|---|---|
@@ -111,9 +111,9 @@ dfe-engine's Overview counts cores from the usage rollup dfe-schemas declares, a
 
 All three carry `k8s.node.name`, the docker host's name, which joins a service's cores to its host's.
 
-- Compose carries CPU limits where Kubernetes counts requests, so a service counts its ceiling. Limits can add up to more than the host has, and then cores deployed reads higher than worker-node cores.
+- Compose carries CPU limits where Kubernetes counts requests, so a service counts its ceiling. When limits add up to more than the host has, cores deployed reads higher than worker-node cores.
 - A one-shot (`restart: "no"`) exits once its job is done and does not count. A service with no CPU limit (`DFE_SERVICE_CPUS=0`, say) counts every core on the host.
-- `make dev`, `ci`, `up` and `apply` read the limits from the compose model of what `up` starts and hand them to the collector as `DFE_USAGE_CPU_LIMITS` and `DFE_USAGE_NODE_NAME`. A collector started by a plain `docker compose up` has neither, so cores deployed reads as not measured. `make apply` recreates the collector when an added or deleted source moved them.
+- `make dev`, `ci`, `up`, `infra` and `apply` read the limits from the compose model of what `up` starts and hand them to the collector as `DFE_USAGE_CPU_LIMITS` and `DFE_USAGE_NODE_NAME`. A collector started by a plain `docker compose up` has neither, so cores deployed reads as not measured. `make apply` recreates the collector when an added or deleted source moved them.
 
 ## Turning self-monitoring on and off
 
@@ -125,7 +125,7 @@ Every profile declares `otel: true`. `DFE_OTEL_ENABLED=false` turns it off.
 | `DFE_OTEL_EXPORTER_ENDPOINT` | empty | where services push -- **empty exports nothing** |
 | `DFE_OTEL_DATABASE` | `dfe` | database the collector writes |
 | `DFE_OTEL_HEALTH_PORT` | `13133` | the `health_check` extension |
-| `DFE_ENGINE_METRICS_BACKEND` | `prometheus` | `opentelemetry` makes dfe-engine push |
+| `DFE_API_METRICS_BACKEND` in `env/engine.env` | `opentelemetry` | makes dfe-engine push. `prometheus` serves `/metrics` only |
 
 The endpoint picks the shape. Enabling the profile points services at the bundled
 collector. Name your own endpoint and they push there instead, which is how you
@@ -140,8 +140,8 @@ edge -- data coming in from your estate, pointing the other way.
 | Component | Pushes? | Why |
 |---|---|---|
 | the six Rust services | metrics and traces, when built against scalo >= 2.10.11 | scalo's `metrics` feature pulls `otel-metrics` and `otel-tracing`, so OTLP export is on by default (scalo-rs#30) |
-| dfe-engine | metrics and traces, once the profile sets the backend | scalo-py has an exporter, its CLI defaults the backend to prometheus (scalo-py#11) |
-| dfe-hunt-runner | metrics, as `dfe_hunt_*` | it has no listener to scrape, and scalo-py's default backend pushes on `OTEL_EXPORTER_OTLP_ENDPOINT` alone |
+| dfe-engine | metrics and traces, on the `opentelemetry` backend `env/engine.env` ships | scalo-py has an exporter. Its CLI defaults the backend to `opentelemetry` from v2.29.14 (scalo-py#11) |
+| dfe-hunt-runner | metrics, as `dfe_hunt_*` | it has no listener to scrape and its default `opentelemetry` backend pushes on `OTEL_EXPORTER_OTLP_ENDPOINT` alone |
 | dfe-ui | no metrics | `@opentelemetry/api` only, no SDK. Serves `/metrics` on `:3000` |
 | every DFE service | LOGS, via Docker's log driver | nothing in the stack exports logs over OTLP, so stdout is shipped instead -- see below |
 
@@ -167,10 +167,7 @@ That does not port: the files live under the daemon's data-root, which is not
 Desktop, and listing that directory needs root. The log driver needs no host path
 and no privilege.
 
-**`docker compose logs` still reads these services.** Docker's dual logging keeps
-a local copy of each line, so the driver adds the collector without taking the CLI
-away. Only DFE's own services move onto the driver -- ClickHouse, the broker, the
-proxies and HyperDX keep `json-file`. Put every service back with:
+**`docker compose logs` still reads these services.** Docker's dual logging keeps a local copy of each line, so the driver adds the collector without taking the CLI away. Only DFE's own services move onto the driver: ClickHouse, the broker, the proxies and HyperDX keep `json-file`. Put every service back with:
 
 ```
 DFE_CONTAINER_LOGS_ENABLED=false

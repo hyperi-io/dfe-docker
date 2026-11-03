@@ -48,6 +48,7 @@ from pathlib import Path
 import pytest
 
 import instances
+from _common import COMPOSE_ONE_SHOTS_FILE
 
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 COMPOSE = REPO_ROOT / "docker-compose.yml"
@@ -55,7 +56,7 @@ COMPOSE = REPO_ROOT / "docker-compose.yml"
 # The trees that deploy or operate the stack.
 SWEPT = (
     "docker-compose.yml",
-    "docker-compose.override.yml",
+    "compose",
     "scripts",
     "config",
     "ops",
@@ -116,7 +117,7 @@ GATED_SERVICES = (
 
 # The two broker services, one per Kafka backend, each enabled by its own
 # compose profile -- so a wait on both is a wait on whichever this tier runs.
-BROKERS = ("kafka-redpanda", "kafka-apache")
+BROKERS = ("kafka-apache", "kafka-redpanda")
 
 _SERVICE_RE = re.compile(r"^  ([A-Za-z0-9][A-Za-z0-9._-]*):\s*$")
 _DEPENDS_RE = re.compile(r"^      ([A-Za-z0-9][A-Za-z0-9._-]*):\s*$")
@@ -214,7 +215,10 @@ def _offenders(pattern: re.Pattern[str]) -> list[str]:
 
 @pytest.fixture(scope="module")
 def services() -> dict[str, list[str]]:
-    blocks = _blocks(COMPOSE.read_text(encoding="utf-8"))
+    blocks = {
+        **_blocks(COMPOSE.read_text(encoding="utf-8")),
+        **_blocks(COMPOSE_ONE_SHOTS_FILE.read_text(encoding="utf-8")),
+    }
     # Loud rather than vacuous: a reader that found nothing would pass every
     # assertion below against an empty mapping.
     assert len(blocks) > 10, f"the compose reader found only {sorted(blocks)}"

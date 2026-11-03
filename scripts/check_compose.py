@@ -34,12 +34,8 @@ any particular digest exists.
 Paths checked:
 
 - registry: ``-f docker-compose.yml`` alone, the CI and production path.
-- dev: the same plus the auto-loaded ``docker-compose.override.yml``, the path
-  ``make dev`` takes.
-- live: dev plus ``docker-compose.live.yml``, the path ``make dev LIVE=1``
-  takes. Its ``${DFE_SRC_ROOT:?...}`` mounts are hard-fail by design, so the
-  placeholder injection covers that key the same way it covers image pins.
-- live-ui: dev plus the container-logs fragment and ``docker-compose.live-ui.yml``, the path ``make dev LIVE_UI=1`` takes. Its Node image and source mount are hard-fail keys too.
+- dev: the same plus the overlay a ``make dev`` build of every component writes, the path ``make dev`` takes.
+- live-ui: dev plus the container-logs fragment and ``compose/live-ui.yml``, the path ``make dev LIVE_UI=1`` takes. Its Node image and source mount are hard-fail by design, so the placeholder injection covers those keys the same way it covers image pins.
 - local: the registry path plus the overlay ``make dev LOCAL=...`` generates,
   rendered here for one representative component so the generator's output is
   checked, not just its source.
@@ -54,25 +50,18 @@ Beyond resolution, these semantic assertions ride along.
 - No service that gates on a health endpoint may carry a CPU ceiling under
   `_MIN_HEALTH_CPUS` -- see that constant for why a lower ceiling takes the
   endpoint dark while the data path keeps working.
-- The web-UI exposure dials must do what they claim: the bind scope moves every
-  UI port and nothing else, and each unpublish fragment drops that UI's ports and
-  no other service's. See `_UI_EXPOSURE`.
+- The web-UI exposure dials must do what they claim: the bind scope moves every UI port and nothing else, each opt-out in the fragment make writes drops that UI's ports and no other service's and the kill switch drops every infra UI's. See `_UI_EXPOSURE`.
 - The opt-in auth profile must gate without holes: no stack needs an OIDC setting
   to resolve, an armed profile moves every infra-UI origin behind a proxy, and
   the infra kill switch takes the proxies down with the UIs. See `_AUTH_PROXIES`.
 - No proxy config, plain or TLS, may add an identity header. See `_identity_stamp_failures`.
-- The committed override must repoint every service that runs a buildable
-  component's image, consumers included, or `make dev` runs two builds of one
-  component. See `_override_coverage_failures`.
+- The overlay a full `make dev` build writes must repoint every service that runs a buildable component's image, consumers included. Otherwise `make dev` runs two builds of one component. See `_dev_overlay_failures`.
 - The overlay `make dev LOCAL=...` generates must put the named component and its
   image consumers on `:local` and leave every other service on its registry pin.
   See `_local_overlay_failures`.
 - A generated per-source instance of a LOCAL app must run its `:local` image, which `extends` alone never gives it. See `_local_instance_failures`.
-- That overlay must describe THIS run: a build that builds nothing removes it
-  rather than leaving the previous run's. See `_overlay_staleness_failures`.
-- `make dev LOCAL=...` names its compose files explicitly instead of riding
-  COMPOSE_FILE, so it must still chain every overlay fragment that chain does.
-  See `_dev_path_fragment_failures`.
+- That overlay must describe THIS run: a LOCAL build that builds nothing removes it and a recorded one leaves it empty, rather than leaving the previous run's. See `_overlay_staleness_failures`.
+- `make dev` names its compose files explicitly instead of riding COMPOSE_FILE, so it must still chain every overlay fragment that chain does. See `_dev_path_fragment_failures`.
 - The builder's IMPLICIT_CONSUMERS must match the compose graph, or a `depends_on`
   edge added here silently stops `make dev` building an image the stack starts.
   See `_implicit_consumer_failures`.
@@ -110,20 +99,23 @@ sys.pycache_prefix = str(Path(__file__).resolve().parent.parent / ".tmp" / "pyca
 import _envoy  # noqa: E402
 import instances  # noqa: E402
 import proxy_tls  # noqa: E402
+import resolve_profile  # noqa: E402
 from _common import (  # noqa: E402
     COMPOSE_FILE,
-    COMPOSE_LIVE_FILE,
     COMPOSE_LIVE_UI_FILE,
-    COMPOSE_OVERRIDE_FILE,
+    COMPOSE_PART_FILES,
+    CONFIG_CHECK_PREFIX,
     CUSTOM_ENV_SUFFIX,
     DOTENV_FILE,
     DOTENV_TEMPLATE,
+    ENGINE_COMPONENT,
     ENV_DIR,
     ENV_TEMPLATE_DIR,
     PER_SOURCE_APP_KEYS,
     REPO_ROOT,
     SERVICE_CONFIG_FILE,
     _dotenv_values,
+    _env_file,
     _parse_dotenv,
     _print,
     _required_compose_vars,
@@ -132,9 +124,10 @@ from build_dev_images import (  # noqa: E402
     IMPLICIT_CONSUMERS,
     buildable_components,
     local_image_services,
+    overlay_components,
     overlay_text,
 )
-from init import _render_secrets  # noqa: E402
+from init import GENERATED_SECRETS, _render_secrets  # noqa: E402
 
 # The overlay `make dev LOCAL=...` generates, rendered for dfe-engine because it
 # is the component with IMAGE_CONSUMERS followers. Written under .tmp so compose
@@ -143,6 +136,8 @@ _LOCAL_SAMPLE = ["dfe-engine"]
 # The per-source app a LOCAL build names when its generated instances are checked
 _LOCAL_INSTANCE_SAMPLE = ["dfe-fetcher"]
 _LOCAL_RENDER = REPO_ROOT / ".tmp" / "compose-check-local.yml"
+# The overlay a `make dev` build of every component writes
+_DEV_RENDER = REPO_ROOT / ".tmp" / "compose-check-dev.yml"
 # A stack service the builder cannot build, for the overlay staleness assertion.
 _UNBUILDABLE_SAMPLE = "kafka-ui"
 
@@ -157,15 +152,18 @@ _PATH_KEY_SUFFIXES = ("_ROOT", "_DIR", "_PATH")
 # Profiles are opt-in, so an unprofiled run checks almost nothing. `dfe` and
 # `core` carry the services this repo exists to ship.
 _BASE_PROFILES = ("clickhouse", "dfe", "core", "hyperdx", "kafka-ui", "otel")
-_KAFKA_BACKENDS = ("kafka-redpanda", "kafka-apache")
+_KAFKA_BACKENDS = ("kafka-apache", "kafka-redpanda")
+# The backend a model renders unless a caller adds the other
+_KAFKA_DEFAULT_BACKEND = resolve_profile.SERVICE_KAFKA_OPTIONS[
+    resolve_profile.SERVICE_KAFKA_DEFAULT
+]
 
 # Tokio sizes its worker pool from `available_parallelism()`, which reads the
 # cgroup CPU quota and FLOORS it. A ceiling under 2.0 therefore leaves a scalo
 # service with a single worker thread, and its synchronous Kafka poll loop owns
 # that thread -- so the operator surface (/livez, /readyz, /metrics) accepts
 # connections and answers none of them while the data path keeps working.
-# Observed on dfe-archiver at 1.5; see the x-limits-service comment in
-# docker-compose.yml for the A/B that proved it.
+# Observed on dfe-archiver at 1.5 (docs/operating.md#dfe_service_cpus-has-a-floor-of-20-and-it-is-not-about-speed).
 #
 # Keyed off the health path rather than a service list so a service added later is
 # covered without anyone remembering this file exists. Both `*z` paths count: the
@@ -180,43 +178,42 @@ _HEALTH_PATHS = ("/livez", "/readyz")
 _RETIRED_HEALTH_PATHS = ("/healthz", "/health/live", "/health/ready", "/health/startup")
 
 # The web UIs the exposure dials govern, keyed by compose service: the class the
-# kill switch reads, and the fragment that unpublishes that UI. PRODUCT is the DFE
+# kill switch reads and the dial that unpublishes that UI. PRODUCT is the DFE
 # UI and the API it consumes; INFRA is the ops consoles DFE_INFRA_UIS_EXTERNAL
 # covers as a set. Every other published port is ingest or a backing service and
 # must not move when the UI dials do -- which is what `_ui_exposure_failures`
 # asserts.
 _UI_EXPOSURE: dict[str, tuple[str, str]] = {
-    "dfe-engine": ("product", "docker-compose.unpublish-engine-api.yml"),
-    "dfe-proxy": ("product", "docker-compose.unpublish-dfe-ui.yml"),
+    "dfe-engine": ("product", "DFE_ENGINE_API_EXTERNAL"),
+    "dfe-proxy": ("product", "DFE_UI_EXTERNAL"),
     # HyperDX's ports sit on its proxy, never on the hyperdx container
-    "dfe-hyperdx-proxy": ("infra", "docker-compose.unpublish-hyperdx.yml"),
-    "kafka-ui": ("infra", "docker-compose.unpublish-kafbat.yml"),
+    "dfe-hyperdx-proxy": ("infra", "DFE_HYPERDX_UI_EXTERNAL"),
+    "kafka-ui": ("infra", "DFE_KAFBAT_UI_EXTERNAL"),
 }
+_INFRA_KILL_SWITCH = "DFE_INFRA_UIS_EXTERNAL"
+# Every UI published and the auth profile off, so a case takes away only what it names
+_EXPOSED = {
+    "DFE_AUTH_RESOLVED": "false",
+    "DFE_ENGINE_API_EXTERNAL": "true",
+    "DFE_HYPERDX_UI_EXTERNAL": "true",
+    "DFE_INFRA_UIS_EXTERNAL": "true",
+    "DFE_KAFBAT_UI_EXTERNAL": "true",
+    "DFE_UI_EXTERNAL": "true",
+}
+# The fragment make writes from the exposure dials, one ports entry per service they change
+_UNPUBLISH_FRAGMENT = ".tmp/docker-compose.unpublish.yml"
 
 # The two addresses DFE_BIND_SCOPE resolves to, localhost first (the default).
 _BIND_SCOPE_ADDRS = ("127.0.0.1", "0.0.0.0")
 
 # The opt-in `auth` profile fronts each infra UI with oauth2-proxy. Keyed by the
-# UI service: the proxies that front it, and the fragment that unpublishes them.
-# One proxy per ORIGIN, because oauth2-proxy serves a single --http-address and
-# HyperDX is one UI across two.
+# UI service: the proxies that front it. One proxy per ORIGIN, because
+# oauth2-proxy serves a single --http-address and HyperDX is one UI across two.
 _AUTH_PROFILE = "auth"
-_AUTH_PROXIES: dict[str, tuple[tuple[str, ...], str]] = {
-    "dfe-hyperdx-proxy": (
-        ("oauth2-proxy-hyperdx", "oauth2-proxy-hyperdx-api"),
-        "docker-compose.unpublish-auth-hyperdx.yml",
-    ),
-    "kafka-ui": (
-        ("oauth2-proxy-kafbat",),
-        "docker-compose.unpublish-auth-kafbat.yml",
-    ),
+_AUTH_PROXIES: dict[str, tuple[str, ...]] = {
+    "dfe-hyperdx-proxy": ("oauth2-proxy-hyperdx", "oauth2-proxy-hyperdx-api"),
+    "kafka-ui": ("oauth2-proxy-kafbat",),
 }
-# The fragments the Makefile chains whenever the profile is armed: each infra UI
-# moves behind its proxy, so its own port stops reaching the host.
-_AUTH_DIRECT_FRAGMENTS = (
-    "docker-compose.unpublish-hyperdx.yml",
-    "docker-compose.unpublish-kafbat.yml",
-)
 # Settings the proxies read. Prefixes, because the rule they guard is that NO
 # stack needs any of them: compose interpolates before it filters by profile, so
 # one hard-fail key in a profiled service would make an OIDC issuer mandatory for
@@ -257,6 +254,7 @@ _FRAGMENT_DIALS = {
     "DFE_UI_EXTERNAL": "false",
     "DFE_ENGINE_API_EXTERNAL": "false",
     "DFE_PROXY_TLS": "true",
+    "DFE_RECEIVER_BEATS_PORT": "5044",
 }
 # Console TLS refuses to start beside the auth profile, so `make dev` runs once per side, each held to the chain its own dials produce. The TLS run also needs what that refusal and the TLS precheck look for: an https origin and a certificate pair openssl accepts.
 _DEV_PATH_CERT_DIR = REPO_ROOT / ".tmp" / "compose-check-certs"
@@ -304,17 +302,9 @@ _CREDENTIAL_CASES: tuple[tuple[str, str, str, bool], ...] = (
 
 # Each service that dials ClickHouse from inside the stack, by the environment keys
 # carrying the host, HTTP port and native port it dials (None where it uses none).
-_CLICKHOUSE_DIALLERS: dict[str, tuple[str, str | None, str]] = {
-    "dfe-engine": (
-        "DFE_CLICKHOUSE_HOST",
-        "DFE_CLICKHOUSE_PORT",
-        "DFE_CLICKHOUSE_NATIVE_PORT",
-    ),
-    "dfe-hunt-runner": (
-        "DFE_CLICKHOUSE_HOST",
-        "DFE_CLICKHOUSE_PORT",
-        "DFE_CLICKHOUSE_NATIVE_PORT",
-    ),
+_CLICKHOUSE_DIALLERS: dict[str, tuple[str, str | None, str | None]] = {
+    "dfe-engine": ("DFE_CLICKHOUSE_HOST", "DFE_CLICKHOUSE_PORT", None),
+    "dfe-hunt-runner": ("DFE_CLICKHOUSE_HOST", "DFE_CLICKHOUSE_PORT", None),
     "otel-collector": ("CLICKHOUSE_HOST", None, "CLICKHOUSE_PORT"),
 }
 # Each service that takes its ClickHouse address as one `host:HTTP port` key
@@ -411,8 +401,8 @@ _VERSION_CHECK_PREFIXES = {
     "dfe-loader": "DFE_LOADER_",
     "dfe-receiver": "DFE_RECEIVER_",
     "dfe-transform-elastic": "DFE_TRANSFORM_ELASTIC_",
-    "dfe-transform-vector": "DFE_TRANSFORM_",
-    "dfe-transform-vrl": "DFE_TRANSFORM_",
+    "dfe-transform-vector": "DFE_TRANSFORM_VECTOR_",
+    "dfe-transform-vrl": "DFE_TRANSFORM_VRL_",
 }
 _NO_VERSION_CHECK = {"dfe-ui"}
 # (label, dial values, what every app must resolve to). The defaults case is the one that matters: the dial opts out and never defaults off.
@@ -429,7 +419,7 @@ _VERSION_CHECK_CASES: tuple[tuple[str, dict[str, str], tuple[str, str]], ...] = 
 
 # The fragment the Makefile chains to ship container stdout to the collector, and
 # the driver options each shipped service needs, with what breaks without one.
-_CONTAINER_LOGS_FRAGMENT = "docker-compose.container-logs.yml"
+_CONTAINER_LOGS_FRAGMENT = "compose/container-logs.yml"
 _LOG_DRIVER_OPTIONS = {
     "fluentd-async": (
         "Docker refuses to create the container while the collector is not listening"
@@ -441,7 +431,7 @@ _LOG_DRIVER_OPTIONS = {
 }
 
 # The fragment the Makefile chains under DFE_PROXY_TLS=true and each proxy it moves, by its (plain, TLS) config file.
-_TLS_FRAGMENT = "docker-compose.tls.yml"
+_TLS_FRAGMENT = "compose/tls.yml"
 _TLS_PROXY_CONFIGS = {
     "dfe-hyperdx-proxy": ("config/proxy/hyperdx.yaml", "config/proxy/hyperdx.tls.yaml"),
     "dfe-proxy": ("config/proxy/envoy.yaml", "config/proxy/envoy.tls.yaml"),
@@ -484,7 +474,18 @@ def _first_start_dotenv() -> dict[str, str]:
     if DOTENV_FILE.is_file():
         return _dotenv_values()
     template = DOTENV_TEMPLATE.read_text(encoding="utf-8", errors="replace")
-    return _parse_dotenv(text=_render_secrets(text=template))
+    return _parse_dotenv(
+        text=_render_secrets(keys=GENERATED_SECRETS[DOTENV_FILE.name], text=template)
+    )
+
+
+def _first_start_engine_env() -> str | None:
+    """The env/engine.env `make init` would write rendered in memory, None when this checkout has its own."""
+    if _env_file(component=ENGINE_COMPONENT).is_file():
+        return None
+    name = f"{ENGINE_COMPONENT}.env"
+    template = (ENV_TEMPLATE_DIR / name).read_text(encoding="utf-8", errors="replace")
+    return _render_secrets(keys=GENERATED_SECRETS[name], text=template)
 
 
 def _check_env() -> tuple[dict[str, str], list[str]]:
@@ -495,15 +496,8 @@ def _check_env() -> tuple[dict[str, str], list[str]]:
     """
     env = {**_first_start_dotenv(), **os.environ}
     injected = []
-    # Discover across every shipped compose file, not just docker-compose.yml: the live overlays declare their own hard-fail keys (DFE_SRC_ROOT, DFE_UI_NODE_IMAGE).
-    required = _required_compose_vars(
-        files=(
-            COMPOSE_FILE,
-            COMPOSE_OVERRIDE_FILE,
-            COMPOSE_LIVE_FILE,
-            COMPOSE_LIVE_UI_FILE,
-        )
-    )
+    # Discover across the live-ui overlay too, which declares its own hard-fail keys (DFE_SRC_ROOT, DFE_UI_NODE_IMAGE)
+    required = _required_compose_vars(files=(COMPOSE_FILE, COMPOSE_LIVE_UI_FILE))
     for name in sorted(required):
         if not (env.get(name, "").strip()):
             env[name] = (
@@ -577,7 +571,7 @@ def _absent_probe_failures(*, config: dict) -> list[str]:
         ).split()
         failures.extend(
             f"{name}: healthcheck runs {tool}, which the image does not ship; "
-            "probe with bash's /dev/tcp (x-probe-livez) or the runtime's own client"
+            "probe with bash's /dev/tcp or the runtime's own client"
             for tool in _PROBE_TOOLS
             if tool in words
         )
@@ -612,7 +606,7 @@ def _config_json(
         cmd += ["-f", path]
     if fragment is not None:
         cmd += ["-f", "-"]
-    for profile in [*_BASE_PROFILES, _KAFKA_BACKENDS[0], *extra_profiles]:
+    for profile in [*_BASE_PROFILES, _KAFKA_DEFAULT_BACKEND, *extra_profiles]:
         cmd += ["--profile", profile]
     cmd += ["config", "--format", "json"]
     result = subprocess.run(
@@ -630,10 +624,53 @@ def _config_json(
     return json.loads(result.stdout)
 
 
+def _scratch_config(
+    *,
+    env: dict[str, str],
+    env_file: Path | None = None,
+    env_files: dict[str, str],
+    extra_profiles: tuple[str, ...] = (),
+    fragment: str | None = None,
+) -> dict | None:
+    """Return `_config_json` of a copy of the compose file in a scratch directory whose env/ holds `env_files`, text by file name.
+
+    So nothing planted lands in this checkout's env/. A copy, because Compose resolves an extended service's paths against the file that declares it.
+    """
+    with tempfile.TemporaryDirectory() as scratch:
+        compose = Path(scratch) / COMPOSE_FILE.name
+        shutil.copyfile(COMPOSE_FILE, compose)
+        # The files it extends or includes, at the same paths relative to it
+        for part in COMPOSE_PART_FILES:
+            copy = Path(scratch) / part.relative_to(REPO_ROOT)
+            copy.parent.mkdir(exist_ok=True)
+            shutil.copyfile(dst=copy, src=part)
+        env_dir = Path(scratch) / ENV_DIR.name
+        env_dir.mkdir()
+        for name, text in env_files.items():
+            (env_dir / name).write_text(text, encoding="utf-8", newline="\n")
+        return _config_json(
+            env=env,
+            env_file=env_file,
+            extra_profiles=extra_profiles,
+            files=[str(compose)],
+            fragment=fragment,
+        )
+
+
 def _published(*, config: dict, service: str) -> list[tuple[str, str]]:
     """Return the (host_ip, published port) pairs one service maps onto the host."""
     ports = config.get("services", {}).get(service, {}).get("ports") or []
     return [(str(p.get("host_ip", "")), str(p.get("published", ""))) for p in ports]
+
+
+def _unpublish_fragment(*, dials: dict[str, str]) -> tuple[str, str]:
+    """Return the unpublish fragment make writes for these dials, empty with the reason when it writes none."""
+    chain, error = _compose_chain(variables=dials)
+    if error:
+        return "", f"`make {_COMPOSE_FILE_GOAL}` failed:\n{error}"
+    if _UNPUBLISH_FRAGMENT not in chain:
+        return "", f"make chains no {_UNPUBLISH_FRAGMENT!r}"
+    return (REPO_ROOT / _UNPUBLISH_FRAGMENT).read_text(encoding="utf-8"), ""
 
 
 def _ui_exposure_failures(*, env: dict[str, str]) -> tuple[list[str], int]:
@@ -645,7 +682,7 @@ def _ui_exposure_failures(*, env: dict[str, str]) -> tuple[list[str], int]:
     - the bind scope moves every UI port to the chosen address;
     - it moves nothing else, so ingest and backing-service ports keep the audience
       they were given;
-    - each unpublish fragment drops exactly its own UI's ports.
+    - each opt-out in the fragment make writes drops exactly its own UI's ports and the kill switch exactly the infra class's.
     """
     failures: list[str] = []
     made = 0
@@ -689,23 +726,33 @@ def _ui_exposure_failures(*, env: dict[str, str]) -> tuple[list[str], int]:
                 "-- ingest and backing services keep their own audience"
             )
 
-    for service, (ui_class, fragment) in sorted(_UI_EXPOSURE.items()):
-        if not ((REPO_ROOT / fragment).is_file()):
-            failures.append(
-                f"{fragment} is missing -- {service} has no {ui_class} opt-out"
-            )
+    infra = {
+        name for name, (ui_class, _) in _UI_EXPOSURE.items() if ui_class == "infra"
+    }
+    cases = {
+        f"{_INFRA_KILL_SWITCH}=false": (
+            {**_EXPOSED, _INFRA_KILL_SWITCH: "false"},
+            infra,
+        )
+    }
+    for service, (_, dial) in _UI_EXPOSURE.items():
+        cases[f"{dial}=false"] = ({**_EXPOSED, dial: "false"}, {service})
+    for label, (dials, dark) in sorted(cases.items()):
+        fragment, problem = _unpublish_fragment(dials=dials)
+        if problem:
+            failures.append(f"{label}: {problem}")
             continue
-        config = _config_json(env=env, files=[*base, fragment])
+        config = _config_json(env=env, files=base, fragment=fragment)
         if config is None:
-            failures.append(f"{fragment} did not resolve on top of the base path")
+            failures.append(f"{label}: the unpublish fragment did not resolve")
             continue
         for other in sorted(_UI_EXPOSURE):
             made += 1
             bound = _published(config=config, service=other)
-            if other == service and bound:
-                failures.append(f"{fragment}: {service} still publishes {bound}")
-            elif other != service and not (bound):
-                failures.append(f"{fragment}: it also unpublished {other}")
+            if other in dark and bound:
+                failures.append(f"{label}: {other} still publishes {bound}")
+            elif other not in dark and not (bound):
+                failures.append(f"{label}: it also unpublished {other}")
     return failures, made
 
 
@@ -741,15 +788,20 @@ def _auth_exposure_failures(*, env: dict[str, str]) -> tuple[list[str], int]:
         )
 
     armed_env = {**env, **_AUTH_ENV, "DFE_UI_BIND_HOST": addr}
+    armed = {**_EXPOSED, "DFE_AUTH_RESOLVED": "true"}
+    fragment, problem = _unpublish_fragment(dials=armed)
+    if problem:
+        return ([f"the {_AUTH_PROFILE} profile armed: {problem}"], made)
     on = _config_json(
         env=armed_env,
-        files=[*base, *_AUTH_DIRECT_FRAGMENTS],
         extra_profiles=(_AUTH_PROFILE,),
+        files=base,
+        fragment=fragment,
     )
     if on is None:
         return ([f"the {_AUTH_PROFILE} profile path did not resolve"], made)
 
-    for ui, (proxies, _) in sorted(_AUTH_PROXIES.items()):
+    for ui, proxies in sorted(_AUTH_PROXIES.items()):
         made += 2
         if _published(config=on, service=ui):
             failures.append(
@@ -781,18 +833,20 @@ def _auth_exposure_failures(*, env: dict[str, str]) -> tuple[list[str], int]:
                 f"{service}: the {_AUTH_PROFILE} profile moved a product UI port"
             )
 
+    fragment, problem = _unpublish_fragment(
+        dials={**armed, _INFRA_KILL_SWITCH: "false"}
+    )
+    if problem:
+        return (failures + [f"the killed-infra auth path: {problem}"], made)
     killed = _config_json(
         env=armed_env,
-        files=[
-            *base,
-            *_AUTH_DIRECT_FRAGMENTS,
-            *(fragment for _, fragment in _AUTH_PROXIES.values()),
-        ],
         extra_profiles=(_AUTH_PROFILE,),
+        files=base,
+        fragment=fragment,
     )
     if killed is None:
         return (failures + ["the killed-infra auth path did not resolve"], made)
-    for ui, (proxies, _) in sorted(_AUTH_PROXIES.items()):
+    for proxies in _AUTH_PROXIES.values():
         for proxy in proxies:
             made += 1
             if _published(config=killed, service=proxy):
@@ -877,40 +931,34 @@ def _health_cpu_failures(*, env: dict[str, str], files: list[str]) -> list[str]:
     return failures
 
 
-def _render_local_overlay() -> None:
-    """Render the `make dev LOCAL=...` overlay for the sample component, uncommitted."""
+def _render_dev_overlays() -> None:
+    """Render the overlays `make dev` writes, for every component and for LOCAL's sample, uncommitted."""
     _LOCAL_RENDER.parent.mkdir(parents=True, exist_ok=True)
+    _DEV_RENDER.write_text(
+        data=overlay_text(components=buildable_components()),
+        encoding="utf-8",
+        newline="\n",
+    )
     _LOCAL_RENDER.write_text(
-        overlay_text(_LOCAL_SAMPLE), encoding="utf-8", newline="\n"
+        data=overlay_text(components=_LOCAL_SAMPLE), encoding="utf-8", newline="\n"
     )
 
 
 def _paths() -> list[tuple[str, list[str]]]:
     """Return the (label, compose file list) pairs we ship and therefore must check."""
-    for shipped in (COMPOSE_OVERRIDE_FILE, COMPOSE_LIVE_FILE, COMPOSE_LIVE_UI_FILE):
-        if not (shipped.is_file()):
-            # Not a skip. Every overlay here is committed (`make dev` auto-loads the override, `make dev LIVE=1` and `LIVE_UI=1` chain the live files), so an absence means that path is broken, not absent. Skipping would shrink the coverage while still printing "All compose paths resolve".
-            raise FileNotFoundError(
-                f"{shipped.name} is missing -- it is committed and used by "
-                "`make dev`, so that path cannot be checked"
-            )
+    live_ui = str(COMPOSE_LIVE_UI_FILE.relative_to(REPO_ROOT))
+    if not (COMPOSE_LIVE_UI_FILE.is_file()):
+        # Not a skip: `make dev LIVE_UI=1` chains it, so an absence means that path is broken. Skipping would shrink the coverage while still printing "All compose paths resolve"
+        raise FileNotFoundError(
+            f"{live_ui!r} is missing: it is committed and used by `make dev`, so "
+            "that path cannot be checked"
+        )
+    dev = [COMPOSE_FILE.name, str(_DEV_RENDER.relative_to(REPO_ROOT))]
     return [
         ("registry", [COMPOSE_FILE.name]),
-        ("dev", [COMPOSE_FILE.name, COMPOSE_OVERRIDE_FILE.name]),
-        (
-            "live",
-            [COMPOSE_FILE.name, COMPOSE_OVERRIDE_FILE.name, COMPOSE_LIVE_FILE.name],
-        ),
+        ("dev", dev),
         # With the container-logs fragment ahead of it, as `make dev` chains it, so the overlay's logging reset is rendered against the fluentd driver it undoes.
-        (
-            "live-ui",
-            [
-                COMPOSE_FILE.name,
-                COMPOSE_OVERRIDE_FILE.name,
-                _CONTAINER_LOGS_FRAGMENT,
-                COMPOSE_LIVE_UI_FILE.name,
-            ],
-        ),
+        ("live-ui", [*dev, _CONTAINER_LOGS_FRAGMENT, live_ui]),
         ("local", [COMPOSE_FILE.name, str(_LOCAL_RENDER.relative_to(REPO_ROOT))]),
     ]
 
@@ -1021,7 +1069,12 @@ def _credential_failures(*, env: dict[str, str]) -> tuple[list[str], int]:
     """
     failures: list[str] = []
     made = 1
-    live = _config_json(env=env, files=[COMPOSE_FILE.name])
+    engine_env = _first_start_engine_env()
+    live = (
+        _config_json(env=env, files=[COMPOSE_FILE.name])
+        if engine_env is None
+        else _scratch_config(env=env, env_files={f"{ENGINE_COMPONENT}.env": engine_env})
+    )
     if live is None:
         return (
             ["the registry path did not resolve, so the credential is unknown"],
@@ -1032,16 +1085,18 @@ def _credential_failures(*, env: dict[str, str]) -> tuple[list[str], int]:
         failures.append(fault)
 
     empty_env_file = _empty_env_file()
-    base = {
-        k: v for k, v in env.items() if k not in (_POSTURE_KEY, _ADMIN_PASSWORD_KEY)
-    }
+    base = {k: v for k, v in env.items() if k != _POSTURE_KEY}
     for label, posture, password, want_flagged in _CREDENTIAL_CASES:
         made += 1
-        case = {**base, _ADMIN_PASSWORD_KEY: password}
+        case = dict(base)
         if posture:
             case[_POSTURE_KEY] = posture
-        config = _config_json(
-            env=case, files=[COMPOSE_FILE.name], env_file=empty_env_file
+        config = _scratch_config(
+            env=case,
+            env_file=empty_env_file,
+            env_files={
+                f"{ENGINE_COMPONENT}.env": f"{_ADMIN_PASSWORD_KEY}={password}\n"
+            },
         )
         if config is None:
             failures.append(f"the credential case {label!r} did not resolve")
@@ -1075,10 +1130,10 @@ def _log_driver_failures(*, config: dict) -> list[str]:
 def _dns_search_failures(*, config: dict) -> list[str]:
     """Return one message per service that keeps the host's DNS search domain."""
     return [
-        f"{name}: dns_search is {service.get('dns_search')!r}, so a bare name with no "
+        f"{name!r}: dns_search is {service.get('dns_search')!r}, so a bare name with no "
         "network alias resolves through the host's search domain to a host outside the stack"
         for name, service in sorted(config.get("services", {}).items())
-        if list(service.get("dns_search") or []) != ["."]
+        if list((service.get("dns_search")) or ([])) != ["."]
     ]
 
 
@@ -1306,7 +1361,7 @@ def _image_volume_model(*, env: dict[str, str]) -> dict | None:
     return _config_json(
         env=env,
         files=[COMPOSE_FILE.name],
-        extra_profiles=(_KAFKA_BACKENDS[1], _AUTH_PROFILE),
+        extra_profiles=(*_KAFKA_BACKENDS, _AUTH_PROFILE),
     )
 
 
@@ -1454,10 +1509,6 @@ def _sentinel_model(*, env: dict[str, str], fragment: str) -> dict | None:
     name outside those carries no sentinel and goes unseen.
     The effect is what is read because Compose 2.38, the CI runner's, prints no
     `env_file` under any `config` flag and rejects `--no-interpolate` here.
-
-    Rendered from a copy of the compose file in a scratch directory, so no sentinel
-    lands in this checkout's env/. A copy, because Compose resolves an extended
-    service's paths against the file that declares it.
     """
     plain = _config_json(
         env=env, files=[COMPOSE_FILE.name], extra_profiles=("*",), fragment=fragment
@@ -1467,25 +1518,15 @@ def _sentinel_model(*, env: dict[str, str], fragment: str) -> dict | None:
     templates = sorted(ENV_TEMPLATE_DIR.glob("*.env"))
     stems = {*plain.get("services", {}), *SERVICE_CONFIG_FILE}
     stems.update(template.stem for template in templates)
-    with tempfile.TemporaryDirectory() as scratch:
-        compose = Path(scratch) / COMPOSE_FILE.name
-        shutil.copyfile(COMPOSE_FILE, compose)
-        env_dir = Path(scratch) / ENV_DIR.name
-        env_dir.mkdir()
-        for template in templates:
-            (env_dir / template.name).write_text(
-                f"{_SENTINEL_LAST}={template.name}\n", encoding="utf-8", newline="\n"
-            )
-        for index, stem in enumerate(sorted(stems)):
-            name = f"{stem}{CUSTOM_ENV_SUFFIX}"
-            (env_dir / name).write_text(
-                f"{_SENTINEL_LAST}={name}\n{_SENTINEL_READ}{index}={name}\n",
-                encoding="utf-8",
-                newline="\n",
-            )
-        config = _config_json(
-            env=env, files=[str(compose)], extra_profiles=("*",), fragment=fragment
-        )
+    planted = {
+        template.name: f"{_SENTINEL_LAST}={template.name}\n" for template in templates
+    }
+    for index, stem in enumerate(sorted(stems)):
+        name = f"{stem}{CUSTOM_ENV_SUFFIX}"
+        planted[name] = f"{_SENTINEL_LAST}={name}\n{_SENTINEL_READ}{index}={name}\n"
+    config = _scratch_config(
+        env=env, env_files=planted, extra_profiles=("*",), fragment=fragment
+    )
     return None if config is None else config.get("services", {})
 
 
@@ -1496,7 +1537,8 @@ def _custom_env_mismatches(*, services: dict) -> list[str]:
     ``<service>.custom.env`` into env/ for each service it renders, an instance
     being ``<app>-<instance>``. A service reading any other custom name reads a
     file nothing writes, and one whose own file is not last lets a later file
-    outvote a key the operator set through the console.
+    outvote a key the operator set through the console. A config check reads its
+    app's files, as that is the environment the app starts with.
     """
     failures = []
     for name, service in sorted(services.items()):
@@ -1507,9 +1549,17 @@ def _custom_env_mismatches(*, services: dict) -> list[str]:
             if key.startswith(_SENTINEL_READ)
         )
         last = environment.get(_SENTINEL_LAST)
-        app = (service.get("labels") or {}).get(instances.INSTANCE_LABEL, "")
+        checked = (
+            name.removeprefix(CONFIG_CHECK_PREFIX)
+            if name.startswith(CONFIG_CHECK_PREFIX)
+            else ""
+        )
+        labels = (service.get("labels")) or ({})
+        app = (labels.get(instances.INSTANCE_LABEL, "")) or (checked)
+        # The service whose custom env file this one reads as its own
+        owner = (checked) or (name)
         rendered = name in SERVICE_CONFIG_FILE or app in SERVICE_CONFIG_FILE
-        writable = {f"{n}{CUSTOM_ENV_SUFFIX}" for n in (name, app) if n and rendered}
+        writable = {f"{n}{CUSTOM_ENV_SUFFIX}" for n in (owner, app) if n and rendered}
         for file in read:
             if file not in writable:
                 failures.append(
@@ -1519,7 +1569,7 @@ def _custom_env_mismatches(*, services: dict) -> list[str]:
                 )
         if not rendered:
             continue
-        own = f"{name}{CUSTOM_ENV_SUFFIX}"
+        own = f"{owner}{CUSTOM_ENV_SUFFIX}"
         if own not in read:
             failures.append(
                 f"{name}: reads no {ENV_DIR.name}/{own}, so a key set through "
@@ -1555,29 +1605,25 @@ def _custom_env_failures(*, env: dict[str, str]) -> tuple[list[str], int]:
     return failures, len(services)
 
 
-def _override_coverage_failures(*, env: dict[str, str]) -> list[str]:
-    """Return one message per service the committed override leaves on the registry.
-
-    Read off the interpolated dev model: every service that runs a buildable
-    component's image must resolve to `<component>:local` there.
-
-    A per-source app is left out: its instances extend docker-compose.yml and never read the override, so the resolver gives each one its image.
-    """
+def _dev_overlay_failures(*, env: dict[str, str]) -> list[str]:
+    """Return one message per service a `make dev` build of every component leaves on the registry, read off the interpolated dev model."""
     config = _config_json(
-        env=env, files=[COMPOSE_FILE.name, COMPOSE_OVERRIDE_FILE.name]
+        env=env, files=[COMPOSE_FILE.name, str(_DEV_RENDER.relative_to(REPO_ROOT))]
     )
     if config is None:
-        return ["the dev path did not resolve, so override coverage is unknown"]
+        return ["the dev path did not resolve, so its images are unknown"]
     services = config.get("services", {})
     failures = []
-    for service, image in sorted(local_image_services(buildable_components()).items()):
-        if (service not in services) or (service in PER_SOURCE_APP_KEYS):
+    for service, image in sorted(
+        local_image_services(components=buildable_components()).items()
+    ):
+        if service not in services:
             continue
         got = services[service].get("image", "")
         if got != image:
             failures.append(
-                f"{COMPOSE_OVERRIDE_FILE.name}: {service} runs {got}, not {image} -- "
-                "a local build of that component would sit beside a registry one"
+                f"{_DEV_RENDER.name}: {service} runs {got!r}, not {image!r}, so a "
+                "local build of that component would sit beside a registry one"
             )
     return failures
 
@@ -1668,22 +1714,18 @@ def _local_instance_failures(*, env: dict[str, str]) -> tuple[list[str], int]:
     return failures, len(probes)
 
 
-def _overlay_staleness_failures() -> tuple[list[str], int]:
-    """Return (messages, assertions made) for the overlay always describing THIS run.
-
-    Runs the builder for a name it cannot build. The overlay must be gone and the
-    run must fail: leaving the previous run's file would start services on
-    `:local` images nothing rebuilt.
-    """
-    stale = REPO_ROOT / ".tmp" / "compose-check-stale-local.yml"
-    stale.parent.mkdir(parents=True, exist_ok=True)
-    stale.write_text(overlay_text(_LOCAL_SAMPLE), encoding="utf-8", newline="\n")
-    result = subprocess.run(
+def _build_nothing(*, flag: str, overlay: Path) -> subprocess.CompletedProcess:
+    """Run the builder for a name it cannot build, over an overlay a previous run left naming the sample on `:local`."""
+    overlay.parent.mkdir(parents=True, exist_ok=True)
+    overlay.write_text(
+        data=overlay_text(components=_LOCAL_SAMPLE), encoding="utf-8", newline="\n"
+    )
+    return subprocess.run(
         [
             sys.executable,
             "scripts/build_dev_images.py",
-            "--overlay",
-            str(stale),
+            flag,
+            str(overlay),
             _UNBUILDABLE_SAMPLE,
         ],
         capture_output=True,
@@ -1692,9 +1734,17 @@ def _overlay_staleness_failures() -> tuple[list[str], int]:
         errors="replace",
         text=True,
     )
+
+
+def _overlay_staleness_failures() -> tuple[list[str], int]:
+    """Return (messages, assertions made) for the overlay always describing THIS run.
+
+    Runs the builder for a name it cannot build. LOCAL's overlay must be gone and the run must fail. The recorded one must be left empty and the run must pass, because `make dev` names it in the compose call that follows. Either way no service starts on a `:local` image nothing rebuilt.
+    """
+    stale = REPO_ROOT / ".tmp" / "compose-check-stale-local.yml"
+    result = _build_nothing(flag="--overlay", overlay=stale)
     failures = []
     if stale.exists():
-        stale.unlink()
         failures.append(
             f"build_dev_images.py left {stale.name} in place after building nothing "
             f"-- a `make dev LOCAL={_UNBUILDABLE_SAMPLE}` would run the previous "
@@ -1705,7 +1755,25 @@ def _overlay_staleness_failures() -> tuple[list[str], int]:
             f"build_dev_images.py exited 0 with nothing built for "
             f"{_UNBUILDABLE_SAMPLE!r} -- the compose call that follows has no overlay"
         )
-    return failures, 2
+    recorded = _build_nothing(flag="--record", overlay=stale)
+    if not (stale.is_file()):
+        failures.append(
+            f"build_dev_images.py --record left no {stale.name} after building "
+            "nothing, but the `make dev` compose call that follows names it"
+        )
+    elif overlay_components(path=stale):
+        failures.append(
+            f"build_dev_images.py --record left {stale.name} naming "
+            f"{', '.join(overlay_components(path=stale))} after building nothing, so "
+            "`make dev` would run the previous run's images"
+        )
+    if recorded.returncode != 0:
+        failures.append(
+            f"build_dev_images.py --record exited {recorded.returncode} with nothing "
+            "built, so `make dev` would stop before it starts the stack"
+        )
+    stale.unlink(missing_ok=True)
+    return failures, 4
 
 
 def _implicit_consumer_failures(*, env: dict[str, str]) -> tuple[list[str], int]:
@@ -1861,9 +1929,9 @@ def _dev_run_failures(
 
 
 def _dev_path_fragment_failures() -> tuple[list[str], int]:
-    """Return (messages, assertions made) for the LOCAL dev path's overlay fragments.
+    """Return (messages, assertions made) for the dev path's overlay fragments, read off a LOCAL run.
 
-    `make dev LOCAL=...` names its compose files explicitly rather than riding
+    `make dev` names its compose files explicitly rather than riding
     COMPOSE_FILE, so the two lists are assembled by different code and can
     disagree -- and did (dfe-docker#104): the explicit lists expanded UI_FLAGS
     before the block that fills it had run, which dropped every unpublish
@@ -1931,7 +1999,7 @@ def _checks() -> int:
         return 1
 
     try:
-        _render_local_overlay()
+        _render_dev_overlays()
         paths = _paths()
     except FileNotFoundError as error:
         _print(msg=str(error))
@@ -2097,14 +2165,14 @@ def _checks() -> int:
         f"{custom_made} service(s) reads one it does not write"
     )
 
-    coverage_failures = _override_coverage_failures(env=env)
+    coverage_failures = _dev_overlay_failures(env=env)
     for message in coverage_failures:
         _print(msg=f"FAIL {message}")
     if coverage_failures:
         return 1
     _print(
-        msg=f"{COMPOSE_OVERRIDE_FILE.name} repoints every service that runs a buildable "
-        "component's image, consumers included"
+        msg="The overlay a full `make dev` build writes repoints every service that "
+        "runs a buildable component's image, consumers included"
     )
 
     local_failures, local_made = _local_overlay_failures(env=env)
@@ -2133,8 +2201,8 @@ def _checks() -> int:
     if stale_failures:
         return 1
     _print(
-        msg="A build that builds nothing removes the overlay instead of leaving the "
-        f"previous run's ({stale_made} assertions)"
+        msg="A build that builds nothing removes LOCAL's overlay and empties the "
+        f"recorded one instead of leaving the previous run's ({stale_made} assertions)"
     )
 
     implicit_failures, implicit_made = _implicit_consumer_failures(env=env)
@@ -2153,8 +2221,9 @@ def _checks() -> int:
     if ui_failures:
         return 1
     _print(
-        msg=f"All {len(_UI_EXPOSURE)} web UI(s) follow the bind scope on both addresses, "
-        f"and each unpublish fragment drops only its own ({ui_made} assertions)"
+        msg=f"All {len(_UI_EXPOSURE)} web UI(s) follow the bind scope on both addresses. "
+        "Each exposure dial unpublishes only its own UI and the kill switch every "
+        f"infra UI ({ui_made} assertions)"
     )
 
     auth_failures, auth_made = _auth_exposure_failures(env=env)
@@ -2183,7 +2252,7 @@ def _checks() -> int:
     if fragment_failures:
         return 1
     _print(
-        msg="`make dev LOCAL=...` pulls and starts with the same overlay fragments the "
+        msg="`make dev` pulls and starts with the same overlay fragments the "
         f"COMPOSE_FILE chain carries ({fragment_made} assertions)"
     )
     return 0
@@ -2193,6 +2262,7 @@ def main() -> int:
     try:
         return _checks()
     finally:
+        _DEV_RENDER.unlink(missing_ok=True)
         _EMPTY_ENV_FILE.unlink(missing_ok=True)
         _LOCAL_RENDER.unlink(missing_ok=True)
 

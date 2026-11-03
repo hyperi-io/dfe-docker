@@ -1,0 +1,182 @@
+
+# Project:   dfe-docker
+# File:      compose/one-shots.yml
+# Purpose:   The containers that run once and exit before their app starts
+# Language:  YAML
+#
+# License:   BUSL-1.1
+# Copyright: (c) 2026 HYPERI PTY LIMITED
+
+services:
+  bearer-tokens-init:
+    image: ${IMAGE_REGISTRY:-ghcr.io/hyperi-io}/dfe-engine:${DFE_ENGINE_VERSION:?run 'make stack VERSION=X.Y.Z' to pin DFE_ENGINE_VERSION}
+    container_name: ${DFE_CONTAINER_PREFIX:-}dfe-bearer-tokens-init
+    profiles: ["dfe"]
+    extends: {file: compose/limits.yml, service: limits-sidecar}
+    user: "1000:1000"
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - umask 077 && mkdir -p /app/config/.secrets/ingest/bearer-tokens
+    volumes:
+      - dfe-engine-config:/app/config
+    restart: "no"
+
+  config-check-dfe-archiver:
+    extends: {file: docker-compose.yml, service: dfe-archiver}
+    container_name: ${DFE_CONTAINER_PREFIX:-}dfe-config-check-dfe-archiver
+    command: ["--config", "${DFE_ARCHIVER_CONFIG_FILE:-/etc/dfe/archiver.yaml}", "config-check"]
+    depends_on: !override
+      dfe-engine:
+        condition: service_healthy
+        required: false
+    healthcheck: !override
+      disable: true
+    ports: !reset []
+    restart: "no"
+
+  config-check-dfe-loader:
+    extends: {file: docker-compose.yml, service: dfe-loader}
+    container_name: ${DFE_CONTAINER_PREFIX:-}dfe-config-check-dfe-loader
+    command: ["--config", "${DFE_LOADER_CONFIG_FILE:-/etc/dfe/loader.yaml}", "config-check"]
+    depends_on: !override
+      dfe-engine:
+        condition: service_healthy
+        required: false
+    healthcheck: !override
+      disable: true
+    ports: !reset []
+    restart: "no"
+
+  config-check-dfe-receiver:
+    extends: {file: docker-compose.yml, service: dfe-receiver}
+    container_name: ${DFE_CONTAINER_PREFIX:-}dfe-config-check-dfe-receiver
+    command: ["--config", "${DFE_RECEIVER_CONFIG_FILE:-/etc/dfe/receiver.yaml}", "config-check"]
+    depends_on: !override
+      bearer-tokens-init:
+        condition: service_completed_successfully
+      dfe-engine:
+        condition: service_healthy
+        required: false
+    healthcheck: !override
+      disable: true
+    ports: !reset []
+    restart: "no"
+
+  contract-dfe-archiver:
+    image: ${IMAGE_REGISTRY:-ghcr.io/hyperi-io}/dfe-archiver:${DFE_ARCHIVER_VERSION:?run 'make stack VERSION=X.Y.Z' to pin DFE_ARCHIVER_VERSION}
+    container_name: ${DFE_CONTAINER_PREFIX:-}dfe-contract-dfe-archiver
+    extends: {file: compose/contract.yml, service: contract}
+    environment:
+      CONTRACT_APP: dfe-archiver
+      CONTRACT_REF: ${IMAGE_REGISTRY:-ghcr.io/hyperi-io}/dfe-archiver:${DFE_ARCHIVER_VERSION:-}
+
+  contract-dfe-fetcher:
+    image: ${IMAGE_REGISTRY:-ghcr.io/hyperi-io}/dfe-fetcher:${DFE_FETCHER_VERSION:?run 'make stack VERSION=X.Y.Z' to pin DFE_FETCHER_VERSION}
+    container_name: ${DFE_CONTAINER_PREFIX:-}dfe-contract-dfe-fetcher
+    extends: {file: compose/contract.yml, service: contract}
+    environment:
+      CONTRACT_APP: dfe-fetcher
+      CONTRACT_REF: ${IMAGE_REGISTRY:-ghcr.io/hyperi-io}/dfe-fetcher:${DFE_FETCHER_VERSION:-}
+
+  contract-dfe-loader:
+    image: ${IMAGE_REGISTRY:-ghcr.io/hyperi-io}/dfe-loader:${DFE_LOADER_VERSION:?run 'make stack VERSION=X.Y.Z' to pin DFE_LOADER_VERSION}
+    container_name: ${DFE_CONTAINER_PREFIX:-}dfe-contract-dfe-loader
+    extends: {file: compose/contract.yml, service: contract}
+    environment:
+      CONTRACT_APP: dfe-loader
+      CONTRACT_REF: ${IMAGE_REGISTRY:-ghcr.io/hyperi-io}/dfe-loader:${DFE_LOADER_VERSION:-}
+
+  contract-dfe-receiver:
+    image: ${IMAGE_REGISTRY:-ghcr.io/hyperi-io}/dfe-receiver:${DFE_RECEIVER_VERSION:?run 'make stack VERSION=X.Y.Z' to pin DFE_RECEIVER_VERSION}
+    container_name: ${DFE_CONTAINER_PREFIX:-}dfe-contract-dfe-receiver
+    extends: {file: compose/contract.yml, service: contract}
+    environment:
+      CONTRACT_APP: dfe-receiver
+      CONTRACT_REF: ${IMAGE_REGISTRY:-ghcr.io/hyperi-io}/dfe-receiver:${DFE_RECEIVER_VERSION:-}
+
+  contract-dfe-transform-elastic:
+    image: ${IMAGE_REGISTRY:-ghcr.io/hyperi-io}/dfe-transform-elastic:${DFE_TRANSFORM_ELASTIC_VERSION:?run 'make stack VERSION=X.Y.Z' to pin DFE_TRANSFORM_ELASTIC_VERSION}
+    container_name: ${DFE_CONTAINER_PREFIX:-}dfe-contract-dfe-transform-elastic
+    extends: {file: compose/contract.yml, service: contract}
+    environment:
+      CONTRACT_APP: dfe-transform-elastic
+      CONTRACT_REF: ${IMAGE_REGISTRY:-ghcr.io/hyperi-io}/dfe-transform-elastic:${DFE_TRANSFORM_ELASTIC_VERSION:-}
+
+  contract-dfe-transform-vector:
+    image: ${IMAGE_REGISTRY:-ghcr.io/hyperi-io}/dfe-transform-vector:${DFE_TRANSFORM_VECTOR_VERSION:?run 'make stack VERSION=X.Y.Z' to pin DFE_TRANSFORM_VECTOR_VERSION}
+    container_name: ${DFE_CONTAINER_PREFIX:-}dfe-contract-dfe-transform-vector
+    extends: {file: compose/contract.yml, service: contract}
+    environment:
+      CONTRACT_APP: dfe-transform-vector
+      CONTRACT_REF: ${IMAGE_REGISTRY:-ghcr.io/hyperi-io}/dfe-transform-vector:${DFE_TRANSFORM_VECTOR_VERSION:-}
+
+  contract-dfe-transform-vrl:
+    image: ${IMAGE_REGISTRY:-ghcr.io/hyperi-io}/dfe-transform-vrl:${DFE_TRANSFORM_VRL_VERSION:?run 'make stack VERSION=X.Y.Z' to pin DFE_TRANSFORM_VRL_VERSION}
+    container_name: ${DFE_CONTAINER_PREFIX:-}dfe-contract-dfe-transform-vrl
+    extends: {file: compose/contract.yml, service: contract}
+    environment:
+      CONTRACT_APP: dfe-transform-vrl
+      CONTRACT_REF: ${IMAGE_REGISTRY:-ghcr.io/hyperi-io}/dfe-transform-vrl:${DFE_TRANSFORM_VRL_VERSION:-}
+
+  dfe-dashboards:
+    image: ${IMAGE_REGISTRY:-ghcr.io/hyperi-io}/dfe-engine:${DFE_ENGINE_VERSION:?run 'make stack VERSION=X.Y.Z' to pin DFE_ENGINE_VERSION}
+    container_name: ${DFE_CONTAINER_PREFIX:-}dfe-dashboards
+    profiles: ["hyperdx"]
+    extends: {file: compose/limits.yml, service: limits-sidecar}
+    user: "0:0"
+    entrypoint: ["python"]
+    command: ["-m", "dfe_engine.hyperdx.dashboards", "--out", "/etc/hyperdx/dashboards"]
+    volumes:
+      - hyperdx-dashboards:/etc/hyperdx/dashboards
+    restart: "no"
+
+  dlq-init:
+    image: ${IMAGE_REGISTRY:-ghcr.io/hyperi-io}/dfe-archiver:${DFE_ARCHIVER_VERSION:?run 'make stack VERSION=X.Y.Z' to pin DFE_ARCHIVER_VERSION}
+    container_name: ${DFE_CONTAINER_PREFIX:-}dfe-dlq-init
+    profiles: ["dfe"]
+    extends: {file: compose/limits.yml, service: limits-sidecar}
+    user: "0:0"
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - chown -R 1000:1000 /var/spool/dfe /var/data/archive /var/lib/dfe-fetcher /var/lib/dfe/geoip
+    volumes:
+      - dlq-spool:/var/spool/dfe
+      - archiver-data:/var/data/archive
+      - fetcher-cursors:/var/lib/dfe-fetcher
+      - transform-elastic-geoip:/var/lib/dfe/geoip
+    restart: "no"
+
+  hyperdx-documentdb-tls:
+    image: ${IMAGE_REGISTRY:-ghcr.io/hyperi-io}/dfe-engine:${DFE_ENGINE_VERSION:?run 'make stack VERSION=X.Y.Z' to pin DFE_ENGINE_VERSION}
+    container_name: ${DFE_CONTAINER_PREFIX:-}dfe-hyperdx-documentdb-tls
+    profiles: ["hyperdx"]
+    extends: {file: compose/limits.yml, service: limits-sidecar}
+    user: "0:0"
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        set -eu
+        umask 077
+        cd /tls
+        if ! { [ -s ca/ca.crt ] && [ -s server/tls.key ] && [ -s server/tls.crt ] \
+            && openssl x509 -checkend 2592000 -noout -in server/tls.crt >/dev/null; }; then
+          rm -rf ca server ca.key ca.srl server.csr server.ext
+          mkdir ca server
+          openssl req -x509 -newkey ec -pkeyopt ec_paramgen_curve:P-384 -nodes -sha384 -days 3650 \
+            -subj /CN=dfe-hyperdx-documentdb-ca \
+            -addext basicConstraints=critical,CA:TRUE -addext keyUsage=critical,keyCertSign,cRLSign \
+            -keyout ca.key -out ca/ca.crt
+          openssl req -new -newkey ec -pkeyopt ec_paramgen_curve:P-384 -nodes -sha384 \
+            -subj /CN=hyperdx-documentdb -keyout server/tls.key -out server.csr
+          printf '%s\n' basicConstraints=critical,CA:FALSE keyUsage=critical,digitalSignature \
+            extendedKeyUsage=serverAuth subjectAltName=DNS:hyperdx-documentdb > server.ext
+          openssl x509 -req -in server.csr -CA ca/ca.crt -CAkey ca.key -CAcreateserial -CAserial ca.srl \
+            -days 3650 -sha384 -extfile server.ext -out server/tls.crt
+          rm -f ca.key ca.srl server.csr server.ext
+        fi
+        chmod 0755 ca
+        chmod 0644 ca/ca.crt
+        chown -R 1000:1000 server
+    volumes:
+      - hyperdx-documentdb-tls:/tls
+    restart: "no"

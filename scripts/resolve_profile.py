@@ -95,8 +95,8 @@ IN_STACK_BROKER = "kafka:9092"
 STACK_PROFILE_VAR = "DFE_STACK_PROFILE"
 TRANSPORT_BUS_PRESENT_VAR = "DFE_TRANSPORT_BUS_PRESENT"
 TRANSPORT_DEFAULT_VAR = "DFE_TRANSPORT_DEFAULT"
-# The receiver's dead-letter backend. Unset keeps its cascade, Kafka first and the spool file behind it
 PROFILE_ENV_NAME = "profile.env"
+# The receiver's dead-letter backend, unset to keep its cascade of Kafka first and the spool file behind it
 RECEIVER_DLQ_MODE_VAR = "DFE_RECEIVER_DLQ_MODE"
 
 # `make stack` pins dfe-ui as a container reference (tag@sha256:...), which is
@@ -146,13 +146,6 @@ def otel_http_endpoint(endpoint: str) -> str:
         return endpoint[: -len("4317")] + "4318"
     return endpoint
 
-
-# The Rust services push whenever the endpoint is set. dfe-engine also needs its
-# backend switched, because scalo-py's CLI defaults it to prometheus (scalo-py#11).
-# `opentelemetry` is dual -- it pushes AND keeps serving /metrics, so switching
-# costs a scraping estate nothing.
-OTEL_ENGINE_BACKEND_ENV_VAR = "DFE_ENGINE_METRICS_BACKEND"
-OTEL_ENGINE_BACKEND = "opentelemetry"
 
 # What the engine is handed as DFE_ADMIN_LINKS: the JSON list of admin UIs a
 # browser can open on this stack.
@@ -249,8 +242,8 @@ RETIRED_PROFILES = {
 
 SERVICE_KAFKA_DEFAULT = "redpanda"
 SERVICE_KAFKA_OPTIONS = {
-    "redpanda": "kafka-redpanda",
     "apache": "kafka-apache",
+    "redpanda": "kafka-redpanda",
 }
 SERVICE_TO_CONFIG_VAR = {
     "dfe-archiver": "DFE_ARCHIVER_CONFIG",
@@ -272,9 +265,7 @@ APP_CONFIG_MOUNT = "/etc/dfe/apps"
 # can require the mount beside the path, rather than the path alone.
 APP_CONFIG_VOLUME = "dfe-app-config"
 # Where the contract one-shots write each app's container contract, and where the
-# engine reads it back from. It hangs off the content volume's own mount, so an
-# operator who moves that path moves both halves together.
-ENGINE_CONTENT_DIR_VAR = "DFE_ENGINE_CONTENT_DIR"
+# engine reads it back from, under the content volume's mount.
 ENGINE_CONTENT_DIR = "/app/content"
 ENGINE_CONTRACT_DIR_VAR = "DFE_ENGINE_CONTRACT_DIR"
 ENGINE_CONTRACT_SUBDIR = "contract"
@@ -368,8 +359,6 @@ def _instance_services(
     Only where the engine renders the app config: anywhere else the index is a
     leftover from a tier this checkout ran earlier, and declaring containers off
     it would start apps this profile does not run.
-
-    `container_logs` puts each instance on the log driver the committed services use, which `extends` would otherwise leave out.
 
     An instance of an app in `local` runs that app's local image, because `extends` reads the committed service and never the overlay that repoints it.
 
@@ -601,7 +590,6 @@ def _parse_args(argv: Sequence[str]) -> argparse.Namespace:
 def engine_tier(
     *,
     configured_broker: str,
-    content_dir: str,
     profile_name: str,
     renders: bool,
     transport: str,
@@ -619,7 +607,7 @@ def engine_tier(
             configured=configured_broker, transport=transport
         ),
         ENGINE_CONTRACT_DIR_VAR: (
-            f"{content_dir}/{ENGINE_CONTRACT_SUBDIR}" if renders else ""
+            f"{ENGINE_CONTENT_DIR}/{ENGINE_CONTRACT_SUBDIR}" if renders else ""
         ),
         # docker-slim or docker-single, which the engine seeds its default app instances from and reports as its deployment profile
         STACK_PROFILE_VAR: f"docker-{profile_name.partition('-')[0]}",
@@ -627,23 +615,6 @@ def engine_tier(
         TRANSPORT_BUS_PRESENT_VAR: "true" if bus else "false",
         TRANSPORT_DEFAULT_VAR: "bus" if bus else "direct",
     }
-
-
-def profile_env(*, lines: Sequence[str]) -> str:
-    """The `export NAME := value` lines of profile.mk as a dotenv file, so a bare `docker compose --env-file .tmp/profile.env` gets what make hands it."""
-    out = []
-    for line in lines:
-        name, sep, value = line.removeprefix("export ").partition(" := ")
-        if not (sep) or not (name.startswith("DFE_")):
-            continue
-        if "'" in value:
-            escaped = (
-                value.replace("\\", "\\\\").replace('"', '\\"').replace("$", "\\$")
-            )
-            out.append(f'{name}="{escaped}"')
-        else:
-            out.append(f"{name}='{value}'")
-    return "\n".join(out) + "\n"
 
 
 def parse_yaml(*, text: str) -> dict[str, object]:
@@ -697,9 +668,21 @@ def per_source_apps(
     return enabled if renders else []
 
 
-def tier_receiver_dlq_mode(*, transport: str) -> str:
-    """The receiver's dead-letter backend: the spool file alone on direct gRPC, where no broker exists to try first, else unset for its cascade."""
-    return "" if transport == "kafka" else "file_only"
+def profile_env(*, lines: Sequence[str]) -> str:
+    """The `export NAME := value` lines of profile.mk as a dotenv file, so a bare `docker compose --env-file .tmp/profile.env` gets what make hands it."""
+    out = []
+    for line in lines:
+        name, sep, value = line.removeprefix("export ").partition(" := ")
+        if not (sep) or not (name.startswith("DFE_")):
+            continue
+        if "'" in value:
+            escaped = (
+                value.replace("\\", "\\\\").replace('"', '\\"').replace("$", "\\$")
+            )
+            out.append(f'{name}="{escaped}"')
+        else:
+            out.append(f"{name}='{value}'")
+    return "\n".join(out) + "\n"
 
 
 def tier_broker(*, configured: str, transport: str) -> str:
@@ -707,6 +690,11 @@ def tier_broker(*, configured: str, transport: str) -> str:
     if transport != "kafka":
         return ""
     return (configured.strip()) or (IN_STACK_BROKER)
+
+
+def tier_receiver_dlq_mode(*, transport: str) -> str:
+    """The receiver's dead-letter backend: the spool file alone on direct gRPC, where no broker exists to try first, else unset for its cascade."""
+    return "" if transport == "kafka" else "file_only"
 
 
 def main(argv: Sequence[str] = ()) -> int:
@@ -795,18 +783,16 @@ def main(argv: Sequence[str] = ()) -> int:
                 service_list.extend(AUTH_HYPERDX_SERVICES)
         lines.append(f"export DFE_SERVICES := {' '.join(service_list)}")
 
-        # The limits the collector reports, read from the services this resolve starts, so only a stack with a collector needs them.
+        # The limits the collector reports, read from the services this resolve starts, so only a stack with a collector needs them
         if args.usage and footprint["otel"]:
             fragment = instances.COMPOSE_INSTANCES_FILE if instance_services else None
             lines += usage_cores.profile_lines(
-                profiles=profiles, services=service_list, fragment=fragment
+                fragment=fragment, profiles=profiles, services=service_list
             )
 
         # What the engine is told about this tier, each line emitted unconditionally and empty where it does not apply, so the included file settles. .env may name another broker and move the content volume's mount
         tier = engine_tier(
             configured_broker=os.environ.get(ENGINE_BROKER_ENV_VAR, ""),
-            content_dir=(os.environ.get(ENGINE_CONTENT_DIR_VAR, "").strip())
-            or (ENGINE_CONTENT_DIR),
             profile_name=active_profile,
             renders=renders,
             transport=transport,
@@ -890,10 +876,6 @@ def main(argv: Sequence[str] = ()) -> int:
             f"export {OTEL_HTTP_ENDPOINT_ENV_VAR} := "
             f"{otel_http_endpoint(endpoint) if endpoint else ''}"
         )
-        backend = os.environ.get(OTEL_ENGINE_BACKEND_ENV_VAR, "").strip() or (
-            OTEL_ENGINE_BACKEND if endpoint else ""
-        )
-        lines.append(f"export {OTEL_ENGINE_BACKEND_ENV_VAR} := {backend}")
 
         for service_name, service_config in services.items():
             var_name = SERVICE_TO_CONFIG_VAR[service_name]
@@ -925,9 +907,8 @@ def main(argv: Sequence[str] = ()) -> int:
         # Same values for a bare `docker compose`, which never reads make's environment
         env_content = profile_env(lines=lines)
         profile_env_file = PROFILE_MK.with_name(PROFILE_ENV_NAME)
-        if (
-            not (profile_env_file.exists())
-            or profile_env_file.read_text(encoding="utf-8") != env_content
+        if not (profile_env_file.exists()) or (
+            profile_env_file.read_text(encoding="utf-8") != env_content
         ):
             profile_env_file.write_text(env_content, encoding="utf-8")
     except ProfileError as error:

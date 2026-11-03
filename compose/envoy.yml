@@ -1,0 +1,19 @@
+
+# Project:   dfe-docker
+# File:      compose/envoy.yml
+# Purpose:   The settings the two Envoy proxies share
+# Language:  YAML
+#
+# License:   BUSL-1.1
+# Copyright: (c) 2026 HYPERI PTY LIMITED
+
+services:
+  envoy:
+    extends: {file: limits.yml, service: limits-sidecar}
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "bash", "-c", "exec 3<>/dev/tcp/127.0.0.1/9901 && printf 'GET /ready HTTP/1.1\\r\\nHost: localhost\\r\\nConnection: close\\r\\n\\r\\n' >&3 && grep -q LIVE <&3"]
+      interval: 10s
+      timeout: 3s
+      start_period: 10s
+      retries: 5

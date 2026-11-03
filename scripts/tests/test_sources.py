@@ -106,6 +106,13 @@ class EngineOverrideCase(TypedDict):
     volumes: list[str]
 
 
+class EngineTransportCase(TypedDict):
+    """A test's transport and the bus settings dfe-engine is handed for it."""
+
+    expected: dict[str, str]
+    transport: str
+
+
 class HintedServicesCase(TypedDict):
     """Engine replies and the services their restart hints name."""
 
@@ -357,6 +364,24 @@ ENGINE_OVERRIDE_CASES = [
             "      - ./config/loader/grpc.yaml:/app/app-config-base/dfe-loader.yaml:ro\n"
         ),
         volumes=["./config/loader/grpc.yaml:/app/app-config-base/dfe-loader.yaml:ro"],
+    ),
+]
+ENGINE_TRANSPORT_CASES = [
+    EngineTransportCase(
+        expected={
+            "DFE_KAFKA_BOOTSTRAP_SERVERS": "",
+            "DFE_TRANSPORT_BUS_PRESENT": "false",
+            "DFE_TRANSPORT_DEFAULT": "direct",
+        },
+        transport="grpc",
+    ),
+    EngineTransportCase(
+        expected={
+            "DFE_KAFKA_BOOTSTRAP_SERVERS": "kafka:9092",
+            "DFE_TRANSPORT_BUS_PRESENT": "true",
+            "DFE_TRANSPORT_DEFAULT": "bus",
+        },
+        transport="kafka",
     ),
 ]
 HINTED_SERVICES_CASES = [
@@ -1031,37 +1056,16 @@ class TestKafkaBootstrap:
 
 
 class TestEngineTransport:
-    @pytest.mark.parametrize(
-        ("transport", "expected"),
-        [
-            (
-                "grpc",
-                {
-                    "DFE_KAFKA_BOOTSTRAP_SERVERS": "",
-                    "DFE_TRANSPORT_BUS_PRESENT": "false",
-                    "DFE_TRANSPORT_DEFAULT": "direct",
-                },
-            ),
-            (
-                "kafka",
-                {
-                    "DFE_KAFKA_BOOTSTRAP_SERVERS": "kafka:9092",
-                    "DFE_TRANSPORT_BUS_PRESENT": "true",
-                    "DFE_TRANSPORT_DEFAULT": "bus",
-                },
-            ),
-        ],
-    )
-    def test_follows_the_tests_transport(
-        self, transport: str, expected: dict[str, str]
-    ) -> None:
-        assert _sources.engine_transport(transport=transport) == expected
+    @pytest.mark.parametrize("case", ENGINE_TRANSPORT_CASES)
+    def test_matches_expected(self, case: EngineTransportCase) -> None:
+        settings = _sources.engine_transport(transport=case["transport"])
+
+        assert settings == case["expected"]
 
     @pytest.mark.parametrize("transport", ["grpc", "kafka"])
     def test_agrees_with_the_tier_the_profile_exports(self, transport: str) -> None:
         tier = resolve_profile.engine_tier(
             configured_broker="",
-            content_dir="",
             profile_name=f"slim-{transport}",
             renders=False,
             transport=transport,
@@ -1378,8 +1382,9 @@ class TestSuiteCustomKeys:
         [
             ("dfe-loader", {"SUITE_KEY": "suite"}),
             ("dfe-loader-a", {"SUITE_KEY": "suite", "INSTANCE_KEY": "instance"}),
+            ("config-check-dfe-loader", {"SUITE_KEY": "suite"}),
         ],
-        ids=["app", "per-source instance"],
+        ids=["app", "per-source instance", "config check"],
     )
     def test_the_apps_read_custom_keys_from_the_suite_tree(
         self, tmp_path: Path, service: str, keys: dict[str, str]

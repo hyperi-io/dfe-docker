@@ -1,0 +1,19 @@
+
+# Project:   dfe-docker
+# File:      compose/kafka.yml
+# Purpose:   The settings both Kafka brokers share
+# Language:  YAML
+#
+# License:   BUSL-1.1
+# Copyright: (c) 2026 HYPERI PTY LIMITED
+
+services:
+  kafka:
+    extends: {file: limits.yml, service: limits-broker}
+    restart: unless-stopped
+    networks:
+      default:
+        aliases:
+          - kafka
+    ports:
+      - ${DFE_BIND_HOST:-127.0.0.1}:${KAFKA_PLAINTEXT_HOST_PORT:-19092}:19092

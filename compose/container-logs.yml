@@ -1,0 +1,37 @@
+# Project:   dfe-docker
+# File:      compose/container-logs.yml
+# Purpose:   DFE container stdout to the collector via fluentd
+# Language:  YAML
+#
+# License:   BUSL-1.1
+# Copyright: (c) 2026 HYPERI PTY LIMITED
+
+x-container-logs: &container-logs
+  driver: fluentd
+  options:
+    fluentd-address: ${DFE_CONTAINER_LOG_ADDRESS:-tcp://${DFE_BIND_HOST:-127.0.0.1}:${DFE_OTEL_FLUENT_PORT:-24224}}
+    fluentd-async: "true"
+    fluentd-request-ack: "true"
+    tag: "{{.Name}}"
+
+services:
+  dfe-archiver:
+    logging: *container-logs
+  dfe-engine:
+    logging: *container-logs
+  dfe-fetcher:
+    logging: *container-logs
+  dfe-hunt-runner:
+    logging: *container-logs
+  dfe-loader:
+    logging: *container-logs
+  dfe-receiver:
+    logging: *container-logs
+  dfe-transform-elastic:
+    logging: *container-logs
+  dfe-transform-vector:
+    logging: *container-logs
+  dfe-transform-vrl:
+    logging: *container-logs
+  dfe-ui:
+    logging: *container-logs

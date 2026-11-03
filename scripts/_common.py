@@ -12,9 +12,11 @@ Internal support module - imported by the runnable scripts, not executed directl
 """
 
 import datetime
+import json
 import os
 import re
 import stat
+import subprocess
 import sys
 import typing
 from pathlib import Path
@@ -100,6 +102,8 @@ SERVICE_TO_RENDERED_CONFIG_VAR = {
 # The suffix of the env file dfe-engine writes into env/ for one Compose service,
 # `<app>` or `<app>-<instance>` (appmgmt/appconfig.py CUSTOM_ENV_SUFFIX).
 CUSTOM_ENV_SUFFIX = ".custom.env"
+# The env/<component>.env compose hands dfe-engine
+ENGINE_COMPONENT = "engine"
 
 # Repo constants
 REPO_ROOT = __find_repo_root()
@@ -113,29 +117,50 @@ DOTENV_FILE = REPO_ROOT / ".env"
 # Owner and group read it (a daemon install shares it through the checkout's group); others never.
 # The per-service env/<service>.env files take the same mode.
 DOTENV_MODE = 0o640
-# The widest a shared checkout may grant: the daemon user and the operator both rewrite .env, so the group needs write too. Others never get a bit.
+# The widest a shared checkout may grant: the daemon user and the operator both rewrite .env, so the group needs write too and others never get a bit
 DOTENV_CEILING = 0o660
 DOTENV_TEMPLATE = REPO_ROOT / ".env.example"
 ENV_DIR = REPO_ROOT / "env"
 ENV_TEMPLATE_DIR = REPO_ROOT / "env.example"
 COMPOSE_FILE = REPO_ROOT / "docker-compose.yml"
-COMPOSE_LIVE_FILE = REPO_ROOT / "docker-compose.live.yml"
-COMPOSE_LIVE_UI_FILE = REPO_ROOT / "docker-compose.live-ui.yml"
-# Generated per run by `make dev LOCAL=...`, never committed.
-COMPOSE_LOCAL_FILE = REPO_ROOT / "docker-compose.local.yml"
-COMPOSE_OVERRIDE_FILE = REPO_ROOT / "docker-compose.override.yml"
+# The run-once containers COMPOSE_FILE includes
+COMPOSE_ONE_SHOTS_FILE = REPO_ROOT / "compose" / "one-shots.yml"
+# The one-shot that checks an app's config before it starts is this prefix and the app's name
+CONFIG_CHECK_PREFIX = "config-check-"
+# The files COMPOSE_FILE extends or includes, never chained as an overlay
+COMPOSE_PART_FILES = (
+    REPO_ROOT / "compose" / "base.yml",
+    REPO_ROOT / "compose" / "contract.yml",
+    REPO_ROOT / "compose" / "dfe-app.yml",
+    REPO_ROOT / "compose" / "envoy.yml",
+    REPO_ROOT / "compose" / "kafka.yml",
+    REPO_ROOT / "compose" / "limits.yml",
+    REPO_ROOT / "compose" / "oauth2-proxy.yml",
+    COMPOSE_ONE_SHOTS_FILE,
+)
+COMPOSE_LIVE_UI_FILE = REPO_ROOT / "compose" / "live-ui.yml"
 # Written by resolve_profile.py on every make run that needs the stack and included by the Makefile, so deleting .tmp/ costs nothing
 PROFILE_MK = REPO_ROOT / ".tmp" / "profile.mk"
 RUST_BUILDER = REPO_ROOT / "docker" / "dfe-rust-builder.Dockerfile"
+# The starter objects the seed targets create through the engine API, one directory per kind
+SEED_DIR = REPO_ROOT / "resources" / "seed"
 SERVICE_PROFILES_FILE = REPO_ROOT / "service_profiles.yaml"
+# What a seed account's username loses in the env/engine.env key its password is recorded under
+_SEED_KEY_STRIP = re.compile(r"[^A-Z0-9]")
 
 # `${VAR:?message}` -- the form that makes an unset value abort the command
 # instead of resolving to something silently wrong. `${VAR:-default}` is optional
 # by construction and needs nothing from us.
 _REQUIRED_VAR_RE = re.compile(r"\$\{([A-Z][A-Z0-9_]*):\?")
+# Enough to resolve interpolation: the limits read off the model do not depend on which image runs
+_COMPOSE_PLACEHOLDER = "0.0.0-placeholder"
 
 
-# Levels a message names by its first word. _print has no level argument, so the word callers already lead with (`FAIL ...`, `WARNING: ...`) becomes the line's level and everything else is INFO.
+class ComposeConfigError(Exception):
+    """Raised when `docker compose config` refuses the files or returns no model."""
+
+
+# Levels a message names by its first word. _print has no level argument, so the word callers already lead with (`FAIL ...`, `WARNING: ...`) becomes the line's level and everything else is INFO
 _LEADING_LEVEL_RE = re.compile(r"(PASS|FAIL|SKIP|WARNING)\b|(error):")
 _LEVEL_WIDTH = 8
 _RESET = "\033[0m"
@@ -143,10 +168,10 @@ _RESET = "\033[0m"
 
 def log_line(
     *,
-    level: str,
-    name: str,
-    msg: str,
     colour: str = "",
+    level: str,
+    msg: str,
+    name: str,
     now: datetime.datetime | None = None,
 ) -> str:
     """Return a line in the shape of scalo's text console logger, without its fields.
@@ -154,7 +179,9 @@ def log_line(
     `<UTC RFC 3339 millis> | <level, padded to 8> | <name> - <msg>`. `colour` is an ANSI
     escape wrapped round the level word only, empty for none.
     """
-    when = (now or datetime.datetime.now(datetime.UTC)).astimezone(datetime.UTC)
+    when = ((now) or (datetime.datetime.now(tz=datetime.UTC))).astimezone(
+        tz=datetime.UTC
+    )
     stamp = f"{when:%Y-%m-%dT%H:%M:%S}.{when.microsecond // 1000:03d}Z"
     shown = f"{colour}{level}{_RESET}" if colour else level
     return f"{stamp} | {shown}{' ' * (_LEVEL_WIDTH - len(level))} | {name} - {msg}"
@@ -173,14 +200,18 @@ def _print(
     # sys.stderr (pytest's capture) must still see the message.
     print(
         # codeql[py/clear-text-logging-sensitive-data] callers pass a secret's key or committed default, never a minted value
-        log_line(level=level, name=f"{script}:{header}" if header else script, msg=msg),
+        log_line(level=level, msg=msg, name=f"{script}:{header}" if header else script),
         file=file or sys.stderr,
     )
 
 
 def _rel_path(*, path: Path) -> str:
-    """Return path relative to the repo root for display."""
-    return str(path.relative_to(REPO_ROOT))
+    """Return path relative to the repo root for display, whole when it lies outside the repo."""
+    return (
+        str(path.relative_to(REPO_ROOT))
+        if path.is_relative_to(REPO_ROOT)
+        else str(path)
+    )
 
 
 def write_private(*, path: Path, text: str, mode: int = 0o600) -> None:
@@ -189,14 +220,15 @@ def write_private(*, path: Path, text: str, mode: int = 0o600) -> None:
     Created at `mode` rather than chmod'ed after, so a new file is never readable
     by others; an existing file is set to `mode` on the open descriptor before any
     of `text` lands, so a rerun narrows one an earlier version or an editor left
-    wide without the new text ever sitting in it.
+    wide without the new text ever sitting in it. It is emptied only once its mode
+    is settled, so a refused chmod leaves the old content in place.
     """
-    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, mode)
+    fd = os.open(path, os.O_WRONLY | os.O_CREAT, mode)
     with os.fdopen(fd, "w", encoding="utf-8", newline="\n") as handle:
-        # O_CREAT's mode applies only to a new file, so an existing one is set here.
-        # Skipped when it already matches: chmod needs the owner, and a group member rewriting a shared file is not.
+        # O_CREAT's mode applies only to a new file, so an existing one is set here unless it already matches: chmod needs the owner, which a group member rewriting a shared file is not
         if stat.S_IMODE(os.fstat(fd).st_mode) != mode:
-            os.fchmod(fd, mode)
+            os.fchmod(fd=fd, mode=mode)
+        os.ftruncate(fd, 0)
         handle.write(text)
 
 
@@ -215,7 +247,51 @@ def write_dotenv(*, path: Path, text: str) -> None:
         mode = DOTENV_CEILING
     else:
         mode = DOTENV_MODE
-    write_private(path=path, text=text, mode=mode)
+    write_private(mode=mode, path=path, text=text)
+
+
+def _compose_env() -> dict[str, str]:
+    """Return the environment with every mandatory compose key set, a placeholder filling the unset ones."""
+    env = dict(os.environ)
+    for name in _required_compose_vars():
+        if not (env.get(name, "").strip()):
+            env[name] = _COMPOSE_PLACEHOLDER
+    return env
+
+
+def _compose_model(
+    *,
+    files: typing.Sequence[Path],
+    profiles: typing.Sequence[str],
+    services: typing.Sequence[str],
+) -> dict:
+    """Return the model `docker compose config --format json` resolves for the files, profiles and services, raising ComposeConfigError when it resolves none."""
+    cmd = ["docker", "compose"]
+    for path in files:
+        cmd += ["-f", str(path)]
+    for profile in profiles:
+        cmd += ["--profile", profile]
+    cmd += ["config", "--format", "json", *services]
+    result = subprocess.run(
+        cmd,
+        capture_output=True,
+        check=False,
+        cwd=REPO_ROOT,
+        encoding="utf-8",
+        env=_compose_env(),
+        errors="replace",
+        text=True,
+    )
+    if result.returncode != 0:
+        raise ComposeConfigError(
+            f"docker compose config failed: {result.stderr.strip()}"
+        )
+    try:
+        return json.loads(result.stdout)
+    except ValueError as error:
+        raise ComposeConfigError(
+            f"docker compose config returned no model: {error}"
+        ) from error
 
 
 def _config_topics(*, path: Path) -> tuple[set[str], set[str], str]:
@@ -294,6 +370,19 @@ def _dotenv_values() -> dict[str, str]:
     return _parse_dotenv(text=DOTENV_FILE.read_text(encoding="utf-8", errors="replace"))
 
 
+def _env_file(*, component: str) -> Path:
+    """Return env/<component>.env, the file compose hands that component's containers."""
+    return ENV_DIR / f"{component}.env"
+
+
+def _env_file_values(*, component: str) -> dict[str, str]:
+    """Parse env/<component>.env by the subset `_dotenv_values` documents, empty when the file is absent."""
+    path = _env_file(component=component)
+    if not (path.is_file()):
+        return {}
+    return _parse_dotenv(text=path.read_text(encoding="utf-8", errors="replace"))
+
+
 def _parse_dotenv(*, text: str) -> dict[str, str]:
     """Parse dotenv text into a dict, by the subset `_dotenv_values` documents."""
     values: dict[str, str] = {}
@@ -346,6 +435,22 @@ def _load_dotenv() -> None:
     """Merge .env into os.environ. Existing environment variables take precedence."""
     for key, value in _dotenv_values().items():
         os.environ.setdefault(key, value)
+
+
+def _load_env_file(*, component: str, keys: typing.Iterable[str]) -> None:
+    """Set each of `keys` the environment lacks from env/<component>.env, empty where that file lacks it too.
+
+    Called before `_load_dotenv`, so none of `keys` is ever read from .env, where an older checkout may still hold a stale copy.
+    """
+    values = _env_file_values(component=component)
+    for key in keys:
+        os.environ.setdefault(key, values.get(key, ""))
+
+
+def seed_password_key(*, username: str) -> str:
+    """Return the env/engine.env key `make accounts` records a seed account's password under."""
+    stem = _SEED_KEY_STRIP.sub(repl="_", string=username.upper())
+    return f"DFE_SEED_ACCOUNT_{stem}_PASSWORD"
 
 
 def _use_mounted_configs(*, environ: typing.MutableMapping[str, str]) -> None:

@@ -87,7 +87,6 @@ def _resolved(*, tmp_path, monkeypatch, environ: dict[str, str]) -> dict[str, st
     for key in (
         resolve_profile.OTEL_ENDPOINT_ENV_VAR,
         resolve_profile.OTEL_HTTP_ENDPOINT_ENV_VAR,
-        resolve_profile.OTEL_ENGINE_BACKEND_ENV_VAR,
         resolve_profile.OTEL_ENABLED_ENV_VAR,
     ):
         monkeypatch.delenv(key, raising=False)
@@ -102,13 +101,12 @@ def _resolved(*, tmp_path, monkeypatch, environ: dict[str, str]) -> dict[str, st
 
 
 @pytest.mark.parametrize(
-    ("environ", "endpoint", "http", "backend"),
+    ("environ", "endpoint", "http"),
     [
         pytest.param(
             {"DFE_OTEL_ENABLED": "true"},
             "http://otel-collector:4317",
             "http://otel-collector:4318",
-            "opentelemetry",
             id="bundled",
         ),
         pytest.param(
@@ -118,10 +116,9 @@ def _resolved(*, tmp_path, monkeypatch, environ: dict[str, str]) -> dict[str, st
             },
             "https://collector.example.test:4317",
             "https://collector.example.test:4318",
-            "opentelemetry",
             id="external-only",
         ),
-        pytest.param({"DFE_OTEL_ENABLED": "false"}, "", "", "", id="none"),
+        pytest.param({"DFE_OTEL_ENABLED": "false"}, "", "", id="none"),
     ],
 )
 def test_every_service_follows_whichever_otlp_endpoint_is_configured(
@@ -131,11 +128,9 @@ def test_every_service_follows_whichever_otlp_endpoint_is_configured(
     environ: dict[str, str],
     endpoint: str,
     http: str,
-    backend: str,
 ) -> None:
     """An external collector with the bundled one off still gets the engine and the UI."""
     values = _resolved(tmp_path=tmp_path, monkeypatch=monkeypatch, environ=environ)
 
     assert values[resolve_profile.OTEL_ENDPOINT_ENV_VAR] == endpoint
     assert values[resolve_profile.OTEL_HTTP_ENDPOINT_ENV_VAR] == http
-    assert values[resolve_profile.OTEL_ENGINE_BACKEND_ENV_VAR] == backend

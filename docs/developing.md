@@ -27,7 +27,7 @@ exist, and how a profile decides which of them run.
 |---|---|
 | Docker and Docker Compose v2 | everything |
 | Python 3 | the helper scripts under `scripts/` |
-| uv | `make sources`, `make rules`, `make hunts`, `make events`, `make test-e2e`, `make test-resilience` and `make test-flows` only. It installs the PyYAML and Playwright those scripts declare inline, hash-checked against the `<script>.lock` beside each |
+| uv | `make sources`, `make rules`, `make hunts`, `make events`, `make orgs`, `make accounts`, `make test-e2e`, `make test-resilience` and `make test-flows` only. It installs the PyYAML and Playwright those scripts declare inline, hash-checked against the `<script>.lock` beside each |
 | ruff | `make check-python` only |
 | pytest | `make check-tests` only (`uvx` fetches the pin if you have it) |
 | git, to clone the public hyperi-io repos (or `DFE_SRC_ROOT` checkouts) | `make dev` |
@@ -51,8 +51,7 @@ make ci                    # pull and start, self test
 to `env/<service>.env`. Existing files are never overwritten, so it is safe to
 re-run. It does two things beyond the copy:
 
-- **Generates secrets.** `DFE_UI_NEXTAUTH_SECRET`, `HYPERDX_POSTGRES_PASSWORD`,
-  `HYPERDX_EXPRESS_SESSION_SECRET` and `HYPERDX_TOKEN_ENCRYPTION_KEY` get a random value. An existing `.env` that predates a key is topped up.
+- **Generates secrets.** Each gets a random value in its file: `.env`, `env/engine.env`, `env/ui.env` or `env/hyperdx.env`. An existing file that predates a key is topped up.
 - **Reports drift.** The copy is one-shot, so a `.env` made months ago never
   learns that `.env.example` grew a setting. A re-run lists the keys yours is
   missing and stops there -- editing your `.env` is yours to do.
@@ -84,7 +83,7 @@ naming the key.
 ## Logging in the first time
 
 The deploy mints the credentials, the engine never ships one. `make init` writes
-two random passwords into `.env` and prints neither.
+two random passwords into `env/engine.env` and prints neither.
 
 | Target | What it does |
 |---|---|
@@ -93,7 +92,7 @@ two random passwords into `.env` and prints neither.
 | `make creds` | prints that summary again, any time |
 
 The password prints to a **terminal** only. Redirect it, pipe it, or run it in
-CI and you get the `.env` key holding the value instead; `DFE_CREDS_SHOW=0` does
+CI and you get the `env/engine.env` key holding the value instead. `DFE_CREDS_SHOW=0` does
 the same on a terminal. `make ci` does not call it at all, which is why `make up`
 exists as the operator-facing name for the same start.
 
@@ -101,18 +100,16 @@ exists as the operator-facing name for the same start.
 first-run setup is incomplete, so an operator who lands there with no password is
 one command from having one.
 
-The two accounts are durable in different ways, deliberately. The engine issues `admin` from `.env` with a forced change at first login, which `make post` makes and records back in `.env`. A new value there is a rotation. The last issued value, or the account's current password, re-issues nothing. `breakglass` is hashed into the engine's deploy repo on its first boot and the variable is ignored from then on, so it still works when the engine, the UI and `.env` are all gone. `make creds` says where its password lives rather than printing it. Once the setup wizard has retired `admin`, `make post` skips the checks that log in and still proves the rest.
+The two accounts are durable in different ways, deliberately. The engine issues `admin` from `env/engine.env` with a forced change at first login, which `make post` makes and records back in `env/engine.env`. A new value there is a rotation. The last issued value or the account's current password re-issues nothing. `breakglass` is hashed into the engine's deploy repo on its first boot and the variable is ignored from then on, so it still works when the engine, the UI and `env/engine.env` are all gone. `make creds` says where its password lives rather than printing it. Once the setup wizard has retired `admin`, `make post` skips the checks that log in and still proves the rest.
 
 The engine **refuses to start** on an empty or `changeme`
 `DFE_AUTH_LOCAL_ADMIN_PASSWORD` unless `DFE_ENV` names a dev posture. `make
 check-compose` asserts the compose file never hands it one, so that is caught
 before a container crash-loops.
 
-`make dev` is the exception and says so: it writes the known default password, `DFE_ENV=dev` and `APP_ENV=development` (the environment every scalo app runs in) into `.env`, because a dev loop should not need a lookup to log in. The engine accepts the default in that posture and makes the admin replace it at first login, and a `.env` already on a dev posture keeps the replacement `make post` recorded. It **refuses** (exit 2) to run when `.env` already declares a non-dev `DFE_ENV` -- downgrading a deployment's posture and overwriting its admin password is not a build target's call. Start that stack with `make up`.
+`make dev` is the exception and says so: it writes the known default password into `env/engine.env` and `DFE_ENV=dev` into `.env`, because a dev loop should not need a lookup to log in. The engine accepts the default in that posture and makes the admin replace it at first login. A `.env` already on a dev posture keeps the replacement `make post` recorded. It **refuses** (exit 2) to run when `.env` already declares a non-dev `DFE_ENV`: downgrading a deployment's posture and overwriting its admin password is not a build target's call. Start that stack with `make up`.
 
-When it does rewrite, it copies the file it replaced to `.env.bak-<utc>` first,
-mode 0600, and prints the path: a minted password is gone once overwritten. A run
-with nothing to change writes neither.
+When it does rewrite, it copies each file it replaces to `<name>.bak-<utc>` beside it first, mode 0600, then prints the paths: a minted password is gone once overwritten. A run with nothing to change writes neither.
 
 `AUTH=real` is the same local build against a deployment's authentication flow,
 for when the login is the thing under test. It mints a password and writes
@@ -131,10 +128,7 @@ make dev    # build :local images from local component source, then start
 make ci     # pull the pinned GHCR images, then start
 ```
 
-`make dev` relies on `docker-compose.override.yml`, which is committed and
-auto-loaded by Compose with no flags. It repoints each DFE service at
-`<service>:local`. `make ci` passes `-f docker-compose.yml` explicitly, which
-skips the override and therefore uses registry images only.
+`make dev` builds the `:local` images, then starts with the overlay the build writes, `.tmp/docker-compose.local.yml`, which repoints each component it built at `<service>:local`. `make ci` names no overlay, so it runs registry images only.
 
 Both start targets run `make env-files` first: it asserts every
 `env.example/<service>.env` has a counterpart in `env/`, runs `make init` for the
@@ -174,10 +168,7 @@ from their own Dockerfile.
 A service that is not a locally buildable DFE component (ClickHouse, the broker,
 `kafka-ui`) is skipped with a message rather than failing the build.
 
-A service that runs a component's image under another name follows it:
-`dlq-init` runs the archiver image, `dfe-hunt-runner` and `dfe-dashboards` the
-engine image. The map is `IMAGE_CONSUMERS` in `scripts/build_dev_images.py`, and
-`make check-compose` asserts the override covers all of it.
+A service that runs a component's image under another name follows it: `dlq-init` runs the archiver image, `dfe-hunt-runner` and `dfe-dashboards` the engine image. The map is `IMAGE_CONSUMERS` in `scripts/build_dev_images.py` and `make check-compose` asserts the overlay a full build writes covers all of it.
 
 The `contract-<app>` one-shots are the deliberate
 exception: they emit an artefact of the PINNED release and stay on the registry
@@ -187,8 +178,7 @@ make a core-only profile compile the Rust components to emit a few files.
 Two of them can start without their component (`IMPLICIT_CONSUMERS`, same file):
 `dlq-init`, which a `depends_on` starts under every Rust app, and
 `dfe-dashboards`, which starts with `hyperdx` whether or not the engine runs.
-`make dev` builds the archiver or the engine for them even on a profile that runs
-neither, or the override points them at a `:local` tag the run never produced.
+`make dev` builds the archiver or the engine for them even on a profile that runs neither, so every DFE image its stack starts comes from source.
 
 ### Some from source, the rest pinned
 
@@ -196,11 +186,7 @@ neither, or the override points them at a `:local` tag the run never produced.
 make dev LOCAL="dfe-engine dfe-ui"   # build these two; everything else from GHCR
 ```
 
-The build writes `docker-compose.local.yml` (not committed) repointing only the
-named components and the services sharing their image at `:local`, and compose
-runs with explicit `-f` files so the all-local override stays out. `SERVICES`
-still filters what starts, `LIVE=1` still layers the engine bind-mounts, and a
-name outside the resolved stack is a hard error.
+The build writes `.tmp/docker-compose.local.yml` repointing only the named components and the services sharing their image at `:local`. `SERVICES` still filters what starts and a name outside the resolved stack is a hard error.
 
 ### Where it looks for your source
 
@@ -217,14 +203,6 @@ Source comes via git, never an assumed directory layout:
   those working trees as they stand, uncommitted changes included. This is the
   explicit replacement for the old sibling-checkout assumption -- nothing is
   inferred from where this repo happens to live.
-- **Live engine edits -- `make dev LIVE=1`.** Layers `docker-compose.live.yml`,
-  which bind-mounts `dfe-engine/config` and `dfe-engine/schemas` from
-  `DFE_SRC_ROOT` so engine config edits land without a rebuild. It hard-fails
-  when `DFE_SRC_ROOT` is unset, because a defaulted path would silently mount
-  empty directories over the engine's own config on any machine without that
-  layout. Note that with `DFE_SRC_ROOT` set, EVERY active component builds from
-  those checkouts -- live mode is "build and mount my local source", not an
-  engine-only switch.
 
 `make stack`'s local-render path is explicit the same way: it uses a dfe-infra
 checkout only when `DFE_INFRA_DIR` names one, and otherwise pulls the signed OCI
@@ -236,7 +214,7 @@ stack manifest.
 make dev LIVE_UI=1   # dfe-ui runs `next dev` over $DFE_SRC_ROOT/dfe-ui
 ```
 
-`LIVE_UI=1` layers `docker-compose.live-ui.yml`, which runs dfe-ui as `next dev` over your checkout instead of building its image. It still sits behind dfe-proxy on `DFE_UI_PORT`, so login, the engine API and the HyperDX embed work as they do on any stack. A saved edit reaches the browser through hot reload, which rides the websocket upgrade the proxy already allows. `docker compose logs -f dfe-ui` shows the dev server's output.
+`LIVE_UI=1` layers `compose/live-ui.yml`, which runs dfe-ui as `next dev` over your checkout instead of building its image. It still sits behind dfe-proxy on `DFE_UI_PORT`, so login, the engine API and the HyperDX embed work as they do on any stack. A saved edit reaches the browser through hot reload, which rides the websocket upgrade the proxy already allows. `docker compose logs -f dfe-ui` shows the dev server's output.
 
 The first start installs dependencies into the checkout, about 1 GB of yarn cache under its gitignored `.yarn/`; later starts install from that cache in seconds. Each route compiles on its first hit. The login page compiles as the dev server starts, so the first visit stays inside dfe-proxy's 15s route timeout.
 
@@ -246,7 +224,7 @@ Next.js only accepts hot-reload connections from `localhost` or the host it serv
 
 The dev server answers its source-map and stack-frame endpoints without a login, so with `DFE_BIND_SCOPE=all` anyone who can reach the console port can read the console's source. Use live mode on a network you trust. `LIVE_UI` only applies to `make dev` and `make apply DEV=1`, never to `make ci` or `make up`.
 
-The container runs as your user and writes `node_modules` and `.next` into the checkout, so stop any `next dev` you run there yourself first. Keys the stack does not set are filled from the checkout's `apps/dfe-core-ui` env files (`.env`, `.env.local` and `.env.development*`). `LOCAL` must not name dfe-ui alongside it.
+The container runs as your user and writes `node_modules` and `.next` into the checkout, so stop any `next dev` you run there yourself first. Keys the stack does not set are filled from the checkout's `apps/dfe-core-ui` env files (`.env`, `.env.local` and `.env.development*`). The stack sets `NEXT_PUBLIC_API_URL` empty, as the production image does, so browser calls stay on the proxy's origin. `next dev` compiles routes in-process, so dfe-ui gets a 4G memory limit in place of the service tier's. `LOCAL` must not name dfe-ui alongside it.
 
 Live mode needs a Linux host: on macOS the container's install would swap the native modules your host's `node_modules` relies on. On a Mac, run `next dev` on the host against the stack's engine instead, on port 5173 since dfe-proxy holds 3000, as dfe-ui's [local development guide](https://github.com/hyperi-io/dfe-ui/blob/main/docs/local-development.md) describes.
 
@@ -295,14 +273,20 @@ A name in `SERVICES` that is not part of the resolved stack is a hard error, not
 | `make rules` | `aws-guardduty-high-severity`, matching a GuardDuty finding rated 7 or above |
 | `make hunts` | That rule, and the hunt `aws-guardduty-high-severity` once `dfe.aws-guardduty` exists, running it every five minutes into `dfe.detection` |
 | `make events` | Two fake GuardDuty findings from `resources/seed/events/`, rated 8.0 and 2.0, so the hunt's next run detects the first and leaves the second |
+| `make orgs` | The org `acme`, for records carrying the tenant id `acme` |
+| `make accounts` | Those orgs, then the admin account `ops` in `dfe-admins` |
 
 `make events` posts its records to dfe-receiver tagged with the source each file is named for, which routes them over the stack's transport, Kafka or gRPC. It waits until the source's table holds them and fails if they do not arrive, so it needs the source deployed by `make sources`, dfe-receiver and an engine that renders the apps' config. It skips the records of a source `make sources` skipped. It sends the records again on every run and needs no login. The hunt that finds them runs in dfe-hunt-runner.
 
-A run of the other three creates only what the engine lacks and leaves an object it already holds as it is, so editing a seed file changes nothing on a stack that has the object; delete the object and the next run creates it from the file. A source is deployed as it is created, which creates its table, and a source the engine holds undeployed is deployed. `make sources` ends by asking the engine to bring every app in step with the sources, which retries a deploy whose apps did not take it.
+A run of any other target creates only what the engine lacks and leaves an object it already holds as it is, so editing a seed file changes nothing on a stack that has the object. Delete the object and the next run creates it from the file. A source is deployed as it is created, which creates its table. A source the engine holds undeployed is deployed. `make sources` ends by asking the engine to bring every app in step with the sources, which retries a deploy whose apps did not take it.
 
-`make sources`, `make rules` and `make hunts` log in as `admin` with `DFE_AUTH_LOCAL_ADMIN_PASSWORD` from `.env`, as `make post` does, and replace a password the engine issued the same way. Once the setup wizard has retired `admin`, they ask at the terminal for an account that can write sources, rules and hunts. They ask once per run and store the login nowhere; without a terminal they stop. An account still on the password it was issued has to change it in the console first.
+Every target but `make events` logs in as `admin` with `DFE_AUTH_LOCAL_ADMIN_PASSWORD` from `env/engine.env` and replaces an issued password as `make post` does. Once the setup wizard has retired `admin`, they ask at the terminal for an account that can write what the target seeds. They ask once per run and store the login nowhere. Without a terminal they stop. An account still on the password it was issued has to change it in the console first.
 
 Each fetcher source runs in its own container, which the engine declares but does not start. The deploy prints the command it needs, such as `recreate required: make apply SERVICES=dfe-fetcher-aws-guardduty`. Until then `make post` leaves the instance out of its metrics check. The fetchers read `AWS_ACCESS_KEY_ID` and `AWS_SECRET_ACCESS_KEY` from `env/fetcher.env` and cannot fetch until both are set. Compose reads that file only when it creates a container, so set the keys before `make apply`, or run it again after setting them.
+
+## Seeding orgs and accounts
+
+`make accounts` creates the orgs first, because the engine refuses an account naming an org it does not hold. An account file carries no password. A new account gets a 24-character one, recorded in `env/engine.env` as `DFE_SEED_ACCOUNT_<USERNAME>_PASSWORD` before the account is created. `make creds` hands it over the way it hands over `admin`. A volume wipe deletes the orgs and accounts, so run both targets again after one. An account comes back on the password already recorded.
 
 ## Proving the pipeline works
 
@@ -335,20 +319,7 @@ make test-e2e
 make test-e2e E2E_TESTS="simple-receiver-to-loader-grpc simple-receiver-to-loader-kafka"
 ```
 
-`tests/e2e/e2e-tests.yaml` is the definition. A `global:` block sets the data file
-(`tests/e2e/data/events.jsonl`), the mode (`ci` builds `--no-cache --pull`; `dev`
-also loads the override file) and `persistent_services` -- only ClickHouse
-survives between tests, so each test runs its own config against a fresh broker.
-The test stacks run as a compose project of their own, `<project>-e2e`, with
-`e2e-` before every container name, so no test reaches the volumes of the stack
-it found. Its engine writes custom keys and instance indexes under
-`.tmp/e2e/<run>/env` rather than `env/`, and its apps read their custom keys
-from there too. That project and its volumes are
-removed when the run ends, and again when the next run starts, in case a killed
-run left them.
-Each entry under `tests:` names a `service_profiles.yaml` profile, optionally
-`expected_topics` (created and cleaned per run, then verified) and
-`config_overrides` keyed by service name.
+`tests/e2e/e2e-tests.yaml` is the definition. A `global:` block sets the data file (`tests/e2e/data/events.jsonl`), the mode (`ci` runs the registry images, `dev` builds local ones and chains the overlay that build writes) and `persistent_services`. Only ClickHouse survives between tests, so each test runs its own config against a fresh broker. The test stacks run as a compose project of their own, `<project>-e2e`, with `e2e-` before every container name, so no test reaches the volumes of the stack it found. Its engine writes custom keys and instance indexes under `.tmp/e2e/<run>/env` rather than `env/` and its apps read their custom keys from there too. That project and its volumes are removed when the run ends and again when the next run starts, in case a killed run left them. Each entry under `tests:` names a `service_profiles.yaml` profile, optionally `expected_topics` (created and cleaned per run, then verified) and `config_overrides` keyed by service name.
 
 The runner brings ClickHouse and `dfe-engine` up first and gates on the engine's
 health, because the engine provisions `dfe.main` and registers the schemas the
@@ -369,7 +340,7 @@ The data file goes to the ingest edge 16 requests at a time. The receiver answer
 
 The suite stops whatever stack the project is running, since both publish the same host ports, so it reads the project first, along with the config hash compose gives each service from its files and environment at that moment. On every way out, a failure or a SIGTERM included, it starts each service that was running or had run to completion again, from the compose files it was started from. A last verdict fails if one comes back on a config hash other than the one compose gave at the start.
 
-A container keeps the hash it was created with, so one whose `.env` or compose file has changed since is named in a warning and comes back on the current config. `make ci` leaves the engine that way whenever `make post` rotates the admin password into `.env`. Run the suite as the user that started the stack: `make` writes that user's GID into the engine's config, and under console TLS its UID and GID into both proxies', so another user shows up in that warning.
+A container keeps the hash it was created with, so one whose `.env` or compose file has changed since is named in a warning and comes back on the current config. `make ci` leaves the engine that way whenever `make post` rotates the admin password into `env/engine.env`. Run the suite as the user that started the stack: `make` writes that user's GID into the engine's config, and under console TLS its UID and GID into both proxies', so another user shows up in that warning.
 
 Under [console TLS](configuration.md#console-tls-opt-in) each test's stack chains the fragments `make ci` does, the exposure opt-outs and container logs included. Its network takes the same-size subnet beside `DFE_NETWORK_SUBNET`, so a found network left behind cannot block it. The console checks go to `https://<DFE_EXTERNAL_ORIGIN host>:<DFE_UI_PORT>` and verify its certificate by chain and name, against `DFE_PROXY_CA_BUNDLE` when a private CA signed it. A certificate that does not verify fails the check with the variable to change.
 
@@ -381,17 +352,17 @@ Two things about the runner worth knowing before you debug it:
   them in and fails regardless of broker health.
 - **It deletes the `_load` sibling of every expected `_land` topic before each run.** Broker volumes outlive containers, so a `main_load` left by any transform run suppresses `main_land` for every non-transform loader thereafter. See [known-issues.md](known-issues.md#a-_load-topic-changes-what-the-loader-reads). Deleting it per run makes a run depend on the test definition, not on broker history.
 
-### The dfe-ui Playwright suite -- one target on, one off
+### The dfe-ui Playwright suite: one target on, one off
 
-The suite seeds its fixtures through the engine's `/api/e2e` routes, which exist only with `DFE_E2E_SERVER=true`, and its seeders refuse anything but `DFE_ENV=test`.
+The suite seeds its fixtures through the engine's `/api/e2e` routes, which exist only with `DFE_E2E_SERVER=true`. Its seeders refuse anything but `DFE_ENV=test`.
 
 ```bash
-make e2e-posture         # DFE_ENV=test, DFE_E2E_SERVER=true, the shipped admin password
-make e2e-posture-check   # exit 1 naming what is missing; the suite runs this first
-make e2e-posture-off     # put back the .env from before
+make e2e-posture         # DFE_ENV=test in .env, DFE_E2E_SERVER=true and the shipped admin password in env/engine.env
+make e2e-posture-check   # exit 1 naming what is missing, the suite runs this first
+make e2e-posture-off     # put back both files from before
 ```
 
-`e2e-posture` copies the `.env` it replaces to `.env.pre-e2e` (0600) the first time, and `e2e-posture-off` restores it. It refuses (exit 2) on a `.env` that names a deployment, since it writes the shipped admin password over the real one. The engine reads `.env` when it starts, so recreate the stack after either switch.
+`e2e-posture` copies each file it replaces to `<name>.pre-e2e` (0600) the first time and `e2e-posture-off` restores them. It refuses (exit 2) on a `.env` that names a deployment, since it writes the shipped admin password over the real one. The engine reads both files when it starts, so recreate the stack after either switch.
 
 ### Rules and hunts -- exactly the matching events
 
@@ -399,7 +370,7 @@ make e2e-posture-off     # put back the .env from before
 make test-e2e E2E_TESTS=rules-and-hunts
 ```
 
-A test with a `detection:` block makes the `e2e` organisation when absent, a rule (`POST /rules`) and a one-minute hunt for it over `dfe.main` into `dfe.detection` (`POST /hunts`), and the runner must commit its first window. It sends the `matching` events and `other` near misses, with `"_org_id": "e2e"`, as the runner reads only the org's rows. The receiver configs keep a sender's `_org_id` (`routing.source_org_id: allow`) and bind the HTTP listener to `default`, `e2e` and `post`, so the field survives the receiver's org clamp. It queues a run (`POST /hunts/{name}/run`) and waits for `last_run` to pass the last event's load time.
+A test with a `detection:` block makes the `e2e` organisation when absent, a rule (`POST /rules`) and a one-minute hunt for it over `dfe.main` into `dfe.detection` (`POST /hunts`), and the runner must commit its first window. It sends the `matching` events and `other` near misses, with `"_org_id": "e2e"`, as the runner reads only the org's rows. Its receiver config, `tests/e2e/configs/receiver-e2e-org.yaml`, keeps a sender's `_org_id` and binds the HTTP listener to `default` and `e2e`, so the field survives the receiver's org clamp. It queues a run (`POST /hunts/{name}/run`) and waits for `last_run` to pass the last event's load time.
 
 The hunt's rows must name, by `matched_uuid`, every landed `matching` row once and no `other` row, under the rule and severity the test gave. The hunt, rule and any org it made are deleted and asserted gone. The rows stay, tagged with the run marker.
 
@@ -454,22 +425,13 @@ Above, sources come through the API. This one creates one in the console, attach
 
 `scripts/test_source.py` supplies what this repo owns: the published ports, the archiver container, the admin login from `.env` and `make apply` for each service the engine says must restart, which is what creates the source's own transform container. Run `make test-source DEV=1` against a `make dev` stack so that apply keeps the local images. `SOURCE_ARGS` reaches the runner untouched (`--keep`, `--per-module`, `--headed`).
 
-Beyond a running stack it needs `DFE_INFRA_DIR` (the runner), `DFE_ENGINE_REPO`
-and `DFE_TRANSFORM_VRL_REPO` (the corpus wrapper, the bundled pipeline), a
-dfe-transform-vector checkout for the vector case (`DFE_TRANSFORM_VECTOR_REPO`, else
-the one beside the engine repo), and an
-interpreter carrying Playwright -- `DFE_ACCEPTANCE_PYTHON` where the system one
-is externally managed. The cloudwatch case polls a real AWS upstream and writes
-nothing to it: put the two `AWS_*` credentials in `env/fetcher.env` and
-`DFE_AWS_REGION` in `.env`.
+Beyond a running stack it needs `DFE_INFRA_DIR` (the runner), `DFE_ENGINE_REPO` and `DFE_TRANSFORM_VRL_REPO` (the corpus wrapper, the bundled pipeline), a dfe-transform-vector checkout for the vector case (`DFE_TRANSFORM_VECTOR_REPO`, else the one beside the engine repo) and an interpreter carrying Playwright (`DFE_ACCEPTANCE_PYTHON` where the system one is externally managed). The cloudwatch case polls a real AWS upstream and writes nothing to it: put the two `AWS_*` credentials in `env/fetcher.env` and `DFE_AWS_REGION` in `.env`.
 
 Every step is a report row and a screenshot under `--shots-dir` (`.tmp/source`).
 A step the console cannot do falls back to the engine API and says so, because
 that is a finding about the console rather than about the pipeline.
 
-`make proof` runs the filebeat and vector cases on every stack version, each
-transform checkout cloned at the tag the stack pins, so a pin of either transform
-is proven through its data path.
+`make proof` runs the filebeat and vector cases on every stack version, each transform checkout cloned at the tag the stack pins, so a pin of either transform is proven through its data path.
 
 ## Static checks
 
@@ -477,7 +439,7 @@ is proven through its data path.
 
 | Target | What it does |
 |---|---|
-| `make check-compose` | `docker compose config` on the registry, dev, live and `LOCAL=` paths, against both Kafka backends, plus the CPU floor and override-coverage assertions |
+| `make check-compose` | `docker compose config` on the registry, dev, `LIVE_UI=1` and `LOCAL=` paths, against both Kafka backends, plus the CPU floor and dev-overlay coverage assertions |
 | `make check-hardfail` | asserts an unpinned checkout refuses to resolve instead of pulling `latest` |
 | `make check-dockerfile` | hadolint on `docker/dfe-rust-builder.Dockerfile` |
 | `make check-docs` | asserts every relative link across the README and the five docs resolves |
@@ -505,9 +467,7 @@ network the first time. The rest need none.
 
 ## Port collisions on a shared dev host
 
-The broker publishes one host port, `19092`. A shared dev box very often already
-runs a Kafka or Redpanda on `9092`, and that does not clash, because the in-network
-listener `kafka:9092` is not published. If something holds `19092`, move it:
+The broker publishes one host port, `19092`. A shared dev box very often already runs a Kafka or Redpanda on `9092`, which does not clash because the in-network listener `kafka:9092` is not published. If something holds `19092`, move it:
 
 ```bash
 make test-e2e KAFKA_PLAINTEXT_HOST_PORT=29192
@@ -528,7 +488,7 @@ dial ClickHouse on 8123/9000 whatever its host publish is. The
 `CLICKHOUSE_EXTERNAL_*_PORT` pair is not a host port; it is only for an
 external `CLICKHOUSE_HOST`.
 
-`make dev` and `make ci` try to bind every host port the resolved stack publishes before starting, and refuse with the variable to set for each one already taken (scripts/port_check.py).
+`make dev` and `make ci` try to bind every host port the resolved stack publishes before starting and refuse with the variable to set for each one already taken (scripts/port_check.py).
 
 Beside another stack on the same daemon, ports are not enough, because every
 `container_name` is daemon-wide. Set `COMPOSE_PROJECT_NAME`, the ports above,
@@ -550,6 +510,8 @@ running stack -- everything is stopped first.
 per-service env file. `LOG_LEVEL` is forwarded by compose, so setting it in
 `env/receiver.env` does nothing; a key compose does not forward reaches the
 container fine.
+
+**A one-shot's `sh -c` command is a list of one.** Compose splits a scalar `command:` into argv, so `sh -c` would run only its first word.
 
 **A build failure in dev mode is usually a component-repo problem.** The builder
 compiles from staged source with no `target/` -- it uses a cache mount rather than

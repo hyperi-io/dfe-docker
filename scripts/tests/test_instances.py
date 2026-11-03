@@ -21,7 +21,7 @@ from pathlib import Path
 import pytest
 
 import instances
-from _common import COMPOSE_FILE, REPO_ROOT
+from _common import COMPOSE_FILE, COMPOSE_ONE_SHOTS_FILE, REPO_ROOT
 
 FETCHER = "dfe-fetcher"
 VRL = "dfe-transform-vrl"
@@ -264,7 +264,9 @@ def test_the_state_volume_is_made_writable_before_the_app_starts(app: str) -> No
     # Docker creates the mountpoint root-owned and the app runs as uid 1000.
     _, root = instances.STATE_DIRS[app]
     compose = COMPOSE_FILE.read_text(encoding="utf-8")
-    init = _committed_block(name="dlq-init", text=compose)
+    init = _committed_block(
+        name="dlq-init", text=COMPOSE_ONE_SHOTS_FILE.read_text(encoding="utf-8")
+    )
 
     assert _volume_at(block=init, target=root) == _volume_at(
         block=_committed_block(name=app, text=compose), target=root
@@ -281,7 +283,7 @@ def test_the_state_volume_moves_with_the_data_root(app: str) -> None:
     )
     overlay = _committed_block(
         name=volume,
-        text=(REPO_ROOT / "docker-compose.storage.yml").read_text(encoding="utf-8"),
+        text=(REPO_ROOT / "compose" / "storage.yml").read_text(encoding="utf-8"),
     )
     makefile = (REPO_ROOT / "Makefile").read_text(encoding="utf-8")
 
@@ -412,8 +414,8 @@ def test_no_warning_while_every_instance_is_declared() -> None:
 
 
 def test_an_instance_copies_the_container_logs_block_when_asked() -> None:
-    # `extends` reads the committed service alone, so the overlay never reaches an instance.
-    text = instances.fragment({FETCHER: ["a", "b"]}, container_logs=True)
+    # `extends` reads the committed service alone, so the overlay never reaches an instance
+    text = instances.fragment(container_logs=True, instances={FETCHER: ["a", "b"]})
 
     block = "\n".join(instances.container_logs_block())
     assert "fluentd-request-ack" in block
@@ -422,7 +424,7 @@ def test_an_instance_copies_the_container_logs_block_when_asked() -> None:
 
 
 def test_an_instance_keeps_the_default_log_driver_otherwise() -> None:
-    text = instances.fragment({FETCHER: ["a"]})
+    text = instances.fragment(instances={FETCHER: ["a"]})
 
     assert "logging:" not in text
     assert "x-container-logs" not in text

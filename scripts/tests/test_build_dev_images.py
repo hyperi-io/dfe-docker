@@ -19,11 +19,14 @@ import re
 from pathlib import Path
 
 import build_dev_images
-from _common import COMPOSE_FILE, PER_SOURCE_APP_KEYS
+from _common import COMPOSE_FILE, COMPOSE_ONE_SHOTS_FILE
 
-_OVERRIDE_FILE = COMPOSE_FILE.parent / "docker-compose.override.yml"
 _SERVICE_KEY_RE = re.compile(r"^  ([A-Za-z0-9._-]+):$")
 _IMAGE_RE = re.compile(r"^    image: (.+)$")
+# A one-shot that runs its app's image by extending the app
+_EXTENDS_APP_RE = re.compile(
+    r"^    extends: \{file: docker-compose\.yml, service: ([A-Za-z0-9._-]+)\}$"
+)
 _DEPENDS_ON_RE = re.compile(r"^    depends_on:$")
 _DEPENDENCY_RE = re.compile(r"^      (?:- )?([A-Za-z0-9._-]+):?$")
 _REGISTRY_IMAGE_RE = re.compile(r"^\$\{IMAGE_REGISTRY:-[^}]*\}/([a-z0-9-]+):")
@@ -46,6 +49,8 @@ def _services(path: Path) -> dict[str, dict[str, object]]:
             continue
         elif image := _IMAGE_RE.match(line):
             current["image"] = image.group(1)
+        elif extended := _EXTENDS_APP_RE.match(line):
+            current["extends"] = extended.group(1)
         elif _DEPENDS_ON_RE.match(line):
             in_depends_on = True
         elif in_depends_on and (dependency := _DEPENDENCY_RE.match(line)):
@@ -58,9 +63,13 @@ def _services(path: Path) -> dict[str, dict[str, object]]:
 def _runners(*, component: str) -> set[str]:
     """Return every compose service that runs component's registry image, pinned one-shots aside."""
     image = build_dev_images.SERVICE_REPO_DIRS.get(component, component)
+    services = {**_services(COMPOSE_FILE), **_services(COMPOSE_ONE_SHOTS_FILE)}
     runners = set()
-    for service, config in _services(COMPOSE_FILE).items():
-        match = _REGISTRY_IMAGE_RE.match(str(config.get("image", "")))
+    for service, config in services.items():
+        extended = services.get(str(config.get("extends", "")), {})
+        match = _REGISTRY_IMAGE_RE.match(
+            str(config.get("image", extended.get("image", "")))
+        )
         if match and match.group(1) == image and not _PINNED_ONE_SHOT_RE.match(service):
             runners.add(service)
     return runners
@@ -87,23 +96,6 @@ def test_a_local_build_repoints_every_service_that_runs_its_image():
     assert wrong == {}
 
 
-def test_the_committed_override_repoints_every_service_that_runs_a_component():
-    # A per-source app's instances extend docker-compose.yml and never read the override
-    override = _services(_OVERRIDE_FILE)
-    wrong = {}
-    for component in build_dev_images.buildable_components():
-        for service in sorted(_runners(component=component) - set(PER_SOURCE_APP_KEYS)):
-            got = override.get(service, {}).get("image")
-            if got != f"{component}:local":
-                wrong[service] = got
-
-    assert wrong == {}
-
-
-def test_the_committed_override_names_no_per_source_app() -> None:
-    assert set(_services(_OVERRIDE_FILE)) & set(PER_SOURCE_APP_KEYS) == set()
-
-
 def test_a_recorded_build_reads_back_as_the_components_it_put_on_local(
     tmp_path: Path,
 ) -> None:
@@ -116,13 +108,16 @@ def test_a_recorded_build_reads_back_as_the_components_it_put_on_local(
     ]
 
 
-def test_a_record_of_nothing_built_is_deleted(tmp_path: Path) -> None:
+def test_a_record_of_nothing_built_is_an_empty_overlay(tmp_path: Path) -> None:
+    # `make dev` names the record in the compose call after the build, so it must exist
     path = tmp_path / "docker-compose.local.yml"
-    path.write_text(data="services:\n", encoding="utf-8")
+    path.write_text(
+        data=build_dev_images.overlay_text(components=["dfe-engine"]), encoding="utf-8"
+    )
 
     build_dev_images._record(built=[], path=path)
 
-    assert not (path.exists())
+    assert path.read_text(encoding="utf-8").splitlines()[-1] == "services: {}"
     assert build_dev_images.overlay_components(path=path) == []
 
 

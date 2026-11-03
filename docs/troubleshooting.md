@@ -1,7 +1,7 @@
 <!--
 Project:   dfe-docker
 File:      docs/troubleshooting.md
-Purpose:   Reading stack state, and the events-accepted and DLQ diagnoses
+Purpose:   Reading stack state, then diagnosing accepted events that never land and the DLQ spool
 Language:  Markdown
 
 License:   BUSL-1.1
@@ -13,9 +13,7 @@ Copyright: (c) 2026 HYPERI PTY LIMITED
 This applies to you if a stack is misbehaving and you need to find out why --
 yours or someone else's.
 
-Start with the state of the stack, then the [known issues](known-issues.md), then
-the [common failures](common-failures.md) for the one you are actually chasing. Several of the known issues produce symptoms
-that look like something else entirely, so read them before you go deep.
+Start with the state of the stack, then the [known issues](known-issues.md), then the [common failures](common-failures.md) for the one you are actually chasing. Several of the known issues produce symptoms that look like something else entirely, so read them before you go deep.
 
 ## Reading the stack's state
 
@@ -46,18 +44,14 @@ the service key and are unaffected.
 
 ## Where a DFE service's logs are
 
-With self-monitoring on, DFE's own services log through Docker's `fluentd`
-driver, and `docker compose logs dfe-loader` still reads them back from the
-daemon's local copy. The same lines are in ClickHouse -- search the `otel_logs`
-source in HyperDX, or read them directly:
+With self-monitoring on, DFE's own services log through Docker's `fluentd` driver and `docker compose logs dfe-loader` still reads them back from the daemon's local copy. The same lines are in ClickHouse: search the `otel_logs` source in HyperDX or read them directly:
 
 ```bash
 docker exec dfe-clickhouse clickhouse-client --query \
   "SELECT Timestamp, Body FROM dfe.otel_logs WHERE ServiceName = 'dfe-loader' ORDER BY Timestamp DESC LIMIT 50"
 ```
 
-ClickHouse, the broker, the proxies and HyperDX keep `json-file`. To put every
-service back on it, set `DFE_CONTAINER_LOGS_ENABLED=false` and restart.
+ClickHouse, the broker, the proxies and HyperDX keep `json-file`. To put every service back on it, set `DFE_CONTAINER_LOGS_ENABLED=false` and restart.
 
 ## Events are accepted but nothing lands
 
@@ -117,8 +111,16 @@ other half of the picture.
 dfe-fetcher, dfe-loader and dfe-receiver. All four run as non-root `appuser` (uid
 1000), and none of the images pre-creates that path, so Docker creates the
 mountpoint owned by root and no service can write inside it. The `dlq-init`
-one-shot (`chown -R 1000:1000 /var/spool/dfe /var/data/archive /var/lib/dfe-fetcher`) fixes that before
+one-shot (`chown -R 1000:1000` over the spool, the archive, the fetcher cursors and the GeoIP store) fixes that before
 the services start.
+
+## An app stops at its config check
+
+`service "config-check-dfe-loader" didn't complete successfully: exit 1` means the loader's config failed its own check, and the loader was never started. `docker compose logs config-check-dfe-loader` shows the app's error. Fix the config, then run `make apply SERVICES=dfe-loader`, which runs the check again first.
+
+## The receiver's bearer-token mount
+
+dfe-receiver mounts `.secrets/ingest/bearer-tokens` from the `dfe-engine-config` volume as a subpath, which Docker refuses when the path does not exist. The `bearer-tokens-init` one-shot creates it first, as uid 1000 and owner-only like the engine's other secrets. It is a directory mount so the engine's token rewrites reach the running receiver.
 
 `archiver-data`, mounted at `/var/data/archive`, has the same problem and the same
 fix. Without it every archive write fails with `Permission denied (os error 13)`,
@@ -144,11 +146,7 @@ Three ways that arrangement fails:
    the warning.
 2. uid 1000 is hard-coded and nothing verifies it, so an image that renumbers
    appuser breaks the DLQ silently.
-3. In dev mode `docker-compose.override.yml` maps dlq-init to
-   `dfe-archiver:local`, so `make dev` builds the archiver from source even on
-   profiles that run no archiver. `make dev LOCAL=...` without `dfe-archiver` in
-   the list leaves dlq-init on the **registry** image instead, which needs GHCR
-   access and a pinned `DFE_ARCHIVER_VERSION`.
+3. In dev mode dlq-init runs `dfe-archiver:local`, so `make dev` builds the archiver from source even on profiles that run no archiver. `make dev LOCAL=...` without `dfe-archiver` in the list leaves dlq-init on the **registry** image instead, which needs GHCR access and a pinned `DFE_ARCHIVER_VERSION`.
 
 **Files under `/var/spool/dfe/dlq` mean events were accepted and then could not be delivered.** They are evidence, not noise: read them to see what was rejected and why. On a gRPC profile, where there is no broker, the loader writes its own dead letters there, under `dlq/loader/`. On a Kafka profile it writes them to the `dfe_loader_dlq` topic, which Kafbat on `:8081` shows, and to that file only when the broker does not take them.
 
@@ -160,8 +158,8 @@ A row ClickHouse refuses with no working DLQ to take it is lost. The loader logs
 
 ## Related
 
-- [known-issues.md](known-issues.md) -- open problems whose symptoms mislead
-- [common-failures.md](common-failures.md) -- the failures seen most often, by symptom
+- [known-issues.md](known-issues.md) - open problems whose symptoms mislead
+- [common-failures.md](common-failures.md) - the failures seen most often, by symptom
 - [observability.md](observability.md) -- the health surface and what each endpoint proves
 - [operating.md](operating.md) -- auth position, exposure, limits, secrets
 - [configuration.md](configuration.md) -- every variable, port and image

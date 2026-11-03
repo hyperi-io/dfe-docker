@@ -21,13 +21,19 @@ from _common import RENDERED_PROFILES, SERVICE_PROFILES_FILE
 
 
 class EngineTierCase(TypedDict):
-    """The broker and content directory a tier is configured with, whether the engine renders there and what it is told."""
+    """The broker a tier is configured with, whether the engine renders there and what it is told."""
 
     configured_broker: str
-    content_dir: str
     expected: dict[str, str]
     profile: str
     renders: bool
+
+
+class ProfileEnvCase(TypedDict):
+    """The profile.mk lines and the dotenv text they render to."""
+
+    expected: str
+    lines: list[str]
 
 
 class ResolveProfileRefusalCase(TypedDict):
@@ -55,7 +61,6 @@ _RENDERED_PATHS = {
 ENGINE_TIER_CASES = [
     EngineTierCase(
         configured_broker="",
-        content_dir="/app/content",
         expected={
             **_RENDERED_PATHS,
             "DFE_ENGINE_CONTRACT_DIR": "/app/content/contract",
@@ -69,10 +74,9 @@ ENGINE_TIER_CASES = [
     ),
     EngineTierCase(
         configured_broker=" broker.example.invalid:9092 ",
-        content_dir="/srv/content",
         expected={
             **_RENDERED_PATHS,
-            "DFE_ENGINE_CONTRACT_DIR": "/srv/content/contract",
+            "DFE_ENGINE_CONTRACT_DIR": "/app/content/contract",
             "DFE_KAFKA_BOOTSTRAP_SERVERS": "broker.example.invalid:9092",
             "DFE_STACK_PROFILE": "docker-slim",
             "DFE_TRANSPORT_BUS_PRESENT": "true",
@@ -83,7 +87,6 @@ ENGINE_TIER_CASES = [
     ),
     EngineTierCase(
         configured_broker="broker.example.invalid:9092",
-        content_dir="/app/content",
         expected={
             "DFE_APP_CONFIG_MOUNT": "/etc/dfe/apps",
             "DFE_ENGINE_APP_CONFIG_BASE_DIR": "",
@@ -97,6 +100,13 @@ ENGINE_TIER_CASES = [
         profile="single-grpc",
         renders=False,
     ),
+]
+PROFILE_ENV_CASES = [
+    ProfileEnvCase(expected="DFE_A='x y'\n", lines=["export DFE_A := x y"]),
+    ProfileEnvCase(expected="DFE_A=''\n", lines=["export DFE_A := "]),
+    ProfileEnvCase(expected="\n", lines=["export PROFILE_FLAGS := --profile a"]),
+    ProfileEnvCase(expected='DFE_A="it\'s \\$B"\n', lines=["export DFE_A := it's $B"]),
+    ProfileEnvCase(expected="DFE_L='{\"a\":1}'\n", lines=['export DFE_L := {"a":1}']),
 ]
 RESOLVE_PROFILE_REFUSAL_CASES = [
     ResolveProfileRefusalCase(
@@ -156,7 +166,6 @@ class TestEngineTier:
     def test_matches_expected(self, case: EngineTierCase) -> None:
         tier = resolve_profile.engine_tier(
             configured_broker=case["configured_broker"],
-            content_dir=case["content_dir"],
             profile_name=case["profile"],
             renders=case["renders"],
             transport=case["profile"].partition("-")[2],
@@ -166,20 +175,9 @@ class TestEngineTier:
 
 
 class TestProfileEnv:
-    @pytest.mark.parametrize(
-        ("lines", "expected"),
-        [
-            (["export DFE_A := x y"], "DFE_A='x y'\n"),
-            (["export DFE_A := "], "DFE_A=''\n"),
-            (["export PROFILE_FLAGS := --profile a"], "\n"),
-            (["export DFE_A := it's $B"], 'DFE_A="it\'s \\$B"\n'),
-            (['export DFE_L := {"a":1}'], "DFE_L='{\"a\":1}'\n"),
-        ],
-    )
-    def test_renders_make_assignments_as_dotenv(
-        self, expected: str, lines: list[str]
-    ) -> None:
-        assert resolve_profile.profile_env(lines=lines) == expected
+    @pytest.mark.parametrize("case", PROFILE_ENV_CASES)
+    def test_matches_expected(self, case: ProfileEnvCase) -> None:
+        assert resolve_profile.profile_env(lines=case["lines"]) == case["expected"]
 
     def test_a_bare_compose_run_gets_the_profile_values(
         self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
@@ -204,10 +202,10 @@ class TestResolveProfile:
     )
     def test_the_receiver_dlq_skips_kafka_where_there_is_no_broker(
         self,
-        expected: str,
         monkeypatch: pytest.MonkeyPatch,
-        profile: str,
         tmp_path: Path,
+        profile: str,
+        expected: str,
     ) -> None:
         values = _profile_mk(
             monkeypatch=monkeypatch, profile=profile, tmp_path=tmp_path

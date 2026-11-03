@@ -47,6 +47,8 @@ _APPS = (
 _CONTENT_MOUNT = "/app/content"
 _CONTENT_VOLUME = "dfe-engine-content"
 _CONTRACT_ROOT = f"{_CONTENT_MOUNT}/contract"
+# The emitter's app, as its command reads it. Compose keeps `$$` escaped in the model
+_APP_VAR = "$$CONTRACT_APP"
 _ENGINE_SERVICE = "dfe-engine"
 # The host `env/` tree inside the engine, where it writes each app's custom keys.
 _APP_ENV_MOUNT = "/app/app-env"
@@ -79,7 +81,6 @@ def _resolved(
     """Run the resolver for one profile and read back the assignments it wrote, its caller holding the `dotenv` fixture so the developer's .env changes nothing."""
     written = tmp_path / ".tmp" / "profile.mk"
     monkeypatch.setattr(resolve_profile, "PROFILE_MK", written)
-    monkeypatch.delenv(resolve_profile.ENGINE_CONTENT_DIR_VAR, raising=False)
     monkeypatch.setitem(os.environ, "DFE_PROFILE", profile)
     assert resolve_profile.main() == 0
     values: dict[str, str] = {}
@@ -131,12 +132,16 @@ def test_an_app_that_cannot_emit_does_not_stop_the_engine(
     app: str, services: dict[str, dict]
 ) -> None:
     """scalo exits non-zero on a write it cannot make, hence the wrapper."""
-    command = "".join(services[f"contract-{app}"]["command"])
+    emitter = services[f"contract-{app}"]
+    command = "".join(emitter["command"])
 
-    assert f"{app} config-schema --dir {_CONTRACT_ROOT}/{app}.new" in command
+    assert emitter["environment"]["CONTRACT_APP"] == app
+    assert (
+        f'"{_APP_VAR}" config-schema --dir "{_CONTRACT_ROOT}/{_APP_VAR}.new"' in command
+    )
     assert "\nif " in command
     assert "else" in command
-    assert services[f"contract-{app}"]["entrypoint"] == ["/bin/sh", "-c"]
+    assert emitter["entrypoint"] == ["/bin/sh", "-c"]
 
 
 @pytest.mark.parametrize("app", _APPS)
@@ -148,9 +153,8 @@ def test_the_contract_names_the_ref_that_produced_it(
     command = "".join(emitter["command"])
 
     assert emitter["environment"]["CONTRACT_REF"] == services[app]["image"]
-    assert "CONTRACT_REF" in command
-    assert f'"app":"{app}"' in command
-    assert f"{_CONTRACT_ROOT}/{app}.new/source.json" in command
+    assert f'"{_APP_VAR}" "$$CONTRACT_REF"' in command
+    assert f'"{_CONTRACT_ROOT}/{_APP_VAR}.new/source.json"' in command
 
 
 def test_the_engine_waits_for_every_contract_and_requires_none(
@@ -341,9 +345,14 @@ def test_an_emission_replaces_the_last_one_whole_or_leaves_none(
     (bindir / app).write_text(_FAKE_APP, encoding="utf-8")
     (bindir / app).chmod(0o755)
     emitter = services[f"contract-{app}"]
-    script = "".join(emitter["command"]).replace(_CONTENT_MOUNT, str(content))
+    script = (
+        "".join(emitter["command"])
+        .replace("$$", "$")
+        .replace(_CONTENT_MOUNT, str(content))
+    )
     environment = {
         "PATH": f"{bindir}{os.pathsep}{os.environ['PATH']}",
+        "CONTRACT_APP": app,
         "CONTRACT_REF": "ref",
         **fake,
     }

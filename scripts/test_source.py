@@ -50,25 +50,29 @@ from pathlib import Path
 # Bytecode for the repo modules imported below goes to .tmp/pycache, as it does under make
 sys.pycache_prefix = str(Path(__file__).resolve().parent.parent / ".tmp" / "pycache")
 
-from _common import _load_dotenv, _print, _published_url  # noqa: E402
+from _common import (  # noqa: E402
+    ENGINE_COMPONENT,
+    _load_dotenv,
+    _load_env_file,
+    _print,
+    _published_url,
+)
 from _pipeline import env_or  # noqa: E402
 
 PROJECT_DIR = Path(__file__).resolve().parent.parent
+_ADMIN_NAME_KEY = "DFE_AUTH_LOCAL_ADMIN_NAME"
+_ADMIN_PASSWORD_KEY = "DFE_AUTH_LOCAL_ADMIN_PASSWORD"
 # Container names are daemon-wide and DFE_CONTAINER_PREFIX moves them, so the
 # archiver is reached through compose.
 ARCHIVER_SERVICE = "dfe-archiver"
 # The runner appends the hinted service as $1; $0 is the checkout make runs in.
 APPLY_SCRIPT = 'exec make -C "$0" --no-print-directory apply SERVICES="$1"'
 RUNNER_PATH = Path("scripts") / "acceptance" / "source" / "run.py"
-# The cases that push a corpus, and the checkout the runner reads it out of.
-# One repo for all three: they feed the same corpus and the elastic case takes
-# its cisco_ios module out of it. A case absent here passes no --transform-repo,
-# which is the fetched cloudwatch one.
+# The cases that push the one corpus repo, which also holds elastic's cisco_ios module, so fetched cloudwatch passes no --transform-repo
 CORPUS_CASES = ("filebeat", "elastic", "vector")
 CORPUS_REPO_ENV_VAR = "DFE_TRANSFORM_VRL_REPO"
 CORPUS_MARKER = Path("pipelines") / "filebeat" / "filebeat.vrl"
-# The vector case uploads its own app's pipeline. Unnamed, the runner looks for
-# a dfe-transform-vector checkout beside the engine repo.
+# The checkout the vector case uploads its own app's pipeline from, else the runner looks beside the engine repo
 PROGRAM_CASES = ("vector",)
 PROGRAM_REPO_ENV_VAR = "DFE_TRANSFORM_VECTOR_REPO"
 PROGRAM_MARKER = Path("pipelines") / "filebeat" / "filebeat.yaml"
@@ -109,33 +113,18 @@ def _engine_repo(flag: str | None) -> Path:
     return repo
 
 
-def _transform_repo(flag: str | None, case: str) -> Path | None:
-    """The checkout this case's corpus is read out of.
-
-    Optional: a fetched case reads none, and the runner falls back to the
-    checkout beside the engine repo when this is not passed.
-    """
-    if case not in CORPUS_CASES:
+def _case_repo(
+    *, case: str, cases: tuple[str, ...], env_var: str, flag: str | None, marker: Path
+) -> Path | None:
+    """The checkout ``flag`` or ``env_var`` names for a case in ``cases``, else None to let the runner find it."""
+    if case not in cases:
         return None
-    candidate = flag or os.environ.get(CORPUS_REPO_ENV_VAR)
-    if not candidate:
+    candidate = (flag) or (os.environ.get(env_var))
+    if not (candidate):
         return None
     repo = Path(candidate).expanduser().resolve()
-    if not ((repo / CORPUS_MARKER).is_file()):
-        sys.exit(f"test_source: {repo} carries no {CORPUS_MARKER}")
-    return repo
-
-
-def _program_repo(flag: str | None, case: str) -> Path | None:
-    """The checkout this case's program is uploaded from, or None to let the runner find it."""
-    if case not in PROGRAM_CASES:
-        return None
-    candidate = flag or os.environ.get(PROGRAM_REPO_ENV_VAR)
-    if not candidate:
-        return None
-    repo = Path(candidate).expanduser().resolve()
-    if not ((repo / PROGRAM_MARKER).is_file()):
-        sys.exit(f"test_source: {repo} carries no {PROGRAM_MARKER}")
+    if not ((repo / marker).is_file()):
+        sys.exit(f"test_source: {repo} carries no {marker}")
     return repo
 
 
@@ -279,23 +268,24 @@ def _ui_urls(*, bound: str, host: str) -> tuple[str, str]:
 
 
 def _suite_env(
-    *, found: Mapping[str, str], host: str, engine_url: str
+    *, engine_url: str, found: Mapping[str, str], host: str
 ) -> dict[str, str]:
     """The DFE_E2E_* block, the same one dfe-ops exports for the Kubernetes lanes.
 
-    There it comes from the cluster's secrets and port-forwards; here from .env
-    and the published ports, which is where a compose deployment keeps them.
+    There it comes from the cluster's secrets and port-forwards. Here it comes from
+    .env, env/engine.env and the published ports, where a compose deployment keeps
+    them.
 
     The block is laid over ``found``, the environment the script was started
     with, never over .env: make re-reads .env and exports a key it finds in the
-    environment with the spaces before that line's comment, which turns every
-    annotated image pin into a reference Docker refuses.
+    environment with the spaces before that line's comment, which turns any
+    value written with an inline comment into one Docker refuses.
     """
-    password = os.environ.get("DFE_AUTH_LOCAL_ADMIN_PASSWORD", "")
+    password = os.environ.get(_ADMIN_PASSWORD_KEY, "")
     if not (password):
         sys.exit(
             "test_source: the runner signs in as this deployment's admin, so it "
-            "needs DFE_AUTH_LOCAL_ADMIN_PASSWORD from this stack's .env"
+            f"needs {_ADMIN_PASSWORD_KEY} from this stack's env/engine.env"
         )
     env = dict(found)
     env.update(
@@ -312,7 +302,7 @@ def _suite_env(
             # all pin `database: dfe`), never DFE_OTEL_DATABASE's.
             "DFE_E2E_CH_DB": env_or("DFE_E2E_CH_DB", "dfe"),
             "DFE_E2E_ENGINE_URL": engine_url,
-            "DFE_E2E_ENGINE_USER": env_or("DFE_AUTH_LOCAL_ADMIN_NAME", "admin"),
+            "DFE_E2E_ENGINE_USER": env_or(_ADMIN_NAME_KEY, "admin"),
             "DFE_E2E_ENGINE_PASSWORD": password,
             "DFE_E2E_ADMIN_PASSWORD": password,
         }
@@ -372,11 +362,26 @@ def main(argv: list[str] | None = None) -> int:
     # set it by hand, because a raw `docker compose` gets the loopback default).
     ui_bind = os.environ.get("DFE_UI_BIND_HOST", "").strip()
     found = dict(os.environ)
+    _load_env_file(
+        component=ENGINE_COMPONENT, keys=(_ADMIN_NAME_KEY, _ADMIN_PASSWORD_KEY)
+    )
     _load_dotenv()
     infra = _infra_repo(args.infra_repo)
     engine = _engine_repo(args.engine_repo)
-    transform = _transform_repo(args.transform_repo, args.case)
-    program = _program_repo(args.program_repo, args.case)
+    transform = _case_repo(
+        case=args.case,
+        cases=CORPUS_CASES,
+        env_var=CORPUS_REPO_ENV_VAR,
+        flag=args.transform_repo,
+        marker=CORPUS_MARKER,
+    )
+    program = _case_repo(
+        case=args.case,
+        cases=PROGRAM_CASES,
+        env_var=PROGRAM_REPO_ENV_VAR,
+        flag=args.program_repo,
+        marker=PROGRAM_MARKER,
+    )
     python = _runner_python(args.python)
 
     # The address the stack publishes on, which is `localhost` for one stack on a
@@ -422,7 +427,7 @@ def main(argv: list[str] | None = None) -> int:
     runner += [arg for arg in runner_args if arg != "--"]
 
     _print(msg=f"case {args.case}, console {ui_url}, runner from {infra}")
-    return walk(runner, _suite_env(found=found, host=host, engine_url=engine_url))
+    return walk(runner, _suite_env(engine_url=engine_url, found=found, host=host))
 
 
 if __name__ == "__main__":

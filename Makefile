@@ -8,6 +8,8 @@
 
 .DEFAULT_GOAL := help
 export PYTHONPYCACHEPREFIX := $(CURDIR)/.tmp/pycache
+# The parse writes generated compose files into .tmp/, which a fresh checkout lacks
+$(shell mkdir -p .tmp)
 
 # Read only when present, because make builds a missing include before any goal
 # and `make help` must not mint secrets. Goals that need .env depend on it.
@@ -22,31 +24,19 @@ export CLICKHOUSE_PASSWORD
 export CLICKHOUSE_URL
 export CLICKHOUSE_USERNAME
 
-# An inline comment on a pin leaves the spaces before the `#` in its value, and make
-# passes that padded value on to compose, which fails with "invalid reference format".
+# Strips the spaces an inline comment leaves before the `#` in a pin, which compose rejects as "invalid reference format"
 $(foreach pin,$(filter DFE_%_VERSION DFE_%_VERSION_TAG,$(.VARIABLES)),$(eval $(pin) := $(strip $($(pin)))))
 
-# Host UID/GID passed to live-mode containers (docker-compose.live.yml) that
-# write to bind-mounted host dirs (dfe-engine config/schemas), so files are owned
-# by the host user rather than the image user and writes don't hit permission
-# errors. The GID is also the group every stack adds to dfe-engine, which is how
-# it writes env/<app>.custom.env into the checkout.
+# The host user, which dfe-ui runs as under LIVE_UI=1, both proxies under console TLS and check-proxy's Envoy always, so what they write or read in the checkout stays its own. Its GID is also the group every stack adds to dfe-engine, which is how it writes env/<app>.custom.env into the checkout
 export DFE_DEV_UID := $(shell id -u)
 export DFE_DEV_GID := $(shell id -g)
 
-# Live-edit mode: `make dev LIVE=1` layers docker-compose.live.yml, which
-# bind-mounts dfe-engine config/schemas from DFE_SRC_ROOT so edits land without
-# a rebuild. COMPOSE_FILE chains the overlay for every plain `docker compose`
-# call this make run spawns; the targets that pass -f explicitly (ci, down,
-# clean) ignore COMPOSE_FILE by design, so the registry path stays untouched.
-# External data location: DFE_DATA_ROOT (env, else .env) rehomes every stateful
-# volume onto that path via docker-compose.storage.yml. STORAGE_FLAGS carries it
-# onto the explicit `-f` targets (ci, ci-pull), which must relocate storage too.
+# DFE_DATA_ROOT (env, else .env) rehomes every stateful volume onto that path via compose/storage.yml. STORAGE_FLAGS carries it onto the targets that pass -f themselves
 DFE_DATA_ROOT ?= $(shell sed -n 's/^DFE_DATA_ROOT=//p' .env 2>/dev/null)
 ifneq ($(strip $(DFE_DATA_ROOT)),)
     export DFE_DATA_ROOT
-    STORAGE_CHAIN := :docker-compose.storage.yml
-    STORAGE_FLAGS := -f docker-compose.storage.yml
+    STORAGE_CHAIN := :compose/storage.yml
+    STORAGE_FLAGS := -f compose/storage.yml
 endif
 
 # Goals that work without a resolved service profile. The check-* targets belong
@@ -77,25 +67,19 @@ ifneq (,$(filter-out $(BOOTSTRAP_GOALS),$(or $(MAKECMDGOALS),help)))
         endif
         ACTIVE_SERVICES := $(filter $(SERVICES),$(DFE_SERVICES))
     endif
-    # `make dev LOCAL="dfe-engine dfe-ui"` builds only those and keeps the rest
-    # on the registry pins: the build writes docker-compose.local.yml for the
-    # built components and the compose call names its files explicitly, which
-    # keeps the auto-loaded all-local override out. Empty LOCAL is plain dev.
+    # The overlay every dev compose call names, which the build writes to put what it built on `:local`. LOCAL="dfe-engine dfe-ui" builds only those
     LOCAL ?=
-    LOCAL_OVERLAY := docker-compose.local.yml
-    # The pull runs before the build writes any overlay, so it names none either
-    # way and resolves every image to its registry pin. The auto-loaded override
-    # otherwise sends it after a `:local` tag nothing has built yet, reached
-    # through an image consumer (dfe-hunt-runner runs dfe-engine's image), so it
-    # bites even when the profile holds no DFE service of its own.
-    # DEV_PULL_FLAGS and DEV_FLAGS expand at use time: UI_FLAGS is filled below.
+    LOCAL_OVERLAY := .tmp/docker-compose.local.yml
+    # Empty until a build writes it, so no dev chain names a missing file
+    $(if $(wildcard $(LOCAL_OVERLAY)),,$(file > $(LOCAL_OVERLAY),services: {}))
+    # Expanded at use time, since UI_FLAGS is filled below. The pull runs before the build, so it names no overlay and every image resolves to its registry pin
     DEV_PULL_FLAGS = -f docker-compose.yml $(STORAGE_FLAGS) $(UI_FLAGS) $(LIVE_UI_FLAGS)
+    DEV_FLAGS = -f docker-compose.yml -f $(LOCAL_OVERLAY) $(STORAGE_FLAGS) $(UI_FLAGS) $(LIVE_UI_FLAGS)
     # `LIVE_UI=1` runs dfe-ui from the checkout, so there is no dfe-ui image to build.
     LIVE_UI_SKIP := $(if $(strip $(LIVE_UI)),dfe-ui)
     ifeq ($(strip $(LOCAL)),)
-        # DFE_SERVICES names a per-source app's instances and never the app, so the apps the profile runs per source are built beside it. The build records what it made in the overlay file, which `make apply` reads to keep an instance on its local image
+        # DFE_SERVICES names a per-source app's instances and never the app, so the apps the profile runs per source are built beside it. The build records what it made in the overlay, which `make apply` reads to keep an instance on its local image
         DEV_BUILD := $(filter-out $(LIVE_UI_SKIP),$(ACTIVE_SERVICES)) $(DFE_PER_SOURCE_APPS)
-        DEV_FLAGS :=
         DEV_OVERLAY_ARG := --record $(LOCAL_OVERLAY)
     else
         # Validated against the buildable set rather than the resolved stack: a
@@ -117,14 +101,6 @@ ifneq (,$(filter-out $(BOOTSTRAP_GOALS),$(or $(MAKECMDGOALS),help)))
             $(error LIVE_UI=1 runs dfe-ui from your checkout with `next dev`, so there is no dfe-ui image to build. Drop dfe-ui from LOCAL)
         endif
         DEV_BUILD := $(LOCAL)
-        # The local overlay takes the committed override's slot, keeping the
-        # default chain's relative order so `LIVE=1` resolves the engine volumes
-        # the same way with and without LOCAL.
-        DEV_FLAGS = -f docker-compose.yml -f $(LOCAL_OVERLAY)
-        ifneq ($(strip $(LIVE)),)
-            DEV_FLAGS += -f docker-compose.live.yml
-        endif
-        DEV_FLAGS += $(STORAGE_FLAGS) $(UI_FLAGS) $(LIVE_UI_FLAGS)
         DEV_OVERLAY_ARG := --overlay $(LOCAL_OVERLAY)
     endif
 endif
@@ -140,12 +116,7 @@ endif
 # Ingest (DFE_INGRESS_BIND_HOST) and the operator ports (DFE_BIND_HOST) keep
 # their own audiences and are untouched by it.
 #
-# Every UI publishes by default. An opt-out drops that service's ports mapping,
-# which compose merging cannot do by override -- hence a `!reset` fragment per
-# UI, chained here the same way STORAGE_CHAIN chains the storage overlay.
-# DFE_INFRA_UIS_EXTERNAL=false is the kill switch: it unpublishes every
-# INFRA-class UI at once and beats their individual flags. dfe-ui and the engine
-# API are PRODUCT class and answer only to their own.
+# Every UI publishes by default. An opt-out drops that service's ports mapping, which compose merging cannot do by override, so make writes a `!reset` entry per unpublished service into one fragment and chains it the way STORAGE_CHAIN chains the storage overlay. DFE_INFRA_UIS_EXTERNAL=false is the kill switch: it unpublishes every INFRA-class UI at once and beats their individual flags. dfe-ui and the engine API are PRODUCT class and answer only to their own.
 #
 # Below the profile block because DFE_AUTH_RESOLVED comes from .tmp/profile.mk, so the profile key and the env var can never disagree about whether the auth proxies are in play. The bootstrap goals skip that include and read it empty, which is the auth-off branch, the safe direction for a target that only stops a stack or checks a file.
 # ---------------------------------------------------------------------------
@@ -252,36 +223,62 @@ endef
 
 UI_CHAIN :=
 UI_FLAGS :=
-# The console's HyperDX embed goes with HyperDX, auth or not. Chained before the DFE UI's own fragment, whose reset then drops the console port this one keeps.
-ifneq ($(HYPERDX_GATED),)
-    $(eval $(call chain_fragment,docker-compose.unpublish-hyperdx-embed.yml))
-endif
+
+# The services whose host ports the exposure dials take away. dfe-proxy carries the console and dfe-hyperdx-proxy both HyperDX origins
+UNPUBLISHED :=
 ifeq ($(strip $(DFE_UI_EXTERNAL)),false)
-    $(eval $(call chain_fragment,docker-compose.unpublish-dfe-ui.yml))
+    UNPUBLISHED += dfe-proxy
 endif
 ifeq ($(strip $(DFE_ENGINE_API_EXTERNAL)),false)
-    $(eval $(call chain_fragment,docker-compose.unpublish-engine-api.yml))
+    UNPUBLISHED += dfe-engine
 endif
 
 # Infra class. With the auth profile armed each infra UI moves BEHIND its
 # oauth2-proxy, so its own port is unpublished either way and the gate lands on
 # the proxy instead.
 ifeq ($(strip $(DFE_AUTH_RESOLVED)),true)
-    $(eval $(call chain_fragment,docker-compose.unpublish-kafbat.yml))
-    $(eval $(call chain_fragment,docker-compose.unpublish-hyperdx.yml))
+    UNPUBLISHED += kafka-ui dfe-hyperdx-proxy
     ifneq ($(KAFBAT_GATED),)
-        $(eval $(call chain_fragment,docker-compose.unpublish-auth-kafbat.yml))
+        UNPUBLISHED += oauth2-proxy-kafbat
     endif
     ifneq ($(HYPERDX_GATED),)
-        $(eval $(call chain_fragment,docker-compose.unpublish-auth-hyperdx.yml))
+        UNPUBLISHED += oauth2-proxy-hyperdx oauth2-proxy-hyperdx-api
     endif
 else
     ifneq ($(KAFBAT_GATED),)
-        $(eval $(call chain_fragment,docker-compose.unpublish-kafbat.yml))
+        UNPUBLISHED += kafka-ui
     endif
     ifneq ($(HYPERDX_GATED),)
-        $(eval $(call chain_fragment,docker-compose.unpublish-hyperdx.yml))
+        UNPUBLISHED += dfe-hyperdx-proxy
     endif
+endif
+
+# The line break $(file) writes between a fragment's lines
+define newline
+
+
+endef
+
+# The console's HyperDX embed goes with HyperDX, auth or not, keeping the console's line. dfe-proxy's own reset drops both and a second key would be duplicate YAML
+EMBED_UNPUBLISHED := $(if $(filter dfe-proxy,$(UNPUBLISHED)),,$(HYPERDX_GATED))
+
+ifneq ($(strip $(UNPUBLISHED))$(EMBED_UNPUBLISHED),)
+    $(file > .tmp/docker-compose.unpublish.yml,# Generated by make$(newline)services:)
+    $(foreach service,$(UNPUBLISHED),$(file >> .tmp/docker-compose.unpublish.yml,  $(service):$(newline)    ports: !reset []))
+    ifneq ($(EMBED_UNPUBLISHED),)
+        $(file >> .tmp/docker-compose.unpublish.yml,  dfe-proxy:$(newline)    ports: !override$(newline)      - $${DFE_UI_BIND_HOST:-127.0.0.1}:$${DFE_UI_PORT:-3000}:8080)
+    endif
+    $(eval $(call chain_fragment,.tmp/docker-compose.unpublish.yml))
+endif
+
+# A receiver listener's host port publishes once its key is set. The listener itself is enabled in the receiver's config
+RECEIVER_LISTENERS := BEATS:5044 GRPC:6000 HEC:8088 OTLP_GRPC:4317 OTLP_HTTP:4318
+RECEIVER_PORTS_SET := $(strip $(foreach listener,$(RECEIVER_LISTENERS),$(if $(strip $(DFE_RECEIVER_$(firstword $(subst :, ,$(listener)))_PORT)),$(listener))))
+
+ifneq ($(RECEIVER_PORTS_SET),)
+    $(file > .tmp/docker-compose.receiver-ports.yml,# Generated by make$(newline)services:$(newline)  dfe-receiver:$(newline)    ports:)
+    $(foreach listener,$(RECEIVER_PORTS_SET),$(file >> .tmp/docker-compose.receiver-ports.yml,      - $${DFE_INGRESS_BIND_HOST:-0.0.0.0}:$${DFE_RECEIVER_$(firstword $(subst :, ,$(listener)))_PORT}:$(lastword $(subst :, ,$(listener)))))
+    $(eval $(call chain_fragment,.tmp/docker-compose.receiver-ports.yml))
 endif
 
 # One service per app instance dfe-engine has rendered a config for, generated
@@ -291,16 +288,13 @@ ifeq ($(strip $(DFE_INSTANCES_RESOLVED)),true)
     $(eval $(call chain_fragment,.tmp/docker-compose.instances.yml))
 endif
 
-# Container stdout to the collector. Off wherever the collector is not, because the
-# driver would queue lines for an endpoint nothing listens on. Empty for the bootstrap
-# goals, which reads as off -- the safe direction for a target that only stops a
-# stack or checks a file.
+# Container stdout to the collector only where one runs, since the driver would queue lines for an endpoint nothing listens on (the bootstrap goals resolve empty, which reads as off)
 DFE_CONTAINER_LOGS_ENABLED ?= true
 ifeq ($(strip $(DFE_OTEL_RESOLVED))-$(strip $(DFE_CONTAINER_LOGS_ENABLED)),true-true)
-    $(eval $(call chain_fragment,docker-compose.container-logs.yml))
+    $(eval $(call chain_fragment,compose/container-logs.yml))
 endif
 
-# Live console edits: `make dev LIVE_UI=1` runs dfe-ui as `next dev` over DFE_SRC_ROOT/dfe-ui (docker-compose.live-ui.yml). It rides the dev paths only, like LIVE=1, so the registry goals (ci, up, apply without DEV) never run a dev server. It chains after the container-logs fragment because it puts dfe-ui back on the default log driver.
+# Live console edits: `make dev LIVE_UI=1` runs dfe-ui as `next dev` over DFE_SRC_ROOT/dfe-ui (compose/live-ui.yml). It rides the dev paths only, so the registry goals (ci, up, apply without DEV) never run a dev server. It chains after the container-logs fragment because it puts dfe-ui back on the default log driver.
 # The Node image comes from the checkout's own Dockerfile rather than a second pin here, read without a shell so a path with a quote in it stays a path.
 LIVE_UI_GOALS := dev dev-build apply apply-services
 ifneq ($(strip $(LIVE_UI)),)
@@ -311,8 +305,8 @@ ifneq ($(strip $(LIVE_UI)),)
     LIVE_UI_ORIGIN_HOST := $(call origin_host,DFE_EXTERNAL_ORIGIN)
     LIVE_UI_ORIGIN_NAME := $(and $(filter-out localhost [%,$(LIVE_UI_ORIGIN_HOST)),$(subst .,,$(subst 0,,$(subst 1,,$(subst 2,,$(subst 3,,$(subst 4,,$(subst 5,,$(subst 6,,$(subst 7,,$(subst 8,,$(subst 9,,$(LIVE_UI_ORIGIN_HOST)))))))))))))
     export DFE_UI_DEV_HOST := $(if $(LIVE_UI_ORIGIN_NAME),$(LIVE_UI_ORIGIN_HOST),0.0.0.0)
-    LIVE_UI_CHAIN := :docker-compose.live-ui.yml
-    LIVE_UI_FLAGS := -f docker-compose.live-ui.yml
+    LIVE_UI_CHAIN := :compose/live-ui.yml
+    LIVE_UI_FLAGS := -f compose/live-ui.yml
     # Refused here rather than at compose interpolation, which `make dev` reaches only after `down` has stopped the stack.
     ifneq (,$(filter $(LIVE_UI_GOALS),$(MAKECMDGOALS)))
         ifeq ($(strip $(DFE_UI_NODE_IMAGE)),)
@@ -324,7 +318,7 @@ endif
 # ---------------------------------------------------------------------------
 # Console TLS (opt-in)
 #
-# DFE_PROXY_TLS=true chains docker-compose.tls.yml, which serves the console, the HyperDX embed and both HyperDX origins over TLS with one certificate. Outside a dev posture the engine marks its OIDC cookies Secure, so a sign-in on any hostname but localhost needs it.
+# DFE_PROXY_TLS=true chains compose/tls.yml, which serves the console, the HyperDX embed and both HyperDX origins over TLS with one certificate. Outside a dev posture the engine marks its OIDC cookies Secure, so a sign-in on any hostname but localhost needs it.
 #
 # The engine trusts X-Forwarded-Proto from dfe-proxy's address alone, so that address is fixed: the last host of DFE_NETWORK_SUBNET, with every other container allocated from the first half. Make cannot do the address arithmetic, so scripts/proxy_tls.py does.
 # ---------------------------------------------------------------------------
@@ -346,7 +340,7 @@ ifeq ($(strip $(DFE_PROXY_TLS)),true)
     PROXY_NETWORK := $(shell python3 scripts/proxy_tls.py network '$(strip $(DFE_NETWORK_SUBNET))')
     export DFE_PROXY_IP := $(word 1,$(PROXY_NETWORK))
     export DFE_NETWORK_IP_RANGE := $(word 2,$(PROXY_NETWORK))
-    $(eval $(call chain_fragment,docker-compose.tls.yml))
+    $(eval $(call chain_fragment,compose/tls.yml))
 endif
 
 # Only the start goals need the certificate, for the reason ORIGIN_GOALS gives. The auth refusal is in the .tmp/profile.mk recipe instead, because it reads DFE_AUTH_RESOLVED and this pass may still hold the previous run's
@@ -384,10 +378,9 @@ certs: ## Mint a console TLS certificate for DFE_EXTERNAL_ORIGIN's host, localho
 	@$(CERT_DIR_REFUSAL)
 	@python3 scripts/proxy_tls.py mint --cert-dir '$(DFE_PROXY_CERT_DIR)' --host '$(or $(call origin_host,DFE_EXTERNAL_ORIGIN),localhost)'
 
-ifneq ($(strip $(LIVE)),)
-    export COMPOSE_FILE := docker-compose.yml:docker-compose.override.yml:docker-compose.live.yml$(STORAGE_CHAIN)$(UI_CHAIN)$(LIVE_UI_CHAIN)
-else ifneq ($(strip $(STORAGE_CHAIN))$(strip $(UI_CHAIN))$(strip $(LIVE_UI_CHAIN)),)
-    export COMPOSE_FILE := docker-compose.yml:docker-compose.override.yml$(STORAGE_CHAIN)$(UI_CHAIN)$(LIVE_UI_CHAIN)
+# What every plain `docker compose` call this make run spawns reads. The targets that pass -f themselves ignore it
+ifneq ($(strip $(STORAGE_CHAIN))$(strip $(UI_CHAIN))$(strip $(LIVE_UI_CHAIN)),)
+    export COMPOSE_FILE := docker-compose.yml$(STORAGE_CHAIN)$(UI_CHAIN)$(LIVE_UI_CHAIN)
 endif
 
 # The gated infra UIs go to the resolver, so the engine's admin links name only
@@ -401,8 +394,8 @@ else ifneq ($(filter dev dev-build,$(MAKECMDGOALS)),)
 else ifeq ($(filter ci,$(MAKECMDGOALS)),)
     RESOLVE_LOCAL_ARGS = --local-overlay $(LOCAL_OVERLAY)
 endif
-# The goals that start or recreate services, the only ones that ask docker compose for the CPU limits the collector reports as cores deployed.
-USAGE_GOALS := dev ci up apply apply-services
+# The goals that start or recreate services, the only ones that ask docker compose for the CPU limits the collector reports as cores deployed
+USAGE_GOALS := dev ci up infra apply apply-services
 .tmp/profile.mk: FORCE
 	@python3 scripts/resolve_profile.py $(if $(KAFBAT_GATED),--unpublished kafbat) $(if $(HYPERDX_GATED),--unpublished hyperdx) $(RESOLVE_LOCAL_ARGS) $(if $(filter $(USAGE_GOALS),$(MAKECMDGOALS)),--usage)
 ifneq ($(PROXY_TLS_START),)
@@ -424,8 +417,8 @@ init: ## Create .env and per-service env/<service>.env files from templates, and
 	@python3 scripts/init.py
 	@python3 scripts/creds.py --write
 
-# Start targets require every per-service env file (dfe-ui reads INTERNAL_API_URL
-# from env/ui.env). Compose marks them optional so `make down` never needs them.
+# Start targets require every per-service env file (dfe-engine reads its secrets
+# from env/engine.env). Compose marks them optional so `make down` never needs them.
 # The guard creates what is missing (init is non-destructive) rather than refusing,
 # so a release that adds a template does not stop an initialised deployment. The
 # .env prerequisite mints the secrets before a fresh checkout's first start.
@@ -438,15 +431,15 @@ env-files: .env ## Assert every env/<service>.env exists, creating any the templ
 # call it, because its stdout is a build log. `make init` and `make up` pass
 # --write, which also leaves access-summary.md (0600, gitignored) for the operator.
 .PHONY: creds
-creds: ## Print the access summary. The admin password prints on a TTY only -- a pipe, a file, a CI log or DFE_CREDS_SHOW=0 gets the .env key instead
+creds: ## Print the access summary. The admin password prints on a TTY only -- a pipe, a file, a CI log or DFE_CREDS_SHOW=0 gets the env/engine.env key instead
 	@python3 scripts/creds.py
 
 # A dev tyre-kick logs in without looking anything up, so `make dev` writes the
 # KNOWN default password and DFE_ENV=dev, the one posture the engine accepts it in.
 # A .env already on a dev posture keeps a non-default password, the replacement
 # `make post` recorded after the engine made the admin change the default.
-# It refuses with exit 2 on any other DFE_ENV, and copies .env to .env.bak-<utc>
-# before overwriting a minted password.
+# It refuses with exit 2 on any other DFE_ENV and copies each file it rewrites to
+# <name>.bak-<utc> first, so a minted password in env/engine.env survives.
 #
 # `AUTH=real` is the other half: local images running the same authentication flow
 # a deployment gets, so it mints a password and writes a non-dev posture instead.
@@ -458,19 +451,19 @@ else
 endif
 
 .PHONY: dev-posture
-dev-posture: .env ## Put .env into the dev posture (DFE_ENV=dev, known admin password until the stack replaces it); AUTH=real mints one and writes a non-dev posture instead
+dev-posture: env-files ## Put .env and env/engine.env into the dev posture (DFE_ENV=dev, known admin password until the stack replaces it); AUTH=real mints one and writes a non-dev posture instead
 	@python3 scripts/dev_posture.py $(DEV_POSTURE_ARG)
 
 .PHONY: e2e-posture
-e2e-posture: .env ## Put .env into the posture the dfe-ui Playwright suite needs (DFE_ENV=test, the engine's e2e routes on), keeping the .env it replaces for e2e-posture-off
+e2e-posture: env-files ## Put .env and env/engine.env into the dfe-ui Playwright suite's posture (DFE_ENV=test, the engine's e2e routes on), keeping both originals for e2e-posture-off
 	@python3 scripts/e2e_posture.py on
 
 .PHONY: e2e-posture-off
-e2e-posture-off: ## Put back the .env from before e2e-posture
+e2e-posture-off: ## Put back the .env and env/engine.env from before e2e-posture
 	@python3 scripts/e2e_posture.py off
 
 .PHONY: e2e-posture-check
-e2e-posture-check: ## Exit 1, naming what is missing, unless .env is in the e2e posture. The Playwright run calls it first
+e2e-posture-check: ## Exit 1 naming what is missing unless the env files are in the e2e posture, which the Playwright run checks first
 	@python3 scripts/e2e_posture.py check
 
 # `make stack VERSION=X.Y.Z` pins the certified set. `make dial` writes the dial's
@@ -492,7 +485,7 @@ stack: .env ## Pin image versions into .env from the DFE stack SSoT (VERSION=X.Y
 # the dial merges the deploy-controlled keys over them. Canonical superset lives
 # in dfe-infra; a lone dfe-docker clone deploys from deployment.yaml alone.
 .PHONY: dial
-dial: .env ## Render deployment.yaml (the deployment dial) into .env -- docker-vm slice
+dial: .env ## Render deployment.yaml (the deployment dial) into .env and env/engine.env -- docker-vm slice
 	@python3 scripts/render_dial.py
 
 # The two deploy-currency modes, stated in one place: PINNED (make stack + make
@@ -504,14 +497,14 @@ modes: ## Show the deploy modes -- pinned vs track-latest -- and which one this 
 	@python3 scripts/show_modes.py
 
 # ---------------------------------------------------------------------------
-# Dev (builds from local source via docker-compose.override.yml)
+# Dev (builds local images from source)
 # ---------------------------------------------------------------------------
 
 # The bind directories must exist before the local volume driver mounts them.
 .PHONY: storage-dirs
 storage-dirs:
 ifneq ($(strip $(DFE_DATA_ROOT)),)
-	@mkdir -p $(addprefix $(DFE_DATA_ROOT)/,clickhouse kafka-redpanda kafka-apache archiver dlq-spool fetcher-cursors transform-elastic-geoip engine-config engine-schemas hyperdx-documentdb)
+	@mkdir -p $(addprefix $(DFE_DATA_ROOT)/,clickhouse kafka-apache kafka-redpanda archiver dlq-spool fetcher-cursors transform-elastic-geoip engine-config engine-schemas hyperdx-documentdb)
 endif
 
 # `dev` and `dev-build` clone the component repos from github.com/hyperi-io,
@@ -532,7 +525,7 @@ dev-build: ## Build local DFE images from source (no start; honours LOCAL). Clon
 	$(if $(strip $(DEV_BUILD)),python3 scripts/build_dev_images.py $(DEV_OVERLAY_ARG) $(DEV_BUILD))
 
 # ---------------------------------------------------------------------------
-# CI / registry images (skips docker-compose.override.yml)
+# CI / registry images
 # ---------------------------------------------------------------------------
 
 # A registry stack runs no local image, so the record of the last dev build goes, or `make apply` would put an instance back on it.
@@ -569,6 +562,9 @@ else
     APPLY_FLAGS = -f docker-compose.yml $(STORAGE_FLAGS) $(UI_FLAGS)
 endif
 
+# The apps with a config-check-<app> in compose/one-shots.yml, which a --no-deps recreate would skip
+CONFIG_CHECKED_APPS := dfe-archiver dfe-loader dfe-receiver
+
 .PHONY: apply
 apply: env-files storage-dirs ## Create or recreate the named services after a config write, removing the containers of deleted sources (SERVICES="svc ..."; DEV=1 for a `make dev` stack), the command dfe-engine's hints name. With no SERVICES it only removes, for after a source is deleted
 	@$(MAKE) --no-print-directory apply-services
@@ -579,9 +575,10 @@ apply-services:
 	@python3 scripts/instances.py --prune -- $(APPLY_FLAGS) $(PROFILE_FLAGS)
 # The engine names no command after a delete, and an empty SERVICES would recreate the whole stack.
 ifneq ($(strip $(SERVICES)),)
+	@for check in $(addprefix config-check-,$(filter $(CONFIG_CHECKED_APPS),$(ACTIVE_SERVICES))); do docker compose $(APPLY_FLAGS) $(PROFILE_FLAGS) run --rm --no-deps "$$check" || exit 1; done
 	docker compose $(APPLY_FLAGS) $(PROFILE_FLAGS) up -d --force-recreate --no-deps $(ACTIVE_SERVICES)
 endif
-# An added or removed instance moves the CPU limits the collector reports, and compose recreates it only when they did.
+# An added or removed instance moves the CPU limits the collector reports and compose recreates it only when they did
 ifeq ($(strip $(DFE_OTEL_RESOLVED)),true)
 	docker compose $(APPLY_FLAGS) $(PROFILE_FLAGS) up -d --no-deps otel-collector
 endif
@@ -632,8 +629,8 @@ print-ruff-version:
 
 .PHONY: check-python
 check-python: ## Lint the helper scripts (config in ruff.toml)
-	$(RUFF) check scripts/ ops/
-	$(RUFF) format --check scripts/ ops/
+	$(RUFF) check scripts/ ops/ resources/demo/events/
+	$(RUFF) format --check scripts/ ops/ resources/demo/events/
 
 # Pinned for the same reason RUFF is, and installed the same way in CI
 # (PYTEST=pytest). Unit tests over the helper scripts: they
@@ -670,14 +667,13 @@ check-locks: ## Assert each inline-metadata script's lock matches its pins (relo
 	$(LOCK_UV) lock --check --script scripts/test_e2e.py
 	$(LOCK_UV) lock --check --script scripts/test_flows.py
 
-# The resolved chain, for check-compose to compare the `make dev LOCAL=...` file
-# list against. Not a bootstrap goal: the chain depends on DFE_AUTH_RESOLVED.
+# The resolved chain, for check-compose to compare the `make dev` file list against. Not a bootstrap goal: the chain depends on DFE_AUTH_RESOLVED.
 .PHONY: print-compose-file
 print-compose-file:
 	@echo "COMPOSE_FILE=$(COMPOSE_FILE)"
 
 .PHONY: check-compose
-check-compose: ## Resolve compose on the registry, dev and live paths, both Kafka backends
+check-compose: ## Resolve compose on the registry, dev, LIVE_UI and LOCAL paths, both Kafka backends
 	@python3 scripts/check_compose.py
 
 .PHONY: check-hardfail
@@ -782,8 +778,16 @@ post: ## Prove the RUNNING stack moves data end to end (DFE_POST_ENABLED=false t
 
 # ---------------------------------------------------------------------------
 # Seed
-# The starter set in resources/seed, created through the engine API on a RUNNING stack, plus fake events for its hunt to find. hunts also creates the rules in the same seed.py run, because the engine refuses a hunt whose rule does not exist. One run means a login asked for at the terminal is asked for once. sources, rules and hunts create only what the engine lacks, but events sends its records again on every run.
+# The starter set in resources/seed, created through the engine API on a RUNNING stack, plus fake events for its hunt to find. hunts also creates the rules in the same seed.py run, because the engine refuses a hunt whose rule does not exist. accounts creates the orgs first, because the engine refuses an account naming an org it does not hold. One run means a login asked for at the terminal is asked for once. Every target but events creates only what the engine lacks. events sends its records again on every run. A volume wipe loses every object, so run the targets again after one.
 # ---------------------------------------------------------------------------
+
+.PHONY: orgs
+orgs: ## Create the resources/seed orgs the running engine lacks
+	@$(UV) run --locked --script ./scripts/seed.py orgs
+
+.PHONY: accounts
+accounts: ## Create the resources/seed orgs and accounts the running engine lacks, recording each new account's minted password in env/engine.env for `make creds`
+	@$(UV) run --locked --script ./scripts/seed.py accounts
 
 .PHONY: sources
 sources: ## Create the resources/seed sources the running engine lacks, deploying each
@@ -803,21 +807,21 @@ events: ## Send the fake resources/seed events through the receiver, after `make
 
 # ---------------------------------------------------------------------------
 # Demo
-# Raw firewall and switch syslog through the RUNNING stack, on whichever profile runs dfe-transform-elastic. The Sources are resources/demo/demo.toml's, created through the engine API, and dfe-transform-elastic in agentless mode detects each line's vendor and lands it in that vendor's table.
+# Raw firewall syslog through the RUNNING stack, each line's vendor detected by dfe-transform-elastic in agentless mode and landed in that vendor's table
 # ---------------------------------------------------------------------------
 
-# The replay script inside the dfe-transform-elastic checkout, fetched at the tag DFE_TRANSFORM_ELASTIC_VERSION pins or read from DFE_SRC_ROOT/dfe-transform-elastic.
+# The replay script inside the dfe-transform-elastic checkout, fetched at the tag DFE_TRANSFORM_ELASTIC_VERSION pins or, with DEV=1, read from DFE_SRC_ROOT/dfe-transform-elastic
 DEMO_GENERATOR ?= scripts/replay_syslog.py
 DEMO_PROTOCOL ?= tcp
 DEMO_RATE ?= 20
-# The stream's container, one per compose project, so a second `make demo` replaces it and `make down` finds it.
+# The stream's container, one per compose project, so a second `make demo` replaces it and `make down` finds it
 DEMO_CONTAINER := $(PROXY_PROJECT)-demo-syslog-stream
-# The generator is standard-library Python and dfe-transform-elastic's image has none, so it runs here, pinned like the hadolint image above.
+# The generator is standard-library Python and dfe-transform-elastic's image has none, so it runs here, pinned like the hadolint image above
 DEMO_PYTHON_IMAGE := python:3.14-slim-trixie@sha256:cd89c30eda26ee911a4611b18680086e0ea42e6f5f8cbe653d07fa7958c9cec8
 
-# On a clone with no stack this is the whole path: make up, then the stream. A running stack is left as it is, and a profile with no dfe-transform-elastic is refused before anything starts. The stream runs under a bare python3: demo.py reads its Sources with tomllib and drives docker, make and git.
+# On a clone with no stack this is the whole path: make up, then the stream. A running stack is left as it is, and a profile with no dfe-transform-elastic is refused before anything starts. The stream runs under a bare python3: demo.py reads its Sources as JSON and drives docker, make and git.
 .PHONY: demo
-demo: ## Start the stack when it is not running, then stream live firewall syslog through it until `make demo-stop`, detected per line by dfe-transform-elastic and landed one table per vendor (PROFILE=, VERSION=, DEMO_RATE, DEMO_PROTOCOL=tcp|udp; DEV=1 for a `make dev` stack). A second run replaces the stream
+demo: ## Start the stack when it is not running, then stream live firewall syslog through it, detected per line by dfe-transform-elastic into one table per vendor beside two fetchers pulling into their own, until `make demo-stop` or a receiver restart (PROFILE=, VERSION=, Sources in resources/demo/sources, DEMO_RATE, DEMO_PROTOCOL=tcp|udp, DEV=1 for a `make dev` stack)
 	@python3 scripts/quickstart.py prepare demo $(QUICKSTART_ARGS) $(if $(strip $(DEV)),--dev)
 	@python3 scripts/quickstart.py running || { $(MAKE) --no-print-directory ci && python3 scripts/creds.py --write; }
 	@$(MAKE) --no-print-directory demo-run
@@ -847,12 +851,12 @@ ps: ## Show running containers, and warn about a deleted source's container stil
 # services by probing then found the stray. Volumes survive; `make clean` is the
 # one that deletes data.
 .PHONY: down
-down: demo-stop ## Stop and remove containers across all profiles, and the `make demo` stream (keeps volumes)
+down: demo-stop ## Stop and remove containers across all profiles and the `make demo` stream (keeps volumes)
 	docker compose -f docker-compose.yml --profile "*" down --remove-orphans
 
 # The engine's volume goes with its sources, so the instance indexes it wrote into env/ go too.
 .PHONY: clean
-clean: demo-stop ## Stop and remove all containers and volumes across every profile, the `make demo` stream, and dfe-engine's per-source instance indexes
+clean: demo-stop ## Stop and remove all containers and volumes across every profile, the `make demo` stream and dfe-engine's per-source instance indexes
 	docker compose -f docker-compose.yml --profile "*" down -v --remove-orphans
 	rm -f env/*.instances
 

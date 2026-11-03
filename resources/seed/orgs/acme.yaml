@@ -1,0 +1,12 @@
+# Project:   dfe-docker
+# File:      resources/seed/orgs/acme.yaml
+# Purpose:   Starter customer org for the records that carry the acme tenant id
+# Language:  YAML
+#
+# License:   BUSL-1.1
+# Copyright: (c) 2026 HYPERI PTY LIMITED
+
+name: acme
+display_name: Acme
+org_ids:
+  - acme

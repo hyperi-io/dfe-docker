@@ -1,0 +1,41 @@
+# Project:   dfe-docker
+# File:      compose/live-ui.yml
+# Purpose:   Run dfe-ui as `next dev` from your checkout
+# Language:  YAML
+#
+# License:   BUSL-1.1
+# Copyright: (c) 2026 HYPERI PTY LIMITED
+
+services:
+  dfe-ui:
+    image: ${DFE_UI_NODE_IMAGE:?start live mode with make dev LIVE_UI=1}
+    user: "${DFE_DEV_UID:-1000}:${DFE_DEV_GID:-1000}"
+    init: true
+    working_dir: /src
+    command:
+      - sh
+      - -c
+      - |
+        set -e
+        corepack yarn install --immutable
+        (node -e "const warm = () => fetch('http://localhost:3000/login').catch(() => setTimeout(warm, 2000)); setTimeout(warm, 2000);" &)
+        exec corepack yarn workspace dfe-core-ui dev --hostname ${DFE_UI_DEV_HOST:-0.0.0.0} --port 3000
+    extra_hosts:
+      - "${DFE_UI_DEV_HOST:-0.0.0.0}:0.0.0.0"
+    environment:
+      COREPACK_ENABLE_DOWNLOAD_PROMPT: "0"
+      COREPACK_HOME: /src/.yarn/corepack
+      HOME: /tmp
+      NEXT_PUBLIC_API_URL: ""
+      NEXT_TELEMETRY_DISABLED: "1"
+      NODE_ENV: development
+      YARN_GLOBAL_FOLDER: /src/.yarn/berry
+    volumes:
+      - ${DFE_SRC_ROOT:?set it to the directory holding your dfe-ui checkout}/dfe-ui:/src
+    deploy:
+      resources:
+        limits:
+          memory: 4G
+    logging: !reset null
+    healthcheck:
+      start_period: 600s

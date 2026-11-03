@@ -10,7 +10,7 @@ The whole DFE stack on one host with Docker Compose, for a single box, an edge s
 - `make stack`, which writes every image pin with its digest from a certified DFE stack release. With a pin unset the stack refuses to start rather than pull `latest`, but compose does not check that a hand-edited pin carries a digest.
 - `make up` from the registry images, or `make dev` to build chosen components from source.
 - Kafka or Redpanda as the broker, and opt-in overlays for TLS, storage and an oauth2-proxy `auth` profile.
-- `make post`, which checks the running stack moves data end to end, every claim the active profile can make, and fails a run that asserted nothing. `DFE_POST_ENABLED=false` switches it off and it then exits 0. `make creds` prints the console URL and admin login, with the password on a TTY only (anywhere else it names the `.env` key).
+- `make post`, which checks the running stack moves data end to end, every claim the active profile can make, and fails a run that asserted nothing. `DFE_POST_ENABLED=false` switches it off and it then exits 0. `make creds` prints the console URL and admin login, with the password on a TTY only (anywhere else it names the `env/engine.env` key).
 - Seed sources, rules and hunts loaded into a running engine with `make sources`, `make rules` and `make hunts`.
 
 ## Start here: which of these are you?
@@ -54,7 +54,7 @@ git clone https://github.com/hyperi-io/dfe-docker && cd dfe-docker
 make demo
 ```
 
-`make demo` creates `.env`, pins the newest published stable stack, starts the `single-kafka` profile, and streams Cisco ASA and FortiGate syslog through it until `make demo-stop`. Its first line says the profile and stack in use. `make creds` prints the DFE console URL and the admin login.
+`make demo` creates `.env`, pins the newest published stable stack, starts the `single-kafka` profile, and streams Cisco ASA and FortiGate syslog through it beside two fetchers (crates.io metadata and the GitHub releases of the DFE components) until `make demo-stop`. Its first line says the profile and stack in use. `make creds` prints the DFE console URL and the admin login.
 
 To start the stack without the stream:
 
@@ -72,7 +72,7 @@ make down                        # stop everything
 - Docker and Docker Compose v2
 - make, git and Python 3 (standard library only)
 - [`oras`](https://oras.land) and [`cosign`](https://docs.sigstore.dev/cosign/system_config/installation/) - optional. `make up`, `make stack` and `make check-proxy` read the signed OCI stack manifest through them, and each runs as a digest-pinned container through Docker when it is not installed. `DFE_STACK_VERIFY=false` skips the signature check, and `DFE_STACK_SIGNER_IDENTITY` and `DFE_STACK_SIGNER_ISSUER` name the signer of a manifest repo of your own. All three are read from the environment, then `.env`. Neither is needed if you render from a local dfe-infra checkout (`DFE_INFRA_DIR`).
-- [`uv`](https://docs.astral.sh/uv/) - only for the seed targets (`make sources`, `make rules`, `make hunts`, `make events`) and the e2e tests.
+- [`uv`](https://docs.astral.sh/uv/) - only for the seed targets (`make sources`, `make rules`, `make hunts`, `make events`, `make orgs`, `make accounts`) and the e2e tests.
 - [`gh`](https://cli.github.com), logged in - only for `DFE_STACK_REPIN_IMAGES=1`,
   which reads each component's GitHub releases through it.
 
@@ -89,12 +89,7 @@ This creates `.env` from `.env.example` and `env/<service>.env` for every templa
 Re-running `make init` is safe - existing files are never overwritten. It does two
 things beyond the copy:
 
-- **Generates secrets.** A random value is minted for `DFE_UI_NEXTAUTH_SECRET`,
-  `HYPERDX_POSTGRES_PASSWORD`, `HYPERDX_EXPRESS_SESSION_SECRET` and
-  `HYPERDX_TOKEN_ENCRYPTION_KEY`. An existing `.env` that predates a key is topped up,
-  so upgrading does not break your checkout. Compose carries a sentinel (or empty)
-  default for each rather than hard-failing (a hard-fail would abort `make down` too); the
-  power-on self test is what refuses to pass while a default is still in place.
+- **Generates secrets.** Each secret is minted into the file that holds it: `.env`, `env/engine.env`, `env/ui.env` or `env/hyperdx.env`. An existing file that predates a key is topped up. A compose hard-fail would abort `make down` too, so the power-on self test refuses to pass while a default is in place.
 - **Reports drift.** The copy is one-shot, so an `.env` created months ago never
   learns that `.env.example` grew a setting. A re-run lists the keys you are
   missing. It only reports - editing your `.env` is yours to do.
@@ -274,10 +269,7 @@ The DFE stack ships two default "it is working" e2e tests: (1) the core data pat
 
 ### Shared dev hosts (port collision)
 
-The broker publishes one host port, `19092`, for tools outside the containers. The in-network
-listener `kafka:9092` is not published, so an always-on Kafka or Redpanda on `9092` does not
-clash. If something already holds `19092`, remap it. The harness only reaches the broker over
-the docker network alias `kafka:9092`, so any free host port works:
+The broker publishes one host port, `19092`, for tools outside the containers. The in-network listener `kafka:9092` is not published, so an always-on Kafka or Redpanda on `9092` does not clash. If something already holds `19092`, remap it. The harness only reaches the broker over the docker network alias `kafka:9092`, so any free host port works:
 
   ```
   make test-e2e KAFKA_PLAINTEXT_HOST_PORT=29192
@@ -312,9 +304,8 @@ dfe-docker stands the whole DFE suite up as one Docker Compose stack on a single
 | Path | What it holds |
 |---|---|
 | `docker-compose.yml` | Every service and every infrastructure profile. The one file `make ci` names explicitly |
-| `docker-compose.override.yml` | Auto-loaded by `docker compose`, so `make dev` builds from source; `make ci` passes `-f docker-compose.yml` to skip it |
-| `docker-compose.{live,storage,container-logs,unpublish-*}.yml` | Opt-in overlays the Makefile chains onto `COMPOSE_FILE` |
-| `service_profiles.yaml` | Which DFE services start, the transport and the config each one mounts. Ships `active_profile: slim-grpc` |
+| `compose/` | The opt-in overlays the Makefile chains: `live-ui`, `storage`, `tls` and `container-logs`. It writes the exposure opt-outs and the dev build's local images into `.tmp/` beside them |
+| `service_profiles.yaml` | Which DFE services start, the transport and the config each one mounts. Ships `active_profile: slim-grpc`, which `make ci` and `make dev` run. `make up` and `make demo` default to `single-kafka` on a clone with no image pins |
 | `Makefile` | Every entry point, plus the profile, overlay and UI-exposure resolution that decides which compose files a target passes |
 | `scripts/resolve_profile.py` | Reads `service_profiles.yaml` and writes the generated `.tmp/profile.mk` the Makefile includes |
 | `scripts/stack.py` | `make stack` - writes `tag@sha256` pins into `.env` from a local dfe-infra checkout (`DFE_INFRA_DIR`) or the signed OCI stack manifest |
@@ -354,13 +345,13 @@ Two ways a green run says less than it looks:
 |---|---|---|
 | Leave containers running when you are finished | `make down`, on every host you touched, the same session | `down` sweeps every profile rather than the active one, because passing only the active profile's services left the previous profile's containers up - still holding host ports and still answering health probes for a pipeline that was no longer wired (`Makefile`, the `down` target) |
 | Assume the deployment target is idle | Check what is already running before you start anything | The docker definition-of-done target carries a long-lived stack refreshed on a 6-hourly systemd timer (`ops/daemon-update/`), not a box you get to yourself |
-| Assume events go through Kafka | Read the profile's `transport` first | `slim-grpc`, the shipped `active_profile`, is `transport: grpc`: the receiver dials `dfe-loader:6000` directly and no broker starts. The `-kafka` profiles start one. The core data path is otherwise identical. `post` and `test-e2e` assert the same landing row either way |
+| Assume events go through Kafka | Read the profile's `transport` first | `slim-grpc`, the shipped `active_profile` (`make up` and `make demo` default to `single-kafka`, which is Kafka), is `transport: grpc`: the receiver dials `dfe-loader:6000` directly and no broker starts. The `-kafka` profiles start one. The core data path is otherwise identical. `post` and `test-e2e` assert the same landing row either way |
 | Add a DDL file or a topic-creating step here | Change the schema in dfe-engine | dfe-engine ships the schemas in its own image and reports healthy only once it has applied them. `scripts/tests/test_engine_only_schema_control.py` fails the build on one (#118) |
 | Give an external ClickHouse's port through `CLICKHOUSE_HTTP_PORT` or `CLICKHOUSE_NATIVE_PORT` | Set `CLICKHOUSE_EXTERNAL_HTTP_PORT` and `CLICKHOUSE_EXTERNAL_NATIVE_PORT` | The first pair is the bundled container's host publish and nothing else, so it is safe to move for a second stack; services on the network dial 8123/9000 unless the EXTERNAL pair says otherwise (#75) |
-| Move the loader's `grpc.listen` off 6000, or confuse it with the receiver's 6000 | Keep the loader on container port 6000, published on host port 50051 | dfe-engine compiles every sender's loader endpoint as `dfe-loader:6000`, so a loader listening anywhere else drops every record behind an HTTP 202 with nothing logged. The receiver's 6000 is the external Vector protocol, off unless `DFE_RECEIVER_GRPC__ENABLED=true` and unpublished until its line in `docker-compose.yml` is uncommented. The loader's is the internal `DfeTransport/Push` and binds `DFE_BIND_HOST` (`127.0.0.1`). `scripts/tests/test_loader_grpc_port.py` fails the build on a mismatch |
+| Move the loader's `grpc.listen` off 6000, or confuse it with the receiver's 6000 | Keep the loader on container port 6000 | dfe-engine compiles every sender's loader endpoint as `dfe-loader:6000`, so a loader listening anywhere else drops every record behind an HTTP 202 with nothing logged. The receiver's 6000 is the external Vector protocol, off unless `DFE_RECEIVER_GRPC__ENABLED=true` and unpublished until `DFE_RECEIVER_GRPC_PORT` is set. The loader's is the internal `DfeTransport/Push` and publishes no host port. `scripts/tests/test_loader_grpc_port.py` fails the build on a mismatch |
 | Publish the UIs beyond loopback and leave `DFE_EXTERNAL_ORIGIN` alone | Set it to the address browsers actually use | `DFE_BIND_SCOPE=all` with a loopback origin builds HyperDX's frame-ancestors policy and every next-auth redirect from the wrong host, so the console comes up with its observability views blocked and sends logins to the wrong machine. The Makefile now refuses the combination (#108) |
 | Raise `REDPANDA_MEMORY` on its own | Raise `DFE_BROKER_MEMORY` above it | The broker gets at most the container limit less the host's `vm.min_free_kbytes`: `redpanda/start.sh` lowers `--memory` to that and logs a WARN naming the `DFE_BROKER_MEMORY` that restores it (`.env.example:229`, `.env.example:519`) |
-| Publish the broker's in-network listener `9092` to the host | Use the host listener on `19092` (`KAFKA_PLAINTEXT_HOST_PORT`) | `9092` advertises `kafka:9092`, which a host client can't resolve, and it collides with an always-on dev Kafka (#36) |
+| Publish the broker's in-network listener `9092` to the host | Use the host listener on `19092` (`KAFKA_PLAINTEXT_HOST_PORT`) | `9092` advertises `kafka:9092`, a name a host client can't resolve. It also collides with an always-on dev Kafka (#36) |
 | Set `DFE_UPDATE_WIPE_STATE=1` on a box that also sets `DFE_DATA_ROOT` | Leave `DFE_DATA_ROOT` unset if you rely on the wipe | `make clean` does not chain the storage overlay, so it removes the volume objects while the bind directories keep their contents and the wipe silently becomes a no-op (`ops/daemon-update/README.md`) |
 | Take the local `CLAUDE.md` as current | Read the file you are asking about | It is gitignored and unmaintained. It still names `dfe-operator` as the Kubernetes repo, claims `hyperi-hyperdx` floats on `:latest`, counts seven docs where there are nine, and points at a `scripts/deprecated/` directory that has been removed |
 

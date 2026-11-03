@@ -1,0 +1,26 @@
+
+# Project:   dfe-docker
+# File:      compose/oauth2-proxy.yml
+# Purpose:   The settings the three oauth2-proxy gates share
+# Language:  YAML
+#
+# License:   BUSL-1.1
+# Copyright: (c) 2026 HYPERI PTY LIMITED
+
+services:
+  oauth2-proxy:
+    extends: {file: limits.yml, service: limits-sidecar}
+    profiles: ["auth"]
+    restart: unless-stopped
+    environment:
+      OAUTH2_PROXY_ALLOWED_GROUPS: ${DFE_OIDC_ALLOWED_GROUPS:-dfe-infra,dfe-admin}
+      OAUTH2_PROXY_CLIENT_ID: ${DFE_OIDC_CLIENT_ID:-}
+      OAUTH2_PROXY_CLIENT_SECRET: ${DFE_OIDC_CLIENT_SECRET:-}
+      OAUTH2_PROXY_COOKIE_DOMAINS: ${DFE_OAUTH2_PROXY_COOKIE_DOMAIN:-}
+      OAUTH2_PROXY_COOKIE_SECRET: ${DFE_OAUTH2_PROXY_COOKIE_SECRET:-}
+      OAUTH2_PROXY_COOKIE_SECURE: ${DFE_OAUTH2_PROXY_COOKIE_SECURE:-false}
+      OAUTH2_PROXY_EMAIL_DOMAINS: ${DFE_OIDC_EMAIL_DOMAINS:-*}
+      OAUTH2_PROXY_HTTP_ADDRESS: 0.0.0.0:4180
+      OAUTH2_PROXY_OIDC_ISSUER_URL: ${DFE_OIDC_ISSUER_URL:-}
+      OAUTH2_PROXY_PROVIDER: oidc
+      OAUTH2_PROXY_SKIP_PROVIDER_BUTTON: "true"

@@ -21,16 +21,16 @@ work, choose Kubernetes.
 
 ## Only the console authenticates -- everything else is bounded by that
 
-The engine's API requires a login. `make init` mints two passwords into `.env` and `make creds` hands them over: `admin` from `DFE_AUTH_LOCAL_ADMIN_PASSWORD`, and the `breakglass` recovery admin, whose hash the engine commits to its deploy repo on the first boot and which therefore outlives the engine, the UI and `.env`.
+The engine's API requires a login. `make init` mints two passwords into `env/engine.env` and `make creds` hands them over: `admin` from `DFE_AUTH_LOCAL_ADMIN_PASSWORD` and the `breakglass` recovery admin, whose hash the engine commits to its deploy repo on the first boot and which therefore outlives the engine, the UI and `env/engine.env`.
 
-The engine issues `admin` with a forced change at first login, which `make post` makes and records back in `.env`. Rotate it by changing the value in `.env` and running `make up`. A value the engine last issued, or the account's current password, re-issues nothing, so a restart never undoes a change.
+The engine issues `admin` with a forced change at first login, which `make post` makes and records back in `env/engine.env`. Rotate it by changing the value in `env/engine.env` and running `make up`. The value the engine last issued or the account's current password re-issues nothing, so a restart never undoes a change.
 
 The engine refuses to start when `DFE_AUTH_LOCAL_ADMIN_PASSWORD` is empty or the shipped default and `DFE_ENV` is not a dev posture. An unset `DFE_ENV` counts as `production`, so only a `.env` that says `dev` gets to run on the shipped password.
 
 `make init` and `make up` also write `access-summary.md` (0600, gitignored) with
 both minted passwords in plaintext. Retire the bootstrap admin from the console
 wizard's last step, or `POST /api/v1/auth/setup/retire-admin`, once your own admin
-exists, then delete `DFE_AUTH_LOCAL_ADMIN_PASSWORD` from `.env` -- the account
+exists, then delete `DFE_AUTH_LOCAL_ADMIN_PASSWORD` from `env/engine.env`. The account
 stays disabled and is never reseeded. Keep the break-glass password offline and
 delete both plaintexts, including that file: the engine keeps only the hash.
 
@@ -131,18 +131,14 @@ Per-port, as published in `docker-compose.yml`:
 | 9091 | dfe-loader | operator | Metrics and health |
 | 9093 | dfe-archiver | operator | Metrics and health |
 | 13133 | otel-collector | operator | `health_check` extension |
-| 50051 | dfe-loader | operator | Internal `DfeTransport/Push` gRPC, container port 6000 |
 
-dfe-fetcher and the three transforms run one instance per source. An instance publishes no host port, so their ingest, Vector API and metrics ports are reached over the Docker network. The receiver's Vector protocol on 6000 publishes only once its line in `docker-compose.yml` is uncommented.
+dfe-fetcher and the three transforms run one instance per source. An instance publishes no host port, so their ingest, Vector API and metrics ports are reached over the Docker network. dfe-loader's `DfeTransport/Push` listener on 6000 is too. The receiver's Vector protocol on 6000 publishes only once `DFE_RECEIVER_GRPC_PORT` is set.
 
 `dfe-ui`, `hyperdx` and `hyperdx-documentdb` publish no host
 ports at all -- they are reached over the Docker network, HyperDX through the
 proxy that holds both its origins. The collector publishes only `24224`, which the
 DOCKER DAEMON sends container stdout to; its OTLP ports stay on the Compose
-network. The receiver's OTLP
-(`4317`, `4318`), Beats (`5044`) and HEC (`8088`) mappings are present but
-commented out; uncomment them to expose those ingest protocols. Note that those
-`4317`/`4318` are the receiver's *ingest* edge, not the collector's.
+network. The receiver's OTLP (`4317`, `4318`), Beats (`5044`) and HEC (`8088`) listeners publish once their port key is set in `.env`. Those `4317`/`4318` are the receiver's *ingest* edge, not the collector's.
 
 Setting `DFE_BIND_HOST=0.0.0.0` opens every operator port at once, including a
 ClickHouse whose `CLICKHOUSE_PASSWORD` defaults to empty and which runs with
@@ -186,23 +182,15 @@ Each UI carries a class, and the class decides what can take it dark:
 infra-class UI at once and beats their individual flags. The product UIs are
 exempt, so locking the ops surfaces down never takes the DFE UI with it.
 
-The console frames HyperDX from dfe-proxy's `:8091`, so HyperDX's two flags
-unpublish that port too, and the console's own `:3000` stays. Switching HyperDX
-off this way takes the console's observability views dark.
+The console frames HyperDX from dfe-proxy's `:8091`, so HyperDX's two flags unpublish that port too and the console's own `:3000` stays. Switching HyperDX off this way takes the console's observability views dark.
 
-Both dials take effect through `make`, which resolves the scope into
-`DFE_UI_BIND_HOST` and chains a `docker-compose.unpublish-*.yml` fragment per
-opted-out UI. Compose merging can add a ports mapping but never remove one, so
-an opt-out has to arrive as a `!reset` fragment rather than an override. A raw
-`docker compose` outside `make` therefore publishes everything on loopback.
+Both dials take effect through `make`, which resolves the scope into `DFE_UI_BIND_HOST`, writes a `!reset` ports entry per opted-out UI into `.tmp/docker-compose.unpublish.yml` and chains it. Compose merging can add a ports mapping but never remove one, so an opt-out has to arrive as a `!reset` rather than an override. The embed alone drops through a `!override` that restates the console's line. A raw `docker compose` outside `make` therefore publishes everything on loopback.
 
 Unpublishing leaves the container running and reachable on the compose network.
 It reduces the accidental surface; it is not access control, and only the console
 and HyperDX ask for a login.
 
-`make check-compose` asserts all of it: that every UI follows the scope on both
-addresses, that no ingest or backing-service port moves with it, and that each
-fragment drops only its own UI.
+`make check-compose` asserts all of it: that every UI follows the scope on both addresses, that no ingest or backing-service port moves with it, that each opt-out drops only its own UI and that the kill switch drops every infra UI.
 
 ## Gating the infra UIs with OIDC
 
@@ -252,16 +240,14 @@ than starting a proxy that redirects nowhere.
 
 ## Resource limits: four tiers, ceilings not reservations
 
-Every service declares `deploy.resources.limits`, which `docker compose up`
-honours outside Swarm. An unlimited service on a single box is how one runaway
-container takes the host down.
+Every service extends a tier in `compose/limits.yml` for its `deploy.resources.limits`, which `docker compose up` honours outside Swarm. An unlimited service on a single box is how one runaway container takes the host down.
 
 | Tier | Applies to |
 |---|---|
 | `DFE_CLICKHOUSE_*` | clickhouse |
-| `DFE_BROKER_*` | kafka-redpanda, kafka-apache |
+| `DFE_BROKER_*` | kafka-apache, kafka-redpanda |
 | `DFE_SERVICE_*` | the DFE components, engine, UI, kafka-ui, HyperDX, its DocumentDB store. HyperDX's memory is `DFE_HYPERDX_MEMORY` |
-| `DFE_SIDECAR_*` | dlq-init, bearer-tokens-init, dfe-dashboards, hyperdx-documentdb-tls, dfe-proxy |
+| `DFE_SIDECAR_*` | the init and contract one-shots, dfe-dashboards, hyperdx-documentdb-tls, both Envoy proxies, otel-collector and the oauth2-proxy gates |
 
 For the actual values and totals, ask the stack rather than this page:
 
@@ -311,6 +297,18 @@ from a shortage of CPU.
 `/readyz`, so you cannot ship this by accident. If you need the ceiling lower
 than the floor, the fix belongs upstream in scalo (its Kafka `recv` wants
 `spawn_blocking` or a `StreamConsumer`), not in your `.env`.
+
+## Containers ignore the host's DNS search domain
+
+Each limit tier extends `base` in `compose/base.yml`, whose `dns_search: ["."]` clears the search domain the host passes into every container. A bare name with no alias (`kafka` on a stack without a broker) then fails to resolve instead of reaching a host on that domain.
+
+## One-shots run before their apps
+
+`compose/one-shots.yml`, which `docker-compose.yml` includes, holds every container that runs once and exits: dlq-init, bearer-tokens-init, the `contract-<app>` emitters, dfe-dashboards, hyperdx-documentdb-tls and a `config-check-<app>` for dfe-archiver, dfe-loader and dfe-receiver.
+
+Each config check runs its app's own `config-check` with the image, environment and config file the app is about to start with, once the engine has rendered that file, and the app starts only after it passes. A broken config therefore stops `make up`, `make dev`, `make ci` and `make apply` with the app's own error instead of leaving the app in a restart loop. A key the app does not know still passes, because the apps ignore unknown keys.
+
+The apps then wait on a healthy dfe-engine, because healthy means their tables and topics exist.
 
 ## Redpanda ships in developer mode
 
@@ -391,46 +389,40 @@ Never commit `.env`.
 
 ## Persistence: what survives, and what `make clean` destroys
 
-These named volumes hold all durable state:
+These named volumes hold all durable state. Every path an image declares a VOLUME gets one, so a down and up never strands an anonymous volume:
 
 | Volume | Holds |
 |---|---|
 | `clickhouse-data` | The ClickHouse warehouse (`/var/lib/clickhouse`) |
-| `kafka-redpanda-data` / `kafka-apache-data` | Broker log and offsets, per backend |
+| `kafka-apache-data` / `kafka-redpanda-data` | Broker log and offsets, per backend |
 | `kafka-apache-secrets` / `kafka-apache-config` | Apache Kafka's TLS and property-file inputs, empty unless a deployment supplies them |
 | `archiver-data` | dfe-archiver output (`/var/data/archive`) |
 | `dlq-spool` | Shared dead-letter spool (`/var/spool/dfe`) |
 | `fetcher-cursors` | dfe-fetcher cursors (`/var/lib/dfe-fetcher`), one directory per fetcher service |
-| `transform-elastic-geoip` | dfe-transform-elastic's GeoIP databases (`/var/lib/dfe/geoip`), downloaded on first start |
+| `transform-elastic-geoip` | dfe-transform-elastic's GeoIP databases (`/var/lib/dfe/geoip`), downloaded on first start to a volume because the image root is read-only |
 | `dfe-engine-config` / `dfe-engine-schemas` | Engine config and schemas, seeded from the engine image on first run |
 | `hyperdx-documentdb-data` | HyperDX metadata store, DocumentDB's PostgreSQL cluster (`/data`) |
 | `hyperdx-documentdb-tls` | The CA and gateway certificate `hyperdx-documentdb-tls` mints, renewed when it nears expiry |
 
 `make down` stops containers and leaves every volume intact. `make clean` runs
 `docker compose --profile "*" down -v --remove-orphans` -- the `-v` deletes all
-of them, which now includes the warehouse. It always removed volumes; what changed
-is that ClickHouse data is in one.
+of them, the warehouse included.
 
 ### Retention
 
 Every time-series table DFE deploys, the OTel tables included, keeps rows for
-`DFE_CLICKHOUSE_DEFAULT_TTL_DAYS` days -- 90 unless set, and 0 disables the
-default TTL. `make init` asks for it once, on a TTY, when it creates `.env` and
-writes the answer as a live line; a non-interactive run keeps the template's
+`DFE_CLICKHOUSE_DEFAULT_TTL_DAYS` days, set in `env/engine.env`: 90 unless set, 0 to disable the
+default TTL. `make init` asks for it once, on a TTY, when it creates `env/engine.env` and
+writes the answer as a live line. A non-interactive run keeps the template's
 commented 90, and the key already set in the environment pre-answers it. The
 value reaches dfe-engine, whose startup apply reconciles existing tables, so
-changing it later is a `.env` edit and a `make ci`. A source, or a
-dfe-schemas definition, that declares its own TTL keeps it. The same knob is
+changing it later is an `env/engine.env` edit and a `make ci`. A source or a
+dfe-schemas definition that declares its own TTL keeps it. The same knob is
 `retention.default_ttl_days` in `deployment.yaml`.
 
 ### External data location
 
-ClickHouse and Kafka grow, and `/var/lib/docker` is rarely the disk sized for
-them. Set `DFE_DATA_ROOT` (in `.env` or the environment) and every volume above
-becomes a bind onto `${DFE_DATA_ROOT}/<name>` via `docker-compose.storage.yml`
--- the make targets create the directories and chain the overlay on every path,
-`make ci` included. The k8s charts parameterise the same choice through
-`storageClass` and size.
+ClickHouse and Kafka grow and `/var/lib/docker` is rarely the disk sized for them. Set `DFE_DATA_ROOT` (in `.env` or the environment) and every volume above becomes a bind onto `${DFE_DATA_ROOT}/<name>` via `compose/storage.yml`. The make targets create the directories and chain the overlay on every path, `make ci` included. The k8s charts parameterise the same choice through `storageClass` and size.
 
 Two consequences to know: switching an existing deployment does not migrate
 data between locations, and `make clean` removes the volume objects while the
@@ -457,7 +449,7 @@ DFE_POST_ENABLED=false make ci   # opt out
 
 It is opt-**out**. A self test you have to remember to run is not a self test.
 Tunables: `DFE_POST_HOST` (default `localhost`), `DFE_POST_DATABASE` (`dfe`),
-`DFE_POST_TABLE` (`default`).
+`DFE_POST_TABLE` (`main`).
 
 A PASS proves exactly this: the ingest edge accepted three events, and within 60
 seconds at least three rows carrying that run's unique marker were readable in
@@ -477,9 +469,7 @@ nobody leaves enabled.
 
 The other outcomes are as informative as the PASS:
 
-- **FAIL on weak secrets** -- `DFE_UI_NEXTAUTH_SECRET`, `HYPERDX_POSTGRES_PASSWORD`,
-  `HYPERDX_EXPRESS_SESSION_SECRET` or `HYPERDX_TOKEN_ENCRYPTION_KEY` is still the
-  committed default. Run `make init`.
+- **FAIL on weak secrets**: `HYPERDX_DOCUMENTDB_PASSWORD`, `NEXTAUTH_SECRET`, `EXPRESS_SESSION_SECRET` or `TOKEN_ENCRYPTION_KEY` is unset or the default. Run `make init`.
 - **FAIL, schema not converged** -- dfe-engine did not report its `schema` readiness check true within 300 seconds. `GET /api/v1/system/schema` on the engine names the object that failed.
 - **SKIP, schema convergence not checked** -- the engine names no `schema` check on `/readyz` and answers 404 on `/api/v1/system/schema`, which is every engine before v1.21.0. The rest of the run still asserts the rows land.
 - **FAIL, not ready** -- the profile declares an ingest component that never
@@ -505,7 +495,7 @@ Every DFE app the profile runs pushes metrics and traces over OTLP, dfe-ui aside
 - [deploying.md](deploying.md) -- the dial, pinning, upgrading a running stack
 - [observability.md](observability.md) -- health surface, self-telemetry, the self test
 - [configuration.md](configuration.md) -- every variable, port and image
-- [troubleshooting.md](troubleshooting.md) -- reading stack state
-- [known-issues.md](known-issues.md) -- open problems whose symptoms mislead
-- [common-failures.md](common-failures.md) -- the failures seen most often, by symptom
+- [troubleshooting.md](troubleshooting.md) - reading stack state
+- [known-issues.md](known-issues.md) - open problems whose symptoms mislead
+- [common-failures.md](common-failures.md) - the failures seen most often, by symptom
 - [architecture.md](architecture.md) -- components, transports, and how data moves

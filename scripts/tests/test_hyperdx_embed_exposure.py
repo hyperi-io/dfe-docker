@@ -1,6 +1,6 @@
 #  Project:      dfe-docker
 #  File:         scripts/tests/test_hyperdx_embed_exposure.py
-#  Purpose:      Assert the HyperDX exposure dials govern the console's HyperDX embed port
+#  Purpose:      Assert the exposure dials and port keys govern what make publishes
 #  Language:     Python
 #
 #  License:      BUSL-1.1
@@ -11,7 +11,7 @@
 The embed stays product class and outside the auth profile's gate, because an OIDC
 redirect cannot complete inside a frame. The HyperDX kill switches take it dark with
 the HyperDX origins. Each case runs a copy of the Makefile for the chain it resolves,
-then reads the real compose model through that chain.
+then reads the real compose model through that chain. The receiver's optional listeners go the same way, each published by its own port key.
 """
 
 import os
@@ -28,6 +28,9 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 # Container ports dfe-proxy publishes: the console and the HyperDX embed.
 _CONSOLE = "8080"
 _EMBED = "8091"
+# Container ports dfe-receiver publishes whatever its port keys say.
+_RECEIVER_BASE = {"8080", "9090"}
+_RECEIVER_FRAGMENT = ".tmp/docker-compose.receiver-ports.yml"
 
 _RESOLVER = '''\
 import os
@@ -64,8 +67,10 @@ def checkout(tmp_path: Path) -> Path:
     return root
 
 
-def _ui_chain(*, checkout: Path, settings: dict[str, str]) -> list[str]:
-    """The exposure fragments `make print-compose-file` chains for `settings`."""
+def _chained_fragment(
+    *, checkout: Path, name: str, settings: dict[str, str]
+) -> str | None:
+    """The fragment `name` as `make print-compose-file` chains it for `settings`, None when it chains none."""
     environment = {
         key: value
         for key, value in os.environ.items()
@@ -87,8 +92,9 @@ def _ui_chain(*, checkout: Path, settings: dict[str, str]) -> list[str]:
     line = next(
         line for line in result.stdout.splitlines() if line.startswith("COMPOSE_FILE=")
     )
-    files = line.removeprefix("COMPOSE_FILE=").split(":")
-    return [name for name in files if name.startswith("docker-compose.unpublish-")]
+    if name not in line.removeprefix("COMPOSE_FILE=").split(":"):
+        return None
+    return (checkout / name).read_text(encoding="utf-8")
 
 
 @pytest.mark.parametrize(
@@ -122,11 +128,13 @@ def test_the_hyperdx_dials_govern_the_embed_and_leave_the_console(
 ) -> None:
     if shutil.which("docker") is None:
         pytest.skip("`docker compose config` renders the model this asserts on")
-    fragments = _ui_chain(checkout=checkout, settings=settings)
+    fragment = _chained_fragment(
+        checkout=checkout, name=check_compose._UNPUBLISH_FRAGMENT, settings=settings
+    )
     environ, _ = check_compose._check_env()
 
     model = check_compose._config_json(
-        env=environ, files=[check_compose.COMPOSE_FILE.name, *fragments]
+        env=environ, files=[check_compose.COMPOSE_FILE.name], fragment=fragment
     )
 
     assert model is not None
@@ -136,3 +144,57 @@ def test_the_hyperdx_dials_govern_the_embed_and_leave_the_console(
     }
     assert (_CONSOLE in targets) == console
     assert (_EMBED in targets) == embed
+
+
+@pytest.mark.parametrize(
+    ("settings", "published"),
+    [
+        pytest.param({}, set(), id="none-set"),
+        pytest.param(
+            {"DFE_RECEIVER_BEATS_PORT": "15044"},
+            {("15044", "5044")},
+            id="one-on-its-own-host-port",
+        ),
+        pytest.param(
+            {
+                "DFE_RECEIVER_BEATS_PORT": "5044",
+                "DFE_RECEIVER_GRPC_PORT": "6000",
+                "DFE_RECEIVER_HEC_PORT": "8088",
+                "DFE_RECEIVER_OTLP_GRPC_PORT": "4317",
+                "DFE_RECEIVER_OTLP_HTTP_PORT": "4318",
+            },
+            {
+                ("4317", "4317"),
+                ("4318", "4318"),
+                ("5044", "5044"),
+                ("6000", "6000"),
+                ("8088", "8088"),
+            },
+            id="all",
+        ),
+    ],
+)
+def test_a_receiver_port_key_publishes_its_listener(
+    checkout: Path, settings: dict[str, str], published: set[tuple[str, str]]
+) -> None:
+    if shutil.which("docker") is None:
+        pytest.skip("`docker compose config` renders the model this asserts on")
+    fragment = _chained_fragment(
+        checkout=checkout, name=_RECEIVER_FRAGMENT, settings=settings
+    )
+    environ, _ = check_compose._check_env()
+
+    assert (fragment is None) == (not (published))
+    model = check_compose._config_json(
+        env={**environ, **settings},
+        files=[check_compose.COMPOSE_FILE.name],
+        fragment=fragment,
+    )
+
+    assert model is not None
+    ports = model["services"]["dfe-receiver"].get("ports") or []
+    assert {
+        (str(port.get("published")), str(port.get("target")))
+        for port in ports
+        if str(port.get("target")) not in _RECEIVER_BASE
+    } == published

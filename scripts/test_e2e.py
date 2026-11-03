@@ -75,9 +75,11 @@ import post  # noqa: E402
 import resolve_profile  # noqa: E402
 import seed  # noqa: E402
 from _common import (  # noqa: E402
+    ENGINE_COMPONENT,
     FALSY,
     _config_argument,
     _load_dotenv,
+    _load_env_file,
     _use_mounted_configs,
     log_line,
 )
@@ -93,7 +95,7 @@ from _pipeline import (  # noqa: E402
     poll_until,
     post_all,
 )
-from build_dev_images import local_image_services  # noqa: E402
+from build_dev_images import local_image_services, overlay_components  # noqa: E402
 
 
 # ==============================================================================
@@ -115,8 +117,8 @@ SUITE_ENV_DIR = TMP_DIR / "env"
 # - Supported config values
 # ------------------------------------------------------------------------------
 MODES = ["dev", "ci"]
-# Chained in dev mode, where it repoints each committed service at its local build
-DEV_OVERRIDE_FILE = "docker-compose.override.yml"
+# Written by this run's dev build and chained in dev mode, putting what it built on its local image
+DEV_OVERLAY_FILE = TMP_DIR / "docker-compose.local.yml"
 DEFAULTS = {
     "data_file": "tests/e2e/data/events.jsonl",
     "mode": "ci",
@@ -135,7 +137,7 @@ SERVICE_PROFILES_FILE = Path(__file__).resolve().parent.parent / "service_profil
 SERVICE_CONFIG_MOUNTS = {
     "dfe-archiver": "/etc/dfe/archiver.yaml",
     "dfe-loader": "/etc/dfe/loader.yaml",
-    "dfe-receiver": "/etc/dfe-receiver/config.yaml",
+    "dfe-receiver": "/etc/dfe/receiver.yaml",
 }
 
 KNOWN_DFE_SERVICES = set(SERVICE_CONFIG_MOUNTS.keys())
@@ -153,9 +155,8 @@ EXTRA_COMPOSE_FILES_ENV_VAR = "DFE_E2E_COMPOSE_FILES"
 # ------------------------------------------------------------------------------
 SCHEMA_AUTHORITY_SERVICE = "dfe-engine"
 SCHEMA_AUTHORITY_PROFILE = "core"
-# Two-second attempts, as long as the engine's compose start period: an engine that finds
-# a schema lease left by a removed one waits the lease out before it applies, and it does
-# not listen until it has.
+READY_POLL_SECONDS = 2
+# Attempts spanning the engine's compose start period, since an engine waiting out a removed engine's schema lease does not listen
 ENGINE_READY_ATTEMPTS = 270
 # resolve_profile.py's `core` footprint, less dfe-engine, which starts first.
 HUNT_RUNNER_SERVICE = "dfe-hunt-runner"
@@ -164,8 +165,6 @@ OTEL_PROFILE = "otel"
 OTEL_SERVICE = "otel-collector"
 OTEL_ENDPOINT_ENV_VAR = "DFE_OTEL_EXPORTER_ENDPOINT"
 OTEL_BUNDLED_ENDPOINT = "http://otel-collector:4317"
-OTEL_ENGINE_BACKEND_ENV_VAR = "DFE_ENGINE_METRICS_BACKEND"
-OTEL_ENGINE_BACKEND = "opentelemetry"
 OTEL_FRESH_WINDOW_SECONDS = 300
 OTEL_TIMEOUT_SECONDS = 120.0
 OTEL_INTERVAL_SECONDS = 5.0
@@ -196,6 +195,9 @@ RESTORE_TIMEOUT_SECONDS = 300
 #   services it found are started again under.
 # ------------------------------------------------------------------------------
 FOUND_ENVIRON = dict(os.environ)
+_load_env_file(
+    component=ENGINE_COMPONENT, keys=(post.ADMIN_NAME_KEY, post.ADMIN_PASSWORD_KEY)
+)
 _load_dotenv()
 _use_mounted_configs(environ=os.environ)
 
@@ -245,16 +247,16 @@ TEST_CONFIG = Path(
 # Kafka Backend
 # - Mirrors scripts/resolve_profile.py: KAFKA_BACKEND selects BOTH the compose
 #   profile and the broker service for kafka-transport tests. Profile name and
-#   service name are identical (service 'kafka-redpanda' lives in profile
-#   'kafka-redpanda'; likewise 'kafka-apache'). The in-network alias is always
+#   service name are identical (service 'kafka-apache' lives in profile
+#   'kafka-apache'; likewise 'kafka-redpanda'). The in-network alias is always
 #   'kafka:9092', so downstream services and `--bootstrap-server` address that,
 #   but `docker compose exec` needs the real SERVICE name -> KAFKA_SERVICE.
 #   Unknown backend falls back to redpanda (the stack default).
 # ------------------------------------------------------------------------------
 KAFKA_BACKEND = os.environ.get("KAFKA_BACKEND", "redpanda").strip().lower()
 KAFKA_BACKEND_PROFILES = {
-    "redpanda": "kafka-redpanda",
     "apache": "kafka-apache",
+    "redpanda": "kafka-redpanda",
 }
 KAFKA_BACKEND_PROFILE = KAFKA_BACKEND_PROFILES.get(KAFKA_BACKEND, "kafka-redpanda")
 KAFKA_SERVICE = KAFKA_BACKEND_PROFILE
@@ -426,11 +428,11 @@ class ColouredFormatter(logging.Formatter):
     def format(self, record):
         colour = self.COLOURS.get(record.levelno, "") if sys.stderr.isatty() else ""
         return log_line(
-            level=record.levelname,
-            name=Path(sys.argv[0]).stem,
-            msg=super().format(record),
             colour=colour,
-            now=datetime.fromtimestamp(record.created, timezone.utc),
+            level=record.levelname,
+            msg=super().format(record=record),
+            name=Path(sys.argv[0]).stem,
+            now=datetime.fromtimestamp(timestamp=record.created, tz=timezone.utc),
         )
 
 
@@ -680,7 +682,6 @@ def resolve_services_profile(profile_name, otel=None):
         # The harness drives compose directly, so it sets what resolve_profile.py
         # would have exported through make.
         os.environ.setdefault(OTEL_ENDPOINT_ENV_VAR, OTEL_BUNDLED_ENDPOINT)
-        os.environ.setdefault(OTEL_ENGINE_BACKEND_ENV_VAR, OTEL_ENGINE_BACKEND)
 
     services = {}
     for svc_name, svc_conf in raw_services.items():
@@ -846,10 +847,13 @@ def build_images(mode, dfe_services):
         services_str = f"'{dfe_services[0]}'"
     LOGGER.info(f"Building images from local source for {services_str}...")
 
+    TMP_DIR.mkdir(parents=True, exist_ok=True)
     build_result = run_cmd(
         [
             sys.executable,
             str(Path(__file__).resolve().parent / "build_dev_images.py"),
+            "--record",
+            str(DEV_OVERLAY_FILE),
             *dfe_services,
         ],
         capture=not (LOG_LEVEL == "DEBUG"),
@@ -923,8 +927,8 @@ def stack_up(mode, test, services):
     compose_files = ["-f", "docker-compose.yml"]
     if mode not in MODES:
         error(f"Unknown mode: '{mode}'. Supported modes: '{MODES}'")
-    elif mode == "dev" and (PROJECT_DIR / DEV_OVERRIDE_FILE).exists():
-        compose_files += ["-f", DEV_OVERRIDE_FILE]
+    elif mode == "dev" and DEV_OVERLAY_FILE.exists():
+        compose_files += ["-f", str(DEV_OVERLAY_FILE)]
 
     for extra in os.environ.get(EXTRA_COMPOSE_FILES_ENV_VAR, "").split(os.pathsep):
         if extra.strip():
@@ -1322,7 +1326,7 @@ def isolate_suite(project):
     os.environ.update(
         _stack_state.suite_environ(os.environ, project=project, taken=taken)
     )
-    # .env belongs to the found stack, so a password rotated on a test engine stays in memory.
+    # env/engine.env belongs to the found stack, so a password rotated on a test engine stays in memory.
     post.RECORD_ROTATION = False
     suite_project = os.environ["COMPOSE_PROJECT_NAME"]
     LOGGER.info(f"Test stacks run as compose project '{suite_project}'")
@@ -1520,7 +1524,7 @@ def report_unready(name):
 # ------------------------------------------------------------------------------
 def wait_for_service(name, url, max_attempts=30):
     LOGGER.info(f"Waiting for '{name}' at '{url}'...")
-    time.sleep(2)
+    time.sleep(READY_POLL_SECONDS)
     for attempt in range(1, max_attempts + 1):
         try:
             http_get(url, timeout=3)
@@ -1530,9 +1534,9 @@ def wait_for_service(name, url, max_attempts=30):
             return True
         except Exception:
             LOGGER.debug(
-                f"    Attempt {attempt}/{max_attempts}: '{name}' not ready, retrying in 2s..."
+                f"    Attempt {attempt}/{max_attempts}: '{name}' not ready, retrying in {READY_POLL_SECONDS}s..."
             )
-            time.sleep(2)
+            time.sleep(READY_POLL_SECONDS)
     LOGGER.error(
         f"'{name}' not ready after {max_attempts} attempt{'s' if (attempt > 1) else ''}"
     )
@@ -3812,12 +3816,13 @@ def start_instances(
         return None
 
     fragment = TMP_DIR / f"docker-compose.{RUN_ID}.{test.name}.instances.yml"
-    # `extends` reads the committed service, never the dev override's local image
-    images = (
-        local_image_services(components=sorted(found))
-        if (DEV_OVERRIDE_FILE in files)
-        else {}
+    # `extends` reads the committed service, never the dev overlay, so an instance of an app the dev build made gets its local image here
+    built = (
+        overlay_components(path=DEV_OVERLAY_FILE)
+        if (str(DEV_OVERLAY_FILE) in files)
+        else []
     )
+    images = local_image_services(components=sorted(set(found) & set(built)))
     instances.write(
         env_dir=SUITE_ENV_DIR, images=images, instances=found, path=fragment
     )
@@ -4283,7 +4288,7 @@ def run_test(ctx, mode, test, persistent_services):
             table=test.table,
         )
 
-    # The apps reach Kafka through the compose anchor, and dfe-engine decides whether a bus exists from these too. Both follow this test's transport rather than make's
+    # The compose broker anchor and dfe-engine's bus settings follow this test's transport rather than make's
     os.environ.update(_sources.engine_transport(transport=test.transport))
 
     # Start the stack (Kafka profiles: infra first, create topics, then full stack)
