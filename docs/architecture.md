@@ -81,7 +81,7 @@ On Kubernetes an app's chart turns its values overlay into a ConfigMap the pod m
 
 The committed file stays the DEPLOYMENT's (brokers, warehouse credentials, the spool) and the overlay wins wherever the two name the same key, so nothing deployment-specific is written into the deploy repo. `resolve_profile.py` turns this on wherever the core footprint runs.
 
-dfe-fetcher and the three transforms have no committed file. The overlay is their whole config and their broker comes from `DFE_KAFKA_BOOTSTRAP_SERVERS` in their environment.
+dfe-fetcher and the three transforms have no committed file. The overlay is their whole config and their broker comes from `DFE_KAFKA_BOOTSTRAP_SERVERS` in `.env`.
 
 Nothing restarts a container. A change the running app cannot take in place is reported by the API as `restart required: make apply SERVICES=<app>` and one to its env file as `recreate required:` with the same command. `make apply` creates a per-source container the engine has only just declared, recreates one that exists and removes the container of a source the engine has deleted, which it finds by the `dfe.instance-of` label only generated services carry. A delete names no command, so `make apply` with no `SERVICES` does that removal alone and starts nothing.
 

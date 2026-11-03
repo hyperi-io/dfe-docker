@@ -45,14 +45,14 @@ ENGINES = tuple(
 )
 # The dfe-engine setting each tier variable resolve_profile.py exports reaches (docker-compose.yml dfe-engine `environment`)
 ENGINE_SETTINGS = {
-    resolve_profile.APP_CONFIG_MOUNT_VAR: "DFE_DEPLOYMENT_APP_CONFIG_MOUNT",
-    resolve_profile.ENGINE_APP_CONFIG_BASE_DIR_VAR: "DFE_DEPLOYMENT_APP_CONFIG_BASE_DIR",
-    resolve_profile.ENGINE_APP_CONFIG_DIR_VAR: "DFE_DEPLOYMENT_APP_CONFIG_DIR",
-    resolve_profile.ENGINE_BROKER_ENV_VAR: "DFE_KAFKA_BOOTSTRAP_SERVERS",
-    resolve_profile.ENGINE_CONTRACT_DIR_VAR: "DFE_APP_CONTRACT_DIR",
-    resolve_profile.STACK_PROFILE_VAR: "DFE_PROFILE",
-    resolve_profile.TRANSPORT_BUS_PRESENT_VAR: "DFE_TRANSPORT_BUS_PRESENT",
-    resolve_profile.TRANSPORT_DEFAULT_VAR: "DFE_TRANSPORT_DEFAULT",
+    resolve_profile.APP_CONFIG_MOUNT_VAR: "DFE_ENGINE_DEPLOYMENT_APP_CONFIG_MOUNT",
+    resolve_profile.ENGINE_APP_CONFIG_BASE_DIR_VAR: "DFE_ENGINE_DEPLOYMENT_APP_CONFIG_BASE_DIR",
+    resolve_profile.ENGINE_APP_CONFIG_DIR_VAR: "DFE_ENGINE_DEPLOYMENT_APP_CONFIG_DIR",
+    resolve_profile.ENGINE_BROKER_ENV_VAR: "DFE_ENGINE_KAFKA_BOOTSTRAP_SERVERS",
+    resolve_profile.ENGINE_CONTRACT_DIR_VAR: "DFE_ENGINE_APP_CONTRACT_DIR",
+    resolve_profile.STACK_PROFILE_VAR: "DFE_ENGINE_PROFILE",
+    resolve_profile.TRANSPORT_BUS_PRESENT_VAR: "DFE_ENGINE_TRANSPORT_BUS_PRESENT",
+    resolve_profile.TRANSPORT_DEFAULT_VAR: "DFE_ENGINE_TRANSPORT_DEFAULT",
 }
 # Where a source's upload fixtures live, relative to the repo root
 FIXTURE_DIR = Path("tests") / "e2e"

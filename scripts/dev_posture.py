@@ -11,7 +11,7 @@
 
 Two postures, because `make dev` is asked for two different things. The default is
 a tyre-kick: a stack you can log into without looking anything up, so it writes the
-KNOWN default password and DFE_ENV=dev, the one posture the engine accepts that
+KNOWN default password and DFE_ENGINE_ENV=dev, the one posture the engine accepts that
 default in. `--real` is the other: local images running the authentication flow a
 deployment gets, so it mints a password and writes a non-dev posture, leaving both
 alone where they already hold real values.
@@ -21,12 +21,12 @@ dev stack the engine makes the admin replace the default at first login and `mak
 post` records the replacement in env/engine.env, so writing the default back would
 lock the next run out of an engine that no longer accepts it.
 
-The tyre-kick refuses on any other DFE_ENV rather than rewriting it, exit 2. A .env
+The tyre-kick refuses on any other DFE_ENGINE_ENV rather than rewriting it, exit 2. A .env
 that says `production` belongs to a deployment, and quietly downgrading its posture
 and overwriting its admin password is not something a build target gets to do.
 `--real` never refuses, because it destroys nothing.
 
-Only those two keys are touched, DFE_ENV in .env and the password in
+Only those two keys are touched, DFE_ENGINE_ENV in .env and the password in
 env/engine.env. Everything else in either file is left as it stands. The minted
 password a tyre-kick overwrites is unrecoverable once it is gone, so each file it
 rewrites is first copied beside itself to `<name>.bak-<utc>`, 0600 like the
@@ -65,7 +65,7 @@ from init import _mint, _setting_key  # noqa: E402
 # The two postures written, and what each means for the admin password.
 _DEV_ENV = "dev"
 _REAL_ENV = "production"
-_POSTURE_KEY = "DFE_ENV"
+_POSTURE_KEY = "DFE_ENGINE_ENV"
 # Exit code for the refusal, distinct from 1 (no .env at all) so a caller can tell
 # "you are not a dev box" from "you have not run make init".
 _REFUSED = 2
@@ -149,10 +149,10 @@ def main(*, argv: list[str] | None = None) -> int:
     if not (args.real) and environment and not (is_dev_posture(environment)):
         _print(
             header=_rel_path(path=DOTENV_FILE),
-            msg=f"DFE_ENV={environment} is not a dev posture, so `make dev` refuses to "
+            msg=f"DFE_ENGINE_ENV={environment} is not a dev posture, so `make dev` refuses to "
             f"run: it would overwrite this deployment's admin password with the shipped "
             f"default. Start it with `make up`, use `make dev AUTH=real` to keep a real "
-            f"login, or set DFE_ENV to one of {', '.join(sorted(_DEV_POSTURES))} if this "
+            f"login or set DFE_ENGINE_ENV to one of {', '.join(sorted(_DEV_POSTURES))} if this "
             f"really is a dev box.",
         )
         return _REFUSED
@@ -171,9 +171,9 @@ def main(*, argv: list[str] | None = None) -> int:
         else "admin password kept as recorded -- `make creds` prints it"
     )
     settled = (
-        f"Real posture already set: DFE_ENV={environment}, admin password is minted"
+        f"Real posture already set: DFE_ENGINE_ENV={environment}, admin password is minted"
         if args.real
-        else f"Dev posture already set: DFE_ENV={_DEV_ENV}, {password_state}"
+        else f"Dev posture already set: DFE_ENGINE_ENV={_DEV_ENV}, {password_state}"
     )
 
     changes = []
@@ -193,10 +193,10 @@ def main(*, argv: list[str] | None = None) -> int:
         backups.append(_rel_path(path=_backup(path=path, text=text)))
         write_dotenv(path=path, text=rewritten)
     written = (
-        f"Real posture: DFE_ENV={wanted.get(_POSTURE_KEY, environment)}, admin password "
+        f"Real posture: DFE_ENGINE_ENV={wanted.get(_POSTURE_KEY, environment)}, admin password "
         f"minted. Read it with `make creds`."
         if args.real
-        else f"Dev posture: DFE_ENV={_DEV_ENV}, {password_state}."
+        else f"Dev posture: DFE_ENGINE_ENV={_DEV_ENV}, {password_state}."
     )
     _print(
         header=_rel_path(path=DOTENV_FILE),

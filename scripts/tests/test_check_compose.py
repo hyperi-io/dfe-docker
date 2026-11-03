@@ -53,9 +53,9 @@ def test_a_checkout_with_no_env_is_checked_as_its_first_start(dotenv: Path) -> N
 
 
 def test_a_checkout_with_an_env_is_checked_on_its_own(dotenv: Path) -> None:
-    dotenv.write_text("DFE_ENV=production\n", encoding="utf-8", newline="\n")
+    dotenv.write_text("DFE_ENGINE_ENV=production\n", encoding="utf-8", newline="\n")
 
-    assert check_compose._first_start_dotenv() == {"DFE_ENV": "production"}
+    assert check_compose._first_start_dotenv() == {"DFE_ENGINE_ENV": "production"}
 
 
 def test_a_checkout_with_no_engine_env_is_checked_as_its_first_start(
@@ -70,7 +70,7 @@ def test_a_checkout_with_no_engine_env_is_checked_as_its_first_start(
 
 
 def test_a_checkout_with_an_engine_env_is_checked_on_its_own(engine_env: Path) -> None:
-    engine_env.write_text("DFE_API_PORT=8003\n", encoding="utf-8", newline="\n")
+    engine_env.write_text("DFE_ENGINE_API_PORT=8003\n", encoding="utf-8", newline="\n")
 
     assert check_compose._first_start_engine_env() is None
 
@@ -365,8 +365,8 @@ def test_every_local_table_image_declares_exactly_the_paths_the_table_lists():
 
 def _dialling(*, host: str, http: str, native: str) -> dict:
     engine_keys = {
-        "DFE_CLICKHOUSE_HOST": host,
-        "DFE_CLICKHOUSE_PORT": http,
+        "DFE_ENGINE_CLICKHOUSE_HOST": host,
+        "DFE_ENGINE_CLICKHOUSE_PORT": http,
     }
     return {
         "services": {
@@ -396,13 +396,15 @@ def test_every_dialler_on_the_container_ports_passes():
 def test_a_dialler_on_the_moved_host_port_fails():
     """The shape #75 reported: the engine dialled the publish, not the container."""
     config = _dialling(host="clickhouse", http="8123", native="9000")
-    config["services"]["dfe-engine"]["environment"]["DFE_CLICKHOUSE_PORT"] = "18123"
+    config["services"]["dfe-engine"]["environment"]["DFE_ENGINE_CLICKHOUSE_PORT"] = (
+        "18123"
+    )
 
     failures = check_compose._clickhouse_dial_mismatches(
         config=config, want=("clickhouse", "8123", "9000")
     )
 
-    assert failures == ["dfe-engine: DFE_CLICKHOUSE_PORT=18123, want 8123"]
+    assert failures == ["dfe-engine: DFE_ENGINE_CLICKHOUSE_PORT=18123, want 8123"]
 
 
 def test_the_collector_is_held_to_the_native_port_it_dials():

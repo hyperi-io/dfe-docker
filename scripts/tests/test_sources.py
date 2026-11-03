@@ -47,10 +47,10 @@ VECTOR = _sources.Source(engine="vector", files=(), name="e2evector")
 VRL = _sources.Source(engine="vrl", files=(("transforms", PROGRAM),), name="e2evrl")
 # What dfe-engine is told about the paths of its own tier, whichever profile the test runs
 _ENGINE_PATHS = {
-    "DFE_APP_CONTRACT_DIR": "/app/content/contract",
-    "DFE_DEPLOYMENT_APP_CONFIG_BASE_DIR": "/app/app-config-base",
-    "DFE_DEPLOYMENT_APP_CONFIG_DIR": "/app/app-config",
-    "DFE_DEPLOYMENT_APP_CONFIG_MOUNT": "/etc/dfe/apps",
+    "DFE_ENGINE_APP_CONTRACT_DIR": "/app/content/contract",
+    "DFE_ENGINE_DEPLOYMENT_APP_CONFIG_BASE_DIR": "/app/app-config-base",
+    "DFE_ENGINE_DEPLOYMENT_APP_CONFIG_DIR": "/app/app-config",
+    "DFE_ENGINE_DEPLOYMENT_APP_CONFIG_MOUNT": "/etc/dfe/apps",
 }
 
 
@@ -313,10 +313,10 @@ ENGINE_ENVIRONMENT_CASES = [
     EngineEnvironmentCase(
         expected={
             **_ENGINE_PATHS,
-            "DFE_KAFKA_BOOTSTRAP_SERVERS": "",
-            "DFE_PROFILE": "docker-single",
-            "DFE_TRANSPORT_BUS_PRESENT": "false",
-            "DFE_TRANSPORT_DEFAULT": "direct",
+            "DFE_ENGINE_KAFKA_BOOTSTRAP_SERVERS": "",
+            "DFE_ENGINE_PROFILE": "docker-single",
+            "DFE_ENGINE_TRANSPORT_BUS_PRESENT": "false",
+            "DFE_ENGINE_TRANSPORT_DEFAULT": "direct",
         },
         profile="single-grpc",
         transport="grpc",
@@ -324,10 +324,10 @@ ENGINE_ENVIRONMENT_CASES = [
     EngineEnvironmentCase(
         expected={
             **_ENGINE_PATHS,
-            "DFE_KAFKA_BOOTSTRAP_SERVERS": "kafka:9092",
-            "DFE_PROFILE": "docker-single",
-            "DFE_TRANSPORT_BUS_PRESENT": "true",
-            "DFE_TRANSPORT_DEFAULT": "bus",
+            "DFE_ENGINE_KAFKA_BOOTSTRAP_SERVERS": "kafka:9092",
+            "DFE_ENGINE_PROFILE": "docker-single",
+            "DFE_ENGINE_TRANSPORT_BUS_PRESENT": "true",
+            "DFE_ENGINE_TRANSPORT_DEFAULT": "bus",
         },
         profile="single-kafka",
         transport="kafka",
@@ -335,10 +335,10 @@ ENGINE_ENVIRONMENT_CASES = [
     EngineEnvironmentCase(
         expected={
             **_ENGINE_PATHS,
-            "DFE_KAFKA_BOOTSTRAP_SERVERS": "",
-            "DFE_PROFILE": "docker-slim",
-            "DFE_TRANSPORT_BUS_PRESENT": "false",
-            "DFE_TRANSPORT_DEFAULT": "direct",
+            "DFE_ENGINE_KAFKA_BOOTSTRAP_SERVERS": "",
+            "DFE_ENGINE_PROFILE": "docker-slim",
+            "DFE_ENGINE_TRANSPORT_BUS_PRESENT": "false",
+            "DFE_ENGINE_TRANSPORT_DEFAULT": "direct",
         },
         profile="slim-grpc",
         transport="grpc",
@@ -347,12 +347,15 @@ ENGINE_ENVIRONMENT_CASES = [
 ENGINE_OVERRIDE_CASES = [
     EngineOverrideCase(environment={}, expected="", volumes=[]),
     EngineOverrideCase(
-        environment={"DFE_TRANSPORT_DEFAULT": "bus", "DFE_HYPERDX_ENABLED": "true"},
+        environment={
+            "DFE_ENGINE_TRANSPORT_DEFAULT": "bus",
+            "DFE_ENGINE_HYPERDX_ENABLED": "true",
+        },
         expected=(
             "  dfe-engine:\n"
             "    environment:\n"
-            '      DFE_HYPERDX_ENABLED: "true"\n'
-            '      DFE_TRANSPORT_DEFAULT: "bus"\n'
+            '      DFE_ENGINE_HYPERDX_ENABLED: "true"\n'
+            '      DFE_ENGINE_TRANSPORT_DEFAULT: "bus"\n'
         ),
         volumes=[],
     ),
@@ -991,7 +994,7 @@ class TestEngineOverride:
 
     def test_compose_reads_both_blocks_under_the_engine_service(self) -> None:
         override = _sources.engine_override(
-            environment={"DFE_TRANSPORT_DEFAULT": "bus"},
+            environment={"DFE_ENGINE_TRANSPORT_DEFAULT": "bus"},
             service="dfe-engine",
             volumes=[
                 "./config/loader/grpc.yaml:/app/app-config-base/dfe-loader.yaml:ro"
@@ -1003,7 +1006,7 @@ class TestEngineOverride:
         assert parsed == {
             "services": {
                 "dfe-engine": {
-                    "environment": {"DFE_TRANSPORT_DEFAULT": "bus"},
+                    "environment": {"DFE_ENGINE_TRANSPORT_DEFAULT": "bus"},
                     "volumes": [
                         "./config/loader/grpc.yaml:/app/app-config-base/dfe-loader.yaml:ro"
                     ],

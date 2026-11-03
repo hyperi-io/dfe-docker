@@ -319,8 +319,8 @@ HYPERDX_SERVICES = [
     "hyperdx-documentdb-tls",
 ]
 HYPERDX_ENGINE_ENVIRONMENT = {
-    "DFE_HYPERDX_ENABLED": "true",
-    "DFE_HYPERDX_BASE_URL": "http://hyperdx:8000",
+    "DFE_ENGINE_HYPERDX_ENABLED": "true",
+    "DFE_ENGINE_HYPERDX_BASE_URL": "http://hyperdx:8000",
 }
 # HyperDX seeds a team's sources on the first request that carries an identity.
 HYPERDX_READY_TIMEOUT = 180

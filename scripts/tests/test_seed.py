@@ -91,8 +91,8 @@ class SkipReasonCase(TypedDict):
     per_source_apps: list[str]
 
 
-_ADMIN_401 = "refused; DFE_AUTH_LOCAL_ADMIN_PASSWORD in env/engine.env is not the bootstrap admin's current password, so set it to that and run this again"
-_ADMIN_UNSET = "refused; set DFE_AUTH_LOCAL_ADMIN_PASSWORD in env/engine.env, which `make init` generates"
+_ADMIN_401 = "refused; DFE_ENGINE_AUTH_LOCAL_ADMIN_PASSWORD in env/engine.env is not the bootstrap admin's current password, so set it to that and run this again"
+_ADMIN_UNSET = "refused; set DFE_ENGINE_AUTH_LOCAL_ADMIN_PASSWORD in env/engine.env, which `make init` generates"
 _FETCHER = "dfe-fetcher"
 _FETCHER_BODY = {"fetcher": {"source_type": "aws"}, "source": "aws-guardduty"}
 _FETCHER_VRL_BODY = {
@@ -289,7 +289,7 @@ class TestAccountPassword:
     def test_mints_and_records_a_password_the_engine_env_lacks(
         self, engine_env: Path
     ) -> None:
-        engine_env.write_text("DFE_API_JWT_SECRET=kept\n", encoding="utf-8")
+        engine_env.write_text("DFE_ENGINE_API_JWT_SECRET=kept\n", encoding="utf-8")
         engine_env.chmod(0o640)
 
         password = seed._account_password(username="ops")
@@ -297,7 +297,7 @@ class TestAccountPassword:
         assert len(password) == 24
         assert set(password) <= set(string.ascii_letters + string.digits)
         values = _common._env_file_values(component=_common.ENGINE_COMPONENT)
-        assert values == {"DFE_API_JWT_SECRET": "kept", _OPS_KEY: password}
+        assert values == {"DFE_ENGINE_API_JWT_SECRET": "kept", _OPS_KEY: password}
         assert stat.S_IMODE(engine_env.stat().st_mode) == 0o640
 
     def test_reuses_the_password_the_engine_env_records(self, engine_env: Path) -> None:
@@ -351,7 +351,7 @@ class TestEnsure:
         capsys: pytest.CaptureFixture[str],
         engine_env: Path,
     ) -> None:
-        engine_env.write_text("DFE_API_JWT_SECRET=kept\n", encoding="utf-8")
+        engine_env.write_text("DFE_ENGINE_API_JWT_SECRET=kept\n", encoding="utf-8")
 
         seed._ensure(
             base="http://engine.invalid",

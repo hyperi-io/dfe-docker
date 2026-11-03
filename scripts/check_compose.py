@@ -273,19 +273,19 @@ _DEV_PATH_RUNS = {
 _DEV_SUBCOMMANDS = {"pull": ("pull",), "up": ("up", "-d")}
 
 # The engine refuses to start on an unset or shipped-default admin password unless
-# DFE_ENV names a dev posture, so a compose file that hands it one outside dev
+# DFE_ENGINE_ENV names a dev posture, so a compose file that hands it one outside dev
 # produces a container that crash-loops on boot. The posture list mirrors
-# dfe_engine.settings.is_dev_posture; compose's own `${DFE_ENV:-production}` default
+# dfe_engine.settings.is_dev_posture; compose's own `${DFE_ENGINE_ENV:-production}` default
 # is what makes the unset case a fault rather than a dev posture, so only a .env
 # that says `dev` gets to run on the shipped password.
 _ENGINE_SERVICE = "dfe-engine"
-_ADMIN_PASSWORD_KEY = "DFE_AUTH_LOCAL_ADMIN_PASSWORD"
-_POSTURE_KEY = "DFE_ENV"
+_ADMIN_PASSWORD_KEY = "DFE_ENGINE_AUTH_LOCAL_ADMIN_PASSWORD"
+_POSTURE_KEY = "DFE_ENGINE_ENV"
 _DEFAULT_PASSWORD = "changeme"
 _DEV_POSTURES = frozenset({"dev", "development", "local", "test", "ci"})
 # An env file compose loads INSTEAD of .env, so a case describes the whole input.
 _EMPTY_ENV_FILE = REPO_ROOT / ".tmp" / "compose-check-empty.env"
-# (label, DFE_ENV, admin password, must the rule flag it). The negative half: a
+# (label, DFE_ENGINE_ENV, admin password, must the rule flag it). The negative half: a
 # rule that flags nothing passes every stack, so the cases that must NOT flag are
 # checked as hard as the ones that must.
 _CREDENTIAL_CASES: tuple[tuple[str, str, str, bool], ...] = (
@@ -303,8 +303,12 @@ _CREDENTIAL_CASES: tuple[tuple[str, str, str, bool], ...] = (
 # Each service that dials ClickHouse from inside the stack, by the environment keys
 # carrying the host, HTTP port and native port it dials (None where it uses none).
 _CLICKHOUSE_DIALLERS: dict[str, tuple[str, str | None, str | None]] = {
-    "dfe-engine": ("DFE_CLICKHOUSE_HOST", "DFE_CLICKHOUSE_PORT", None),
-    "dfe-hunt-runner": ("DFE_CLICKHOUSE_HOST", "DFE_CLICKHOUSE_PORT", None),
+    "dfe-engine": ("DFE_ENGINE_CLICKHOUSE_HOST", "DFE_ENGINE_CLICKHOUSE_PORT", None),
+    "dfe-hunt-runner": (
+        "DFE_ENGINE_CLICKHOUSE_HOST",
+        "DFE_ENGINE_CLICKHOUSE_PORT",
+        None,
+    ),
     "otel-collector": ("CLICKHOUSE_HOST", None, "CLICKHOUSE_PORT"),
 }
 # Each service that takes its ClickHouse address as one `host:HTTP port` key
@@ -440,7 +444,7 @@ _TLS_FORWARDING_PROXY = "dfe-proxy"
 _ENVOY_CONFIG_TARGET = "/etc/envoy/envoy.yaml"
 _ENVOY_CERT_TARGET = "/etc/envoy/certs"
 _TLS_CERT_DIR = "./compose-check-tls-certs"
-_TRUSTED_PROXIES_KEY = "DFE_API_FORWARDED_ALLOW_IPS"
+_TRUSTED_PROXIES_KEY = "DFE_ENGINE_API_FORWARDED_ALLOW_IPS"
 # None of these is a default, so a render that ignored a dial and used a literal fails.
 _TLS_SUBNET = "10.231.7.0/24"
 _TLS_USER = {"DFE_DEV_GID": "4343", "DFE_DEV_UID": "4242"}
@@ -967,7 +971,7 @@ def _credential_fault(*, config: dict) -> str:
     """Return why the engine's admin credential is unusable, or empty when it is fine."""
     service = config.get("services", {}).get(_ENGINE_SERVICE, {})
     environment = service.get("environment") or {}
-    # Engine contract: settings.is_dev_posture strips and lowercases DFE_ENV, and
+    # Engine contract: settings.is_dev_posture strips and lowercases DFE_ENGINE_ENV, and
     # auth.bootstrap.default_credentials_in_use strips the password before comparing.
     posture = str(environment.get(_POSTURE_KEY) or "").strip().lower()
     password = str(environment.get(_ADMIN_PASSWORD_KEY) or "").strip()

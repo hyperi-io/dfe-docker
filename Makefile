@@ -435,10 +435,10 @@ creds: ## Print the access summary. The admin password prints on a TTY only -- a
 	@python3 scripts/creds.py
 
 # A dev tyre-kick logs in without looking anything up, so `make dev` writes the
-# KNOWN default password and DFE_ENV=dev, the one posture the engine accepts it in.
+# KNOWN default password and DFE_ENGINE_ENV=dev, the one posture the engine accepts it in.
 # A .env already on a dev posture keeps a non-default password, the replacement
 # `make post` recorded after the engine made the admin change the default.
-# It refuses with exit 2 on any other DFE_ENV and copies each file it rewrites to
+# It refuses with exit 2 on any other DFE_ENGINE_ENV and copies each file it rewrites to
 # <name>.bak-<utc> first, so a minted password in env/engine.env survives.
 #
 # `AUTH=real` is the other half: local images running the same authentication flow
@@ -451,11 +451,11 @@ else
 endif
 
 .PHONY: dev-posture
-dev-posture: env-files ## Put .env and env/engine.env into the dev posture (DFE_ENV=dev, known admin password until the stack replaces it); AUTH=real mints one and writes a non-dev posture instead
+dev-posture: env-files ## Put .env and env/engine.env into the dev posture (DFE_ENGINE_ENV=dev, known admin password until the stack replaces it); AUTH=real mints one and writes a non-dev posture instead
 	@python3 scripts/dev_posture.py $(DEV_POSTURE_ARG)
 
 .PHONY: e2e-posture
-e2e-posture: env-files ## Put .env and env/engine.env into the dfe-ui Playwright suite's posture (DFE_ENV=test, the engine's e2e routes on), keeping both originals for e2e-posture-off
+e2e-posture: env-files ## Put .env and env/engine.env into the dfe-ui Playwright suite's posture (DFE_ENGINE_ENV=test, the engine's e2e routes on), keeping both originals for e2e-posture-off
 	@python3 scripts/e2e_posture.py on
 
 .PHONY: e2e-posture-off

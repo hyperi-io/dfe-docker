@@ -17,7 +17,7 @@ Generated secrets. GENERATED_SECRETS names each secret by the file it lives in: 
 
 Drift report. A re-run reports template keys that never reached .env. The copy is one-shot, so an operator who ran `make init` months ago otherwise never learns that .env.example grew a setting. Reporting is all it does - editing an operator's .env is theirs to do, not ours.
 
-The retention question. A NEW env/engine.env is asked, once and on a TTY only, for the default TTL every time-series table gets. The answer lands as a live DFE_CLICKHOUSE_DEFAULT_TTL_DAYS line. The environment pre-answers it, a non-interactive run keeps the template's commented 90 and an existing env/engine.env is never re-asked.
+The retention question. A NEW env/engine.env is asked, once and on a TTY only, for the default TTL every time-series table gets. The answer lands as a live DFE_ENGINE_CLICKHOUSE_DEFAULT_TTL_DAYS line. The environment pre-answers it, a non-interactive run keeps the template's commented 90 and an existing env/engine.env is never re-asked.
 
 The env/ directory. The engine writes env/<app>.custom.env into it, so it is made group-writable and setgid: the engine writes through the group compose adds it to, and every file it creates keeps the group Compose reads it as.
 
@@ -44,7 +44,6 @@ from _common import (  # noqa: E402
     ENGINE_COMPONENT,
     ENV_DIR,
     ENV_TEMPLATE_DIR,
-    _env_file_values,
     _print,
     _rel_path,
     write_dotenv,
@@ -55,15 +54,15 @@ from _common import (  # noqa: E402
 # EXPRESS_SESSION_SECRET, TOKEN_ENCRYPTION_KEY and each
 # DFE_<APP>_CLICKHOUSE_PASSWORD via its WEAK_SECRET_DEFAULTS service-map,
 # CLICKHOUSE_PASSWORD via its own external-CH check (its default is empty, not a
-# sentinel string), and DFE_AUTH_LOCAL_ADMIN_PASSWORD by logging in with it. Keep
+# sentinel string) and DFE_ENGINE_AUTH_LOCAL_ADMIN_PASSWORD by logging in with it. Keep
 # them in step. CLICKHOUSE_KEEPER_PASSWORD is the one compose refuses to run without.
 #
 # Each DFE_<APP>_CLICKHOUSE_PASSWORD is one app's: the engine creates that
 # app's ClickHouse user on it and the app connects with it.
 #
-# The deploy mints two logins: DFE_AUTH_LOCAL_ADMIN_PASSWORD is `admin`, issued with
+# The deploy mints two logins: DFE_ENGINE_AUTH_LOCAL_ADMIN_PASSWORD is `admin`, issued with
 # a forced change at first login, which `make post` records in env/engine.env.
-# DFE_AUTH_BREAKGLASS_PASSWORD is the recovery admin the engine hashes into the
+# DFE_ENGINE_AUTH_BREAKGLASS_PASSWORD is the recovery admin the engine hashes into the
 # deploy repo on first boot and ignores thereafter.
 # Neither is printed here; `make creds` is the hand-over.
 #
@@ -99,7 +98,7 @@ GENERATED_SECRETS = {
         # Keeper's digest identity: a changed value locks the server out of its own znodes.
         "CLICKHOUSE_KEEPER_PASSWORD": _LEN_CREDENTIAL,
         "CLICKHOUSE_PASSWORD": _LEN_CREDENTIAL,
-        "DFE_API_JWT_SECRET": _LEN_KEY,
+        "DFE_ENGINE_API_JWT_SECRET": _LEN_KEY,
         "DFE_HUNT_RUNNER_CLICKHOUSE_PASSWORD": _LEN_CREDENTIAL,
         "DFE_LOADER_CLICKHOUSE_PASSWORD": _LEN_CREDENTIAL,
         "DFE_OTEL_WRITER_CLICKHOUSE_PASSWORD": _LEN_CREDENTIAL,
@@ -108,8 +107,8 @@ GENERATED_SECRETS = {
         "DFE_OAUTH2_PROXY_COOKIE_SECRET": _LEN_COOKIE,
     },
     f"{ENGINE_COMPONENT}.env": {
-        "DFE_AUTH_BREAKGLASS_PASSWORD": _LEN_CREDENTIAL,
-        "DFE_AUTH_LOCAL_ADMIN_PASSWORD": _LEN_CREDENTIAL,
+        "DFE_ENGINE_AUTH_BREAKGLASS_PASSWORD": _LEN_CREDENTIAL,
+        "DFE_ENGINE_AUTH_LOCAL_ADMIN_PASSWORD": _LEN_CREDENTIAL,
     },
     "hyperdx.env": {
         "EXPRESS_SESSION_SECRET": _LEN_KEY,
@@ -120,8 +119,6 @@ GENERATED_SECRETS = {
     },
 }
 _SECRET_LENGTHS = collections.ChainMap(*GENERATED_SECRETS.values())
-# A secret that moved into .env, and the env/<component>.env a box initialised earlier still holds it in
-MOVED_SECRETS = {"DFE_API_JWT_SECRET": ENGINE_COMPONENT}
 
 # Matches a dotenv assignment: live (`KEY=value`) or a single-hash commented-out
 # setting (`# KEY=value`).
@@ -140,7 +137,7 @@ ENV_DIR_GROUP_BITS = stat.S_IRWXG | stat.S_ISGID
 
 # The retention every time-series table gets unless a source or a dfe-schemas
 # definition sets its own. Whole days; 0 disables the default TTL.
-RETENTION_KEY = "DFE_CLICKHOUSE_DEFAULT_TTL_DAYS"
+RETENTION_KEY = "DFE_ENGINE_CLICKHOUSE_DEFAULT_TTL_DAYS"
 RETENTION_FILE = f"{ENGINE_COMPONENT}.env"
 RETENTION_DEFAULT = "90"
 _RETENTION_PROMPT = (
@@ -287,15 +284,8 @@ def _ask_retention(*, dotenv_path: Path) -> None:
     _print(header=_rel_path(path=dotenv_path), msg=f"{RETENTION_KEY}={days}")
 
 
-def _moved_or_minted(*, key: str) -> str:
-    """Return the value a moved secret still holds in its old env file, else a fresh one."""
-    component = MOVED_SECRETS.get(key)
-    old = _env_file_values(component=component) if component else {}
-    return old.get(key, "").strip() or _mint(key)
-
-
-def _top_up_secrets(*, dotenv_path: Path, only: Iterable[str] | None = None) -> None:
-    """Give each GENERATED_SECRETS key of an existing .env or env/<service>.env a real value, limited to `only` when given.
+def _top_up_secrets(*, dotenv_path: Path) -> None:
+    """Give each GENERATED_SECRETS key of an existing .env or env/<service>.env a real value.
 
     Two cases, because they need different repairs. A key the file never mentions
     is appended. A key present but EMPTY (`KEY=`) is rewritten in place - appending
@@ -303,10 +293,9 @@ def _top_up_secrets(*, dotenv_path: Path, only: Iterable[str] | None = None) -> 
     duplicate key in an operator's .env is how the next person loses an hour.
     """
     text = dotenv_path.read_text(encoding="utf-8")
-    keys = set(GENERATED_SECRETS.get(dotenv_path.name, {}))
-    if only is not None:
-        keys &= set(only)
-    missing = sorted(keys - _live_keys(text=text))
+    missing = sorted(
+        set(GENERATED_SECRETS.get(dotenv_path.name, {})) - _live_keys(text=text)
+    )
     if not (missing):
         return
 
@@ -316,16 +305,14 @@ def _top_up_secrets(*, dotenv_path: Path, only: Iterable[str] | None = None) -> 
         key = _setting_key(line=line)
         if key in pending and not (line.lstrip().startswith("#")):
             pending.discard(key)
-            rewritten.append(f"{key}={_moved_or_minted(key=key)}")
+            rewritten.append(f"{key}={_mint(key=key)}")
             continue
         rewritten.append(line)
 
     if pending:
         rewritten.append("")
         rewritten.append("## Generated by `make init` - POST fails without these")
-        rewritten.extend(
-            f"{key}={_moved_or_minted(key=key)}" for key in sorted(pending)
-        )
+        rewritten.extend(f"{key}={_mint(key=key)}" for key in sorted(pending))
 
     write_dotenv(path=dotenv_path, text="\n".join(rewritten) + "\n")
     _print(

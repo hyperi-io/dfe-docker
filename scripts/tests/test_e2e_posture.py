@@ -6,7 +6,7 @@
 #  License:      BUSL-1.1
 #  Copyright:    (c) 2026 HYPERI PTY LIMITED
 
-"""The dfe-ui Playwright suite's posture: DFE_ENV=test in .env, the e2e routes and shipped admin password in env/engine.env."""
+"""The dfe-ui Playwright suite's posture: DFE_ENGINE_ENV=test in .env, the e2e routes and shipped admin password in env/engine.env."""
 
 import stat
 from pathlib import Path
@@ -20,12 +20,12 @@ _MINTED = "s3cr3t-minted-value"
 
 def _dotenv_text(*, extra: str = "", posture: str) -> str:
     """A .env in the given posture, with one key the switch must leave alone."""
-    return f"DFE_ENV={posture}\nDFE_UI_PORT=3000\n{extra}"
+    return f"DFE_ENGINE_ENV={posture}\nDFE_UI_PORT=3000\n{extra}"
 
 
 def _engine_text(*, extra: str = "") -> str:
     """An env/engine.env holding a minted admin password."""
-    return f"DFE_AUTH_LOCAL_ADMIN_PASSWORD={_MINTED}\n{extra}"
+    return f"DFE_ENGINE_AUTH_LOCAL_ADMIN_PASSWORD={_MINTED}\n{extra}"
 
 
 def _saved(*, path: Path) -> Path:
@@ -56,11 +56,11 @@ def test_on_writes_the_posture_and_keeps_the_rest(
 
     dotenv_written = dotenv.read_text(encoding="utf-8")
     engine_written = engine_env.read_text(encoding="utf-8")
-    assert "DFE_ENV=test" in dotenv_written
+    assert "DFE_ENGINE_ENV=test" in dotenv_written
     assert "DFE_UI_PORT=3000" in dotenv_written
-    assert "DFE_E2E_SERVER" not in dotenv_written
-    assert "DFE_AUTH_LOCAL_ADMIN_PASSWORD=changeme" in engine_written
-    assert "DFE_E2E_SERVER=true" in engine_written
+    assert "DFE_ENGINE_E2E_SERVER" not in dotenv_written
+    assert "DFE_ENGINE_AUTH_LOCAL_ADMIN_PASSWORD=changeme" in engine_written
+    assert "DFE_ENGINE_E2E_SERVER=true" in engine_written
 
 
 def test_a_deployment_is_refused_and_left_alone(
@@ -141,28 +141,40 @@ def test_off_with_nothing_saved_changes_nothing(dotenv: Path, engine_env: Path) 
     ("posture", "dotenv_extra", "engine_extra", "want", "named"),
     [
         pytest.param(
-            "dev", "", "", 1, ["DFE_ENV=test", "DFE_E2E_SERVER=true"], id="plain_dev"
+            "dev",
+            "",
+            "",
+            1,
+            ["DFE_ENGINE_ENV=test", "DFE_ENGINE_E2E_SERVER=true"],
+            id="plain_dev",
         ),
         pytest.param(
-            "test", "", "", 1, ["DFE_E2E_SERVER=true"], id="test_without_the_server"
+            "test",
+            "",
+            "",
+            1,
+            ["DFE_ENGINE_E2E_SERVER=true"],
+            id="test_without_the_server",
         ),
         pytest.param(
             "dev",
             "",
-            "DFE_E2E_SERVER=true\n",
+            "DFE_ENGINE_E2E_SERVER=true\n",
             1,
-            ["DFE_ENV=test"],
+            ["DFE_ENGINE_ENV=test"],
             id="server_without_test",
         ),
         pytest.param(
             "test",
-            "DFE_E2E_SERVER=true\n",
+            "DFE_ENGINE_E2E_SERVER=true\n",
             "",
             1,
-            ["DFE_E2E_SERVER=true"],
+            ["DFE_ENGINE_E2E_SERVER=true"],
             id="server_in_dotenv_is_not_read",
         ),
-        pytest.param("test", "", "DFE_E2E_SERVER=TRUE\n", 0, [], id="both_any_case"),
+        pytest.param(
+            "test", "", "DFE_ENGINE_E2E_SERVER=TRUE\n", 0, [], id="both_any_case"
+        ),
     ],
 )
 def test_check_names_what_is_missing(

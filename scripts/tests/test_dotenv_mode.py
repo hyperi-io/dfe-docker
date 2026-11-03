@@ -55,7 +55,9 @@ def layout(dotenv: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     template.write_text("# CLICKHOUSE_SECURE=false\n", encoding="utf-8", newline="\n")
     env_templates = dotenv.parent / "env.example"
     env_templates.mkdir()
-    (env_templates / "engine.env").write_text("# DFE_API_PORT=8003\n", encoding="utf-8")
+    (env_templates / "engine.env").write_text(
+        "# DFE_ENGINE_API_PORT=8003\n", encoding="utf-8"
+    )
     monkeypatch.setattr(init, "DOTENV_TEMPLATE", template)
     monkeypatch.setattr(init, "ENV_TEMPLATE_DIR", env_templates)
     monkeypatch.setattr(init, "ENV_DIR", dotenv.parent / "env")
@@ -111,7 +113,7 @@ def test_an_existing_private_dotenv_is_left_alone(
 def test_a_secret_top_up_reasserts_the_mode(
     dotenv: Path, layout: Path, open_umask: None
 ) -> None:
-    dotenv.write_text("DFE_ENV=dev\n", encoding="utf-8", newline="\n")
+    dotenv.write_text("DFE_ENGINE_ENV=dev\n", encoding="utf-8", newline="\n")
     dotenv.chmod(0o644)
 
     assert init.main() == 0

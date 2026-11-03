@@ -417,7 +417,7 @@ def checkout(tmp_path: Path) -> Path:
 
 
 def _through_make(*, cwd: Path, **settings: str) -> tuple[str, str]:
-    """Return (the .tmp/profile.mk value, the engine's DFE_ADMIN_LINKS) for one make run."""
+    """Return (the .tmp/profile.mk value, the engine's DFE_ENGINE_ADMIN_LINKS) for one make run."""
     environment = {
         key: value
         for key, value in os.environ.items()
@@ -441,7 +441,7 @@ def _through_make(*, cwd: Path, **settings: str) -> tuple[str, str]:
     engine = json.loads(result.stdout)["services"]["dfe-engine"]["environment"]
     written = cwd / PROFILE_MK.relative_to(REPO_ROOT)
     resolved = _exports(path=written)[resolve_profile.ADMIN_LINKS_VAR]
-    return resolved, engine["DFE_ADMIN_LINKS"]
+    return resolved, engine["DFE_ENGINE_ADMIN_LINKS"]
 
 
 _SINGLE_ALL = {

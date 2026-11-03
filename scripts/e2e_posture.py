@@ -32,10 +32,10 @@ from dev_posture import _rewrite  # noqa: E402
 
 _BANNER = "## Written by `make e2e-posture` - the Playwright suite's stack"
 _E2E_ENV = "test"
-_POSTURE_KEY = "DFE_ENV"
+_POSTURE_KEY = "DFE_ENGINE_ENV"
 # Distinct from 1 (no env files at all) so a caller can tell a deployment from a checkout that never ran make init
 _REFUSED = 2
-_SERVER_KEY = "DFE_E2E_SERVER"
+_SERVER_KEY = "DFE_ENGINE_E2E_SERVER"
 
 
 def _check() -> int:
@@ -95,7 +95,7 @@ def _switch_on() -> int:
     if environment and environment != _E2E_ENV and not (is_dev_posture(environment)):
         _print(
             header=_rel_path(path=DOTENV_FILE),
-            msg=f"DFE_ENV={environment!r} is not a dev posture, so `make e2e-posture` refuses: it would overwrite this deployment's admin password with the shipped default. Run the suite from a checkout of its own.",
+            msg=f"DFE_ENGINE_ENV={environment!r} is not a dev posture, so `make e2e-posture` refuses: it would overwrite this deployment's admin password with the shipped default. Run the suite from a checkout of its own.",
         )
         return _REFUSED
 
@@ -115,7 +115,7 @@ def _switch_on() -> int:
         write_dotenv(path=path, text=rewritten)
     _print(
         header=_rel_path(path=DOTENV_FILE),
-        msg="E2E posture: DFE_ENV=test in .env, DFE_E2E_SERVER=true and the shipped admin password in env/engine.env. `make e2e-posture-off` restores both. Recreate the stack so the engine reads them.",
+        msg="E2E posture: DFE_ENGINE_ENV=test in .env, DFE_ENGINE_E2E_SERVER=true and the shipped admin password in env/engine.env. `make e2e-posture-off` restores both. Recreate the stack so the engine reads them.",
     )
     return 0
 

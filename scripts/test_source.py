@@ -60,8 +60,8 @@ from _common import (  # noqa: E402
 from _pipeline import env_or  # noqa: E402
 
 PROJECT_DIR = Path(__file__).resolve().parent.parent
-_ADMIN_NAME_KEY = "DFE_AUTH_LOCAL_ADMIN_NAME"
-_ADMIN_PASSWORD_KEY = "DFE_AUTH_LOCAL_ADMIN_PASSWORD"
+_ADMIN_NAME_KEY = "DFE_ENGINE_AUTH_LOCAL_ADMIN_NAME"
+_ADMIN_PASSWORD_KEY = "DFE_ENGINE_AUTH_LOCAL_ADMIN_PASSWORD"
 # Container names are daemon-wide and DFE_CONTAINER_PREFIX moves them, so the
 # archiver is reached through compose.
 ARCHIVER_SERVICE = "dfe-archiver"

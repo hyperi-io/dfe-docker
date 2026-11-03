@@ -35,15 +35,15 @@ import creds
 _MINTED = "s3cr3t-minted-value"
 _FIXTURE_PASSWORD = "shared-fixture-value"
 _ENV = f"""\
-DFE_ENV=dev
-DFE_AUTH_LOCAL_ADMIN_NAME=admin
-DFE_AUTH_LOCAL_ADMIN_PASSWORD={_MINTED}
-DFE_AUTH_BREAKGLASS_PASSWORD=another-minted-value
+DFE_ENGINE_ENV=dev
+DFE_ENGINE_AUTH_LOCAL_ADMIN_NAME=admin
+DFE_ENGINE_AUTH_LOCAL_ADMIN_PASSWORD={_MINTED}
+DFE_ENGINE_AUTH_BREAKGLASS_PASSWORD=another-minted-value
 """
 _ENGINE_KEYS = (
-    "DFE_AUTH_BREAKGLASS_PASSWORD",
-    "DFE_AUTH_LOCAL_ADMIN_NAME",
-    "DFE_AUTH_LOCAL_ADMIN_PASSWORD",
+    "DFE_ENGINE_AUTH_BREAKGLASS_PASSWORD",
+    "DFE_ENGINE_AUTH_LOCAL_ADMIN_NAME",
+    "DFE_ENGINE_AUTH_LOCAL_ADMIN_PASSWORD",
     "DFE_SEED_ACCOUNT_",
 )
 _SEED_PASSWORD = "seed-account-minted-value"
@@ -70,7 +70,7 @@ def _deploy(*, dotenv: Path, text: str) -> None:
     ("engine_line", "expected"),
     [
         pytest.param(
-            "DFE_AUTH_LOCAL_ADMIN_NAME=ops\n", "ops", id="engine-file-names-it"
+            "DFE_ENGINE_AUTH_LOCAL_ADMIN_NAME=ops\n", "ops", id="engine-file-names-it"
         ),
         pytest.param("", "admin", id="unset-falls-back"),
     ],
@@ -79,9 +79,10 @@ def test_the_summary_takes_the_admin_name_from_the_engine_file_not_dotenv(
     dotenv: Path, engine_line: str, expected: str
 ) -> None:
     _deploy(
-        dotenv=dotenv, text=f"{engine_line}DFE_AUTH_LOCAL_ADMIN_PASSWORD={_MINTED}\n"
+        dotenv=dotenv,
+        text=f"{engine_line}DFE_ENGINE_AUTH_LOCAL_ADMIN_PASSWORD={_MINTED}\n",
     )
-    dotenv.write_text("DFE_AUTH_LOCAL_ADMIN_NAME=stale\n", encoding="utf-8")
+    dotenv.write_text("DFE_ENGINE_AUTH_LOCAL_ADMIN_NAME=stale\n", encoding="utf-8")
 
     printed = "\n".join(creds.summary_lines(values=creds.access_values()))
 
@@ -110,7 +111,7 @@ def test_non_tty_prints_the_fetch_hint_instead(
     assert creds.main() == 0
     out = capsys.readouterr().out
     assert _MINTED not in out
-    assert "DFE_AUTH_LOCAL_ADMIN_PASSWORD" in out
+    assert "DFE_ENGINE_AUTH_LOCAL_ADMIN_PASSWORD" in out
 
 
 def test_show_zero_hides_it_on_a_tty(
@@ -123,7 +124,7 @@ def test_show_zero_hides_it_on_a_tty(
     assert creds.main() == 0
     out = capsys.readouterr().out
     assert _MINTED not in out
-    assert "DFE_AUTH_LOCAL_ADMIN_PASSWORD" in out
+    assert "DFE_ENGINE_AUTH_LOCAL_ADMIN_PASSWORD" in out
 
 
 def test_the_break_glass_password_is_never_printed(
@@ -234,8 +235,8 @@ def test_the_file_also_names_the_two_engine_env_keys(dotenv: Path) -> None:
     body = creds.summary_markdown(values=creds.access_values())
 
     assert "Both are also in `env/engine.env`" in body
-    assert "DFE_AUTH_LOCAL_ADMIN_PASSWORD" in body
-    assert "DFE_AUTH_BREAKGLASS_PASSWORD" in body
+    assert "DFE_ENGINE_AUTH_LOCAL_ADMIN_PASSWORD" in body
+    assert "DFE_ENGINE_AUTH_BREAKGLASS_PASSWORD" in body
 
 
 def test_a_password_an_older_dotenv_still_sets_is_not_handed_over(
@@ -280,7 +281,7 @@ def test_without_write_no_file_is_left_behind(
 
 
 def test_an_unminted_password_says_so_rather_than_printing_blank(dotenv: Path) -> None:
-    dotenv.write_text("DFE_ENV=dev\n", encoding="utf-8", newline="\n")
+    dotenv.write_text("DFE_ENGINE_ENV=dev\n", encoding="utf-8", newline="\n")
 
     body = creds.summary_markdown(values=creds.access_values())
 
@@ -289,7 +290,7 @@ def test_an_unminted_password_says_so_rather_than_printing_blank(dotenv: Path) -
 
 
 def test_no_fixture_keys_prints_no_fixture_line() -> None:
-    assert creds.fixture_lines(values={"DFE_ENV": "dev"}) == []
+    assert creds.fixture_lines(values={"DFE_ENGINE_ENV": "dev"}) == []
 
 
 def test_the_password_alone_falls_back_to_the_default_user() -> None:
@@ -465,7 +466,7 @@ def test_a_dev_posture_never_reports_the_refusal(
 ) -> None:
     """The refusal is about the POSTURE, so a pipe must not conjure one.
 
-    DFE_ENV=dev accepts the default password. Reporting otherwise sends the
+    DFE_ENGINE_ENV=dev accepts the default password. Reporting otherwise sends the
     operator to rotate credentials on a stack that is running.
     """
     _deploy(dotenv=dotenv, text=_DEFAULT_ENV)
@@ -484,7 +485,7 @@ def test_a_non_dev_posture_reports_the_refusal_either_way(
     is_tty: bool,
 ) -> None:
     """A stack that cannot boot is worth saying in a build log too."""
-    production = _DEFAULT_ENV.replace("DFE_ENV=dev", "DFE_ENV=production")
+    production = _DEFAULT_ENV.replace("DFE_ENGINE_ENV=dev", "DFE_ENGINE_ENV=production")
     _deploy(dotenv=dotenv, text=production)
     monkeypatch.setattr("sys.stdout.isatty", lambda: is_tty)
     monkeypatch.delenv("DFE_CREDS_SHOW", raising=False)

@@ -175,7 +175,7 @@ def test_the_engine_reads_the_directory_the_one_shots_wrote(
 ) -> None:
     engine = services[_ENGINE_SERVICE]
 
-    assert engine["environment"]["DFE_APP_CONTRACT_DIR"] == _CONTRACT_ROOT
+    assert engine["environment"]["DFE_ENGINE_APP_CONTRACT_DIR"] == _CONTRACT_ROOT
     assert _CONTENT_MOUNT in {volume["target"] for volume in engine["volumes"]}
 
 
@@ -183,7 +183,7 @@ def test_a_tier_that_projects_nothing_leaves_the_engine_no_contract_directory() 
     """The resolver's EMPTY has to survive: `${VAR-...}`, never `${VAR:-...}`."""
     services = _model(**{resolve_profile.ENGINE_CONTRACT_DIR_VAR: ""})
 
-    assert services[_ENGINE_SERVICE]["environment"]["DFE_APP_CONTRACT_DIR"] == ""
+    assert services[_ENGINE_SERVICE]["environment"]["DFE_ENGINE_APP_CONTRACT_DIR"] == ""
 
 
 def test_the_engine_is_told_where_to_write_a_custom_env(
@@ -192,7 +192,7 @@ def test_the_engine_is_told_where_to_write_a_custom_env(
     """The directory it is given has to BE the bind mount, or it writes nowhere."""
     engine = services[_ENGINE_SERVICE]
 
-    assert engine["environment"]["DFE_DEPLOYMENT_APP_ENV_DIR"] == _APP_ENV_MOUNT
+    assert engine["environment"]["DFE_ENGINE_DEPLOYMENT_APP_ENV_DIR"] == _APP_ENV_MOUNT
     writable = {
         volume["target"]
         for volume in engine["volumes"]

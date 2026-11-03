@@ -42,7 +42,7 @@ def test_an_empty_exported_clickhouse_key_takes_its_default(
 ) -> None:
     monkeypatch.setenv("CLICKHOUSE_HTTP_PORT", "")
     monkeypatch.setenv("CLICKHOUSE_USERNAME", "")
-    monkeypatch.setenv("DFE_AUTH_LOCAL_ADMIN_PASSWORD", "issued")
+    monkeypatch.setenv("DFE_ENGINE_AUTH_LOCAL_ADMIN_PASSWORD", "issued")
 
     env = test_source._suite_env(
         engine_url="http://localhost:8003", found={}, host="localhost"
@@ -56,7 +56,7 @@ def test_the_runner_starts_make_without_the_keys_dotenv_merged(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     # make re-exports an inherited .env key with the spaces before its comment
-    monkeypatch.setenv("DFE_AUTH_LOCAL_ADMIN_PASSWORD", "issued")
+    monkeypatch.setenv("DFE_ENGINE_AUTH_LOCAL_ADMIN_PASSWORD", "issued")
     monkeypatch.setenv("DFE_RECEIVER_VERSION", "v1.15.57@sha256:abc")
 
     env = test_source._suite_env(
@@ -66,7 +66,7 @@ def test_the_runner_starts_make_without_the_keys_dotenv_merged(
     )
 
     assert "DFE_RECEIVER_VERSION" not in env
-    assert "DFE_AUTH_LOCAL_ADMIN_PASSWORD" not in env
+    assert "DFE_ENGINE_AUTH_LOCAL_ADMIN_PASSWORD" not in env
     assert env["PATH"] == "/usr/bin"
     assert env["DFE_E2E_ENGINE_PASSWORD"] == "issued"
 
