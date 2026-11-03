@@ -345,14 +345,18 @@ say "Chain: $CHAIN"
 
 [ "${1:-}" != --no-start ] || exit 0
 
-if [ "$PROXY_TLS" = true ]; then
-    project=${COMPOSE_PROJECT_NAME:-$(setting COMPOSE_PROJECT_NAME)}
-    project=${project:-$(basename "$PWD" | tr '[:upper:]' '[:lower:]' | tr -cd 'a-z0-9_-' | sed 's/^[_-]*//')}
-    if held=$(docker network inspect "${project}_default" --format '{{range .IPAM.Config}}{{.Subnet}} {{end}}' 2>/dev/null); then
-        case " $held " in
-            *" $SUBNET "*) ;;
-            *) die "the network ${project}_default holds ${held:-no subnet}, and Docker cannot re-address a live network. Stop the stack first: docker compose --profile '*' down" ;;
-        esac
+# Docker cannot re-address a live network, so flipping DFE_PROXY_TLS on a running stack needs it taken down first
+project=${COMPOSE_PROJECT_NAME:-$(setting COMPOSE_PROJECT_NAME)}
+project=${project:-$(basename "$PWD" | tr '[:upper:]' '[:lower:]' | tr -cd 'a-z0-9_-' | sed 's/^[_-]*//')}
+if held=$(docker network inspect "${project}_default" --format '{{range .IPAM.Config}}{{.Subnet}} {{end}}' 2>/dev/null); then
+    pinned=$(setting DFE_NETWORK_SUBNET)
+    pinned=${pinned:-10.207.0.0/24}
+    case " $held " in
+        *" $pinned "*) addressed=true ;;
+        *) addressed=false ;;
+    esac
+    if [ "$addressed" != "$PROXY_TLS" ]; then
+        die "the network ${project}_default holds ${held:-no subnet} and DFE_PROXY_TLS is $PROXY_TLS, and Docker cannot re-address a live network. Stop the stack first: docker compose --profile '*' down"
     fi
 fi
 say "Starting the $PROFILE stack, which pulls its images first"

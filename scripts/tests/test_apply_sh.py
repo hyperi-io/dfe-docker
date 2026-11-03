@@ -26,7 +26,7 @@ STUB = """#!/bin/sh
 printf '%s\\n' "$*" >> "$DOCKER_LOG"
 case $1 in
     info) echo "8 testhost" ;;
-    network) exit 1 ;;
+    network) [ -n "${NET_SUBNETS:-}" ] || exit 1; echo "$NET_SUBNETS " ;;
 esac
 exit 0
 """
@@ -64,7 +64,7 @@ def _install(
 
 
 def _apply(
-    tmp_path: Path, target: Path, *args: str
+    tmp_path: Path, target: Path, *args: str, net_subnets: str = ""
 ) -> tuple[subprocess.CompletedProcess, str]:
     stubs = tmp_path / "bin"
     stubs.mkdir(exist_ok=True)
@@ -83,6 +83,7 @@ def _apply(
             **os.environ,
             "PATH": f"{stubs}:{os.environ['PATH']}",
             "DOCKER_LOG": str(log),
+            "NET_SUBNETS": net_subnets,
         },
         errors="replace",
         text=True,
@@ -400,3 +401,31 @@ def test_console_tls_keeps_a_certificate_set_that_is_already_there(
     refused, _ = _apply(tmp_path, target, "--no-start")
     assert refused.returncode == 1
     assert "holds only some of the certificate set" in refused.stderr
+
+
+@pytest.mark.parametrize(
+    ("tls", "network", "refused"),
+    [
+        ("true", "172.19.0.0/16", True),
+        ("true", "10.207.0.0/24", False),
+        ("false", "10.207.0.0/24", True),
+        ("false", "172.19.0.0/16", False),
+    ],
+)
+def test_flipping_console_tls_on_a_live_network_is_refused_until_it_is_down(
+    tmp_path: Path, tls: str, network: str, refused: bool
+) -> None:
+    certs = tmp_path / "certs"
+    for name in ("console.crt", "console.key", "ca.crt"):
+        certs.mkdir(exist_ok=True)
+        (certs / name).write_text("x", encoding="utf-8")
+    target = _install(
+        tmp_path,
+        settings=f"DFE_PROXY_TLS={tls}\nDFE_EXTERNAL_ORIGIN=https://dfe.example.com\nDFE_PROXY_CERT_DIR={certs}\n",
+    )
+
+    result, calls = _apply(tmp_path, target, net_subnets=network)
+
+    assert (result.returncode == 1) is refused
+    assert ("Docker cannot re-address a live network" in result.stderr) is refused
+    assert ("compose up" in calls) is not refused
