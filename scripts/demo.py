@@ -739,7 +739,9 @@ def _outcome(
         _print(
             msg=f"FAIL {ARCHIVER_SERVICE} wrote no files for {', '.join(archiving)} "
             f"in {ARCHIVE_TIMEOUT_SECONDS:.0f}s. `docker compose logs {ARCHIVER_SERVICE}` "
-            f"says why"
+            f"says why. An archiver that predates the DFE_ARCHIVER_ env names (the one "
+            f"stack 2.2.1 pins, v1.7.39) never reaches the broker, so pin a newer "
+            f"{ARCHIVER_SERVICE} in .env"
         )
     else:
         kept = " and the archiver wrote files" if archiving else ""
