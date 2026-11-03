@@ -167,7 +167,7 @@ TARGET_TABLE = "main"
 # Schema control. dfe-engine applies every ClickHouse object and every bootstrap
 # topic at its own startup and names a `schema` check on /readyz that is true
 # only once that pass converged. The window covers a cold ClickHouse, which the
-# engine retries for DFE_CLICKHOUSE_BOOTSTRAP_WAIT_SECONDS (180) first.
+# engine retries for DFE_ENGINE_CLICKHOUSE_BOOTSTRAP_WAIT_SECONDS (180) first.
 ENGINE_SERVICE = "dfe-engine"
 SCHEMA_READY_CHECK = "schema"
 # The route that reports the pass. It arrived with schema control in engine
@@ -254,8 +254,8 @@ HYPERDX_NETWORK_BASE = "http://dfe-hyperdx-proxy:8000"
 API_EXEC_MARGIN_SECONDS = 10
 
 # The console login's name, and its password, which a forced change writes back to the same file.
-ADMIN_NAME_KEY = "DFE_AUTH_LOCAL_ADMIN_NAME"
-ADMIN_PASSWORD_KEY = "DFE_AUTH_LOCAL_ADMIN_PASSWORD"
+ADMIN_NAME_KEY = "DFE_ENGINE_AUTH_LOCAL_ADMIN_NAME"
+ADMIN_PASSWORD_KEY = "DFE_ENGINE_AUTH_LOCAL_ADMIN_PASSWORD"
 # The owner's own password change, the one call the engine serves an account that
 # is still on the password it was issued.
 CHANGE_PASSWORD_PATH = "/auth/accounts/reset-password"
@@ -1912,7 +1912,9 @@ def _verify_ui_query(*, database: str, marker: str, table: str) -> Claim:
     if fault and _skip_retired(base=base, status=status, what="the query path"):
         return SKIPPED
     if status == 0:
-        _print(msg="FAIL  DFE_AUTH_LOCAL_ADMIN_PASSWORD is unset -- run `make init`")
+        _print(
+            msg="FAIL  DFE_ENGINE_AUTH_LOCAL_ADMIN_PASSWORD is unset -- run `make init`"
+        )
         return Claim(asserted=True, failed=1)
 
     _print(msg=f"Querying {database}.{table} through the engine API as {username!r}")
@@ -2130,7 +2132,7 @@ def _verify_hunt(*, database: str, ingest_url: str, marker: str, table: str) -> 
     if status == 0:
         _print(
             msg="FAIL  no password for the console is available -- set "
-            "DFE_AUTH_LOCAL_ADMIN_PASSWORD (run `make init`), so this run can create "
+            "DFE_ENGINE_AUTH_LOCAL_ADMIN_PASSWORD (run `make init`), so this run can create "
             "the hunt it needs"
         )
         return Claim(asserted=True, failed=1)

@@ -35,7 +35,7 @@ _E2E_ENV = "test"
 _POSTURE_KEY = "DFE_ENV"
 # Distinct from 1 (no env files at all) so a caller can tell a deployment from a checkout that never ran make init
 _REFUSED = 2
-_SERVER_KEY = "DFE_E2E_SERVER"
+_SERVER_KEY = "DFE_ENGINE_E2E_SERVER"
 
 
 def _check() -> int:
@@ -115,7 +115,7 @@ def _switch_on() -> int:
         write_dotenv(path=path, text=rewritten)
     _print(
         header=_rel_path(path=DOTENV_FILE),
-        msg="E2E posture: DFE_ENV=test in .env, DFE_E2E_SERVER=true and the shipped admin password in env/engine.env. `make e2e-posture-off` restores both. Recreate the stack so the engine reads them.",
+        msg="E2E posture: DFE_ENV=test in .env, DFE_ENGINE_E2E_SERVER=true and the shipped admin password in env/engine.env. `make e2e-posture-off` restores both. Recreate the stack so the engine reads them.",
     )
     return 0
 

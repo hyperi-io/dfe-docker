@@ -17,7 +17,7 @@ Generated secrets. GENERATED_SECRETS names each secret by the file it lives in: 
 
 Drift report. A re-run reports template keys that never reached .env. The copy is one-shot, so an operator who ran `make init` months ago otherwise never learns that .env.example grew a setting. Reporting is all it does - editing an operator's .env is theirs to do, not ours.
 
-The retention question. A NEW env/engine.env is asked, once and on a TTY only, for the default TTL every time-series table gets. The answer lands as a live DFE_CLICKHOUSE_DEFAULT_TTL_DAYS line. The environment pre-answers it, a non-interactive run keeps the template's commented 90 and an existing env/engine.env is never re-asked.
+The retention question. A NEW env/engine.env is asked, once and on a TTY only, for the default TTL every time-series table gets. The answer lands as a live DFE_ENGINE_CLICKHOUSE_DEFAULT_TTL_DAYS line. The environment pre-answers it, a non-interactive run keeps the template's commented 90 and an existing env/engine.env is never re-asked.
 
 The env/ directory. The engine writes env/<app>.custom.env into it, so it is made group-writable and setgid: the engine writes through the group compose adds it to, and every file it creates keeps the group Compose reads it as.
 
@@ -55,15 +55,15 @@ from _common import (  # noqa: E402
 # EXPRESS_SESSION_SECRET, TOKEN_ENCRYPTION_KEY and each
 # DFE_<APP>_CLICKHOUSE_PASSWORD via its WEAK_SECRET_DEFAULTS service-map,
 # CLICKHOUSE_PASSWORD via its own external-CH check (its default is empty, not a
-# sentinel string), and DFE_AUTH_LOCAL_ADMIN_PASSWORD by logging in with it. Keep
+# sentinel string), and DFE_ENGINE_AUTH_LOCAL_ADMIN_PASSWORD by logging in with it. Keep
 # them in step. CLICKHOUSE_KEEPER_PASSWORD is the one compose refuses to run without.
 #
 # Each DFE_<APP>_CLICKHOUSE_PASSWORD is one app's: the engine creates that
 # app's ClickHouse user on it and the app connects with it.
 #
-# The deploy mints two logins: DFE_AUTH_LOCAL_ADMIN_PASSWORD is `admin`, issued with
+# The deploy mints two logins: DFE_ENGINE_AUTH_LOCAL_ADMIN_PASSWORD is `admin`, issued with
 # a forced change at first login, which `make post` records in env/engine.env.
-# DFE_AUTH_BREAKGLASS_PASSWORD is the recovery admin the engine hashes into the
+# DFE_ENGINE_AUTH_BREAKGLASS_PASSWORD is the recovery admin the engine hashes into the
 # deploy repo on first boot and ignores thereafter.
 # Neither is printed here; `make creds` is the hand-over.
 #
@@ -108,8 +108,8 @@ GENERATED_SECRETS = {
         "DFE_OAUTH2_PROXY_COOKIE_SECRET": _LEN_COOKIE,
     },
     f"{ENGINE_COMPONENT}.env": {
-        "DFE_AUTH_BREAKGLASS_PASSWORD": _LEN_CREDENTIAL,
-        "DFE_AUTH_LOCAL_ADMIN_PASSWORD": _LEN_CREDENTIAL,
+        "DFE_ENGINE_AUTH_BREAKGLASS_PASSWORD": _LEN_CREDENTIAL,
+        "DFE_ENGINE_AUTH_LOCAL_ADMIN_PASSWORD": _LEN_CREDENTIAL,
     },
     "hyperdx.env": {
         "EXPRESS_SESSION_SECRET": _LEN_KEY,
@@ -140,7 +140,7 @@ ENV_DIR_GROUP_BITS = stat.S_IRWXG | stat.S_ISGID
 
 # The retention every time-series table gets unless a source or a dfe-schemas
 # definition sets its own. Whole days; 0 disables the default TTL.
-RETENTION_KEY = "DFE_CLICKHOUSE_DEFAULT_TTL_DAYS"
+RETENTION_KEY = "DFE_ENGINE_CLICKHOUSE_DEFAULT_TTL_DAYS"
 RETENTION_FILE = f"{ENGINE_COMPONENT}.env"
 RETENTION_DEFAULT = "90"
 _RETENTION_PROMPT = (

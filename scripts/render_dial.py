@@ -81,7 +81,7 @@ _DOCKER_DIAL_MAP: tuple[tuple[tuple[str, ...], str], ...] = (
 )
 # (dial path) -> env/engine.env key, for the engine's own settings
 _ENGINE_DIAL_MAP: tuple[tuple[tuple[str, ...], str], ...] = (
-    (("retention", "default_ttl_days"), "DFE_CLICKHOUSE_DEFAULT_TTL_DAYS"),
+    (("retention", "default_ttl_days"), "DFE_ENGINE_CLICKHOUSE_DEFAULT_TTL_DAYS"),
 )
 
 # A dotenv assignment, live (`KEY=`) or single-hash commented (`# KEY=`). Mirrors

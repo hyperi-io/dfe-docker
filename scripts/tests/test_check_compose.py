@@ -365,8 +365,8 @@ def test_every_local_table_image_declares_exactly_the_paths_the_table_lists():
 
 def _dialling(*, host: str, http: str, native: str) -> dict:
     engine_keys = {
-        "DFE_CLICKHOUSE_HOST": host,
-        "DFE_CLICKHOUSE_PORT": http,
+        "DFE_ENGINE_CLICKHOUSE_HOST": host,
+        "DFE_ENGINE_CLICKHOUSE_PORT": http,
     }
     return {
         "services": {
@@ -396,13 +396,15 @@ def test_every_dialler_on_the_container_ports_passes():
 def test_a_dialler_on_the_moved_host_port_fails():
     """The shape #75 reported: the engine dialled the publish, not the container."""
     config = _dialling(host="clickhouse", http="8123", native="9000")
-    config["services"]["dfe-engine"]["environment"]["DFE_CLICKHOUSE_PORT"] = "18123"
+    config["services"]["dfe-engine"]["environment"]["DFE_ENGINE_CLICKHOUSE_PORT"] = (
+        "18123"
+    )
 
     failures = check_compose._clickhouse_dial_mismatches(
         config=config, want=("clickhouse", "8123", "9000")
     )
 
-    assert failures == ["dfe-engine: DFE_CLICKHOUSE_PORT=18123, want 8123"]
+    assert failures == ["dfe-engine: DFE_ENGINE_CLICKHOUSE_PORT=18123, want 8123"]
 
 
 def test_the_collector_is_held_to_the_native_port_it_dials():

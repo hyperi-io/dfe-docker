@@ -30,11 +30,11 @@ import pytest
 import dev_posture
 
 _MINTED = "s3cr3t-minted-value"
-_PASSWORD_LINE = "DFE_AUTH_LOCAL_ADMIN_PASSWORD="
+_PASSWORD_LINE = "DFE_ENGINE_AUTH_LOCAL_ADMIN_PASSWORD="
 _DEPLOYMENT = f"""\
 ## A deployment's .env.
 DFE_ENV=production
-DFE_AUTH_LOCAL_ADMIN_PASSWORD={_MINTED}
+DFE_ENGINE_AUTH_LOCAL_ADMIN_PASSWORD={_MINTED}
 DFE_UI_PORT=3000
 """
 _DEV_BOX = _DEPLOYMENT.replace("production", "dev")
@@ -42,7 +42,7 @@ _DEV_BOX = _DEPLOYMENT.replace("production", "dev")
 # repair: a dev posture running on the shipped default.
 _TYRE_KICKED = _DEV_BOX.replace(_MINTED, "changeme")
 _NO_POSTURE = f"""\
-DFE_AUTH_LOCAL_ADMIN_PASSWORD={_MINTED}
+DFE_ENGINE_AUTH_LOCAL_ADMIN_PASSWORD={_MINTED}
 DFE_UI_PORT=3000
 """
 
@@ -110,7 +110,7 @@ def test_the_rewrite_sets_both_keys_and_leaves_the_rest(dotenv: Path) -> None:
     dotenv_text, engine_text = _state(dotenv=dotenv)
     assert "DFE_ENV=dev" in dotenv_text
     assert "DFE_UI_PORT=3000" in dotenv_text
-    assert "DFE_AUTH_LOCAL_ADMIN_PASSWORD=changeme" in engine_text
+    assert "DFE_ENGINE_AUTH_LOCAL_ADMIN_PASSWORD=changeme" in engine_text
     assert _MINTED not in dotenv_text + engine_text
 
 
@@ -205,7 +205,7 @@ def test_real_mints_a_password_and_writes_a_non_dev_posture(dotenv: Path) -> Non
     dotenv_text, engine_text = _state(dotenv=dotenv)
     assert "DFE_ENV=production" in dotenv_text
     assert "DFE_UI_PORT=3000" in dotenv_text
-    assert "DFE_AUTH_LOCAL_ADMIN_PASSWORD=changeme" not in engine_text
+    assert "DFE_ENGINE_AUTH_LOCAL_ADMIN_PASSWORD=changeme" not in engine_text
     assert engine_text.startswith(_PASSWORD_LINE)
 
 
@@ -226,7 +226,7 @@ def test_real_keeps_a_minted_password_and_only_lifts_the_posture(
 
     assert dev_posture.main(argv=["--real"]) == 0
     dotenv_text, engine_text = _state(dotenv=dotenv)
-    assert f"DFE_AUTH_LOCAL_ADMIN_PASSWORD={_MINTED}" in engine_text
+    assert f"DFE_ENGINE_AUTH_LOCAL_ADMIN_PASSWORD={_MINTED}" in engine_text
     assert "DFE_ENV=production" in dotenv_text
 
 

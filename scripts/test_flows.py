@@ -51,8 +51,8 @@ from _pipeline import env_or  # noqa: E402
 
 PROJECT_DIR = Path(__file__).resolve().parent.parent
 SERVICE_PROFILES_FILE = PROJECT_DIR / "service_profiles.yaml"
-_ADMIN_NAME_KEY = "DFE_AUTH_LOCAL_ADMIN_NAME"
-_ADMIN_PASSWORD_KEY = "DFE_AUTH_LOCAL_ADMIN_PASSWORD"
+_ADMIN_NAME_KEY = "DFE_ENGINE_AUTH_LOCAL_ADMIN_NAME"
+_ADMIN_PASSWORD_KEY = "DFE_ENGINE_AUTH_LOCAL_ADMIN_PASSWORD"
 
 
 def _profiles() -> dict:

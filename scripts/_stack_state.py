@@ -45,8 +45,8 @@ SUITE_CONTAINER_PREFIX = "e2e-"
 
 # The tier and transport dfe-engine runs with, the variable make exports each from and compose's default
 _ENGINE_SETTINGS = (
-    ("DFE_PROFILE", "DFE_STACK_PROFILE", "docker-slim"),
-    ("DFE_TRANSPORT_DEFAULT", "DFE_TRANSPORT_DEFAULT", "direct"),
+    ("DFE_ENGINE_PROFILE", "DFE_STACK_PROFILE", "docker-slim"),
+    ("DFE_ENGINE_TRANSPORT_DEFAULT", "DFE_TRANSPORT_DEFAULT", "direct"),
 )
 
 
@@ -175,8 +175,10 @@ def _profile_flags(profiles: Iterable[str]) -> list[str]:
 
 def _profile_name(*, settings: Mapping[str, str]) -> str:
     """The service profile a dfe-engine tier and transport belong to, such as single-grpc."""
-    tier = settings["DFE_PROFILE"].removeprefix("docker-")
-    transport = "kafka" if (settings["DFE_TRANSPORT_DEFAULT"] == "bus") else "grpc"
+    tier = settings["DFE_ENGINE_PROFILE"].removeprefix("docker-")
+    transport = (
+        "kafka" if (settings["DFE_ENGINE_TRANSPORT_DEFAULT"] == "bus") else "grpc"
+    )
     return f"{tier}-{transport}"
 
 

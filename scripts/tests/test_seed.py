@@ -91,8 +91,8 @@ class SkipReasonCase(TypedDict):
     per_source_apps: list[str]
 
 
-_ADMIN_401 = "refused; DFE_AUTH_LOCAL_ADMIN_PASSWORD in env/engine.env is not the bootstrap admin's current password, so set it to that and run this again"
-_ADMIN_UNSET = "refused; set DFE_AUTH_LOCAL_ADMIN_PASSWORD in env/engine.env, which `make init` generates"
+_ADMIN_401 = "refused; DFE_ENGINE_AUTH_LOCAL_ADMIN_PASSWORD in env/engine.env is not the bootstrap admin's current password, so set it to that and run this again"
+_ADMIN_UNSET = "refused; set DFE_ENGINE_AUTH_LOCAL_ADMIN_PASSWORD in env/engine.env, which `make init` generates"
 _FETCHER = "dfe-fetcher"
 _FETCHER_BODY = {"fetcher": {"source_type": "aws"}, "source": "aws-guardduty"}
 _FETCHER_VRL_BODY = {

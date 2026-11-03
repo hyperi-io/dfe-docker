@@ -24,7 +24,7 @@ profile: slim-grpc
 retention:
   default_ttl_days: 30
 """
-_TTL_KEY = "DFE_CLICKHOUSE_DEFAULT_TTL_DAYS"
+_TTL_KEY = "DFE_ENGINE_CLICKHOUSE_DEFAULT_TTL_DAYS"
 
 
 @pytest.fixture

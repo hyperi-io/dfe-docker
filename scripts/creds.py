@@ -83,10 +83,10 @@ _SEED_LABEL = "Seed account"
 
 # The account names the engine seeds. `breakglass` is fixed in the engine
 # (auth/breakglass.py); `admin` is overridable per deployment.
-_ADMIN_NAME_KEY = "DFE_AUTH_LOCAL_ADMIN_NAME"
-_ADMIN_PASSWORD_KEY = "DFE_AUTH_LOCAL_ADMIN_PASSWORD"
+_ADMIN_NAME_KEY = "DFE_ENGINE_AUTH_LOCAL_ADMIN_NAME"
+_ADMIN_PASSWORD_KEY = "DFE_ENGINE_AUTH_LOCAL_ADMIN_PASSWORD"
 _BREAKGLASS_NAME = "breakglass"
-_BREAKGLASS_PASSWORD_KEY = "DFE_AUTH_BREAKGLASS_PASSWORD"
+_BREAKGLASS_PASSWORD_KEY = "DFE_ENGINE_AUTH_BREAKGLASS_PASSWORD"
 
 # The tester login the console acceptance specs sign in with. Same names in every
 # DFE repo; the default user is the one the fixture provisioners create.

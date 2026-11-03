@@ -338,8 +338,8 @@ def test_stale_names_only_restored_services_their_files_have_moved_past() -> Non
 
 
 _SINGLE_GRPC_ENGINE = {
-    "DFE_PROFILE": "docker-single",
-    "DFE_TRANSPORT_DEFAULT": "direct",
+    "DFE_ENGINE_PROFILE": "docker-single",
+    "DFE_ENGINE_TRANSPORT_DEFAULT": "direct",
 }
 
 
@@ -350,7 +350,13 @@ _SINGLE_GRPC_ENGINE = {
             _SINGLE_GRPC_ENGINE,
             {"DFE_STACK_PROFILE": "docker-single", "DFE_TRANSPORT_DEFAULT": "direct"},
         ),
-        ({"DFE_PROFILE": "docker-slim", "DFE_TRANSPORT_DEFAULT": "direct"}, {}),
+        (
+            {
+                "DFE_ENGINE_PROFILE": "docker-slim",
+                "DFE_ENGINE_TRANSPORT_DEFAULT": "direct",
+            },
+            {},
+        ),
         ({}, {"DFE_STACK_PROFILE": "docker-single", "DFE_TRANSPORT_DEFAULT": "bus"}),
     ],
     ids=["same-profile", "compose-defaults", "no-engine"],
