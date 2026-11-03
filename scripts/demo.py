@@ -55,7 +55,6 @@ from _common import (  # noqa: E402
     _rel_path,
     _resolved_services,
 )
-from _pipeline import ch_execute  # noqa: E402
 from _sources import hinted_services  # noqa: E402
 from build_dev_images import SRC_REMOTE_DEFAULT  # noqa: E402
 from post import (  # noqa: E402
@@ -378,13 +377,6 @@ def _delete_source(*, base: str, name: str, token: str) -> None:
         )
     if status != 404:
         _print(msg=f"deleted source {name!r}")
-
-
-def _drop_table(*, name: str) -> None:
-    """Drop the table a deleted source leaves in ClickHouse."""
-    done, answer = ch_execute(f"DROP TABLE IF EXISTS {TARGET_DB}.`{name}`")
-    if not (done):
-        raise DemoError(f"dropping {TARGET_DB}.{name!r} failed: {answer}")
 
 
 def _await_ready(*, instance: str) -> None:
@@ -1003,7 +995,7 @@ def _read_manifest(*, path: Path) -> dict:
 
 
 def _remove_pack(*, args: argparse.Namespace, manifest: dict) -> None:
-    """Take everything the demo put in out again: the stream, the pruner, the sources and their tables, and the archived objects. A step that cannot be done warns, and the rest still run."""
+    """Take everything the demo put in out again: the stream, the pruner, the sources, the console objects, the cursors and the archived objects. A step that cannot be done warns, and the rest still run."""
     _stop_stream(container=args.container)
     _stop_stream(container=args.pruner)
     cursors = {
@@ -1043,11 +1035,6 @@ def _remove_pack(*, args: argparse.Namespace, manifest: dict) -> None:
                 f"Run `make demo-stop` again once the stack is up"
             )
     if deleted:
-        for name in manifest["sources"]:
-            try:
-                _drop_table(name=name)
-            except DemoError as error:
-                _print(msg=f"WARNING {error}")
         _apply(dev=args.dev, environ=dict(os.environ), services=[])
         for name, storage in cursors.items():
             directory = instances.service_name(instance=name, service=FETCHER_SERVICE)

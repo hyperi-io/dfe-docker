@@ -54,7 +54,7 @@ git clone https://github.com/hyperi-io/dfe-docker && cd dfe-docker
 make demo
 ```
 
-`make demo` creates `.env`, pins the newest published stable stack, starts the `single-kafka` profile, and streams Cisco ASA and FortiGate syslog through it beside two fetchers (live Wikipedia recent changes and the GitHub releases of the DFE components) until `make demo-stop`. Its first line says the profile and stack in use. `make creds` prints the DFE console URL and the admin login.
+`make demo` creates `.env`, pins the newest published stable stack, starts the `single-kafka` profile, and streams Cisco ASA and FortiGate syslog through it beside two fetchers (live Wikipedia recent changes and the GitHub releases of the DFE components) until `make demo-stop`, with dashboards and saved searches for each source in the console. Its first line says the profile and stack in use. `make creds` prints the DFE console URL and the admin login.
 
 To start the stack without the stream:
 
