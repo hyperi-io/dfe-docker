@@ -67,6 +67,22 @@ make down                        # stop everything
 
 `PROFILE=` and `VERSION=` on the make line are written to `.env` (as `DFE_PROFILE` and the image pins), so later runs keep them. A `.env` that already holds pins keeps them until `VERSION=` names another stack. `make demo` needs a profile that runs dfe-transform-elastic, `single-kafka` or `single-grpc`.
 
+### Without git, make or python
+
+Each release carries `install.sh` and a bundle of the compose files, config and templates. It needs docker with compose, and curl or wget:
+
+```bash
+curl -fsSL https://github.com/hyperi-io/dfe-docker/releases/latest/download/install.sh | sh
+```
+
+or download it first and run it:
+
+```bash
+curl -fsSLO https://github.com/hyperi-io/dfe-docker/releases/latest/download/install.sh && sh install.sh
+```
+
+It checks the bundle's sha256 against the release's `SHA256SUMS`, unpacks into `./dfe`, writes `.env` with random secrets and the stack's image pins, starts `single-kafka` and prints the console login. `DFE_PROFILE=slim-grpc` picks another profile, `DFE_VERSION=1.0.2` an older release. From then on a plain `docker compose` in `./dfe` runs the stack, and `docker compose --profile '*' down -v` removes it. The bundle has no `make` targets, so `make demo` and its dashboards need the clone.
+
 ### Prerequisites
 
 - Docker and Docker Compose v2

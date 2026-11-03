@@ -47,7 +47,7 @@ endif
 # any more (both sweep every profile), and requiring a resolvable profile to STOP
 # a stack is the same lockout the compose secret comments argue against -- set
 # DFE_PROFILE to something that does not exist and you could not tear down.
-BOOTSTRAP_GOALS := init env-files creds certs up demo dev-posture e2e-posture e2e-posture-off e2e-posture-check help stack dial modes down clean demo-stop limits check check-compose check-hardfail check-dockerfile check-docs check-locks check-proxy check-python check-tests
+BOOTSTRAP_GOALS := init env-files creds certs up demo dev-posture e2e-posture e2e-posture-off e2e-posture-check help stack dial modes down clean demo-stop limits check check-compose check-hardfail check-dockerfile check-docs check-locks check-proxy check-python check-shell check-tests
 
 # Resolve the active profile only when a goal actually needs the compose stack
 ifneq (,$(filter-out $(BOOTSTRAP_GOALS),$(or $(MAKECMDGOALS),help)))
@@ -611,7 +611,7 @@ infra: .env storage-dirs ## Start infrastructure services
 # ---------------------------------------------------------------------------
 
 .PHONY: check
-check: check-compose check-hardfail check-dockerfile check-docs check-proxy check-python check-tests check-locks ## Run every static check CI runs
+check: check-compose check-hardfail check-dockerfile check-docs check-proxy check-python check-shell check-tests check-locks ## Run every static check CI runs
 
 .PHONY: limits
 limits: ## Show the resource limits and totals, computed from the resolved config
@@ -631,6 +631,11 @@ print-ruff-version:
 check-python: ## Lint the helper scripts (config in ruff.toml)
 	$(RUFF) check scripts/ ops/ resources/demo/
 	$(RUFF) format --check scripts/ ops/ resources/demo/
+
+# install.sh runs on hosts with no python, so it is held to ShellCheck's POSIX sh rules.
+.PHONY: check-shell
+check-shell: ## Lint install.sh with ShellCheck as POSIX sh
+	shellcheck -s sh install.sh
 
 # Pinned for the same reason RUFF is, and installed the same way in CI
 # (PYTEST=pytest). Unit tests over the helper scripts: they
