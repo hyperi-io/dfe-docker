@@ -63,7 +63,8 @@
         "shape": "incremental",
         "window": {
           "format": "epoch_secs",
-          "lookback": "30s"
+          "lookback": "30s",
+          "step": "5m"
         }
       },
       "vars": {

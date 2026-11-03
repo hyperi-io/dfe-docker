@@ -127,6 +127,12 @@ ARCHIVE_STORAGE = (
     "{{if .Name}}{{.Name}}{{else}}{{.Source}}{{end}}{{end}}{{end}}"
 )
 ARCHIVE_TIMEOUT_SECONDS = 180.0
+# Where a fetcher keeps its cursor, one directory per instance, which outlives the instance and would start a re-created source from the old window
+CURSOR_MOUNT = "/var/lib/dfe-fetcher"
+CURSOR_STORAGE = (
+    '{{range .Mounts}}{{if eq .Destination "' + CURSOR_MOUNT + '"}}'
+    "{{if .Name}}{{.Name}}{{else}}{{.Source}}{{end}}{{end}}{{end}}"
+)
 ARCHIVE_TOOL = DEMO_DIR / "archive.py"
 ARCHIVE_ROOT = "/a"
 MANIFEST_FILE = DEMO_DIR / "demo.json"
@@ -237,6 +243,24 @@ def _await_archive(*, before: int | None, image: str, sources: list[str]) -> int
         if (now is None) or (now > (before or 0)) or (time.monotonic() >= deadline):
             return now
         time.sleep(LAND_INTERVAL_SECONDS)
+
+
+def _cursor_storage(*, name: str) -> str | None:
+    """The volume holding a fetcher source's cursor, None when the source runs no fetcher instance."""
+    container = _container(
+        service=instances.service_name(instance=name, service=FETCHER_SERVICE)
+    )
+    if not (container):
+        return None
+    mounted = _docker(
+        args=[
+            "inspect",
+            "--format",
+            CURSOR_STORAGE,
+            container,
+        ]
+    )
+    return mounted.stdout.strip() or None
 
 
 def _delete_source(*, base: str, name: str, token: str) -> None:
@@ -871,6 +895,11 @@ def _remove_pack(*, args: argparse.Namespace, manifest: dict) -> None:
     _stop_stream(container=args.container)
     _stop_stream(container=args.pruner)
     deleted = False
+    cursors = {
+        name: storage
+        for name in manifest["sources"]
+        if (storage := _cursor_storage(name=name))
+    }
     if not (_container(service=ENGINE_SERVICE)):
         _print(msg="no engine container runs, so there are no sources to remove")
     else:
@@ -896,6 +925,22 @@ def _remove_pack(*, args: argparse.Namespace, manifest: dict) -> None:
             except DemoError as error:
                 _print(msg=f"WARNING {error}")
         _apply(dev=args.dev, environ=dict(os.environ), services=[])
+        for name, storage in cursors.items():
+            directory = instances.service_name(instance=name, service=FETCHER_SERVICE)
+            _docker(
+                args=[
+                    "run",
+                    "--rm",
+                    "--volume",
+                    f"{storage}:/c",
+                    args.image,
+                    "python3",
+                    "-I",
+                    "-c",
+                    "import shutil, sys; shutil.rmtree('/c/' + sys.argv[1], ignore_errors=True)",
+                    directory,
+                ]
+            )
     storage = _archive_storage()
     if storage is not None:
         purged = _archive_tool(
