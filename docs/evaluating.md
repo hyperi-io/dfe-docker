@@ -19,22 +19,20 @@ come out the other. Everything else can wait.
 ## What you need
 
 - Docker and Docker Compose v2
-- Python 3 and [uv](https://docs.astral.sh/uv/)
+- make, git and Python 3 (standard library only)
 - Network access to `ghcr.io/hyperi-io`, where the images are public and pull with no login
 
 ## Getting it running
 
 ```bash
-make init                  # create .env and env/, generate secrets
-make stack VERSION=X.Y.Z   # pin every image from the DFE stack manifest
-make up                    # pull, start, print the console login
+make up                          # single-kafka, newest published stable stack
+make up PROFILE=slim-grpc        # another profile
+make up VERSION=2.2.1            # an older stack
 ```
 
-`make stack` is not optional. The stack refuses to start on unpinned images
-rather than quietly pulling `latest`, so a fresh checkout without it fails with a
-message telling you exactly which pin is missing. That is deliberate: on
-something you might later deploy, "which image am I running?" should never have a
-vague answer.
+`make up` creates `.env` and `env/`, generates the secrets, pins every image from the DFE stack manifest, starts the stack and prints the console login. Its first line says the profile and stack in use. `PROFILE=` and `VERSION=` are written to `.env`, so the next `make up` keeps them.
+
+The stack refuses to start on unpinned images rather than quietly pulling `latest`, which is why `make up` pins first. On something you might later deploy, "which image am I running?" should never have a vague answer. `make init` and `make stack VERSION=X.Y.Z` do the two steps by hand.
 
 `make ci` finishes by running the power-on self test, which injects a few marked
 events and proves they reached ClickHouse. If it prints `PASS`, the pipeline
@@ -92,15 +90,16 @@ genuinely so; a couple of seconds is normal.
 
 `make demo` streams Cisco ASA and FortiGate firewall logs into the running stack as raw syslog. dfe-transform-elastic works out which device sent each line, parses it, and lands it in that vendor's own table. Palo Alto and Cisco IOS come back once [dfe-receiver#212](https://github.com/hyperi-io/dfe-receiver/issues/212) and [dfe-transform-elastic#133](https://github.com/hyperi-io/dfe-transform-elastic/issues/133) land.
 
-It needs a profile that runs dfe-transform-elastic, so set `DFE_PROFILE=single-kafka` or `DFE_PROFILE=single-grpc` in `.env` before `make ci`. Then:
+It needs a profile that runs dfe-transform-elastic, `single-kafka` (the default) or `single-grpc`. On a clone with no stack running, `make demo` does the `make up` steps first, and it refuses a profile without dfe-transform-elastic before it starts anything. It never moves a running stack to another profile.
 
 ```bash
+git clone https://github.com/hyperi-io/dfe-docker && cd dfe-docker
 make demo                      # 20 lines a second over TCP, until you stop it
 make demo DEMO_RATE=100        # replaces a running stream with a faster one
 make demo-stop                 # stops the stream; `make down` stops it too
 ```
 
-It creates the Sources in [`resources/demo/demo.yaml`](../resources/demo/demo.yaml) through the engine: a `demo-syslog` intake, and the tables `dfe.cisco-asa` and `dfe.fortinet`. It turns on dfe-receiver's syslog listener, UDP and TCP on port 514, and recreates what that changes. Both vendors replay about 6,000 sample lines each from [`resources/demo/samples/`](../resources/demo/samples/), roughly ten minutes before a line repeats, and `python3 resources/demo/samples/generate.py` regenerates them. It returns as soon as every vendor table has gained rows, and the stream keeps running:
+It creates the Sources in [`resources/demo/demo.toml`](../resources/demo/demo.toml) through the engine: a `demo-syslog` intake, and the tables `dfe.cisco-asa` and `dfe.fortinet`. It turns on dfe-receiver's syslog listener, UDP and TCP on port 514, and recreates what that changes. Both vendors replay about 6,000 sample lines each from [`resources/demo/samples/`](../resources/demo/samples/), roughly ten minutes before a line repeats, and `python3 resources/demo/samples/generate.py` regenerates them. It returns as soon as every vendor table has gained rows, and the stream keeps running:
 
 ```text
 demo -   dfe.cisco-asa: +N rows

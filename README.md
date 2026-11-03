@@ -47,13 +47,32 @@ See [docs/architecture.md](docs/architecture.md).
 
 ## Quickstart
 
+On a host with Docker (with Compose v2), make, git and python3:
+
+```bash
+git clone https://github.com/hyperi-io/dfe-docker && cd dfe-docker
+make demo
+```
+
+`make demo` creates `.env`, pins the newest published stable stack, starts the `single-kafka` profile, and streams Cisco ASA and FortiGate syslog through it until `make demo-stop`. Its first line says the profile and stack in use. `make creds` prints the DFE console URL and the admin login.
+
+To start the stack without the stream:
+
+```bash
+make up                          # single-kafka, newest published stable stack
+make up PROFILE=slim-grpc        # another profile
+make up VERSION=2.2.1            # an older stack
+make down                        # stop everything
+```
+
+`PROFILE=` and `VERSION=` on the make line are written to `.env` (as `DFE_PROFILE` and the image pins), so later runs keep them. A `.env` that already holds pins keeps them until `VERSION=` names another stack. `make demo` needs a profile that runs dfe-transform-elastic, `single-kafka` or `single-grpc`.
+
 ### Prerequisites
 
 - Docker and Docker Compose v2
-- Python 3
-- [`uv`](https://docs.astral.sh/uv/) - only for the seed targets (`make sources`, `make rules`, `make hunts`, `make events`), `make demo` and the e2e tests.
-- [`oras`](https://oras.land) - `make stack` and `make check-proxy` read the signed OCI stack-manifest through it. Not needed if you render from a local dfe-infra checkout (`DFE_INFRA_DIR`).
-- [`cosign`](https://docs.sigstore.dev/cosign/system_config/installation/) - optional. The same two targets check the manifest's signature with it, and run it as a digest-pinned container through Docker when it is not installed. `DFE_STACK_VERIFY=false` skips the check, and `DFE_STACK_SIGNER_IDENTITY` and `DFE_STACK_SIGNER_ISSUER` name the signer of a manifest repo of your own. All three are read from the environment, then `.env`.
+- make, git and Python 3 (standard library only)
+- [`oras`](https://oras.land) and [`cosign`](https://docs.sigstore.dev/cosign/system_config/installation/) - optional. `make up`, `make stack` and `make check-proxy` read the signed OCI stack manifest through them, and each runs as a digest-pinned container through Docker when it is not installed. `DFE_STACK_VERIFY=false` skips the signature check, and `DFE_STACK_SIGNER_IDENTITY` and `DFE_STACK_SIGNER_ISSUER` name the signer of a manifest repo of your own. All three are read from the environment, then `.env`. Neither is needed if you render from a local dfe-infra checkout (`DFE_INFRA_DIR`).
+- [`uv`](https://docs.astral.sh/uv/) - only for the seed targets (`make sources`, `make rules`, `make hunts`, `make events`) and the e2e tests.
 - [`gh`](https://cli.github.com), logged in - only for `DFE_STACK_REPIN_IMAGES=1`,
   which reads each component's GitHub releases through it.
 
@@ -86,12 +105,12 @@ things beyond the copy:
 
 The CI path *and* the small-environment production path - same images, same
 command. See [Deployment posture](#deployment-posture) before running this
-anywhere that is not a laptop.
+anywhere that is not a laptop. `make up` is `make init`, `make stack` and `make ci` in one step. To run them by hand:
 
 ```bash
 make init   # Edit .env files as needed (versions, ports)
 make stack VERSION=X.Y.Z   # Pin image versions from the DFE stack SSoT
-make ci     # Uses active_profile from service_profiles.yaml
+make ci     # Uses DFE_PROFILE from .env, else active_profile from service_profiles.yaml
 make down   # Stop everything
 ```
 
