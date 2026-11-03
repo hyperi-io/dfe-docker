@@ -1,5 +1,4 @@
 {
-  "archive": true,
   "description": "The log data stream of the Elastic fortinet_fortigate integration.",
   "display_name": "fortinet_fortigate.log",
   "from_catalogue_intake": "receiver",

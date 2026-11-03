@@ -126,7 +126,13 @@ ARCHIVE_STORAGE = (
     '{{range .Mounts}}{{if eq .Destination "' + ARCHIVE_MOUNT + '"}}'
     "{{if .Name}}{{.Name}}{{else}}{{.Source}}{{end}}{{end}}{{end}}"
 )
-ARCHIVE_COUNT = "import os; print(sum(len(files) for _, _, files in os.walk('/a')))"
+# The archiver files each source's lines under <source>_land
+ARCHIVE_COUNT = "\n".join(
+    (
+        "import os, sys",
+        "print(sum(len(files) for name in sys.argv[1:] for _, _, files in os.walk(f'/a/{name}_land')))",
+    )
+)
 # The generator ends a loop only at --count or --duration, so the stream runs ten years unless removed
 STREAM_SECONDS = 315_360_000
 READY_TIMEOUT_SECONDS = 120.0
@@ -167,8 +173,8 @@ def _apply(*, dev: bool, environ: dict[str, str], services: list[str]) -> None:
         raise DemoError(f"`{' '.join(command)}` failed")
 
 
-def _archived_objects(*, image: str) -> int | None:
-    """How many files the archiver has written, None when its container or storage cannot be read."""
+def _archived_objects(*, image: str, sources: list[str]) -> int | None:
+    """How many files the archiver has written for the sources, None when its container or storage cannot be read."""
     container = _container(service=ARCHIVER_SERVICE)
     if not (container):
         return None
@@ -194,6 +200,7 @@ def _archived_objects(*, image: str) -> int | None:
             "-I",
             "-c",
             ARCHIVE_COUNT,
+            *sources,
         ],
         timeout=120,
     )
@@ -203,11 +210,11 @@ def _archived_objects(*, image: str) -> int | None:
         return None
 
 
-def _await_archive(*, before: int | None, image: str) -> int | None:
+def _await_archive(*, before: int | None, image: str, sources: list[str]) -> int | None:
     """Poll until the archiver has written more files than before, then return how many it has now, None when it never could be read."""
     deadline = time.monotonic() + ARCHIVE_TIMEOUT_SECONDS
     while True:
-        now = _archived_objects(image=image)
+        now = _archived_objects(image=image, sources=sources)
         if (now is None) or (now > (before or 0)) or (time.monotonic() >= deadline):
             return now
         time.sleep(LAND_INTERVAL_SECONDS)
@@ -546,7 +553,9 @@ def _outcome(
     )
     archived = None
     if archiving and not (empty):
-        archived = _await_archive(before=archived_before, image=image)
+        archived = _await_archive(
+            before=archived_before, image=image, sources=archiving
+        )
         _print(
             msg=f"  {ARCHIVER_SERVICE} archive of {', '.join(archiving)}: "
             f"{'unreadable' if archived is None else f'{archived} files'}"
@@ -663,14 +672,15 @@ def _run(*, args: argparse.Namespace) -> int:
     checkout = _resolve_generator(dev=args.dev, generator=args.generator)
     network = _network(service=RECEIVER_SERVICE)
     kept, dropped = archivable(
-        archiver_runs=ARCHIVER_SERVICE in _resolved_services(), bodies=demo.vendors
+        archiver_runs=ARCHIVER_SERVICE in _resolved_services(),
+        bodies=[*demo.vendors, demo.intake],
     )
     for name in dropped:
         _print(
             msg=f"WARNING source {name!r} archives in its file and this profile runs no "
             f"{ARCHIVER_SERVICE!r}, so it is created without archiving"
         )
-    demo = demo._replace(vendors=kept)
+    demo = demo._replace(intake=kept[-1], vendors=kept[:-1])
     _check_catalogue(vendors=demo.vendors)
 
     base = _engine_base()
@@ -715,8 +725,12 @@ def _run(*, args: argparse.Namespace) -> int:
     # A previous run's stream stops before the count, though lines it already sent can still land after it
     _stop_stream(container=args.container)
     before = _counts(tables=tables)
-    archiving = [body["source"] for body in demo.vendors if body.get("archive")]
-    archived_before = _archived_objects(image=args.image) if archiving else None
+    archiving = [
+        body["source"] for body in [*demo.vendors, demo.intake] if body.get("archive")
+    ]
+    archived_before = (
+        _archived_objects(image=args.image, sources=archiving) if archiving else None
+    )
     feed = stage_feed(
         checkout=checkout,
         events={
@@ -893,7 +907,7 @@ def _variant(*, source: dict) -> str:
 def archivable(
     *, archiver_runs: bool, bodies: list[dict]
 ) -> tuple[list[dict], list[str]]:
-    """The vendor source bodies as the profile can run them, and the names that lost `archive`.
+    """The source bodies as the profile can run them, and the names that lost `archive`.
 
     On a gRPC profile no archiver runs, and the receiver answers 503 for a source that archives.
     """

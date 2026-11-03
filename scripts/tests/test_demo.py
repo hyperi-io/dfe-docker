@@ -1010,7 +1010,8 @@ class TestArchivable:
         assert names == dropped
         assert archiving["archive"] is True
 
-    def test_the_committed_demo_archives_one_vendor(self) -> None:
+    def test_the_committed_demo_archives_the_raw_intake(self) -> None:
         loaded = demo.load_demo(events=demo.EVENTS_DIR, sources=demo.SOURCES_DIR)
+        bodies = [*loaded.vendors, loaded.intake, *loaded.fetchers]
 
-        assert [b["source"] for b in loaded.vendors if b.get("archive")] == ["fortinet"]
+        assert [b["source"] for b in bodies if b.get("archive")] == ["demo-syslog"]
