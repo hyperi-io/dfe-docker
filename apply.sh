@@ -395,11 +395,14 @@ else
     printf '\n' >>.env.new
 fi
 cat .tmp/env.block >>.env.new
-rm -f .tmp/env.block .tmp/env.settings
+rm -f .tmp/env.block
 mv .env.new .env
 say "Chain: $CHAIN"
 
-[ "$MODE" != --no-start ] || exit 0
+if [ "$MODE" = --no-start ]; then
+    rm -f .tmp/env.settings
+    exit 0
+fi
 
 # Docker cannot re-address a live network, so flipping DFE_PROXY_TLS on a running stack needs it taken down first
 project=${COMPOSE_PROJECT_NAME:-$(setting COMPOSE_PROJECT_NAME)}
@@ -415,6 +418,7 @@ if held=$(docker network inspect "${project}_default" --format '{{range .IPAM.Co
         die "the network ${project}_default holds ${held:-no subnet} and DFE_PROXY_TLS is $PROXY_TLS, and Docker cannot re-address a live network. Stop the stack first: docker compose --profile '*' down"
     fi
 fi
+rm -f .tmp/env.settings
 say "Starting the $PROFILE stack, which pulls its images first"
 # SERVICES is a list of service names, so it has to split
 # shellcheck disable=SC2086

@@ -456,6 +456,8 @@ def test_console_tls_keeps_a_certificate_set_that_is_already_there(
         ("true", "10.207.0.0/24", False),
         ("false", "10.207.0.0/24", True),
         ("false", "172.19.0.0/16", False),
+        ("true\nDFE_NETWORK_SUBNET=10.50.0.0/24", "10.50.0.0/24", False),
+        ("false\nDFE_NETWORK_SUBNET=10.50.0.0/24", "10.50.0.0/24", True),
     ],
 )
 @needs_openssl
