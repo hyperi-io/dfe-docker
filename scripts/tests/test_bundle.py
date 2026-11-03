@@ -20,6 +20,7 @@ MK = """export PROFILE_FLAGS := --profile clickhouse --profile kafka-redpanda
 export DFE_SERVICES := dfe-loader dfe-receiver kafka-ui
 export DFE_KAFKA_BOOTSTRAP_SERVERS := kafka:9092
 export DFE_RECEIVER_DLQ_MODE :=
+export DFE_OTEL_RESOLVED := true
 export DFE_ADMIN_LINKS_RESOLVED := [{"name":"Kafbat","url":"http://localhost:8081"}]
 export DFE_USAGE_CPU_LIMITS := {"dfe-loader":2.0,"kafka-ui":-1.0}
 export DFE_USAGE_NODE_NAME := docker-host
@@ -33,6 +34,7 @@ def test_a_resolved_profile_becomes_dotenv_and_a_shell_conf() -> None:
     assert dotenv.splitlines() == [
         "DFE_KAFKA_BOOTSTRAP_SERVERS=kafka:9092",
         "DFE_RECEIVER_DLQ_MODE=",
+        "DFE_OTEL_RESOLVED=true",
         'DFE_ADMIN_LINKS_RESOLVED=\'[{"name":"Kafbat","url":"http://localhost:8081"}]\'',
     ]
     assert conf.splitlines() == [
@@ -100,6 +102,9 @@ def test_the_bundle_carries_no_secret_and_no_dev_tooling(
         for variant in ("kafbat", "hyperdx", "kafbat-hyperdx")
     } <= set(names)
     assert "dfe/apply.sh" in names
+    with tarfile.open(out, "r:gz") as tar:
+        assert tar.getmember("dfe/apply.sh").mode == 0o755
+        assert tar.getmember("dfe/docker-compose.yml").mode == 0o644
     assert not [n for n in names if n in ("dfe/.env", "dfe/deployment.yaml")]
     assert not [
         n
@@ -109,3 +114,19 @@ def test_the_bundle_carries_no_secret_and_no_dev_tooling(
         )
     ]
     assert (tmp_path / "SHA256SUMS").read_text(encoding="utf-8").split()[1] == out.name
+
+
+def test_a_profile_with_a_collector_and_no_cpu_limits_stops_the_build(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.setattr(
+        bundle,
+        "resolve",
+        lambda *, profile, **_: MK.replace(
+            'export DFE_USAGE_CPU_LIMITS := {"dfe-loader":2.0,"kafka-ui":-1.0}',
+            "export DFE_USAGE_CPU_LIMITS := {}",
+        ),
+    )
+
+    with pytest.raises(bundle.BundleError, match="no CPU limits"):
+        bundle.build(out=tmp_path, pins="DFE_ENGINE_VERSION=v1@sha256:x\n", version="9")

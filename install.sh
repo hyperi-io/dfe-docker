@@ -123,7 +123,8 @@ for key in DFE_DATA_ROOT DFE_BIND_SCOPE DFE_EXTERNAL_ORIGIN DFE_UI_EXTERNAL DFE_
     eval "value=\${$key:-}"
     [ -n "$value" ] || continue
     case $value in
-        *\|* | *\&* | *\\*) die "$key holds a character install.sh cannot write into .env: $value" ;;
+        *\|* | *\&* | *\\* | *'
+'*) die "$key holds a character install.sh cannot write into .env: $value" ;;
     esac
     set_key .env "$key" "$value"
 done
@@ -135,6 +136,7 @@ done
     printf 'DFE_DEV_UID=%s\nDFE_DEV_GID=%s\n' "$(id -u)" "$(id -g)"
 } >>.env
 # Compose reads COMPOSE_FILE and COMPOSE_PROFILES from .env, so a plain `docker compose` in ./dfe runs this stack. apply.sh writes them
+chmod +x apply.sh
 sh ./apply.sh --no-start
 
 # From here the directory holds the compose project, which a failed start leaves for `docker compose down`

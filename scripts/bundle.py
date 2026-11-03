@@ -215,7 +215,11 @@ def build(*, out: Path, pins: str, version: str) -> tuple[Path, Path]:
         dotenv, conf, limits = profile_files(mk_text=resolve(profile=name, usage=True))
         members[f"install/profiles/{name}.env"] = dotenv.encode()
         members[f"install/profiles/{name}.conf"] = conf.encode()
-        if limits:
+        if "DFE_OTEL_RESOLVED=true" in dotenv.splitlines():
+            if limits in ("", "{}"):
+                raise BundleError(
+                    f"profile {name} runs the collector but no CPU limits were read for it, so it would report no cores deployed. Is docker running, with the stack's .env pinned?"
+                )
             members[f"install/profiles/{name}.usage"] = f"{limits}\n".encode()
         for gated in (("kafbat",), ("hyperdx",), GATED_UIS):
             variant, _, _ = profile_files(
@@ -227,7 +231,12 @@ def build(*, out: Path, pins: str, version: str) -> tuple[Path, Path]:
     with bundle.open("wb") as raw, gzip.GzipFile(fileobj=raw, mode="wb", mtime=0) as gz:
         with tarfile.open(fileobj=gz, mode="w") as tar:
             for name in sorted(members):
-                _add(tar=tar, name=name, data=members[name])
+                _add(
+                    tar=tar,
+                    name=name,
+                    data=members[name],
+                    mode=0o755 if name.endswith(".sh") else 0o644,
+                )
     digest = hashlib.sha256(bundle.read_bytes()).hexdigest()
     installer = REPO_ROOT / "install.sh"
     sums = [f"{digest}  {bundle.name}"]
