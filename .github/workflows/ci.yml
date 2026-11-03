@@ -95,6 +95,10 @@ jobs:
       - name: Docs
         run: make check-docs
 
+      # The runner ships ShellCheck, and install.sh has to lint as POSIX sh
+      - name: Shell
+        run: make check-shell
+
       # The pin lives in the Makefile (RUFF_VERSION), so a local `make check`
       # lints with the same version this does. Installed here rather than run
       # through uvx to keep the runner off the network mid-job.

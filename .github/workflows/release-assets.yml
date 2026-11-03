@@ -1,0 +1,60 @@
+# Project:   dfe-docker
+# File:      .github/workflows/release-assets.yml
+# Purpose:   Attach the install bundle, its checksums and install.sh to each published release
+#
+# License:   BUSL-1.1 - HYPERI PTY LIMITED
+# Copyright: (c) 2026 HYPERI PTY LIMITED
+#
+# install.sh downloads releases/latest/download/{install.sh,SHA256SUMS,dfe-docker-<version>.tar.gz},
+# so those three are the assets. The bundle pins the newest published stack.
+
+name: Release assets
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: The release tag to attach the assets to
+        required: true
+
+permissions:
+  contents: read
+
+env:
+  PYTHON_VERSION: "3.14.7"
+
+jobs:
+  assets:
+    name: Assets
+    runs-on: ubuntu-26.04
+    permissions:
+      contents: write
+    env:
+      TAG: ${{ github.event.release.tag_name || inputs.tag }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ env.TAG }}
+          persist-credentials: false
+
+      - name: Set up Python
+        uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Install oras
+        uses: oras-project/setup-oras@005458ad77f1c8facd38a094e4af2e69e5607ff4 # v2.0.2
+
+      - name: Shellcheck the installer
+        run: shellcheck -s sh install.sh
+
+      - name: Build the bundle
+        run: python3 scripts/bundle.py --out dist --version "${TAG#v}" --stack latest
+
+      - name: Attach the assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release upload "$TAG" dist/*.tar.gz dist/SHA256SUMS install.sh --clobber
