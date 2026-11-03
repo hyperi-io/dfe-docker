@@ -49,7 +49,7 @@ jobs:
         uses: oras-project/setup-oras@005458ad77f1c8facd38a094e4af2e69e5607ff4 # v2.0.2
 
       - name: Shellcheck the installer
-        run: shellcheck -s sh install.sh
+        run: shellcheck -s sh install.sh apply.sh
 
       - name: Build the bundle
         run: python3 scripts/bundle.py --out dist --version "${TAG#v}" --stack latest

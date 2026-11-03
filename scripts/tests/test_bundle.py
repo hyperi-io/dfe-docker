@@ -21,12 +21,14 @@ export DFE_SERVICES := dfe-loader dfe-receiver kafka-ui
 export DFE_KAFKA_BOOTSTRAP_SERVERS := kafka:9092
 export DFE_RECEIVER_DLQ_MODE :=
 export DFE_ADMIN_LINKS_RESOLVED := [{"name":"Kafbat","url":"http://localhost:8081"}]
+export DFE_USAGE_CPU_LIMITS := {"dfe-loader":2.0,"kafka-ui":-1.0}
+export DFE_USAGE_NODE_NAME := docker-host
 not an export line
 """
 
 
 def test_a_resolved_profile_becomes_dotenv_and_a_shell_conf() -> None:
-    dotenv, conf = bundle.profile_files(mk_text=MK)
+    dotenv, conf, limits = bundle.profile_files(mk_text=MK)
 
     assert dotenv.splitlines() == [
         "DFE_KAFKA_BOOTSTRAP_SERVERS=kafka:9092",
@@ -37,6 +39,7 @@ def test_a_resolved_profile_becomes_dotenv_and_a_shell_conf() -> None:
         'PROFILES="clickhouse,kafka-redpanda"',
         'SERVICES="dfe-loader dfe-receiver kafka-ui"',
     ]
+    assert limits == '{"dfe-loader":2.0,"kafka-ui":-1.0}'
 
 
 def test_a_value_with_a_single_quote_is_refused_rather_than_misquoted() -> None:
@@ -81,7 +84,7 @@ def test_every_generated_secret_is_listed_with_its_kind_and_length() -> None:
 def test_the_bundle_carries_no_secret_and_no_dev_tooling(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    monkeypatch.setattr(bundle, "resolve", lambda *, profile: MK)
+    monkeypatch.setattr(bundle, "resolve", lambda *, profile, **_: MK)
     pins = "DFE_ENGINE_VERSION=v1@sha256:" + "b" * 64 + "\n"
     out, _ = bundle.build(out=tmp_path, pins=pins, version="9.9.9")
 
@@ -91,6 +94,12 @@ def test_the_bundle_carries_no_secret_and_no_dev_tooling(
     assert "dfe/docker-compose.yml" in names
     assert "dfe/install/stack.env" in names
     assert "dfe/install/profiles/single-kafka.conf" in names
+    assert "dfe/install/profiles/single-kafka.usage" in names
+    assert {
+        f"dfe/install/profiles/single-kafka.{variant}.env"
+        for variant in ("kafbat", "hyperdx", "kafbat-hyperdx")
+    } <= set(names)
+    assert "dfe/apply.sh" in names
     assert not [n for n in names if n in ("dfe/.env", "dfe/deployment.yaml")]
     assert not [
         n

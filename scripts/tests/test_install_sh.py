@@ -40,6 +40,7 @@ FILES = {
     "install/profiles/slim-grpc.env": "DFE_OTEL_RESOLVED=false\n",
     "install/profiles/slim-grpc.conf": 'PROFILES="clickhouse"\nSERVICES="dfe-loader"\n',
     "docker-compose.yml": "services: {}\n",
+    "apply.sh": (INSTALL.parent / "apply.sh").read_text(encoding="utf-8"),
 }
 STUB = """#!/bin/sh
 printf '%s\\n' "$*" >> "$DOCKER_LOG"

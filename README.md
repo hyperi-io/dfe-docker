@@ -83,7 +83,7 @@ curl -fsSLO https://github.com/hyperi-io/dfe-docker/releases/latest/download/ins
 
 It checks the bundle's sha256 against the release's `SHA256SUMS`, unpacks into `./dfe`, writes `.env` with random secrets and the stack's image pins, starts `single-kafka` and prints the console login. `DFE_PROFILE=slim-grpc` picks another profile and `DFE_VERSION=X.Y.Z` a release. From then on a plain `docker compose` in `./dfe` runs the stack, and `docker compose --profile '*' down -v` removes it.
 
-The bundle holds the default stack, resolved once. It has no `make`, so the `.env` dials that change what compose is given (`DFE_DATA_ROOT`, `DFE_BIND_SCOPE`, the exposure flags, `DFE_PROXY_TLS`, `DFE_RECEIVER_*_PORT`) do nothing, the console cannot start per-source containers, the stack does not report cores deployed, and `make demo` needs the clone. Only a release cut after this one carries the assets.
+Set the dials in `./dfe/.env` and run `./apply.sh` to work out the compose chain from them and start the stack, or put them in the environment of the install (`DFE_UI_EXTERNAL=false sh install.sh`), which writes them to `.env`. `apply.sh` is the Makefile's chain in POSIX sh. It acts on `DFE_DATA_ROOT`, `DFE_BIND_SCOPE`, the five `*_EXTERNAL` exposure flags, `DFE_PROXY_TLS` with `DFE_NETWORK_SUBNET`, `DFE_PROXY_CERT_DIR` and `DFE_EXTERNAL_ORIGIN` (it mints the console certificate with `openssl`), the `DFE_RECEIVER_*_PORT` keys, and the cores deployed the stack reports. The console cannot start per-source containers from an install, and `make demo` needs the clone. Only a release cut after this one carries the assets.
 
 ### Prerequisites
 
