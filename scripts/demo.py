@@ -894,12 +894,20 @@ def _remove_pack(*, args: argparse.Namespace, manifest: dict) -> None:
     """Take everything the demo put in out again: the stream, the pruner, the sources and their tables, and the archived objects. A step that cannot be done warns, and the rest still run."""
     _stop_stream(container=args.container)
     _stop_stream(container=args.pruner)
-    deleted = False
     cursors = {
         name: storage
         for name in manifest["sources"]
         if (storage := _cursor_storage(name=name))
     }
+    # A fetcher or transform left running would recreate the topics the engine deletes with its source
+    for name in manifest["sources"]:
+        for app in (FETCHER_SERVICE, TRANSFORM_APP):
+            running = _container(
+                service=instances.service_name(instance=name, service=app)
+            )
+            if running:
+                _docker(args=["rm", "--force", running])
+    deleted = False
     if not (_container(service=ENGINE_SERVICE)):
         _print(msg="no engine container runs, so there are no sources to remove")
     else:
