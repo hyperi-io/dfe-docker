@@ -30,7 +30,7 @@ _ENV = f"""\
 ## The bootstrap admin.
 # {post.ADMIN_PASSWORD_KEY}=commented-out-example
 {post.ADMIN_PASSWORD_KEY}={_ISSUED}
-DFE_AUTH_BREAKGLASS_PASSWORD=untouched-breakglass-value
+DFE_ENGINE_AUTH_BREAKGLASS_PASSWORD=untouched-breakglass-value
 """
 
 
@@ -88,7 +88,7 @@ def issued(engine_env: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     """An env/engine.env holding the issued admin password at 0600 with nothing else steering POST."""
     engine_env.write_text(_ENV, encoding="utf-8", newline="\n")
     engine_env.chmod(0o600)
-    monkeypatch.setenv("DFE_AUTH_LOCAL_ADMIN_NAME", "admin")
+    monkeypatch.setenv("DFE_ENGINE_AUTH_LOCAL_ADMIN_NAME", "admin")
     monkeypatch.setenv(post.ADMIN_PASSWORD_KEY, _ISSUED)
     monkeypatch.setattr(post, "_setup_status", _setup_unread)
     return engine_env

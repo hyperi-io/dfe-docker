@@ -50,10 +50,10 @@ APP_USERS = {
 
 # The variable the engine adopts each app's password from.
 ENGINE_READS = {
-    "dfe_hunt_runner": "DFE_CLICKHOUSE_HUNT_RUNNER_PASSWORD",
-    "dfe_loader": "DFE_CLICKHOUSE_LOADER_PASSWORD",
-    "dfe_otel_writer": "DFE_CLICKHOUSE_OTEL_WRITER_PASSWORD",
-    "dfe_query_reader": "DFE_CLICKHOUSE_QUERY_READER_PASSWORD",
+    "dfe_hunt_runner": "DFE_ENGINE_CLICKHOUSE_HUNT_RUNNER_PASSWORD",
+    "dfe_loader": "DFE_ENGINE_CLICKHOUSE_LOADER_PASSWORD",
+    "dfe_otel_writer": "DFE_ENGINE_CLICKHOUSE_OTEL_WRITER_PASSWORD",
+    "dfe_query_reader": "DFE_ENGINE_CLICKHOUSE_QUERY_READER_PASSWORD",
 }
 
 # HyperDX takes dfe_query_reader from the connection dfe-engine hands it, so its own definition names no user
@@ -102,7 +102,7 @@ def test_only_the_engine_takes_the_admin_user(services: dict[str, str]) -> None:
     [
         "      CLICKHOUSE_USERNAME: default",
         '      CLICKHOUSE_USER: "default"',
-        "      - DFE_CLICKHOUSE_USERNAME=default",
+        "      - DFE_ENGINE_CLICKHOUSE_USERNAME=default",
         "      DFE_LOADER_CLICKHOUSE_USERNAME: ${SOME_USER:-default}",
     ],
 )

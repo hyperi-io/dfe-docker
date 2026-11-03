@@ -132,8 +132,8 @@ def _engine_hyperdx(*, exports: dict[str, str]) -> tuple[str, str]:
     """Return the (enabled, base URL) the engine container receives."""
     environment = _service_environment(service=_ENGINE_SERVICE)
     return (
-        _expand(template=environment["DFE_HYPERDX_ENABLED"], values=exports),
-        _expand(template=environment["DFE_HYPERDX_BASE_URL"], values=exports),
+        _expand(template=environment["DFE_ENGINE_HYPERDX_ENABLED"], values=exports),
+        _expand(template=environment["DFE_ENGINE_HYPERDX_BASE_URL"], values=exports),
     )
 
 

@@ -31,10 +31,10 @@ Put `DFE_SERVICE_CPUS` back to 2.0 or above and recreate the service. To confirm
 
 ## The self test fails on the console login
 
-`make post` logs in as `admin` with `DFE_AUTH_LOCAL_ADMIN_PASSWORD` from `env/engine.env`, the same value `make creds` prints. A 401 here means the running engine holds a different password from the one in `env/engine.env`: a rotation applied to the store alone, say. Pass the current one on the command line, since the shell environment beats `env/engine.env`:
+`make post` logs in as `admin` with `DFE_ENGINE_AUTH_LOCAL_ADMIN_PASSWORD` from `env/engine.env`, the same value `make creds` prints. A 401 here means the running engine holds a different password from the one in `env/engine.env`: a rotation applied to the store alone, say. Pass the current one on the command line, since the shell environment beats `env/engine.env`:
 
 ```bash
-DFE_AUTH_LOCAL_ADMIN_PASSWORD='the rotated password' make post
+DFE_ENGINE_AUTH_LOCAL_ADMIN_PASSWORD='the rotated password' make post
 ```
 
 ## The self test fails on self-telemetry
@@ -55,7 +55,7 @@ docker compose exec dfe-engine printenv OTEL_EXPORTER_OTLP_ENDPOINT
 docker compose logs dfe-engine | grep "Metrics initialized"
 ```
 
-`backend=prometheus` on that last line means it is not pushing. Drop the `DFE_API_METRICS_BACKEND` line from `env/engine.env`, then `make up`.
+`backend=prometheus` on that last line means it is not pushing. Drop the `DFE_ENGINE_API_METRICS_BACKEND` line from `env/engine.env`, then `make up`.
 
 Every DFE app the profile runs should appear, dfe-ui aside. A service that is running but missing from the results IS a fault. The Rust services push whenever their `OTEL_EXPORTER_OTLP_ENDPOINT` is set, so check that env on the absent container the same way. Which components push and since when is in [observability.md](observability.md).
 

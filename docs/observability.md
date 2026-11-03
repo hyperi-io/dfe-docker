@@ -125,7 +125,7 @@ Every profile declares `otel: true`. `DFE_OTEL_ENABLED=false` turns it off.
 | `DFE_OTEL_EXPORTER_ENDPOINT` | empty | where services push -- **empty exports nothing** |
 | `DFE_OTEL_DATABASE` | `dfe` | database the collector writes |
 | `DFE_OTEL_HEALTH_PORT` | `13133` | the `health_check` extension |
-| `DFE_API_METRICS_BACKEND` in `env/engine.env` | `opentelemetry` | makes dfe-engine push. `prometheus` serves `/metrics` only |
+| `DFE_ENGINE_API_METRICS_BACKEND` in `env/engine.env` | `opentelemetry` | makes dfe-engine push. `prometheus` serves `/metrics` only |
 
 The endpoint picks the shape. Enabling the profile points services at the bundled
 collector. Name your own endpoint and they push there instead, which is how you

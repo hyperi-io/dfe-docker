@@ -26,12 +26,12 @@ INSTALL = REPO_ROOT / "install.sh"
 SECRETS = (
     ".env CLICKHOUSE_PASSWORD alnum 24\n"
     ".env DFE_API_JWT_SECRET alnum 48\n"
-    "engine.env DFE_AUTH_LOCAL_ADMIN_PASSWORD alnum 24\n"
+    "engine.env DFE_ENGINE_AUTH_LOCAL_ADMIN_PASSWORD alnum 24\n"
     "hyperdx.env TOKEN_ENCRYPTION_KEY hex 64\n"
 )
 FILES = {
     ".env.example": "# CLICKHOUSE_PASSWORD=\n# DFE_API_JWT_SECRET=changeme\nDFE_UI_PORT=3000\n",
-    "env.example/engine.env": "# DFE_AUTH_LOCAL_ADMIN_PASSWORD=\n",
+    "env.example/engine.env": "# DFE_ENGINE_AUTH_LOCAL_ADMIN_PASSWORD=\n",
     "env.example/hyperdx.env": "# TOKEN_ENCRYPTION_KEY=\n",
     "install/secrets.list": SECRETS,
     "install/stack.env": "DFE_ENGINE_VERSION=v1@sha256:" + "c" * 64 + "\n",
@@ -117,7 +117,7 @@ def test_installs_the_default_profile_with_minted_secrets(
     assert values["COMPOSE_PROFILES"] == "clickhouse,kafka-redpanda"
     assert values["DFE_ENGINE_VERSION"].startswith("v1@sha256:")
     assert re.fullmatch(
-        r"DFE_AUTH_LOCAL_ADMIN_PASSWORD=[A-Za-z0-9]{24}",
+        r"DFE_ENGINE_AUTH_LOCAL_ADMIN_PASSWORD=[A-Za-z0-9]{24}",
         (target / "env" / "engine.env").read_text(encoding="utf-8").strip(),
     )
     assert re.fullmatch(

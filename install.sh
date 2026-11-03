@@ -141,14 +141,14 @@ say "Starting the $DFE_PROFILE stack, which pulls its images first"
 # shellcheck disable=SC2086
 docker compose up -d --wait --wait-timeout 900 $SERVICES
 
-ADMIN=$(sed -n 's/^DFE_AUTH_LOCAL_ADMIN_PASSWORD=//p' env/engine.env | head -n 1)
+ADMIN=$(sed -n 's/^DFE_ENGINE_AUTH_LOCAL_ADMIN_PASSWORD=//p' env/engine.env | head -n 1)
 say ""
 say "DFE is up. The console is at http://localhost:3000"
 say "  login     admin"
 if [ -t 1 ]; then
     say "  password  $ADMIN"
 else
-    say "  password  DFE_AUTH_LOCAL_ADMIN_PASSWORD in $PWD/env/engine.env"
+    say "  password  DFE_ENGINE_AUTH_LOCAL_ADMIN_PASSWORD in $PWD/env/engine.env"
 fi
 say "  stop      cd \"$PWD\" && docker compose --profile '*' down"
 say "  remove    cd \"$PWD\" && docker compose --profile '*' down -v"

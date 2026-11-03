@@ -9,7 +9,7 @@
 services:
   dfe-engine:
     environment:
-      DFE_API_FORWARDED_ALLOW_IPS: ${DFE_PROXY_IP:?start TLS with make and DFE_PROXY_TLS=true}
+      DFE_ENGINE_API_FORWARDED_ALLOW_IPS: ${DFE_PROXY_IP:?start TLS with make and DFE_PROXY_TLS=true}
 
   dfe-proxy:
     user: "${DFE_DEV_UID:-1000}:${DFE_DEV_GID:-1000}"

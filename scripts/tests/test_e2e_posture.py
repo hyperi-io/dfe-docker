@@ -25,7 +25,7 @@ def _dotenv_text(*, extra: str = "", posture: str) -> str:
 
 def _engine_text(*, extra: str = "") -> str:
     """An env/engine.env holding a minted admin password."""
-    return f"DFE_AUTH_LOCAL_ADMIN_PASSWORD={_MINTED}\n{extra}"
+    return f"DFE_ENGINE_AUTH_LOCAL_ADMIN_PASSWORD={_MINTED}\n{extra}"
 
 
 def _saved(*, path: Path) -> Path:
@@ -59,7 +59,7 @@ def test_on_writes_the_posture_and_keeps_the_rest(
     assert "DFE_ENV=test" in dotenv_written
     assert "DFE_UI_PORT=3000" in dotenv_written
     assert "DFE_E2E_SERVER" not in dotenv_written
-    assert "DFE_AUTH_LOCAL_ADMIN_PASSWORD=changeme" in engine_written
+    assert "DFE_ENGINE_AUTH_LOCAL_ADMIN_PASSWORD=changeme" in engine_written
     assert "DFE_E2E_SERVER=true" in engine_written
 
 
