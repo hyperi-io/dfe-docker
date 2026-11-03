@@ -12,7 +12,9 @@
 The bundle holds what `docker compose up` reads, so a host with no git, make or python can run the stack: docker-compose.yml, compose/, config/, redpanda/, resources/, the .env and env/ templates and service_profiles.yaml. Under `install/` it carries what `make` and the helper scripts work out on a checkout:
 
   profiles/<name>.env    the profile as dotenv, from resolve_profile.py, for .env
+  profiles/<name>.<ui>.env  the same with an infra UI the exposure dials take off the host: kafbat, hyperdx or kafbat-hyperdx
   profiles/<name>.conf   PROFILES (the compose profiles) and SERVICES (what `up -d` names)
+  profiles/<name>.usage  the CPU limit of each service as JSON, with UNLIMITED_PLACEHOLDER where a service has none, for apply.sh to fill in with the host's cores. Absent where the profile has no collector
   stack.env              the image pins of one stack, from stack.py, tag and digest
   secrets.list           `<file> <key> <kind> <length>` for each generated secret, from init.py
 
@@ -33,6 +35,7 @@ import re
 import subprocess
 import sys
 import tarfile
+from collections.abc import Sequence
 from pathlib import Path
 
 # Bytecode for the repo modules imported below goes to .tmp/pycache, as it does under make
@@ -41,6 +44,7 @@ sys.pycache_prefix = str(Path(__file__).resolve().parent.parent / ".tmp" / "pyca
 import init  # noqa: E402
 import resolve_profile  # noqa: E402
 import stack  # noqa: E402
+import usage_cores  # noqa: E402
 from _common import (  # noqa: E402
     DOTENV_FILE,
     PROFILE_MK,
@@ -60,6 +64,7 @@ INCLUDE = (
     "redpanda",
     "resources",
     "service_profiles.yaml",
+    "apply.sh",
     "VERSION",
     "LICENSE",
 )
@@ -69,7 +74,14 @@ _EXPORT_LINE = re.compile(r"^export (?P<key>[A-Z][A-Z0-9_]*) :=\s*(?P<value>.*)$
 # The keys of profile.mk that compose never reads as variables: its own flags and service list
 FLAG_KEY = "PROFILE_FLAGS"
 SERVICES_KEY = "DFE_SERVICES"
-SHELL_ONLY = {FLAG_KEY, SERVICES_KEY}
+SHELL_ONLY = {
+    FLAG_KEY,
+    SERVICES_KEY,
+    usage_cores.USAGE_LIMITS_VAR,
+    usage_cores.USAGE_NODE_VAR,
+}
+# The infra UIs the exposure dials can take off the host, and so the profile variants apply.sh picks between
+GATED_UIS = ("kafbat", "hyperdx")
 _PIN_KEY = re.compile(r"^[A-Z][A-Z0-9_]*_VERSION$")
 
 
@@ -86,11 +98,12 @@ def dotenv_value(*, value: str) -> str:
     return f"'{value}'"
 
 
-def profile_files(*, mk_text: str) -> tuple[str, str]:
-    """The dotenv text and the shell conf one resolved profile.mk turns into."""
+def profile_files(*, mk_text: str) -> tuple[str, str, str]:
+    """The dotenv text, the shell conf and the CPU limits JSON (empty where there are none) one resolved profile.mk turns into."""
     dotenv = []
     flags = ""
     services = ""
+    limits = ""
     for line in mk_text.splitlines():
         match = _EXPORT_LINE.match(line)
         if match is None:
@@ -100,11 +113,13 @@ def profile_files(*, mk_text: str) -> tuple[str, str]:
             flags = value
         elif key == SERVICES_KEY:
             services = value
+        elif key == usage_cores.USAGE_LIMITS_VAR:
+            limits = value
         elif key not in SHELL_ONLY:
             dotenv.append(f"{key}={dotenv_value(value=value)}")
     profiles = ",".join(part for part in flags.split() if part != "--profile")
     conf = f'PROFILES="{profiles}"\nSERVICES="{services}"\n'
-    return "\n".join(dotenv) + "\n", conf
+    return "\n".join(dotenv) + "\n", conf, limits
 
 
 def pin_lines(*, dotenv_text: str) -> str:
@@ -131,11 +146,16 @@ def secrets_list() -> str:
     return "\n".join(rows) + "\n"
 
 
-def resolve(*, profile: str) -> str:
+def resolve(
+    *, profile: str, unpublished: Sequence[str] = (), usage: bool = False
+) -> str:
     """profile.mk for one profile, as the Makefile would resolve it on a default .env."""
     environ = {**os.environ, resolve_profile.PROFILE_ENV_VAR: profile}
+    args = [f"--unpublished={ui}" for ui in unpublished]
+    if usage:
+        args += ["--usage", "--usage-placeholder"]
     result = subprocess.run(
-        [sys.executable, str(REPO_ROOT / "scripts" / "resolve_profile.py")],
+        [sys.executable, str(REPO_ROOT / "scripts" / "resolve_profile.py"), *args],
         check=False,
         env=environ,
         capture_output=True,
@@ -192,15 +212,31 @@ def build(*, out: Path, pins: str, version: str) -> tuple[Path, Path]:
     ):
         members[str(path.relative_to(REPO_ROOT))] = path.read_bytes()
     for name in names:
-        dotenv, conf = profile_files(mk_text=resolve(profile=name))
+        dotenv, conf, limits = profile_files(mk_text=resolve(profile=name, usage=True))
         members[f"install/profiles/{name}.env"] = dotenv.encode()
         members[f"install/profiles/{name}.conf"] = conf.encode()
+        if "DFE_OTEL_RESOLVED=true" in dotenv.splitlines():
+            if limits in ("", "{}"):
+                raise BundleError(
+                    f"profile {name} runs the collector but no CPU limits were read for it, so it would report no cores deployed. Is docker running, with the stack's .env pinned?"
+                )
+            members[f"install/profiles/{name}.usage"] = f"{limits}\n".encode()
+        for gated in (("kafbat",), ("hyperdx",), GATED_UIS):
+            variant, _, _ = profile_files(
+                mk_text=resolve(profile=name, unpublished=gated)
+            )
+            members[f"install/profiles/{name}.{'-'.join(gated)}.env"] = variant.encode()
     members["install/stack.env"] = pins.encode()
     members["install/secrets.list"] = secrets_list().encode()
     with bundle.open("wb") as raw, gzip.GzipFile(fileobj=raw, mode="wb", mtime=0) as gz:
         with tarfile.open(fileobj=gz, mode="w") as tar:
             for name in sorted(members):
-                _add(tar=tar, name=name, data=members[name])
+                _add(
+                    tar=tar,
+                    name=name,
+                    data=members[name],
+                    mode=0o755 if name.endswith(".sh") else 0o644,
+                )
     digest = hashlib.sha256(bundle.read_bytes()).hexdigest()
     installer = REPO_ROOT / "install.sh"
     sums = [f"{digest}  {bundle.name}"]

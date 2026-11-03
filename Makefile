@@ -632,10 +632,10 @@ check-python: ## Lint the helper scripts (config in ruff.toml)
 	$(RUFF) check scripts/ ops/ resources/demo/
 	$(RUFF) format --check scripts/ ops/ resources/demo/
 
-# install.sh runs on hosts with no python, so it is held to ShellCheck's POSIX sh rules.
+# install.sh and apply.sh run on hosts with no python, so they are held to ShellCheck's POSIX sh rules.
 .PHONY: check-shell
-check-shell: ## Lint install.sh with ShellCheck as POSIX sh
-	shellcheck -s sh install.sh
+check-shell: ## Lint install.sh and apply.sh with ShellCheck as POSIX sh
+	shellcheck -s sh install.sh apply.sh
 
 # Pinned for the same reason RUFF is, and installed the same way in CI
 # (PYTEST=pytest). Unit tests over the helper scripts: they
