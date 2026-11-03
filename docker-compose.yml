@@ -338,10 +338,10 @@ services:
       - path: env/dfe-transform-vector.custom.env
         required: false
     environment:
-      DFE_TRANSFORM_SINK_BROKERS: ${DFE_KAFKA_BOOTSTRAP_SERVERS:-}
-      DFE_TRANSFORM_SOURCE_BROKERS: ${DFE_KAFKA_BOOTSTRAP_SERVERS:-}
-      DFE_TRANSFORM_VERSION_CHECK__ENABLED: ${DFE_VERSION_CHECK_ENABLED:-true}
-      DFE_TRANSFORM_VERSION_CHECK__SEND_INSTANCE_ID: ${DFE_VERSION_CHECK_SEND_INSTANCE_ID:-true}
+      DFE_TRANSFORM_VECTOR_SINK_BROKERS: ${DFE_KAFKA_BOOTSTRAP_SERVERS:-}
+      DFE_TRANSFORM_VECTOR_SOURCE_BROKERS: ${DFE_KAFKA_BOOTSTRAP_SERVERS:-}
+      DFE_TRANSFORM_VECTOR_VERSION_CHECK__ENABLED: ${DFE_VERSION_CHECK_ENABLED:-true}
+      DFE_TRANSFORM_VECTOR_VERSION_CHECK__SEND_INSTANCE_ID: ${DFE_VERSION_CHECK_SEND_INSTANCE_ID:-true}
       OTEL_SERVICE_NAME: dfe-transform-vector
     depends_on:
       dfe-engine:
@@ -365,10 +365,10 @@ services:
       - path: env/dfe-transform-vrl.custom.env
         required: false
     environment:
-      DFE_TRANSFORM_SINK_BROKERS: ${DFE_KAFKA_BOOTSTRAP_SERVERS:-}
-      DFE_TRANSFORM_SOURCE_BROKERS: ${DFE_KAFKA_BOOTSTRAP_SERVERS:-}
-      DFE_TRANSFORM_VERSION_CHECK__ENABLED: ${DFE_VERSION_CHECK_ENABLED:-true}
-      DFE_TRANSFORM_VERSION_CHECK__SEND_INSTANCE_ID: ${DFE_VERSION_CHECK_SEND_INSTANCE_ID:-true}
+      DFE_TRANSFORM_VRL_SINK_BROKERS: ${DFE_KAFKA_BOOTSTRAP_SERVERS:-}
+      DFE_TRANSFORM_VRL_SOURCE_BROKERS: ${DFE_KAFKA_BOOTSTRAP_SERVERS:-}
+      DFE_TRANSFORM_VRL_VERSION_CHECK__ENABLED: ${DFE_VERSION_CHECK_ENABLED:-true}
+      DFE_TRANSFORM_VRL_VERSION_CHECK__SEND_INSTANCE_ID: ${DFE_VERSION_CHECK_SEND_INSTANCE_ID:-true}
       OTEL_SERVICE_NAME: dfe-transform-vrl
     depends_on:
       dfe-engine:
@@ -415,6 +415,7 @@ services:
       DFE_DEPLOYMENT_APP_ENV_DIR: /app/app-env
       DFE_DEPLOYMENT_TARGET: docker
       DFE_ENV: ${DFE_ENV:-production}
+      DFE_GITOPS_ENABLED: ${DFE_GITOPS_ENABLED:-true}
       DFE_GITOPS_LOCAL_PATH: /app/config/deploy-repo
       DFE_GITOPS_MODE: solo
       DFE_HYPERDX_BASE_URL: ${DFE_HYPERDX_RESOLVED_BASE_URL:-}
@@ -600,29 +601,23 @@ services:
         required: false
 
   # ============================================================
-  # HyperDX: opt-in by DFE_HYPERDX_ENABLED
+  # HyperDX
   # ============================================================
 
-  # HyperDX's store, PostgreSQL behind a Mongo-wire gateway
   hyperdx-documentdb:
     image: ghcr.io/documentdb/documentdb/documentdb-local:${HYPERDX_DOCUMENTDB_VERSION:-pg18-1.0.0@sha256:03aef53ed72cd3007236f8ce1b4ef7a0c958dbbce1519074b85d8a3e10be89a5}
     container_name: ${DFE_CONTAINER_PREFIX:-}dfe-hyperdx-documentdb
     profiles: ["hyperdx"]
     restart: unless-stopped
-    # initdb's 128MB shared_buffers run inside this limit
     extends: {file: compose/limits.yml, service: limits-service}
     environment:
-      # The minted pair. requireTLS refuses plain clients
       CERT_PATH: /etc/documentdb/tls/tls.crt
-      # On upstream, reporting to a third party hourly
       DOCUMENTDB_USAGE_TELEMETRY: "false"
       KEY_FILE: /etc/documentdb/tls/tls.key
-      # Minted by `make init`, as a `:?` breaks `make down`
       PASSWORD: ${HYPERDX_DOCUMENTDB_PASSWORD:-hyperdx}
       TLS_MODE: requireTLS
       USERNAME: ${HYPERDX_DOCUMENTDB_USER:-hyperdx}
     volumes:
-      # Pre-initialised, so the first start skips initdb
       - hyperdx-documentdb-data:/data
       - type: volume
         source: hyperdx-documentdb-tls
@@ -634,7 +629,6 @@ services:
       hyperdx-documentdb-tls:
         condition: service_completed_successfully
     healthcheck:
-      # The image's own probe, retuned to gate startup
       test: ["CMD", "/usr/local/bin/documentdb-healthcheck"]
       interval: 5s
       timeout: 10s
@@ -642,39 +636,30 @@ services:
       retries: 10
 
   hyperdx:
-    # Digest-pinned by `make stack`, as in the Kubernetes chart
     image: ${IMAGE_REGISTRY:-ghcr.io/hyperi-io}/dfe-hyperdx:${DFE_HYPERDX_VERSION:?run 'make stack VERSION=X.Y.Z' to pin DFE_HYPERDX_VERSION}
     container_name: ${DFE_CONTAINER_PREFIX:-}dfe-hyperdx
     profiles: ["hyperdx"]
     restart: unless-stopped
     extends: {file: compose/limits.yml, service: limits-hyperdx}
-    # No ports: dfe-hyperdx-proxy carries both origins
     env_file:
       - path: env/hyperdx.env
         required: false
     environment:
       DASHBOARD_PROVISIONER_ALL_TEAMS: "true"
-      # Starts the provisioner, which reruns each minute
       DASHBOARD_PROVISIONER_DIR: /etc/hyperdx/dashboards
-      # Skips a dashboard whose source the team lacks
       DASHBOARD_PROVISIONER_REQUIRE_REFS: "true"
-      # Where a token with no group claim lands
       DFE_AUTH_DEFAULT_TEAM: ${DFE_HYPERDX_TEAM:-dfe}
-      # Verifies the engine's ES384 token against its JWKS
       DFE_AUTH_MODE: oidc-proxy
-      DFE_ENGINE_JWKS_URL: ${DFE_ENGINE_JWKS_URL:-http://dfe-engine:8000/.well-known/jwks.json}
+      DFE_ENGINE_JWKS_URL: http://dfe-engine:8000/.well-known/jwks.json
       FRONTEND_URL: ${DFE_HYPERDX_APP_URL:-${DFE_EXTERNAL_ORIGIN:-http://localhost}}:${DFE_HYPERDX_APP_PORT:-8090}
-      # Container ports dfe-proxy dials by name (#32)
       HYPERDX_API_PORT: 8000
       HYPERDX_APP_PORT: 8090
       HYPERDX_APP_URL: ${DFE_HYPERDX_APP_URL:-${DFE_EXTERNAL_ORIGIN:-http://localhost}}
-      # The gateway, over TLS with a SCRAM-SHA-256 login
       MONGO_URI: mongodb://${HYPERDX_DOCUMENTDB_USER:-hyperdx}:${HYPERDX_DOCUMENTDB_PASSWORD:-hyperdx}@hyperdx-documentdb:10260/hyperdx?tls=true&tlsCAFile=/etc/dfe/documentdb-ca/ca.crt&authMechanism=SCRAM-SHA-256
-      # Where the embedded HyperDX opens a created rule
       NEXT_PUBLIC_DFE_UI_BASE_URL: ${DFE_HYPERDX_APP_URL:-${DFE_EXTERNAL_ORIGIN:-http://localhost}}:${DFE_UI_PORT:-3000}
+      USAGE_STATS_ENABLED: ${USAGE_STATS_ENABLED:-false}
     volumes:
       - hyperdx-dashboards:/etc/hyperdx/dashboards:ro
-      # The CA alone, never the gateway's key beside it
       - type: volume
         source: hyperdx-documentdb-tls
         target: /etc/dfe/documentdb-ca
@@ -685,7 +670,6 @@ services:
       clickhouse:
         condition: service_healthy
         required: false
-      # Its dashboards first, optional without the engine
       dfe-dashboards:
         condition: service_completed_successfully
         required: false
@@ -698,13 +682,11 @@ services:
       start_period: 30s
       retries: 5
 
-  # HyperDX's edge: both host ports behind one service
   dfe-hyperdx-proxy:
     image: envoyproxy/envoy:${DFE_PROXY_VERSION:?run 'make stack VERSION=X.Y.Z' to pin DFE_PROXY_VERSION}
     container_name: ${DFE_CONTAINER_PREFIX:-}dfe-hyperdx-proxy
     profiles: ["hyperdx"]
     extends: {file: compose/envoy.yml, service: envoy}
-    # INFRA class: DFE_INFRA_UIS_EXTERNAL=false unpublishes both
     ports:
       - ${DFE_UI_BIND_HOST:-127.0.0.1}:${DFE_HYPERDX_APP_PORT:-8090}:8090
       - ${DFE_UI_BIND_HOST:-127.0.0.1}:${DFE_HYPERDX_API_PORT:-8000}:8000

@@ -686,8 +686,8 @@ def test_the_engine_is_read_bare_and_elastic_under_its_own_prefix():
 
     assert prefixes["dfe-engine"] == ""
     assert prefixes["dfe-transform-elastic"] == "DFE_TRANSFORM_ELASTIC_"
-    assert prefixes["dfe-transform-vrl"] == prefixes["dfe-transform-vector"]
-    assert prefixes["dfe-transform-vrl"] == "DFE_TRANSFORM_"
+    assert prefixes["dfe-transform-vector"] == "DFE_TRANSFORM_VECTOR_"
+    assert prefixes["dfe-transform-vrl"] == "DFE_TRANSFORM_VRL_"
 
 
 def test_an_app_missing_from_the_stack_fails_the_release_check_rather_than_passing():

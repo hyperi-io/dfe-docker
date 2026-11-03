@@ -401,8 +401,8 @@ _VERSION_CHECK_PREFIXES = {
     "dfe-loader": "DFE_LOADER_",
     "dfe-receiver": "DFE_RECEIVER_",
     "dfe-transform-elastic": "DFE_TRANSFORM_ELASTIC_",
-    "dfe-transform-vector": "DFE_TRANSFORM_",
-    "dfe-transform-vrl": "DFE_TRANSFORM_",
+    "dfe-transform-vector": "DFE_TRANSFORM_VECTOR_",
+    "dfe-transform-vrl": "DFE_TRANSFORM_VRL_",
 }
 _NO_VERSION_CHECK = {"dfe-ui"}
 # (label, dial values, what every app must resolve to). The defaults case is the one that matters: the dial opts out and never defaults off.
