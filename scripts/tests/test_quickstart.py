@@ -15,7 +15,7 @@ import pytest
 import init
 import quickstart
 import resolve_profile
-from _common import SERVICE_PROFILES_FILE
+from _common import REPO_ROOT, SERVICE_PROFILES_FILE
 from _sources import enabled_apps
 
 
@@ -29,23 +29,33 @@ from _sources import enabled_apps
         ),
         pytest.param(
             {"explicit": "", "environ": "slim-kafka", "dotenv": "single-grpc"},
-            ("slim-kafka", "environment"),
-            id="environment_beats_dotenv",
-        ),
-        pytest.param(
-            {"explicit": "", "environ": "", "dotenv": "single-grpc"},
             ("single-grpc", ".env"),
-            id="dotenv_kept",
+            id="dotenv_beats_environment_as_make_applies_it",
         ),
         pytest.param(
-            {"explicit": " ", "environ": "", "dotenv": ""},
+            {"explicit": "", "environ": "slim-kafka", "dotenv": ""},
+            ("slim-kafka", "environment"),
+            id="environment_when_dotenv_is_silent",
+        ),
+        pytest.param(
+            {"explicit": " ", "environ": "", "dotenv": "", "pinned": False},
             ("single-kafka", "default"),
-            id="default_when_nothing_is_set",
+            id="bare_clone_takes_the_default",
+        ),
+        pytest.param(
+            {"explicit": "", "environ": "", "dotenv": "", "pinned": True},
+            ("slim-grpc", "active_profile"),
+            id="existing_deployment_keeps_the_active_profile",
         ),
     ],
 )
 def test_chooses_the_profile_nearest_the_user(given: dict, expected: tuple) -> None:
-    assert quickstart.choose_profile(default="single-kafka", **given) == expected
+    assert (
+        quickstart.choose_profile(
+            active="slim-grpc", default="single-kafka", **({"pinned": False} | given)
+        )
+        == expected
+    )
 
 
 @pytest.mark.parametrize(
@@ -110,16 +120,16 @@ def test_the_demo_refuses_a_profile_without_the_transform(
     assert re.search(message, reason) if message else reason == "", reason
 
 
-def test_every_committed_profile_can_be_chosen() -> None:
-    text = SERVICE_PROFILES_FILE.read_text(encoding="utf-8")
-    names = list(resolve_profile.parse_yaml(text=text)["profiles"])
-
-    assert (
-        quickstart.choose_profile(
-            default="single-kafka", dotenv="", environ="", explicit=""
-        )[0]
-        in names
+def test_the_default_and_the_active_profile_are_committed_profiles() -> None:
+    parsed = resolve_profile.parse_yaml(
+        text=SERVICE_PROFILES_FILE.read_text(encoding="utf-8")
     )
+    default = re.search(
+        r"(?m)^DEFAULT_PROFILE := (\S+)$", (REPO_ROOT / "Makefile").read_text()
+    )
+
+    assert default and default.group(1) in parsed["profiles"]
+    assert parsed["active_profile"] in parsed["profiles"]
 
 
 def test_the_profile_line_is_replaced_not_appended() -> None:

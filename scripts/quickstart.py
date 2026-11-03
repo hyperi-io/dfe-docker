@@ -11,7 +11,7 @@
 
 `prepare` settles two choices, prints them as its first line, and writes them to .env.
 
-The profile is PROFILE= on the make line, else DFE_PROFILE from the environment or .env, else DEFAULT_PROFILE. One that came from the make line or the default is written to .env as DFE_PROFILE, replacing the line there, so later runs keep it.
+The profile is PROFILE= on the make line, else DFE_PROFILE from .env or the environment, else DEFAULT_PROFILE on a clone with no image pins, else the active_profile in service_profiles.yaml, which is what `make ci` runs on an existing deployment. One that came from the make line or the default is written to .env as DFE_PROFILE, replacing the line there, so later runs keep it. The active_profile is never written.
 
 The stack is VERSION= on the make line. With none given, a .env that holds no image pins gets the stack in DFE_STACK_VERSION, else the newest published stable stack, pinned by its version number. A .env that holds pins is left as it is.
 
@@ -62,16 +62,21 @@ class QuickstartError(Exception):
 
 
 def choose_profile(
-    *, default: str, dotenv: str, environ: str, explicit: str
+    *, active: str, default: str, dotenv: str, environ: str, explicit: str, pinned: bool
 ) -> tuple[str, str]:
-    """The profile to run, and which of the make line, environment, .env or default gave it."""
+    """The profile to run, and which source gave it.
+
+    Inside make a .env value beats the environment, because make assigns it over the inherited variable. A .env with image pins is an existing deployment, which keeps the active_profile it has been running.
+    """
     for source, value in (
         ("make line", explicit),
-        ("environment", environ),
         (".env", dotenv),
+        ("environment", environ),
     ):
         if value.strip():
             return value.strip(), source
+    if pinned:
+        return active, "active_profile"
     return default, "default"
 
 
@@ -131,10 +136,12 @@ def prepare(*, args: argparse.Namespace) -> None:
     valid = list(resolve_profile.parse_yaml(text=profiles_text)["profiles"])
     dotenv = _dotenv_values()
     name, profile_from = choose_profile(
+        active=resolve_profile.parse_yaml(text=profiles_text)["active_profile"],
         default=args.default_profile,
         dotenv=dotenv.get(PROFILE_KEY, ""),
         environ=os.environ.get(PROFILE_KEY, ""),
         explicit=args.profile,
+        pinned=bool(dotenv.get(IMAGE_PIN_KEY, "").strip()),
     )
     if name not in valid:
         raise QuickstartError(f"profile {name!r} is not one of {', '.join(valid)}")
@@ -155,6 +162,11 @@ def prepare(*, args: argparse.Namespace) -> None:
 
     if args.command == "demo":
         up = running()
+        if args.dev and not up:
+            raise QuickstartError(
+                "DEV=1 streams through a running `make dev` stack, and none runs here. "
+                "Run `make dev` first, or drop DEV=1 to start the registry stack"
+            )
         if up and args.profile and args.profile != dotenv.get(PROFILE_KEY, ""):
             raise QuickstartError(
                 f"a stack is running here, and PROFILE={args.profile} would move it off "
@@ -170,8 +182,8 @@ def prepare(*, args: argparse.Namespace) -> None:
     if args.dev:
         return
 
-    if not DOTENV_FILE.is_file():
-        init.main()
+    if not DOTENV_FILE.is_file() and init.main() != 0:
+        raise QuickstartError("`make init` failed, see above")
     if profile_from in ("make line", "default") and dotenv.get(PROFILE_KEY) != name:
         text = init._set_live(
             text=DOTENV_FILE.read_text(encoding="utf-8"), key=PROFILE_KEY, value=name
