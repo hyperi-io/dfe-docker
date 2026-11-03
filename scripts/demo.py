@@ -240,12 +240,12 @@ def _archive_report(*, image: str, sources: list[str]) -> str:
     return shown.stdout.strip()
 
 
-def _await_archive(*, before: int | None, image: str, sources: list[str]) -> int | None:
-    """Poll until the archiver has written more files than before, then return how many it has now, None when it never could be read."""
+def _await_archive(*, image: str, sources: list[str]) -> int | None:
+    """Poll until the archive holds a file for the sources, then return how many it holds, None when it cannot be read."""
     deadline = time.monotonic() + ARCHIVE_TIMEOUT_SECONDS
     while True:
         now = _archived_objects(image=image, sources=sources)
-        if (now is None) or (now > (before or 0)) or (time.monotonic() >= deadline):
+        if (now is None) or (now > 0) or (time.monotonic() >= deadline):
             return now
         time.sleep(LAND_INTERVAL_SECONDS)
 
@@ -696,7 +696,7 @@ def _network(*, service: str) -> str:
 
 def _outcome(
     *,
-    archive: tuple[list[str], int | None, str],
+    archive: tuple[list[str], str],
     before: dict[str, int | None],
     container: str,
     fetchers: list[dict],
@@ -704,7 +704,7 @@ def _outcome(
     vendors: list[str],
 ) -> int:
     """Wait for the vendor rows and the archived files, report every table and return the demo's exit code."""
-    archiving, archived_before, image = archive
+    archiving, image = archive
     gained = _await_rows(before=before, container=container, vendors=vendors)
     for table, rows in gained.items():
         _print(msg=f"  {TARGET_DB}.{table}: +{rows} rows")
@@ -720,18 +720,14 @@ def _outcome(
     )
     archived = None
     if archiving and not (empty):
-        archived = _await_archive(
-            before=archived_before, image=image, sources=archiving
-        )
+        archived = _await_archive(image=image, sources=archiving)
         _print(
             msg=f"  {ARCHIVER_SERVICE} archive of {', '.join(archiving)}: "
             f"{'unreadable' if archived is None else f'{archived} files'}"
         )
         for line in _archive_report(image=image, sources=archiving).splitlines():
             _print(msg=f"    {line}")
-    unarchived = (
-        bool(archiving) and not (empty) and (archived or 0) <= (archived_before or 0)
-    )
+    unarchived = bool(archiving) and not (empty) and not ((archived or 0) > 0)
     # Lines a previous stream sent can still land, so rows alone do not prove this run's generator worked
     if not (_running(container=container)):
         _print(
@@ -920,9 +916,6 @@ def _install(*, args: argparse.Namespace, manifest: dict) -> int:
     archiving = [
         body["source"] for body in [*demo.vendors, demo.intake] if body.get("archive")
     ]
-    archived_before = (
-        _archived_objects(image=args.image, sources=archiving) if archiving else None
-    )
     storage = _archive_storage() if archiving else None
     if storage is not None:
         _start_pruner(
@@ -959,7 +952,7 @@ def _install(*, args: argparse.Namespace, manifest: dict) -> int:
             "the generator container did not start. Docker's error is above"
         )
     return _outcome(
-        archive=(archiving, archived_before, args.image),
+        archive=(archiving, args.image),
         before=before,
         container=args.container,
         fetchers=fetchers,
