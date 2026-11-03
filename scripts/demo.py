@@ -136,6 +136,11 @@ CURSOR_STORAGE = (
 ARCHIVE_TOOL = DEMO_DIR / "archive.py"
 ARCHIVE_ROOT = "/a"
 MANIFEST_FILE = DEMO_DIR / "demo.json"
+CONSOLE_DIR = DEMO_DIR / "console"
+# dfe-hyperdx's API as dfe-engine reaches it, which accepts the engine's own token. Everything the pack puts in the console is a plain, deletable object whose name starts with CONSOLE_PREFIX
+HYPERDX_API = "http://hyperdx:8000"
+CONSOLE_PREFIX = "demo-"
+HYPERDX_SERVICE = "hyperdx"
 # The generator ends a loop only at --count or --duration, so the stream runs ten years unless removed
 STREAM_SECONDS = 315_360_000
 READY_TIMEOUT_SECONDS = 120.0
@@ -261,6 +266,101 @@ def _cursor_storage(*, name: str) -> str | None:
         ]
     )
     return mounted.stdout.strip() or None
+
+
+def _console_files(*, kind: str) -> list[dict]:
+    """The console objects of one kind (dashboards or searches) in resources/demo/console, in name order."""
+    bodies = []
+    for path in sorted((CONSOLE_DIR / kind).glob(pattern="*.json")):
+        try:
+            body = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, UnicodeDecodeError, json.JSONDecodeError) as error:
+            raise DemoError(f"{path.name!r} is not readable JSON: {error}") from error
+        if not (isinstance(body, dict)) or body.get("name") != path.stem:
+            raise DemoError(
+                f"{path.name!r} needs an object whose `name` is {path.stem!r}"
+            )
+        bodies.append(body)
+    return bodies
+
+
+def _console_url(*, path: str) -> str:
+    """Where a browser on this host opens a HyperDX page."""
+    origin = os.environ.get("DFE_HYPERDX_APP_URL", "").strip() or "http://localhost"
+    port = os.environ.get("DFE_HYPERDX_APP_PORT", "").strip() or "8090"
+    return f"{origin.rstrip('/')}:{port}{path}"
+
+
+def _hyperdx(
+    *, method: str, path: str, payload: dict | None, token: str
+) -> tuple[int, typing.Any]:
+    """One call to dfe-hyperdx's API from inside the stack, returning (status, decoded body)."""
+    status, body = _exec_request(
+        method=method,
+        payload=payload,
+        timeout=30,
+        token=token,
+        url=f"{HYPERDX_API}{path}",
+    )
+    return status, _decoded(raw=body)
+
+
+def _hyperdx_list(*, path: str, token: str) -> list[dict]:
+    status, answer = _hyperdx(method="GET", path=path, payload=None, token=token)
+    if status != 200 or not (isinstance(answer, list)):
+        raise DemoError(f"GET {path} on dfe-hyperdx returned HTTP {status}: {answer}")
+    return [item for item in answer if isinstance(item, dict)]
+
+
+def _remove_console(*, token: str) -> int:
+    """Delete every dashboard and saved search whose name starts with the demo prefix, and return how many went."""
+    removed = 0
+    for path in ("/dashboards", "/saved-search"):
+        for item in _hyperdx_list(path=path, token=token):
+            name = str(item.get("name", ""))
+            if not (name.startswith(CONSOLE_PREFIX)) or item.get("provisioned"):
+                continue
+            status, answer = _hyperdx(
+                method="DELETE", path=f"{path}/{item['id']}", payload=None, token=token
+            )
+            if status not in (200, 204, 404):
+                raise DemoError(f"deleting {name!r} returned HTTP {status}: {answer}")
+            removed += 1
+    return removed
+
+
+def _install_console(*, token: str) -> list[str]:
+    """Replace the pack's dashboards and saved searches in the console and return the lines that say where to open them.
+
+    The files name a source by its name, and tiles that run SQL take the connection of that source.
+    """
+    sources = {
+        item["name"]: item for item in _hyperdx_list(path="/sources", token=token)
+    }
+    _remove_console(token=token)
+    links = []
+    for kind, path, front in (
+        ("dashboards", "/dashboards", "/dashboards"),
+        ("searches", "/saved-search", "/search"),
+    ):
+        for body in _console_files(kind=kind):
+            payload = resolve_console(body=body, sources=sources)
+            status, made = _hyperdx(
+                method="POST", path=path, payload=payload, token=token
+            )
+            if status != 200 or not (isinstance(made, dict)) or not (made.get("id")):
+                raise DemoError(
+                    f"creating {kind[:-1]} {body['name']!r} returned HTTP {status}: {made}"
+                )
+            tail = (
+                "?isLive=true"
+                if kind == "searches" and body["name"].endswith("-live")
+                else ""
+            )
+            links.append(
+                f"{body['name']}: {_console_url(path=f'{front}/{made['id']}{tail}')}"
+            )
+    return links
 
 
 def _delete_source(*, base: str, name: str, token: str) -> None:
@@ -802,6 +902,14 @@ def _install(*, args: argparse.Namespace, manifest: dict) -> int:
     if services:
         _apply(dev=args.dev, environ=environ, services=services)
     _await_ready(instance=instance)
+    if HYPERDX_SERVICE in _resolved_services():
+        for line in _install_console(token=token):
+            _print(msg=f"  console {line}")
+    else:
+        _print(
+            msg=f"WARNING this profile runs no {HYPERDX_SERVICE!r}, so the demo's "
+            f"dashboards and saved searches are not created"
+        )
 
     vendors = [body["source"] for body in demo.vendors]
     # Lines no detector claims land in the intake's own table, while main is shown to prove none went there
@@ -887,6 +995,17 @@ def _read_manifest(*, path: Path) -> dict:
             f"{path.name!r} needs an `archive` mapping with `sources` and positive "
             f"{', '.join(keys)}"
         )
+    console = manifest.get("console")
+    if not (isinstance(console, dict)) or not (
+        all(
+            isinstance(console.get(kind), list)
+            and all(isinstance(name, str) and name for name in console[kind])
+            for kind in ("dashboards", "searches")
+        )
+    ):
+        raise DemoError(
+            f"{path.name!r} needs a `console` mapping with `dashboards` and `searches` name lists"
+        )
     return manifest
 
 
@@ -918,6 +1037,10 @@ def _remove_pack(*, args: argparse.Namespace, manifest: dict) -> None:
             _load_dotenv()
             base = _engine_base()
             token = _token(base=base)
+            if _container(service=HYPERDX_SERVICE):
+                _print(
+                    msg=f"removed {_remove_console(token=token)} console dashboard(s) and saved search(es)"
+                )
             for name in reversed(manifest["sources"]):
                 _delete_source(base=base, name=name, token=token)
             deleted = True
@@ -1189,6 +1312,13 @@ def check_manifest(*, demo: Demo, manifest: dict) -> None:
             f"{MANIFEST_FILE.name!r} lists sources {listed} and "
             f"{str(SOURCES_DIR)!r} holds {found}. Make them the same set"
         )
+    for kind in ("dashboards", "searches"):
+        found_console = sorted(body["name"] for body in _console_files(kind=kind))
+        if found_console != sorted(manifest["console"][kind]):
+            raise DemoError(
+                f"{MANIFEST_FILE.name!r} lists {kind} {sorted(manifest['console'][kind])} "
+                f"and {str(CONSOLE_DIR / kind)!r} holds {found_console}. Make them the same set"
+            )
     archiving = sorted(body["source"] for body in bodies if body.get("archive"))
     if archiving != sorted(manifest["archive"]["sources"]):
         raise DemoError(
@@ -1196,6 +1326,33 @@ def check_manifest(*, demo: Demo, manifest: dict) -> None:
             f"{sorted(manifest['archive']['sources'])} and the files that archive are "
             f"{archiving}. Make them the same set"
         )
+
+
+def resolve_console(*, body: dict, sources: dict[str, dict]) -> dict:
+    """A console file as dfe-hyperdx takes it, each source name replaced by the source's id and each SQL tile given its source's connection."""
+
+    def source_id(name: object) -> str:
+        found = sources.get(str(name))
+        if found is None:
+            raise DemoError(
+                f"{body['name']!r} names source {name!r}, which dfe-hyperdx does not hold"
+            )
+        return found["id"]
+
+    resolved = {key: value for key, value in body.items()}
+    if "source" in resolved:
+        resolved["source"] = source_id(resolved["source"])
+    tiles = []
+    for tile in resolved.get("tiles", []):
+        config = dict(tile["config"])
+        owner = sources.get(str(config.get("source")))
+        config["source"] = source_id(config.get("source"))
+        if config.get("configType") == "sql" and owner is not None:
+            config["connection"] = owner["connection"]
+        tiles.append({**tile, "config": config})
+    if "tiles" in resolved:
+        resolved["tiles"] = tiles
+    return resolved
 
 
 def ensure_steps(*, body: dict, held: dict | None) -> list[str]:

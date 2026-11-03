@@ -156,3 +156,66 @@ class TestManifest:
 
         with pytest.raises(demo.DemoError):
             demo._read_manifest(path=path)
+
+
+class TestConsole:
+    SOURCES = {
+        "cisco-asa": {"id": "a1", "connection": "c1", "name": "cisco-asa"},
+        "all_sources": {"id": "a2", "connection": "c1", "name": "all_sources"},
+    }
+
+    def test_resolves_source_names_to_ids_and_gives_sql_tiles_their_connection(
+        self,
+    ) -> None:
+        body = {
+            "name": "demo-x",
+            "tiles": [
+                {"id": "t", "config": {"configType": "sql", "source": "cisco-asa"}},
+                {"id": "u", "config": {"source": "all_sources", "displayType": "line"}},
+            ],
+        }
+
+        resolved = demo.resolve_console(body=body, sources=self.SOURCES)
+
+        assert resolved["tiles"][0]["config"] == {
+            "configType": "sql",
+            "connection": "c1",
+            "source": "a1",
+        }
+        assert "connection" not in resolved["tiles"][1]["config"]
+        assert body["tiles"][0]["config"]["source"] == "cisco-asa"
+
+    def test_resolves_a_saved_search_source(self) -> None:
+        resolved = demo.resolve_console(
+            body={"name": "demo-s", "source": "cisco-asa"}, sources=self.SOURCES
+        )
+
+        assert resolved["source"] == "a1"
+
+    def test_refuses_a_source_the_console_lacks(self) -> None:
+        with pytest.raises(demo.DemoError, match="does not hold"):
+            demo.resolve_console(
+                body={"name": "demo-s", "source": "absent"}, sources=self.SOURCES
+            )
+
+    def test_every_committed_console_object_is_named_for_the_demo_and_finds_its_source(
+        self,
+    ) -> None:
+        manifest = demo._read_manifest(path=demo.MANIFEST_FILE)
+        known = {name: {"id": name, "connection": "c"} for name in manifest["sources"]}
+        known["all_sources"] = {"id": "all_sources", "connection": "c"}
+        for kind in ("dashboards", "searches"):
+            for body in demo._console_files(kind=kind):
+                assert body["name"].startswith(demo.CONSOLE_PREFIX)
+                assert "demo" in body["tags"]
+                demo.resolve_console(body=body, sources=known)
+
+    def test_every_committed_tile_is_sql_over_the_demo_tables(self) -> None:
+        for body in demo._console_files(kind="dashboards"):
+            ids = [tile["id"] for tile in body["tiles"]]
+            assert len(ids) == len(set(ids)), body["name"]
+            for tile in body["tiles"]:
+                assert tile["config"]["configType"] == "sql", tile["id"]
+                assert "$__timeFilter" in tile["config"]["sqlTemplate"] or (
+                    "component-releases" in tile["config"]["sqlTemplate"]
+                ), tile["id"]

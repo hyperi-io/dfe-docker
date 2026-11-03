@@ -1,0 +1,11 @@
+{
+  "name": "demo-syslog-live",
+  "orderBy": "_timestamp_load DESC",
+  "select": "_timestamp_load, message, hostname, app_name",
+  "source": "demo-syslog",
+  "tags": [
+    "demo"
+  ],
+  "where": "",
+  "whereLanguage": "sql"
+}

@@ -1,0 +1,64 @@
+{
+  "name": "demo-stack-health",
+  "tags": [
+    "demo"
+  ],
+  "tiles": [
+    {
+      "config": {
+        "configType": "sql",
+        "displayType": "stacked_bar",
+        "name": "Rows per table per minute",
+        "source": "all_sources",
+        "sqlTemplate": "SELECT $__timeInterval(_timestamp_load) AS ts,\n       toString(_source) AS \"table\",\n       count() * 60 / $__interval_s AS \"rows/min\"\nFROM dfe.all_sources\nWHERE $__timeFilter(_timestamp_load) AND toString(_source) IN ('cisco-asa', 'fortinet', 'demo-syslog', 'component-releases', 'wikipedia-recentchanges')\nGROUP BY ts, \"table\"\nORDER BY ts"
+      },
+      "h": 7,
+      "id": "rows",
+      "w": 16,
+      "x": 0,
+      "y": 0
+    },
+    {
+      "config": {
+        "configType": "sql",
+        "displayType": "table",
+        "name": "Rows landed",
+        "source": "all_sources",
+        "sqlTemplate": "SELECT toString(_source) AS \"Table\",\n       count() AS \"Rows\"\nFROM dfe.all_sources\nWHERE $__timeFilter(_timestamp_load) AND toString(_source) IN ('cisco-asa', 'fortinet', 'demo-syslog', 'component-releases', 'wikipedia-recentchanges')\nGROUP BY 1\nORDER BY 2 DESC"
+      },
+      "h": 7,
+      "id": "total",
+      "w": 8,
+      "x": 16,
+      "y": 0
+    },
+    {
+      "config": {
+        "configType": "sql",
+        "displayType": "line",
+        "name": "Records the archiver has written",
+        "source": "all_sources",
+        "sqlTemplate": "SELECT $__timeInterval(TimeUnix) AS ts,\n       max(Value) AS \"records archived\"\nFROM dfe.otel_metrics_sum\nWHERE $__timeFilter(TimeUnix) AND MetricName = 'messages_archived_total'\nGROUP BY ts\nORDER BY ts"
+      },
+      "h": 6,
+      "id": "archived",
+      "w": 12,
+      "x": 0,
+      "y": 7
+    },
+    {
+      "config": {
+        "configType": "sql",
+        "displayType": "number",
+        "name": "Archiver errors",
+        "source": "all_sources",
+        "sqlTemplate": "SELECT max(Value) AS \"archive errors\"\nFROM dfe.otel_metrics_sum\nWHERE $__timeFilter(TimeUnix) AND MetricName = 'archive_errors_total'"
+      },
+      "h": 6,
+      "id": "archerr",
+      "w": 12,
+      "x": 12,
+      "y": 7
+    }
+  ]
+}

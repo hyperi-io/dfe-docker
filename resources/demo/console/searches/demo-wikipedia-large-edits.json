@@ -1,0 +1,11 @@
+{
+  "name": "demo-wikipedia-large-edits",
+  "orderBy": "_timestamp DESC",
+  "select": "_timestamp, _json.title, _json.user, _json.oldlen, _json.newlen, _json.comment",
+  "source": "wikipedia-recentchanges",
+  "tags": [
+    "demo"
+  ],
+  "where": "toString(_json.type) = 'edit' AND abs(toInt64OrZero(toString(_json.newlen)) - toInt64OrZero(toString(_json.oldlen))) > 2000",
+  "whereLanguage": "sql"
+}

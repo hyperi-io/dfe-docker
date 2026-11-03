@@ -1,0 +1,36 @@
+{
+  "name": "demo-component-releases",
+  "tags": [
+    "demo"
+  ],
+  "tiles": [
+    {
+      "config": {
+        "configType": "sql",
+        "displayType": "table",
+        "name": "Latest release of each DFE component",
+        "source": "component-releases",
+        "sqlTemplate": "SELECT toString(_json._dfe_fetcher_repo) AS \"Component\",\n       argMax(toString(_json.tag_name), parseDateTimeBestEffortOrZero(toString(_json.published_at))) AS \"Latest version\",\n       max(parseDateTimeBestEffortOrZero(toString(_json.published_at))) AS \"Published\",\n       dateDiff('hour', max(parseDateTimeBestEffortOrZero(toString(_json.published_at))), now()) AS \"Age (hours)\"\nFROM dfe.`component-releases`\nGROUP BY 1\nORDER BY 3 DESC"
+      },
+      "h": 9,
+      "id": "latest",
+      "w": 24,
+      "x": 0,
+      "y": 0
+    },
+    {
+      "config": {
+        "configType": "sql",
+        "displayType": "line",
+        "name": "Release rows landed",
+        "source": "component-releases",
+        "sqlTemplate": "SELECT $__timeInterval(_timestamp_load) AS ts,\n       count() AS \"rows landed\"\nFROM dfe.`component-releases`\nWHERE $__timeFilter(_timestamp_load)\nGROUP BY ts\nORDER BY ts"
+      },
+      "h": 5,
+      "id": "polls",
+      "w": 24,
+      "x": 0,
+      "y": 9
+    }
+  ]
+}

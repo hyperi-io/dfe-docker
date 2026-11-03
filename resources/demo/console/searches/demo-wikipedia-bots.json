@@ -1,0 +1,11 @@
+{
+  "name": "demo-wikipedia-bots",
+  "orderBy": "_timestamp DESC",
+  "select": "_timestamp, _json.title, _json.user, _json.type, _json.comment",
+  "source": "wikipedia-recentchanges",
+  "tags": [
+    "demo"
+  ],
+  "where": "dynamicType(_json.bot) != 'None'",
+  "whereLanguage": "sql"
+}

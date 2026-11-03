@@ -1,0 +1,11 @@
+{
+  "name": "demo-fortinet-live",
+  "orderBy": "_timestamp_load DESC",
+  "select": "_timestamp_load, event_action, event_outcome, source_ip, source_port, destination_ip, destination_port, network_transport, network_bytes, event_original",
+  "source": "fortinet",
+  "tags": [
+    "demo"
+  ],
+  "where": "",
+  "whereLanguage": "sql"
+}

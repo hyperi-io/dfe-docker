@@ -7,6 +7,28 @@
     ],
     "sweep_minutes": 5
   },
+  "console": {
+    "dashboards": [
+      "demo-cisco-asa",
+      "demo-component-releases",
+      "demo-fortinet",
+      "demo-stack-health",
+      "demo-syslog",
+      "demo-wikipedia-recentchanges"
+    ],
+    "searches": [
+      "demo-cisco-asa-denied",
+      "demo-cisco-asa-live",
+      "demo-component-releases-all",
+      "demo-fortinet-denied",
+      "demo-fortinet-live",
+      "demo-syslog-live",
+      "demo-syslog-unclaimed",
+      "demo-wikipedia-bots",
+      "demo-wikipedia-large-edits",
+      "demo-wikipedia-live"
+    ]
+  },
   "sources": [
     "cisco-asa",
     "component-releases",
