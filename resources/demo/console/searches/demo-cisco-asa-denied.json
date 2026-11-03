@@ -1,0 +1,11 @@
+{
+  "name": "demo-cisco-asa-denied",
+  "orderBy": "_timestamp DESC",
+  "select": "_timestamp, event_action, event_outcome, replaceOne(IPv6NumToString(assumeNotNull(source_ip)), '::ffff:', '') AS source, source_port, replaceOne(IPv6NumToString(assumeNotNull(destination_ip)), '::ffff:', '') AS destination, destination_port, network_transport, network_bytes, event_original",
+  "source": "cisco-asa",
+  "tags": [
+    "demo"
+  ],
+  "where": "event_outcome = 'failure'",
+  "whereLanguage": "sql"
+}

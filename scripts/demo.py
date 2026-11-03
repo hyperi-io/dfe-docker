@@ -90,12 +90,12 @@ RECEIVER_SERVICE = "dfe-receiver"
 # dfe-engine main reads the catalogue from its dfe-schemas wheel and older images from the seeded /app/schemas, so this tries both in that order, at any depth because newer wheels file each entry under its tag folder
 CATALOGUE_READ = "\n".join(
     (
-        "import pathlib, sys, dfe_schemas",
+        "import json, pathlib, sys, dfe_schemas, yaml",
         "name = sys.argv[1] + '.yaml'",
         "for root in (dfe_schemas.schemas_root(), pathlib.Path('/app/schemas')):",
         "    path = next(iter(sorted((root / 'catalogue').rglob(name))), None)",
         "    if path is not None:",
-        "        sys.stdout.write(path.read_text(encoding='utf-8'))",
+        "        sys.stdout.write(json.dumps(yaml.safe_load(path.read_text(encoding='utf-8')), default=str))",
         "        break",
     )
 )
@@ -128,6 +128,30 @@ FIXTURES = "tests/fixtures/unencumbered"
 # The generator's inputs beside its own directory: the detector's label table and the fixtures it replays
 GENERATOR_INPUTS = ("src/detect", FIXTURES)
 FETCH_ROOT = REPO_ROOT / ".tmp" / "demo"
+ARCHIVER_SERVICE = "dfe-archiver"
+# Where dfe-archiver writes (file:// in config/archiver/kafka.yaml), which throwaway containers mount to count, show, prune and purge what it archived
+ARCHIVE_MOUNT = "/var/data/archive"
+ARCHIVE_STORAGE = (
+    '{{range .Mounts}}{{if eq .Destination "' + ARCHIVE_MOUNT + '"}}'
+    "{{if .Name}}{{.Name}}{{else}}{{.Source}}{{end}}{{end}}{{end}}"
+)
+ARCHIVE_TIMEOUT_SECONDS = 180.0
+# Where a fetcher keeps its cursor, one directory per instance, which outlives the instance and would start a re-created source from the old window
+CURSOR_MOUNT = "/var/lib/dfe-fetcher"
+CURSOR_STORAGE = (
+    '{{range .Mounts}}{{if eq .Destination "' + CURSOR_MOUNT + '"}}'
+    "{{if .Name}}{{.Name}}{{else}}{{.Source}}{{end}}{{end}}{{end}}"
+)
+ARCHIVE_TOOL = DEMO_DIR / "archive.py"
+ARCHIVE_ROOT = "/a"
+MANIFEST_FILE = DEMO_DIR / "demo.json"
+# The sources this checkout's demo created, which is all `make demo-stop` deletes, so a source of the same name that someone else made is never taken out by `make down`
+INSTALLED_FILE = FETCH_ROOT / "installed.json"
+CONSOLE_DIR = DEMO_DIR / "console"
+# dfe-hyperdx's API as dfe-engine reaches it, which accepts the engine's own token. Everything the pack puts in the console is a plain, deletable object whose name starts with CONSOLE_PREFIX
+HYPERDX_API = "http://hyperdx:8000"
+CONSOLE_PREFIX = "demo-"
+HYPERDX_SERVICE = "hyperdx"
 # The generator ends a loop only at --count or --duration, so the stream runs ten years unless removed
 STREAM_SECONDS = 315_360_000
 READY_TIMEOUT_SECONDS = 120.0
@@ -166,6 +190,205 @@ def _apply(*, dev: bool, environ: dict[str, str], services: list[str]) -> None:
     result = subprocess.run(command, check=False, cwd=REPO_ROOT, env=environ)
     if result.returncode != 0:
         raise DemoError(f"`{' '.join(command)}` failed")
+
+
+def _archive_storage() -> str | None:
+    """The volume or host path the archiver writes to, None when its container cannot be read."""
+    container = _container(service=ARCHIVER_SERVICE)
+    if not (container):
+        return None
+    mounted = _docker(args=["inspect", "--format", ARCHIVE_STORAGE, container])
+    storage = mounted.stdout.strip()
+    return storage if (mounted.returncode == 0) and storage else None
+
+
+def _archive_tool(
+    *, args: list[str], image: str, storage: str, write: bool = False
+) -> subprocess.CompletedProcess:
+    """Run resources/demo/archive.py in a throwaway container holding the archive volume."""
+    return _docker(
+        args=[
+            "run",
+            "--rm",
+            "--volume",
+            f"{storage}:{ARCHIVE_ROOT}{'' if write else ':ro'}",
+            "--volume",
+            f"{ARCHIVE_TOOL}:/archive.py:ro",
+            image,
+            "python3",
+            "-I",
+            "/archive.py",
+            *args,
+            "--root",
+            ARCHIVE_ROOT,
+        ],
+        timeout=120,
+    )
+
+
+def _archived_objects(*, image: str, sources: list[str]) -> int | None:
+    """How many files the archiver has written for the sources, None when they cannot be counted."""
+    storage = _archive_storage()
+    if storage is None:
+        return None
+    counted = _archive_tool(
+        args=["count", "--sources", ",".join(sources)], image=image, storage=storage
+    )
+    try:
+        return int(counted.stdout.strip())
+    except ValueError:
+        return None
+
+
+def _archive_report(*, image: str, sources: list[str]) -> str:
+    """The names and sizes of the newest archived objects and the first line of the newest."""
+    storage = _archive_storage()
+    if storage is None:
+        return ""
+    shown = _archive_tool(
+        args=["show", "--sources", ",".join(sources)], image=image, storage=storage
+    )
+    return shown.stdout.strip()
+
+
+def _await_archive(*, image: str, sources: list[str]) -> int | None:
+    """Poll until the archive holds a file for the sources, then return how many it holds, None when it cannot be read."""
+    deadline = time.monotonic() + ARCHIVE_TIMEOUT_SECONDS
+    while True:
+        now = _archived_objects(image=image, sources=sources)
+        if (now is None) or (now > 0) or (time.monotonic() >= deadline):
+            return now
+        time.sleep(LAND_INTERVAL_SECONDS)
+
+
+def _cursor_storage(*, name: str) -> str | None:
+    """The volume holding a fetcher source's cursor, None when the source runs no fetcher instance."""
+    container = _container(
+        service=instances.service_name(instance=name, service=FETCHER_SERVICE)
+    )
+    if not (container):
+        return None
+    mounted = _docker(
+        args=[
+            "inspect",
+            "--format",
+            CURSOR_STORAGE,
+            container,
+        ]
+    )
+    return mounted.stdout.strip() or None
+
+
+def _console_files(*, kind: str) -> list[dict]:
+    """The console objects of one kind (dashboards or searches) in resources/demo/console, in name order."""
+    bodies = []
+    for path in sorted((CONSOLE_DIR / kind).glob(pattern="*.json")):
+        try:
+            body = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, UnicodeDecodeError, json.JSONDecodeError) as error:
+            raise DemoError(f"{path.name!r} is not readable JSON: {error}") from error
+        if not (isinstance(body, dict)) or body.get("name") != path.stem:
+            raise DemoError(
+                f"{path.name!r} needs an object whose `name` is {path.stem!r}"
+            )
+        bodies.append(body)
+    return bodies
+
+
+def _console_url(*, path: str) -> str:
+    """Where a browser on this host opens a HyperDX page."""
+    origin = os.environ.get("DFE_HYPERDX_APP_URL", "").strip() or "http://localhost"
+    port = os.environ.get("DFE_HYPERDX_APP_PORT", "").strip() or "8090"
+    return f"{origin.rstrip('/')}:{port}{path}"
+
+
+def _hyperdx(
+    *, method: str, path: str, payload: dict | None, token: str
+) -> tuple[int, typing.Any]:
+    """One call to dfe-hyperdx's API from inside the stack, returning (status, decoded body)."""
+    status, body = _exec_request(
+        method=method,
+        payload=payload,
+        timeout=30,
+        token=token,
+        url=f"{HYPERDX_API}{path}",
+    )
+    return status, _decoded(raw=body)
+
+
+def _hyperdx_list(*, path: str, token: str) -> list[dict]:
+    status, answer = _hyperdx(method="GET", path=path, payload=None, token=token)
+    if status != 200 or not (isinstance(answer, list)):
+        raise DemoError(f"GET {path} on dfe-hyperdx returned HTTP {status}: {answer}")
+    return [item for item in answer if isinstance(item, dict)]
+
+
+def _remove_console(*, token: str) -> int:
+    """Delete every dashboard and saved search whose name starts with the demo prefix, and return how many went."""
+    removed = 0
+    for path in ("/dashboards", "/saved-search"):
+        for item in _hyperdx_list(path=path, token=token):
+            name = str(item.get("name", ""))
+            if not (name.startswith(CONSOLE_PREFIX)) or item.get("provisioned"):
+                continue
+            status, answer = _hyperdx(
+                method="DELETE", path=f"{path}/{item['id']}", payload=None, token=token
+            )
+            if status not in (200, 204, 404):
+                raise DemoError(f"deleting {name!r} returned HTTP {status}: {answer}")
+            removed += 1
+    return removed
+
+
+def _install_console(*, token: str) -> list[str]:
+    """Replace the pack's dashboards and saved searches in the console and return the lines that say where to open them.
+
+    The files name a source by its name, and tiles that run SQL take the connection of that source.
+    """
+    sources = {
+        item["name"]: item for item in _hyperdx_list(path="/sources", token=token)
+    }
+    _remove_console(token=token)
+    links = []
+    for kind, path, front in (
+        ("dashboards", "/dashboards", "/dashboards"),
+        ("searches", "/saved-search", "/search"),
+    ):
+        for body in _console_files(kind=kind):
+            payload = resolve_console(body=body, sources=sources)
+            status, made = _hyperdx(
+                method="POST", path=path, payload=payload, token=token
+            )
+            if status != 200 or not (isinstance(made, dict)) or not (made.get("id")):
+                raise DemoError(
+                    f"creating {kind[:-1]} {body['name']!r} returned HTTP {status}: {made}"
+                )
+            tail = (
+                "?isLive=true"
+                if kind == "searches" and body["name"].endswith("-live")
+                else ""
+            )
+            links.append(
+                f"{body['name']}: {_console_url(path=f'{front}/{made['id']}{tail}')}"
+            )
+    return links
+
+
+def _delete_source(*, base: str, name: str, token: str) -> None:
+    """Delete one source through the engine, which takes its instance, receiver rule and topics with it. One the engine lacks is already gone."""
+    status, answer = _exec_request(
+        method="DELETE",
+        payload=None,
+        timeout=DEPLOY_TIMEOUT_SECONDS,
+        token=token,
+        url=_source_url(base=base, name=name),
+    )
+    if status not in (200, 202, 404):
+        raise DemoError(
+            f"deleting source {name!r} returned HTTP {status}: {_decoded(raw=answer)}"
+        )
+    if status != 404:
+        _print(msg=f"deleted source {name!r}")
 
 
 def _await_ready(*, instance: str) -> None:
@@ -219,11 +442,9 @@ def _catalogue(*, name: str) -> dict | str:
     if not (result.stdout.strip()):
         return f"{ENGINE_SERVICE!r} ships no catalogue entry named {name!r}"
     try:
-        entry = _parsed_yaml(
-            label=f"the {ENGINE_SERVICE!r} catalogue entry {name!r}", text=result.stdout
-        )
-    except DemoError as error:
-        return str(error)
+        entry = json.loads(s=result.stdout)
+    except json.JSONDecodeError as error:
+        return f"the {ENGINE_SERVICE!r} catalogue entry {name!r} is not readable JSON: {error}"
     if not (isinstance(entry, dict)):
         return f"the {ENGINE_SERVICE!r} catalogue entry {name!r} is not a mapping"
     return entry
@@ -239,7 +460,10 @@ def _check_catalogue(*, vendors: list[dict]) -> None:
                 msg=f"WARNING {path!r} is unchecked against the engine catalogue: {entry}"
             )
             continue
-        drift = catalogue_drift(catalogue=entry, source=body)
+        # `archive` is the demo's own choice on top of the catalogue entry
+        drift = catalogue_drift(
+            catalogue=entry, source={**body, "archive": WRITE_DEFAULTS["archive"]}
+        )
         if drift:
             keys = ", ".join(repr(key) for key in drift)
             _print(
@@ -490,13 +714,15 @@ def _network(*, service: str) -> str:
 
 def _outcome(
     *,
+    archive: tuple[list[str], str],
     before: dict[str, int | None],
     container: str,
     fetchers: list[dict],
     instance: str,
     vendors: list[str],
 ) -> int:
-    """Wait for the vendor rows, report every table and return the demo's exit code."""
+    """Wait for the vendor rows and the archived files, report every table and return the demo's exit code."""
+    archiving, image = archive
     gained = _await_rows(before=before, container=container, vendors=vendors)
     for table, rows in gained.items():
         _print(msg=f"  {TARGET_DB}.{table}: +{rows} rows")
@@ -510,6 +736,16 @@ def _outcome(
     empty = ", ".join(
         repr(f"{TARGET_DB}.{table}") for table in vendors if gained[table] <= 0
     )
+    archived = None
+    if archiving and not (empty):
+        archived = _await_archive(image=image, sources=archiving)
+        _print(
+            msg=f"  {ARCHIVER_SERVICE} archive of {', '.join(archiving)}: "
+            f"{'unreadable' if archived is None else f'{archived} files'}"
+        )
+        for line in _archive_report(image=image, sources=archiving).splitlines():
+            _print(msg=f"    {line}")
+    unarchived = bool(archiving) and not (empty) and not ((archived or 0) > 0)
     # Lines a previous stream sent can still land, so rows alone do not prove this run's generator worked
     if not (_running(container=container)):
         _print(
@@ -523,10 +759,20 @@ def _outcome(
             f"what the transform did with them. The generator's last output:\n"
             f"{_generator_output(container=container)}"
         )
-    else:
+    elif unarchived:
         _print(
-            msg="PASS every vendor table gained rows, ready to query in the console or "
-            "HyperDX. The stream runs until `make demo-stop` or a receiver restart"
+            msg=f"FAIL {ARCHIVER_SERVICE} wrote no files for {', '.join(archiving)} "
+            f"in {ARCHIVE_TIMEOUT_SECONDS:.0f}s. `docker compose logs {ARCHIVER_SERVICE}` "
+            f"says why. An archiver that predates the DFE_ARCHIVER_ env names (the one "
+            f"stack 2.2.1 pins, v1.7.39) never reaches the broker, so pin a newer "
+            f"{ARCHIVER_SERVICE} in .env"
+        )
+    else:
+        kept = " and the archiver wrote files" if archiving else ""
+        _print(
+            msg=f"PASS every vendor table gained rows{kept}, ready to query in the "
+            f"console or HyperDX. The stream runs until `make demo-stop` or a receiver "
+            f"restart"
         )
         return 0
     _stop_stream(container=container)
@@ -598,7 +844,25 @@ def _role(*, body: dict) -> str:
 
 
 def _run(*, args: argparse.Namespace) -> int:
-    """Run the demo against the running stack and return its exit code."""
+    """Install the demo pack on the running stack and return the exit code. A pack that does not install whole is removed again."""
+    manifest = _read_manifest(path=MANIFEST_FILE)
+    INSTALLED_FILE.parent.mkdir(exist_ok=True, parents=True)
+    INSTALLED_FILE.write_text(
+        json.dumps({"sources": manifest["sources"]}), encoding="utf-8"
+    )
+    try:
+        code = _install(args=args, manifest=manifest)
+    except (*ENGINE_FAULTS, DemoError, SeedError) as error:
+        _print(msg=f"FAIL {error}")
+        code = 1
+    if code != 0:
+        _print(msg="removing what the demo put in, so no part of it is left behind")
+        _remove_pack(args=args, manifest=manifest)
+    return code
+
+
+def _install(*, args: argparse.Namespace, manifest: dict) -> int:
+    """Create every source of the pack, start the stream and the pruner and wait for the rows and archived files."""
     environ = dict(os.environ)
     _load_env_file(
         component=ENGINE_COMPONENT, keys=(ADMIN_NAME_KEY, ADMIN_PASSWORD_KEY)
@@ -617,8 +881,19 @@ def _run(*, args: argparse.Namespace) -> int:
     if reason:
         raise DemoError(reason)
     demo = load_demo(events=EVENTS_DIR, sources=SOURCES_DIR)
+    check_manifest(demo=demo, manifest=manifest)
     checkout = _resolve_generator(dev=args.dev, generator=args.generator)
     network = _network(service=RECEIVER_SERVICE)
+    kept, dropped = archivable(
+        archiver_runs=ARCHIVER_SERVICE in _resolved_services(),
+        bodies=[*demo.vendors, demo.intake],
+    )
+    for name in dropped:
+        _print(
+            msg=f"WARNING source {name!r} archives in its file and this profile runs no "
+            f"{ARCHIVER_SERVICE!r}, so it is created without archiving"
+        )
+    demo = demo._replace(intake=kept[-1], vendors=kept[:-1])
     _check_catalogue(vendors=demo.vendors)
 
     base = _engine_base()
@@ -656,6 +931,14 @@ def _run(*, args: argparse.Namespace) -> int:
     if services:
         _apply(dev=args.dev, environ=environ, services=services)
     _await_ready(instance=instance)
+    if HYPERDX_SERVICE in _resolved_services():
+        for line in _install_console(token=token):
+            _print(msg=f"  console {line}")
+    else:
+        _print(
+            msg=f"WARNING this profile runs no {HYPERDX_SERVICE!r}, so the demo's "
+            f"dashboards and saved searches are not created"
+        )
 
     vendors = [body["source"] for body in demo.vendors]
     # Lines no detector claims land in the intake's own table, while main is shown to prove none went there
@@ -663,6 +946,17 @@ def _run(*, args: argparse.Namespace) -> int:
     # A previous run's stream stops before the count, though lines it already sent can still land after it
     _stop_stream(container=args.container)
     before = _counts(tables=tables)
+    archiving = [
+        body["source"] for body in [*demo.vendors, demo.intake] if body.get("archive")
+    ]
+    storage = _archive_storage() if archiving else None
+    if storage is not None:
+        _start_pruner(
+            archive=manifest["archive"],
+            container=args.pruner,
+            image=args.image,
+            storage=storage,
+        )
     feed = stage_feed(
         checkout=checkout,
         events={
@@ -691,11 +985,182 @@ def _run(*, args: argparse.Namespace) -> int:
             "the generator container did not start. Docker's error is above"
         )
     return _outcome(
+        archive=(archiving, args.image),
         before=before,
         container=args.container,
         fetchers=fetchers,
         instance=instance,
         vendors=vendors,
+    )
+
+
+def _read_manifest(*, path: Path) -> dict:
+    """The demo pack's manifest, refused unless it names its sources and the archive's retention."""
+    try:
+        manifest = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError) as error:
+        raise DemoError(f"{path.name!r} is not readable JSON: {error}") from error
+    sources = manifest.get("sources") if isinstance(manifest, dict) else None
+    archive = manifest.get("archive") if isinstance(manifest, dict) else None
+    if not (isinstance(sources, list)) or not (
+        all(isinstance(name, str) and name for name in sources)
+    ):
+        raise DemoError(f"{path.name!r} needs a `sources` list of source names")
+    keys = ("max_megabytes", "retention_minutes", "sweep_minutes")
+    if (
+        not (isinstance(archive, dict))
+        or not (isinstance(archive.get("sources"), list))
+        or not (
+            all(
+                isinstance(archive.get(key), int | float) and archive[key] > 0
+                for key in keys
+            )
+        )
+    ):
+        raise DemoError(
+            f"{path.name!r} needs an `archive` mapping with `sources` and positive "
+            f"{', '.join(keys)}"
+        )
+    console = manifest.get("console")
+    if not (isinstance(console, dict)) or not (
+        all(
+            isinstance(console.get(kind), list)
+            and all(isinstance(name, str) and name for name in console[kind])
+            for kind in ("dashboards", "searches")
+        )
+    ):
+        raise DemoError(
+            f"{path.name!r} needs a `console` mapping with `dashboards` and `searches` name lists"
+        )
+    return manifest
+
+
+def _installed_sources(*, manifest: dict) -> list[str]:
+    """The pack's sources this checkout's demo installed, none when it never ran here."""
+    try:
+        recorded = json.loads(INSTALLED_FILE.read_text(encoding="utf-8"))["sources"]
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError, KeyError, TypeError):
+        return []
+    return [name for name in manifest["sources"] if name in recorded]
+
+
+def _remove_pack(*, args: argparse.Namespace, manifest: dict) -> None:
+    """Take everything the demo put in out again: the stream, the pruner, the sources, the console objects, the cursors and the archived objects. A step that cannot be done warns, and the rest still run."""
+    manifest = {**manifest, "sources": _installed_sources(manifest=manifest)}
+    _stop_stream(container=args.container)
+    _stop_stream(container=args.pruner)
+    cursors = {
+        name: storage
+        for name in manifest["sources"]
+        if (storage := _cursor_storage(name=name))
+    }
+    # A fetcher or transform left running would recreate the topics the engine deletes with its source
+    for name in manifest["sources"]:
+        for app in (FETCHER_SERVICE, TRANSFORM_APP):
+            running = _container(
+                service=instances.service_name(instance=name, service=app)
+            )
+            if running:
+                _docker(args=["rm", "--force", running])
+    deleted = False
+    if not (_container(service=ENGINE_SERVICE)):
+        _print(msg="no engine container runs, so there are no sources to remove")
+    else:
+        try:
+            _load_env_file(
+                component=ENGINE_COMPONENT, keys=(ADMIN_NAME_KEY, ADMIN_PASSWORD_KEY)
+            )
+            _load_dotenv()
+            base = _engine_base()
+            token = _token(base=base)
+            if _container(service=HYPERDX_SERVICE):
+                _print(
+                    msg=f"removed {_remove_console(token=token)} console dashboard(s) and saved search(es)"
+                )
+            for name in reversed(manifest["sources"]):
+                _delete_source(base=base, name=name, token=token)
+            deleted = True
+        except (*ENGINE_FAULTS, DemoError, SeedError) as error:
+            _print(
+                msg=f"WARNING the demo's sources were not all removed, because {error}. "
+                f"Run `make demo-stop` again once the stack is up"
+            )
+    if deleted:
+        try:
+            _apply(dev=args.dev, environ=dict(os.environ), services=[])
+        except DemoError as error:
+            _print(msg=f"WARNING {error}")
+        INSTALLED_FILE.unlink(missing_ok=True)
+        for name, storage in cursors.items():
+            directory = instances.service_name(instance=name, service=FETCHER_SERVICE)
+            _docker(
+                args=[
+                    "run",
+                    "--rm",
+                    "--volume",
+                    f"{storage}:/c",
+                    args.image,
+                    "python3",
+                    "-I",
+                    "-c",
+                    "import shutil, sys; shutil.rmtree('/c/' + sys.argv[1], ignore_errors=True)",
+                    directory,
+                ]
+            )
+    storage = _archive_storage()
+    if storage is not None:
+        purged = _archive_tool(
+            args=["purge", "--sources", ",".join(manifest["archive"]["sources"])],
+            image=args.image,
+            storage=storage,
+            write=True,
+        )
+        _print(msg=f"removed {purged.stdout.strip() or 0} archived file(s)")
+
+
+def _start_pruner(*, archive: dict, container: str, image: str, storage: str) -> None:
+    """Run the pruner beside the stack, which keeps the archive to its retention and size cap until the pack is removed."""
+    _docker(args=["rm", "--force", container])
+    result = subprocess.run(
+        [
+            "docker",
+            "run",
+            "--detach",
+            "--rm",
+            "--init",
+            "--name",
+            container,
+            "--volume",
+            f"{storage}:{ARCHIVE_ROOT}",
+            "--volume",
+            f"{ARCHIVE_TOOL}:/archive.py:ro",
+            image,
+            "python3",
+            "-I",
+            "/archive.py",
+            "prune",
+            "--root",
+            ARCHIVE_ROOT,
+            "--sources",
+            ",".join(archive["sources"]),
+            "--interval-minutes",
+            str(archive["sweep_minutes"]),
+            "--max-age-minutes",
+            str(archive["retention_minutes"]),
+            "--max-megabytes",
+            str(archive["max_megabytes"]),
+        ],
+        capture_output=True,
+        check=False,
+        encoding="utf-8",
+        errors="replace",
+        text=True,
+    )
+    if result.returncode != 0:
+        raise DemoError(f"the archive pruner did not start: {result.stderr.strip()}")
+    _print(
+        msg=f"pruning the archive every {archive['sweep_minutes']:g} min to "
+        f"{archive['retention_minutes']:g} min and {archive['max_megabytes']:g} MB"
     )
 
 
@@ -835,6 +1300,21 @@ def _variant(*, source: dict) -> str:
     return variant
 
 
+def archivable(
+    *, archiver_runs: bool, bodies: list[dict]
+) -> tuple[list[dict], list[str]]:
+    """The source bodies as the profile can run them, and the names that lost `archive`.
+
+    On a gRPC profile no archiver runs, and the receiver answers 503 for a source that archives.
+    """
+    if archiver_runs:
+        return bodies, []
+    kept = [
+        {**body, "archive": False} if body.get("archive") else body for body in bodies
+    ]
+    return kept, [body["source"] for body in bodies if body.get("archive")]
+
+
 def catalogue_drift(*, catalogue: dict, source: dict) -> list[str]:
     """The top-level keys where a source differs from what `from-catalogue` writes for its catalogue entry on the receiver intake, `state` aside."""
     name = catalogue.get("source")
@@ -857,6 +1337,59 @@ def catalogue_drift(*, catalogue: dict, source: dict) -> list[str]:
 def create_body(*, body: dict) -> dict:
     """The POST or PUT body for one source file: all of it bar `state`, which only the lifecycle route sets here."""
     return {key: value for key, value in body.items() if key != "state"}
+
+
+def check_manifest(*, demo: Demo, manifest: dict) -> None:
+    """Refuse a pack whose manifest and source files disagree, so nothing is installed that removal would not find."""
+    bodies = [*demo.vendors, demo.intake, *demo.fetchers]
+    found = sorted(body["source"] for body in bodies)
+    listed = sorted(manifest["sources"])
+    if found != listed:
+        raise DemoError(
+            f"{MANIFEST_FILE.name!r} lists sources {listed} and "
+            f"{str(SOURCES_DIR)!r} holds {found}. Make them the same set"
+        )
+    for kind in ("dashboards", "searches"):
+        found_console = sorted(body["name"] for body in _console_files(kind=kind))
+        if found_console != sorted(manifest["console"][kind]):
+            raise DemoError(
+                f"{MANIFEST_FILE.name!r} lists {kind} {sorted(manifest['console'][kind])} "
+                f"and {str(CONSOLE_DIR / kind)!r} holds {found_console}. Make them the same set"
+            )
+    archiving = sorted(body["source"] for body in bodies if body.get("archive"))
+    if archiving != sorted(manifest["archive"]["sources"]):
+        raise DemoError(
+            f"{MANIFEST_FILE.name!r} lists archive sources "
+            f"{sorted(manifest['archive']['sources'])} and the files that archive are "
+            f"{archiving}. Make them the same set"
+        )
+
+
+def resolve_console(*, body: dict, sources: dict[str, dict]) -> dict:
+    """A console file as dfe-hyperdx takes it, each source name replaced by the source's id and each SQL tile given its source's connection."""
+
+    def source_id(name: object) -> str:
+        found = sources.get(str(name))
+        if found is None:
+            raise DemoError(
+                f"{body['name']!r} names source {name!r}, which dfe-hyperdx does not hold"
+            )
+        return found["id"]
+
+    resolved = {key: value for key, value in body.items()}
+    if "source" in resolved:
+        resolved["source"] = source_id(resolved["source"])
+    tiles = []
+    for tile in resolved.get("tiles", []):
+        config = dict(tile["config"])
+        owner = sources.get(str(config.get("source")))
+        config["source"] = source_id(config.get("source"))
+        if config.get("configType") == "sql" and owner is not None:
+            config["connection"] = owner["connection"]
+        tiles.append({**tile, "config": config})
+    if "tiles" in resolved:
+        resolved["tiles"] = tiles
+    return resolved
 
 
 def ensure_steps(*, body: dict, held: dict | None) -> list[str]:
@@ -1120,24 +1653,39 @@ def main() -> int:
         help="recreate from the local images a `make dev` stack runs",
     )
     parser.add_argument(
+        "--remove",
+        action="store_true",
+        help="take the whole demo pack out of the stack instead of installing it",
+    )
+    parser.add_argument(
         "--container", help="the name the stream's container runs under", required=True
+    )
+    parser.add_argument(
+        "--pruner",
+        help="the name the archive pruner's container runs under",
+        required=True,
+    )
+    parser.add_argument(
+        "--image", help="the pinned Python image the helpers run in", required=True
     )
     parser.add_argument(
         "--generator",
         help="the replay script's path inside the dfe-transform-elastic checkout",
-        required=True,
     )
-    parser.add_argument(
-        "--image", help="the pinned Python image the generator runs in", required=True
-    )
-    parser.add_argument(
-        "--protocol", choices=("udp", "tcp"), help="syslog transport", required=True
-    )
-    parser.add_argument("--rate", help="lines per second", required=True, type=float)
+    parser.add_argument("--protocol", choices=("udp", "tcp"), help="syslog transport")
+    parser.add_argument("--rate", help="lines per second", type=float)
     args = parser.parse_args()
-    if args.rate <= 0:
-        parser.error(message="--rate must be positive")
+    if not (args.remove):
+        if not (args.generator) or not (args.protocol) or args.rate is None:
+            parser.error(
+                message="--generator, --protocol and --rate are required to install"
+            )
+        if args.rate <= 0:
+            parser.error(message="--rate must be positive")
     try:
+        if args.remove:
+            _remove_pack(args=args, manifest=_read_manifest(path=MANIFEST_FILE))
+            return 0
         return _run(args=args)
     except (*ENGINE_FAULTS, DemoError, SeedError) as error:
         _print(msg=f"FAIL {error}")

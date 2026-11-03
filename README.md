@@ -54,7 +54,7 @@ git clone https://github.com/hyperi-io/dfe-docker && cd dfe-docker
 make demo
 ```
 
-`make demo` creates `.env`, pins the newest published stable stack, starts the `single-kafka` profile and streams Cisco ASA and FortiGate syslog through it until `make demo-stop` or a receiver restart. Its first line says the profile and stack in use. `make creds` prints the DFE console URL and the admin login.
+`make demo` creates `.env`, pins the newest published stable stack, starts the `single-kafka` profile and streams Cisco ASA and FortiGate syslog through it beside two fetchers (live Wikipedia recent changes and the GitHub releases of the DFE components) until `make demo-stop` or a receiver restart, with dashboards and saved searches for each source in the console. Its first line says the profile and stack in use. `make creds` prints the DFE console URL and the admin login.
 
 To start the stack without the stream:
 
@@ -66,6 +66,24 @@ make down                        # stop everything
 ```
 
 `PROFILE=` and `VERSION=` on the make line are written to `.env` (as `DFE_PROFILE` and the image pins), so later runs keep them. A `.env` that already holds pins keeps them until `VERSION=` names another stack. `make demo` needs a profile that runs dfe-transform-elastic, `single-kafka` or `single-grpc`.
+
+### Without git, make or python
+
+Each release carries `install.sh` and a bundle of the compose files, config and templates. It needs docker with compose and curl or wget:
+
+```bash
+curl -fsSL https://github.com/hyperi-io/dfe-docker/releases/latest/download/install.sh | sh
+```
+
+or download it first and run it:
+
+```bash
+curl -fsSLO https://github.com/hyperi-io/dfe-docker/releases/latest/download/install.sh && sh install.sh
+```
+
+It checks the bundle's sha256 against the release's `SHA256SUMS`, unpacks into `./dfe`, writes `.env` with random secrets and the stack's image pins, starts `single-kafka` and prints the console login. `DFE_PROFILE=slim-grpc` picks another profile and `DFE_VERSION=X.Y.Z` a release. From then on a plain `docker compose` in `./dfe` runs the stack, and `docker compose --profile '*' down -v` removes it.
+
+The bundle holds the default stack, resolved once. It has no `make`, so the `.env` dials that change what compose is given (`DFE_DATA_ROOT`, `DFE_BIND_SCOPE`, the exposure flags, `DFE_PROXY_TLS`, `DFE_RECEIVER_*_PORT`) do nothing, the console cannot start per-source containers, the stack does not report cores deployed, and `make demo` needs the clone. Only a release cut after this one carries the assets.
 
 ### Prerequisites
 
@@ -303,7 +321,7 @@ dfe-docker stands the whole DFE suite up as one Docker Compose stack on a single
 |---|---|
 | `docker-compose.yml` | Every service and every infrastructure profile. The one file `make ci` names explicitly |
 | `compose/` | The opt-in overlays the Makefile chains: `live-ui`, `storage`, `tls` and `container-logs`. It writes the exposure opt-outs and the dev build's local images into `.tmp/` beside them |
-| `service_profiles.yaml` | Which DFE services start, the transport and the config each one mounts. Ships `active_profile: slim-grpc` |
+| `service_profiles.yaml` | Which DFE services start, the transport and the config each one mounts. Ships `active_profile: slim-grpc`, which `make ci` and `make dev` run. `make up` and `make demo` default to `single-kafka` on a clone with no image pins |
 | `Makefile` | Every entry point, plus the profile, overlay and UI-exposure resolution that decides which compose files a target passes |
 | `scripts/resolve_profile.py` | Reads `service_profiles.yaml` and writes the generated `.tmp/profile.mk` the Makefile includes |
 | `scripts/stack.py` | `make stack` - writes `tag@sha256` pins into `.env` from a local dfe-infra checkout (`DFE_INFRA_DIR`) or the signed OCI stack manifest |
@@ -343,7 +361,7 @@ Two ways a green run says less than it looks:
 |---|---|---|
 | Leave containers running when you are finished | `make down`, on every host you touched, the same session | `down` sweeps every profile rather than the active one, because passing only the active profile's services left the previous profile's containers up - still holding host ports and still answering health probes for a pipeline that was no longer wired (`Makefile`, the `down` target) |
 | Assume the deployment target is idle | Check what is already running before you start anything | The docker definition-of-done target carries a long-lived stack refreshed on a 6-hourly systemd timer (`ops/daemon-update/`), not a box you get to yourself |
-| Assume events go through Kafka | Read the profile's `transport` first | `slim-grpc`, the shipped `active_profile`, is `transport: grpc`: the receiver dials `dfe-loader:6000` directly and no broker starts. The `-kafka` profiles start one. The core data path is otherwise identical. `post` and `test-e2e` assert the same landing row either way |
+| Assume events go through Kafka | Read the profile's `transport` first | `slim-grpc`, the shipped `active_profile` (`make up` and `make demo` default to `single-kafka`, which is Kafka), is `transport: grpc`: the receiver dials `dfe-loader:6000` directly and no broker starts. The `-kafka` profiles start one. The core data path is otherwise identical. `post` and `test-e2e` assert the same landing row either way |
 | Add a DDL file or a topic-creating step here | Change the schema in dfe-engine | dfe-engine ships the schemas in its own image and reports healthy only once it has applied them. `scripts/tests/test_engine_only_schema_control.py` fails the build on one (#118) |
 | Give an external ClickHouse's port through `CLICKHOUSE_HTTP_PORT` or `CLICKHOUSE_NATIVE_PORT` | Set `CLICKHOUSE_EXTERNAL_HTTP_PORT` and `CLICKHOUSE_EXTERNAL_NATIVE_PORT` | The first pair is the bundled container's host publish and nothing else, so it is safe to move for a second stack; services on the network dial 8123/9000 unless the EXTERNAL pair says otherwise (#75) |
 | Move the loader's `grpc.listen` off 6000, or confuse it with the receiver's 6000 | Keep the loader on container port 6000 | dfe-engine compiles every sender's loader endpoint as `dfe-loader:6000`, so a loader listening anywhere else drops every record behind an HTTP 202 with nothing logged. The receiver's 6000 is the external Vector protocol, off unless `DFE_RECEIVER_GRPC__ENABLED=true` and unpublished until `DFE_RECEIVER_GRPC_PORT` is set. The loader's is the internal `DfeTransport/Push` and publishes no host port. `scripts/tests/test_loader_grpc_port.py` fails the build on a mismatch |

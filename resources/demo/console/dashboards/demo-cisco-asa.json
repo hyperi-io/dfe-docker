@@ -1,0 +1,78 @@
+{
+  "name": "demo-cisco-asa",
+  "tags": [
+    "demo"
+  ],
+  "tiles": [
+    {
+      "config": {
+        "configType": "sql",
+        "displayType": "line",
+        "name": "Events per second",
+        "source": "cisco-asa",
+        "sqlTemplate": "SELECT $__timeInterval(_timestamp) AS ts,\n       count() / $__interval_s AS \"events/s\"\nFROM dfe.`cisco-asa`\nWHERE $__timeFilter(_timestamp)\nGROUP BY ts\nORDER BY ts"
+      },
+      "h": 6,
+      "id": "rate",
+      "w": 12,
+      "x": 0,
+      "y": 0
+    },
+    {
+      "config": {
+        "configType": "sql",
+        "displayType": "stacked_bar",
+        "name": "Cisco ASA: allowed, denied and other over time",
+        "source": "cisco-asa",
+        "sqlTemplate": "SELECT $__timeInterval(_timestamp) AS ts,\n       multiIf(event_action IN ('flow-creation', 'flow-expiration', 'nat-slot', 'logged-in'), 'allowed', event_action IN ('firewall-rule', 'logon-failed'), 'denied', 'other') AS verdict,\n       count() AS events\nFROM dfe.`cisco-asa`\nWHERE $__timeFilter(_timestamp)\nGROUP BY ts, verdict\nORDER BY ts"
+      },
+      "h": 6,
+      "id": "verdict",
+      "w": 12,
+      "x": 12,
+      "y": 0
+    },
+    {
+      "config": {
+        "configType": "sql",
+        "displayType": "table",
+        "name": "Top source IPs",
+        "source": "cisco-asa",
+        "sqlTemplate": "SELECT replaceOne(IPv6NumToString(assumeNotNull(source_ip)), '::ffff:', '') AS \"Source IP\",\n       count() AS \"Events\",\n       sum(coalesce(network_bytes, 0)) AS \"Bytes\"\nFROM dfe.`cisco-asa`\nWHERE $__timeFilter(_timestamp) AND source_ip IS NOT NULL\nGROUP BY 1\nORDER BY 2 DESC\nLIMIT 10"
+      },
+      "h": 7,
+      "id": "src",
+      "w": 8,
+      "x": 0,
+      "y": 6
+    },
+    {
+      "config": {
+        "configType": "sql",
+        "displayType": "table",
+        "name": "Top destination IPs",
+        "source": "cisco-asa",
+        "sqlTemplate": "SELECT replaceOne(IPv6NumToString(assumeNotNull(destination_ip)), '::ffff:', '') AS \"Destination IP\",\n       count() AS \"Events\",\n       sum(coalesce(network_bytes, 0)) AS \"Bytes\"\nFROM dfe.`cisco-asa`\nWHERE $__timeFilter(_timestamp) AND destination_ip IS NOT NULL\nGROUP BY 1\nORDER BY 2 DESC\nLIMIT 10"
+      },
+      "h": 7,
+      "id": "dst",
+      "w": 8,
+      "x": 8,
+      "y": 6
+    },
+    {
+      "config": {
+        "configType": "sql",
+        "displayType": "table",
+        "name": "Top destination ports",
+        "source": "cisco-asa",
+        "sqlTemplate": "SELECT destination_port AS \"Port\",\n       network_transport AS \"Transport\",\n       count() AS \"Events\"\nFROM dfe.`cisco-asa`\nWHERE $__timeFilter(_timestamp) AND destination_port IS NOT NULL\nGROUP BY 1, 2\nORDER BY 3 DESC\nLIMIT 10"
+      },
+      "h": 7,
+      "id": "ports",
+      "w": 8,
+      "x": 16,
+      "y": 6
+    }
+  ]
+}

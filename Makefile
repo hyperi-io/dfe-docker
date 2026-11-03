@@ -47,7 +47,7 @@ endif
 # any more (both sweep every profile), and requiring a resolvable profile to STOP
 # a stack is the same lockout the compose secret comments argue against -- set
 # DFE_PROFILE to something that does not exist and you could not tear down.
-BOOTSTRAP_GOALS := init env-files creds certs up demo dev-posture e2e-posture e2e-posture-off e2e-posture-check help stack dial modes down clean demo-stop limits check check-compose check-hardfail check-dockerfile check-docs check-locks check-proxy check-python check-tests
+BOOTSTRAP_GOALS := init env-files creds certs up demo dev-posture e2e-posture e2e-posture-off e2e-posture-check help stack dial modes down clean demo-stop limits check check-compose check-hardfail check-dockerfile check-docs check-locks check-proxy check-python check-shell check-tests
 
 # Resolve the active profile only when a goal actually needs the compose stack
 ifneq (,$(filter-out $(BOOTSTRAP_GOALS),$(or $(MAKECMDGOALS),help)))
@@ -609,7 +609,7 @@ infra: .env storage-dirs ## Start infrastructure services
 # ---------------------------------------------------------------------------
 
 .PHONY: check
-check: check-compose check-hardfail check-dockerfile check-docs check-proxy check-python check-tests check-locks ## Run every static check CI runs
+check: check-compose check-hardfail check-dockerfile check-docs check-proxy check-python check-shell check-tests check-locks ## Run every static check CI runs
 
 .PHONY: limits
 limits: ## Show the resource limits and totals, computed from the resolved config
@@ -627,8 +627,13 @@ print-ruff-version:
 
 .PHONY: check-python
 check-python: ## Lint the helper scripts (config in ruff.toml)
-	$(RUFF) check scripts/ ops/ resources/demo/events/
-	$(RUFF) format --check scripts/ ops/ resources/demo/events/
+	$(RUFF) check scripts/ ops/ resources/demo/
+	$(RUFF) format --check scripts/ ops/ resources/demo/
+
+# install.sh runs on hosts with no python, so it is held to ShellCheck's POSIX sh rules.
+.PHONY: check-shell
+check-shell: ## Lint install.sh with ShellCheck as POSIX sh
+	shellcheck -s sh install.sh
 
 # Pinned for the same reason RUFF is, and installed the same way in CI
 # (PYTEST=pytest). Unit tests over the helper scripts: they
@@ -814,6 +819,8 @@ DEMO_PROTOCOL ?= tcp
 DEMO_RATE ?= 20
 # The stream's container, one per compose project, so a second `make demo` replaces it and `make down` finds it
 DEMO_CONTAINER := $(PROXY_PROJECT)-demo-syslog-stream
+# Keeps the archive to its retention and size cap while the demo runs, one per compose project
+DEMO_PRUNER := $(PROXY_PROJECT)-demo-archive-prune
 # The generator is standard-library Python and dfe-transform-elastic's image has none, so it runs here, pinned like the hadolint image above
 DEMO_PYTHON_IMAGE := python:3.14-slim-trixie@sha256:cd89c30eda26ee911a4611b18680086e0ea42e6f5f8cbe653d07fa7958c9cec8
 
@@ -826,11 +833,11 @@ demo: ## Start the stack when it is not running, then stream live firewall syslo
 
 .PHONY: demo-run
 demo-run: env-files
-	@python3 ./scripts/demo.py --container '$(DEMO_CONTAINER)' --generator '$(DEMO_GENERATOR)' --image '$(DEMO_PYTHON_IMAGE)' --protocol '$(DEMO_PROTOCOL)' --rate '$(DEMO_RATE)' $(if $(strip $(DEV)),--dev)
+	@python3 ./scripts/demo.py --container '$(DEMO_CONTAINER)' --generator '$(DEMO_GENERATOR)' --image '$(DEMO_PYTHON_IMAGE)' --protocol '$(DEMO_PROTOCOL)' --pruner '$(DEMO_PRUNER)' --rate '$(DEMO_RATE)' $(if $(strip $(DEV)),--dev)
 
 .PHONY: demo-stop
-demo-stop: ## Stop and remove the `make demo` stream
-	docker rm --force $(DEMO_CONTAINER)
+demo-stop: ## Remove the whole `make demo` pack: the stream, the archive pruner, the sources it created, the console dashboards and searches, and the archived files (the tables stay)
+	@python3 ./scripts/demo.py --remove --container '$(DEMO_CONTAINER)' --pruner '$(DEMO_PRUNER)' --image '$(DEMO_PYTHON_IMAGE)' $(if $(strip $(DEV)),--dev) || echo 'demo-stop: part of the demo pack was not removed, see above. `make down` goes on regardless'
 
 # ---------------------------------------------------------------------------
 # Lifecycle
@@ -849,12 +856,12 @@ ps: ## Show running containers, and warn about a deleted source's container stil
 # services by probing then found the stray. Volumes survive; `make clean` is the
 # one that deletes data.
 .PHONY: down
-down: demo-stop ## Stop and remove containers across all profiles and the `make demo` stream (keeps volumes)
+down: demo-stop ## Stop and remove containers across all profiles and the `make demo` pack (keeps volumes)
 	docker compose -f docker-compose.yml --profile "*" down --remove-orphans
 
 # The engine's volume goes with its sources, so the instance indexes it wrote into env/ go too.
 .PHONY: clean
-clean: demo-stop ## Stop and remove all containers and volumes across every profile, the `make demo` stream and dfe-engine's per-source instance indexes
+clean: demo-stop ## Stop and remove all containers and volumes across every profile, the `make demo` pack and dfe-engine's per-source instance indexes
 	docker compose -f docker-compose.yml --profile "*" down -v --remove-orphans
 	rm -f env/*.instances
 

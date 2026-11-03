@@ -1,0 +1,11 @@
+{
+  "name": "demo-wikipedia-live",
+  "orderBy": "_timestamp DESC",
+  "select": "_timestamp, toString(_json.type) AS type, toString(_json.title) AS page, toString(_json.user) AS editor, toInt64OrZero(toString(_json.newlen)) - toInt64OrZero(toString(_json.oldlen)) AS bytes, toString(_json.comment) AS comment",
+  "source": "wikipedia-recentchanges",
+  "tags": [
+    "demo"
+  ],
+  "where": "",
+  "whereLanguage": "sql"
+}

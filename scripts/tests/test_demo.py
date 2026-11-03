@@ -9,8 +9,6 @@
 """The checks on `make demo` that need no stack: its committed Sources and events and the pure steps between the engine, the pins and docker."""
 
 import re
-import subprocess
-import sys
 from pathlib import Path
 from typing import TypedDict
 
@@ -19,6 +17,8 @@ import yaml
 
 import demo
 from _common import SOURCE_NAME
+
+pytestmark = pytest.mark.usefixtures("engine_python_here")
 
 ENGINE_PYTHON = demo._engine_python
 
@@ -608,18 +608,6 @@ def _committed() -> demo.Demo:
     return demo.load_demo(events=demo.EVENTS_DIR, sources=demo.SOURCES_DIR)
 
 
-def _python_here(*, code: str, stdin: str) -> subprocess.CompletedProcess:
-    """Run what the demo sends the engine's python on this one, so only `docker exec` is left out."""
-    return subprocess.run(
-        [sys.executable, "-c", code],
-        capture_output=True,
-        check=False,
-        encoding="utf-8",
-        input=stdin,
-        text=True,
-    )
-
-
 def _unsorted(*, node: object, path: str) -> list[str]:
     """Every mapping under node whose keys are out of alphabetical order, named by its path."""
     found = []
@@ -649,11 +637,6 @@ def _write_demo(
             (root / "events" / name / file).write_text(
                 data="%ASA-6-302013: x\n", encoding="utf-8"
             )
-
-
-@pytest.fixture(autouse=True)
-def engine_python(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(demo, "_engine_python", _python_here)
 
 
 class TestEnginePython:
@@ -922,12 +905,32 @@ class TestLoadDemo:
         fetchers = {body["source"]: body["fetcher"] for body in loaded.fetchers}
         releases = fetchers["component-releases"]["config"]
 
-        assert sorted(fetchers) == ["component-releases", "package-registry-crates-io"]
+        assert sorted(fetchers) == ["component-releases", "wikipedia-recentchanges"]
         assert all(fetcher["topic"] == "own" for fetcher in fetchers.values())
         # Unauthenticated GitHub allows 60 requests an hour per IP and each poll spends one per repo
         assert releases["interval_secs"] >= 60 * len(releases["vars"]["repos"])
         for name in [loaded.intake["source"], *loaded.events, *fetchers]:
             assert SOURCE_NAME.fullmatch(string=name), name
+
+    def test_the_wikipedia_fetcher_asks_for_each_window_once_and_names_itself(
+        self,
+    ) -> None:
+        wiki = {b["source"]: b for b in _committed().fetchers}[
+            "wikipedia-recentchanges"
+        ]
+        config = wiki["fetcher"]["config"]
+        profile = config["profile"]
+        query = profile["endpoints"][0]["query"]
+
+        assert config["interval_secs"] == 5
+        assert profile["window"]["format"] == "epoch_secs"
+        # Whole seconds, both ends inclusive, so the next window must start one second past this one's end
+        assert "int(window.start) - 1" in query["rcstart"]
+        assert "int(window.end) - 2" in query["rcend"]
+        assert query["rcdir"] == "newer"
+        agent = profile["headers"]["User-Agent"]
+        assert agent.startswith("DFE-demo/")
+        assert "https://github.com/hyperi-io/dfe-docker" in agent
 
     def test_the_committed_sources_keep_their_keys_alphabetical(self) -> None:
         unsorted = []
@@ -1026,3 +1029,31 @@ class TestStageFeed:
                 feed=tmp_path / "feed",
                 generator="scripts/replay_syslog.py",
             )
+
+
+class TestArchivable:
+    @pytest.mark.parametrize(
+        ("archiver_runs", "kept", "dropped"),
+        [
+            pytest.param(True, True, [], id="kafka_profile_archives"),
+            pytest.param(False, False, ["archiving"], id="grpc_profile_drops_it"),
+        ],
+    )
+    def test_keeps_archive_only_where_an_archiver_runs(
+        self, archiver_runs: bool, kept: bool, dropped: list[str]
+    ) -> None:
+        archiving = {**VENDOR, "source": "archiving", "archive": True}
+
+        bodies, names = demo.archivable(
+            archiver_runs=archiver_runs, bodies=[VENDOR, archiving]
+        )
+
+        assert [body.get("archive", False) for body in bodies] == [False, kept]
+        assert names == dropped
+        assert archiving["archive"] is True
+
+    def test_the_committed_demo_archives_the_raw_intake(self) -> None:
+        loaded = demo.load_demo(events=demo.EVENTS_DIR, sources=demo.SOURCES_DIR)
+        bodies = [*loaded.vendors, loaded.intake, *loaded.fetchers]
+
+        assert [b["source"] for b in bodies if b.get("archive")] == ["demo-syslog"]

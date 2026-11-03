@@ -6,6 +6,7 @@
 # License:   BUSL-1.1
 # Copyright: (c) 2026 HYPERI PTY LIMITED
 
+archive: true
 description: Raw vendor syslog, each line detected and parsed by dfe-transform-elastic in agentless mode
 display_name: Demo syslog
 header:

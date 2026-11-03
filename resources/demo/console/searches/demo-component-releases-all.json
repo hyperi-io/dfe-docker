@@ -1,0 +1,11 @@
+{
+  "name": "demo-component-releases-all",
+  "orderBy": "_timestamp_load DESC",
+  "select": "_timestamp_load, toString(_json._dfe_fetcher_repo) AS component, toString(_json.tag_name) AS version, toString(_json.published_at) AS published, toString(_json.name) AS release",
+  "source": "component-releases",
+  "tags": [
+    "demo"
+  ],
+  "where": "",
+  "whereLanguage": "sql"
+}
