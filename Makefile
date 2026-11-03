@@ -833,8 +833,8 @@ demo-run: env-files
 	@python3 ./scripts/demo.py --container '$(DEMO_CONTAINER)' --pruner '$(DEMO_PRUNER)' --generator '$(DEMO_GENERATOR)' --image '$(DEMO_PYTHON_IMAGE)' --protocol '$(DEMO_PROTOCOL)' --rate '$(DEMO_RATE)' $(if $(strip $(DEV)),--dev)
 
 .PHONY: demo-stop
-demo-stop: ## Remove the whole `make demo` pack: the stream, the archive pruner, the sources with their tables and the archived files
-	@python3 ./scripts/demo.py --remove --container '$(DEMO_CONTAINER)' --pruner '$(DEMO_PRUNER)' --image '$(DEMO_PYTHON_IMAGE)' $(if $(strip $(DEV)),--dev)
+demo-stop: ## Remove the whole `make demo` pack: the stream, the archive pruner, the sources it created, the console dashboards and searches, and the archived files (the tables stay)
+	@python3 ./scripts/demo.py --remove --container '$(DEMO_CONTAINER)' --pruner '$(DEMO_PRUNER)' --image '$(DEMO_PYTHON_IMAGE)' $(if $(strip $(DEV)),--dev) || echo 'demo-stop: part of the demo pack was not removed, see above. `make down` goes on regardless'
 
 # ---------------------------------------------------------------------------
 # Lifecycle

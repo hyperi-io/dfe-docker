@@ -44,13 +44,33 @@ def test_prune_removes_what_is_older_than_the_retention_and_empty_directories(
     _object(tmp_path, "b_land/default/old.jsonl", age_minutes=30)
 
     removed = archive.prune(
-        max_age_seconds=15 * 60, max_bytes=10**9, now=NOW, root=tmp_path
+        max_age_seconds=15 * 60,
+        max_bytes=10**9,
+        now=NOW,
+        root=tmp_path,
+        sources=["a", "b"],
     )
 
     assert removed == 2
     assert not old.exists()
     assert new.exists()
-    assert not (tmp_path / "b_land").exists()
+    assert not any((tmp_path / "b_land").iterdir())
+
+
+def test_prune_leaves_the_files_of_sources_it_was_not_given(tmp_path: Path) -> None:
+    _object(tmp_path, "demo-syslog_land/old.jsonl", age_minutes=60)
+    theirs = _object(tmp_path, "main_land/old.jsonl", age_minutes=600, size=10**6)
+
+    removed = archive.prune(
+        max_age_seconds=15 * 60,
+        max_bytes=10,
+        now=NOW,
+        root=tmp_path,
+        sources=["demo-syslog"],
+    )
+
+    assert removed == 1
+    assert theirs.exists()
 
 
 def test_prune_drops_the_oldest_files_until_the_archive_fits_its_cap(
@@ -61,7 +81,7 @@ def test_prune_drops_the_oldest_files_until_the_archive_fits_its_cap(
     newest = _object(tmp_path, "a_land/3.jsonl", age_minutes=1, size=60)
 
     removed = archive.prune(
-        max_age_seconds=15 * 60, max_bytes=100, now=NOW, root=tmp_path
+        max_age_seconds=15 * 60, max_bytes=100, now=NOW, root=tmp_path, sources=["a"]
     )
 
     assert removed == 2
@@ -219,3 +239,27 @@ class TestConsole:
                 assert "$__timeFilter" in tile["config"]["sqlTemplate"] or (
                     "component-releases" in tile["config"]["sqlTemplate"]
                 ), tile["id"]
+
+
+class TestInstalledSources:
+    def test_deletes_only_what_this_checkouts_demo_created(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        marker = tmp_path / "installed.json"
+        monkeypatch.setattr(demo, "INSTALLED_FILE", marker)
+        manifest = {"sources": ["cisco-asa", "fortinet", "wikipedia-recentchanges"]}
+
+        assert demo._installed_sources(manifest=manifest) == []
+
+        marker.write_text('{"sources": ["fortinet", "elsewhere"]}', encoding="utf-8")
+
+        assert demo._installed_sources(manifest=manifest) == ["fortinet"]
+
+    def test_an_unreadable_marker_deletes_nothing(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        marker = tmp_path / "installed.json"
+        marker.write_text("[", encoding="utf-8")
+        monkeypatch.setattr(demo, "INSTALLED_FILE", marker)
+
+        assert demo._installed_sources(manifest={"sources": ["fortinet"]}) == []

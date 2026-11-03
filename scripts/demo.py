@@ -135,6 +135,8 @@ CURSOR_STORAGE = (
 ARCHIVE_TOOL = DEMO_DIR / "archive.py"
 ARCHIVE_ROOT = "/a"
 MANIFEST_FILE = DEMO_DIR / "demo.json"
+# The sources this checkout's demo created, which is all `make demo-stop` deletes, so a source of the same name that someone else made is never taken out by `make down`
+INSTALLED_FILE = FETCH_ROOT / "installed.json"
 CONSOLE_DIR = DEMO_DIR / "console"
 # dfe-hyperdx's API as dfe-engine reaches it, which accepts the engine's own token. Everything the pack puts in the console is a plain, deletable object whose name starts with CONSOLE_PREFIX
 HYPERDX_API = "http://hyperdx:8000"
@@ -809,6 +811,10 @@ def _role(*, body: dict) -> str:
 def _run(*, args: argparse.Namespace) -> int:
     """Install the demo pack on the running stack and return the exit code. A pack that does not install whole is removed again."""
     manifest = _read_manifest(path=MANIFEST_FILE)
+    INSTALLED_FILE.parent.mkdir(exist_ok=True, parents=True)
+    INSTALLED_FILE.write_text(
+        json.dumps({"sources": manifest["sources"]}), encoding="utf-8"
+    )
     try:
         code = _install(args=args, manifest=manifest)
     except (*ENGINE_FAULTS, DemoError, SeedError) as error:
@@ -994,8 +1000,18 @@ def _read_manifest(*, path: Path) -> dict:
     return manifest
 
 
+def _installed_sources(*, manifest: dict) -> list[str]:
+    """The pack's sources this checkout's demo installed, none when it never ran here."""
+    try:
+        recorded = json.loads(INSTALLED_FILE.read_text(encoding="utf-8"))["sources"]
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError, KeyError, TypeError):
+        return []
+    return [name for name in manifest["sources"] if name in recorded]
+
+
 def _remove_pack(*, args: argparse.Namespace, manifest: dict) -> None:
     """Take everything the demo put in out again: the stream, the pruner, the sources, the console objects, the cursors and the archived objects. A step that cannot be done warns, and the rest still run."""
+    manifest = {**manifest, "sources": _installed_sources(manifest=manifest)}
     _stop_stream(container=args.container)
     _stop_stream(container=args.pruner)
     cursors = {
@@ -1035,7 +1051,11 @@ def _remove_pack(*, args: argparse.Namespace, manifest: dict) -> None:
                 f"Run `make demo-stop` again once the stack is up"
             )
     if deleted:
-        _apply(dev=args.dev, environ=dict(os.environ), services=[])
+        try:
+            _apply(dev=args.dev, environ=dict(os.environ), services=[])
+        except DemoError as error:
+            _print(msg=f"WARNING {error}")
+        INSTALLED_FILE.unlink(missing_ok=True)
         for name, storage in cursors.items():
             directory = instances.service_name(instance=name, service=FETCHER_SERVICE)
             _docker(
@@ -1086,6 +1106,8 @@ def _start_pruner(*, archive: dict, container: str, image: str, storage: str) ->
             "prune",
             "--root",
             ARCHIVE_ROOT,
+            "--sources",
+            ",".join(archive["sources"]),
             "--interval-minutes",
             str(archive["sweep_minutes"]),
             "--max-age-minutes",

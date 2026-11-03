@@ -9,7 +9,7 @@
 
 """Read and clear the archive volume for `make demo`.
 
-dfe-archiver files each source's lines under <root>/<source>_land/ and has no retention of its own. `make demo` runs this in a throwaway Python container with the volume at /a: `prune` runs in a loop beside the stack so the archive stays small, `count` and `show` back the demo's PASS check, and `purge` empties a source's directory when the demo is removed.
+dfe-archiver files each source's lines under <root>/<source>_land/ and has no retention of its own. `make demo` runs this in a throwaway Python container with the volume at /a: `prune` runs in a loop beside the stack so the demo's own files stay small, `count` and `show` back the demo's PASS check, and `purge` empties a source's directory when the demo is removed.
 
 Standard library only.
 """
@@ -26,24 +26,34 @@ SAMPLE_CHARS = 200
 def objects(*, root: Path, sources: list[str]) -> list[Path]:
     """Every file under root, or under the named sources' directories, oldest first."""
     bases = [root / f"{name}{LAND_SUFFIX}" for name in sources] if sources else [root]
-    found = [
-        path
-        for base in bases
-        if base.is_dir()
-        for path in base.rglob("*")
-        if path.is_file()
-    ]
-    return sorted(found, key=lambda path: path.stat().st_mtime)
+    found = []
+    for base in bases:
+        if base.is_dir():
+            for path in base.rglob("*"):
+                # The archiver rolls files away while this scans, so one that has gone is skipped
+                try:
+                    if path.is_file():
+                        found.append((path.stat().st_mtime, path))
+                except FileNotFoundError:
+                    continue
+    return [path for _, path in sorted(found)]
 
 
-def prune(*, max_age_seconds: float, max_bytes: int, now: float, root: Path) -> int:
-    """Delete files older than the age, then the oldest until the rest fit the cap, and return how many went."""
+def prune(
+    *,
+    max_age_seconds: float,
+    max_bytes: int,
+    now: float,
+    root: Path,
+    sources: list[str],
+) -> int:
+    """Delete the named sources' files older than the age, then the oldest until the rest fit the cap, and return how many went."""
     removed = 0
-    for path in objects(root=root, sources=[]):
+    for path in objects(root=root, sources=sources):
         if now - path.stat().st_mtime > max_age_seconds:
             path.unlink()
             removed += 1
-    kept = objects(root=root, sources=[])
+    kept = objects(root=root, sources=sources)
     total = sum(path.stat().st_size for path in kept)
     for path in kept:
         if total <= max_bytes:
@@ -52,11 +62,13 @@ def prune(*, max_age_seconds: float, max_bytes: int, now: float, root: Path) -> 
         path.unlink()
         removed += 1
     # A directory the archiver rolls into again is recreated, so emptied ones can go
-    for directory in sorted(
-        (path for path in root.rglob("*") if path.is_dir()), reverse=True
-    ):
-        if not any(directory.iterdir()):
-            directory.rmdir()
+    for name in sources:
+        base = root / f"{name}{LAND_SUFFIX}"
+        for directory in sorted(
+            (path for path in base.rglob("*") if path.is_dir()), reverse=True
+        ):
+            if not any(directory.iterdir()):
+                directory.rmdir()
     return removed
 
 
@@ -133,6 +145,7 @@ def main(argv: list[str] | None = None) -> int:
                 max_bytes=int(args.max_megabytes * 1024 * 1024),
                 now=time.time(),
                 root=args.root,
+                sources=sources,
             )
             print(f"pruned {removed} file(s)", flush=True)
             if args.interval_minutes <= 0:
