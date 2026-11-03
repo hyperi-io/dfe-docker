@@ -883,12 +883,32 @@ class TestLoadDemo:
         fetchers = {body["source"]: body["fetcher"] for body in loaded.fetchers}
         releases = fetchers["component-releases"]["config"]
 
-        assert sorted(fetchers) == ["component-releases", "package-registry-crates-io"]
+        assert sorted(fetchers) == ["component-releases", "wikipedia-recentchanges"]
         assert all(fetcher["topic"] == "own" for fetcher in fetchers.values())
         # Unauthenticated GitHub allows 60 requests an hour per IP and each poll spends one per repo
         assert releases["interval_secs"] >= 60 * len(releases["vars"]["repos"])
         for name in [loaded.intake["source"], *loaded.events, *fetchers]:
             assert SOURCE_NAME.fullmatch(string=name), name
+
+    def test_the_wikipedia_fetcher_asks_for_each_window_once_and_names_itself(
+        self,
+    ) -> None:
+        wiki = {b["source"]: b for b in _committed().fetchers}[
+            "wikipedia-recentchanges"
+        ]
+        config = wiki["fetcher"]["config"]
+        profile = config["profile"]
+        query = profile["endpoints"][0]["query"]
+
+        assert config["interval_secs"] == 5
+        assert profile["window"]["format"] == "epoch_secs"
+        # Whole seconds, both ends inclusive, so the next window must start one second past this one's end
+        assert "int(window.start) - 1" in query["rcstart"]
+        assert "int(window.end) - 2" in query["rcend"]
+        assert query["rcdir"] == "newer"
+        agent = profile["headers"]["User-Agent"]
+        assert agent.startswith("DFE-demo/")
+        assert "https://github.com/hyperi-io/dfe-docker" in agent
 
     def test_the_committed_sources_keep_their_keys_alphabetical(self) -> None:
         unsorted = []

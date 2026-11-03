@@ -1,0 +1,17 @@
+{
+  "archive": {
+    "max_megabytes": 200,
+    "retention_minutes": 15,
+    "sources": [
+      "demo-syslog"
+    ],
+    "sweep_minutes": 5
+  },
+  "sources": [
+    "cisco-asa",
+    "component-releases",
+    "demo-syslog",
+    "fortinet",
+    "wikipedia-recentchanges"
+  ]
+}
