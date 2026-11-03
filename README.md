@@ -81,7 +81,9 @@ or download it first and run it:
 curl -fsSLO https://github.com/hyperi-io/dfe-docker/releases/latest/download/install.sh && sh install.sh
 ```
 
-It checks the bundle's sha256 against the release's `SHA256SUMS`, unpacks into `./dfe`, writes `.env` with random secrets and the stack's image pins, starts `single-kafka` and prints the console login. `DFE_PROFILE=slim-grpc` picks another profile, `DFE_VERSION=1.0.2` an older release. From then on a plain `docker compose` in `./dfe` runs the stack, and `docker compose --profile '*' down -v` removes it. The bundle has no `make` targets, so `make demo` and its dashboards need the clone.
+It checks the bundle's sha256 against the release's `SHA256SUMS`, unpacks into `./dfe`, writes `.env` with random secrets and the stack's image pins, starts `single-kafka` and prints the console login. `DFE_PROFILE=slim-grpc` picks another profile and `DFE_VERSION=X.Y.Z` a release. From then on a plain `docker compose` in `./dfe` runs the stack, and `docker compose --profile '*' down -v` removes it.
+
+The bundle holds the default stack, resolved once. It has no `make`, so the `.env` dials that change what compose is given (`DFE_DATA_ROOT`, `DFE_BIND_SCOPE`, the exposure flags, `DFE_PROXY_TLS`, `DFE_RECEIVER_*_PORT`) do nothing, the console cannot start per-source containers, the stack does not report cores deployed, and `make demo` needs the clone. Only a release cut after this one carries the assets.
 
 ### Prerequisites
 

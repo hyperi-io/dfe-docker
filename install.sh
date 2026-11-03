@@ -11,6 +11,7 @@
 # DFE_VERSION, DFE_PROFILE, DFE_DIR and DFE_RELEASE_URL (a file:// URL works) override the defaults below.
 
 set -eu
+umask 022
 
 DFE_RELEASE_URL=${DFE_RELEASE_URL:-https://github.com/hyperi-io/dfe-docker/releases}
 DFE_VERSION=${DFE_VERSION:-latest}
@@ -149,6 +150,6 @@ if [ -t 1 ]; then
 else
     say "  password  DFE_AUTH_LOCAL_ADMIN_PASSWORD in $PWD/env/engine.env"
 fi
-say "  stop      cd $PWD && docker compose --profile '*' down"
-say "  remove    cd $PWD && docker compose --profile '*' down -v"
+say "  stop      cd \"$PWD\" && docker compose --profile '*' down"
+say "  remove    cd \"$PWD\" && docker compose --profile '*' down -v"
 say "The admin password is issued with a forced change at first login."
