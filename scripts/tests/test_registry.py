@@ -15,7 +15,8 @@ A DFE image is picked by RELEASE, and version order is not release order there: 
 The network calls are the seam: `list_tags`, `list_releases` and `marked_latest_release` are repointed at fixed data, so what is pinned here is the selection, not the registry's or GitHub's current contents.
 """
 
-from __future__ import annotations
+from pathlib import Path
+from typing import TypedDict
 
 import pytest
 
@@ -33,6 +34,26 @@ _DFE_TAGS = [
     "v1.19.36",
     "sha-ca635f78",
 ]
+
+
+class OrasCommandCase(TypedDict):
+    """The tools on PATH and how the oras command starts."""
+
+    expected: list[str]
+    on_path: set[str]
+
+
+ORAS_COMMAND_CASES = [
+    OrasCommandCase(expected=["oras"], on_path={"docker", "oras"}),
+    OrasCommandCase(expected=["docker", "run", "--rm", "--user"], on_path={"docker"}),
+]
+
+
+def _tools_on_path(*, monkeypatch: pytest.MonkeyPatch, on_path: set[str]) -> None:
+    def _which(tool: str) -> str | None:
+        return f"/bin/{tool}" if tool in on_path else None
+
+    monkeypatch.setattr(_registry.shutil, "which", _which)
 
 
 def _fixed_tags(tags: list[str], monkeypatch: pytest.MonkeyPatch) -> None:
@@ -274,11 +295,46 @@ def test_a_sha256_digest_is_returned(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 def _fixed_descriptor(stdout: str, monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(_registry, "_require_oras", lambda: None)
-    monkeypatch.setattr(
-        _registry,
-        "_run",
-        lambda *, cmd: _registry.subprocess.CompletedProcess(
-            args=cmd, returncode=0, stdout=stdout, stderr=""
-        ),
-    )
+    def _oras_command() -> list[str]:
+        return ["oras"]
+
+    def _run(*, cmd: list[str]) -> _registry.subprocess.CompletedProcess:
+        return _registry.subprocess.CompletedProcess(
+            args=cmd, returncode=0, stderr="", stdout=stdout
+        )
+
+    monkeypatch.setattr(_registry, "oras_command", _oras_command)
+    monkeypatch.setattr(_registry, "_run", _run)
+
+
+class TestOrasCommand:
+    @pytest.mark.parametrize("case", ORAS_COMMAND_CASES)
+    def test_matches_expected(
+        self, monkeypatch: pytest.MonkeyPatch, case: OrasCommandCase
+    ) -> None:
+        _tools_on_path(monkeypatch=monkeypatch, on_path=case["on_path"])
+
+        command = _registry.oras_command()
+
+        assert command[: len(case["expected"])] == case["expected"]
+        assert (command[-1] == _registry.ORAS_IMAGE) == (command[0] == "docker")
+        assert "@sha256:" in _registry.ORAS_IMAGE
+
+    def test_a_pull_mounts_its_output_directory(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        _tools_on_path(monkeypatch=monkeypatch, on_path={"docker"})
+
+        command = _registry.oras_command(mount=tmp_path)
+
+        assert f"{tmp_path}:{_registry.OUT_DIR}" in command
+
+    def test_no_oras_and_no_docker_is_refused(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        _tools_on_path(monkeypatch=monkeypatch, on_path=set())
+
+        with pytest.raises(
+            _registry.RegistryError, match="neither `oras` nor `docker`"
+        ):
+            _registry.oras_command()

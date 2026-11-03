@@ -10,21 +10,25 @@
 
 Internal support module - imported by the runnable scripts, not executed directly. Two callers ask "what is the newest thing published here", and they ask two different sources.
 
-The track-latest daemon and `make stack VERSION=latest` ask the signed stack-manifest repo for its newest TAG, through `oras`. Only semver tags are ranked, so the `sha-<commit>` build tags and the floating `latest` are ignored rather than compared. An optional leading `v` is carried through verbatim, because the tag itself is what goes into the pin. A release ranks above its own pre-releases; what happens when a repo has published only pre-releases is the caller's `prereleases` choice.
+The track-latest daemon and `make stack VERSION=latest` ask the signed stack-manifest repo for its newest TAG, through `oras` or its pinned image when the host has docker and no `oras`. Only semver tags are ranked, so the `sha-<commit>` build tags and the floating `latest` are ignored rather than compared. An optional leading `v` is carried through verbatim, because the tag itself is what goes into the pin. A release ranks above its own pre-releases. What happens when a repo has published only pre-releases is the caller's `prereleases` choice.
 
 With `DFE_STACK_REPIN_IMAGES=1`, `make stack VERSION=latest` then asks each DFE component for its newest GitHub RELEASE, through `gh`, and pins that release's image. That is the only call here that leaves the public OCI registry, and it needs read access to every component repo. Version order is not release order: a fork can carry a release tagged above its own line, and a version ranking pins that one ahead of every later release. GitHub's own `releases/latest` answer is the authority -- the one the repo page labels Latest, ranked by creation date.
 """
-
-from __future__ import annotations
 
 import json
 import os
 import re
 import shutil
 import subprocess
+from pathlib import Path
 
 # The signed stack-manifest artifact repo -- the certified pin set's home.
 DEFAULT_MANIFEST_REPO = "ghcr.io/hyperi-io/dfe-stack-manifest"
+
+# oras for a host with docker and no oras, pinned by digest like the cosign image in stack.py
+ORAS_IMAGE = "ghcr.io/oras-project/oras:v1.3.6@sha256:9cfb578be975b762fd898b9d004243d8003aeb807a3e15b2ed212cdd1326c9eb"
+# Where that image sees the directory a pull writes to
+OUT_DIR = "/out"
 
 # The VERSION= words meaning "discover the newest", mapped to how each treats a
 # pre-release. Anything else is an explicit version.
@@ -77,15 +81,6 @@ def _require_gh() -> None:
         raise RegistryError(
             "`gh` is not installed -- cannot read a component's GitHub releases "
             "(see the README prerequisites)"
-        )
-
-
-def _require_oras() -> None:
-    """Fail loudly when `oras` is absent rather than degrading to a floating tag."""
-    if shutil.which("oras") is None:
-        raise RegistryError(
-            "`oras` is not installed -- cannot read tags or digests from the "
-            "registry (see the README prerequisites)"
         )
 
 
@@ -197,8 +192,7 @@ def list_releases(*, repo: str) -> list[dict]:
 
 def list_tags(*, repo: str) -> list[str]:
     """Return every tag on an OCI repo via `oras repo tags`."""
-    _require_oras()
-    out = _run(cmd=["oras", "repo", "tags", repo])
+    out = _run(cmd=[*oras_command(), "repo", "tags", repo])
     if out.returncode != 0:
         detail = out.stderr.strip() or out.stdout.strip()
         raise RegistryError(f"`oras repo tags {repo}` failed: {detail}")
@@ -228,14 +222,37 @@ def manifest_repo() -> str:
     )
 
 
+def oras_command(*, mount: Path | None = None) -> list[str]:
+    """The command that runs oras: the one on PATH, else the pinned image through docker.
+
+    mount is a host directory the image sees as OUT_DIR, for a pull that writes files. The image runs as the caller's user, so the caller can remove what it writes.
+    """
+    if shutil.which("oras") is not None:
+        return ["oras"]
+    if shutil.which("docker") is None:
+        raise RegistryError(
+            "neither `oras` nor `docker` is installed, so tags and digests cannot be "
+            "read from the registry (see the README prerequisites)"
+        )
+    volume = [] if mount is None else ["--volume", f"{mount}:{OUT_DIR}"]
+    return [
+        "docker",
+        "run",
+        "--rm",
+        "--user",
+        f"{os.getuid()}:{os.getgid()}",
+        *volume,
+        ORAS_IMAGE,
+    ]
+
+
 def resolve_digest(*, reference: str) -> str:
     """Return the ``sha256:...`` digest a tagged reference currently points at.
 
     A tag is a moving pointer, so the digest is what makes the pin reproducible --
     every pin this repo writes carries one.
     """
-    _require_oras()
-    out = _run(cmd=["oras", "manifest", "fetch", "--descriptor", reference])
+    out = _run(cmd=[*oras_command(), "manifest", "fetch", "--descriptor", reference])
     if out.returncode != 0:
         detail = out.stderr.strip() or out.stdout.strip()
         raise RegistryError(f"cannot resolve {reference}: {detail}")

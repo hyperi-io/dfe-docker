@@ -1,4 +1,4 @@
-#!/usr/bin/env -S uv run --locked --script
+#!/usr/bin/env python3
 #  Project:      dfe-docker
 #  File:         scripts/demo.py
 #  Purpose:      Send live vendor syslog through the running stack, detected per line by dfe-transform-elastic and landed one table per vendor
@@ -7,16 +7,9 @@
 #  License:      BUSL-1.1
 #  Copyright:    (c) 2026 HYPERI PTY LIMITED
 
-# /// script
-# requires-python = ">=3.12"
-# dependencies = [
-#     "pyyaml==6.0.3",
-# ]
-# ///
-
 """Run the agentless syslog demo against the RUNNING stack.
 
-The Sources are the POST /sources bodies under resources/demo/sources, one to a file, each taking its role from its body. The one with `transform.mode: agentless` is the intake: a dfe-transform-elastic Source on the receiver's syslog listener whose detect candidates are the vendor variants. One with a `fetcher` mapping pulls from its upstream into its own table beside the receiver's push. Every other is a vendor table holding its engine catalogue entry as `from-catalogue` writes it for the receiver intake, which the run checks against the engine's copy.
+The Sources are the POST /sources bodies under resources/demo/sources, one to a file, each taking its role from its body. The one with `transform.mode: agentless` is the intake: a dfe-transform-elastic Source on the receiver's syslog listener whose detect candidates are the vendor variants. One with a `fetcher` mapping pulls from its upstream into its own table beside the receiver's push. Every other is a vendor table holding its engine catalogue entry as `from-catalogue` writes it for the receiver intake, which the run checks against the engine's copy. The engine's own PyYAML reads each file, because this script runs on a bare python3.
 
 A Source the engine lacks is created without its `state`, because a Source created dormant gets no table. One the engine holds whose working version differs from its file is written over with the file. Each is then deployed where that is outstanding and set to the `state` its file names, active when it names none. A dormant vendor table keeps filling from the intake with no per-vendor transform running.
 
@@ -33,6 +26,7 @@ Exit codes:
 """
 
 import argparse
+import json
 import os
 import re
 import shutil
@@ -42,8 +36,6 @@ import time
 import typing
 from pathlib import Path
 from urllib.parse import quote
-
-import yaml
 
 # Bytecode for the repo modules imported below goes to .tmp/pycache, as it does under make
 sys.pycache_prefix = str(Path(__file__).resolve().parent.parent / ".tmp" / "pycache")
@@ -105,6 +97,16 @@ CATALOGUE_READ = "\n".join(
         "    if path is not None:",
         "        sys.stdout.write(path.read_text(encoding='utf-8'))",
         "        break",
+    )
+)
+# One YAML document on stdin as JSON on stdout with any refusal on stderr. A value JSON cannot carry, such as a date, is refused
+YAML_TO_JSON = "\n".join(
+    (
+        "import json, sys, yaml",
+        "try:",
+        "    json.dump(yaml.safe_load(sys.stdin), sys.stdout)",
+        "except (TypeError, yaml.YAMLError) as error:",
+        "    sys.exit(str(error))",
     )
 )
 # What `from-catalogue` adds to an entry on the receiver intake (dfe-engine source/catalogue.py write_request_for and _match_for)
@@ -217,9 +219,11 @@ def _catalogue(*, name: str) -> dict | str:
     if not (result.stdout.strip()):
         return f"{ENGINE_SERVICE!r} ships no catalogue entry named {name!r}"
     try:
-        entry = yaml.safe_load(stream=result.stdout)
-    except yaml.YAMLError as error:
-        return f"the {ENGINE_SERVICE!r} catalogue entry {name!r} is not readable YAML: {error}"
+        entry = _parsed_yaml(
+            label=f"the {ENGINE_SERVICE!r} catalogue entry {name!r}", text=result.stdout
+        )
+    except DemoError as error:
+        return str(error)
     if not (isinstance(entry, dict)):
         return f"the {ENGINE_SERVICE!r} catalogue entry {name!r} is not a mapping"
     return entry
@@ -334,7 +338,9 @@ def _deploy(*, base: str, name: str, token: str) -> dict:
     return answer
 
 
-def _docker(*, args: list[str], timeout: int = 30) -> subprocess.CompletedProcess:
+def _docker(
+    *, args: list[str], stdin: str | None = None, timeout: int = 30
+) -> subprocess.CompletedProcess:
     """Run one docker command and capture its text output."""
     return subprocess.run(
         ["docker", *args],
@@ -342,9 +348,21 @@ def _docker(*, args: list[str], timeout: int = 30) -> subprocess.CompletedProces
         check=False,
         encoding="utf-8",
         errors="replace",
+        input=stdin,
         text=True,
         timeout=timeout,
     )
+
+
+def _engine_python(*, code: str, stdin: str) -> subprocess.CompletedProcess:
+    """Run Python in the engine's container, for the PyYAML it carries."""
+    container = _container(service=ENGINE_SERVICE)
+    if not (container) or not (_running(container=container)):
+        raise DemoError(
+            f"{ENGINE_SERVICE!r} is not running and reading the demo's YAML needs it. "
+            f"Start the stack first"
+        )
+    return _docker(args=["exec", "-i", container, "python", "-c", code], stdin=stdin)
 
 
 def _ensure_fetchers(
@@ -515,6 +533,14 @@ def _outcome(
     return 1
 
 
+def _parsed_yaml(*, label: str, text: str) -> object:
+    """One YAML document as the engine's PyYAML reads it, refused under label when it cannot."""
+    result = _engine_python(code=YAML_TO_JSON, stdin=text)
+    if result.returncode != 0:
+        raise DemoError(f"{label} is not readable YAML: {result.stderr.strip()}")
+    return json.loads(s=result.stdout)
+
+
 def _patch_json(*, payload: dict, token: str, url: str) -> tuple[int, typing.Any]:
     """PATCH JSON from inside the stack and return (status, decoded body)."""
     status, body = _exec_request(
@@ -526,9 +552,10 @@ def _patch_json(*, payload: dict, token: str, url: str) -> tuple[int, typing.Any
 def _read_source(*, path: Path) -> dict:
     """One demo source file's POST /sources body, refused unless its `source` is the file's name."""
     try:
-        body = yaml.safe_load(stream=path.read_text(encoding="utf-8"))
-    except (OSError, UnicodeDecodeError, yaml.YAMLError) as error:
+        text = path.read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError) as error:
         raise DemoError(f"{path.name!r} is not readable YAML: {error}") from error
+    body = _parsed_yaml(label=repr(path.name), text=text)
     if not (isinstance(body, dict)):
         raise DemoError(f"{path.name!r} needs a POST /sources body, which is a mapping")
     if body.get("source") != path.stem:
@@ -572,7 +599,6 @@ def _role(*, body: dict) -> str:
 
 def _run(*, args: argparse.Namespace) -> int:
     """Run the demo against the running stack and return its exit code."""
-    demo = load_demo(events=EVENTS_DIR, sources=SOURCES_DIR)
     environ = dict(os.environ)
     _load_env_file(
         component=ENGINE_COMPONENT, keys=(ADMIN_NAME_KEY, ADMIN_PASSWORD_KEY)
@@ -590,6 +616,7 @@ def _run(*, args: argparse.Namespace) -> int:
     )
     if reason:
         raise DemoError(reason)
+    demo = load_demo(events=EVENTS_DIR, sources=SOURCES_DIR)
     checkout = _resolve_generator(dev=args.dev, generator=args.generator)
     network = _network(service=RECEIVER_SERVICE)
     _check_catalogue(vendors=demo.vendors)

@@ -9,6 +9,8 @@
 """The checks on `make demo` that need no stack: its committed Sources and events and the pure steps between the engine, the pins and docker."""
 
 import re
+import subprocess
+import sys
 from pathlib import Path
 from typing import TypedDict
 
@@ -17,6 +19,8 @@ import yaml
 
 import demo
 from _common import SOURCE_NAME
+
+ENGINE_PYTHON = demo._engine_python
 
 TCP_LISTEN_514 = (
     "   0: 00000000:0202 00000000:0000 0A 00000000:00000000 00:00000000 00000000"
@@ -465,6 +469,11 @@ LOAD_DEMO_REFUSAL_CASES = [
         sources={"intake.yaml": "source: [\n"},
     ),
     LoadDemoRefusalCase(
+        events=EVENTS,
+        message="not readable YAML",
+        sources={"intake.yaml": "source: 2026-11-03\n"},
+    ),
+    LoadDemoRefusalCase(
         events=EVENTS, message="which is a mapping", sources={"intake.yaml": "- a\n"}
     ),
     LoadDemoRefusalCase(
@@ -599,6 +608,18 @@ def _committed() -> demo.Demo:
     return demo.load_demo(events=demo.EVENTS_DIR, sources=demo.SOURCES_DIR)
 
 
+def _python_here(*, code: str, stdin: str) -> subprocess.CompletedProcess:
+    """Run what the demo sends the engine's python on this one, so only `docker exec` is left out."""
+    return subprocess.run(
+        [sys.executable, "-c", code],
+        capture_output=True,
+        check=False,
+        encoding="utf-8",
+        input=stdin,
+        text=True,
+    )
+
+
 def _unsorted(*, node: object, path: str) -> list[str]:
     """Every mapping under node whose keys are out of alphabetical order, named by its path."""
     found = []
@@ -628,6 +649,24 @@ def _write_demo(
             (root / "events" / name / file).write_text(
                 data="%ASA-6-302013: x\n", encoding="utf-8"
             )
+
+
+@pytest.fixture(autouse=True)
+def engine_python(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(demo, "_engine_python", _python_here)
+
+
+class TestEnginePython:
+    def test_refuses_an_engine_that_is_not_running(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        def no_container(*, service: str) -> str:
+            return ""
+
+        monkeypatch.setattr(demo, "_container", no_container)
+
+        with pytest.raises(demo.DemoError, match="is not running"):
+            ENGINE_PYTHON(code="", stdin="")
 
 
 class TestEventsDir:
