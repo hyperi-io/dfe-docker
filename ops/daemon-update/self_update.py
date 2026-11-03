@@ -37,9 +37,7 @@ DFE_ENV declaration and a healthcheck path that older compose files do not have,
 so the schema authority restart-loops while the timer records a clean run. Set
 DFE_UPDATE_SKIP_GIT_PULL=1 on a box whose checkout is managed some other way.
 
-The same goes for .env. A version can add a generated secret, and the power-on
-self test fails while one is still at its built-in default, so `make init` tops
-up the existing .env before the bring-up. It never overwrites a value.
+The same goes for .env and env/<service>.env. A version can add a generated secret. The power-on self test fails while one is still at its built-in default, so `make init` tops up each existing file that holds one before the bring-up. It never overwrites a value.
 
 DFE_UPDATE_WIPE_STATE=1 inserts `make clean` between the pin and the bring-up, so
 a DISPOSABLE box re-initialises from empty volumes on every new version and the

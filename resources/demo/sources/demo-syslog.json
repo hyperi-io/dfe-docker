@@ -1,0 +1,30 @@
+{
+  "archive": true,
+  "description": "Raw vendor syslog, each line detected and parsed by dfe-transform-elastic in agentless mode",
+  "display_name": "Demo syslog",
+  "header": {
+    "type": "common-header/timeseries",
+    "version": "1.0.1"
+  },
+  "match": {
+    "field": "_source",
+    "operator": "equals",
+    "value": "syslog"
+  },
+  "schema": {
+    "meta_schema": "meta/syslog",
+    "meta_schema_version": "1.0.0"
+  },
+  "source": "demo-syslog",
+  "transform": {
+    "detect": {
+      "candidates": [
+        "filebeat.cisco_asa.default",
+        "filebeat.fortinet.default"
+      ],
+      "unmatched": "passthrough"
+    },
+    "engine": "elastic",
+    "mode": "agentless"
+  }
+}

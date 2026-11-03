@@ -31,7 +31,7 @@ import pytest
 
 import instances
 import resolve_profile
-from _common import COMPOSE_LOCAL_FILE, PROFILE_MK, _required_compose_vars
+from _common import PROFILE_MK, _required_compose_vars
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 
@@ -370,8 +370,6 @@ _PLACEHOLDER = "0.0.0-admin-links-test"
 # Keys whose value in the developer's shell would otherwise reach make or compose.
 _FOREIGN_PREFIXES = ("DFE_", "KAFBAT_", "KAFKA_", "HYPERDX_", "CLICKHOUSE_", "COMPOSE_")
 _MAKE_STATE = ("MAKEFLAGS", "MAKELEVEL", "MFLAGS")
-# Written by a make run, so never copied from the checkout into the scratch one.
-_GENERATED = {COMPOSE_LOCAL_FILE.name}
 
 
 def _compose_renders() -> bool:
@@ -406,9 +404,8 @@ def checkout(tmp_path: Path) -> Path:
     (tmp_path / "service_profiles.yaml").write_text(
         data=committed.stdout, encoding="utf-8", newline="\n"
     )
-    for compose in REPO_ROOT.glob("docker-compose*.yml"):
-        if compose.name not in _GENERATED:
-            shutil.copy(compose, tmp_path / compose.name)
+    shutil.copy(REPO_ROOT / "docker-compose.yml", tmp_path / "docker-compose.yml")
+    shutil.copytree(REPO_ROOT / "compose", tmp_path / "compose")
     shutil.copytree(REPO_ROOT / "config", tmp_path / "config")
     shutil.copytree(
         REPO_ROOT / "scripts",

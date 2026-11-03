@@ -1,0 +1,53 @@
+
+# Project:   dfe-docker
+# File:      compose/limits.yml
+# Purpose:   The resource limit tiers docker-compose.yml extends
+# Language:  YAML
+#
+# License:   BUSL-1.1
+# Copyright: (c) 2026 HYPERI PTY LIMITED
+
+services:
+  limits-broker:
+    extends: {file: base.yml, service: base}
+    deploy:
+      resources:
+        limits:
+          cpus: "${DFE_BROKER_CPUS:-1.5}"
+          memory: ${DFE_BROKER_MEMORY:-2560M}
+
+  limits-clickhouse:
+    extends: {file: base.yml, service: base}
+    deploy:
+      resources:
+        limits:
+          cpus: "${DFE_CLICKHOUSE_CPUS:-2.0}"
+          memory: ${DFE_CLICKHOUSE_MEMORY:-3G}
+    ulimits:
+      nofile:
+        soft: 262144
+        hard: 262144
+
+  limits-hyperdx:
+    extends: {file: base.yml, service: base}
+    deploy:
+      resources:
+        limits:
+          cpus: "${DFE_SERVICE_CPUS:-2.0}"
+          memory: ${DFE_HYPERDX_MEMORY:-2G}
+
+  limits-service:
+    extends: {file: base.yml, service: base}
+    deploy:
+      resources:
+        limits:
+          cpus: "${DFE_SERVICE_CPUS:-2.0}"
+          memory: ${DFE_SERVICE_MEMORY:-768M}
+
+  limits-sidecar:
+    extends: {file: base.yml, service: base}
+    deploy:
+      resources:
+        limits:
+          cpus: "${DFE_SIDECAR_CPUS:-0.5}"
+          memory: ${DFE_SIDECAR_MEMORY:-512M}

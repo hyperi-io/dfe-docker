@@ -22,18 +22,26 @@ import shutil
 from pathlib import Path
 
 import pytest
-import yaml
 
+import _common
 import check_compose
 import init
 import instances
 from _common import COMPOSE_FILE, REPO_ROOT
 
-_FRAGMENTS = "-f docker-compose.yml -f docker-compose.override.yml"
+_FRAGMENTS = "-f docker-compose.yml -f .tmp/docker-compose.local.yml"
 _PROXY_DIR = REPO_ROOT / "config" / "proxy"
 
 # A service key in docker-compose.yml: two spaces in, alone on its line.
 _SERVICE_KEY_RE = re.compile(r"^  ([A-Za-z0-9._-]+):$", re.MULTILINE)
+# Each service whose own settings live in an env/<component>.env, mapped to that file
+_COMPONENT_ENV_FILES = {
+    "dfe-engine": "engine.env",
+    "dfe-ui": "ui.env",
+    "hyperdx": "hyperdx.env",
+}
+# Planted in each of those files under a key of its own, so a service shows which it read
+_READ_FROM = "DFE_COMPOSE_TEST_READ_"
 
 
 def test_a_checkout_with_no_env_is_checked_as_its_first_start(dotenv: Path) -> None:
@@ -41,7 +49,7 @@ def test_a_checkout_with_no_env_is_checked_as_its_first_start(dotenv: Path) -> N
     values = check_compose._first_start_dotenv()
 
     assert not dotenv.exists()
-    assert all(values.get(key) for key in init.GENERATED_SECRETS)
+    assert all(values.get(key) for key in init.GENERATED_SECRETS[dotenv.name])
 
 
 def test_a_checkout_with_an_env_is_checked_on_its_own(dotenv: Path) -> None:
@@ -50,13 +58,58 @@ def test_a_checkout_with_an_env_is_checked_on_its_own(dotenv: Path) -> None:
     assert check_compose._first_start_dotenv() == {"DFE_ENV": "production"}
 
 
+def test_a_checkout_with_no_engine_env_is_checked_as_its_first_start(
+    dotenv: Path,
+) -> None:
+    rendered = check_compose._first_start_engine_env()
+
+    assert rendered is not None
+    values = _common._parse_dotenv(text=rendered)
+    assert all(values.get(key) for key in init.GENERATED_SECRETS["engine.env"])
+    assert not ((dotenv.parent / "env").exists())
+
+
+def test_a_checkout_with_an_engine_env_is_checked_on_its_own(engine_env: Path) -> None:
+    engine_env.write_text("DFE_API_PORT=8003\n", encoding="utf-8", newline="\n")
+
+    assert check_compose._first_start_engine_env() is None
+
+
+def test_each_component_reads_the_env_file_its_settings_live_in(dotenv: Path) -> None:
+    if shutil.which("docker") is None:
+        pytest.skip("`docker compose config` renders the model this asserts on")
+    env, _ = check_compose._check_env()
+    planted = {
+        name: f"{_READ_FROM}{Path(name).stem.upper()}={name}\n"
+        for name in set(_COMPONENT_ENV_FILES.values())
+    }
+
+    config = check_compose._scratch_config(
+        env=env, env_files=planted, extra_profiles=("*",)
+    )
+
+    assert config is not None, "the registry compose path did not resolve"
+    for service, name in sorted(_COMPONENT_ENV_FILES.items()):
+        environment = config["services"][service].get("environment") or {}
+        assert environment.get(f"{_READ_FROM}{Path(name).stem.upper()}") == name, (
+            service
+        )
+    # It runs SQL built from rule text, so it holds none of the engine's logins
+    assert not (
+        any(
+            key.startswith(_READ_FROM)
+            for key in config["services"]["dfe-hunt-runner"]["environment"]
+        )
+    )
+
+
 def test_it_reads_the_files_off_each_subcommand():
     found = check_compose._dev_compose_files(
         output=f"docker compose {_FRAGMENTS} pull\ndocker compose {_FRAGMENTS} up -d\n"
     )
 
     assert sorted(found) == ["pull", "up"]
-    assert found["up"] == [["docker-compose.yml", "docker-compose.override.yml"]]
+    assert found["up"] == [["docker-compose.yml", ".tmp/docker-compose.local.yml"]]
 
 
 def test_a_second_line_does_not_hide_the_first():
@@ -70,7 +123,7 @@ def test_a_second_line_does_not_hide_the_first():
 
     assert found["up"] == [
         ["docker-compose.yml"],
-        ["docker-compose.yml", "docker-compose.override.yml"],
+        ["docker-compose.yml", ".tmp/docker-compose.local.yml"],
     ]
 
 
@@ -314,7 +367,6 @@ def _dialling(*, host: str, http: str, native: str) -> dict:
     engine_keys = {
         "DFE_CLICKHOUSE_HOST": host,
         "DFE_CLICKHOUSE_PORT": http,
-        "DFE_CLICKHOUSE_NATIVE_PORT": native,
     }
     return {
         "services": {
@@ -613,7 +665,7 @@ def test_an_app_that_defaults_the_check_off_fails():
     ]
 
 
-def test_the_archiver_is_read_under_its_dfe_archiver_prefix():
+def test_the_archiver_is_read_under_dfe_archiver_not_its_old_prefix():
     config = _checking()
     environment = config["services"]["dfe-archiver"]["environment"]
     environment["ARCHIVER_VERSION_CHECK__ENABLED"] = environment.pop(
@@ -634,8 +686,8 @@ def test_the_engine_is_read_bare_and_elastic_under_its_own_prefix():
 
     assert prefixes["dfe-engine"] == ""
     assert prefixes["dfe-transform-elastic"] == "DFE_TRANSFORM_ELASTIC_"
-    assert prefixes["dfe-transform-vrl"] == prefixes["dfe-transform-vector"]
-    assert prefixes["dfe-transform-vrl"] == "DFE_TRANSFORM_"
+    assert prefixes["dfe-transform-vector"] == "DFE_TRANSFORM_VECTOR_"
+    assert prefixes["dfe-transform-vrl"] == "DFE_TRANSFORM_VRL_"
 
 
 def test_an_app_missing_from_the_stack_fails_the_release_check_rather_than_passing():
@@ -696,7 +748,9 @@ def test_a_new_dfe_app_nobody_decided_for_fails(monkeypatch: pytest.MonkeyPatch)
         (["corp.example.com", "."], 1),
     ],
 )
-def test_a_service_must_clear_the_host_search_domain(dns_search, expected_failures):
+def test_a_service_must_clear_the_host_search_domain(
+    dns_search: list[str] | None, expected_failures: int
+) -> None:
     service = {} if dns_search is None else {"dns_search": dns_search}
     config = {"services": {"dfe-loader": service}}
 
@@ -729,26 +783,35 @@ def test_a_dfe_probe_runs_only_a_tool_its_image_ships(service, test, expected_fa
     assert len(failures) == expected_failures
 
 
-def test_the_committed_probes_run_no_tool_the_rust_images_lack():
-    compose = yaml.safe_load(COMPOSE_FILE.read_text(encoding="utf-8"))
+@pytest.fixture(scope="module")
+def resolved_model() -> dict:
+    """The interpolated model, because the apps' probes and grace come from `extends`."""
+    if shutil.which("docker") is None:
+        pytest.skip("`docker compose config` renders the model these assert on")
+    env, _ = check_compose._check_env()
+    model = check_compose._config_json(env=env, files=[COMPOSE_FILE.name])
+    assert model is not None, "the registry compose path did not resolve"
+    return model
 
-    assert check_compose._absent_probe_failures(config=compose) == []
+
+def test_the_committed_probes_run_no_tool_the_rust_images_lack(resolved_model):
+    assert check_compose._absent_probe_failures(config=resolved_model) == []
 
 
-# Each app's deployment contract termination_grace_seconds, which its drain is sized to.
-_TERMINATION_GRACE_SECONDS = {
-    "dfe-archiver": 45,
-    "dfe-fetcher": 45,
-    "dfe-loader": 45,
-    "dfe-receiver": 45,
-    "dfe-transform-elastic": 45,
-    "dfe-transform-vector": 90,
-    "dfe-transform-vrl": 45,
+# Each app's deployment contract termination_grace_seconds, as `docker compose config` writes the duration
+_TERMINATION_GRACE = {
+    "dfe-archiver": "45s",
+    "dfe-fetcher": "45s",
+    "dfe-loader": "45s",
+    "dfe-receiver": "45s",
+    "dfe-transform-elastic": "45s",
+    "dfe-transform-vector": "1m30s",
+    "dfe-transform-vrl": "45s",
 }
 
 
-@pytest.mark.parametrize(("service", "seconds"), _TERMINATION_GRACE_SECONDS.items())
-def test_a_dfe_app_gets_the_stop_grace_its_contract_asks_for(service, seconds):
-    compose = yaml.safe_load(COMPOSE_FILE.read_text(encoding="utf-8"))
-
-    assert compose["services"][service]["stop_grace_period"] == f"{seconds}s"
+@pytest.mark.parametrize(("service", "grace"), _TERMINATION_GRACE.items())
+def test_a_dfe_app_gets_the_stop_grace_its_contract_asks_for(
+    resolved_model, service, grace
+):
+    assert resolved_model["services"][service]["stop_grace_period"] == grace

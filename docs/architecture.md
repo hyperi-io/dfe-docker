@@ -69,11 +69,11 @@ ingest components produce to a `*_land` topic derived from the event's `_source`
 and the loader consumes `topic_regex: .*_land`. On a `*-grpc` profile there is no
 broker: the ingest components dial `dfe-loader:6000` directly.
 
-The three transforms are bus-only today: each reads a topic and writes a topic. `dfe-archiver` archives each source from its landing topic on Kafka. No gRPC profile runs it, so archiving needs a Kafka profile. Once a transform writes `<base>_load`, the loader reads it instead of `<base>_land`, through the same `config/loader/kafka.yaml`: scalo drops `<base>_land` from its subscription once `<base>_load` exists.
+Each transform reads a topic and writes a topic on Kafka but pushes to the loader on gRPC. `dfe-archiver` archives each source from its landing topic on Kafka. No gRPC profile runs it, so archiving needs a Kafka profile. Once a transform writes `<base>_load`, the loader reads it instead of `<base>_land`, through the same `config/loader/kafka.yaml`: scalo drops `<base>_land` from its subscription once `<base>_load` exists.
 
 ## What each profile runs
 
-`slim-*` is the core data path alone: receiver, loader, engine, UI and HyperDX. `single-*` adds the per-source apps its keys enable ([profiles.md](profiles.md#which-profile-runs-what)). The `-kafka` profiles add the broker. `single-kafka` also adds one archiver. None starts a per-source app until a source created through the engine binds one.
+`slim-*` is the core data path alone: receiver, loader, engine, UI and HyperDX. `single-*` adds the per-source apps its keys enable ([profiles.md](profiles.md#per-source-apps)). The `-kafka` profiles add the broker. `single-kafka` also adds one archiver. None starts a per-source app until a source created through the engine binds one.
 
 ## The engine renders each app's config
 
@@ -92,9 +92,9 @@ A source with a transform stops sharing `main_land`: the receiver routes it to
 is deployed once per source, as the Kubernetes tier deploys one per Source
 definition -- input topic, program directory and output topic all carry the name.
 
-The source and its transform are created through the engine, as the console does it. dfe-engine renders the instance's config into `dfe-app-config` and `make apply` starts a service that extends the committed `dfe-transform-vrl`, `dfe-transform-vector` or `dfe-transform-elastic`. Those committed services carry the broker env and nothing of a source's own. dfe-transform-vector also mounts `resources/enrichment/` at `/etc/dfe-transform-vector/data`, where its bundled filebeat pipeline reads `timezones.csv`. `make test-source` drives the filebeat, Vector and Elastic cases end to end.
+The source and its transform are created through the engine, as the console does it. dfe-engine renders the instance's config into `dfe-app-config` and `make apply` starts a service that extends the committed `dfe-transform-vrl`, `dfe-transform-vector` or `dfe-transform-elastic`. Those committed services carry the broker env and nothing of a source's own. dfe-transform-vector also mounts `resources/enrichment/` at `/etc/dfe-transform-vector/data`, where its bundled filebeat pipeline reads `timezones.csv`. dfe-transform-elastic compiles its transforms in and the engine uploads the enrichment tables a dfe-transform-vrl program reads, so neither mounts them. `make test-source` drives the filebeat, Vector and Elastic cases end to end.
 
-dfe-transform-vector's one port carries everything. The wrapper scrapes Vector's `internal_metrics` off its `prometheus_exporter` on loopback and registers the samples on scalo's own recorder (dfe-transform-vector#70), so `vector_*` reads on the published port AND rides the OTLP push into the otel database. The exporter's 9598 is not published.
+dfe-transform-vector's one port carries everything. The wrapper scrapes Vector's `internal_metrics` off its `prometheus_exporter` on loopback and registers the samples on scalo's own recorder (dfe-transform-vector#70), so `vector_*` reads on its metrics port AND rides the OTLP push into the otel database. The exporter's 9598 is not published.
 
 dfe-engine creates a transform's table and nothing here provisions it. Create the source before sending it data: a loader that meets rows for a table it has no schema for buffers them, then dead-letters them.
 
@@ -147,10 +147,10 @@ flowchart LR
 
 | Container port | Host port | Owner | Protocol | Audience | Binds |
 |---|---|---|---|---|---|
-| 6000 | none, 6000 once its `docker-compose.yml` line is uncommented | dfe-receiver | Vector protocol, an ingest source that listens only with `DFE_RECEIVER_GRPC__ENABLED=true` | external clients | `DFE_INGRESS_BIND_HOST` (`0.0.0.0`) |
-| 6000 | 50051 | dfe-loader | `DfeTransport/Push`, internal transport | receiver, fetcher, transform-vrl | `DFE_BIND_HOST` (`127.0.0.1`) |
+| 6000 | none, until `DFE_RECEIVER_GRPC_PORT` is set | dfe-receiver | Vector protocol, an ingest source that listens only with `DFE_RECEIVER_GRPC__ENABLED=true` | external clients | `DFE_INGRESS_BIND_HOST` (`0.0.0.0`) |
+| 6000 | none | dfe-loader | `DfeTransport/Push`, internal transport | receiver, fetcher, the transforms | the compose network |
 
-Every Push listener in the suite answers on 6000, and dfe-engine compiles each sender's endpoint against that port. The loader publishes on host port 50051, which leaves 6000 for the receiver's listener. The binding split is the tell: the receiver's listener is meant to be reachable, the loader's is not.
+Every Push listener in the suite answers on 6000 and dfe-engine compiles each sender's endpoint against that port. The receiver's listener is meant to be reachable from outside the stack. The loader's is not, so it publishes no host port.
 
 ## Two independent selectors decide what runs
 
@@ -174,8 +174,8 @@ flowchart TD
 | Compose profile | Services |
 |---|---|
 | `clickhouse` | `clickhouse` |
-| `kafka-redpanda` | `kafka-redpanda` |
 | `kafka-apache` | `kafka-apache` |
+| `kafka-redpanda` | `kafka-redpanda` |
 | `kafka-ui` | `kafka-ui` (Kafbat) |
 | `dfe` | `dlq-init`, `bearer-tokens-init`, archiver, fetcher, loader, receiver, every transform instance |
 | `core` | `dfe-engine`, `dfe-ui`, `dfe-proxy` |
@@ -201,8 +201,8 @@ ordering.
 
 ## The Kafka backend is swappable
 
-Two brokers, mutually exclusive, chosen by `KAFKA_BACKEND` (`redpanda` default,
-`apache` opt-in). Both expose the network alias `kafka` on the same ports, so
+Two brokers, mutually exclusive, chosen by `KAFKA_BACKEND` (`apache` opt-in,
+`redpanda` default). Both expose the network alias `kafka` on the same ports, so
 every config addresses `kafka:9092` and nothing downstream knows which is running.
 
 Compose interpolates every service before profiles filter anything, so
@@ -217,7 +217,7 @@ Dev builds fetch source into a managed git cache, or from your own checkouts whe
 
 | Repo | Language | Role | Profile |
 |---|---|---|---|
-| `dfe-receiver` | Rust | Push ingest. HTTP `:8080` published, Vector gRPC `:6000`, OTLP, Beats and HEC commented out | `dfe` |
+| `dfe-receiver` | Rust | Push ingest. HTTP `:8080` published, Vector gRPC `:6000`, OTLP, Beats and HEC published once their port key is set | `dfe` |
 | `dfe-fetcher` | Rust | Pull ingest from vendor APIs | `dfe` |
 | `dfe-loader` | Rust | Writes ClickHouse; hosts `DfeTransport/Push` | `dfe` |
 | `dfe-archiver` | Rust | Archive sink (filesystem, S3, MinIO, GCS, Azure Blob) | `dfe` |

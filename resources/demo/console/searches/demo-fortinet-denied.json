@@ -1,0 +1,11 @@
+{
+  "name": "demo-fortinet-denied",
+  "orderBy": "_timestamp_load DESC",
+  "select": "_timestamp_load, event_action, event_outcome, replaceOne(IPv6NumToString(assumeNotNull(source_ip)), '::ffff:', '') AS source, source_port, replaceOne(IPv6NumToString(assumeNotNull(destination_ip)), '::ffff:', '') AS destination, destination_port, network_transport, network_bytes, event_original",
+  "source": "fortinet",
+  "tags": [
+    "demo"
+  ],
+  "where": "event_action = 'deny'",
+  "whereLanguage": "sql"
+}

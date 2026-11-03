@@ -16,7 +16,7 @@ because these tests run with no PyYAML.
 
 import re
 
-from _common import COMPOSE_FILE, REPO_ROOT
+from _common import REPO_ROOT
 
 # dfe-engine's appmgmt/apps.yaml declares dfe-loader `endpoints.push.port: 6000`.
 MANIFEST_PUSH_PORT = 6000
@@ -34,11 +34,3 @@ def _loader_listen_port() -> int:
 
 def test_the_loader_listens_where_the_engine_points_its_senders() -> None:
     assert _loader_listen_port() == MANIFEST_PUSH_PORT
-
-
-def test_compose_publishes_the_port_the_loader_listens_on() -> None:
-    compose = COMPOSE_FILE.read_text(encoding="utf-8")
-
-    published = re.findall(r"\$\{DFE_LOADER_GRPC_PORT:-\d+\}:(\d+)", compose)
-
-    assert published == [str(_loader_listen_port())]

@@ -10,7 +10,7 @@ Requires=docker.service
 [Service]
 Type=oneshot
 User=__DFE_UPDATE_USER__
-# Files the updater creates stay group-writable, so an operator in the group can work in the checkout without sudo.
+# Files the updater creates stay group-writable, so an operator in the group can work in the checkout without sudo
 UMask=0002
 WorkingDirectory=__DFE_DOCKER_DIR__
 Environment=DFE_DOCKER_DIR=__DFE_DOCKER_DIR__

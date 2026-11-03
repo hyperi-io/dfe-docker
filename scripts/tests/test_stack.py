@@ -139,9 +139,8 @@ def test_a_repin_line_carries_the_tag_the_digest_and_both_repos(
     pins = stack._latest_image_pins(prereleases="fallback")
 
     assert set(pins) == _OUR_KEYS
-    assert pins["DFE_ENGINE_VERSION"] == (
-        f"DFE_ENGINE_VERSION=v1.19.36@sha256:{'a' * 64}"
-        "  # ghcr.io/hyperi-io/dfe-engine, newest release of hyperi-io/dfe-engine"
+    assert (
+        pins["DFE_ENGINE_VERSION"] == f"DFE_ENGINE_VERSION=v1.19.36@sha256:{'a' * 64}"
     )
 
 
@@ -156,7 +155,7 @@ def test_a_repin_never_writes_a_floating_tag(monkeypatch: pytest.MonkeyPatch) ->
     monkeypatch.setattr(stack, "resolve_digest", _resolve_digest)
 
     for line in stack._latest_image_pins(prereleases="fallback").values():
-        value = line.split("=", 1)[1].split("  #", 1)[0]
+        value = line.split("=", 1)[1]
         assert "@sha256:" in value
         assert not value.startswith("latest")
 
@@ -324,8 +323,8 @@ def test_a_discovery_word_resolves_with_no_gh_and_no_token(
     assert calls[2][-1] == pinned
     assert calls[3][-1] == pinned
     written = dotenv.read_text(encoding="utf-8")
-    assert f"DFE_ENGINE_VERSION=v1.22.8@sha256:{'a' * 64}" in written
-    assert f"DFE_STACK_VERSION={word}  # resolved {expected}\n" in written
+    assert f"DFE_ENGINE_VERSION=v1.22.8@sha256:{'a' * 64}\n" in written
+    assert f"DFE_STACK_VERSION={word}\n" in written
     assert "HTTP_PORT=8080" in written
 
 

@@ -62,7 +62,10 @@ def test_a_new_service_env_file_is_closed_to_other_users(env_dir: Path) -> None:
 
     created = env_dir / "engine.env"
     assert _mode(created) == _common.DOTENV_MODE
-    assert created.read_text(encoding="utf-8") == template.read_text(encoding="utf-8")
+    # The template's lines, then the secrets `make init` mints into this file
+    assert created.read_text(encoding="utf-8").startswith(
+        template.read_text(encoding="utf-8")
+    )
 
 
 def test_a_start_target_heals_an_env_dir_an_older_init_made(env_dir: Path) -> None:
@@ -73,6 +76,30 @@ def test_a_start_target_heals_an_env_dir_an_older_init_made(env_dir: Path) -> No
     assert env_files.main() == 0
 
     assert _mode(env_dir) == 0o2770
+
+
+@pytest.mark.parametrize(
+    ("engine_text", "carried"),
+    [
+        pytest.param("DFE_API_JWT_SECRET=still-in-engine-env\n", True, id="carried"),
+        pytest.param("", False, id="minted"),
+    ],
+)
+def test_a_start_target_moves_the_jwt_secret_and_nothing_else(
+    dotenv: Path, env_dir: Path, engine_text: str, carried: bool
+) -> None:
+    env_dir.mkdir()
+    (env_dir / "engine.env").write_text(engine_text, encoding="utf-8")
+    dotenv.write_text("CLICKHOUSE_PASSWORD=\n", encoding="utf-8")
+
+    assert env_files.main() == 0
+    first = dotenv.read_text(encoding="utf-8")
+    assert env_files.main() == 0
+
+    assert dotenv.read_text(encoding="utf-8") == first
+    assert "CLICKHOUSE_PASSWORD=\n" in first
+    assert ("DFE_API_JWT_SECRET=still-in-engine-env\n" in first) == carried
+    assert "DFE_API_JWT_SECRET=" in first
 
 
 def test_only_group_bits_are_added_and_nothing_is_taken_away(dotenv: Path) -> None:

@@ -1,0 +1,40 @@
+# Project:   dfe-docker
+# File:      compose/storage.yml
+# Purpose:   Rehome the stateful volumes onto DFE_DATA_ROOT
+# Language:  YAML
+#
+# License:   BUSL-1.1
+# Copyright: (c) 2026 HYPERI PTY LIMITED
+
+# Chained when DFE_DATA_ROOT is set. Switching migrates no data
+volumes:
+  archiver-data:
+    driver: local
+    driver_opts: {device: "${DFE_DATA_ROOT}/archiver", o: bind, type: none}
+  clickhouse-data:
+    driver: local
+    driver_opts: {device: "${DFE_DATA_ROOT}/clickhouse", o: bind, type: none}
+  dfe-engine-config:
+    driver: local
+    driver_opts: {device: "${DFE_DATA_ROOT}/engine-config", o: bind, type: none}
+  dfe-engine-schemas:
+    driver: local
+    driver_opts: {device: "${DFE_DATA_ROOT}/engine-schemas", o: bind, type: none}
+  dlq-spool:
+    driver: local
+    driver_opts: {device: "${DFE_DATA_ROOT}/dlq-spool", o: bind, type: none}
+  fetcher-cursors:
+    driver: local
+    driver_opts: {device: "${DFE_DATA_ROOT}/fetcher-cursors", o: bind, type: none}
+  hyperdx-documentdb-data:
+    driver: local
+    driver_opts: {device: "${DFE_DATA_ROOT}/hyperdx-documentdb", o: bind, type: none}
+  kafka-apache-data:
+    driver: local
+    driver_opts: {device: "${DFE_DATA_ROOT}/kafka-apache", o: bind, type: none}
+  kafka-redpanda-data:
+    driver: local
+    driver_opts: {device: "${DFE_DATA_ROOT}/kafka-redpanda", o: bind, type: none}
+  transform-elastic-geoip:
+    driver: local
+    driver_opts: {device: "${DFE_DATA_ROOT}/transform-elastic-geoip", o: bind, type: none}

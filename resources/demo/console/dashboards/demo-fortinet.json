@@ -1,0 +1,78 @@
+{
+  "name": "demo-fortinet",
+  "tags": [
+    "demo"
+  ],
+  "tiles": [
+    {
+      "config": {
+        "configType": "sql",
+        "displayType": "line",
+        "name": "Events per second",
+        "source": "fortinet",
+        "sqlTemplate": "SELECT $__timeInterval(_timestamp_load) AS ts,\n       count() / $__interval_s AS \"events/s\"\nFROM dfe.`fortinet`\nWHERE $__timeFilter(_timestamp_load)\nGROUP BY ts\nORDER BY ts"
+      },
+      "h": 6,
+      "id": "rate",
+      "w": 12,
+      "x": 0,
+      "y": 0
+    },
+    {
+      "config": {
+        "configType": "sql",
+        "displayType": "stacked_bar",
+        "name": "FortiGate: allowed, denied and other over time",
+        "source": "fortinet",
+        "sqlTemplate": "SELECT $__timeInterval(_timestamp_load) AS ts,\n       multiIf(event_action IN ('accept', 'close', 'timeout', 'ftgd_allow'), 'allowed', event_action IN ('deny'), 'denied', 'other') AS verdict,\n       count() AS events\nFROM dfe.`fortinet`\nWHERE $__timeFilter(_timestamp_load)\nGROUP BY ts, verdict\nORDER BY ts"
+      },
+      "h": 6,
+      "id": "verdict",
+      "w": 12,
+      "x": 12,
+      "y": 0
+    },
+    {
+      "config": {
+        "configType": "sql",
+        "displayType": "table",
+        "name": "Top source IPs",
+        "source": "fortinet",
+        "sqlTemplate": "SELECT replaceOne(IPv6NumToString(assumeNotNull(source_ip)), '::ffff:', '') AS \"Source IP\",\n       count() AS \"Events\",\n       sum(coalesce(network_bytes, 0)) AS \"Bytes\"\nFROM dfe.`fortinet`\nWHERE $__timeFilter(_timestamp_load) AND source_ip IS NOT NULL\nGROUP BY 1\nORDER BY 2 DESC\nLIMIT 10"
+      },
+      "h": 7,
+      "id": "src",
+      "w": 8,
+      "x": 0,
+      "y": 6
+    },
+    {
+      "config": {
+        "configType": "sql",
+        "displayType": "table",
+        "name": "Top destination IPs",
+        "source": "fortinet",
+        "sqlTemplate": "SELECT replaceOne(IPv6NumToString(assumeNotNull(destination_ip)), '::ffff:', '') AS \"Destination IP\",\n       count() AS \"Events\",\n       sum(coalesce(network_bytes, 0)) AS \"Bytes\"\nFROM dfe.`fortinet`\nWHERE $__timeFilter(_timestamp_load) AND destination_ip IS NOT NULL\nGROUP BY 1\nORDER BY 2 DESC\nLIMIT 10"
+      },
+      "h": 7,
+      "id": "dst",
+      "w": 8,
+      "x": 8,
+      "y": 6
+    },
+    {
+      "config": {
+        "configType": "sql",
+        "displayType": "table",
+        "name": "Top destination ports",
+        "source": "fortinet",
+        "sqlTemplate": "SELECT destination_port AS \"Port\",\n       network_transport AS \"Transport\",\n       count() AS \"Events\"\nFROM dfe.`fortinet`\nWHERE $__timeFilter(_timestamp_load) AND destination_port IS NOT NULL\nGROUP BY 1, 2\nORDER BY 3 DESC\nLIMIT 10"
+      },
+      "h": 7,
+      "id": "ports",
+      "w": 8,
+      "x": 16,
+      "y": 6
+    }
+  ]
+}

@@ -1,0 +1,34 @@
+# Project:   dfe-docker
+# File:      compose/tls.yml
+# Purpose:   TLS for the console and HyperDX on one certificate
+# Language:  YAML
+#
+# License:   BUSL-1.1
+# Copyright: (c) 2026 HYPERI PTY LIMITED
+
+services:
+  dfe-engine:
+    environment:
+      DFE_API_FORWARDED_ALLOW_IPS: ${DFE_PROXY_IP:?start TLS with make and DFE_PROXY_TLS=true}
+
+  dfe-proxy:
+    user: "${DFE_DEV_UID:-1000}:${DFE_DEV_GID:-1000}"
+    networks:
+      default:
+        ipv4_address: ${DFE_PROXY_IP:?start TLS with make and DFE_PROXY_TLS=true}
+    volumes:
+      - ./config/proxy/envoy.tls.yaml:/etc/envoy/envoy.yaml:ro
+      - ${DFE_PROXY_CERT_DIR:?start TLS with make and DFE_PROXY_TLS=true}:/etc/envoy/certs:ro
+
+  dfe-hyperdx-proxy:
+    user: "${DFE_DEV_UID:-1000}:${DFE_DEV_GID:-1000}"
+    volumes:
+      - ./config/proxy/hyperdx.tls.yaml:/etc/envoy/envoy.yaml:ro
+      - ${DFE_PROXY_CERT_DIR:?start TLS with make and DFE_PROXY_TLS=true}:/etc/envoy/certs:ro
+
+networks:
+  default:
+    ipam:
+      config:
+        - subnet: ${DFE_NETWORK_SUBNET:?start TLS with make and DFE_PROXY_TLS=true}
+          ip_range: ${DFE_NETWORK_IP_RANGE:?start TLS with make and DFE_PROXY_TLS=true}

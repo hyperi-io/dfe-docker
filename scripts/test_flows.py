@@ -46,11 +46,13 @@ import yaml
 # Bytecode for the repo modules imported below goes to .tmp/pycache, as it does under make
 sys.pycache_prefix = str(Path(__file__).resolve().parent.parent / ".tmp" / "pycache")
 
-from _common import _load_dotenv  # noqa: E402
+from _common import ENGINE_COMPONENT, _load_dotenv, _load_env_file  # noqa: E402
 from _pipeline import env_or  # noqa: E402
 
 PROJECT_DIR = Path(__file__).resolve().parent.parent
 SERVICE_PROFILES_FILE = PROJECT_DIR / "service_profiles.yaml"
+_ADMIN_NAME_KEY = "DFE_AUTH_LOCAL_ADMIN_NAME"
+_ADMIN_PASSWORD_KEY = "DFE_AUTH_LOCAL_ADMIN_PASSWORD"
 
 
 def _profiles() -> dict:
@@ -121,6 +123,9 @@ def main(argv: list[str] | None = None) -> int:
     )
     args = parser.parse_args(argv)
 
+    _load_env_file(
+        component=ENGINE_COMPONENT, keys=(_ADMIN_NAME_KEY, _ADMIN_PASSWORD_KEY)
+    )
     _load_dotenv()
     profile = (
         args.profile
@@ -151,15 +156,15 @@ def main(argv: list[str] | None = None) -> int:
             "DFE_E2E_CH_PASSWORD": os.environ.get("CLICKHOUSE_PASSWORD", ""),
             "DFE_E2E_CH_DB": env_or("DFE_OTEL_DATABASE", "dfe"),
             "DFE_E2E_ENGINE_URL": f"http://{host}:{env_or('DFE_ENGINE_PORT', '8003')}",
-            "DFE_E2E_ENGINE_USER": env_or("DFE_AUTH_LOCAL_ADMIN_NAME", "admin"),
+            "DFE_E2E_ENGINE_USER": env_or(_ADMIN_NAME_KEY, "admin"),
             "DFE_E2E_TRANSPORT": transport,
         }
     )
-    password = os.environ.get("DFE_AUTH_LOCAL_ADMIN_PASSWORD", "")
+    password = os.environ.get(_ADMIN_PASSWORD_KEY, "")
     if not password:
         sys.exit(
             "test_flows: the suite writes sources through the engine, so it needs "
-            "DFE_AUTH_LOCAL_ADMIN_PASSWORD from this stack's .env"
+            f"{_ADMIN_PASSWORD_KEY} from this stack's env/engine.env"
         )
     env["DFE_E2E_ENGINE_PASSWORD"] = password
 

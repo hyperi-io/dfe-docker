@@ -15,11 +15,11 @@ Three steps, in order:
    It brings up one stack per test, so the standing stack is gone afterwards.
 2. ``make ci`` -- the standing stack back up, and POST with it. Runs even when
    step 1 failed, so the host is never left without a stack.
-3. ``make test-source`` -- the console source walk against that stack, once per
+3. ``make test-source`` - the console source walk against that stack, once per
    case in ``SOURCE_CASES``, from fresh dfe-infra, dfe-engine and transform
    checkouts and a throwaway Playwright environment built from dfe-infra's
    ``scripts/acceptance/requirements.txt``. It needs a profile that runs
-   dfe-transform-vrl and dfe-transform-vector per source (single-*), and
+   dfe-transform-vrl and dfe-transform-vector per source (single-*) and
    fails at once on one that does not.
 
 Everything it creates lives in one temporary directory that is deleted at the
@@ -63,7 +63,7 @@ Environment:
                            the public repo), whose pipeline the vector case uploads
     DFE_PROOF_TRANSFORM_VECTOR_REF   branch or tag, by default the tag in
                            DFE_TRANSFORM_VECTOR_VERSION, resolved as for dfe-engine
-    DFE_PROOF_SKIP        comma-separated steps to skip: e2e, source (a
+    DFE_PROOF_SKIP         comma-separated steps to skip: e2e, source (a
                            partial run never marks a version proven)
     DFE_PROOF_FORCE        1 to run a version that is already proven
 
@@ -96,13 +96,17 @@ DEFAULT_INFRA_REPO = "https://github.com/hyperi-io/dfe-infra.git"
 DEFAULT_ENGINE_REPO = "https://github.com/hyperi-io/dfe-engine.git"
 DEFAULT_TRANSFORM_VRL_REPO = "https://github.com/hyperi-io/dfe-transform-vrl.git"
 DEFAULT_TRANSFORM_VECTOR_REPO = "https://github.com/hyperi-io/dfe-transform-vector.git"
-# Each pushed case proves one transform's data path, so a pin of either app is
-# proven by the proof that runs on its stack version.
-SOURCE_CASES = ("filebeat", "vector")
-# The app each case routes its source through. A profile starts it per source only with its `*_enabled` key set, so on one that does not (slim-grpc) the engine's instance is never declared and nothing runs it.
+# The app each case routes its source through, run per source only on a profile that sets its `*_enabled` key (slim-grpc does not)
 SOURCE_CASE_APPS = {"filebeat": "dfe-transform-vrl", "vector": "dfe-transform-vector"}
+# Each pushed case proves one transform's data path, so a pin of either app is proven on its stack version
+SOURCE_CASES = tuple(SOURCE_CASE_APPS)
 ACCEPTANCE_REQUIREMENTS = Path("scripts") / "acceptance" / "requirements.txt"
 CHROME_NAMES = ("google-chrome", "google-chrome-stable", "chrome")
+
+
+def _source_args(*, case: str, work: Path) -> str:
+    """The test-source flags for one case, its screenshots kept apart from the others."""
+    return f"--case {case} --shots-dir {work / 'source-shots' / case}"
 
 
 def log(message: str) -> None:
@@ -195,13 +199,13 @@ def transform_vrl_ref(repo: str) -> str:
     )
 
 
-def transform_vector_ref(repo: str) -> str:
+def transform_vector_ref(*, repo: str) -> str:
     """The dfe-transform-vector ref matching the running stack: the vector case uploads its pipeline."""
     return pinned_ref(
-        repo,
         name="dfe-transform-vector",
-        version_var="DFE_TRANSFORM_VECTOR_VERSION",
         override_var="DFE_PROOF_TRANSFORM_VECTOR_REF",
+        repo=repo,
+        version_var="DFE_TRANSFORM_VECTOR_VERSION",
     )
 
 
@@ -254,19 +258,19 @@ def acceptance_python(infra: Path, venv: Path) -> str:
     return str(python)
 
 
-def source_profile_problem(env: dict[str, str]) -> str | None:
+def source_profile_problem(*, env: dict[str, str]) -> str | None:
     """Why the resolved profile cannot run the source cases, or None when it can."""
     resolved = subprocess.run(
         ["make", "--no-print-directory", "-s", ".tmp/profile.mk"],
+        check=False,
         cwd=PROJECT_DIR,
         env=env,
-        check=False,
     )
     if resolved.returncode != 0:
         return "the profile did not resolve"
     running = _common._profile_mk_value(key=_common.PER_SOURCE_APPS_VAR)
     missing = [app for app in SOURCE_CASE_APPS.values() if app not in running]
-    if not missing:
+    if not (missing):
         return None
     keys = ", ".join(_common.PER_SOURCE_APP_KEYS[app] for app in missing)
     return (
@@ -280,7 +284,7 @@ def source_step(work: Path, env: dict[str, str]) -> bool:
     if not any(shutil.which(name) for name in CHROME_NAMES):
         log("FAIL source: no Chrome on PATH; the runner drives the installed browser")
         return False
-    problem = source_profile_problem(env)
+    problem = source_profile_problem(env=env)
     if problem is not None:
         log(f"FAIL source: {problem}")
         return False
@@ -297,9 +301,9 @@ def source_step(work: Path, env: dict[str, str]) -> bool:
         clone(engine_repo, engine_ref(engine_repo), work / "dfe-engine")
         clone(vrl_repo, transform_vrl_ref(vrl_repo), work / "dfe-transform-vrl")
         clone(
-            vector_repo,
-            transform_vector_ref(vector_repo),
-            work / "dfe-transform-vector",
+            dest=work / "dfe-transform-vector",
+            ref=transform_vector_ref(repo=vector_repo),
+            repo=vector_repo,
         )
         python = acceptance_python(work / "dfe-infra", work / "venv")
     except (subprocess.CalledProcessError, RuntimeError) as exc:
@@ -313,22 +317,16 @@ def source_step(work: Path, env: dict[str, str]) -> bool:
         "DFE_TRANSFORM_VECTOR_REPO": str(work / "dfe-transform-vector"),
         "DFE_ACCEPTANCE_PYTHON": python,
     }
-    # Every case runs even after one fails, so one red run names every broken
-    # data path rather than the first.
+    # Every case runs even after one fails, so one red run names every broken data path rather than the first
     passed = [
         run_step(
-            f"source {case}",
-            ["make", "--no-print-directory", "test-source"],
-            {**base_env, "SOURCE_ARGS": source_args(case, work)},
+            argv=["make", "--no-print-directory", "test-source"],
+            env={**base_env, "SOURCE_ARGS": _source_args(case=case, work=work)},
+            name=f"source {case}",
         )
         for case in SOURCE_CASES
     ]
     return all(passed)
-
-
-def source_args(case: str, work: Path) -> str:
-    """The test-source flags for one case, its screenshots kept apart from the others."""
-    return f"--case {case} --shots-dir {work / 'source-shots' / case}"
 
 
 def read_marker(path: Path) -> str:
