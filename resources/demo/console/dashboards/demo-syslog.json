@@ -10,7 +10,7 @@
         "displayType": "stacked_bar",
         "name": "Raw syslog lines by the vendor table they were detected into",
         "source": "demo-syslog",
-        "sqlTemplate": "SELECT $__timeInterval(_timestamp_load) AS ts,\n       toString(_source) AS vendor,\n       count() AS lines\nFROM dfe.all_sources\nWHERE $__timeFilter(_timestamp_load) AND toString(_json._source_original) = 'syslog'\nGROUP BY ts, vendor\nORDER BY ts"
+        "sqlTemplate": "SELECT $__timeInterval(_timestamp_load) AS ts,\n       toString(_source) AS vendor,\n       count() AS lines\nFROM dfe.all_sources\nWHERE $__timeFilter(_timestamp_load) AND _table = toString(_source) AND toString(_json._source_original) = 'syslog'\nGROUP BY ts, vendor\nORDER BY ts"
       },
       "h": 7,
       "id": "routed",
@@ -38,7 +38,7 @@
         "displayType": "table",
         "name": "Detected lines per vendor",
         "source": "demo-syslog",
-        "sqlTemplate": "SELECT toString(_source) AS \"Vendor\",\n       count() AS \"Lines\"\nFROM dfe.all_sources\nWHERE $__timeFilter(_timestamp_load) AND toString(_json._source_original) = 'syslog'\nGROUP BY 1\nORDER BY 2 DESC"
+        "sqlTemplate": "SELECT toString(_source) AS \"Vendor\",\n       count() AS \"Lines\"\nFROM dfe.all_sources\nWHERE $__timeFilter(_timestamp_load) AND _table = toString(_source) AND toString(_json._source_original) = 'syslog'\nGROUP BY 1\nORDER BY 2 DESC"
       },
       "h": 6,
       "id": "share",

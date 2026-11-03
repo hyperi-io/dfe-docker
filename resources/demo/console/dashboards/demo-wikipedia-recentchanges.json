@@ -36,13 +36,13 @@
       "config": {
         "configType": "sql",
         "displayType": "table",
-        "name": "Top pages",
+        "name": "Top pages (edits and new pages)",
         "source": "wikipedia-recentchanges",
-        "sqlTemplate": "SELECT toString(_json.title) AS \"Page\",\n       count() AS \"Changes\",\n       uniqExact(toString(_json.user)) AS \"Editors\"\nFROM dfe.`wikipedia-recentchanges`\nWHERE $__timeFilter(_timestamp)\nGROUP BY 1\nORDER BY 2 DESC\nLIMIT 10"
+        "sqlTemplate": "SELECT toString(_json.title) AS \"Page\",\n       count() AS \"Changes\",\n       uniqExact(toString(_json.user)) AS \"Editors\"\nFROM dfe.`wikipedia-recentchanges`\nWHERE $__timeFilter(_timestamp) AND toString(_json.type) IN ('edit', 'new')\nGROUP BY 1\nORDER BY 2 DESC\nLIMIT 12"
       },
-      "h": 8,
+      "h": 12,
       "id": "pages",
-      "w": 8,
+      "w": 12,
       "x": 0,
       "y": 6
     },
@@ -54,10 +54,10 @@
         "source": "wikipedia-recentchanges",
         "sqlTemplate": "SELECT toString(_json._dfe_fetcher_wiki) AS \"Wiki\",\n       toString(_json.type) AS \"Type\",\n       count() AS \"Changes\"\nFROM dfe.`wikipedia-recentchanges`\nWHERE $__timeFilter(_timestamp)\nGROUP BY 1, 2\nORDER BY 3 DESC"
       },
-      "h": 8,
+      "h": 5,
       "id": "wikis",
-      "w": 8,
-      "x": 8,
+      "w": 12,
+      "x": 12,
       "y": 6
     },
     {
@@ -66,13 +66,13 @@
         "displayType": "table",
         "name": "Size change distribution (bytes)",
         "source": "wikipedia-recentchanges",
-        "sqlTemplate": "SELECT multiIf(d < -2000, 'shrank over 2000', d < -200, 'shrank 200 to 2000', d < 0, 'shrank under 200', d = 0, 'no change', d <= 200, 'grew under 200', d <= 2000, 'grew 200 to 2000', 'grew over 2000') AS \"Change\",\n       count() AS \"Edits\"\nFROM (SELECT toInt64OrZero(toString(_json.newlen)) - toInt64OrZero(toString(_json.oldlen)) AS d FROM dfe.`wikipedia-recentchanges` WHERE $__timeFilter(_timestamp) AND toString(_json.type) = 'edit')\nGROUP BY 1\nORDER BY 2 DESC"
+        "sqlTemplate": "SELECT multiIf(d < -2000, 'shrank over 2000', d < -200, 'shrank 200 to 2000', d < 0, 'shrank under 200', d = 0, 'no change', d <= 200, 'grew under 200', d <= 2000, 'grew 200 to 2000', 'grew over 2000') AS \"Change\",\n       count() AS \"Edits\"\nFROM (SELECT toInt64OrZero(toString(_json.newlen)) - toInt64OrZero(toString(_json.oldlen)) AS d FROM dfe.`wikipedia-recentchanges` WHERE $__timeFilter(_timestamp) AND toString(_json.type) = 'edit')\nGROUP BY 1\nORDER BY min(d)"
       },
-      "h": 8,
+      "h": 7,
       "id": "sizes",
-      "w": 8,
-      "x": 16,
-      "y": 6
+      "w": 12,
+      "x": 12,
+      "y": 11
     }
   ]
 }
