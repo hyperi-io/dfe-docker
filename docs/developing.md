@@ -87,7 +87,7 @@ two random passwords into `env/engine.env` and prints neither.
 
 | Target | What it does |
 |---|---|
-| `make init` | mints `DFE_ENGINE_AUTH_LOCAL_ADMIN_PASSWORD` (the `admin` login) and `DFE_AUTH_BREAKGLASS_PASSWORD` (the `breakglass` recovery login) |
+| `make init` | mints `DFE_ENGINE_AUTH_LOCAL_ADMIN_PASSWORD` (the `admin` login) and `DFE_ENGINE_AUTH_BREAKGLASS_PASSWORD` (the `breakglass` recovery login) |
 | `make up` | starts the pinned stack, runs the self test, then prints the access summary with the login |
 | `make creds` | prints that summary again, any time |
 
@@ -354,10 +354,10 @@ Two things about the runner worth knowing before you debug it:
 
 ### The dfe-ui Playwright suite: one target on, one off
 
-The suite seeds its fixtures through the engine's `/api/e2e` routes, which exist only with `DFE_E2E_SERVER=true`. Its seeders refuse anything but `DFE_ENV=test`.
+The suite seeds its fixtures through the engine's `/api/e2e` routes, which exist only with `DFE_ENGINE_E2E_SERVER=true`. Its seeders refuse anything but `DFE_ENV=test`.
 
 ```bash
-make e2e-posture         # DFE_ENV=test in .env, DFE_E2E_SERVER=true and the shipped admin password in env/engine.env
+make e2e-posture         # DFE_ENV=test in .env, DFE_ENGINE_E2E_SERVER=true and the shipped admin password in env/engine.env
 make e2e-posture-check   # exit 1 naming what is missing, the suite runs this first
 make e2e-posture-off     # put back both files from before
 ```
