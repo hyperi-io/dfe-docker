@@ -27,7 +27,7 @@ exist, and how a profile decides which of them run.
 |---|---|
 | Docker and Docker Compose v2 | everything |
 | Python 3 | the helper scripts under `scripts/` |
-| uv | `make sources`, `make rules`, `make hunts`, `make events`, `make demo`, `make test-e2e`, `make test-resilience` and `make test-flows` only. It installs the PyYAML and Playwright those scripts declare inline, hash-checked against the `<script>.lock` beside each |
+| uv | `make sources`, `make rules`, `make hunts`, `make events`, `make test-e2e`, `make test-resilience` and `make test-flows` only. It installs the PyYAML and Playwright those scripts declare inline, hash-checked against the `<script>.lock` beside each |
 | ruff | `make check-python` only |
 | pytest | `make check-tests` only (`uvx` fetches the pin if you have it) |
 | git, to clone the public hyperi-io repos (or `DFE_SRC_ROOT` checkouts) | `make dev` |
@@ -35,9 +35,16 @@ exist, and how a profile decides which of them run.
 ## First run
 
 ```bash
+make up                    # init, pin the newest stable stack, start, self test, print the login
+make up PROFILE=slim-grpc VERSION=X.Y.Z   # a profile and a stack of your choosing
+```
+
+`make up` runs `scripts/quickstart.py`, which makes `.env` when it is missing, writes `PROFILE=` to it as `DFE_PROFILE`, and pins `VERSION=` (the newest published stable stack when none is given and the `.env` holds no pins). `DEFAULT_PROFILE` in the Makefile is the profile when none is set. The steps it runs are these, and each works on its own:
+
+```bash
 make init                  # generate .env and env/<service>.env
 make stack VERSION=X.Y.Z   # pin the image versions
-make up                    # pull and start, self test, then print the login
+make ci                    # pull and start, self test
 ```
 
 `make init` copies `.env.example` to `.env` and every `env.example/<service>.env`
@@ -55,8 +62,8 @@ DFE stack SSoT. It uses a local dfe-infra checkout only when `DFE_INFRA_DIR`
 names one (`scripts/dfe-stack render --target docker --stack VERSION`), and
 otherwise resolves `ghcr.io/hyperi-io/dfe-stack-manifest:VERSION` to a digest,
 checks with `cosign verify` that dfe-infra's release workflow signed it, and
-pulls that digest with `oras`. With no `cosign` installed, it runs cosign's
-digest-pinned image through Docker. If neither is available it fails loudly -- there is no silent `latest`. Only
+pulls that digest with `oras`. With no `cosign` or `oras` installed, it runs their
+digest-pinned images through Docker. If neither is available it fails loudly -- there is no silent `latest`. Only
 `*_VERSION` keys are rewritten; your ports, hosts, credentials and profile
 survive the merge.
 

@@ -57,7 +57,7 @@ endif
 # any more (both sweep every profile), and requiring a resolvable profile to STOP
 # a stack is the same lockout the compose secret comments argue against -- set
 # DFE_PROFILE to something that does not exist and you could not tear down.
-BOOTSTRAP_GOALS := init env-files creds certs dev-posture e2e-posture e2e-posture-off e2e-posture-check help stack dial modes down clean demo-stop limits check check-compose check-hardfail check-dockerfile check-docs check-locks check-proxy check-python check-tests
+BOOTSTRAP_GOALS := init env-files creds certs up demo dev-posture e2e-posture e2e-posture-off e2e-posture-check help stack dial modes down clean demo-stop limits check check-compose check-hardfail check-dockerfile check-docs check-locks check-proxy check-python check-tests
 
 # Resolve the active profile only when a goal actually needs the compose stack
 ifneq (,$(filter-out $(BOOTSTRAP_GOALS),$(or $(MAKECMDGOALS),help)))
@@ -545,11 +545,17 @@ ci: env-files down storage-dirs  ## Pull and start infra and registry DFE images
 	docker compose -f docker-compose.yml $(STORAGE_FLAGS) $(UI_FLAGS) $(PROFILE_FLAGS) up -d $(ACTIVE_SERVICES)
 	@$(MAKE) --no-print-directory post || { echo "post: SELF TEST FAILED -- the stack is up, but it did not prove it moves data. Run 'make post' for detail."; exit 1; }
 
+# `make up` is a clone's one command: scripts/quickstart.py makes .env, picks the profile and pins the newest published stack, then the sub-make starts it. A sub-make because .tmp/profile.mk is resolved when make parses, before any recipe could write the profile into .env. PROFILE= and VERSION= count only from the make line, so a PROFILE in the shell's environment never moves the stack.
+DEFAULT_PROFILE := single-kafka
+QUICKSTART_ARGS = --default-profile '$(DEFAULT_PROFILE)' --profile '$(if $(filter command line,$(origin PROFILE)),$(PROFILE))' --version '$(if $(filter command line,$(origin VERSION)),$(VERSION))'
+
 # The operator-facing name for the registry start, and the one the engine prints
 # when it tells someone how to apply a rotated password. It is `ci` plus the
 # hand-over, which is the whole difference between the two.
 .PHONY: up
-up: ci ## Start the stack from the pinned registry images, then print the access summary (password on a TTY only) and write access-summary.md
+up: ## Start the stack from the pinned registry images (PROFILE=slim-grpc and VERSION=X.Y.Z override the defaults), then print the access summary (password on a TTY only) and write access-summary.md
+	@python3 scripts/quickstart.py prepare up $(QUICKSTART_ARGS)
+	@$(MAKE) --no-print-directory ci
 	@python3 scripts/creds.py --write
 
 # The command dfe-engine's restart and recreate hints name after a config write:
@@ -660,7 +666,6 @@ print-uv-version:
 
 .PHONY: check-locks
 check-locks: ## Assert each inline-metadata script's lock matches its pins (relock with `uv lock --script <script>`)
-	$(LOCK_UV) lock --check --script scripts/demo.py
 	$(LOCK_UV) lock --check --script scripts/seed.py
 	$(LOCK_UV) lock --check --script scripts/test_e2e.py
 	$(LOCK_UV) lock --check --script scripts/test_flows.py
@@ -798,7 +803,7 @@ events: ## Send the fake resources/seed events through the receiver, after `make
 
 # ---------------------------------------------------------------------------
 # Demo
-# Raw firewall and switch syslog through the RUNNING stack, on whichever profile runs dfe-transform-elastic. The Sources are resources/demo/demo.yaml's, created through the engine API, and dfe-transform-elastic in agentless mode detects each line's vendor and lands it in that vendor's table.
+# Raw firewall and switch syslog through the RUNNING stack, on whichever profile runs dfe-transform-elastic. The Sources are resources/demo/demo.toml's, created through the engine API, and dfe-transform-elastic in agentless mode detects each line's vendor and lands it in that vendor's table.
 # ---------------------------------------------------------------------------
 
 # The replay script inside the dfe-transform-elastic checkout, fetched at the tag DFE_TRANSFORM_ELASTIC_VERSION pins or read from DFE_SRC_ROOT/dfe-transform-elastic.
@@ -810,9 +815,16 @@ DEMO_CONTAINER := $(PROXY_PROJECT)-demo-syslog-stream
 # The generator is standard-library Python and dfe-transform-elastic's image has none, so it runs here, pinned like the hadolint image above.
 DEMO_PYTHON_IMAGE := python:3.14-slim-trixie@sha256:cd89c30eda26ee911a4611b18680086e0ea42e6f5f8cbe653d07fa7958c9cec8
 
+# On a clone with no stack this is the whole path: make up, then the stream. A running stack is left as it is, and a profile with no dfe-transform-elastic is refused before anything starts. The stream runs under a bare python3: demo.py reads its Sources with tomllib and drives docker, make and git.
 .PHONY: demo
-demo: env-files ## Stream live firewall syslog through the running stack until `make demo-stop`, detected per line by dfe-transform-elastic and landed one table per vendor (DEMO_RATE, DEMO_PROTOCOL=tcp|udp; DEV=1 for a `make dev` stack). A second run replaces the stream
-	@$(UV) run --locked --script ./scripts/demo.py --container '$(DEMO_CONTAINER)' --generator '$(DEMO_GENERATOR)' --image '$(DEMO_PYTHON_IMAGE)' --protocol '$(DEMO_PROTOCOL)' --rate '$(DEMO_RATE)' $(if $(strip $(DEV)),--dev)
+demo: ## Start the stack when it is not running, then stream live firewall syslog through it until `make demo-stop`, detected per line by dfe-transform-elastic and landed one table per vendor (PROFILE=, VERSION=, DEMO_RATE, DEMO_PROTOCOL=tcp|udp; DEV=1 for a `make dev` stack). A second run replaces the stream
+	@python3 scripts/quickstart.py prepare demo $(QUICKSTART_ARGS) $(if $(strip $(DEV)),--dev)
+	@python3 scripts/quickstart.py running || { $(MAKE) --no-print-directory ci && python3 scripts/creds.py --write; }
+	@$(MAKE) --no-print-directory demo-run
+
+.PHONY: demo-run
+demo-run: env-files
+	@python3 ./scripts/demo.py --container '$(DEMO_CONTAINER)' --generator '$(DEMO_GENERATOR)' --image '$(DEMO_PYTHON_IMAGE)' --protocol '$(DEMO_PROTOCOL)' --rate '$(DEMO_RATE)' $(if $(strip $(DEV)),--dev)
 
 .PHONY: demo-stop
 demo-stop: ## Stop and remove the `make demo` stream

@@ -274,7 +274,7 @@ def test_a_sha256_digest_is_returned(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 def _fixed_descriptor(stdout: str, monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(_registry, "_require_oras", lambda: None)
+    monkeypatch.setattr(_registry, "oras_command", lambda: ["oras"])
     monkeypatch.setattr(
         _registry,
         "_run",
@@ -282,3 +282,49 @@ def _fixed_descriptor(stdout: str, monkeypatch: pytest.MonkeyPatch) -> None:
             args=cmd, returncode=0, stdout=stdout, stderr=""
         ),
     )
+
+
+@pytest.mark.parametrize(
+    ("on_path", "expected"),
+    [
+        pytest.param({"oras", "docker"}, ["oras"], id="oras_on_path_wins"),
+        pytest.param(
+            {"docker"},
+            ["docker", "run", "--rm", "--user"],
+            id="docker_runs_the_pinned_image",
+        ),
+    ],
+)
+def test_oras_runs_from_path_else_as_the_pinned_image(
+    monkeypatch: pytest.MonkeyPatch, on_path: set[str], expected: list[str]
+) -> None:
+    monkeypatch.setattr(
+        _registry.shutil, "which", lambda tool: "/bin/x" if tool in on_path else None
+    )
+
+    command = _registry.oras_command()
+
+    assert command[: len(expected)] == expected
+    assert (command[-1] == _registry.ORAS_IMAGE) == (command[0] == "docker")
+    assert "@sha256:" in _registry.ORAS_IMAGE
+
+
+def test_oras_pull_mounts_its_output_directory(
+    monkeypatch: pytest.MonkeyPatch, tmp_path
+) -> None:
+    monkeypatch.setattr(
+        _registry.shutil,
+        "which",
+        lambda tool: "/bin/docker" if tool == "docker" else None,
+    )
+
+    command = _registry.oras_command(mount=tmp_path)
+
+    assert f"{tmp_path}:{_registry.OUT_DIR}" in command
+
+
+def test_no_oras_and_no_docker_is_refused(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(_registry.shutil, "which", lambda tool: None)
+
+    with pytest.raises(_registry.RegistryError, match="neither `oras` nor `docker`"):
+        _registry.oras_command()

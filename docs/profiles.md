@@ -2,6 +2,8 @@
 
 This repo owns every profile in `service_profiles.yaml`. Nothing generates them.
 
+Pick one with `make up PROFILE=<profile>`, which writes it to `.env` as `DFE_PROFILE`. With none set, `make up` and `make demo` use `single-kafka` (`DEFAULT_PROFILE` in the Makefile). `make demo` needs a profile that runs dfe-transform-elastic, which is `single-grpc` or `single-kafka`.
+
 ## Which profile runs what
 
 | Profile        | Transport | dfe-archiver | dfe-loader | dfe-receiver | dfe-fetcher | dfe-transform-elastic | dfe-transform-vector | dfe-transform-vrl |

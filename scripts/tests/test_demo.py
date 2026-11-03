@@ -50,35 +50,34 @@ def test_the_committed_demo_names_an_agentless_intake_and_valid_tables() -> None
 @pytest.mark.parametrize(
     ("text", "message"),
     [
-        pytest.param("sources: [a]\n", "needs an `intake`", id="no_intake"),
+        pytest.param('sources = ["a"]\n', "needs an `intake`", id="no_intake"),
         pytest.param(
-            "intake: {source: x, transform: {engine: elastic}}\n",
+            '[intake]\nsource = "x"\n[intake.transform]\nengine = "elastic"\n',
             "non-empty `sources`",
             id="no_sources",
         ),
         pytest.param(
-            "intake: {source: x, transform: {engine: elastic}}\nsources: []\n",
+            'sources = []\n[intake]\nsource = "x"\n[intake.transform]\nengine = "elastic"\n',
             "non-empty `sources`",
             id="empty_sources",
         ),
         pytest.param(
-            "intake: {source: x, transform: {engine: elastic}}\nsources: ['']\n",
+            'sources = [""]\n[intake]\nsource = "x"\n[intake.transform]\nengine = "elastic"\n',
             "non-empty `sources`",
             id="blank_source",
         ),
         pytest.param(
-            "intake: {source: x}\nsources: [a]\n",
+            'sources = ["a"]\n[intake]\nsource = "x"\n',
             "needs a `transform`",
             id="no_transform",
         ),
-        pytest.param("intake: [\n", "not readable YAML", id="malformed"),
-        pytest.param("- a\n", "needs an `intake`", id="not_a_mapping"),
+        pytest.param("intake = [\n", "not readable TOML", id="malformed"),
     ],
 )
 def test_refuses_a_demo_file_it_cannot_run(
     tmp_path: Path, text: str, message: str
 ) -> None:
-    path = tmp_path / "demo.yaml"
+    path = tmp_path / "demo.toml"
     path.write_text(text, encoding="utf-8")
 
     with pytest.raises(demo.DemoError, match=message):

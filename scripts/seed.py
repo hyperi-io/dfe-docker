@@ -42,8 +42,6 @@ import typing
 from pathlib import Path
 from urllib.parse import quote
 
-import yaml
-
 # Bytecode for the repo modules imported below goes to .tmp/pycache, as it does under make
 sys.pycache_prefix = str(Path(__file__).resolve().parent.parent / ".tmp" / "pycache")
 
@@ -296,6 +294,9 @@ def _prompted_token(*, base: str, terminal: bool) -> str:
 
 def _read(*, path: Path) -> object:
     """Parse one seed file, which has to hold only values JSON can carry."""
+    # Imported here because scripts/demo.py imports this module and runs under a bare python3 with no PyYAML
+    import yaml
+
     try:
         content = yaml.safe_load(stream=path.read_text(encoding="utf-8"))
     except (OSError, yaml.YAMLError) as error:
