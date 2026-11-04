@@ -11,7 +11,7 @@ display_name: GuardDuty high severity findings
 cron: "*/5 * * * *"
 # A required label: the runner takes each detection's org from the matched row.
 customers:
-  - seed
+  - default
 rules:
   - aws-guardduty-high-severity
 global_source_table_name: dfe.aws-guardduty

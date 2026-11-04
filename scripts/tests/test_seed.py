@@ -583,13 +583,24 @@ class TestSeedSet:
         for name, body in _seeded(kind="accounts"):
             assert not (_plaintext_credentials(path=name, value=body)), name
 
-    def test_every_org_an_account_names_is_seeded(self) -> None:
+    def test_every_org_an_account_or_hunt_names_is_seeded(self) -> None:
         orgs = {name for name, _ in _seeded(kind="orgs")}
         for name, body in _seeded(kind="accounts"):
             assert body.get("org", "") in orgs | {""}, name
+        for name, body in _seeded(kind="hunts"):
+            assert set(body["customers"]) <= orgs, name
 
-    def test_the_accounts_target_creates_the_orgs_first(self) -> None:
-        assert seed.TARGETS["accounts"] == ("orgs", "accounts")
+    @pytest.mark.parametrize(
+        ("target", "expected"),
+        [
+            ("accounts", ("orgs", "accounts")),
+            ("hunts", ("orgs", "rules", "hunts")),
+        ],
+    )
+    def test_a_target_naming_orgs_creates_them_first(
+        self, target: str, expected: tuple[str, ...]
+    ) -> None:
+        assert seed.TARGETS[target] == expected
 
     def test_every_events_file_names_a_seeded_source(self) -> None:
         sources = {name for name, _ in _seeded(kind="sources")}
