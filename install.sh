@@ -9,6 +9,7 @@
 
 # POSIX sh, because `curl | sh` runs on a host with no python or make.
 # DFE_VERSION, DFE_PROFILE, DFE_DIR and DFE_RELEASE_URL (a file:// URL works) override the defaults below.
+# DFE_DATA_ROOT, DFE_BIND_SCOPE, DFE_EXTERNAL_ORIGIN, the *_EXTERNAL exposure flags, DFE_PROXY_TLS, DFE_NETWORK_SUBNET and DFE_PROXY_CERT_DIR are written to .env when set, and apply.sh acts on them.
 
 set -eu
 umask 022
@@ -117,33 +118,36 @@ done <install/secrets.list
 # dfe-engine writes env/<app>.custom.env here, as the group compose adds it to
 chmod g+ws env
 
+# The settings apply.sh reads, taken from the environment this run was started with, so `DFE_UI_EXTERNAL=false sh install.sh` is kept for the next ./apply.sh too
+for key in DFE_DATA_ROOT DFE_BIND_SCOPE DFE_EXTERNAL_ORIGIN DFE_UI_EXTERNAL DFE_ENGINE_API_EXTERNAL DFE_INFRA_UIS_EXTERNAL DFE_KAFBAT_UI_EXTERNAL DFE_HYPERDX_UI_EXTERNAL DFE_PROXY_TLS DFE_NETWORK_SUBNET DFE_PROXY_CERT_DIR; do
+    eval "value=\${$key:-}"
+    [ -n "$value" ] || continue
+    case $value in
+        *\|* | *\&* | *\\* | *'
+'*) die "$key holds a character install.sh cannot write into .env: $value" ;;
+    esac
+    set_key .env "$key" "$value"
+done
+
 {
     printf '\n## Written by install.sh\n'
     cat install/stack.env
-    cat "install/profiles/$DFE_PROFILE.env"
     printf 'DFE_PROFILE=%s\n' "$DFE_PROFILE"
     printf 'DFE_DEV_UID=%s\nDFE_DEV_GID=%s\n' "$(id -u)" "$(id -g)"
-    printf 'DFE_UI_BIND_HOST=127.0.0.1\n'
 } >>.env
-# shellcheck disable=SC1090
-. "./install/profiles/$DFE_PROFILE.conf"
-# Compose reads these two from .env, so a plain `docker compose` in ./dfe runs this stack
-FILES=docker-compose.yml
-if grep -q '^DFE_OTEL_RESOLVED=true$' "install/profiles/$DFE_PROFILE.env"; then
-    FILES=$FILES:compose/container-logs.yml
-fi
-printf 'COMPOSE_FILE=%s\nCOMPOSE_PROFILES=%s\n' "$FILES" "$PROFILES" >>.env
+# Compose reads COMPOSE_FILE and COMPOSE_PROFILES from .env, so a plain `docker compose` in ./dfe runs this stack. apply.sh writes them
+chmod +x apply.sh
+sh ./apply.sh --no-start
 
 # From here the directory holds the compose project, which a failed start leaves for `docker compose down`
 MADE=
-say "Starting the $DFE_PROFILE stack, which pulls its images first"
-# SERVICES is a list of service names, so it has to split
-# shellcheck disable=SC2086
-docker compose up -d --wait --wait-timeout 900 $SERVICES
+sh ./apply.sh
 
 ADMIN=$(sed -n 's/^DFE_ENGINE_AUTH_LOCAL_ADMIN_PASSWORD=//p' env/engine.env | head -n 1)
 say ""
-say "DFE is up. The console is at http://localhost:3000"
+ORIGIN=$(sed -n 's/^DFE_EXTERNAL_ORIGIN=//p' .env | tail -n 1)
+PORT=$(sed -n 's/^DFE_UI_PORT=//p' .env | tail -n 1)
+say "DFE is up. The console is at ${ORIGIN:-http://localhost}:${PORT:-3000}"
 say "  login     admin"
 if [ -t 1 ]; then
     say "  password  $ADMIN"

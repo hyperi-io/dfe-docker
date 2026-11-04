@@ -584,6 +584,11 @@ def _parse_args(argv: Sequence[str]) -> argparse.Namespace:
         "collector reports as cores deployed. It asks docker compose, so only the "
         "goals that start services pass it",
     )
+    parser.add_argument(
+        "--usage-placeholder",
+        action="store_true",
+        help="with --usage, mark each unlimited service with a placeholder instead of this docker host's cores, as a release bundle does",
+    )
     return parser.parse_args(list(argv))
 
 
@@ -787,7 +792,12 @@ def main(argv: Sequence[str] = ()) -> int:
         if args.usage and footprint["otel"]:
             fragment = instances.COMPOSE_INSTANCES_FILE if instance_services else None
             lines += usage_cores.profile_lines(
-                fragment=fragment, profiles=profiles, services=service_list
+                fragment=fragment,
+                profiles=profiles,
+                services=service_list,
+                host=(usage_cores.DEFAULT_NODE, usage_cores.UNLIMITED_PLACEHOLDER)
+                if args.usage_placeholder
+                else None,
             )
 
         # What the engine is told about this tier, each line emitted unconditionally and empty where it does not apply, so the included file settles. .env may name another broker and move the content volume's mount
