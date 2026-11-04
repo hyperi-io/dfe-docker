@@ -416,7 +416,9 @@ services:
       DFE_ENGINE_ENV: ${DFE_ENGINE_ENV:-production}
       DFE_ENGINE_GITOPS_ENABLED: ${DFE_ENGINE_GITOPS_ENABLED:-true}
       DFE_ENGINE_GITOPS_LOCAL_PATH: /app/config/deploy-repo
-      DFE_ENGINE_GITOPS_MODE: solo
+      DFE_ENGINE_GITOPS_MODE: ${DFE_ENGINE_GITOPS_MODE:-solo}
+      DFE_ENGINE_HUNTS_DIR: /app/config/deploy-repo/config/hunts
+      DFE_ENGINE_HUNTS_RULES_DIR: /app/config/deploy-repo/config/rules
       DFE_ENGINE_HYPERDX_BASE_URL: ${DFE_HYPERDX_RESOLVED_BASE_URL:-}
       DFE_ENGINE_HYPERDX_ENABLED: ${DFE_HYPERDX_RESOLVED:-false}
       DFE_ENGINE_KAFKA_BOOTSTRAP_SERVERS: ${DFE_KAFKA_BOOTSTRAP_SERVERS:-}
@@ -500,11 +502,21 @@ services:
       DFE_ENGINE_ENV: ${DFE_ENGINE_ENV:-production}
       DFE_ENGINE_HUNTS_DIR: /app/config/deploy-repo/config/hunts
       DFE_ENGINE_HUNTS_RULES_DIR: /app/config/deploy-repo/config/rules
-      DFE_ENGINE_SECRETS_PATH: /app/config/.secrets
       OTEL_EXPORTER_OTLP_ENDPOINT: ${DFE_OTEL_EXPORTER_ENDPOINT:-}
       OTEL_SERVICE_NAME: dfe-hunt-runner
     volumes:
-      - dfe-engine-config:/app/config:ro
+      - type: volume
+        source: dfe-engine-config
+        target: /app/config/alert-destinations
+        read_only: true
+        volume:
+          subpath: alert-destinations
+      - type: volume
+        source: dfe-engine-config
+        target: /app/config/deploy-repo/config
+        read_only: true
+        volume:
+          subpath: deploy-repo/config
     depends_on:
       clickhouse:
         condition: service_healthy
