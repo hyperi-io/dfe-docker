@@ -207,8 +207,8 @@ HyperDX is one UI across two origins:
 | Host port | Proxy | Upstream |
 |---|---|---|
 | 8081 | oauth2-proxy-kafbat | kafka-ui |
-| 8090 | oauth2-proxy-hyperdx | HyperDX app |
-| 8000 | oauth2-proxy-hyperdx-api | HyperDX API, an operator surface |
+| 8090 | oauth2-proxy-hyperdx | HyperDX app. Gates page access only, as HyperDX reads the engine token itself |
+| 8000 | oauth2-proxy-hyperdx-api | HyperDX API, an operator surface. `OAUTH2_PROXY_PASS_HOST_HEADER` passes HyperDX's CORS headers through untouched |
 
 They take those ports over and the UIs stop publishing their own, so nothing
 moves for anyone using them. All three share one cookie secret, and cookies are
@@ -396,6 +396,7 @@ These named volumes hold all durable state. Every path an image declares a VOLUM
 | `fetcher-cursors` | dfe-fetcher cursors (`/var/lib/dfe-fetcher`), one directory per fetcher service |
 | `transform-elastic-geoip` | dfe-transform-elastic's GeoIP databases (`/var/lib/dfe/geoip`), downloaded on first start to a volume because the image root is read-only |
 | `dfe-engine-config` / `dfe-engine-schemas` | Engine config and schemas, seeded from the engine image on first run |
+| `dfe-app-config` | What the engine renders each app's config into, one directory per app. Its own volume because `dfe-engine-config` also holds the JWT signing key and the deploy repo, which no data-plane container should read |
 | `hyperdx-documentdb-data` | HyperDX metadata store, DocumentDB's PostgreSQL cluster (`/data`) |
 | `hyperdx-documentdb-tls` | The CA and gateway certificate `hyperdx-documentdb-tls` mints, renewed when it nears expiry |
 

@@ -381,7 +381,6 @@ services:
   # dfe-engine
   # ============================================================
 
-  # DFE_ENGINE_VERSION also pins the dfe-schemas it carries
   dfe-engine:
     image: ${IMAGE_REGISTRY:-ghcr.io/hyperi-io}/dfe-engine:${DFE_ENGINE_VERSION:?run 'make stack VERSION=X.Y.Z' to pin DFE_ENGINE_VERSION}
     container_name: ${DFE_CONTAINER_PREFIX:-}dfe-engine
@@ -545,7 +544,6 @@ services:
   # dfe-proxy
   # ============================================================
 
-  # Chains in OIDC filters when dfe-engine is the provider
   dfe-proxy:
     image: envoyproxy/envoy:${DFE_PROXY_VERSION:?run 'make stack VERSION=X.Y.Z' to pin DFE_PROXY_VERSION}
     container_name: ${DFE_CONTAINER_PREFIX:-}dfe-proxy
@@ -694,15 +692,13 @@ services:
       - ./config/proxy/hyperdx.yaml:/etc/envoy/envoy.yaml:ro
 
   # ============================================================
-  # oauth2-proxy: OIDC and group check in front of the infra UIs
+  # oauth2-proxy
   # ============================================================
 
-  # See docs/operating.md#gating-the-infra-uis-with-oidc
   oauth2-proxy-kafbat:
     image: quay.io/oauth2-proxy/oauth2-proxy:${DFE_OAUTH2_PROXY_VERSION:-v7.15.5@sha256:8498b0d0ef0a7b29686414000a08aee467f02d0299c9ed1e006a8f33fc017916}
     container_name: ${DFE_CONTAINER_PREFIX:-}dfe-oauth2-proxy-kafbat
     extends: {file: compose/oauth2-proxy.yml, service: oauth2-proxy}
-    # kafbat's port, which make unpublishes for this gate
     ports:
       - ${DFE_UI_BIND_HOST:-127.0.0.1}:${KAFBAT_PORT:-8081}:4180
     environment:
@@ -713,7 +709,6 @@ services:
         condition: service_started
         required: false
 
-  # Gates page access only, HyperDX reads the engine token
   oauth2-proxy-hyperdx:
     image: quay.io/oauth2-proxy/oauth2-proxy:${DFE_OAUTH2_PROXY_VERSION:-v7.15.5@sha256:8498b0d0ef0a7b29686414000a08aee467f02d0299c9ed1e006a8f33fc017916}
     container_name: ${DFE_CONTAINER_PREFIX:-}dfe-oauth2-proxy-hyperdx
@@ -728,7 +723,6 @@ services:
         condition: service_healthy
         required: false
 
-  # The API origin, covered by the app's sign-in cookie
   oauth2-proxy-hyperdx-api:
     image: quay.io/oauth2-proxy/oauth2-proxy:${DFE_OAUTH2_PROXY_VERSION:-v7.15.5@sha256:8498b0d0ef0a7b29686414000a08aee467f02d0299c9ed1e006a8f33fc017916}
     container_name: ${DFE_CONTAINER_PREFIX:-}dfe-oauth2-proxy-hyperdx-api
@@ -736,7 +730,6 @@ services:
     ports:
       - ${DFE_UI_BIND_HOST:-127.0.0.1}:${DFE_HYPERDX_API_PORT:-8000}:4180
     environment:
-      # Passes HyperDX's CORS headers through untouched
       OAUTH2_PROXY_PASS_HOST_HEADER: "true"
       OAUTH2_PROXY_REDIRECT_URL: ${DFE_OAUTH2_PROXY_EXTERNAL_ORIGIN:-${DFE_EXTERNAL_ORIGIN:-http://localhost}}:${DFE_HYPERDX_API_PORT:-8000}/oauth2/callback
       OAUTH2_PROXY_UPSTREAMS: http://hyperdx:8000
@@ -748,7 +741,6 @@ services:
 volumes:
   archiver-data:
   clickhouse-data:
-  # Apart from dfe-engine-config and its JWT key
   dfe-app-config:
   dfe-engine-config:
   dfe-engine-content:
