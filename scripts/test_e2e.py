@@ -703,22 +703,6 @@ def resolve_services_profile(profile_name, otel=None):
 
 
 # ------------------------------------------------------------------------------
-# Parse Compose Profiles
-# - Reads docker-compose.yml and builds a mapping of profiles to services
-# ------------------------------------------------------------------------------
-def parse_compose_profiles():
-    compose_path = PROJECT_DIR / "docker-compose.yml"
-    with open(compose_path, encoding="utf-8") as compose_file:
-        compose_data = yaml.safe_load(compose_file)
-
-    profile_map = {}
-    for service_name, service_data in compose_data.get("services", {}).items():
-        for profile in service_data.get("profiles", []):
-            profile_map.setdefault(profile, []).append(service_name)
-    return profile_map
-
-
-# ------------------------------------------------------------------------------
 # Parse Compose Services
 # - Returns the list of every service defined in docker-compose.yml
 # ------------------------------------------------------------------------------
@@ -1072,12 +1056,8 @@ def stack_is_up():
 # - Stops the Docker stack
 # ------------------------------------------------------------------------------
 def stack_down(keep_services=None):
-    base_cmd = ["docker", "compose"]
-
-    profiles = parse_compose_profiles()
-    profile_flags = []
-    for profile in profiles:
-        profile_flags += ["--profile", profile]
+    # `down` skips a service whose profile is off, and the apps inherit theirs through `extends`
+    base_cmd = ["docker", "compose", "--profile", "*"]
 
     if keep_services:
         all_services = set(parse_compose_services())
@@ -1098,13 +1078,13 @@ def stack_down(keep_services=None):
         else:
             keep_services_str = keep_services[0]
         LOGGER.info(f"Stopping services (keeping {keep_services_str})...")
-        stop_args = base_cmd + profile_flags + ["stop"] + stop_services
+        stop_args = base_cmd + ["stop"] + stop_services
         run_cmd(stop_args, capture=not (LOG_LEVEL == "DEBUG"))
-        rm_args = base_cmd + profile_flags + ["rm", "-f"] + stop_services
+        rm_args = base_cmd + ["rm", "-f"] + stop_services
         run_cmd(rm_args, capture=not (LOG_LEVEL == "DEBUG"))
     else:
         LOGGER.info("Stopping stack...")
-        down_args = base_cmd + profile_flags + ["down", "--remove-orphans"]
+        down_args = base_cmd + ["down", "--remove-orphans"]
         run_cmd(down_args, capture=not (LOG_LEVEL == "DEBUG"))
 
 
@@ -1113,14 +1093,7 @@ def stack_down(keep_services=None):
 # - Dumps recent logs from all containers in the stack for debugging purposes
 # ------------------------------------------------------------------------------
 def dump_logs():
-    base_cmd = ["docker", "compose"]
-
-    profiles = parse_compose_profiles()
-    profile_flags = []
-    for profile in profiles:
-        profile_flags += ["--profile", profile]
-
-    logs_args = base_cmd + profile_flags + ["logs", "--tail=50"]
+    logs_args = ["docker", "compose", "--profile", "*", "logs", "--tail=50"]
 
     if LOG_LEVEL == "DEBUG":
         print("--------------- CONTAINER LOGS (50 TAIL LOGS) --------------")

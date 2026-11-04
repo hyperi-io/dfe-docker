@@ -70,6 +70,27 @@ def test_a_leftover_suite_project_is_removed_before_any_test(
     assert steps.index(leftover) < steps.index("test") < steps.index("put_back")
 
 
+def test_stack_down_reaches_the_profiles_services_inherit(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def _run_cmd(args, capture=False, cwd=None):
+        commands.append(list(args))
+        return subprocess.CompletedProcess(
+            args=args, returncode=0, stderr="", stdout=""
+        )
+
+    commands = []
+    monkeypatch.setattr(name="run_cmd", target=test_e2e, value=_run_cmd)
+
+    test_e2e.stack_down()
+    test_e2e.stack_down(keep_services=["clickhouse"])
+
+    assert [command[:4] for command in commands] == [
+        ["docker", "compose", "--profile", "*"]
+    ] * 3
+    assert [command[4] for command in commands] == ["down", "stop", "rm"]
+
+
 def test_isolation_keeps_a_rotated_password_out_of_dotenv_until_it_ends(
     monkeypatch: pytest.MonkeyPatch, tmp_path
 ) -> None:
