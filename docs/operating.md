@@ -397,6 +397,8 @@ These named volumes hold all durable state. Every path an image declares a VOLUM
 | `transform-elastic-geoip` | dfe-transform-elastic's GeoIP databases (`/var/lib/dfe/geoip`), downloaded on first start to a volume because the image root is read-only |
 | `dfe-engine-config` / `dfe-engine-schemas` | Engine config and schemas, seeded from the engine image on first run |
 | `dfe-app-config` | What the engine renders each app's config into, one directory per app. Its own volume because `dfe-engine-config` also holds the JWT signing key and the deploy repo, which no data-plane container should read |
+| `dfe-engine-content` | Each app's config schema, which the `contract-<app>` one-shots write for the engine to read (`/app/content`) |
+| `hyperdx-dashboards` | The dashboards the `dfe-dashboards` one-shot generates from the engine image for HyperDX to read (`/etc/hyperdx/dashboards`) |
 | `hyperdx-documentdb-data` | HyperDX metadata store, DocumentDB's PostgreSQL cluster (`/data`) |
 | `hyperdx-documentdb-tls` | The CA and gateway certificate `hyperdx-documentdb-tls` mints, renewed when it nears expiry |
 
