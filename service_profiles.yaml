@@ -38,7 +38,7 @@
 # and single adds the per-source apps to slim, plus the archiver on Kafka.
 # resolve_profile.py refuses any other name.
 
-active_profile: slim-grpc
+active_profile: single-kafka
 
 profiles:
   slim-grpc:
