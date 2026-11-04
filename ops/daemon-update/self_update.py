@@ -1,80 +1,27 @@
 #!/usr/bin/env python3
 #  Project:      dfe-docker
 #  File:         ops/daemon-update/self_update.py
-#  Purpose:      Keep a dfe-docker VM current using OUR updater (make stack + ci)
+#  Purpose:      Move a dfe-docker VM to the newest published stack when one ships
 #  Language:     Python
 #
 #  License:      BUSL-1.1
 #  Copyright:    (c) 2026 HYPERI PTY LIMITED
 
-"""Daemon-driven self-update for a dfe-docker single-VM deployment.
-
-The stack's own updater (`make stack VERSION=X.Y.Z` -> pin from the signed OCI
-stack-manifest -> `make ci` -> pull + up -d) is EXPLICIT-VERSION by design: it
-hard-fails rather than ever pull `latest`. So a "stay current" daemon cannot just
-call it - it must first DISCOVER the newest certified stack version, compare it
-to what this VM last applied, and only run the updater when there is something
-new. That is this script; a systemd timer runs it on a schedule.
-
-Flow:
-  1. List tags on the OCI stack-manifest repo (`oras repo tags`).
-  2. Pick the highest STABLE semver (pre-releases skipped unless
-     DFE_UPDATE_ALLOW_PRERELEASE=1).
-  3. Compare to the last-applied version recorded in the state file.
-  4. If newer (or nothing applied yet): fast-forward the checkout, then
-     `make init`, `make stack VERSION=<new>` and `make ci`, and record the
-     version on success.
-
-A target that ranks BELOW the applied version is refused at step 4 and logged. The
-newest PUBLISHED manifest can be older than what a VM runs -- a box installed from
-a cut branch is exactly that -- and applying it would roll the deployment
-backwards.
-
-A stack version is images PLUS the compose that runs them, so step 4 refreshes
-the checkout first. Pinning new images against an old docker-compose.yml is a
-half-update that reports success: the 2.2.0-rc.2 engine, for one, needs a
-DFE_ENV declaration and a healthcheck path that older compose files do not have,
-so the schema authority restart-loops while the timer records a clean run. Set
-DFE_UPDATE_SKIP_GIT_PULL=1 on a box whose checkout is managed some other way.
-
-The same goes for .env and env/<service>.env. A version can add a generated secret. The power-on self test fails while one is still at its built-in default, so `make init` tops up each existing file that holds one before the bring-up. It never overwrites a value.
-
-DFE_UPDATE_WIPE_STATE=1 inserts `make clean` between the pin and the bring-up, so
-a DISPOSABLE box re-initialises from empty volumes on every new version and the
-first-start paths get exercised for real. It deletes ClickHouse, Kafka, the DLQ
-spool and the engine's config volume -- sources, orgs and local accounts included,
-none of which the image can reseed. Leave it unset anywhere the data matters.
-
-A tick holds the checkout's stack lock (.dfe-stack.lock) from discovery to the
-end of the apply, the lock `make proof` holds for its whole run. When a proof has
-it the tick logs that and exits 0 without touching anything: `make ci` would take
-down the stack the proof is testing, and the next tick retries. --dry-run changes
-nothing, so it takes no lock.
-
-The pull replaces this script mid-run; Python has already loaded it, so the
-current tick finishes on the old code and the next uses the new.
-
-Idempotent: when the VM is already on the newest version it only fast-forwards the
-checkout, so a Makefile or ops change reaches the box without waiting for the next
-stack release. Fails loudly (non-zero) so systemd marks the unit failed and the next
-timer tick retries.
-"""
-
-from __future__ import annotations
+"""Move a dfe-docker VM to the newest published stack when one ships."""
 
 import argparse
 import os
 import subprocess
 import sys
+from collections.abc import Sequence
 from pathlib import Path
 
-# The tag discovery is shared with `make stack VERSION=latest`, so it lives in
-# the checkout's scripts/ and is imported from there. `_sort_key` comes with it so
-# the floor below ranks versions the same way the discovery does.
-sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "scripts"))
+_REPO_ROOT = Path(__file__).resolve().parents[2]
 
-# Bytecode for the repo modules imported below goes to .tmp/pycache, as it does under make
-sys.pycache_prefix = str(Path(__file__).resolve().parents[2] / ".tmp" / "pycache")
+# The tag discovery and the stack lock live in the checkout's scripts/
+sys.path.insert(0, str(_REPO_ROOT / "scripts"))
+# Bytecode goes to .tmp/pycache, as it does under make
+sys.pycache_prefix = str(_REPO_ROOT / ".tmp" / "pycache")
 
 import _stack_lock  # noqa: E402
 from _registry import (  # noqa: E402
@@ -84,43 +31,59 @@ from _registry import (  # noqa: E402
     manifest_repo,
 )
 
-# Records the version this VM last successfully applied. Gitignored; lives beside
-# the checkout so it survives across timer runs.
+# Gitignored, so it survives a fast-forward of the checkout
 STATE_FILENAME = ".dfe-stack-applied"
+_STATUS_ARGS = ("status", "--porcelain", "--untracked-files=no")
+_TRUE_VALUES = {"1", "true", "yes"}
 
 
 class UpdateError(Exception):
     """Raised when discovery or the update run fails."""
 
 
-def _log(message: str) -> None:
-    print(f"[dfe-docker-update] {message}", flush=True)
+def _applied_version(*, state_path: Path) -> str | None:
+    """Return the version this VM last applied, None when it has applied nothing."""
+    if not (state_path.is_file()):
+        return None
+    return state_path.read_text(encoding="utf-8", errors="replace").strip() or None
 
 
-def _run(cmd: list[str], cwd: Path | None = None) -> subprocess.CompletedProcess:
+def _apply(*, repo_dir: Path, version: str) -> None:
+    """Refresh the checkout, then init, pin and start the version.
+
+    `make clean` follows the pin because compose cannot run `down -v` on an unpinned tree, and follows the refresh so the compose file naming the volumes is the new version's own.
+    """
+    _refresh_checkout(repo_dir=repo_dir)
+    targets = [["init"], ["stack", f"VERSION={version}"]]
+    if _flag_set(name="DFE_UPDATE_WIPE_STATE"):
+        _log(message="DFE_UPDATE_WIPE_STATE is set, deleting every volume first")
+        targets.append(["clean"])
+    targets.append(["ci"])
+    for target in targets:
+        _make(repo_dir=repo_dir, target=target)
+
+
+def _flag_set(*, name: str) -> bool:
+    """Return whether an environment flag is switched on."""
+    return os.environ.get(name, "").strip() in _TRUE_VALUES
+
+
+def _git(*, args: Sequence[str], repo_dir: Path) -> subprocess.CompletedProcess:
+    """Run git in the checkout and capture what it prints."""
     return subprocess.run(
-        cmd,
-        cwd=str(cwd) if cwd else None,
+        ["git", "-C", str(repo_dir), *args],
         capture_output=True,
-        text=True,
+        check=False,
         encoding="utf-8",
         errors="replace",
-        check=False,
+        text=True,
     )
 
 
-def _applied_version(state_path: Path) -> str | None:
-    if not state_path.is_file():
-        return None
-    value = state_path.read_text(encoding="utf-8", errors="replace").strip()
-    return value or None
-
-
 def _is_downgrade(*, applied: str, target: str) -> bool:
-    """Whether the published target ranks BELOW the version this VM already runs.
+    """Return whether the target ranks below the applied version.
 
-    A pair that cannot be ranked -- a hand-written state file, a tag that is not
-    semver -- is not a downgrade: there is no ordering to refuse on.
+    A pair that cannot be ranked, such as a hand-written state file, is not a downgrade because there is no order to refuse on.
     """
     try:
         return _sort_key(version=target) < _sort_key(version=applied)
@@ -128,201 +91,120 @@ def _is_downgrade(*, applied: str, target: str) -> bool:
         return False
 
 
-def _record_applied(state_path: Path, version: str) -> None:
-    state_path.write_text(version + "\n", encoding="utf-8", newline="\n")
+def _log(*, message: str) -> None:
+    """Write one line to the journal."""
+    print(f"[dfe-docker-update] {message}", flush=True)
 
 
-def _git(repo_dir: Path, *args: str) -> subprocess.CompletedProcess:
-    return _run(["git", "-C", str(repo_dir), *args])
+def _make(*, repo_dir: Path, target: Sequence[str]) -> None:
+    """Run one make target with its output going straight to the journal."""
+    command = " ".join(("make", *target))
+    _log(message=f"running: {command}")
+    result = subprocess.run(["make", *target], check=False, cwd=repo_dir)
+    if result.returncode != 0:
+        raise UpdateError(f"{command!r} failed (exit {result.returncode})")
 
 
-def _checkout_status(repo_dir: Path) -> str | None:
-    """Return why the checkout cannot be fast-forwarded, or None when it can."""
-    if not (repo_dir / ".git").exists():
-        return "not a git checkout"
-    if os.environ.get("DFE_UPDATE_SKIP_GIT_PULL", "").strip() in {"1", "true", "yes"}:
-        return "DFE_UPDATE_SKIP_GIT_PULL is set"
-    return None
-
-
-def _refresh_checkout(repo_dir: Path) -> None:
-    """Fast-forward the checkout so the compose file matches the pins about to land.
-
-    Refuses on a dirty tree rather than discarding an operator's edit. A deployed
-    box should be clean: .env, env/, deployment.yaml and the applied-state file
-    are all gitignored.
-    """
-    skip = _checkout_status(repo_dir)
-    if skip is not None:
-        _log(f"checkout refresh skipped ({skip}) -- compose may lag the pins")
+def _refresh_checkout(*, repo_dir: Path) -> None:
+    """Fast-forward the checkout, refusing uncommitted changes to tracked files."""
+    if not ((repo_dir / ".git").exists()):
+        _log(message="no .git, so the checkout stays put and compose may lag the pins")
         return
-
-    dirty = _git(repo_dir, "status", "--porcelain", "--untracked-files=no")
+    dirty = _git(args=_STATUS_ARGS, repo_dir=repo_dir)
     if dirty.returncode != 0:
-        raise UpdateError(f"`git status` failed: {dirty.stderr.strip()}")
+        raise UpdateError(f"git status failed: {dirty.stderr.strip()!r}")
     if dirty.stdout.strip():
         raise UpdateError(
-            "the checkout has uncommitted changes to tracked files -- refusing to "
-            f"pull over them:\n{dirty.stdout.strip()}"
+            f"the checkout has uncommitted changes to tracked files: {dirty.stdout.strip()!r}"
         )
-
-    _log("running: git pull --ff-only")
-    out = _git(repo_dir, "pull", "--ff-only")
-    sys.stdout.write(out.stdout)
-    if out.returncode != 0:
-        detail = out.stderr.strip() or out.stdout.strip()
+    _log(message="running: git pull --ff-only")
+    pull = _git(args=("pull", "--ff-only"), repo_dir=repo_dir)
+    if pull.returncode != 0:
+        detail = pull.stderr.strip() or pull.stdout.strip()
         raise UpdateError(
-            f"`git pull --ff-only` failed: {detail} -- the checkout needs a "
-            "credential for the remote, or has diverged from it"
+            f"git pull --ff-only failed, the checkout needs a credential for the remote or has diverged from it: {detail!r}"
         )
+    _log(message=pull.stdout.strip())
 
 
-def _refresh_plan(repo_dir: Path) -> str:
-    """What `_refresh_checkout` would do, for --dry-run. Touches nothing."""
-    skip = _checkout_status(repo_dir)
-    if skip is not None:
-        return f"be SKIPPED ({skip}) -- compose may lag the pins"
-    dirty = _git(repo_dir, "status", "--porcelain", "--untracked-files=no")
+def _refresh_plan(*, repo_dir: Path) -> str:
+    """Return what a refresh would do, for --dry-run."""
+    if not ((repo_dir / ".git").exists()):
+        return "be skipped, there is no .git, so compose may lag the pins"
+    dirty = _git(args=_STATUS_ARGS, repo_dir=repo_dir)
     if dirty.returncode != 0:
-        return f"FAIL -- `git status` errored: {dirty.stderr.strip()}"
+        return f"fail, git status errored: {dirty.stderr.strip()!r}"
     if dirty.stdout.strip():
-        return "REFUSE -- the checkout has uncommitted changes to tracked files"
-    return "run `git pull --ff-only`"
+        return "refuse, the checkout has uncommitted changes to tracked files"
+    return "run git pull --ff-only"
 
 
-def _wipe_state_enabled() -> bool:
-    """Whether this box destroys its data on every version change.
-
-    OFF by default: `make clean` deletes ClickHouse, Kafka, the DLQ spool and the
-    engine's config volume, and none of that is recoverable. Only a box whose data
-    is expendable should set it.
-    """
-    return os.environ.get("DFE_UPDATE_WIPE_STATE", "").strip() in {"1", "true", "yes"}
-
-
-def _apply(repo_dir: Path, version: str) -> None:
-    """Run OUR updater: refresh the checkout, top up .env, pin the version, then pull + restart.
-
-    With DFE_UPDATE_WIPE_STATE set, `make clean` runs between the pin and the
-    bring-up so the new version initialises from nothing -- the disposable-VM
-    workflow, where the point is to exercise the first-start paths rather than to
-    keep data. It sits inside the version-change branch its caller already guards,
-    so a wipe costs one new stack version, not one timer tick.
-
-    The slot is not arbitrary. It follows `make stack` because docker-compose.yml
-    declares its image pins `:?`-required and compose resolves those before it runs
-    anything, so an unpinned tree aborts `down -v` exactly as it aborts `up`. And it
-    follows the checkout refresh, so the compose file naming the volume set is the
-    one shipping with the version being installed.
-    """
-    _refresh_checkout(repo_dir)
-    commands = [["make", "init"], ["make", "stack", f"VERSION={version}"]]
-    if _wipe_state_enabled():
-        _log("DFE_UPDATE_WIPE_STATE is set -- deleting every volume before bring-up")
-        commands.append(["make", "clean"])
-    commands.append(["make", "ci"])
-    for cmd in commands:
-        _log(f"running: {' '.join(cmd)}")
-        out = _run(cmd, cwd=repo_dir)
-        sys.stdout.write(out.stdout)
-        sys.stderr.write(out.stderr)
-        if out.returncode != 0:
-            raise UpdateError(f"`{' '.join(cmd)}` failed (exit {out.returncode})")
-
-
-def _tick(
-    *, repo_dir: Path, state_path: Path, allow_prerelease: bool, dry_run: bool
-) -> int:
+def _tick(*, dry_run: bool, repo_dir: Path) -> None:
     """Discover the newest stack version and apply it when it is newer."""
+    allow_prerelease = _flag_set(name="DFE_UPDATE_ALLOW_PRERELEASE")
     repo = manifest_repo()
     latest = latest_tag(
         prereleases="include" if allow_prerelease else "exclude", repo=repo
     )
-    applied = _applied_version(state_path)
-    _log(f"repo={repo} latest={latest} applied={applied or '(none)'}")
+    state_path = repo_dir / STATE_FILENAME
+    applied = _applied_version(state_path=state_path)
+    _log(message=f"repo={repo!r} latest={latest!r} applied={applied!r}")
 
     if applied == latest:
         if dry_run:
-            _log(
-                f"dry-run: already current; checkout refresh would {_refresh_plan(repo_dir)}"
-            )
-            return 0
-        _refresh_checkout(repo_dir)
-        _log("already current - checkout refreshed, nothing else to do")
-        return 0
+            plan = _refresh_plan(repo_dir=repo_dir)
+            _log(message=f"dry-run: already current, checkout refresh would {plan}")
+            return
+        _refresh_checkout(repo_dir=repo_dir)
+        _log(message="already current, checkout refreshed")
+        return
     if applied and _is_downgrade(applied=applied, target=latest):
         _log(
-            f"refusing {applied} -> {latest}: the newest published manifest is "
-            "older than the version this VM has applied, so the update would "
-            "roll it backwards"
+            message=f"refusing {applied!r} -> {latest!r}: the newest published stack is older than the one this VM applied"
         )
-        return 0
+        return
     if dry_run:
-        _log(f"dry-run: would update {applied or '(none)'} -> {latest}")
-        _log(f"dry-run: checkout refresh would {_refresh_plan(repo_dir)}")
-        if _wipe_state_enabled():
+        _log(message=f"dry-run: would update {applied!r} -> {latest!r}")
+        _log(
+            message=f"dry-run: checkout refresh would {_refresh_plan(repo_dir=repo_dir)}"
+        )
+        if _flag_set(name="DFE_UPDATE_WIPE_STATE"):
             _log(
-                "dry-run: DFE_UPDATE_WIPE_STATE is set -- EVERY volume would be "
-                "deleted (ClickHouse, Kafka, DLQ spool, engine config)"
+                message="dry-run: DFE_UPDATE_WIPE_STATE is set, every volume would be deleted"
             )
-        return 0
+        return
 
-    _log(f"updating {applied or '(none)'} -> {latest}")
-    _apply(repo_dir, latest)
-    _record_applied(state_path, latest)
-    _log(f"updated to {latest}")
-    return 0
+    _log(message=f"updating {applied!r} -> {latest!r}")
+    _apply(repo_dir=repo_dir, version=latest)
+    state_path.write_text(f"{latest}\n", encoding="utf-8", newline="\n")
+    _log(message=f"updated to {latest!r}")
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description=__doc__.split("\n")[0].strip())
-    parser.add_argument(
-        "--repo-dir",
-        type=Path,
-        default=Path(os.environ.get("DFE_DOCKER_DIR", ".")).expanduser(),
-        help="the dfe-docker checkout to operate on (default: $DFE_DOCKER_DIR or cwd)",
-    )
+    parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
         "--dry-run",
         action="store_true",
-        help="report the latest vs applied version and exit without updating",
+        help="report the latest and applied versions and exit without updating",
     )
     args = parser.parse_args()
 
-    allow_prerelease = os.environ.get("DFE_UPDATE_ALLOW_PRERELEASE", "").strip() in {
-        "1",
-        "true",
-        "yes",
-    }
-    repo_dir = args.repo_dir.resolve()
-    state_path = repo_dir / STATE_FILENAME
-
     try:
-        if not (repo_dir / "Makefile").is_file():
-            raise UpdateError(f"{repo_dir} is not a dfe-docker checkout (no Makefile)")
+        # A dry run changes nothing, so it takes no lock
         if args.dry_run:
-            return _tick(
-                repo_dir=repo_dir,
-                state_path=state_path,
-                allow_prerelease=allow_prerelease,
-                dry_run=True,
-            )
-        with _stack_lock.stack_lock(directory=repo_dir) as held:
-            if not held:
+            _tick(dry_run=True, repo_dir=_REPO_ROOT)
+            return 0
+        with _stack_lock.stack_lock(directory=_REPO_ROOT) as held:
+            if not (held):
                 _log(
-                    f"skipping this tick: a proof or another update holds "
-                    f"{_stack_lock.LOCK_FILENAME}; the next tick retries"
+                    message=f"skipping this tick: a proof or another update holds {_stack_lock.LOCK_FILENAME!r}, the next tick retries"
                 )
                 return 0
-            return _tick(
-                repo_dir=repo_dir,
-                state_path=state_path,
-                allow_prerelease=allow_prerelease,
-                dry_run=False,
-            )
+            _tick(dry_run=False, repo_dir=_REPO_ROOT)
     except (RegistryError, UpdateError) as error:
-        _log(f"error: {error}")
+        _log(message=f"error: {error}")
         return 1
+    return 0
 
 
 if __name__ == "__main__":

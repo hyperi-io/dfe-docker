@@ -529,12 +529,14 @@ dev-build: ## Build local DFE images from source (no start; honours LOCAL). Clon
 # ---------------------------------------------------------------------------
 
 # A registry stack runs no local image, so the record of the last dev build goes, or `make apply` would put an instance back on it.
+# Pull before down, so a failed pull leaves the running stack up.
 .PHONY: ci
-ci: env-files down storage-dirs  ## Pull and start infra and registry DFE images. Prints no credentials -- run `make creds` for those
+ci: env-files storage-dirs  ## Pull and start infra and registry DFE images. Prints no credentials -- run `make creds` for those
 	@rm -f $(LOCAL_OVERLAY)
-	python3 scripts/port_check.py -- -f docker-compose.yml $(STORAGE_FLAGS) $(UI_FLAGS) $(PROFILE_FLAGS)
 	docker compose -f docker-compose.yml $(STORAGE_FLAGS) $(UI_FLAGS) $(PROFILE_FLAGS) pull
 	docker compose -f docker-compose.yml $(STORAGE_FLAGS) $(UI_FLAGS) $(PROFILE_FLAGS) pull $(ACTIVE_SERVICES)
+	@$(MAKE) --no-print-directory down
+	python3 scripts/port_check.py -- -f docker-compose.yml $(STORAGE_FLAGS) $(UI_FLAGS) $(PROFILE_FLAGS)
 	docker compose -f docker-compose.yml $(STORAGE_FLAGS) $(UI_FLAGS) $(PROFILE_FLAGS) up -d $(ACTIVE_SERVICES)
 	@$(MAKE) --no-print-directory post || { echo "post: SELF TEST FAILED -- the stack is up, but it did not prove it moves data. Run 'make post' for detail."; exit 1; }
 

@@ -50,10 +50,7 @@ from _common import (  # noqa: E402
 )
 from _registry import DISCOVERY_WORDS  # noqa: E402
 
-# self_update.py records the last-applied version here (its STATE_FILENAME): a
-# track-latest box grows one, a purely pinned box never does. Kept in step with
-# ops/daemon-update/self_update.py -- fold onto a shared constant if a third
-# consumer appears.
+# self_update.py's STATE_FILENAME: a track-latest box has one, a pinned box never does
 _APPLIED_STATE = REPO_ROOT / ".dfe-stack-applied"
 
 
