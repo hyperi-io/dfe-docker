@@ -92,6 +92,8 @@ from init import _create_dotenv  # noqa: E402
 _PIN_LINE = re.compile(r"^(?P<key>[A-Z][A-Z0-9_]*)=(?P<rest>.+)$")
 # make keeps the whitespace before an inline comment as part of the value, so no pin written to .env carries one
 _PIN_COMMENT = re.compile(r"\s+#")
+# Culvert is a VPN service dfe-infra deploys, compose runs none
+_SKIPPED_PINS = {"DFE_CULVERT_VERSION"}
 
 # Which stack the pins came from. `make modes` reports it and `VERSION ?=
 # $(DFE_STACK_VERSION)` defaults from it, so it rides in `.env` beside the pins
@@ -253,7 +255,7 @@ def _resolve_fragment(version: str) -> tuple[str, str]:
 
 
 def _parse_pins(fragment: str) -> dict[str, str]:
-    """Extract KEY -> rendered line, its inline comment dropped, for every active ``*_VERSION`` pin line."""
+    """Extract KEY -> rendered line, its inline comment dropped, for every active ``*_VERSION`` pin line outside _SKIPPED_PINS."""
     pins: dict[str, str] = {}
     for raw in fragment.splitlines():
         stripped = raw.strip()
@@ -263,7 +265,7 @@ def _parse_pins(fragment: str) -> dict[str, str]:
         if not match:
             continue
         key = match.group("key")
-        if not key.endswith("_VERSION"):
+        if not (key.endswith("_VERSION")) or (key in _SKIPPED_PINS):
             continue
         value = _PIN_COMMENT.split(match.group("rest"), maxsplit=1)[0].strip()
         pins[key] = f"{key}={value}"
