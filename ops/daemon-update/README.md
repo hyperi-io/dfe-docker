@@ -27,8 +27,31 @@ Set these in a drop-in on `dfe-docker-update.service`:
 
 | Variable                        | Effect                                                            |
 |---------------------------------|-------------------------------------------------------------------|
+| `DFE_STACK_REPIN_IMAGES=1`      | Follows every DFE image release, not only stacks. See below       |
 | `DFE_UPDATE_ALLOW_PRERELEASE=1` | Also takes `-rc` stacks                                           |
 | `DFE_UPDATE_WIPE_STATE=1`       | Runs `make clean` before `make ci`, once per new stack. See below |
+
+## Following image releases
+
+`DFE_STACK_REPIN_IMAGES=1` moves the box on every DFE image release, not only when a stack ships. A tick takes the newest stack, overlays each image's newest GitHub release by digest and records the result as `2.2.1+images.1a2b3c4d5e6f`. Nobody certified this mix, so a bug found here may never reach a cut stack.
+
+A new digest runs `make stack VERSION=latest` (`rc` with `DFE_UPDATE_ALLOW_PRERELEASE=1`) and `make ci`. The same digest restarts nothing. A failed `make ci` records nothing, so the next tick retries, and nothing rolls back: the box stays on the image that failed until a newer release ships.
+
+It needs no credential or `gh`: images and releases are public, so a tick reads them anonymously, about one GitHub request per image against the limit of 60 an hour per IP. A failed lookup fails the tick and changes nothing.
+
+`make ci` takes the whole stack down on each move and components ship several releases a day, so run the timer once a night. The drop-in's name has to sort after any other in the directory:
+
+```ini
+# /etc/systemd/system/dfe-docker-update.timer.d/zz-nightly.conf
+[Timer]
+OnBootSec=
+OnUnitActiveSec=
+OnCalendar=
+OnCalendar=*-*-* 01:00
+Persistent=true
+```
+
+`make proof` records a pass against a digest of the pins too, so it proves each new image set once.
 
 ## Disposable boxes: fresh state on every version
 

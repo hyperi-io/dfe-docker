@@ -16,6 +16,8 @@ from typing import TypedDict
 import pytest
 
 import _stack_lock
+import stack
+from _registry import RegistryError, images_version
 
 UPDATER_DIR = Path(__file__).resolve().parents[2] / "ops" / "daemon-update"
 if str(UPDATER_DIR) not in sys.path:
@@ -23,12 +25,29 @@ if str(UPDATER_DIR) not in sys.path:
 
 import self_update  # noqa: E402
 
+_IMAGE_PINS = {"DFE_ENGINE_VERSION": "DFE_ENGINE_VERSION=v2@sha256:b"}
+_IMAGE_TARGET = images_version(pins=_IMAGE_PINS.values(), version="2.2.1")
+_OLD_IMAGE_TARGET = "2.2.1+images.000000000000"
+
 
 class ApplyCase(TypedDict):
     """The wipe flag and the steps an update runs, in order."""
 
     expected: list[str]
     wipe: str
+
+
+class ImageReleasesCase(TypedDict):
+    """A state file and flag, and what one tick following image releases does."""
+
+    allow_prerelease: str
+    applied: str
+    dry_run: bool
+    expected_applied: list[str]
+    expected_log: str
+    expected_prereleases: list[str]
+    expected_refreshed: bool
+    expected_state: str
 
 
 class IsDowngradeCase(TypedDict):
@@ -68,7 +87,71 @@ APPLY_CASES = [
         wipe="1",
     ),
 ]
+IMAGE_RELEASES_CASES = [
+    ImageReleasesCase(
+        allow_prerelease="",
+        applied="",
+        dry_run=False,
+        expected_applied=["latest"],
+        expected_log=f"updated to {_IMAGE_TARGET!r}",
+        expected_prereleases=["fallback", "fallback"],
+        expected_refreshed=False,
+        expected_state=_IMAGE_TARGET,
+    ),
+    ImageReleasesCase(
+        allow_prerelease="",
+        applied="2.2.1",
+        dry_run=False,
+        expected_applied=["latest"],
+        expected_log=f"updated to {_IMAGE_TARGET!r}",
+        expected_prereleases=["fallback", "fallback"],
+        expected_refreshed=False,
+        expected_state=_IMAGE_TARGET,
+    ),
+    ImageReleasesCase(
+        allow_prerelease="",
+        applied=_OLD_IMAGE_TARGET,
+        dry_run=False,
+        expected_applied=["latest"],
+        expected_log=f"updated to {_IMAGE_TARGET!r}",
+        expected_prereleases=["fallback", "fallback"],
+        expected_refreshed=False,
+        expected_state=_IMAGE_TARGET,
+    ),
+    ImageReleasesCase(
+        allow_prerelease="1",
+        applied=_OLD_IMAGE_TARGET,
+        dry_run=False,
+        expected_applied=["rc"],
+        expected_log=f"updated to {_IMAGE_TARGET!r}",
+        expected_prereleases=["include", "include"],
+        expected_refreshed=False,
+        expected_state=_IMAGE_TARGET,
+    ),
+    ImageReleasesCase(
+        allow_prerelease="",
+        applied=_IMAGE_TARGET,
+        dry_run=False,
+        expected_applied=[],
+        expected_log="checkout refreshed",
+        expected_prereleases=["fallback", "fallback"],
+        expected_refreshed=True,
+        expected_state=_IMAGE_TARGET,
+    ),
+    ImageReleasesCase(
+        allow_prerelease="",
+        applied=_OLD_IMAGE_TARGET,
+        dry_run=True,
+        expected_applied=[],
+        expected_log="dry-run: would update",
+        expected_prereleases=["fallback", "fallback"],
+        expected_refreshed=False,
+        expected_state=_OLD_IMAGE_TARGET,
+    ),
+]
 IS_DOWNGRADE_CASES = [
+    IsDowngradeCase(applied="2.2.1", expected=False, target=_IMAGE_TARGET),
+    IsDowngradeCase(applied=_IMAGE_TARGET, expected=False, target="2.2.1"),
     IsDowngradeCase(applied="2.2.0-rc.13", expected=True, target="2.2.0-rc.12"),
     IsDowngradeCase(applied="2.2.0-rc.13", expected=False, target="2.2.0-rc.14"),
     IsDowngradeCase(applied="2.2.0-rc.13", expected=False, target="2.2.0-rc.13"),
@@ -162,6 +245,8 @@ def _discover(*, latest: str, monkeypatch: pytest.MonkeyPatch) -> list[str]:
         return "ghcr.io/test/manifest"
 
     applied = []
+    monkeypatch.delenv(name=stack.REPIN_ENV, raising=False)
+    monkeypatch.delenv(name="DFE_UPDATE_ALLOW_PRERELEASE", raising=False)
     monkeypatch.setattr(name="_apply", target=self_update, value=apply)
     monkeypatch.setattr(name="latest_tag", target=self_update, value=latest_tag)
     monkeypatch.setattr(name="manifest_repo", target=self_update, value=manifest_repo)
@@ -228,6 +313,83 @@ class TestApply:
         self_update._apply(repo_dir=tmp_path, version="2.2.0")
 
         assert steps == case["expected"]
+
+
+class TestImageReleases:
+    @pytest.mark.parametrize("case", IMAGE_RELEASES_CASES)
+    def test_matches_expected(
+        self,
+        capsys: pytest.CaptureFixture[str],
+        clone: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        case: ImageReleasesCase,
+    ) -> None:
+        def latest_tag(*, prereleases: str, repo: str) -> str:
+            asked.append(prereleases)
+            return "2.2.1"
+
+        def pins(*, prereleases: str) -> dict[str, str]:
+            asked.append(prereleases)
+            return _IMAGE_PINS
+
+        def refresh(*, repo_dir: Path) -> None:
+            refreshed.append(repo_dir)
+
+        asked = []
+        refreshed = []
+        repo = _checkout(applied=case["applied"], tmp_path=clone)
+        applied = _discover(latest="unused", monkeypatch=monkeypatch)
+        monkeypatch.setenv(name=stack.REPIN_ENV, value="1")
+        monkeypatch.setenv(
+            name="DFE_UPDATE_ALLOW_PRERELEASE", value=case["allow_prerelease"]
+        )
+        monkeypatch.setattr(name="latest_tag", target=self_update, value=latest_tag)
+        monkeypatch.setattr(name="_latest_image_pins", target=stack, value=pins)
+        monkeypatch.setattr(name="_refresh_checkout", target=self_update, value=refresh)
+
+        code = _main(dry_run=case["dry_run"], monkeypatch=monkeypatch, repo=repo)
+
+        assert code == 0
+        assert applied == case["expected_applied"]
+        assert asked == case["expected_prereleases"]
+        assert bool(refreshed) is case["expected_refreshed"]
+        assert case["expected_log"] in capsys.readouterr().out
+        assert _state(repo=repo) == case["expected_state"]
+
+    def test_a_failed_apply_records_nothing(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        def fail(*, repo_dir: Path, version: str) -> None:
+            raise self_update.UpdateError("'make ci' failed (exit 2)")
+
+        def pins(*, prereleases: str) -> dict[str, str]:
+            return _IMAGE_PINS
+
+        repo = _checkout(applied=_OLD_IMAGE_TARGET, tmp_path=tmp_path)
+        _discover(latest="2.2.1", monkeypatch=monkeypatch)
+        monkeypatch.setenv(name=stack.REPIN_ENV, value="1")
+        monkeypatch.setattr(name="_apply", target=self_update, value=fail)
+        monkeypatch.setattr(name="_latest_image_pins", target=stack, value=pins)
+
+        assert _main(dry_run=False, monkeypatch=monkeypatch, repo=repo) == 1
+
+        assert _state(repo=repo) == _OLD_IMAGE_TARGET
+
+    def test_a_failed_release_lookup_fails_the_tick(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        def pins(*, prereleases: str) -> dict[str, str]:
+            raise RegistryError("GitHub answered 403")
+
+        repo = _checkout(applied=_OLD_IMAGE_TARGET, tmp_path=tmp_path)
+        applied = _discover(latest="2.2.1", monkeypatch=monkeypatch)
+        monkeypatch.setenv(name=stack.REPIN_ENV, value="1")
+        monkeypatch.setattr(name="_latest_image_pins", target=stack, value=pins)
+
+        assert _main(dry_run=False, monkeypatch=monkeypatch, repo=repo) == 1
+
+        assert applied == []
+        assert _state(repo=repo) == _OLD_IMAGE_TARGET
 
 
 class TestIsDowngrade:

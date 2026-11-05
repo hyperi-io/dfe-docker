@@ -70,7 +70,7 @@ and `sha-<commit>` tags for every
 image, the hyperdx fork included -- none of them is ever consumed here, so what
 a release publishes and what a deploy runs stay two separate decisions.
 
-**Track-latest (opt-in).** `ops/daemon-update/install.sh` installs a systemd timer that discovers the newest certified stack tag and runs the SAME `make stack` + `make ci`, but only when something newer has shipped. It never pulls `latest`. By default it tracks STABLE releases only. `DFE_UPDATE_ALLOW_PRERELEASE=1` also takes `-rc` builds. See [ops/daemon-update/README.md](../ops/daemon-update/README.md).
+**Track-latest (opt-in).** `ops/daemon-update/install.sh` installs a systemd timer that discovers the newest certified stack tag and runs the SAME `make stack` + `make ci`, but only when something newer has shipped. It never pulls `latest`. By default it tracks STABLE releases only. `DFE_UPDATE_ALLOW_PRERELEASE=1` also takes `-rc` builds. `DFE_STACK_REPIN_IMAGES=1` on its service follows every DFE image release instead, a mix nobody certified. See [ops/daemon-update/README.md](../ops/daemon-update/README.md).
 
 **Latest (development only).** `make stack VERSION=latest` pins the newest
 published stack, read anonymously from the OCI registry, and moves forward on

@@ -31,7 +31,7 @@ Each stack version is proven once. A full pass writes the version .env pins
 later run on the same version exits 0 without touching the stack, so a timer
 that fires with nothing new does not take the standing stack away. A failed
 version runs again on the next fire. A checkout with no pinned version always
-runs.
+runs. Under `latest` or `rc` the word names no fixed images, so a pass also records a digest of the pins and a new image set is proven again.
 
 One run at a time. The proof holds the checkout's stack lock (.dfe-stack.lock,
 shared with the daemon updater) for its whole run, so an update tick that fires
@@ -86,6 +86,7 @@ from pathlib import Path
 sys.pycache_prefix = str(Path(__file__).resolve().parent.parent / ".tmp" / "pycache")
 
 import _common  # noqa: E402
+import _registry  # noqa: E402
 import _stack_lock  # noqa: E402
 
 PROJECT_DIR = Path(__file__).resolve().parent.parent
@@ -102,6 +103,19 @@ SOURCE_CASE_APPS = {"filebeat": "dfe-transform-vrl", "vector": "dfe-transform-ve
 SOURCE_CASES = tuple(SOURCE_CASE_APPS)
 ACCEPTANCE_REQUIREMENTS = Path("scripts") / "acceptance" / "requirements.txt"
 CHROME_NAMES = ("google-chrome", "google-chrome-stable", "chrome")
+
+
+def _proven_key(*, version: str) -> str:
+    """Return what a pass is recorded against: the version, plus the pins' digest under a discovery word."""
+    if (version not in _registry.DISCOVERY_WORDS) or not (ENV_FILE.is_file()):
+        return version
+    values = _common._parse_dotenv(
+        text=ENV_FILE.read_text(encoding="utf-8", errors="replace")
+    )
+    pins = [
+        f"{key}={value}" for key, value in values.items() if key.endswith("_VERSION")
+    ]
+    return _registry.images_version(pins=pins, version=version)
 
 
 def _source_args(*, case: str, work: Path) -> str:
@@ -353,9 +367,10 @@ def run_proof() -> int:
         s.strip() for s in os.environ.get("DFE_PROOF_SKIP", "").split(",") if s.strip()
     }
     version = stack_version()
+    proven = _proven_key(version=version)
     force = os.environ.get("DFE_PROOF_FORCE", "").strip().lower() in TRUTHY
-    if version and not skip and not force and read_marker(PROVEN_MARKER) == version:
-        log(f"SKIP {version} is already proven; DFE_PROOF_FORCE=1 runs it again")
+    if version and not skip and not force and read_marker(PROVEN_MARKER) == proven:
+        log(f"SKIP {proven} is already proven, DFE_PROOF_FORCE=1 runs it again")
         return 0
     results: dict[str, bool] = {}
     work = Path(tempfile.mkdtemp(prefix="dfe-proof-"))
@@ -382,7 +397,7 @@ def run_proof() -> int:
     log(f"RESULT {summary or 'nothing ran'}")
     passed = bool(results) and all(results.values())
     if passed and version and not skip:
-        PROVEN_MARKER.write_text(f"{version}\n", encoding="utf-8", newline="\n")
+        PROVEN_MARKER.write_text(f"{proven}\n", encoding="utf-8", newline="\n")
     return 0 if passed else 1
 
 

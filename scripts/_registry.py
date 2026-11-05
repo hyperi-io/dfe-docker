@@ -12,18 +12,25 @@ Internal support module - imported by the runnable scripts, not executed directl
 
 The track-latest daemon and `make stack VERSION=latest` ask the signed stack-manifest repo for its newest TAG, through `oras` or its pinned image when the host has docker and no `oras`. Only semver tags are ranked, so the `sha-<commit>` build tags and the floating `latest` are ignored rather than compared. An optional leading `v` is carried through verbatim, because the tag itself is what goes into the pin. A release ranks above its own pre-releases. What happens when a repo has published only pre-releases is the caller's `prereleases` choice.
 
-With `DFE_STACK_REPIN_IMAGES=1`, `make stack VERSION=latest` then asks each DFE component for its newest GitHub RELEASE, through `gh`, and pins that release's image. That is the only call here that leaves the public OCI registry, and it needs read access to every component repo. Version order is not release order: a fork can carry a release tagged above its own line, and a version ranking pins that one ahead of every later release. GitHub's own `releases/latest` answer is the authority -- the one the repo page labels Latest, ranked by creation date.
+With `DFE_STACK_REPIN_IMAGES=1`, `make stack VERSION=latest` then asks each DFE component for its newest GitHub RELEASE, through `gh`, and pins that release's image. That is the only call here that leaves the public OCI registry, and `gh` needs read access to every component repo. Without `gh` the releases are read anonymously, which covers public repos within GitHub's limit of 60 requests an hour per IP. Version order is not release order: a fork can carry a release tagged above its own line, and a version ranking pins that one ahead of every later release. GitHub's own `releases/latest` answer is the authority -- the one the repo page labels Latest, ranked by creation date.
 """
 
+import hashlib
 import json
 import os
 import re
 import shutil
 import subprocess
+import urllib.error
+import urllib.request
+from collections.abc import Iterable
 from pathlib import Path
 
 # The signed stack-manifest artifact repo -- the certified pin set's home.
 DEFAULT_MANIFEST_REPO = "ghcr.io/hyperi-io/dfe-stack-manifest"
+
+# Joins a version to the digest of the pins laid over it
+IMAGES_INFIX = "+images."
 
 # oras for a host with docker and no oras, pinned by digest like the cosign image in stack.py
 ORAS_IMAGE = "ghcr.io/oras-project/oras:v1.3.6@sha256:9cfb578be975b762fd898b9d004243d8003aeb807a3e15b2ed212cdd1326c9eb"
@@ -50,6 +57,9 @@ _SEMVER = re.compile(
 
 # How `gh api` reports a resource that is not there.
 _GH_NOT_FOUND = "(HTTP 404)"
+# GitHub's largest page, and the base of the anonymous lookups
+_GITHUB_PAGE_SIZE = 100
+_GITHUB_API = "https://api.github.com"
 
 
 class RegistryError(Exception):
@@ -59,6 +69,42 @@ class RegistryError(Exception):
 def _created_order(release: dict) -> str:
     """Key function for ``max`` over releases: ISO 8601 UTC stamps sort as text."""
     return str(release.get("created_at", ""))
+
+
+def _github_get(*, path: str) -> object | None:
+    """Return one anonymous GitHub API answer, None when the resource is not there."""
+    request = urllib.request.Request(
+        f"{_GITHUB_API}/{path}",
+        headers={"Accept": "application/vnd.github+json", "User-Agent": "dfe-docker"},
+    )
+    try:
+        # The base URL is a constant https address
+        with urllib.request.urlopen(request, timeout=30) as response:  # noqa: S310
+            return json.load(response)
+    except urllib.error.HTTPError as error:
+        if error.code == 404:
+            return None
+        raise RegistryError(
+            f"GitHub answered {error.code} for {path!r}, anonymous lookups are limited to 60 an hour per IP"
+        ) from error
+    except (OSError, ValueError) as error:
+        raise RegistryError(f"cannot read {path!r} from GitHub: {error}") from error
+
+
+def _github_releases(*, repo: str) -> list[dict]:
+    """Return every release on a public repo, read anonymously page by page."""
+    releases = []
+    page = 1
+    while True:
+        rows = _github_get(
+            path=f"repos/{repo}/releases?per_page={_GITHUB_PAGE_SIZE}&page={page}"
+        )
+        if not (isinstance(rows, list)):
+            raise RegistryError(f"{repo} has no readable releases on GitHub")
+        releases.extend(rows)
+        if len(rows) < _GITHUB_PAGE_SIZE:
+            return releases
+        page += 1
 
 
 def _is_stable(*, version: str) -> bool:
@@ -73,15 +119,6 @@ def _pre_key(*, pre: str) -> tuple:
         (0, int(ident), "") if ident.isdigit() else (1, 0, ident)
         for ident in pre.split(".")
     )
-
-
-def _require_gh() -> None:
-    """Fail loudly when `gh` is absent rather than falling back to a registry tag."""
-    if shutil.which("gh") is None:
-        raise RegistryError(
-            "`gh` is not installed -- cannot read a component's GitHub releases "
-            "(see the README prerequisites)"
-        )
 
 
 def _run(*, cmd: list[str]) -> subprocess.CompletedProcess:
@@ -114,6 +151,13 @@ def _sort_key(*, version: str) -> tuple:
 def _tag_order(tag: str) -> tuple:
     """Key function for ``max`` over a tag list."""
     return _sort_key(version=tag)
+
+
+def images_version(*, pins: Iterable[str], version: str) -> str:
+    """Return a version naming the set of image pins laid over it, whatever their order."""
+    joined = "\n".join(sorted(pins))
+    digest = hashlib.sha256(joined.encode("utf-8")).hexdigest()[:12]
+    return f"{version}{IMAGES_INFIX}{digest}"
 
 
 def latest_tag(*, prereleases: str = "exclude", repo: str) -> str:
@@ -168,7 +212,8 @@ def latest_release(*, prereleases: str = "exclude", repo: str) -> str:
 
 def list_releases(*, repo: str) -> list[dict]:
     """Return every release on ``repo`` as ``{tag_name, draft, created_at}``."""
-    _require_gh()
+    if shutil.which("gh") is None:
+        return _github_releases(repo=repo)
     out = _run(
         cmd=[
             "gh",
@@ -205,7 +250,9 @@ def marked_latest_release(*, repo: str) -> str | None:
     GitHub answers 404 when every release is a draft or a pre-release, which is an
     answer here rather than a failure.
     """
-    _require_gh()
+    if shutil.which("gh") is None:
+        release = _github_get(path=f"repos/{repo}/releases/latest")
+        return release.get("tag_name") if isinstance(release, dict) else None
     out = _run(cmd=["gh", "api", f"repos/{repo}/releases/latest", "--jq", ".tag_name"])
     if out.returncode == 0:
         return out.stdout.strip() or None

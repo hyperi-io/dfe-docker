@@ -91,8 +91,7 @@ Set the dials in `./dfe/.env` and run `./apply.sh` to work out the compose chain
 - make, git and Python 3 (standard library only)
 - [`oras`](https://oras.land) and [`cosign`](https://docs.sigstore.dev/cosign/system_config/installation/) - optional. `make up`, `make stack` and `make check-proxy` read the signed OCI stack manifest through them and each runs as a digest-pinned container through Docker when it is not installed. `DFE_STACK_VERIFY=false` skips the signature check, while `DFE_STACK_SIGNER_IDENTITY` and `DFE_STACK_SIGNER_ISSUER` name the signer of a manifest repo of your own. All three are read from the environment, then `.env`. Neither tool is needed if you render from a local dfe-infra checkout (`DFE_INFRA_DIR`).
 - [`uv`](https://docs.astral.sh/uv/) - only for the seed targets (`make sources`, `make rules`, `make hunts`, `make events`, `make orgs`, `make accounts`) and the e2e tests.
-- [`gh`](https://cli.github.com), logged in - only for `DFE_STACK_REPIN_IMAGES=1`,
-  which reads each component's GitHub releases through it.
+- [`gh`](https://cli.github.com), logged in - optional for `DFE_STACK_REPIN_IMAGES=1`, which reads each component's GitHub releases. Without it they are read anonymously, which covers public repos within GitHub's limit of 60 requests an hour per IP.
 
 ### Initialisation
 

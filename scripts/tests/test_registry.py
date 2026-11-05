@@ -15,6 +15,9 @@ A DFE image is picked by RELEASE, and version order is not release order there: 
 The network calls are the seam: `list_tags`, `list_releases` and `marked_latest_release` are repointed at fixed data, so what is pinned here is the selection, not the registry's or GitHub's current contents.
 """
 
+import http.server
+import threading
+from collections.abc import Iterator
 from pathlib import Path
 from typing import TypedDict
 
@@ -36,6 +39,15 @@ _DFE_TAGS = [
 ]
 
 
+class MarkedLatestReleaseCase(TypedDict):
+    """What GitHub answers an anonymous lookup and what comes back."""
+
+    body: bytes
+    expected: str | None
+    raises: str
+    status: int
+
+
 class OrasCommandCase(TypedDict):
     """The tools on PATH and how the oras command starts."""
 
@@ -43,10 +55,111 @@ class OrasCommandCase(TypedDict):
     on_path: set[str]
 
 
+class _GithubAnswers(http.server.BaseHTTPRequestHandler):
+    """Answer each path from the server's table, 404 for anything else."""
+
+    def do_GET(self) -> None:  # noqa: N802
+        status, body = self.server.answers.get(self.path, (404, b"{}"))
+        self.send_response(status)
+        self.end_headers()
+        self.wfile.write(body)
+
+    def log_message(self, format: str, *args: object) -> None:
+        pass
+
+
+MARKED_LATEST_RELEASE_CASES = [
+    MarkedLatestReleaseCase(
+        body=b'{"tag_name": "v1.2.3"}', expected="v1.2.3", raises="", status=200
+    ),
+    MarkedLatestReleaseCase(body=b"{}", expected=None, raises="", status=404),
+    MarkedLatestReleaseCase(
+        body=b"{}", expected=None, raises="GitHub answered 403", status=403
+    ),
+    MarkedLatestReleaseCase(
+        body=b"<html>", expected=None, raises="cannot read", status=200
+    ),
+]
 ORAS_COMMAND_CASES = [
     OrasCommandCase(expected=["oras"], on_path={"docker", "oras"}),
     OrasCommandCase(expected=["docker", "run", "--rm", "--user"], on_path={"docker"}),
 ]
+
+
+@pytest.fixture
+def github(monkeypatch: pytest.MonkeyPatch) -> Iterator[http.server.HTTPServer]:
+    """A local HTTP server standing where GitHub's API is, with no `gh` on PATH."""
+
+    def no_gh(tool: str) -> None:
+        return None
+
+    server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), _GithubAnswers)
+    server.answers = {}
+    thread = threading.Thread(daemon=True, target=server.serve_forever)
+    thread.start()
+    monkeypatch.setattr(
+        _registry, "_GITHUB_API", f"http://127.0.0.1:{server.server_port}"
+    )
+    monkeypatch.setattr(_registry.shutil, "which", no_gh)
+    yield server
+    server.shutdown()
+    server.server_close()
+    thread.join()
+
+
+class TestMarkedLatestRelease:
+    @pytest.mark.parametrize("case", MARKED_LATEST_RELEASE_CASES)
+    def test_matches_expected(
+        self, github: http.server.HTTPServer, case: MarkedLatestReleaseCase
+    ) -> None:
+        github.answers["/repos/o/r/releases/latest"] = (case["status"], case["body"])
+
+        if case["raises"]:
+            with pytest.raises(_registry.RegistryError, match=case["raises"]):
+                _registry.marked_latest_release(repo="o/r")
+            return
+
+        assert _registry.marked_latest_release(repo="o/r") == case["expected"]
+
+
+class TestListReleases:
+    def test_anonymous_lookup_reads_every_page(
+        self, github: http.server.HTTPServer, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(_registry, "_GITHUB_PAGE_SIZE", 2)
+        github.answers["/repos/o/r/releases?per_page=2&page=1"] = (
+            200,
+            b'[{"tag_name": "v3"}, {"tag_name": "v2"}]',
+        )
+        github.answers["/repos/o/r/releases?per_page=2&page=2"] = (
+            200,
+            b'[{"tag_name": "v1"}]',
+        )
+
+        tags = [release["tag_name"] for release in _registry.list_releases(repo="o/r")]
+
+        assert tags == ["v3", "v2", "v1"]
+
+    def test_a_missing_repo_raises(self, github: http.server.HTTPServer) -> None:
+        with pytest.raises(_registry.RegistryError, match="no readable releases"):
+            _registry.list_releases(repo="o/absent")
+
+
+class TestImagesVersion:
+    def test_the_digest_follows_the_pins_not_their_order(self) -> None:
+        first = _registry.images_version(pins=["B=2", "A=1"], version="2.2.1")
+        reordered = _registry.images_version(pins=["A=1", "B=2"], version="2.2.1")
+        changed = _registry.images_version(pins=["A=1", "B=3"], version="2.2.1")
+
+        assert first.startswith("2.2.1+images.")
+        assert first == reordered
+        assert first != changed
+
+    def test_it_is_not_a_rankable_version(self) -> None:
+        version = _registry.images_version(pins=["A=1"], version="2.2.1")
+
+        with pytest.raises(_registry.RegistryError, match="not a semver tag"):
+            _registry._sort_key(version=version)
 
 
 def _tools_on_path(*, monkeypatch: pytest.MonkeyPatch, on_path: set[str]) -> None:

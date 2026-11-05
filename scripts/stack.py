@@ -24,7 +24,7 @@ them as unpinned.
 
 ``DFE_STACK_REPIN_IMAGES=1`` adds the DEV CURRENCY step on top: every image we
 publish to ``ghcr.io/hyperi-io`` is repinned at its component's newest GitHub
-release, read through a logged-in ``gh`` that can see the component repos. That
+release, read through ``gh``, or anonymously where it is not installed. That
 combination is newer than any stack anyone certified. ``latest`` takes the
 release GitHub marks Latest and falls back to the newest pre-release on a repo
 that has published none; ``rc`` takes the newest release of either kind. The
@@ -100,8 +100,7 @@ _SKIPPED_PINS = {"DFE_CULVERT_VERSION"}
 # while naming a stack rather than an image.
 STACK_VERSION_KEY = "DFE_STACK_VERSION"
 
-# Opt-in for the GitHub-release repin, which needs `gh` read access to every
-# component repo and so is never part of the default `latest` / `rc` path.
+# Opt-in for the GitHub-release repin, never part of the default `latest` / `rc` path
 REPIN_ENV = "DFE_STACK_REPIN_IMAGES"
 _TRUTHY = {"1", "true", "yes", "on"}
 

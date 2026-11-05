@@ -24,9 +24,12 @@ sys.path.insert(0, str(_REPO_ROOT / "scripts"))
 sys.pycache_prefix = str(_REPO_ROOT / ".tmp" / "pycache")
 
 import _stack_lock  # noqa: E402
+import stack  # noqa: E402
 from _registry import (  # noqa: E402
+    DISCOVERY_WORDS,
     RegistryError,
     _sort_key,
+    images_version,
     latest_tag,
     manifest_repo,
 )
@@ -139,13 +142,28 @@ def _refresh_plan(*, repo_dir: Path) -> str:
     return "run git pull --ff-only"
 
 
+def _target(*, allow_prerelease: bool, repo: str) -> tuple[str, str]:
+    """Return the version this box should be on and what `make stack` pins to reach it.
+
+    A box following image releases has no stack tag to name that version, so it names the newest stack plus a digest of the image pins laid over it.
+    """
+    if not (stack._repin_requested()):
+        latest = latest_tag(
+            prereleases="include" if allow_prerelease else "exclude", repo=repo
+        )
+        return latest, latest
+    word = "rc" if allow_prerelease else "latest"
+    prereleases = DISCOVERY_WORDS[word]
+    pins = stack._latest_image_pins(prereleases=prereleases)
+    version = latest_tag(prereleases=prereleases, repo=repo)
+    return images_version(pins=pins.values(), version=version), word
+
+
 def _tick(*, dry_run: bool, repo_dir: Path) -> None:
-    """Discover the newest stack version and apply it when it is newer."""
+    """Discover the newest version and apply it when it differs."""
     allow_prerelease = _flag_set(name="DFE_UPDATE_ALLOW_PRERELEASE")
     repo = manifest_repo()
-    latest = latest_tag(
-        prereleases="include" if allow_prerelease else "exclude", repo=repo
-    )
+    latest, pin = _target(allow_prerelease=allow_prerelease, repo=repo)
     state_path = repo_dir / STATE_FILENAME
     applied = _applied_version(state_path=state_path)
     _log(message=f"repo={repo!r} latest={latest!r} applied={applied!r}")
@@ -175,7 +193,7 @@ def _tick(*, dry_run: bool, repo_dir: Path) -> None:
         return
 
     _log(message=f"updating {applied!r} -> {latest!r}")
-    _apply(repo_dir=repo_dir, version=latest)
+    _apply(repo_dir=repo_dir, version=pin)
     state_path.write_text(f"{latest}\n", encoding="utf-8", newline="\n")
     _log(message=f"updated to {latest!r}")
 

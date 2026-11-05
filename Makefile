@@ -472,8 +472,8 @@ e2e-posture-check: ## Exit 1 naming what is missing unless the env files are in 
 # VERSION=latest (rc to include pre-releases) instead pins the newest published
 # stack, read anonymously from the OCI registry. DFE_STACK_REPIN_IMAGES=1 also
 # repins every ghcr.io/hyperi-io image at its component's newest GitHub release,
-# through a gh login that can read the component repos -- development currency,
-# not a deployment. Still digest-pinned either way.
+# through gh, or anonymously where it is not installed. Nobody certified that mix.
+# Still digest-pinned either way.
 VERSION ?= $(DFE_STACK_VERSION)
 
 .PHONY: stack

@@ -21,6 +21,8 @@ which one a box is on should never have to be guessed:
     systemd timer that DISCOVERS the newest certified stack tag and runs the
     SAME `make stack` + `make ci`, but only when something newer has shipped.
     It never pulls `latest`; -rc builds join in with DFE_UPDATE_ALLOW_PRERELEASE=1.
+    DFE_STACK_REPIN_IMAGES=1 on its service follows every DFE image release
+    instead, a combination nobody certified, still digest-pinned.
 
   LATEST (development only) -- `make stack VERSION=latest` pins the newest
     published stack and moves forward on every re-run. DFE_STACK_REPIN_IMAGES=1
@@ -34,8 +36,6 @@ needs the registry and stays in ops/daemon-update/self_update.py --dry-run, whic
 this points at rather than duplicates.
 """
 
-from __future__ import annotations
-
 import sys
 from pathlib import Path
 
@@ -48,7 +48,7 @@ from _common import (  # noqa: E402
     _dotenv_values,
     _parse_yaml_subset,
 )
-from _registry import DISCOVERY_WORDS  # noqa: E402
+from _registry import DISCOVERY_WORDS, IMAGES_INFIX  # noqa: E402
 
 # self_update.py's STATE_FILENAME: a track-latest box has one, a pinned box never does
 _APPLIED_STATE = REPO_ROOT / ".dfe-stack-applied"
@@ -109,6 +109,11 @@ def _current_mode() -> tuple[str, str]:
             if applied
             else "daemon owns the version (nothing applied yet)",
         )
+    if (env_pin in DISCOVERY_WORDS) and (IMAGES_INFIX in applied):
+        return (
+            "TRACK-LATEST (newest images)",
+            f"daemon follows every DFE image release (last applied {applied})",
+        )
     # `make stack VERSION=latest|rc` stamps the WORD, not a number, because a
     # re-run is meant to refresh. Reporting that as PINNED would claim a
     # reproducible deployment the box does not have.
@@ -140,6 +145,8 @@ def main() -> int:
     print("    Discovers the newest certified stack tag and runs the same")
     print("    `make stack` + `make ci`, only when something newer ships. Never")
     print("    pulls `latest`. -rc builds included with DFE_UPDATE_ALLOW_PRERELEASE=1.")
+    print("    DFE_STACK_REPIN_IMAGES=1 on its service follows every DFE image release")
+    print("    instead -- a combination nobody certified. Still digest-pinned.")
     print()
     print("  LATEST (development only, NOT a deployment)")
     print("    make stack VERSION=latest   # `rc` to rank pre-releases throughout")
