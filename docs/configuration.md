@@ -27,6 +27,7 @@ The sections follow [.env.example](../.env.example): stack-wide settings first, 
 | Variable                                         | Use                                                                                  | Default                                                             |
 |--------------------------------------------------|--------------------------------------------------------------------------------------|---------------------------------------------------------------------|
 | `DFE_STACK_VERIFY`                               | `false` pulls the stack manifest without checking its signature                      | `true`                                                              |
+| `DFE_STACK_VERSION`                              | The stack `make stack` last pinned, or `latest` or `rc` to follow the newest         | none, `make stack` sets it                                          |
 | `DOCKER_DEFAULT_PLATFORM`                        | Image architecture to pull from docker (if not wanting automatic determination)      | -                                                                   |
 | `IMAGE_REGISTRY`                                 | OCI registry hosting published `dfe-*` images                                        | `ghcr.io/hyperi-io`                                                 |
 

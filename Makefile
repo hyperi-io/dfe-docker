@@ -783,7 +783,7 @@ post: ## Prove the RUNNING stack moves data end to end (DFE_POST_ENABLED=false t
 
 # ---------------------------------------------------------------------------
 # Seed
-# The starter set in resources/seed, created through the engine API on a RUNNING stack, plus fake events for its hunt to find. hunts also creates the rules in the same seed.py run, because the engine refuses a hunt whose rule does not exist. accounts creates the orgs first, because the engine refuses an account naming an org it does not hold. One run means a login asked for at the terminal is asked for once. Every target but events creates only what the engine lacks. events sends its records again on every run. A volume wipe loses every object, so run the targets again after one.
+# The starter set in resources/seed, created through the engine API on a RUNNING stack, plus fake events for its hunt to find. hunts also creates the orgs and rules in the same seed.py run, because the engine refuses a hunt naming an org or rule it does not hold. accounts creates the orgs first, because the engine refuses an account naming an org it does not hold. One run means a login asked for at the terminal is asked for once. Every target but events creates only what the engine lacks. events sends its records again on every run. A volume wipe loses every object, so run the targets again after one.
 # ---------------------------------------------------------------------------
 
 .PHONY: orgs
@@ -803,7 +803,7 @@ rules: ## Create the resources/seed rules the running engine lacks
 	@$(UV) run --locked --script ./scripts/seed.py rules
 
 .PHONY: hunts
-hunts: ## Create the resources/seed rules and hunts the running engine lacks
+hunts: ## Create the resources/seed orgs, rules and hunts the running engine lacks
 	@$(UV) run --locked --script ./scripts/seed.py hunts
 
 .PHONY: events
