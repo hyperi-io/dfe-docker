@@ -234,8 +234,7 @@ DFE_RECEIVER_INGEST_URL = env_or(
     "DFE_RECEIVER_INGEST_URL",
     f"http://localhost:{env_or('DFE_RECEIVER_HTTP_PORT', '8080')}/ingest",
 )
-# dfe-proxy's port, which serves the console and the HyperDX it embeds: http on
-# localhost, or https at DFE_EXTERNAL_ORIGIN's host under console TLS.
+# dfe-proxy's port, which serves the console and the HyperDX it embeds, at DFE_EXTERNAL_ORIGIN or localhost
 DFE_UI_URL = _console_tls.console_url(environ=os.environ)
 # The HTTP checks in the test definitions name it as ${DFE_UI_URL}.
 os.environ[_console_tls.UI_URL_VAR] = DFE_UI_URL
