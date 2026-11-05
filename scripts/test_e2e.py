@@ -731,12 +731,15 @@ def generate_compose_override(
     content = "services:\n"
     for svc_name in sorted(services):
         mount = SERVICE_CONFIG_MOUNTS[svc_name]
-        content += (
-            f"  {svc_name}:\n    volumes:\n      - ./{services[svc_name]}:{mount}:ro\n"
-        )
+        volumes = f"    volumes:\n      - ./{services[svc_name]}:{mount}:ro\n"
+        content += f"  {svc_name}:\n{volumes}"
+        # The one-shot extends the service's compose entry, which this override does not reach
+        check = f"  config-check-{svc_name}:\n{volumes}"
         if svc_name in rendered_services:
             rendered = _sources.rendered_config(service=svc_name)
             content += f"    command: {json.dumps(obj=['--config', rendered])}\n"
+            check += f"    command: {json.dumps(obj=['--config', rendered, 'config-check'])}\n"
+        content += check
     content += _sources.engine_override(
         environment=engine_environment,
         service=SCHEMA_AUTHORITY_SERVICE,
