@@ -26,11 +26,13 @@ class Route:
         match: The route's match fields, values as written.
         cluster: The cluster it forwards to, empty for a direct response.
         status: The direct response's status, empty for a forwarded route.
+        timeout: The forwarded route's timeout as written, empty for Envoy's default.
     """
 
     match: dict[str, str]
     cluster: str
     status: str
+    timeout: str = ""
 
 
 @dataclass(frozen=True, slots=True)
@@ -141,8 +143,12 @@ def _route(*, lines: list[str]) -> Route:
     forward = keys.get("route")
     direct = keys.get("direct_response")
     if isinstance(forward, str) and direct is None:
+        target = _flow(value=forward)
         return Route(
-            match=_flow(value=match), cluster=_flow(value=forward)["cluster"], status=""
+            match=_flow(value=match),
+            cluster=target["cluster"],
+            status="",
+            timeout=target.get("timeout", ""),
         )
     if forward is None and isinstance(direct, list):
         status = _keys(lines=direct).get("status")
