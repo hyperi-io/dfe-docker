@@ -22,12 +22,12 @@ _CONSOLE_CONFIGS = ["envoy.yaml", "envoy.tls.yaml"]
 _ALL_CONFIGS = [*_CONSOLE_CONFIGS, "hyperdx.yaml", "hyperdx.tls.yaml"]
 _CONSOLE_LISTENER = "ingress"
 _NORMALISING = ("normalize_path", "merge_slashes")
-# The console's routes in match order, as (match, cluster, direct status).
+# The console's routes in match order, as (match, cluster, direct status, timeout).
 _CONSOLE_ROUTES = [
-    ({"path": "/livez"}, "", "200"),
-    ({"path_separated_prefix": "/metrics", "case_sensitive": "false"}, "", "404"),
-    ({"prefix": "/api/v1/"}, "dfe-engine", ""),
-    ({"prefix": "/"}, "dfe-ui", ""),
+    ({"path": "/livez"}, "", "200", ""),
+    ({"path_separated_prefix": "/metrics", "case_sensitive": "false"}, "", "404", ""),
+    ({"prefix": "/api/v1/"}, "dfe-engine", "", "120s"),
+    ({"prefix": "/"}, "dfe-ui", "", ""),
 ]
 
 
@@ -46,7 +46,9 @@ def test_the_console_hides_metrics_and_routes_everything_else_unchanged(
     assert len(console) == 1
     assert len(console[0].virtual_hosts) == 1
     routes = console[0].virtual_hosts[0].routes
-    assert [(r.match, r.cluster, r.status) for r in routes] == _CONSOLE_ROUTES
+    assert [
+        (r.match, r.cluster, r.status, r.timeout) for r in routes
+    ] == _CONSOLE_ROUTES
 
 
 @pytest.mark.parametrize("name", _CONSOLE_CONFIGS)
