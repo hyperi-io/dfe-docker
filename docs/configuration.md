@@ -248,7 +248,7 @@ Only `single-kafka` runs dfe-archiver, so archiving needs a Kafka profile ([prof
 | `AZURE_SUBSCRIPTION_ID`                          | In `env/fetcher.env`. Subscription an Azure source reads                             | -                                                                   |
 | `AZURE_TENANT_ID`                                | In `env/fetcher.env`. Tenant the client belongs to                                   | -                                                                   |
 
-The AWS **region** is not an environment variable: it is a literal in each source's fetcher config (`region: us-west-2` in `resources/seed/sources/aws-*.yaml`), because only the two credential fields are `env:`-interpolated.
+The AWS **region** and poll interval are not environment variables: they are literals in each source's fetcher config (`region: us-west-2` and `interval_secs` in `resources/seed/sources/aws-*.yaml`, 30 seconds and 300 for GuardDuty, whose every poll stores all its findings again), because only the two credential fields are `env:`-interpolated.
 
 ### DFE Loader
 
