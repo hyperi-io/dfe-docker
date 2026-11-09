@@ -54,14 +54,30 @@ processors:
       - action: upsert
         key: k8s.node.name
         value: ${env:DFE_USAGE_NODE_NAME}
-  # Names container logs after their container and strips colour codes
+  # Names container logs, strips colour codes and reads the level
   transform/container_logs:
     error_mode: ignore
     log_statements:
-      - context: log
+      - conditions:
+          - attributes["fluent.tag"] != nil
+        context: log
         statements:
-          - set(resource.attributes["service.name"], attributes["fluent.tag"]) where attributes["fluent.tag"] != nil
-          - replace_pattern(body, "\\x1b\\[[0-9;]*m", "") where attributes["fluent.tag"] != nil
+          - set(resource.attributes["service.name"], attributes["fluent.tag"])
+          - replace_pattern(body, "\\x1b\\[[0-9;]*m", "")
+          # The engine writes JSON lines with a level field
+          - merge_maps(cache, ParseJSON(body), "upsert") where IsMatch(body, "^\\{")
+          - set(severity_text, ToUpperCase(cache["level"])) where IsString(cache["level"])
+          # A Rust line's timestamp and level move to their own columns
+          - merge_maps(cache, ExtractPatterns(body, "(?s)^(?P<line_time>\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(?:\\.\\d+)?Z)\\s+(?P<line_level>TRACE|DEBUG|INFO|WARN|ERROR)\\s+(?P<line_message>.*)$"), "upsert") where severity_text == ""
+          - set(time, Time(cache["line_time"], "%Y-%m-%dT%H:%M:%SZ")) where cache["line_time"] != nil
+          - set(severity_text, cache["line_level"]) where cache["line_level"] != nil
+          - set(body, cache["line_message"]) where cache["line_message"] != nil
+          - set(severity_number, SEVERITY_NUMBER_TRACE) where severity_text == "TRACE"
+          - set(severity_number, SEVERITY_NUMBER_DEBUG) where severity_text == "DEBUG"
+          - set(severity_number, SEVERITY_NUMBER_INFO) where severity_text == "INFO" or severity_text == "SUCCESS"
+          - set(severity_number, SEVERITY_NUMBER_WARN) where severity_text == "WARN" or severity_text == "WARNING"
+          - set(severity_number, SEVERITY_NUMBER_ERROR) where severity_text == "ERROR"
+          - set(severity_number, SEVERITY_NUMBER_FATAL) where severity_text == "CRITICAL" or severity_text == "FATAL"
 
 receivers:
   # Container stdout from Docker's fluentd log driver
