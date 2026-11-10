@@ -68,7 +68,7 @@ from build_dev_images import (  # noqa: E402
 
 AUTH_ENABLED_ENV_VAR = "DFE_AUTH_ENABLED"
 # One proxy per infra-UI ORIGIN, not per UI: oauth2-proxy serves a single
-# --http-address, and HyperDX's app and API are two origins of one UI. Each list
+# --http-address, and dfe-hyperdx's app and API are two origins of one UI. Each list
 # rides on its UI being in the footprint -- a proxy in front of a UI that is not
 # running is a port bound to nothing.
 AUTH_KAFBAT_SERVICES = ["oauth2-proxy-kafbat"]
@@ -109,17 +109,17 @@ CORE_ENABLED_ENV_VAR = "DFE_CORE_ENABLED"
 CORE_SERVICES = ["dfe-engine", "dfe-hunt-runner", "dfe-ui", "dfe-proxy"]
 
 HYPERDX_ENABLED_ENV_VAR = "DFE_HYPERDX_ENABLED"
-# What the ENGINE is handed, so its HyperDX control surface follows the resolved
+# What the ENGINE is handed, so its dfe-hyperdx control surface follows the resolved
 # footprint rather than a second switch an operator has to remember.
 HYPERDX_RESOLVED_VAR = "DFE_HYPERDX_RESOLVED"
 HYPERDX_RESOLVED_BASE_URL_VAR = "DFE_HYPERDX_RESOLVED_BASE_URL"
 # The in-stack API by service name and container port; .env names an external
-# HyperDX instead, the same precedence the broker above has.
+# dfe-hyperdx instead, the same precedence the broker above has.
 HYPERDX_BASE_URL_ENV_VAR = "DFE_HYPERDX_BASE_URL"
 IN_STACK_HYPERDX = "http://dfe-hyperdx:8000"
 # dfe-dashboards is the one-shot that writes the engine's shipped dashboards into
-# the volume HyperDX's provisioner reads; it exits before dfe-hyperdx starts.
-# dfe-hyperdx-proxy carries the two HyperDX host ports, so the infra exposure
+# the volume dfe-hyperdx's provisioner reads; it exits before dfe-hyperdx starts.
+# dfe-hyperdx-proxy carries the two dfe-hyperdx host ports, so the infra exposure
 # dials and the `auth` profile govern one service.
 HYPERDX_SERVICES = [
     "dfe-dashboards",
@@ -195,7 +195,7 @@ ADMIN_UIS = {
         purpose="Logs, metrics and traces",
         port_var="DFE_HYPERDX_APP_PORT",
         default_port="8090",
-        # The proxy carrying HyperDX's host port, so one probe answers for both.
+        # The proxy carrying dfe-hyperdx's host port, so one probe answers for both.
         probe_url="http://dfe-hyperdx-proxy:8090",
         origin_var="DFE_HYPERDX_APP_URL",
     ),
@@ -399,7 +399,7 @@ def _footprint(*, profile: dict[str, object], profile_name: str) -> dict[str, bo
             default if declared is None else declared.strip().lower() not in FALSY
         )
         resolved[key] = _env_truthy(default=fallback, name=env_var)
-    # HyperDX signs callers in with dfe-engine's token, so without core nobody could sign in
+    # dfe-hyperdx signs callers in with dfe-engine's token, so without core nobody could sign in
     resolved["hyperdx"] = resolved["hyperdx"] and resolved["core"]
     return resolved
 
@@ -831,8 +831,8 @@ def main(argv: Sequence[str] = ()) -> int:
             f"export DFE_OTEL_RESOLVED := {'true' if footprint['otel'] else 'false'}"
         )
 
-        # The engine drives HyperDX's team, connections and sources, so it is
-        # pointed at HyperDX exactly when the resolved footprint runs it. Both
+        # The engine drives dfe-hyperdx's team, connections and sources, so it is
+        # pointed at dfe-hyperdx exactly when the resolved footprint runs it. Both
         # lines are emitted unconditionally, so the included file settles.
         lines.append(
             f"export {HYPERDX_RESOLVED_VAR} := "

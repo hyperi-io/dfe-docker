@@ -76,13 +76,13 @@ flowchart LR
     host("docker host /proc") -->|host_metrics pull| col
     col -->|self-telemetry :8888| col
     col -->|clickhouse exporter| ch[(dfe.otel_* tables)]
-    ch -.->|queries it| hdx["HyperDX"]
+    ch -.->|queries it| hdx["dfe-hyperdx"]
 
     classDef on fill:#009E73,color:#ffffff,stroke:#000000
     class col,ch on
 ```
 
-Services PUSH. HyperDX reads ClickHouse rather than receiving anything -- the
+Services PUSH. dfe-hyperdx reads ClickHouse rather than receiving anything -- the
 fork ships no OTLP receiver, so the collector's exporter writes the tables it
 queries. This is the same chain Kubernetes runs.
 
@@ -98,8 +98,8 @@ refused/failed counts (`otelcol_*`) into the same pipeline as everything else.
 `sql_query` and `prometheus` are what the pre-canned DFE ClickHouse Health and DFE Pipeline Health dashboards read. Without them those dashboards render empty here while working on Kubernetes.
 
 `/metrics` is a SEPARATE pathway, for anything that scrapes. This repo ships
-nothing that does. Enabling push does not disable it: a Prometheus estate and a
-HyperDX estate are both served.
+nothing that does. Enabling push does not disable it: a Prometheus estate and an
+OTLP one are both served.
 
 dfe-engine's Overview counts cores from the usage rollup dfe-schemas declares. That rollup reads the Kubernetes shape, so the collector reports Compose in it:
 
@@ -159,7 +159,7 @@ scraping estate nothing.
 
 ## Container logs go through the log driver, not a file reader
 
-Nothing in the stack exports logs over OTLP, so the lines a service writes to stdout reach ClickHouse a different way: Docker's own `fluentd` log driver sends them to the collector's `fluent_forward` receiver, which turns the driver's tag into `ServiceName` and writes `dfe.otel_logs`. Search them in HyperDX on the `otel_logs` source.
+Nothing in the stack exports logs over OTLP, so the lines a service writes to stdout reach ClickHouse a different way: Docker's own `fluentd` log driver sends them to the collector's `fluent_forward` receiver, which turns the driver's tag into `ServiceName` and writes `dfe.otel_logs`. Search them in dfe-hyperdx on the `otel_logs` source.
 
 Kubernetes reads the same lines off the node with a DaemonSet filelog receiver.
 That does not port: the files live under the daemon's data-root, which is not
@@ -167,7 +167,7 @@ That does not port: the files live under the daemon's data-root, which is not
 Desktop, and listing that directory needs root. The log driver needs no host path
 and no privilege.
 
-**`docker compose logs` still reads these services.** Docker's dual logging keeps a local copy of each line, so the driver adds the collector without taking the CLI away. Only DFE's own services move onto the driver: ClickHouse, the broker, the proxies and HyperDX keep `json-file`. Put every service back with:
+**`docker compose logs` still reads these services.** Docker's dual logging keeps a local copy of each line, so the driver adds the collector without taking the CLI away. Only DFE's own services move onto the driver: ClickHouse, the broker, the proxies and dfe-hyperdx keep `json-file`. Put every service back with:
 
 ```
 DFE_CONTAINER_LOGS_ENABLED=false
@@ -206,7 +206,7 @@ Of the host's own metrics only its CPUs are collected, for the usage readings.
   a five-minute window can age its only lines out while the earlier claims run.
   Every service that pushes has fresh metric rows under its own name, and the hunt
   runner also reports `dfe_hunt_backlog` and `dfe_hunt_tick_duration_seconds`.
-- **Observability**, when HyperDX is running. Its API returns the six seeded
+- **Observability**, when dfe-hyperdx is running. Its API returns the six seeded
   sources and at least one provisioned dashboard, read through the proxy that
   gives it an identity.
 - **Console.** Those same marked rows read back through the engine query API.

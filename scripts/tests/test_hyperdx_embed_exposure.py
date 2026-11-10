@@ -6,11 +6,11 @@
 #  License:      BUSL-1.1
 #  Copyright:    (c) 2026 HYPERI PTY LIMITED
 
-"""The console frames HyperDX from dfe-proxy's embed port, so HyperDX's dials cover it.
+"""The console frames dfe-hyperdx from dfe-proxy's embed port, so dfe-hyperdx's dials cover it.
 
 The embed stays product class and outside the auth profile's gate, because an OIDC
-redirect cannot complete inside a frame. The HyperDX kill switches take it dark with
-the HyperDX origins. Each case runs a copy of the Makefile for the chain it resolves,
+redirect cannot complete inside a frame. The dfe-hyperdx kill switches take it dark with
+the dfe-hyperdx origins. Each case runs a copy of the Makefile for the chain it resolves,
 then reads the real compose model through that chain. The receiver's optional listeners go the same way, each published by its own port key.
 """
 
@@ -25,7 +25,7 @@ import check_compose
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 
-# Container ports dfe-proxy publishes: the console and the HyperDX embed.
+# Container ports dfe-proxy publishes: the console and the dfe-hyperdx embed.
 _CONSOLE = "8080"
 _EMBED = "8091"
 # Container ports dfe-receiver publishes whatever its port keys say.

@@ -85,13 +85,13 @@ _LEN_KEY = 48  # signing keys and other long-lived key material
 # or 32 bytes. The key tier's 48 is rejected outright, so this one is its own
 # length rather than a tier -- 32 for AES-256, the strongest of the three.
 _LEN_COOKIE = 32
-# HyperDX takes TOKEN_ENCRYPTION_KEY as 64 hex chars or base64 of exactly 32 bytes
+# dfe-hyperdx takes TOKEN_ENCRYPTION_KEY as 64 hex chars or base64 of exactly 32 bytes
 # and refuses to start on anything else; hex keeps it alphanumeric.
 _LEN_HEX_AES256 = 64
 _HEX_SECRETS = frozenset({"TOKEN_ENCRYPTION_KEY"})
 
 # File -> name -> length tier. DB passwords are the 128-bit credential tier, and
-# the dfe-ui NextAuth, engine JWT and HyperDX session values are session-signing
+# the dfe-ui NextAuth, engine JWT and dfe-hyperdx session values are session-signing
 # KEYS, so they take the 256-bit tier.
 GENERATED_SECRETS = {
     DOTENV_FILE.name: {

@@ -56,7 +56,7 @@ ENGINE_READS = {
     "dfe_query_reader": "DFE_ENGINE_CLICKHOUSE_QUERY_READER_PASSWORD",
 }
 
-# HyperDX takes dfe_query_reader from the connection dfe-engine hands it, so its own definition names no user
+# dfe-hyperdx takes dfe_query_reader from the connection dfe-engine hands it, so its own definition names no user
 ENGINE_HANDED_USERS = {"dfe_query_reader"}
 
 

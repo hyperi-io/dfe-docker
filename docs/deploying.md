@@ -144,7 +144,7 @@ publish the UIs on every interface --
 an upgraded stack that runs `make init` (to pick up new `.env.example` keys) gets
 a real password. ClickHouse stores the default-user credential in its data volume
 on first init, so a pre-existing `clickhouse-data` volume still expects the OLD
-(blank) password and the loader/engine/HyperDX now authenticate with the new one
+(blank) password and the loader, engine and dfe-hyperdx now authenticate with the new one
 -- every query fails `Authentication failed`. A blank password is no way back:
 `make init` rewrites an empty `CLICKHOUSE_PASSWORD=` with a generated one, and
 `make post` fails a stack still on it. Adopt the generated password instead: set

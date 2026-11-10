@@ -100,7 +100,7 @@ def profile_lines(
     node, host_cores = _docker_host()
     files = [COMPOSE_FILE] if fragment is None else [COMPOSE_FILE, fragment]
     try:
-        # Naming the services brings in their dependencies and any whose compose profile is off, HyperDX's among them
+        # Naming the services brings in their dependencies and any whose compose profile is off, dfe-hyperdx's among them
         model = _compose_model(files=files, profiles=profiles, services=services)
         limits = _cpu_limits(host_cores=host_cores, model=model)
     except (ComposeConfigError, ValueError) as error:

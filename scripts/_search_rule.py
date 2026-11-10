@@ -1,6 +1,6 @@
 #  Project:      dfe-docker
 #  File:         _search_rule.py
-#  Purpose:      The console steps that turn a HyperDX search into a rule and a hunt
+#  Purpose:      The console steps that turn a dfe-hyperdx search into a rule and a hunt
 #  Language:     Python
 #
 #  License:      BUSL-1.1
@@ -50,7 +50,7 @@ _SCROLL_NESTED_LIST = """panel => {
 }"""
 LOCAL_LOGIN_TAB = "Login with Local"
 SEARCH_PATH = "/observe/search"
-# The HyperDX route Create Rule posts to, which forwards the engine's answer.
+# The dfe-hyperdx route Create Rule posts to, which forwards the engine's answer.
 CREATE_RULE_ROUTE = "/dfe/create-rule"
 RULE_PATH = "/rules/"
 HUNTS_PATH = "/hunts"
@@ -253,7 +253,7 @@ class Console:
         self.shot("signed-in")
 
     def _search_frame(self):
-        """The HyperDX search the console embeds on Observe, once it has loaded."""
+        """The dfe-hyperdx search the console embeds on Observe, once it has loaded."""
         self.page.goto(f"{self.ui_url}{SEARCH_PATH}", wait_until="domcontentloaded")
         frame = self.page.frame_locator("iframe").first
         frame.get_by_test_id("where-language-switch").wait_for(
@@ -369,7 +369,7 @@ class Console:
         """Search, filter from the side panel, press Create Rule and read the rule page.
 
         Args:
-            source: The HyperDX source to search.
+            source: The dfe-hyperdx source to search.
             search: The search bar's SQL.
             filter_path: The JSON sub-path to filter on in the side panel.
             filter_value: The value to pick for it.
