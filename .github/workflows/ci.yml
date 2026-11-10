@@ -382,7 +382,7 @@ jobs:
       # The trailer gate, the classification check and the version, as every hyperi-ci pipeline decides them
       - name: Plan the release
         id: plan
-        uses: hyperi-io/hyperi-ci/.github/actions/predict-version@main
+        uses: hyperi-io/hyperi-ci/.github/actions/predict-version@694e34f69bed448a2638a8e862414257861e8b17 # main
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
           tag: ${{ inputs.tag }}
