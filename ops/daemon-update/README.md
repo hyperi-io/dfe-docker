@@ -1,104 +1,94 @@
-# dfe-docker self-update daemon (STAGED - apply parked)
+# dfe-docker self-update daemon
 
-Keeps a single-VM dfe-docker deployment CURRENT using the stack's OWN updater -
-not watchtower. A systemd timer periodically discovers the newest certified
-stack version and, only when there is something new, runs `make init` (tops up
-any generated secret the new version added to .env, never overwrites one), then
-`make stack VERSION=<new>` (pin from the signed OCI stack-manifest), then
-`make ci` (pull + up -d).
+A systemd timer that keeps a single-VM deployment on the newest published stack, so nobody has to log in to move it. It is opt-in: a box stays where `make stack VERSION=X.Y.Z && make ci` put it unless this is installed. It moves between whole signed stacks, where watchtower would bump container tags one at a time.
 
-Why not watchtower: watchtower bumps individual container tags blindly. The DFE
-stack is versioned as a CERTIFIED SET (the signed `dfe-stack-manifest`), and
-`make stack` hard-fails rather than ever pull `latest`. This daemon respects
-that - it only ever moves the VM between whole certified pin sets.
+## What a tick does
+
+A tick runs 10 minutes after boot, then every hour:
+
+1. Takes `.dfe-stack.lock`, the lock `make proof` holds. If it is held the tick logs `skipping this tick` and exits 0, because `make ci` would take down the stack the proof is testing.
+2. Lists the stack-manifest tags with `oras repo tags` and picks the highest stable version.
+3. Compares it to `.dfe-stack-applied`. The same version only fast-forwards the checkout and restarts nothing. A lower version is refused, because a box installed from a cut branch can sit ahead of the newest published stack.
+4. A higher version runs `git pull --ff-only`, `make init`, `make stack VERSION=<new>` and `make ci`, then records the version.
+
+A failure exits non-zero, so systemd marks the unit failed and the next tick retries. `make ci` pulls the images before it stops the stack, so a failed pull leaves the running stack up. Output reaches the journal as it happens: `journalctl -u dfe-docker-update -f`.
 
 ## The checkout moves with the pins
 
-A stack version is images PLUS the compose that runs them, so the daemon
-fast-forwards the checkout (`git pull --ff-only`) before pinning. Pinning new
-images against an old `docker-compose.yml` is a half-update that reports success:
-the 2.2.0-rc.2 engine needs a `DFE_ENV` declaration and a healthcheck path that
-older compose files do not have, so the schema authority restart-loops while the
-timer records a clean run.
+A stack is images plus the compose that runs them, so the tick fast-forwards the checkout before pinning. It pulls the branch the checkout is on, which is the newest compose on that branch and not one tied to the stack version.
 
-Two guards. A tree with uncommitted changes to TRACKED files is refused rather
-than pulled over - a deployed box should be clean, since `.env`, `env/`,
-`deployment.yaml` and the state file are all gitignored. And the pull needs a
-credential for the remote; without one it fails loudly rather than carrying on
-with a stale compose.
+A tree with uncommitted changes to tracked files is refused rather than pulled over. `.env`, `env/`, `deployment.yaml` and the state file are gitignored, so a deployed box should be clean. The pull needs a credential for the remote and fails the tick without one.
 
-`DFE_UPDATE_SKIP_GIT_PULL=1` turns it off for a box whose checkout is managed
-another way (an image, a config-management run, an air-gapped copy). The skip is
-logged, because it reintroduces exactly the drift above.
+`make init` adds any generated secret the new version needs and never overwrites a value, so an existing `.env` and `env/` carry over as they are.
 
-`--dry-run` reports what the refresh would do, so you can see a box is dirty
-before the timer does.
+## Settings
 
-## Running alongside `make proof`
+Set these in a drop-in on `dfe-docker-update.service`:
 
-A tick and `make proof` both take the stack down, so they share a lock,
-`.dfe-stack.lock` in the checkout. A tick that finds a proof holding it logs
-`skipping this tick` and exits 0, and the next tick retries. `--dry-run` takes no
-lock.
+| Variable                        | Effect                                                            |
+|---------------------------------|-------------------------------------------------------------------|
+| `DFE_STACK_REPIN_IMAGES=1`      | Follows every DFE image release, not only stacks. See below       |
+| `DFE_UPDATE_ALLOW_PRERELEASE=1` | Also takes `-rc` stacks                                           |
+| `DFE_UPDATE_WIPE_STATE=1`       | Runs `make clean` before `make ci`, once per new stack. See below |
+
+## Following image releases
+
+`DFE_STACK_REPIN_IMAGES=1` moves the box on every DFE image release, not only when a stack ships. A tick takes the newest stack, overlays each image's newest GitHub release by digest and records the result as `2.2.1+images.1a2b3c4d5e6f`. Nobody certified this mix, so a bug found here may never reach a cut stack.
+
+A new digest runs `make stack VERSION=latest` (`rc` with `DFE_UPDATE_ALLOW_PRERELEASE=1`) and `make ci`. The same digest restarts nothing. A failed `make ci` records nothing, so the next tick retries, and nothing rolls back: the box stays on the image that failed until a newer release ships.
+
+It needs no credential or `gh`: images and releases are public, so a tick reads them anonymously, about one GitHub request per image against the limit of 60 an hour per IP. A failed lookup fails the tick and changes nothing.
+
+`make ci` takes the whole stack down on each move and components ship several releases a day, so run the timer once a night. The drop-in's name has to sort after any other in the directory:
+
+```ini
+# /etc/systemd/system/dfe-docker-update.timer.d/zz-nightly.conf
+[Timer]
+OnBootSec=
+OnUnitActiveSec=
+OnCalendar=
+OnCalendar=*-*-* 01:00
+Persistent=true
+```
+
+`make proof` records a pass against a digest of the pins too, so it proves each new image set once.
 
 ## Disposable boxes: fresh state on every version
 
-`DFE_UPDATE_WIPE_STATE=1` runs `make clean` between the pin and the bring-up, so
-the new version comes up against empty volumes and its first-start paths - schema
-creation, the break-glass seed, the engine's built-in defaults - actually execute
-instead of short-circuiting as already-current. It fires once per NEW STACK
-VERSION, not once per timer tick: the wipe sits inside the branch the daemon
-already guards with `applied == latest`.
+`DFE_UPDATE_WIPE_STATE=1` brings each new version up on empty volumes, so its first-start paths run for real: schema creation, the break-glass seed and the engine's built-in defaults.
 
-It deletes everything - ClickHouse, Kafka, the DLQ spool, HyperDX and the engine's config volume. That last one does not come back: the image ships an EMPTY `/app/config`, so sources, orgs and locally created accounts are gone for good. Only the two logins return, both from `env/engine.env`. The engine issues `admin` again from `DFE_ENGINE_AUTH_LOCAL_ADMIN_PASSWORD`, with a forced change at first login. It hashes `breakglass` from `DFE_ENGINE_AUTH_BREAKGLASS_PASSWORD` into the new deploy repo, which needs `DFE_GITOPS_ENABLED=true` there too. `make orgs` and `make accounts` create the seed orgs and accounts again. Pin both passwords to known values on a box running this, rather than letting `make init` mint random ones you never see.
+It deletes ClickHouse, Kafka, the DLQ spool, HyperDX and the engine's config volume. The image ships an empty `/app/config`, so sources, orgs and locally created accounts are gone for good. Only the two logins return, both from `env/engine.env`. The engine issues `admin` again from `DFE_ENGINE_AUTH_LOCAL_ADMIN_PASSWORD`, with a forced change at first login. It hashes `breakglass` from `DFE_ENGINE_AUTH_BREAKGLASS_PASSWORD` into the new deploy repo, which needs `DFE_ENGINE_GITOPS_ENABLED=true` there too. `make orgs` and `make accounts` create the seed orgs and accounts again. Pin both passwords to known values on a box running this.
 
-One trap. With `DFE_DATA_ROOT` set, `compose/storage.yml` turns every volume into a bind onto that path and `make clean` does not chain that overlay: it removes the volume objects while the directories keep their contents. The wipe silently degrades to a no-op. Leave `DFE_DATA_ROOT` unset on a box that relies on this flag.
+With `DFE_DATA_ROOT` set, `compose/storage.yml` turns every volume into a bind onto that path, and `make clean` removes the volume objects while the directories keep their contents. The wipe then does nothing, so leave `DFE_DATA_ROOT` unset on a box that relies on this flag.
 
-## Files
+## Install
 
-- `self_update.py` - discovers the newest stable stack tag (`oras repo tags`),
-  compares to the last-applied version (state file `.dfe-stack-applied` in the
-  checkout), and runs the updater only on a change. `--dry-run` reports without
-  acting. `DFE_UPDATE_ALLOW_PRERELEASE=1` includes `-rc` builds;
-  `DFE_UPDATE_WIPE_STATE=1` destroys every volume on each version change.
-- `dfe-docker-update.service` - oneshot that runs the updater.
-- `dfe-docker-update.timer` - runs it 10 min after boot, then every 6h (jittered).
-- `dfe-docker-update.rules` - polkit rule: members of the service user's group start, stop and restart the update and proof units without sudo.
-- `share_checkout.py` - makes the checkout bar `certs/` group-writable and setgid, closes secrets to others, sets `core.sharedRepository group` and `safe.directory`, adds operators to the group. Idempotent, `--dry-run` lists changes.
-- `install.sh` - renders + installs the units and polkit rule, shares the checkout and enables the timer. `DFE_UPDATE_ENABLE_TIMER=0` leaves the timer alone, `DFE_OPERATOR_USER=<login>` adds a login to the group, `DFE_UPDATE_SHARE_CHECKOUT=0` skips the checkout conversion.
+Run this as root on the VM. It needs docker, `oras`, python3, a working `.env` (`make init` once) and the service user in the `docker` group. Images and the stack manifest pull anonymously, so the VM needs no registry login.
 
-## Install (parked - run on the dfe-docker VM as root)
-
-Prerequisites on the VM: docker, `oras`, python3; the service user in the
-`docker` group; a working `.env` (`make init` once). The images and the stack
-manifest pull anonymously, so the VM needs no registry login.
-
-```
+```bash
 sudo DFE_DOCKER_DIR=/opt/dfe-docker DFE_UPDATE_USER=dfe ./install.sh
-# verify
 systemctl status dfe-docker-update.timer
-sudo -u dfe DFE_DOCKER_DIR=/opt/dfe-docker python3 \
-  /opt/dfe-docker/ops/daemon-update/self_update.py --dry-run   # shows latest vs applied
-journalctl -u dfe-docker-update.service -f                     # watch a real run
+sudo -u dfe python3 /opt/dfe-docker/ops/daemon-update/self_update.py --dry-run
 ```
 
-First real run adopts the current newest stable stack and records it; subsequent
-ticks are no-ops until a newer certified stack ships.
+The first real run adopts the newest stable stack and records it. Later ticks do nothing but fast-forward until a newer one ships.
 
 ## Operating without sudo
 
 After `install.sh`, a login in the service user's group runs everything itself:
 
-```
+```bash
 systemctl start dfe-docker-update.service      # one tick, as the service user, waits for it
 systemctl start --no-block dfe-docker-update.service && journalctl -u dfe-docker-update -f
-git -C /opt/dfe-docker pull --ff-only          # and make stack / make ci / make post
+git -C /opt/dfe-docker pull --ff-only          # and make stack, make ci, make post
 ```
 
-The tick follows the newest tag in the stack-manifest repository. A version the manifest does not list as newest goes through `make stack VERSION=X.Y.Z && make ci` as the operator. The full account, with the one-time conversion of an existing install, is in [docs/deploying.md](../../docs/deploying.md#updating-a-daemon-vm-without-sudo).
+A tick follows the newest tag in the stack-manifest repository. Any other version goes through `make stack VERSION=X.Y.Z && make ci` as the operator. The conversion of an existing install is in [docs/deploying.md](../../docs/deploying.md#updating-a-daemon-vm-without-sudo).
 
-## Why staged
+## Files
 
-Installing systemd units and restarting the live stack on the deployment's VM is a
-VM-side mutation - parked for a human to run on the box. Everything needed is
-here; `install.sh` is the one command.
+- `self_update.py`: one tick. `--dry-run` reports without acting and takes no lock.
+- `dfe-docker-update.service`: the oneshot that runs a tick.
+- `dfe-docker-update.timer`: the schedule.
+- `dfe-docker-update.rules`: a polkit rule letting the service user's group start, stop and restart the update and proof units.
+- `install.sh`: renders and installs the units and polkit rule, then enables the timer. It also makes the checkout bar `certs/` group-writable and setgid, closes secrets to others, sets `core.sharedRepository group` and `safe.directory` and adds the operator to the group. Its header lists its settings.

@@ -435,10 +435,10 @@ creds: ## Print the access summary. The admin password prints on a TTY only -- a
 	@python3 scripts/creds.py
 
 # A dev tyre-kick logs in without looking anything up, so `make dev` writes the
-# KNOWN default password and DFE_ENV=dev, the one posture the engine accepts it in.
+# KNOWN default password and DFE_ENGINE_ENV=dev, the one posture the engine accepts it in.
 # A .env already on a dev posture keeps a non-default password, the replacement
 # `make post` recorded after the engine made the admin change the default.
-# It refuses with exit 2 on any other DFE_ENV and copies each file it rewrites to
+# It refuses with exit 2 on any other DFE_ENGINE_ENV and copies each file it rewrites to
 # <name>.bak-<utc> first, so a minted password in env/engine.env survives.
 #
 # `AUTH=real` is the other half: local images running the same authentication flow
@@ -451,11 +451,11 @@ else
 endif
 
 .PHONY: dev-posture
-dev-posture: env-files ## Put .env and env/engine.env into the dev posture (DFE_ENV=dev, known admin password until the stack replaces it); AUTH=real mints one and writes a non-dev posture instead
+dev-posture: env-files ## Put .env and env/engine.env into the dev posture (DFE_ENGINE_ENV=dev, known admin password until the stack replaces it); AUTH=real mints one and writes a non-dev posture instead
 	@python3 scripts/dev_posture.py $(DEV_POSTURE_ARG)
 
 .PHONY: e2e-posture
-e2e-posture: env-files ## Put .env and env/engine.env into the dfe-ui Playwright suite's posture (DFE_ENV=test, the engine's e2e routes on), keeping both originals for e2e-posture-off
+e2e-posture: env-files ## Put .env and env/engine.env into the dfe-ui Playwright suite's posture (DFE_ENGINE_ENV=test, the engine's e2e routes on), keeping both originals for e2e-posture-off
 	@python3 scripts/e2e_posture.py on
 
 .PHONY: e2e-posture-off
@@ -472,8 +472,8 @@ e2e-posture-check: ## Exit 1 naming what is missing unless the env files are in 
 # VERSION=latest (rc to include pre-releases) instead pins the newest published
 # stack, read anonymously from the OCI registry. DFE_STACK_REPIN_IMAGES=1 also
 # repins every ghcr.io/hyperi-io image at its component's newest GitHub release,
-# through a gh login that can read the component repos -- development currency,
-# not a deployment. Still digest-pinned either way.
+# through gh, or anonymously where it is not installed. Nobody certified that mix.
+# Still digest-pinned either way.
 VERSION ?= $(DFE_STACK_VERSION)
 
 .PHONY: stack
@@ -529,22 +529,22 @@ dev-build: ## Build local DFE images from source (no start; honours LOCAL). Clon
 # ---------------------------------------------------------------------------
 
 # A registry stack runs no local image, so the record of the last dev build goes, or `make apply` would put an instance back on it.
+# Pull before down, so a failed pull leaves the running stack up.
 .PHONY: ci
-ci: env-files down storage-dirs  ## Pull and start infra and registry DFE images. Prints no credentials -- run `make creds` for those
+ci: env-files storage-dirs  ## Pull and start infra and registry DFE images. Prints no credentials -- run `make creds` for those
 	@rm -f $(LOCAL_OVERLAY)
-	python3 scripts/port_check.py -- -f docker-compose.yml $(STORAGE_FLAGS) $(UI_FLAGS) $(PROFILE_FLAGS)
 	docker compose -f docker-compose.yml $(STORAGE_FLAGS) $(UI_FLAGS) $(PROFILE_FLAGS) pull
 	docker compose -f docker-compose.yml $(STORAGE_FLAGS) $(UI_FLAGS) $(PROFILE_FLAGS) pull $(ACTIVE_SERVICES)
+	@$(MAKE) --no-print-directory down
+	python3 scripts/port_check.py -- -f docker-compose.yml $(STORAGE_FLAGS) $(UI_FLAGS) $(PROFILE_FLAGS)
 	docker compose -f docker-compose.yml $(STORAGE_FLAGS) $(UI_FLAGS) $(PROFILE_FLAGS) up -d $(ACTIVE_SERVICES)
 	@$(MAKE) --no-print-directory post || { echo "post: SELF TEST FAILED -- the stack is up, but it did not prove it moves data. Run 'make post' for detail."; exit 1; }
 
-# `make up` is a clone's one command: scripts/quickstart.py makes .env, picks the profile and pins the newest published stack, then the sub-make starts it. A sub-make because .tmp/profile.mk is resolved when make parses, before any recipe could write the profile into .env. PROFILE= and VERSION= count only from the make line, so a PROFILE in the shell's environment never moves the stack.
+# `make up` is a clone's one command: scripts/quickstart.py makes .env, picks the profile and pins the newest published stack, then the sub-make starts it. A sub-make because .tmp/profile.mk is resolved when make parses, before any recipe could write the profile into .env. PROFILE= and VERSION= count only from the make line, so a PROFILE in the shell's environment never moves the stack
 DEFAULT_PROFILE := single-kafka
 QUICKSTART_ARGS = --default-profile '$(DEFAULT_PROFILE)' --profile '$(if $(filter command line,$(origin PROFILE)),$(PROFILE))' --version '$(if $(filter command line,$(origin VERSION)),$(VERSION))'
 
-# The operator-facing name for the registry start, and the one the engine prints
-# when it tells someone how to apply a rotated password. It is `ci` plus the
-# hand-over, which is the whole difference between the two.
+# The operator-facing name for the registry start and the one the engine prints when it tells someone how to apply a rotated password. It is `ci` with the quickstart before it and the hand-over after it
 .PHONY: up
 up: ## Start the stack from the pinned registry images (PROFILE=slim-grpc and VERSION=X.Y.Z override the defaults), then print the access summary (password on a TTY only) and write access-summary.md
 	@python3 scripts/quickstart.py prepare up $(QUICKSTART_ARGS)
@@ -783,7 +783,7 @@ post: ## Prove the RUNNING stack moves data end to end (DFE_POST_ENABLED=false t
 
 # ---------------------------------------------------------------------------
 # Seed
-# The starter set in resources/seed, created through the engine API on a RUNNING stack, plus fake events for its hunt to find. hunts also creates the rules in the same seed.py run, because the engine refuses a hunt whose rule does not exist. accounts creates the orgs first, because the engine refuses an account naming an org it does not hold. One run means a login asked for at the terminal is asked for once. Every target but events creates only what the engine lacks. events sends its records again on every run. A volume wipe loses every object, so run the targets again after one.
+# The starter set in resources/seed, created through the engine API on a RUNNING stack, plus fake events for its hunt to find. hunts also creates the orgs and rules in the same seed.py run, because the engine refuses a hunt naming an org or rule it does not hold. accounts creates the orgs first, because the engine refuses an account naming an org it does not hold. One run means a login asked for at the terminal is asked for once. Every target but events creates only what the engine lacks. events sends its records again on every run. A volume wipe loses every object, so run the targets again after one.
 # ---------------------------------------------------------------------------
 
 .PHONY: orgs
@@ -803,7 +803,7 @@ rules: ## Create the resources/seed rules the running engine lacks
 	@$(UV) run --locked --script ./scripts/seed.py rules
 
 .PHONY: hunts
-hunts: ## Create the resources/seed rules and hunts the running engine lacks
+hunts: ## Create the resources/seed orgs, rules and hunts the running engine lacks
 	@$(UV) run --locked --script ./scripts/seed.py hunts
 
 .PHONY: events
@@ -826,16 +826,16 @@ DEMO_PRUNER := $(PROXY_PROJECT)-demo-archive-prune
 # The generator is standard-library Python and dfe-transform-elastic's image has none, so it runs here, pinned like the hadolint image above
 DEMO_PYTHON_IMAGE := python:3.14-slim-trixie@sha256:cd89c30eda26ee911a4611b18680086e0ea42e6f5f8cbe653d07fa7958c9cec8
 
-# On a clone with no stack this is the whole path: make up, then the stream. A running stack is left as it is, and a profile with no dfe-transform-elastic is refused before anything starts. The stream runs under a bare python3: demo.py reads its Sources as JSON and drives docker, make and git.
+# On a clone with no stack this is the whole path: make up, then the stream. A running stack is left as it is and a profile with no dfe-transform-elastic is refused before anything starts. The stream runs under a bare python3: demo.py reads its Sources through the engine's PyYAML and drives docker, make and git
 .PHONY: demo
-demo: ## Start the stack when it is not running, then stream live firewall syslog through it, detected per line by dfe-transform-elastic into one table per vendor beside two fetchers pulling into their own, until `make demo-stop` or a receiver restart (PROFILE=, VERSION=, Sources in resources/demo/sources, DEMO_RATE, DEMO_PROTOCOL=tcp|udp, DEV=1 for a `make dev` stack)
+demo: ## Start the stack when it is not running, then stream live firewall syslog through it, detected per line by dfe-transform-elastic into one table per vendor beside two fetchers pulling into their own, until `make demo-stop` or a receiver restart (Sources in resources/demo/sources, PROFILE=, VERSION=, DEMO_RATE, DEMO_PROTOCOL=tcp|udp, DEV=1 for a `make dev` stack)
 	@python3 scripts/quickstart.py prepare demo $(QUICKSTART_ARGS) $(if $(strip $(DEV)),--dev)
 	@python3 scripts/quickstart.py running || { $(MAKE) --no-print-directory ci && python3 scripts/creds.py --write; }
 	@$(MAKE) --no-print-directory demo-run
 
 .PHONY: demo-run
 demo-run: env-files
-	@python3 ./scripts/demo.py --container '$(DEMO_CONTAINER)' --pruner '$(DEMO_PRUNER)' --generator '$(DEMO_GENERATOR)' --image '$(DEMO_PYTHON_IMAGE)' --protocol '$(DEMO_PROTOCOL)' --rate '$(DEMO_RATE)' $(if $(strip $(DEV)),--dev)
+	@python3 ./scripts/demo.py --container '$(DEMO_CONTAINER)' --generator '$(DEMO_GENERATOR)' --image '$(DEMO_PYTHON_IMAGE)' --protocol '$(DEMO_PROTOCOL)' --pruner '$(DEMO_PRUNER)' --rate '$(DEMO_RATE)' $(if $(strip $(DEV)),--dev)
 
 .PHONY: demo-stop
 demo-stop: ## Remove the whole `make demo` pack: the stream, the archive pruner, the sources it created, the console dashboards and searches, and the archived files (the tables stay)

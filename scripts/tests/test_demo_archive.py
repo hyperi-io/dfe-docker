@@ -18,6 +18,8 @@ import pytest
 import demo
 from _common import REPO_ROOT
 
+pytestmark = pytest.mark.usefixtures("engine_python_here")
+
 _SPEC = importlib.util.spec_from_file_location(
     "demo_archive", REPO_ROOT / "resources" / "demo" / "archive.py"
 )

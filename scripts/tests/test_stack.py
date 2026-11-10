@@ -243,6 +243,7 @@ _FRAGMENT = (
     "# rendered for docker\n"
     f"DFE_ENGINE_VERSION=v1.22.8@sha256:{'a' * 64}  # ghcr.io/hyperi-io/dfe-engine\n"
     f"CLICKHOUSE_VERSION=25.8@sha256:{'b' * 64}\n"
+    f"DFE_CULVERT_VERSION=v2.1.28@sha256:{'c' * 64}\n"
 )
 
 
@@ -326,6 +327,7 @@ def test_a_discovery_word_resolves_with_no_gh_and_no_token(
     assert f"DFE_ENGINE_VERSION=v1.22.8@sha256:{'a' * 64}\n" in written
     assert f"DFE_STACK_VERSION={word}\n" in written
     assert "HTTP_PORT=8080" in written
+    assert "DFE_CULVERT_VERSION" not in written
 
 
 def test_the_github_release_repin_runs_only_when_asked(

@@ -15,8 +15,10 @@ boundaries, and every command it would run is recorded in order.
 import ipaddress
 import json
 import subprocess
+from pathlib import Path
 
 import pytest
+import yaml
 
 import test_e2e
 
@@ -68,6 +70,61 @@ def test_a_leftover_suite_project_is_removed_before_any_test(
     ]
     assert leftover in steps
     assert steps.index(leftover) < steps.index("test") < steps.index("put_back")
+
+
+def test_stack_down_reaches_the_profiles_services_inherit(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def _run_cmd(args, capture=False, cwd=None):
+        commands.append(list(args))
+        return subprocess.CompletedProcess(
+            args=args, returncode=0, stderr="", stdout=""
+        )
+
+    commands = []
+    monkeypatch.setattr(name="run_cmd", target=test_e2e, value=_run_cmd)
+
+    test_e2e.stack_down()
+    test_e2e.stack_down(keep_services=["clickhouse"])
+
+    assert [command[:4] for command in commands] == [
+        ["docker", "compose", "--profile", "*"]
+    ] * 3
+    assert [command[4] for command in commands] == ["down", "stop", "rm"]
+
+
+def test_each_config_check_reads_the_config_its_service_mounts(
+    monkeypatch: pytest.MonkeyPatch, tmp_path
+) -> None:
+    monkeypatch.setattr(name="TMP_DIR", target=test_e2e, value=tmp_path)
+
+    written = test_e2e.generate_compose_override(
+        engine_environment={},
+        engine_volumes=[],
+        rendered_services=["dfe-loader"],
+        services={
+            "dfe-loader": "config/loader/grpc.yaml",
+            "dfe-receiver": "tests/e2e/configs/receiver-e2e-org.yaml",
+        },
+    )
+
+    services = yaml.safe_load(Path(written).read_text(encoding="utf-8"))["services"]
+    for name in ("dfe-loader", "dfe-receiver"):
+        assert services[f"config-check-{name}"]["volumes"] == services[name]["volumes"]
+    assert services["config-check-dfe-loader"]["command"] == [
+        *services["dfe-loader"]["command"],
+        "config-check",
+    ]
+    assert "command" not in services["config-check-dfe-receiver"]
+
+
+def test_every_mounted_service_has_the_config_check_the_override_names() -> None:
+    one_shots = (test_e2e.PROJECT_DIR / "compose" / "one-shots.yml").read_text(
+        encoding="utf-8"
+    )
+
+    for name in test_e2e.SERVICE_CONFIG_MOUNTS:
+        assert f"  config-check-{name}:\n" in one_shots
 
 
 def test_isolation_keeps_a_rotated_password_out_of_dotenv_until_it_ends(

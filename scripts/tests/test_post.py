@@ -987,8 +987,8 @@ def _only_the_runner_password_in_play(
     monkeypatch.setattr(post, "_resolved_services", lambda: services)
     monkeypatch.delenv("CLICKHOUSE_HOST", raising=False)
     monkeypatch.setenv("CLICKHOUSE_PASSWORD", "aMintedAdminValue123")
-    # Minted into .env since it moved out of env/engine.env, so the environment carries it
-    monkeypatch.setenv("DFE_API_JWT_SECRET", "aMintedSigningValue123")
+    # Minted into .env, which a clean checkout does not have
+    monkeypatch.setenv("DFE_ENGINE_API_JWT_SECRET", "aMintedSigningValue123")
     _mint_env_file_secrets()
 
 
@@ -1083,10 +1083,12 @@ def test_the_engines_published_jwt_placeholder_fails_the_self_test(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     _only_the_runner_password_in_play(monkeypatch, ["dfe-engine"])
-    monkeypatch.setenv("DFE_API_JWT_SECRET", "dev-secret-key-change-in-production")
+    monkeypatch.setenv(
+        "DFE_ENGINE_API_JWT_SECRET", "dev-secret-key-change-in-production"
+    )
 
     assert post._weak_secrets() == [
-        ("DFE_API_JWT_SECRET", "dev-secret-key-change-in-production")
+        ("DFE_ENGINE_API_JWT_SECRET", "dev-secret-key-change-in-production")
     ]
 
 

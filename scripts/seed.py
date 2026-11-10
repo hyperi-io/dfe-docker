@@ -16,7 +16,7 @@
 
 """Create one part of the starter set in resources/seed on the running stack or send its fake events.
 
-The hunts target also creates the rules, because the engine refuses a hunt whose rule does not exist. The accounts target creates the orgs first for the same reason, since the engine refuses an account naming an org it does not hold. Nothing else is created for a target: a rule over a source that is not deployed yet is accepted and reads nothing until it is. A hunt whose table does not exist yet is not created, because the hunt runner fails on every run of it.
+The hunts target also creates the orgs and rules, because the engine refuses a hunt naming an org or rule it does not hold. The accounts target creates the orgs first for the same reason, since the engine refuses an account naming an org it does not hold. Nothing else is created for a target: a rule over a source that is not deployed yet is accepted and reads nothing until it is. A hunt whose table does not exist yet is not created, because the hunt runner fails on every run of it.
 
 Each sources, rules, hunts, orgs or accounts file is the body the engine's create route takes, named for the object it creates. An account file carries no password. A new account gets the one env/engine.env already records for it as DFE_SEED_ACCOUNT_<USERNAME>_PASSWORD. Without one it gets a fresh 24-character password, recorded there before the account is created. So a volume wipe brings the account back on the same password, which `make creds` hands over. No password is ever printed. An object the engine already holds is left as it is, so a re-run creates only what is missing. The one exception is a held source that was never deployed, which is deployed. A source whose fetcher or transform app the profile does not run is skipped. The sources end with a request for the engine to bring every app in step with them, which retries a deploy whose apps did not follow. A restart the engine asks for is printed, not run: `make apply` on a `make dev` stack needs DEV=1, which this script cannot know.
 
@@ -123,7 +123,7 @@ HUNT_TABLE = re.compile(
 TARGETS = {
     "accounts": ("orgs", "accounts"),
     EVENTS: (EVENTS,),
-    "hunts": ("rules", "hunts"),
+    "hunts": ("orgs", "rules", "hunts"),
     "orgs": ("orgs",),
     "rules": ("rules",),
     "sources": ("sources",),

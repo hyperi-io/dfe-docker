@@ -25,6 +25,7 @@ import contextlib
 import fcntl
 import os
 import stat
+import subprocess
 import sys
 from collections.abc import Iterator
 from pathlib import Path
@@ -96,6 +97,18 @@ def _on_audit(event: str, args: tuple) -> None:
         _watch.views.append((stat.S_IMODE(info.st_mode), text))
 
 
+def _python_here(*, code: str, stdin: str) -> subprocess.CompletedProcess:
+    """Run what the demo sends the engine's python on this one, so only `docker exec` is left out."""
+    return subprocess.run(
+        [sys.executable, "-c", code],
+        capture_output=True,
+        check=False,
+        encoding="utf-8",
+        input=stdin,
+        text=True,
+    )
+
+
 sys.addaudithook(_on_audit)
 
 
@@ -108,6 +121,12 @@ def chmod_watch() -> Iterator[ChmodWatch]:
         yield _watch
     finally:
         _watch = None
+
+
+@pytest.fixture
+def engine_python_here(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Read the demo's YAML with no engine running."""
+    monkeypatch.setattr("demo._engine_python", _python_here)
 
 
 @pytest.fixture(autouse=True)

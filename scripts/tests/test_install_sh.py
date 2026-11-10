@@ -25,12 +25,12 @@ from _common import REPO_ROOT
 INSTALL = REPO_ROOT / "install.sh"
 SECRETS = (
     ".env CLICKHOUSE_PASSWORD alnum 24\n"
-    ".env DFE_API_JWT_SECRET alnum 48\n"
+    ".env DFE_ENGINE_API_JWT_SECRET alnum 48\n"
     "engine.env DFE_ENGINE_AUTH_LOCAL_ADMIN_PASSWORD alnum 24\n"
     "hyperdx.env TOKEN_ENCRYPTION_KEY hex 64\n"
 )
 FILES = {
-    ".env.example": "# CLICKHOUSE_PASSWORD=\n# DFE_API_JWT_SECRET=changeme\nDFE_UI_PORT=3000\n",
+    ".env.example": "# CLICKHOUSE_PASSWORD=\n# DFE_ENGINE_API_JWT_SECRET=changeme\nDFE_UI_PORT=3000\n",
     "env.example/engine.env": "# DFE_ENGINE_AUTH_LOCAL_ADMIN_PASSWORD=\n",
     "env.example/hyperdx.env": "# TOKEN_ENCRYPTION_KEY=\n",
     "install/secrets.list": SECRETS,
@@ -112,7 +112,7 @@ def test_installs_the_default_profile_with_minted_secrets(
         if "=" in line and not line.startswith("#")
     )
     assert re.fullmatch(r"[A-Za-z0-9]{24}", values["CLICKHOUSE_PASSWORD"])
-    assert re.fullmatch(r"[A-Za-z0-9]{48}", values["DFE_API_JWT_SECRET"])
+    assert re.fullmatch(r"[A-Za-z0-9]{48}", values["DFE_ENGINE_API_JWT_SECRET"])
     assert values["DFE_PROFILE"] == "single-kafka"
     assert values["COMPOSE_FILE"] == "docker-compose.yml:compose/container-logs.yml"
     assert values["COMPOSE_PROFILES"] == "clickhouse,kafka-redpanda"

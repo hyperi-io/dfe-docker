@@ -137,6 +137,29 @@ def test_a_pass_marks_the_version_env_pins_not_the_daemons_last_apply(
     assert steps["proven"].read_text(encoding="utf-8") == "2.2.1-rc.8\n"
 
 
+def test_a_discovery_word_proves_each_image_set_once(
+    steps: dict, tmp_path: Path
+) -> None:
+    env_file = tmp_path / ".env"
+    env_file.write_text(
+        "DFE_STACK_VERSION=latest\nDFE_ENGINE_VERSION=v1@sha256:a\n", encoding="utf-8"
+    )
+    assert proof.main() == 0
+    first = steps["proven"].read_text(encoding="utf-8")
+    assert first.startswith("latest+images.")
+
+    steps["ran"].clear()
+    assert proof.main() == 0
+    assert steps["ran"] == []
+
+    env_file.write_text(
+        "DFE_STACK_VERSION=latest\nDFE_ENGINE_VERSION=v2@sha256:b\n", encoding="utf-8"
+    )
+    assert proof.main() == 0
+    assert steps["ran"] == ["e2e", "restore", "source"]
+    assert steps["proven"].read_text(encoding="utf-8") != first
+
+
 def test_all_steps_pass(steps: dict) -> None:
     assert proof.main() == 0
     assert steps["ran"] == ["e2e", "restore", "source"]

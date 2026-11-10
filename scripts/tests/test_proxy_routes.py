@@ -22,7 +22,7 @@ _CONSOLE_CONFIGS = ["envoy.yaml", "envoy.tls.yaml"]
 _ALL_CONFIGS = [*_CONSOLE_CONFIGS, "hyperdx.yaml", "hyperdx.tls.yaml"]
 _CONSOLE_LISTENER = "ingress"
 _NORMALISING = ("normalize_path", "merge_slashes")
-# The console's routes in match order, as (match, cluster, direct status, timeout).
+# Console routes in match order: match, cluster, status, timeout
 _CONSOLE_ROUTES = [
     ({"path": "/livez"}, "", "200", ""),
     ({"path_separated_prefix": "/metrics", "case_sensitive": "false"}, "", "404", ""),

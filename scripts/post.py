@@ -328,7 +328,7 @@ WEAK_SECRET_DEFAULTS = {
     # Unset, HyperDX stores third-party tokens in plain text
     "TOKEN_ENCRYPTION_KEY": ("", "hyperdx"),
     # Unset, the engine signs its tokens with this placeholder from its own published source
-    "DFE_API_JWT_SECRET": ("dev-secret-key-change-in-production", "dfe-engine"),
+    "DFE_ENGINE_API_JWT_SECRET": ("dev-secret-key-change-in-production", "dfe-engine"),
     # Empty leaves the app's user on a password the engine mints, which the app never sees.
     "DFE_HUNT_RUNNER_CLICKHOUSE_PASSWORD": ("", "dfe-hunt-runner"),
     "DFE_LOADER_CLICKHOUSE_PASSWORD": ("", "dfe-loader"),
@@ -1368,32 +1368,32 @@ def _stale(*, at: float | None, now: float) -> bool:
 
 def _routing_sources(*, base: str, token: str) -> dict[str, float | None] | None:
     """Every routing source the engine holds, with when it was last written, or None when it cannot say."""
-    sources: dict[str, float | None] = {}
+    sources = {}
     page = ""
     while True:
         try:
             status, body = _api_get_json(
-                f"{base}/sources?search={ROUTING_SOURCE_PREFIX}&page_size=1000{page}",
                 token=token,
+                url=f"{base}/sources?search={ROUTING_SOURCE_PREFIX}&page_size=1000{page}",
             )
         except ApiUnreachable:
             return None
-        if status != 200 or not (isinstance(body, dict)):
+        if (status != 200) or not (isinstance(body, dict)):
             return None
-        for item in body.get("items") or []:
-            name = str(item.get("name") or "")
-            if not (ROUTING_SOURCE_PATTERN.fullmatch(name)):
+        for item in (body.get("items")) or ([]):
+            name = str((item.get("name")) or (""))
+            if not (ROUTING_SOURCE_PATTERN.fullmatch(string=name)):
                 continue
             try:
                 sources[name] = datetime.datetime.fromisoformat(
-                    str(item.get("updated_at") or "")
+                    str((item.get("updated_at")) or (""))
                 ).timestamp()
             except ValueError:
                 sources[name] = None
         next_token = body.get("next_page_token")
-        if not next_token:
+        if not (next_token):
             return sources
-        page = f"&page_token={quote(str(next_token), safe='')}"
+        page = f"&page_token={quote(safe='', string=str(next_token))}"
 
 
 def _sweep_stale_routing(*, base: str, database: str, token: str) -> None:
@@ -1919,7 +1919,7 @@ def _verify_ui_query(*, database: str, marker: str, table: str) -> Claim:
         return SKIPPED
     if status == 0:
         _print(
-            msg="FAIL  DFE_ENGINE_AUTH_LOCAL_ADMIN_PASSWORD is unset -- run `make init`"
+            msg="FAIL  DFE_ENGINE_AUTH_LOCAL_ADMIN_PASSWORD is unset, so run `make init`"
         )
         return Claim(asserted=True, failed=1)
 

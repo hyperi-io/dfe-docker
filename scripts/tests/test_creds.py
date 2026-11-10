@@ -35,7 +35,7 @@ import creds
 _MINTED = "s3cr3t-minted-value"
 _FIXTURE_PASSWORD = "shared-fixture-value"
 _ENV = f"""\
-DFE_ENV=dev
+DFE_ENGINE_ENV=dev
 DFE_ENGINE_AUTH_LOCAL_ADMIN_NAME=admin
 DFE_ENGINE_AUTH_LOCAL_ADMIN_PASSWORD={_MINTED}
 DFE_ENGINE_AUTH_BREAKGLASS_PASSWORD=another-minted-value
@@ -281,7 +281,7 @@ def test_without_write_no_file_is_left_behind(
 
 
 def test_an_unminted_password_says_so_rather_than_printing_blank(dotenv: Path) -> None:
-    dotenv.write_text("DFE_ENV=dev\n", encoding="utf-8", newline="\n")
+    dotenv.write_text("DFE_ENGINE_ENV=dev\n", encoding="utf-8", newline="\n")
 
     body = creds.summary_markdown(values=creds.access_values())
 
@@ -290,7 +290,7 @@ def test_an_unminted_password_says_so_rather_than_printing_blank(dotenv: Path) -
 
 
 def test_no_fixture_keys_prints_no_fixture_line() -> None:
-    assert creds.fixture_lines(values={"DFE_ENV": "dev"}) == []
+    assert creds.fixture_lines(values={"DFE_ENGINE_ENV": "dev"}) == []
 
 
 def test_the_password_alone_falls_back_to_the_default_user() -> None:
@@ -466,7 +466,7 @@ def test_a_dev_posture_never_reports_the_refusal(
 ) -> None:
     """The refusal is about the POSTURE, so a pipe must not conjure one.
 
-    DFE_ENV=dev accepts the default password. Reporting otherwise sends the
+    DFE_ENGINE_ENV=dev accepts the default password. Reporting otherwise sends the
     operator to rotate credentials on a stack that is running.
     """
     _deploy(dotenv=dotenv, text=_DEFAULT_ENV)
@@ -485,7 +485,7 @@ def test_a_non_dev_posture_reports_the_refusal_either_way(
     is_tty: bool,
 ) -> None:
     """A stack that cannot boot is worth saying in a build log too."""
-    production = _DEFAULT_ENV.replace("DFE_ENV=dev", "DFE_ENV=production")
+    production = _DEFAULT_ENV.replace("DFE_ENGINE_ENV=dev", "DFE_ENGINE_ENV=production")
     _deploy(dotenv=dotenv, text=production)
     monkeypatch.setattr("sys.stdout.isatty", lambda: is_tty)
     monkeypatch.delenv("DFE_CREDS_SHOW", raising=False)

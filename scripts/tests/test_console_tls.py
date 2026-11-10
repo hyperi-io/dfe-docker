@@ -169,8 +169,9 @@ def _refusal(*, environ: dict[str, str], url: str) -> str:
                 "DFE_EXTERNAL_ORIGIN": "http://dfe.example.test",
                 "DFE_PROXY_TLS": "false",
             },
-            "http://localhost:3000",
+            "http://dfe.example.test:3000",
         ),
+        ({"DFE_EXTERNAL_ORIGIN": "http://localhost"}, "http://localhost:3000"),
         (
             {
                 "DFE_EXTERNAL_ORIGIN": "https://dfe.example.test",

@@ -39,7 +39,7 @@ make up                    # init, pin the newest stable stack, start, self test
 make up PROFILE=slim-grpc VERSION=X.Y.Z   # a profile and a stack of your choosing
 ```
 
-`make up` runs `scripts/quickstart.py`, which makes `.env` when it is missing, writes `PROFILE=` to it as `DFE_PROFILE`, and pins `VERSION=` (the newest published stable stack when none is given and the `.env` holds no pins). `DEFAULT_PROFILE` in the Makefile is the profile when none is set. The steps it runs are these, and each works on its own:
+`make up` runs `scripts/quickstart.py`, which makes `.env` when it is missing, writes `PROFILE=` to it as `DFE_PROFILE` and pins `VERSION=` (the newest published stable stack when none is given and the `.env` holds no pins). `DEFAULT_PROFILE` in the Makefile is the profile when none is set. These are its steps and each works on its own:
 
 ```bash
 make init                  # generate .env and env/<service>.env
@@ -56,15 +56,9 @@ re-run. It does two things beyond the copy:
   learns that `.env.example` grew a setting. A re-run lists the keys yours is
   missing and stops there -- editing your `.env` is yours to do.
 
-`make stack VERSION=X.Y.Z[-rc.N]` writes the `*_VERSION` pins into `.env` from the
-DFE stack SSoT. It uses a local dfe-infra checkout only when `DFE_INFRA_DIR`
-names one (`scripts/dfe-stack render --target docker --stack VERSION`), and
-otherwise resolves `ghcr.io/hyperi-io/dfe-stack-manifest:VERSION` to a digest,
-checks with `cosign verify` that dfe-infra's release workflow signed it, and
-pulls that digest with `oras`. With no `cosign` or `oras` installed, it runs their
-digest-pinned images through Docker. If neither is available it fails loudly -- there is no silent `latest`. Only
-`*_VERSION` keys are rewritten; your ports, hosts, credentials and profile
-survive the merge.
+`make stack VERSION=X.Y.Z[-rc.N]` writes the `*_VERSION` pins into `.env` from the DFE stack SSoT. It uses a local dfe-infra checkout only when `DFE_INFRA_DIR` names one (`scripts/dfe-stack render --target docker --stack VERSION`). Otherwise it resolves `ghcr.io/hyperi-io/dfe-stack-manifest:VERSION` to a digest, checks with `cosign verify` that dfe-infra's release workflow signed it and pulls that digest with `oras`. With no `cosign` or `oras` installed, it runs their digest-pinned images through Docker. With no Docker either it fails loudly, as there is no silent `latest`.
+
+Only `*_VERSION` keys are rewritten, so your ports, hosts, credentials and profile survive the merge.
 
 `make stack VERSION=latest` pins the newest published stack (`rc` ranks
 pre-releases too). It reads only the public OCI registry, needs no credential,
@@ -73,7 +67,7 @@ it as LATEST, and it is not a deploy.
 
 `DFE_STACK_REPIN_IMAGES=1` adds the development-currency step: every DFE image is
 repinned at the release its GitHub repo marks Latest (`rc`: the newest release of
-either kind), through a `gh` login. The pins still carry digests, but the combination is one nobody
+either kind), through `gh` or anonymously where it is not installed. The pins still carry digests, but the combination is one nobody
 certified.
 
 Skipping `make stack` is not a soft failure. Nearly every image pin uses
@@ -102,23 +96,17 @@ one command from having one.
 
 The two accounts are durable in different ways, deliberately. The engine issues `admin` from `env/engine.env` with a forced change at first login, which `make post` makes and records back in `env/engine.env`. A new value there is a rotation. The last issued value or the account's current password re-issues nothing. `breakglass` is hashed into the engine's deploy repo on its first boot and the variable is ignored from then on, so it still works when the engine, the UI and `env/engine.env` are all gone. `make creds` says where its password lives rather than printing it. Once the setup wizard has retired `admin`, `make post` skips the checks that log in and still proves the rest.
 
-The engine **refuses to start** on an empty or `changeme`
-`DFE_ENGINE_AUTH_LOCAL_ADMIN_PASSWORD` unless `DFE_ENV` names a dev posture. `make
-check-compose` asserts the compose file never hands it one, so that is caught
-before a container crash-loops.
+The engine **refuses to start** on an empty or `changeme` `DFE_ENGINE_AUTH_LOCAL_ADMIN_PASSWORD` unless `DFE_ENGINE_ENV` names a dev posture. `make check-compose` asserts the compose file never hands it one, so that is caught before a container crash-loops.
 
-`make dev` is the exception and says so: it writes the known default password into `env/engine.env` and `DFE_ENV=dev` into `.env`, because a dev loop should not need a lookup to log in. The engine accepts the default in that posture and makes the admin replace it at first login. A `.env` already on a dev posture keeps the replacement `make post` recorded. It **refuses** (exit 2) to run when `.env` already declares a non-dev `DFE_ENV`: downgrading a deployment's posture and overwriting its admin password is not a build target's call. Start that stack with `make up`.
+`make dev` is the exception and says so: it writes the known default password into `env/engine.env` and `DFE_ENGINE_ENV=dev` into `.env`, because a dev loop should not need a lookup to log in. The engine accepts the default in that posture and makes the admin replace it at first login. A `.env` already on a dev posture keeps the replacement `make post` recorded. It **refuses** (exit 2) to run when `.env` already declares a non-dev `DFE_ENGINE_ENV`: downgrading a deployment's posture and overwriting its admin password is not a build target's call. Start that stack with `make up`.
 
 When it does rewrite, it copies each file it replaces to `<name>.bak-<utc>` beside it first, mode 0600, then prints the paths: a minted password is gone once overwritten. A run with nothing to change writes neither.
 
-`AUTH=real` is the same local build against a deployment's authentication flow,
-for when the login is the thing under test. It mints a password and writes
-`DFE_ENV=production`, leaving either alone where it is already real, so it never
-refuses. `make creds` reads the password back.
+`AUTH=real` is the same local build against a deployment's authentication flow, for when the login is the thing under test. It mints a password and writes `DFE_ENGINE_ENV=production`, leaving either alone where it is already real, so it never refuses. `make creds` reads the password back.
 
 ```bash
-make dev              # local images, DFE_ENV=dev, known default password until replaced
-make dev AUTH=real    # local images, minted password, DFE_ENV=production
+make dev              # local images, DFE_ENGINE_ENV=dev, known default password until replaced
+make dev AUTH=real    # local images, minted password, DFE_ENGINE_ENV=production
 ```
 
 ## Dev mode compiles your source; registry mode pulls GHCR
@@ -265,16 +253,16 @@ A name in `SERVICES` that is not part of the resolved stack is a hard error, not
 
 ## Seeding a starter set
 
-`make sources`, `make rules` and `make hunts` create a starter set of detection content on a running stack through the engine API, from the request bodies in `resources/seed/`. `make hunts` also creates the rules, because the engine refuses a hunt whose rule does not exist. A rule over an undeployed source reads nothing until its source is deployed. A hunt whose table does not exist yet is not created, because the hunt runner would fail on every run. `make hunts` creates it once `make sources` has made the table, on a profile that runs the source.
+`make sources`, `make rules` and `make hunts` create a starter set of detection content on a running stack through the engine API, from `resources/seed/`. `make hunts` also creates the orgs and rules, because the engine refuses a hunt without them. A rule over an undeployed source reads nothing until its source is deployed. A hunt whose table does not exist is not created, because the runner would fail every run. `make hunts` creates it once `make sources` has made the table, on a profile that runs the source.
 
 | Target | What it creates |
 |---|---|
 | `make sources` | `aws-cloudtrail`, `aws-guardduty` and `aws-securityhub` (each polled by its own dfe-fetcher instance) and `syslog`, which takes any record sent to the receiver with `_source: syslog`. Each lands in `dfe.<source>`. Sources a profile cannot run are skipped, so [`slim-grpc`](profiles.md#which-profile-runs-what) gets `syslog` alone |
 | `make rules` | `aws-guardduty-high-severity`, matching a GuardDuty finding rated 7 or above |
-| `make hunts` | That rule, and the hunt `aws-guardduty-high-severity` once `dfe.aws-guardduty` exists, running it every five minutes into `dfe.detection` |
+| `make hunts` | The org, that rule and the hunt `aws-guardduty-high-severity` once `dfe.aws-guardduty` exists, running it every five minutes into `dfe.detection` |
 | `make events` | Two fake GuardDuty findings from `resources/seed/events/`, rated 8.0 and 2.0, so the hunt's next run detects the first and leaves the second |
-| `make orgs` | The org `acme`, for records carrying the tenant id `acme` |
-| `make accounts` | Those orgs, then the admin account `ops` in `dfe-admins` |
+| `make orgs` | The org `default`, for records with no tenant id, which is where `make events` lands |
+| `make accounts` | That org, then the admin account `ops` in `dfe-admins` |
 
 `make events` posts its records to dfe-receiver tagged with the source each file is named for, which routes them over the stack's transport, Kafka or gRPC. It waits until the source's table holds them and fails if they do not arrive, so it needs the source deployed by `make sources`, dfe-receiver and an engine that renders the apps' config. It skips the records of a source `make sources` skipped. It sends the records again on every run and needs no login. The hunt that finds them runs in dfe-hunt-runner.
 
@@ -354,10 +342,10 @@ Two things about the runner worth knowing before you debug it:
 
 ### The dfe-ui Playwright suite: one target on, one off
 
-The suite seeds its fixtures through the engine's `/api/e2e` routes, which exist only with `DFE_ENGINE_E2E_SERVER=true`. Its seeders refuse anything but `DFE_ENV=test`.
+The suite seeds its fixtures through the engine's `/api/e2e` routes, which exist only with `DFE_ENGINE_E2E_SERVER=true`. Its seeders refuse anything but `DFE_ENGINE_ENV=test`.
 
 ```bash
-make e2e-posture         # DFE_ENV=test in .env, DFE_ENGINE_E2E_SERVER=true and the shipped admin password in env/engine.env
+make e2e-posture         # DFE_ENGINE_ENV=test in .env, DFE_ENGINE_E2E_SERVER=true and the shipped admin password in env/engine.env
 make e2e-posture-check   # exit 1 naming what is missing, the suite runs this first
 make e2e-posture-off     # put back both files from before
 ```

@@ -1,0 +1,12 @@
+# Project:   dfe-docker
+# File:      resources/seed/orgs/default.yaml
+# Purpose:   Starter org for records sent with no tenant id
+# Language:  YAML
+#
+# License:   BUSL-1.1
+# Copyright: (c) 2026 HYPERI PTY LIMITED
+
+name: default
+display_name: Default
+org_ids:
+  - default

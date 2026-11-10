@@ -289,7 +289,7 @@ class TestAccountPassword:
     def test_mints_and_records_a_password_the_engine_env_lacks(
         self, engine_env: Path
     ) -> None:
-        engine_env.write_text("DFE_API_JWT_SECRET=kept\n", encoding="utf-8")
+        engine_env.write_text("DFE_ENGINE_API_JWT_SECRET=kept\n", encoding="utf-8")
         engine_env.chmod(0o640)
 
         password = seed._account_password(username="ops")
@@ -297,7 +297,7 @@ class TestAccountPassword:
         assert len(password) == 24
         assert set(password) <= set(string.ascii_letters + string.digits)
         values = _common._env_file_values(component=_common.ENGINE_COMPONENT)
-        assert values == {"DFE_API_JWT_SECRET": "kept", _OPS_KEY: password}
+        assert values == {"DFE_ENGINE_API_JWT_SECRET": "kept", _OPS_KEY: password}
         assert stat.S_IMODE(engine_env.stat().st_mode) == 0o640
 
     def test_reuses_the_password_the_engine_env_records(self, engine_env: Path) -> None:
@@ -351,7 +351,7 @@ class TestEnsure:
         capsys: pytest.CaptureFixture[str],
         engine_env: Path,
     ) -> None:
-        engine_env.write_text("DFE_API_JWT_SECRET=kept\n", encoding="utf-8")
+        engine_env.write_text("DFE_ENGINE_API_JWT_SECRET=kept\n", encoding="utf-8")
 
         seed._ensure(
             base="http://engine.invalid",
@@ -583,13 +583,24 @@ class TestSeedSet:
         for name, body in _seeded(kind="accounts"):
             assert not (_plaintext_credentials(path=name, value=body)), name
 
-    def test_every_org_an_account_names_is_seeded(self) -> None:
+    def test_every_org_an_account_or_hunt_names_is_seeded(self) -> None:
         orgs = {name for name, _ in _seeded(kind="orgs")}
         for name, body in _seeded(kind="accounts"):
             assert body.get("org", "") in orgs | {""}, name
+        for name, body in _seeded(kind="hunts"):
+            assert set(body["customers"]) <= orgs, name
 
-    def test_the_accounts_target_creates_the_orgs_first(self) -> None:
-        assert seed.TARGETS["accounts"] == ("orgs", "accounts")
+    @pytest.mark.parametrize(
+        ("target", "expected"),
+        [
+            ("accounts", ("orgs", "accounts")),
+            ("hunts", ("orgs", "rules", "hunts")),
+        ],
+    )
+    def test_a_target_naming_orgs_creates_them_first(
+        self, target: str, expected: tuple[str, ...]
+    ) -> None:
+        assert seed.TARGETS[target] == expected
 
     def test_every_events_file_names_a_seeded_source(self) -> None:
         sources = {name for name, _ in _seeded(kind="sources")}

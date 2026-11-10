@@ -45,7 +45,7 @@ from _common import (  # noqa: E402
     _print,
     _rel_path,
 )
-from init import MOVED_SECRETS, _top_up_secrets, drift_keys, share_env_dir  # noqa: E402
+from init import drift_keys, share_env_dir  # noqa: E402
 from init import main as init_main  # noqa: E402
 
 
@@ -83,8 +83,6 @@ def _report_drift(*, include_dotenv: bool) -> None:
 
 
 def main() -> int:
-    if DOTENV_FILE.is_file():
-        _top_up_secrets(dotenv_path=DOTENV_FILE, only=MOVED_SECRETS)
     missing = _missing_files()
     if missing:
         _print(msg=f"env/ is missing {', '.join(missing)} -- running `make init`")

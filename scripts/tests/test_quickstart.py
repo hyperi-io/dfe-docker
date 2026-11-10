@@ -1,14 +1,15 @@
 #  Project:      dfe-docker
 #  File:         tests/test_quickstart.py
-#  Purpose:      Assert how `make up` and `make demo` choose the profile and stack, and what they refuse
+#  Purpose:      Assert how `make up` and `make demo` choose the profile and stack and what they refuse
 #  Language:     Python
 #
 #  License:      BUSL-1.1
 #  Copyright:    (c) 2026 HYPERI PTY LIMITED
 
-"""The checks on the one-command quickstart that need no stack: the profile and stack choice, the demo's refusal, and the .env line it writes."""
+"""The checks on the one-command quickstart that need no stack: the profile and stack choice, the demo's refusal and the .env line it writes."""
 
 import re
+from typing import TypedDict
 
 import pytest
 
@@ -19,124 +20,167 @@ from _common import REPO_ROOT, SERVICE_PROFILES_FILE
 from _sources import enabled_apps
 
 
-@pytest.mark.parametrize(
-    ("given", "expected"),
-    [
-        pytest.param(
-            {"explicit": "slim-grpc", "environ": "slim-kafka", "dotenv": "single-grpc"},
-            ("slim-grpc", "make line"),
-            id="make_line_wins",
-        ),
-        pytest.param(
-            {"explicit": "", "environ": "slim-kafka", "dotenv": "single-grpc"},
-            ("single-grpc", ".env"),
-            id="dotenv_beats_environment_as_make_applies_it",
-        ),
-        pytest.param(
-            {"explicit": "", "environ": "slim-kafka", "dotenv": ""},
-            ("slim-kafka", "environment"),
-            id="environment_when_dotenv_is_silent",
-        ),
-        pytest.param(
-            {"explicit": " ", "environ": "", "dotenv": "", "pinned": False},
-            ("single-kafka", "default"),
-            id="bare_clone_takes_the_default",
-        ),
-        pytest.param(
-            {"explicit": "", "environ": "", "dotenv": "", "pinned": True},
-            ("slim-grpc", "active_profile"),
-            id="existing_deployment_keeps_the_active_profile",
-        ),
-    ],
-)
-def test_chooses_the_profile_nearest_the_user(given: dict, expected: tuple) -> None:
-    assert (
-        quickstart.choose_profile(
-            active="slim-grpc", default="single-kafka", **({"pinned": False} | given)
-        )
-        == expected
-    )
+class ChooseProfileCase(TypedDict):
+    """Each place a profile can be set and the profile and source that wins."""
+
+    dotenv: str
+    environ: str
+    expected: tuple[str, str]
+    explicit: str
+    pinned: bool
 
 
-@pytest.mark.parametrize(
-    ("dotenv", "explicit", "expected"),
-    [
-        pytest.param({}, "", ("latest", "default"), id="bare_clone_takes_the_newest"),
-        pytest.param(
-            {"DFE_STACK_VERSION": "2.2.1"},
-            "",
-            ("2.2.1", ".env"),
-            id="recorded_stack_without_pins",
-        ),
-        pytest.param(
-            {"DFE_ENGINE_VERSION": "2.2.2@sha256:x", "DFE_STACK_VERSION": "2.2.2"},
-            "",
-            ("", ".env"),
-            id="pins_kept",
-        ),
-        pytest.param(
-            {"DFE_ENGINE_VERSION": "2.2.2@sha256:x"},
-            "2.2.1",
-            ("2.2.1", "make line"),
-            id="make_line_repins",
-        ),
-    ],
-)
-def test_chooses_the_stack_to_pin(dotenv: dict, explicit: str, expected: tuple) -> None:
-    assert quickstart.choose_stack(dotenv=dotenv, explicit=explicit) == expected
+class ChooseStackCase(TypedDict):
+    """A .env and a make line and the stack and source that wins."""
+
+    dotenv: dict[str, str]
+    expected: tuple[str, str]
+    explicit: str
 
 
-def _apps(name: str) -> list[str]:
+class RefusalCase(TypedDict):
+    """A profile, the stack running and the pattern its refusal matches, empty when the demo can run."""
+
+    message: str
+    name: str
+    running: str
+
+
+CHOOSE_PROFILE_CASES = [
+    ChooseProfileCase(
+        dotenv="single-grpc",
+        environ="slim-kafka",
+        expected=("slim-grpc", "make line"),
+        explicit="slim-grpc",
+        pinned=False,
+    ),
+    ChooseProfileCase(
+        dotenv="single-grpc",
+        environ="slim-kafka",
+        expected=("single-grpc", ".env"),
+        explicit="",
+        pinned=False,
+    ),
+    ChooseProfileCase(
+        dotenv="",
+        environ="slim-kafka",
+        expected=("slim-kafka", "environment"),
+        explicit="",
+        pinned=False,
+    ),
+    ChooseProfileCase(
+        dotenv="",
+        environ="",
+        expected=("single-kafka", "default"),
+        explicit=" ",
+        pinned=False,
+    ),
+    ChooseProfileCase(
+        dotenv="",
+        environ="",
+        expected=("slim-grpc", "active_profile"),
+        explicit="",
+        pinned=True,
+    ),
+]
+CHOOSE_STACK_CASES = [
+    ChooseStackCase(dotenv={}, expected=("latest", "default"), explicit=""),
+    ChooseStackCase(
+        dotenv={"DFE_STACK_VERSION": "2.2.1"}, expected=("2.2.1", ".env"), explicit=""
+    ),
+    ChooseStackCase(
+        dotenv={"DFE_ENGINE_VERSION": "2.2.2@sha256:x", "DFE_STACK_VERSION": "2.2.2"},
+        expected=("", ".env"),
+        explicit="",
+    ),
+    ChooseStackCase(
+        dotenv={"DFE_ENGINE_VERSION": "2.2.2@sha256:x"},
+        expected=("2.2.1", "make line"),
+        explicit="2.2.1",
+    ),
+]
+REFUSAL_CASES = [
+    RefusalCase(message="", name="single-kafka", running=""),
+    RefusalCase(message="", name="single-grpc", running=""),
+    RefusalCase(
+        message="profile 'slim-grpc' runs no 'dfe-transform-elastic'.*PROFILE=single-kafka",
+        name="slim-grpc",
+        running="",
+    ),
+    RefusalCase(
+        message="stack running here is profile 'slim-kafka'.*make down",
+        name="slim-kafka",
+        running="slim-kafka",
+    ),
+]
+
+
+def _apps(*, name: str) -> list[str]:
+    """The apps a committed profile enables."""
     return enabled_apps(
         profile_name=name,
         text=SERVICE_PROFILES_FILE.read_text(encoding="utf-8"),
     )
 
 
-@pytest.mark.parametrize(
-    ("name", "running", "message"),
-    [
-        pytest.param("single-kafka", "", "", id="single_kafka_runs_the_demo"),
-        pytest.param("single-grpc", "", "", id="single_grpc_runs_the_demo"),
-        pytest.param(
-            "slim-grpc",
-            "",
-            "profile slim-grpc runs no dfe-transform-elastic.*PROFILE=single-kafka",
-            id="slim_is_refused_by_name",
-        ),
-        pytest.param(
-            "slim-kafka",
-            "slim-kafka",
-            "stack running here is profile slim-kafka.*make down",
-            id="running_slim_stack_is_not_switched",
-        ),
-    ],
-)
-def test_the_demo_refuses_a_profile_without_the_transform(
-    name: str, running: str, message: str
-) -> None:
-    reason = quickstart.refusal(apps=_apps(name), name=name, running=running)
+class TestChooseProfile:
+    @pytest.mark.parametrize("case", CHOOSE_PROFILE_CASES)
+    def test_matches_expected(self, case: ChooseProfileCase) -> None:
+        chosen = quickstart._choose_profile(
+            active="slim-grpc",
+            default="single-kafka",
+            dotenv=case["dotenv"],
+            environ=case["environ"],
+            explicit=case["explicit"],
+            pinned=case["pinned"],
+        )
 
-    assert re.search(message, reason) if message else reason == "", reason
+        assert chosen == case["expected"]
 
 
-def test_the_default_and_the_active_profile_are_committed_profiles() -> None:
-    parsed = resolve_profile.parse_yaml(
-        text=SERVICE_PROFILES_FILE.read_text(encoding="utf-8")
-    )
-    default = re.search(
-        r"(?m)^DEFAULT_PROFILE := (\S+)$", (REPO_ROOT / "Makefile").read_text()
-    )
+class TestChooseStack:
+    @pytest.mark.parametrize("case", CHOOSE_STACK_CASES)
+    def test_matches_expected(self, case: ChooseStackCase) -> None:
+        chosen = quickstart._choose_stack(
+            dotenv=case["dotenv"], explicit=case["explicit"]
+        )
 
-    assert default and default.group(1) in parsed["profiles"]
-    assert parsed["active_profile"] in parsed["profiles"]
+        assert chosen == case["expected"]
 
 
-def test_the_profile_line_is_replaced_not_appended() -> None:
-    text = "A=1\n# DFE_PROFILE=\nDFE_PROFILE=slim-kafka\nB=2\n"
+class TestRefusal:
+    @pytest.mark.parametrize("case", REFUSAL_CASES)
+    def test_matches_expected(self, case: RefusalCase) -> None:
+        reason = quickstart._refusal(
+            apps=_apps(name=case["name"]), name=case["name"], running=case["running"]
+        )
 
-    out = init._set_live(text=text, key="DFE_PROFILE", value="single-kafka")
+        if case["message"]:
+            assert re.search(pattern=case["message"], string=reason), reason
+        else:
+            assert reason == ""
 
-    assert out.splitlines().count("DFE_PROFILE=single-kafka") == 1
-    assert "slim-kafka" not in out
-    assert out.startswith("A=1\n") and out.rstrip().endswith("B=2")
+
+class TestCommittedProfiles:
+    def test_the_default_and_the_active_profile_are_committed_profiles(self) -> None:
+        parsed = resolve_profile.parse_yaml(
+            text=SERVICE_PROFILES_FILE.read_text(encoding="utf-8")
+        )
+        default = re.search(
+            pattern=r"(?m)^DEFAULT_PROFILE := (\S+)$",
+            string=(REPO_ROOT / "Makefile").read_text(encoding="utf-8"),
+        )
+
+        assert default and default.group(1) in parsed["profiles"]
+        assert parsed["active_profile"] in parsed["profiles"]
+
+
+class TestSetLive:
+    def test_the_profile_line_is_replaced_not_appended(self) -> None:
+        text = "A=1\n# DFE_PROFILE=\nDFE_PROFILE=slim-kafka\nB=2\n"
+
+        out = init._set_live(key="DFE_PROFILE", text=text, value="single-kafka")
+
+        assert out.splitlines().count("DFE_PROFILE=single-kafka") == 1
+        assert "slim-kafka" not in out
+        assert out.startswith("A=1\n") and out.rstrip().endswith("B=2")

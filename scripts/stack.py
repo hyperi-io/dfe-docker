@@ -24,7 +24,7 @@ them as unpinned.
 
 ``DFE_STACK_REPIN_IMAGES=1`` adds the DEV CURRENCY step on top: every image we
 publish to ``ghcr.io/hyperi-io`` is repinned at its component's newest GitHub
-release, read through a logged-in ``gh`` that can see the component repos. That
+release, read through ``gh``, or anonymously where it is not installed. That
 combination is newer than any stack anyone certified. ``latest`` takes the
 release GitHub marks Latest and falls back to the newest pre-release on a repo
 that has published none; ``rc`` takes the newest release of either kind. The
@@ -38,13 +38,7 @@ Transport is EXPLICIT-LOCAL-FIRST, OCI-DEFAULT:
 1. A local dfe-infra checkout, ONLY when ``DFE_INFRA_DIR`` names one (no
    implicit sibling probe): run ``scripts/dfe-stack render --target docker
    --stack VERSION`` and read its stdout fragment.
-2. Else resolve the OCI stack-manifest tag
-   (``ghcr.io/hyperi-io/dfe-stack-manifest:VERSION``) to its digest, check with
-   ``cosign verify`` that dfe-infra's release workflow signed that digest, then
-   ``oras pull`` it by digest and read its ``dfe-env-VERSION.txt`` member. This
-   is the air-gap / CI path. cosign and oras run from PATH, else as digest-pinned
-   containers through docker. ``DFE_STACK_VERIFY=false`` skips the signature
-   check, and still pulls by digest.
+2. Else resolve the OCI stack-manifest tag (``ghcr.io/hyperi-io/dfe-stack-manifest:VERSION``) to its digest, check with ``cosign verify`` that dfe-infra's release workflow signed that digest, then ``oras pull`` it by digest and read its ``dfe-env-VERSION.txt`` member. This is the air-gap / CI path. cosign and oras run from PATH, else as digest-pinned containers through docker. ``DFE_STACK_VERIFY=false`` skips the signature check and still pulls by digest.
 3. Neither available -> fail loudly. We never silently fall back to ``latest``.
 
 The rendered fragment is the source of truth for the pins. This tool only
@@ -78,10 +72,10 @@ from _common import (  # noqa: E402
 )
 from _registry import (  # noqa: E402
     DISCOVERY_WORDS,
+    OUT_DIR,
     RegistryError,
     latest_release,
     latest_tag,
-    OUT_DIR,
     manifest_repo,
     oras_command,
     resolve_digest,
@@ -98,14 +92,15 @@ from init import _create_dotenv  # noqa: E402
 _PIN_LINE = re.compile(r"^(?P<key>[A-Z][A-Z0-9_]*)=(?P<rest>.+)$")
 # make keeps the whitespace before an inline comment as part of the value, so no pin written to .env carries one
 _PIN_COMMENT = re.compile(r"\s+#")
+# Culvert is a VPN service dfe-infra deploys, compose runs none
+_SKIPPED_PINS = {"DFE_CULVERT_VERSION"}
 
 # Which stack the pins came from. `make modes` reports it and `VERSION ?=
 # $(DFE_STACK_VERSION)` defaults from it, so it rides in `.env` beside the pins
 # while naming a stack rather than an image.
 STACK_VERSION_KEY = "DFE_STACK_VERSION"
 
-# Opt-in for the GitHub-release repin, which needs `gh` read access to every
-# component repo and so is never part of the default `latest` / `rc` path.
+# Opt-in for the GitHub-release repin, never part of the default `latest` / `rc` path
 REPIN_ENV = "DFE_STACK_REPIN_IMAGES"
 _TRUTHY = {"1", "true", "yes", "on"}
 
@@ -240,7 +235,7 @@ def _render_oci(version: str) -> str:
         oras = oras_command(mount=Path(tmp))
         # Under docker the image writes to its own mount point, not the host path
         target = OUT_DIR if oras[0] == "docker" else tmp
-        out = _run([*oras, "pull", "--output", target, pinned])
+        out = _run(cmd=[*oras, "pull", "--output", target, pinned])
         if out.returncode != 0:
             detail = out.stderr.strip() or out.stdout.strip()
             raise StackError(f"oras pull {pinned} failed: {detail}")
@@ -259,7 +254,7 @@ def _resolve_fragment(version: str) -> tuple[str, str]:
 
 
 def _parse_pins(fragment: str) -> dict[str, str]:
-    """Extract KEY -> rendered line, its inline comment dropped, for every active ``*_VERSION`` pin line."""
+    """Extract KEY -> rendered line, its inline comment dropped, for every active ``*_VERSION`` pin line outside _SKIPPED_PINS."""
     pins: dict[str, str] = {}
     for raw in fragment.splitlines():
         stripped = raw.strip()
@@ -269,7 +264,7 @@ def _parse_pins(fragment: str) -> dict[str, str]:
         if not match:
             continue
         key = match.group("key")
-        if not key.endswith("_VERSION"):
+        if not (key.endswith("_VERSION")) or (key in _SKIPPED_PINS):
             continue
         value = _PIN_COMMENT.split(match.group("rest"), maxsplit=1)[0].strip()
         pins[key] = f"{key}={value}"

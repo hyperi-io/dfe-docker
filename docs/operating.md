@@ -25,14 +25,9 @@ The engine's API requires a login. `make init` mints two passwords into `env/eng
 
 The engine issues `admin` with a forced change at first login, which `make post` makes and records back in `env/engine.env`. Rotate it by changing the value in `env/engine.env` and running `make up`. The value the engine last issued or the account's current password re-issues nothing, so a restart never undoes a change.
 
-The engine refuses to start when `DFE_ENGINE_AUTH_LOCAL_ADMIN_PASSWORD` is empty or the shipped default and `DFE_ENV` is not a dev posture. An unset `DFE_ENV` counts as `production`, so only a `.env` that says `dev` gets to run on the shipped password.
+The engine refuses to start when `DFE_ENGINE_AUTH_LOCAL_ADMIN_PASSWORD` is empty or the shipped default and `DFE_ENGINE_ENV` is not a dev posture. An unset `DFE_ENGINE_ENV` counts as `production`, so only a `.env` that says `dev` gets to run on the shipped password.
 
-`make init` and `make up` also write `access-summary.md` (0600, gitignored) with
-both minted passwords in plaintext. Retire the bootstrap admin from the console
-wizard's last step, or `POST /api/v1/auth/setup/retire-admin`, once your own admin
-exists, then delete `DFE_ENGINE_AUTH_LOCAL_ADMIN_PASSWORD` from `env/engine.env`. The account
-stays disabled and is never reseeded. Keep the break-glass password offline and
-delete both plaintexts, including that file: the engine keeps only the hash.
+`make init` and `make up` also write `access-summary.md` (0600, gitignored) with both minted passwords in plaintext. Retire the bootstrap admin from the console wizard's last step or `POST /api/v1/auth/setup/retire-admin` once your own admin exists, then delete `DFE_ENGINE_AUTH_LOCAL_ADMIN_PASSWORD` from `env/engine.env`. The account stays disabled and is never reseeded. Keep the break-glass password offline and delete both plaintexts, including that file: the engine keeps only the hash.
 
 HyperDX is the one other thing that authenticates, and it does it by verifying the
 engine's token rather than by holding logins of its own. Nothing else does, and
@@ -212,8 +207,8 @@ HyperDX is one UI across two origins:
 | Host port | Proxy | Upstream |
 |---|---|---|
 | 8081 | oauth2-proxy-kafbat | kafka-ui |
-| 8090 | oauth2-proxy-hyperdx | HyperDX app |
-| 8000 | oauth2-proxy-hyperdx-api | HyperDX API, an operator surface |
+| 8090 | oauth2-proxy-hyperdx | HyperDX app. Gates page access only, as HyperDX reads the engine token itself |
+| 8000 | oauth2-proxy-hyperdx-api | HyperDX API, an operator surface. `OAUTH2_PROXY_PASS_HOST_HEADER` passes HyperDX's CORS headers through untouched |
 
 They take those ports over and the UIs stop publishing their own, so nothing
 moves for anyone using them. All three share one cookie secret, and cookies are
@@ -401,6 +396,9 @@ These named volumes hold all durable state. Every path an image declares a VOLUM
 | `fetcher-cursors` | dfe-fetcher cursors (`/var/lib/dfe-fetcher`), one directory per fetcher service |
 | `transform-elastic-geoip` | dfe-transform-elastic's GeoIP databases (`/var/lib/dfe/geoip`), downloaded on first start to a volume because the image root is read-only |
 | `dfe-engine-config` / `dfe-engine-schemas` | Engine config and schemas, seeded from the engine image on first run |
+| `dfe-app-config` | What the engine renders each app's config into, one directory per app. Its own volume because `dfe-engine-config` also holds the JWT signing key and the deploy repo, which no data-plane container should read |
+| `dfe-engine-content` | Each app's config schema, which the `contract-<app>` one-shots write for the engine to read (`/app/content`) |
+| `hyperdx-dashboards` | The dashboards the `dfe-dashboards` one-shot generates from the engine image for HyperDX to read (`/etc/hyperdx/dashboards`) |
 | `hyperdx-documentdb-data` | HyperDX metadata store, DocumentDB's PostgreSQL cluster (`/data`) |
 | `hyperdx-documentdb-tls` | The CA and gateway certificate `hyperdx-documentdb-tls` mints, renewed when it nears expiry |
 
@@ -410,15 +408,7 @@ of them, the warehouse included.
 
 ### Retention
 
-Every time-series table DFE deploys, the OTel tables included, keeps rows for
-`DFE_ENGINE_CLICKHOUSE_DEFAULT_TTL_DAYS` days, set in `env/engine.env`: 90 unless set, 0 to disable the
-default TTL. `make init` asks for it once, on a TTY, when it creates `env/engine.env` and
-writes the answer as a live line. A non-interactive run keeps the template's
-commented 90, and the key already set in the environment pre-answers it. The
-value reaches dfe-engine, whose startup apply reconciles existing tables, so
-changing it later is an `env/engine.env` edit and a `make ci`. A source or a
-dfe-schemas definition that declares its own TTL keeps it. The same knob is
-`retention.default_ttl_days` in `deployment.yaml`.
+Every time-series table DFE deploys, the OTel tables included, keeps rows for `DFE_ENGINE_CLICKHOUSE_DEFAULT_TTL_DAYS` days, set in `env/engine.env`: 90 unless set, 0 to disable the default TTL. `make init` asks for it once, on a TTY, when it creates `env/engine.env` and writes the answer as a live line. A non-interactive run keeps the template's commented 90 and the key already set in the environment pre-answers it. The value reaches dfe-engine, whose startup apply reconciles existing tables, so changing it later is an `env/engine.env` edit and a `make ci`. A source or a dfe-schemas definition that declares its own TTL keeps it. The same knob is `retention.default_ttl_days` in `deployment.yaml`.
 
 ### External data location
 

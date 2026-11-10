@@ -78,7 +78,7 @@ static_resources:
                         - direct_response:
                             status: 404
                           match: { case_sensitive: false, path_separated_prefix: /metrics }
-                        # Envoy's 15 s default cuts off engine calls that apply DDL, such as a retention change.
+                        # Envoy's 15 s default cuts off DDL such as a retention change
                         - match: { prefix: /api/v1/ }
                           route: { cluster: dfe-engine, timeout: 120s }
                         - match: { prefix: / }

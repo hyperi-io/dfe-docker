@@ -54,7 +54,7 @@ git clone https://github.com/hyperi-io/dfe-docker && cd dfe-docker
 make demo
 ```
 
-`make demo` creates `.env`, pins the newest published stable stack, starts the `single-kafka` profile, and streams Cisco ASA and FortiGate syslog through it beside two fetchers (live Wikipedia recent changes and the GitHub releases of the DFE components) until `make demo-stop`, with dashboards and saved searches for each source in the console. Its first line says the profile and stack in use. `make creds` prints the DFE console URL and the admin login.
+`make demo` creates `.env`, pins the newest published stable stack, starts the `single-kafka` profile and streams Cisco ASA and FortiGate syslog through it beside two fetchers (live Wikipedia recent changes and the GitHub releases of the DFE components) until `make demo-stop` or a receiver restart, with dashboards and saved searches for each source in the console. Its first line says the profile and stack in use. `make creds` prints the DFE console URL and the admin login.
 
 To start the stack without the stream:
 
@@ -69,7 +69,7 @@ make down                        # stop everything
 
 ### Without git, make or python
 
-Each release carries `install.sh` and a bundle of the compose files, config and templates. It needs docker with compose, and curl or wget:
+Each release carries `install.sh` and a bundle of the compose files, config and templates. It needs docker with compose and curl or wget:
 
 ```bash
 curl -fsSL https://github.com/hyperi-io/dfe-docker/releases/latest/download/install.sh | sh
@@ -89,10 +89,9 @@ Set the dials in `./dfe/.env` and run `./apply.sh` to work out the compose chain
 
 - Docker and Docker Compose v2
 - make, git and Python 3 (standard library only)
-- [`oras`](https://oras.land) and [`cosign`](https://docs.sigstore.dev/cosign/system_config/installation/) - optional. `make up`, `make stack` and `make check-proxy` read the signed OCI stack manifest through them, and each runs as a digest-pinned container through Docker when it is not installed. `DFE_STACK_VERIFY=false` skips the signature check, and `DFE_STACK_SIGNER_IDENTITY` and `DFE_STACK_SIGNER_ISSUER` name the signer of a manifest repo of your own. All three are read from the environment, then `.env`. Neither is needed if you render from a local dfe-infra checkout (`DFE_INFRA_DIR`).
+- [`oras`](https://oras.land) and [`cosign`](https://docs.sigstore.dev/cosign/system_config/installation/) - optional. `make up`, `make stack` and `make check-proxy` read the signed OCI stack manifest through them and each runs as a digest-pinned container through Docker when it is not installed. `DFE_STACK_VERIFY=false` skips the signature check, while `DFE_STACK_SIGNER_IDENTITY` and `DFE_STACK_SIGNER_ISSUER` name the signer of a manifest repo of your own. All three are read from the environment, then `.env`. Neither tool is needed if you render from a local dfe-infra checkout (`DFE_INFRA_DIR`).
 - [`uv`](https://docs.astral.sh/uv/) - only for the seed targets (`make sources`, `make rules`, `make hunts`, `make events`, `make orgs`, `make accounts`) and the e2e tests.
-- [`gh`](https://cli.github.com), logged in - only for `DFE_STACK_REPIN_IMAGES=1`,
-  which reads each component's GitHub releases through it.
+- [`gh`](https://cli.github.com), logged in - optional for `DFE_STACK_REPIN_IMAGES=1`, which reads each component's GitHub releases. Without it they are read anonymously, which covers public repos within GitHub's limit of 60 requests an hour per IP.
 
 ### Initialisation
 
@@ -116,9 +115,7 @@ things beyond the copy:
 
 ### 1. Registry mode (GHCR images)
 
-The CI path *and* the small-environment production path - same images, same
-command. See [Deployment posture](#deployment-posture) before running this
-anywhere that is not a laptop. `make up` is `make init`, `make stack` and `make ci` in one step. To run them by hand:
+The CI path *and* the small-environment production path - same images, same command. See [Deployment posture](#deployment-posture) before running this anywhere that is not a laptop. `make up` is `make init`, `make stack` and `make ci` in one step. To run them by hand:
 
 ```bash
 make init   # Edit .env files as needed (versions, ports)
@@ -171,7 +168,7 @@ All three, in full, plus what an upgrade does to an existing stack:
 
 ## Service Profiles
 
-Service selection is controlled by `service_profiles.yaml` at the repo root. Each profile declares a transport mode, which DFE services to start and optionally its whole footprint - the `clickhouse`, `core`, `kafbat`, `hyperdx` and `otel` keys. The `active_profile` field is used to define the profile set and can be overridden with the `DFE_PROFILE` env var. It ships as `slim-grpc`, which `make ci` and `make dev` run. `make up` and `make demo` run `single-kafka` on a clone with no image pins, and keep the profile of one that has them. The matching `.env` flags (`DFE_CLICKHOUSE_ENABLED`, `DFE_CORE_ENABLED`, `KAFBAT_ENABLED`, `DFE_HYPERDX_ENABLED`, `DFE_OTEL_ENABLED`) override the profile's keys.
+Service selection is controlled by `service_profiles.yaml` at the repo root. Each profile declares a transport mode, which DFE services to start and optionally its whole footprint - the `clickhouse`, `core`, `kafbat`, `hyperdx` and `otel` keys. The `active_profile` field is used to define the profile set and can be overridden with the `DFE_PROFILE` env var. It ships as `slim-grpc`, which `make ci` and `make dev` run. `make up` and `make demo` run `single-kafka` on a clone with no image pins and keep the profile of one that has them. The matching `.env` flags (`DFE_CLICKHOUSE_ENABLED`, `DFE_CORE_ENABLED`, `KAFBAT_ENABLED`, `DFE_HYPERDX_ENABLED`, `DFE_OTEL_ENABLED`) override the profile's keys.
 
 For `kafka` transport profiles, the Kafka backend is selected via `KAFKA_BACKEND` (default `redpanda`).
 
@@ -323,7 +320,7 @@ dfe-docker stands the whole DFE suite up as one Docker Compose stack on a single
 |---|---|
 | `docker-compose.yml` | Every service and every infrastructure profile. The one file `make ci` names explicitly |
 | `compose/` | The opt-in overlays the Makefile chains: `live-ui`, `storage`, `tls` and `container-logs`. It writes the exposure opt-outs and the dev build's local images into `.tmp/` beside them |
-| `service_profiles.yaml` | Which DFE services start, the transport and the config each one mounts. Ships `active_profile: slim-grpc`, which `make ci` and `make dev` run. `make up` and `make demo` default to `single-kafka` on a clone with no image pins |
+| `service_profiles.yaml` | Which DFE services start, the transport and the config each one mounts. Ships `active_profile: single-kafka`, which `make ci` and `make dev` run. `make up` and `make demo` default to the same profile on a clone with no image pins |
 | `Makefile` | Every entry point, plus the profile, overlay and UI-exposure resolution that decides which compose files a target passes |
 | `scripts/resolve_profile.py` | Reads `service_profiles.yaml` and writes the generated `.tmp/profile.mk` the Makefile includes |
 | `scripts/stack.py` | `make stack` - writes `tag@sha256` pins into `.env` from a local dfe-infra checkout (`DFE_INFRA_DIR`) or the signed OCI stack manifest |
@@ -363,7 +360,7 @@ Two ways a green run says less than it looks:
 |---|---|---|
 | Leave containers running when you are finished | `make down`, on every host you touched, the same session | `down` sweeps every profile rather than the active one, because passing only the active profile's services left the previous profile's containers up - still holding host ports and still answering health probes for a pipeline that was no longer wired (`Makefile`, the `down` target) |
 | Assume the deployment target is idle | Check what is already running before you start anything | The docker definition-of-done target carries a long-lived stack refreshed on a 6-hourly systemd timer (`ops/daemon-update/`), not a box you get to yourself |
-| Assume events go through Kafka | Read the profile's `transport` first | `slim-grpc`, the shipped `active_profile` (`make up` and `make demo` default to `single-kafka`, which is Kafka), is `transport: grpc`: the receiver dials `dfe-loader:6000` directly and no broker starts. The `-kafka` profiles start one. The core data path is otherwise identical. `post` and `test-e2e` assert the same landing row either way |
+| Assume events go through Kafka | Read the profile's `transport` first | A `-grpc` profile is `transport: grpc`: the receiver dials `dfe-loader:6000` directly and no broker starts. The `-kafka` profiles, the shipped `single-kafka` among them, start one. The core data path is otherwise identical. `post` and `test-e2e` assert the same landing row either way |
 | Add a DDL file or a topic-creating step here | Change the schema in dfe-engine | dfe-engine ships the schemas in its own image and reports healthy only once it has applied them. `scripts/tests/test_engine_only_schema_control.py` fails the build on one (#118) |
 | Give an external ClickHouse's port through `CLICKHOUSE_HTTP_PORT` or `CLICKHOUSE_NATIVE_PORT` | Set `CLICKHOUSE_EXTERNAL_HTTP_PORT` and `CLICKHOUSE_EXTERNAL_NATIVE_PORT` | The first pair is the bundled container's host publish and nothing else, so it is safe to move for a second stack; services on the network dial 8123/9000 unless the EXTERNAL pair says otherwise (#75) |
 | Move the loader's `grpc.listen` off 6000, or confuse it with the receiver's 6000 | Keep the loader on container port 6000 | dfe-engine compiles every sender's loader endpoint as `dfe-loader:6000`, so a loader listening anywhere else drops every record behind an HTTP 202 with nothing logged. The receiver's 6000 is the external Vector protocol, off unless `DFE_RECEIVER_GRPC__ENABLED=true` and unpublished until `DFE_RECEIVER_GRPC_PORT` is set. The loader's is the internal `DfeTransport/Push` and publishes no host port. `scripts/tests/test_loader_grpc_port.py` fails the build on a mismatch |

@@ -456,7 +456,7 @@ _BOTH_ON_ORIGIN = [_kafbat(f"{_ORIGIN}:8081"), _hyperdx(f"{_ORIGIN}:8090")]
 @pytest.mark.parametrize(
     ("settings", "want"),
     [
-        ({}, [_hyperdx("http://localhost:8090")]),
+        ({}, [_kafbat("http://localhost:8081"), _hyperdx("http://localhost:8090")]),
         (_SINGLE_ALL, _BOTH_ON_ORIGIN),
         ({**_SINGLE_ALL, "DFE_INFRA_UIS_EXTERNAL": "false"}, []),
         (
@@ -478,7 +478,7 @@ _BOTH_ON_ORIGIN = [_kafbat(f"{_ORIGIN}:8081"), _hyperdx(f"{_ORIGIN}:8090")]
         ({**_SINGLE_ALL, **_AUTH_SETTINGS, "DFE_INFRA_UIS_EXTERNAL": "false"}, []),
     ],
     ids=[
-        "default-slim-grpc",
+        "default-single-kafka",
         "single-kafka-scope-all",
         "single-kafka-infra-killed",
         "single-kafka-kafbat-unpublished",

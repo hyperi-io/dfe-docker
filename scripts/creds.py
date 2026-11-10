@@ -100,7 +100,7 @@ _FIXTURE_OVERRIDE_RE = re.compile(r"^DFE_OIDC_([A-Z0-9]+)_FIXTURE_(?:USER|PASSWO
 # Postures the engine treats as dev, where it tolerates the shipped default
 # password. Mirrors dfe_engine.settings.is_dev_posture.
 _DEV_POSTURES = {"dev", "development", "local", "test", "ci"}
-# What an unset DFE_ENV resolves to. Mirrors compose's own `${DFE_ENV:-production}`,
+# What an unset DFE_ENGINE_ENV resolves to. Mirrors compose's own `${DFE_ENGINE_ENV:-production}`,
 # so the summary names the posture the engine is actually running in.
 _UNSET_POSTURE = "production"
 # The shipped placeholder the engine refuses outside a dev posture.
@@ -160,7 +160,7 @@ def _url(
 
 
 def is_dev_posture(environment: str) -> bool:
-    """True when DFE_ENV names a posture the engine tolerates defaults in."""
+    """True when DFE_ENGINE_ENV names a posture the engine tolerates defaults in."""
     return (environment.strip() or _UNSET_POSTURE).lower() in _DEV_POSTURES
 
 
@@ -226,7 +226,7 @@ def access_values() -> dict[str, str]:
 
 def summary_lines(*, values: dict[str, str], reveal: bool = True) -> list[str]:
     """The access summary, one line per thing the operator needs."""
-    environment = values.get("DFE_ENV", "").strip() or _UNSET_POSTURE
+    environment = values.get("DFE_ENGINE_ENV", "").strip() or _UNSET_POSTURE
     admin = values.get(_ADMIN_NAME_KEY, "").strip() or "admin"
     password = values.get(_ADMIN_PASSWORD_KEY, "").strip()
     engine_env = _rel_path(path=_env_file(component=ENGINE_COMPONENT))
@@ -255,13 +255,13 @@ def summary_lines(*, values: dict[str, str], reveal: bool = True) -> list[str]:
     if password and default_admin_password(password):
         if not (is_dev_posture(environment)):
             lines.append(
-                f"                 DFE_ENV={environment} is not a dev posture, so the "
+                f"                 DFE_ENGINE_ENV={environment} is not a dev posture, so the "
                 "engine REFUSES this default and will not start -- mint one with "
-                "`make dev AUTH=real`, or set DFE_ENV=dev for a tyre-kick"
+                "`make dev AUTH=real` or set DFE_ENGINE_ENV=dev for a tyre-kick"
             )
         elif reveal:
             lines.append(
-                f"                 DFE_ENV={environment}, so the engine accepts this "
+                f"                 DFE_ENGINE_ENV={environment}, so the engine accepts this "
                 "default and asks for a change at first login"
             )
     if values.get(_BREAKGLASS_PASSWORD_KEY, "").strip():

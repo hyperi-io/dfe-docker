@@ -10,7 +10,7 @@
 
 Internal support module - imported by the e2e suite, not executed directly. Stdlib only, so the unit tests import it without PyYAML.
 
-With DFE_PROXY_TLS off the console is http://localhost:<DFE_UI_PORT>. With it on, dfe-proxy answers https only, so the suite goes to DFE_EXTERNAL_ORIGIN's host on DFE_UI_PORT and verifies the certificate there, by chain and by name: against the system trust store, or against the PEM bundle DFE_PROXY_CA_BUNDLE names when a private CA signed it. Verification is never switched off.
+The suite goes to DFE_EXTERNAL_ORIGIN on DFE_UI_PORT, else localhost, because the console's own links go there and its session cookie does not cross hosts. With DFE_PROXY_TLS on, dfe-proxy answers https only, so the suite verifies the certificate there, by chain and by name: against the system trust store, or against the PEM bundle DFE_PROXY_CA_BUNDLE names when a private CA signed it. Verification is never switched off.
 
 Chrome takes no CA bundle, so the browser is pinned to the public key of the leaf certificate this module has just verified.
 """
@@ -26,7 +26,7 @@ import typing
 from pathlib import Path
 from urllib.parse import urlsplit
 
-from _common import PROXY_TLS_KEY, _published_url
+from _common import _published_url
 
 CA_BUNDLE_VAR = "DFE_PROXY_CA_BUNDLE"
 UI_URL_VAR = "DFE_UI_URL"
@@ -45,16 +45,10 @@ class ConsoleTrustError(Exception):
 
 
 def console_url(*, environ: typing.Mapping[str, str]) -> str:
-    """Return the console URL the suite drives: DFE_UI_URL when set, else the one dfe-proxy publishes.
-
-    Plain http is http://localhost:<DFE_UI_PORT>. Under console TLS it is https at DFE_EXTERNAL_ORIGIN's host, the name the certificate carries.
-    """
+    """Return the console URL the suite drives: DFE_UI_URL when set, else the one dfe-proxy publishes."""
     explicit = environ.get(UI_URL_VAR, "").strip().rstrip("/")
     if explicit:
         return explicit
-    if environ.get(PROXY_TLS_KEY, "").strip() != "true":
-        port = (environ.get("DFE_UI_PORT", "").strip()) or ("3000")
-        return f"http://localhost:{port}"
     return _published_url(
         default_port="3000",
         host="localhost",

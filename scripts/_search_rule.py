@@ -351,7 +351,7 @@ class Console:
         except Exception as error:
             text = f"(body unreadable: {error})"
         try:
-            reason = json.loads(text).get("detail") or text
+            reason = (json.loads(s=text).get("detail")) or (text)
         except (ValueError, AttributeError):
             reason = text
         return f"{CREATE_RULE_ROUTE} answered HTTP {response.status}: {reason}"

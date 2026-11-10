@@ -8,6 +8,7 @@
 
 # No password: `make accounts` mints one into env/engine.env and `make creds` hands it over
 username: ops
+name: Ops
 email: ops@example.com
 groups:
   - dfe-admins

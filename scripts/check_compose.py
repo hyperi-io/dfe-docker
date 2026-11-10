@@ -273,21 +273,19 @@ _DEV_PATH_RUNS = {
 _DEV_SUBCOMMANDS = {"pull": ("pull",), "up": ("up", "-d")}
 
 # The engine refuses to start on an unset or shipped-default admin password unless
-# DFE_ENV names a dev posture, so a compose file that hands it one outside dev
+# DFE_ENGINE_ENV names a dev posture, so a compose file that hands it one outside dev
 # produces a container that crash-loops on boot. The posture list mirrors
-# dfe_engine.settings.is_dev_posture; compose's own `${DFE_ENV:-production}` default
+# dfe_engine.settings.is_dev_posture; compose's own `${DFE_ENGINE_ENV:-production}` default
 # is what makes the unset case a fault rather than a dev posture, so only a .env
 # that says `dev` gets to run on the shipped password.
 _ENGINE_SERVICE = "dfe-engine"
 _ADMIN_PASSWORD_KEY = "DFE_ENGINE_AUTH_LOCAL_ADMIN_PASSWORD"
-_POSTURE_KEY = "DFE_ENV"
-# The key the engine reads it under: compose hands it DFE_ENV from .env as this.
-_ENGINE_POSTURE_KEY = "DFE_ENGINE_ENV"
+_POSTURE_KEY = "DFE_ENGINE_ENV"
 _DEFAULT_PASSWORD = "changeme"
 _DEV_POSTURES = frozenset({"dev", "development", "local", "test", "ci"})
 # An env file compose loads INSTEAD of .env, so a case describes the whole input.
 _EMPTY_ENV_FILE = REPO_ROOT / ".tmp" / "compose-check-empty.env"
-# (label, DFE_ENV, admin password, must the rule flag it). The negative half: a
+# (label, DFE_ENGINE_ENV, admin password, must the rule flag it). The negative half: a
 # rule that flags nothing passes every stack, so the cases that must NOT flag are
 # checked as hard as the ones that must.
 _CREDENTIAL_CASES: tuple[tuple[str, str, str, bool], ...] = (
@@ -975,7 +973,7 @@ def _credential_fault(*, config: dict) -> str:
     environment = service.get("environment") or {}
     # Engine contract: settings.is_dev_posture strips and lowercases DFE_ENGINE_ENV, and
     # auth.bootstrap.default_credentials_in_use strips the password before comparing.
-    posture = str(environment.get(_ENGINE_POSTURE_KEY) or "").strip().lower()
+    posture = str(environment.get(_POSTURE_KEY) or "").strip().lower()
     password = str(environment.get(_ADMIN_PASSWORD_KEY) or "").strip()
     if password and password != _DEFAULT_PASSWORD:
         return ""
@@ -984,7 +982,7 @@ def _credential_fault(*, config: dict) -> str:
     return (
         f"{_ENGINE_SERVICE} receives "
         f"{'no ' + _ADMIN_PASSWORD_KEY if not password else _ADMIN_PASSWORD_KEY + '=' + _DEFAULT_PASSWORD}"
-        f" with {_ENGINE_POSTURE_KEY}={posture or 'unset'} -- the engine refuses to start on "
+        f" with {_POSTURE_KEY}={posture or 'unset'} -- the engine refuses to start on "
         "that outside a dev posture, so the container crash-loops. Run `make init` to "
         f"mint one, or `make dev` for a dev stack"
     )

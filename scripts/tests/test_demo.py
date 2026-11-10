@@ -8,15 +8,19 @@
 
 """The checks on `make demo` that need no stack: its committed Sources and events and the pure steps between the engine, the pins and docker."""
 
-import json
 import re
 from pathlib import Path
 from typing import TypedDict
 
 import pytest
+import yaml
 
 import demo
 from _common import SOURCE_NAME
+
+pytestmark = pytest.mark.usefixtures("engine_python_here")
+
+ENGINE_PYTHON = demo._engine_python
 
 TCP_LISTEN_514 = (
     "   0: 00000000:0202 00000000:0000 0A 00000000:00000000 00:00000000 00000000"
@@ -461,62 +465,67 @@ LOAD_DEMO_REFUSAL_CASES = [
     LoadDemoRefusalCase(events={}, message="holds no source files", sources={}),
     LoadDemoRefusalCase(
         events=EVENTS,
-        message="not readable JSON",
-        sources={"intake.json": '{"source": [\n'},
+        message="not readable YAML",
+        sources={"intake.yaml": "source: [\n"},
     ),
     LoadDemoRefusalCase(
-        events=EVENTS, message="which is a mapping", sources={"intake.json": '["a"]\n'}
+        events=EVENTS,
+        message="not readable YAML",
+        sources={"intake.yaml": "source: 2026-11-03\n"},
+    ),
+    LoadDemoRefusalCase(
+        events=EVENTS, message="which is a mapping", sources={"intake.yaml": "- a\n"}
     ),
     LoadDemoRefusalCase(
         events=EVENTS,
         message="names source 'intake'",
-        sources={"cisco-asa.json": VENDOR, "other.json": INTAKE},
+        sources={"cisco-asa.yaml": VENDOR, "other.yaml": INTAKE},
     ),
     LoadDemoRefusalCase(
         events=EVENTS,
         message="exactly one intake",
-        sources={"cisco-asa.json": VENDOR},
+        sources={"cisco-asa.yaml": VENDOR},
     ),
     LoadDemoRefusalCase(
         events=EVENTS,
         message="exactly one intake",
         sources={
-            "cisco-asa.json": VENDOR,
-            "intake.json": INTAKE,
-            "second.json": {**INTAKE, "source": "second"},
+            "cisco-asa.yaml": VENDOR,
+            "intake.yaml": INTAKE,
+            "second.yaml": {**INTAKE, "source": "second"},
         },
     ),
     LoadDemoRefusalCase(
         events={},
         message="no vendor source",
-        sources={"intake.json": INTAKE, "registry.json": FETCHER},
+        sources={"intake.yaml": INTAKE, "registry.yaml": FETCHER},
     ),
     LoadDemoRefusalCase(
         events=EVENTS,
         message="needs a `transform.variant`",
         sources={
-            "cisco-asa.json": {
+            "cisco-asa.yaml": {
                 "source": "cisco-asa",
                 "transform": {"engine": "elastic"},
             },
-            "intake.json": INTAKE,
+            "intake.yaml": INTAKE,
         },
     ),
     LoadDemoRefusalCase(
         events=EVENTS,
         message="'registry' needs a `transform.variant`",
         sources={
-            "cisco-asa.json": VENDOR,
-            "intake.json": INTAKE,
-            "registry.json": {"fetcher": None, "source": "registry"},
+            "cisco-asa.yaml": VENDOR,
+            "intake.yaml": INTAKE,
+            "registry.yaml": {"fetcher": None, "source": "registry"},
         },
     ),
     LoadDemoRefusalCase(
         events=EVENTS,
         message="transform.detect.candidates",
         sources={
-            "cisco-asa.json": VENDOR,
-            "intake.json": {
+            "cisco-asa.yaml": VENDOR,
+            "intake.yaml": {
                 **INTAKE,
                 "transform": {
                     "detect": {"candidates": [FORTINET_VARIANT]},
@@ -529,20 +538,20 @@ LOAD_DEMO_REFUSAL_CASES = [
         events=EVENTS,
         message="transform.detect.candidates",
         sources={
-            "cisco-asa.json": VENDOR,
-            "intake.json": {**INTAKE, "transform": {"mode": "agentless"}},
+            "cisco-asa.yaml": VENDOR,
+            "intake.yaml": {**INTAKE, "transform": {"mode": "agentless"}},
         },
     ),
     LoadDemoRefusalCase(
         events={**EVENTS, "edge": ["demo.log"]},
         message="both replay over fixture package 'cisco_asa'",
         sources={
-            "cisco-asa.json": VENDOR,
-            "edge.json": {
+            "cisco-asa.yaml": VENDOR,
+            "edge.yaml": {
                 "source": "edge",
                 "transform": {"variant": "filebeat.cisco_asa.edge"},
             },
-            "intake.json": {
+            "intake.yaml": {
                 **INTAKE,
                 "transform": {
                     "detect": {"candidates": [ASA_VARIANT, "filebeat.cisco_asa.edge"]},
@@ -554,17 +563,17 @@ LOAD_DEMO_REFUSAL_CASES = [
     LoadDemoRefusalCase(
         events={},
         message="no events to replay",
-        sources={"cisco-asa.json": VENDOR, "intake.json": INTAKE},
+        sources={"cisco-asa.yaml": VENDOR, "intake.yaml": INTAKE},
     ),
     LoadDemoRefusalCase(
         events={"cisco-asa": []},
         message="no events to replay",
-        sources={"cisco-asa.json": VENDOR, "intake.json": INTAKE},
+        sources={"cisco-asa.yaml": VENDOR, "intake.yaml": INTAKE},
     ),
     LoadDemoRefusalCase(
         events={**EVENTS, "fortinet": ["demo.log"]},
         message="no vendor source of that name",
-        sources={"cisco-asa.json": VENDOR, "intake.json": INTAKE},
+        sources={"cisco-asa.yaml": VENDOR, "intake.yaml": INTAKE},
     ),
 ]
 REFUSAL_REASON_CASES = [
@@ -620,7 +629,7 @@ def _write_demo(
     """Write each source file under root/sources and each events directory, with its files, under root/events."""
     (root / "sources").mkdir(parents=True)
     for name, body in sources.items():
-        text = body if isinstance(body, str) else json.dumps(body)
+        text = body if isinstance(body, str) else yaml.safe_dump(data=body)
         (root / "sources" / name).write_text(data=text, encoding="utf-8")
     for name, files in events.items():
         (root / "events" / name).mkdir(parents=True)
@@ -628,6 +637,19 @@ def _write_demo(
             (root / "events" / name / file).write_text(
                 data="%ASA-6-302013: x\n", encoding="utf-8"
             )
+
+
+class TestEnginePython:
+    def test_refuses_an_engine_that_is_not_running(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        def no_container(*, service: str) -> str:
+            return ""
+
+        monkeypatch.setattr(demo, "_container", no_container)
+
+        with pytest.raises(demo.DemoError, match="is not running"):
+            ENGINE_PYTHON(code="", stdin="")
 
 
 class TestEventsDir:
@@ -785,9 +807,9 @@ class TestLoadDemo:
             events=EVENTS,
             root=tmp_path,
             sources={
-                "cisco-asa.json": VENDOR,
-                "intake.json": INTAKE,
-                "registry.json": FETCHER,
+                "cisco-asa.yaml": VENDOR,
+                "intake.yaml": INTAKE,
+                "registry.yaml": FETCHER,
             },
         )
 
@@ -813,9 +835,9 @@ class TestLoadDemo:
             events={**EVENTS, "fortinet": ["demo.log"]},
             root=tmp_path,
             sources={
-                "cisco-asa.json": VENDOR,
-                "fortinet.json": fortinet,
-                "intake.json": intake,
+                "cisco-asa.yaml": VENDOR,
+                "fortinet.yaml": fortinet,
+                "intake.yaml": intake,
             },
         )
 
@@ -831,9 +853,9 @@ class TestLoadDemo:
             events=EVENTS,
             root=tmp_path,
             sources={
-                "cisco-asa.json": VENDOR,
-                "intake.json": INTAKE,
-                "registry.json": polled,
+                "cisco-asa.yaml": VENDOR,
+                "intake.yaml": INTAKE,
+                "registry.yaml": polled,
             },
         )
 
@@ -912,8 +934,8 @@ class TestLoadDemo:
 
     def test_the_committed_sources_keep_their_keys_alphabetical(self) -> None:
         unsorted = []
-        for path in sorted(demo.SOURCES_DIR.glob(pattern="*.json")):
-            body = json.loads(path.read_text(encoding="utf-8"))
+        for path in sorted(demo.SOURCES_DIR.glob(pattern="*.yaml")):
+            body = yaml.safe_load(stream=path.read_text(encoding="utf-8"))
             unsorted += _unsorted(node=body, path=path.name)
 
         assert unsorted == []

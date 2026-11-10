@@ -381,7 +381,6 @@ services:
   # dfe-engine
   # ============================================================
 
-  # DFE_ENGINE_VERSION also pins the dfe-schemas it carries
   dfe-engine:
     image: ${IMAGE_REGISTRY:-ghcr.io/hyperi-io}/dfe-engine:${DFE_ENGINE_VERSION:?run 'make stack VERSION=X.Y.Z' to pin DFE_ENGINE_VERSION}
     container_name: ${DFE_CONTAINER_PREFIX:-}dfe-engine
@@ -397,7 +396,7 @@ services:
         required: false
     environment:
       DFE_ENGINE_ADMIN_LINKS: ${DFE_ADMIN_LINKS_RESOLVED:-}
-      DFE_ENGINE_API_JWT_SECRET: ${DFE_API_JWT_SECRET:-}
+      DFE_ENGINE_API_JWT_SECRET: ${DFE_ENGINE_API_JWT_SECRET:-}
       DFE_ENGINE_APP_CONTRACT_DIR: ${DFE_ENGINE_CONTRACT_DIR-/app/content/contract}
       DFE_ENGINE_CLICKHOUSE_DATABASE: ${CLICKHOUSE_DB:-default}
       DFE_ENGINE_CLICKHOUSE_HOST: ${CLICKHOUSE_HOST:-clickhouse}
@@ -414,10 +413,12 @@ services:
       DFE_ENGINE_DEPLOYMENT_APP_CONFIG_MOUNT: ${DFE_APP_CONFIG_MOUNT:-/etc/dfe/apps}
       DFE_ENGINE_DEPLOYMENT_APP_ENV_DIR: /app/app-env
       DFE_ENGINE_DEPLOYMENT_TARGET: docker
-      DFE_ENGINE_ENV: ${DFE_ENV:-production}
-      DFE_ENGINE_GITOPS_ENABLED: ${DFE_GITOPS_ENABLED:-true}
+      DFE_ENGINE_ENV: ${DFE_ENGINE_ENV:-production}
+      DFE_ENGINE_GITOPS_ENABLED: ${DFE_ENGINE_GITOPS_ENABLED:-true}
       DFE_ENGINE_GITOPS_LOCAL_PATH: /app/config/deploy-repo
-      DFE_ENGINE_GITOPS_MODE: solo
+      DFE_ENGINE_GITOPS_MODE: ${DFE_ENGINE_GITOPS_MODE:-solo}
+      DFE_ENGINE_HUNTS_DIR: /app/config/deploy-repo/config/hunts
+      DFE_ENGINE_HUNTS_RULES_DIR: /app/config/deploy-repo/config/rules
       DFE_ENGINE_HYPERDX_BASE_URL: ${DFE_HYPERDX_RESOLVED_BASE_URL:-}
       DFE_ENGINE_HYPERDX_ENABLED: ${DFE_HYPERDX_RESOLVED:-false}
       DFE_ENGINE_KAFKA_BOOTSTRAP_SERVERS: ${DFE_KAFKA_BOOTSTRAP_SERVERS:-}
@@ -491,21 +492,31 @@ services:
     entrypoint: ["dfe-hunt-runner"]
     command: ["run", "--reload-every", "1"]
     environment:
-      DFE_ENGINE_API_JWT_SECRET: ${DFE_API_JWT_SECRET:-}
+      DFE_ENGINE_API_JWT_SECRET: ${DFE_ENGINE_API_JWT_SECRET:-}
       DFE_ENGINE_CLICKHOUSE_DATABASE: ${CLICKHOUSE_DB:-default}
       DFE_ENGINE_CLICKHOUSE_HOST: ${CLICKHOUSE_HOST:-clickhouse}
       DFE_ENGINE_CLICKHOUSE_PASSWORD: ${DFE_HUNT_RUNNER_CLICKHOUSE_PASSWORD:-}
       DFE_ENGINE_CLICKHOUSE_PORT: ${CLICKHOUSE_EXTERNAL_HTTP_PORT:-8123}
       DFE_ENGINE_CLICKHOUSE_SECURE: ${CLICKHOUSE_SECURE:-false}
       DFE_ENGINE_CLICKHOUSE_USERNAME: dfe_hunt_runner
-      DFE_ENGINE_ENV: ${DFE_ENV:-production}
+      DFE_ENGINE_ENV: ${DFE_ENGINE_ENV:-production}
       DFE_ENGINE_HUNTS_DIR: /app/config/deploy-repo/config/hunts
       DFE_ENGINE_HUNTS_RULES_DIR: /app/config/deploy-repo/config/rules
-      DFE_ENGINE_SECRETS_PATH: /app/config/.secrets
       OTEL_EXPORTER_OTLP_ENDPOINT: ${DFE_OTEL_EXPORTER_ENDPOINT:-}
       OTEL_SERVICE_NAME: dfe-hunt-runner
     volumes:
-      - dfe-engine-config:/app/config
+      - type: volume
+        source: dfe-engine-config
+        target: /app/config/alert-destinations
+        read_only: true
+        volume:
+          subpath: alert-destinations
+      - type: volume
+        source: dfe-engine-config
+        target: /app/config/deploy-repo/config
+        read_only: true
+        volume:
+          subpath: deploy-repo/config
     depends_on:
       clickhouse:
         condition: service_healthy
@@ -545,7 +556,6 @@ services:
   # dfe-proxy
   # ============================================================
 
-  # Chains in OIDC filters when dfe-engine is the provider
   dfe-proxy:
     image: envoyproxy/envoy:${DFE_PROXY_VERSION:?run 'make stack VERSION=X.Y.Z' to pin DFE_PROXY_VERSION}
     container_name: ${DFE_CONTAINER_PREFIX:-}dfe-proxy
@@ -694,15 +704,13 @@ services:
       - ./config/proxy/hyperdx.yaml:/etc/envoy/envoy.yaml:ro
 
   # ============================================================
-  # oauth2-proxy: OIDC and group check in front of the infra UIs
+  # oauth2-proxy
   # ============================================================
 
-  # See docs/operating.md#gating-the-infra-uis-with-oidc
   oauth2-proxy-kafbat:
     image: quay.io/oauth2-proxy/oauth2-proxy:${DFE_OAUTH2_PROXY_VERSION:-v7.15.5@sha256:8498b0d0ef0a7b29686414000a08aee467f02d0299c9ed1e006a8f33fc017916}
     container_name: ${DFE_CONTAINER_PREFIX:-}dfe-oauth2-proxy-kafbat
     extends: {file: compose/oauth2-proxy.yml, service: oauth2-proxy}
-    # kafbat's port, which make unpublishes for this gate
     ports:
       - ${DFE_UI_BIND_HOST:-127.0.0.1}:${KAFBAT_PORT:-8081}:4180
     environment:
@@ -713,7 +721,6 @@ services:
         condition: service_started
         required: false
 
-  # Gates page access only, HyperDX reads the engine token
   oauth2-proxy-hyperdx:
     image: quay.io/oauth2-proxy/oauth2-proxy:${DFE_OAUTH2_PROXY_VERSION:-v7.15.5@sha256:8498b0d0ef0a7b29686414000a08aee467f02d0299c9ed1e006a8f33fc017916}
     container_name: ${DFE_CONTAINER_PREFIX:-}dfe-oauth2-proxy-hyperdx
@@ -728,7 +735,6 @@ services:
         condition: service_healthy
         required: false
 
-  # The API origin, covered by the app's sign-in cookie
   oauth2-proxy-hyperdx-api:
     image: quay.io/oauth2-proxy/oauth2-proxy:${DFE_OAUTH2_PROXY_VERSION:-v7.15.5@sha256:8498b0d0ef0a7b29686414000a08aee467f02d0299c9ed1e006a8f33fc017916}
     container_name: ${DFE_CONTAINER_PREFIX:-}dfe-oauth2-proxy-hyperdx-api
@@ -736,7 +742,6 @@ services:
     ports:
       - ${DFE_UI_BIND_HOST:-127.0.0.1}:${DFE_HYPERDX_API_PORT:-8000}:4180
     environment:
-      # Passes HyperDX's CORS headers through untouched
       OAUTH2_PROXY_PASS_HOST_HEADER: "true"
       OAUTH2_PROXY_REDIRECT_URL: ${DFE_OAUTH2_PROXY_EXTERNAL_ORIGIN:-${DFE_EXTERNAL_ORIGIN:-http://localhost}}:${DFE_HYPERDX_API_PORT:-8000}/oauth2/callback
       OAUTH2_PROXY_UPSTREAMS: http://hyperdx:8000
@@ -748,7 +753,6 @@ services:
 volumes:
   archiver-data:
   clickhouse-data:
-  # Apart from dfe-engine-config and its JWT key
   dfe-app-config:
   dfe-engine-config:
   dfe-engine-content:

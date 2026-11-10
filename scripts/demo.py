@@ -9,7 +9,7 @@
 
 """Run the agentless syslog demo against the RUNNING stack.
 
-The Sources are the POST /sources bodies under resources/demo/sources, one to a file, each taking its role from its body. The one with `transform.mode: agentless` is the intake: a dfe-transform-elastic Source on the receiver's syslog listener whose detect candidates are the vendor variants. One with a `fetcher` mapping pulls from its upstream into its own table beside the receiver's push. Every other is a vendor table holding its engine catalogue entry as `from-catalogue` writes it for the receiver intake, which the run checks against the engine's copy.
+The Sources are the POST /sources bodies under resources/demo/sources, one to a file, each taking its role from its body. The one with `transform.mode: agentless` is the intake: a dfe-transform-elastic Source on the receiver's syslog listener whose detect candidates are the vendor variants. One with a `fetcher` mapping pulls from its upstream into its own table beside the receiver's push. Every other is a vendor table holding its engine catalogue entry as `from-catalogue` writes it for the receiver intake, which the run checks against the engine's copy. The engine's own PyYAML reads each file, because this script runs on a bare python3.
 
 A Source the engine lacks is created without its `state`, because a Source created dormant gets no table. One the engine holds whose working version differs from its file is written over with the file. Each is then deployed where that is outstanding and set to the `state` its file names, active when it names none. A dormant vendor table keeps filling from the intake with no per-vendor transform running.
 
@@ -97,6 +97,16 @@ CATALOGUE_READ = "\n".join(
         "    if path is not None:",
         "        sys.stdout.write(json.dumps(yaml.safe_load(path.read_text(encoding='utf-8')), default=str))",
         "        break",
+    )
+)
+# One YAML document on stdin as JSON on stdout with any refusal on stderr. A value JSON cannot carry, such as a date, is refused
+YAML_TO_JSON = "\n".join(
+    (
+        "import json, sys, yaml",
+        "try:",
+        "    json.dump(yaml.safe_load(sys.stdin), sys.stdout)",
+        "except (TypeError, yaml.YAMLError) as error:",
+        "    sys.exit(str(error))",
     )
 )
 # What `from-catalogue` adds to an entry on the receiver intake (dfe-engine source/catalogue.py write_request_for and _match_for)
@@ -432,7 +442,7 @@ def _catalogue(*, name: str) -> dict | str:
     if not (result.stdout.strip()):
         return f"{ENGINE_SERVICE!r} ships no catalogue entry named {name!r}"
     try:
-        entry = json.loads(result.stdout)
+        entry = json.loads(s=result.stdout)
     except json.JSONDecodeError as error:
         return f"the {ENGINE_SERVICE!r} catalogue entry {name!r} is not readable JSON: {error}"
     if not (isinstance(entry, dict)):
@@ -443,7 +453,7 @@ def _catalogue(*, name: str) -> dict | str:
 def _check_catalogue(*, vendors: list[dict]) -> None:
     """Warn for each vendor source that differs from the engine's catalogue entry or cannot be checked against one."""
     for body in vendors:
-        path = _rel_path(path=SOURCES_DIR / f"{body['source']}.json")
+        path = _rel_path(path=SOURCES_DIR / f"{body['source']}.yaml")
         entry = _catalogue(name=body["source"])
         if isinstance(entry, str):
             _print(
@@ -551,7 +561,9 @@ def _deploy(*, base: str, name: str, token: str) -> dict:
     return answer
 
 
-def _docker(*, args: list[str], timeout: int = 30) -> subprocess.CompletedProcess:
+def _docker(
+    *, args: list[str], stdin: str | None = None, timeout: int = 30
+) -> subprocess.CompletedProcess:
     """Run one docker command and capture its text output."""
     return subprocess.run(
         ["docker", *args],
@@ -559,9 +571,21 @@ def _docker(*, args: list[str], timeout: int = 30) -> subprocess.CompletedProces
         check=False,
         encoding="utf-8",
         errors="replace",
+        input=stdin,
         text=True,
         timeout=timeout,
     )
+
+
+def _engine_python(*, code: str, stdin: str) -> subprocess.CompletedProcess:
+    """Run Python in the engine's container, for the PyYAML it carries."""
+    container = _container(service=ENGINE_SERVICE)
+    if not (container) or not (_running(container=container)):
+        raise DemoError(
+            f"{ENGINE_SERVICE!r} is not running and reading the demo's YAML needs it. "
+            f"Start the stack first"
+        )
+    return _docker(args=["exec", "-i", container, "python", "-c", code], stdin=stdin)
 
 
 def _ensure_fetchers(
@@ -754,6 +778,14 @@ def _outcome(
     return 1
 
 
+def _parsed_yaml(*, label: str, text: str) -> object:
+    """One YAML document as the engine's PyYAML reads it, refused under label when it cannot."""
+    result = _engine_python(code=YAML_TO_JSON, stdin=text)
+    if result.returncode != 0:
+        raise DemoError(f"{label} is not readable YAML: {result.stderr.strip()}")
+    return json.loads(s=result.stdout)
+
+
 def _patch_json(*, payload: dict, token: str, url: str) -> tuple[int, typing.Any]:
     """PATCH JSON from inside the stack and return (status, decoded body)."""
     status, body = _exec_request(
@@ -765,9 +797,10 @@ def _patch_json(*, payload: dict, token: str, url: str) -> tuple[int, typing.Any
 def _read_source(*, path: Path) -> dict:
     """One demo source file's POST /sources body, refused unless its `source` is the file's name."""
     try:
-        body = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, UnicodeDecodeError, json.JSONDecodeError) as error:
-        raise DemoError(f"{path.name!r} is not readable JSON: {error}") from error
+        text = path.read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError) as error:
+        raise DemoError(f"{path.name!r} is not readable YAML: {error}") from error
+    body = _parsed_yaml(label=repr(path.name), text=text)
     if not (isinstance(body, dict)):
         raise DemoError(f"{path.name!r} needs a POST /sources body, which is a mapping")
     if body.get("source") != path.stem:
@@ -828,9 +861,7 @@ def _run(*, args: argparse.Namespace) -> int:
 
 
 def _install(*, args: argparse.Namespace, manifest: dict) -> int:
-    """Create every source of the pack, start the stream and the pruner, and wait for the rows and archived files."""
-    demo = load_demo(events=EVENTS_DIR, sources=SOURCES_DIR)
-    check_manifest(demo=demo, manifest=manifest)
+    """Create every source of the pack, start the stream and the pruner and wait for the rows and archived files."""
     environ = dict(os.environ)
     _load_env_file(
         component=ENGINE_COMPONENT, keys=(ADMIN_NAME_KEY, ADMIN_PASSWORD_KEY)
@@ -848,6 +879,8 @@ def _install(*, args: argparse.Namespace, manifest: dict) -> int:
     )
     if reason:
         raise DemoError(reason)
+    demo = load_demo(events=EVENTS_DIR, sources=SOURCES_DIR)
+    check_manifest(demo=demo, manifest=manifest)
     checkout = _resolve_generator(dev=args.dev, generator=args.generator)
     network = _network(service=RECEIVER_SERVICE)
     kept, dropped = archivable(
@@ -1488,18 +1521,18 @@ def listening_protocols(*, port: int, proc_net: str) -> set[str]:
 def load_demo(*, events: Path, sources: Path) -> Demo:
     """Read every source file under sources by role and pair each vendor source with its directory under events."""
     bodies = [
-        _read_source(path=path) for path in sorted(sources.glob(pattern="*.json"))
+        _read_source(path=path) for path in sorted(sources.glob(pattern="*.yaml"))
     ]
     if not (bodies):
         raise DemoError(
             f"{str(sources)!r} holds no source files. Add one POST /sources body per "
-            f"demo source as <source>.json"
+            f"demo source as <source>.yaml"
         )
     fetchers = [body for body in bodies if _role(body=body) == "fetcher"]
     intakes = [body for body in bodies if _role(body=body) == "intake"]
     vendors = [body for body in bodies if _role(body=body) == "vendor"]
     if len(intakes) != 1:
-        found = (", ".join(repr(f"{body['source']}.json") for body in intakes)) or (
+        found = (", ".join(repr(f"{body['source']}.yaml") for body in intakes)) or (
             "none"
         )
         raise DemoError(
@@ -1520,7 +1553,7 @@ def load_demo(*, events: Path, sources: Path) -> Demo:
     )
     if listed != variants:
         raise DemoError(
-            f"{intake['source'] + '.json'!r} lists `transform.detect.candidates` "
+            f"{intake['source'] + '.yaml'!r} lists `transform.detect.candidates` "
             f"{listed}. Set them to the vendor sources' variants, {variants}"
         )
     owners = {}

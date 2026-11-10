@@ -147,7 +147,7 @@ def otel_http_endpoint(endpoint: str) -> str:
     return endpoint
 
 
-# What the engine is handed as DFE_ADMIN_LINKS: the JSON list of admin UIs a
+# What the engine is handed as DFE_ENGINE_ADMIN_LINKS: the JSON list of admin UIs a
 # browser can open on this stack.
 ADMIN_LINKS_VAR = "DFE_ADMIN_LINKS_RESOLVED"
 # Compose's own fallback for DFE_EXTERNAL_ORIGIN, and the override the
@@ -518,7 +518,7 @@ def _admin_links(
     running: Collection[str],
     unpublished: Collection[str],
 ) -> list[dict[str, str]]:
-    """Return the admin UIs this stack runs and publishes, as DFE_ADMIN_LINKS entries.
+    """Return the admin UIs this stack runs and publishes, as DFE_ENGINE_ADMIN_LINKS entries.
 
     Each URL is the one docker-compose.yml builds for that surface: its origin
     override, else DFE_EXTERNAL_ORIGIN, then the host port. Behind the auth

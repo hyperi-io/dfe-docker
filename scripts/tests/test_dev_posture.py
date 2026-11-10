@@ -9,7 +9,7 @@
 """`make dev` overwrites a minted admin password with the shipped default.
 
 That is right on a box becoming a dev box and destructive anywhere else, so the
-properties worth pinning are the refusal on a non-dev DFE_ENV and the backup taken
+properties worth pinning are the refusal on a non-dev DFE_ENGINE_ENV and the backup taken
 before the rewrite -- a minted password is unrecoverable once overwritten. A box
 ALREADY on a dev posture keeps a non-default password: the stack replaced the
 default itself, and writing it back locks the next run out.
@@ -17,7 +17,7 @@ default itself, and writing it back locks the next run out.
 `--real` is the opposite promise: it mints rather than overwrites, so what is
 pinned there is that it never replaces a value that is already real.
 
-DFE_ENV lives in .env and the password in env/engine.env, so each case is written
+DFE_ENGINE_ENV lives in .env and the password in env/engine.env, so each case is written
 as one text and split the way `make init` splits it.
 """
 
@@ -33,7 +33,7 @@ _MINTED = "s3cr3t-minted-value"
 _PASSWORD_LINE = "DFE_ENGINE_AUTH_LOCAL_ADMIN_PASSWORD="
 _DEPLOYMENT = f"""\
 ## A deployment's .env.
-DFE_ENV=production
+DFE_ENGINE_ENV=production
 DFE_ENGINE_AUTH_LOCAL_ADMIN_PASSWORD={_MINTED}
 DFE_UI_PORT=3000
 """
@@ -97,7 +97,7 @@ def test_a_missing_dotenv_is_a_different_exit_code(dotenv: Path) -> None:
 def test_a_missing_engine_env_is_the_same_exit_code(
     capsys: pytest.CaptureFixture[str], dotenv: Path
 ) -> None:
-    dotenv.write_text("DFE_ENV=dev\n", encoding="utf-8", newline="\n")
+    dotenv.write_text("DFE_ENGINE_ENV=dev\n", encoding="utf-8", newline="\n")
 
     assert dev_posture.main(argv=[]) == 1
     assert "env/engine.env" in capsys.readouterr().err
@@ -108,7 +108,7 @@ def test_the_rewrite_sets_both_keys_and_leaves_the_rest(dotenv: Path) -> None:
 
     assert dev_posture.main(argv=[]) == 0
     dotenv_text, engine_text = _state(dotenv=dotenv)
-    assert "DFE_ENV=dev" in dotenv_text
+    assert "DFE_ENGINE_ENV=dev" in dotenv_text
     assert "DFE_UI_PORT=3000" in dotenv_text
     assert "DFE_ENGINE_AUTH_LOCAL_ADMIN_PASSWORD=changeme" in engine_text
     assert _MINTED not in dotenv_text + engine_text
@@ -137,7 +137,7 @@ def test_an_absent_posture_is_written_rather_than_refused(dotenv: Path) -> None:
     _deploy(dotenv=dotenv, text=_NO_POSTURE)
 
     assert dev_posture.main(argv=[]) == 0
-    assert "DFE_ENV=dev" in _state(dotenv=dotenv)[0]
+    assert "DFE_ENGINE_ENV=dev" in _state(dotenv=dotenv)[0]
 
 
 def test_each_replaced_file_is_backed_up_0600_and_named(
@@ -190,7 +190,7 @@ def test_a_dev_box_on_the_default_stays_on_it(dotenv: Path) -> None:
 
 
 def test_another_dev_posture_is_renamed_and_keeps_its_password(dotenv: Path) -> None:
-    local_box = _DEV_BOX.replace("DFE_ENV=dev", "DFE_ENV=local")
+    local_box = _DEV_BOX.replace("DFE_ENGINE_ENV=dev", "DFE_ENGINE_ENV=local")
     _deploy(dotenv=dotenv, text=local_box)
 
     assert dev_posture.main(argv=[]) == 0
@@ -203,7 +203,7 @@ def test_real_mints_a_password_and_writes_a_non_dev_posture(dotenv: Path) -> Non
 
     assert dev_posture.main(argv=["--real"]) == 0
     dotenv_text, engine_text = _state(dotenv=dotenv)
-    assert "DFE_ENV=production" in dotenv_text
+    assert "DFE_ENGINE_ENV=production" in dotenv_text
     assert "DFE_UI_PORT=3000" in dotenv_text
     assert "DFE_ENGINE_AUTH_LOCAL_ADMIN_PASSWORD=changeme" not in engine_text
     assert engine_text.startswith(_PASSWORD_LINE)
@@ -227,7 +227,7 @@ def test_real_keeps_a_minted_password_and_only_lifts_the_posture(
     assert dev_posture.main(argv=["--real"]) == 0
     dotenv_text, engine_text = _state(dotenv=dotenv)
     assert f"DFE_ENGINE_AUTH_LOCAL_ADMIN_PASSWORD={_MINTED}" in engine_text
-    assert "DFE_ENV=production" in dotenv_text
+    assert "DFE_ENGINE_ENV=production" in dotenv_text
 
 
 def test_real_mints_a_distinct_password_each_time(dotenv: Path) -> None:
@@ -248,4 +248,4 @@ def test_the_flag_is_read_from_the_command_line(
     monkeypatch.setattr(sys, "argv", ["dev_posture.py", "--real"])
 
     assert dev_posture.main() == 0
-    assert "DFE_ENV=production" in _state(dotenv=dotenv)[0]
+    assert "DFE_ENGINE_ENV=production" in _state(dotenv=dotenv)[0]

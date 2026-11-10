@@ -53,9 +53,9 @@ def test_a_checkout_with_no_env_is_checked_as_its_first_start(dotenv: Path) -> N
 
 
 def test_a_checkout_with_an_env_is_checked_on_its_own(dotenv: Path) -> None:
-    dotenv.write_text("DFE_ENV=production\n", encoding="utf-8", newline="\n")
+    dotenv.write_text("DFE_ENGINE_ENV=production\n", encoding="utf-8", newline="\n")
 
-    assert check_compose._first_start_dotenv() == {"DFE_ENV": "production"}
+    assert check_compose._first_start_dotenv() == {"DFE_ENGINE_ENV": "production"}
 
 
 def test_a_checkout_with_no_engine_env_is_checked_as_its_first_start(
@@ -70,7 +70,7 @@ def test_a_checkout_with_no_engine_env_is_checked_as_its_first_start(
 
 
 def test_a_checkout_with_an_engine_env_is_checked_on_its_own(engine_env: Path) -> None:
-    engine_env.write_text("DFE_API_PORT=8003\n", encoding="utf-8", newline="\n")
+    engine_env.write_text("DFE_ENGINE_API_PORT=8003\n", encoding="utf-8", newline="\n")
 
     assert check_compose._first_start_engine_env() is None
 
