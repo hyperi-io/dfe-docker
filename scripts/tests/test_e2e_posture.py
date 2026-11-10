@@ -60,6 +60,10 @@ def test_on_writes_the_posture_and_keeps_the_rest(
     assert "DFE_UI_PORT=3000" in dotenv_written
     assert "DFE_ENGINE_E2E_SERVER" not in dotenv_written
     assert "DFE_ENGINE_AUTH_LOCAL_ADMIN_PASSWORD=changeme" in engine_written
+    assert (
+        "DFE_ENGINE_E2E_SCHEMA_FIXTURES_DIR=/tmp/dfe-e2e-schema-fixtures"
+        in engine_written
+    )
     assert "DFE_ENGINE_E2E_SERVER=true" in engine_written
 
 

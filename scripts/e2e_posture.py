@@ -35,6 +35,9 @@ _E2E_ENV = "test"
 _POSTURE_KEY = "DFE_ENGINE_ENV"
 # Distinct from 1 (no env files at all) so a caller can tell a deployment from a checkout that never ran make init
 _REFUSED = 2
+# The engine's e2e schema seeds write only here, outside the schema tree
+_SCHEMA_FIXTURES_DIR = "/tmp/dfe-e2e-schema-fixtures"
+_SCHEMA_FIXTURES_KEY = "DFE_ENGINE_E2E_SCHEMA_FIXTURES_DIR"
 _SERVER_KEY = "DFE_ENGINE_E2E_SERVER"
 
 
@@ -126,6 +129,7 @@ def _wanted() -> dict[Path, dict[str, str]]:
         DOTENV_FILE: {_POSTURE_KEY: _E2E_ENV},
         _env_file(component=ENGINE_COMPONENT): {
             _ADMIN_PASSWORD_KEY: _DEFAULT_PASSWORD,
+            _SCHEMA_FIXTURES_KEY: _SCHEMA_FIXTURES_DIR,
             _SERVER_KEY: "true",
         },
     }
