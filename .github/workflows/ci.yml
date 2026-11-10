@@ -166,27 +166,30 @@ jobs:
       - name: Proxy configs
         run: make check-proxy
 
-  # What a desktop with only Docker does: the image sets each profile up, the
-  # default one starts and serves the console, and the image drives it through
-  # the Docker socket, every step with a PATH that holds no make and no python.
-  # The default install goes to the Windows job, which reads it with the
-  # Windows compose.
+  # What a desktop with only Docker does: the image sets each profile up and the
+  # default one starts, serves the console and runs the demo, every step with a
+  # PATH that holds no make and no python. The default install goes to the
+  # Windows job, which reads it with the Windows compose.
   image:
     name: Image
     runs-on: ubuntu-26.04
     timeout-minutes: 50
     env:
       IMAGE: dfe-docker:ci
-      # The newest published stack, pre-releases included, so the proof runs the images the compose files on this branch are written for
-      STACK: rc
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
 
+      - name: Set up Python
+        uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      # The stack deployment.example.yaml pins, as image.yml bakes into the :<version> image
       - name: Build the image
-        run: docker build --file docker/dfe-docker.Dockerfile --build-arg "IMAGE=$IMAGE" --tag "$IMAGE" .
+        run: docker build --file docker/dfe-docker.Dockerfile --build-arg "IMAGE=$IMAGE" --build-arg "STACK=$(python3 scripts/quickstart_json.py --print-stack)" --tag "$IMAGE" .
 
       # docker, curl for the console check and the few tools the checks below use. No make, no python
       - name: Put only Docker on PATH
@@ -209,7 +212,7 @@ jobs:
           for profile in slim-grpc slim-kafka single-grpc single-kafka; do
             mkdir "$WORK/$profile"
             cd "$WORK/$profile"
-            docker run --rm -v "${PWD}:/dfe" "$IMAGE" init --profile "$profile" --stack "$STACK"
+            docker run --rm -v "${PWD}:/dfe" "$IMAGE" init --profile "$profile"
             docker compose config -q
           done
 
@@ -218,7 +221,7 @@ jobs:
           export PATH="$DOCKER_ONLY"
           mkdir "$WORK/default"
           cd "$WORK/default"
-          docker run --rm -v "${PWD}:/dfe" "$IMAGE" init --stack "$STACK"
+          docker run --rm -v "${PWD}:/dfe" "$IMAGE" init
           docker compose config -q
           docker compose config --services > "$WORK/default.services"
 
@@ -233,7 +236,7 @@ jobs:
           fi
           secrets() { grep -h -E '^[A-Z0-9_]*(PASSWORD|SECRET|KEY)=' .env env/*.env | sha256sum; }
           before="$(secrets)"
-          docker run --rm -v "${PWD}:/dfe" "$IMAGE" init --upgrade --stack "$STACK"
+          docker run --rm -v "${PWD}:/dfe" "$IMAGE" init --upgrade
           if [ "$(secrets)" != "$before" ]; then
             echo "::error::init --upgrade changed a minted secret"
             exit 1
@@ -273,12 +276,12 @@ jobs:
           docker compose up -d --wait --wait-timeout 900
           curl -fsSL --retry 5 --retry-all-errors -o /dev/null -w 'console answered %{http_code} at %{url_effective}\n' http://localhost:3000/
 
-      # demo-stop reaches the running stack the way demo does: the socket, the folder at its own path and make inside the image
-      - name: Drive the running stack from the image
-        timeout-minutes: 10
+      - name: Run the demo and take it out again
+        timeout-minutes: 15
         run: |
           export PATH="$DOCKER_ONLY"
           cd "$WORK/default"
+          docker run --rm -v "${PWD}:${PWD}" -w "${PWD}" -v /var/run/docker.sock:/var/run/docker.sock "$IMAGE" demo
           docker run --rm -v "${PWD}:${PWD}" -w "${PWD}" -v /var/run/docker.sock:/var/run/docker.sock "$IMAGE" demo-stop
           docker compose config -q
 
