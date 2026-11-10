@@ -46,6 +46,7 @@ _GUARDED_GOALS = [
     "post",
     "test-source",
     "test-flows",
+    "print-compose-env",
 ]
 # Stopping a stack and checking a file must work whatever the configuration says.
 _UNGUARDED_GOALS = ["down", "clean", "creds", "init", "help", "check-compose"]

@@ -1,6 +1,6 @@
 # Project:   dfe-docker
 # File:      .github/workflows/ci.yml
-# Purpose:   Validate the compose stack, lint the dev builder Dockerfile and validate the proxy configs
+# Purpose:   Validate the compose stack, lint the Dockerfiles, validate the proxy configs and prove the dfe-docker image starts the stack with only Docker
 #
 # License:   BUSL-1.1 - HYPERI PTY LIMITED
 # Copyright: (c) 2026 HYPERI PTY LIMITED
@@ -95,10 +95,6 @@ jobs:
       - name: Docs
         run: make check-docs
 
-      # The runner ships ShellCheck, and install.sh has to lint as POSIX sh
-      - name: Shell
-        run: make check-shell
-
       # The pin lives in the Makefile (RUFF_VERSION), so a local `make check`
       # lints with the same version this does. Installed here rather than run
       # through uvx to keep the runner off the network mid-job.
@@ -150,7 +146,7 @@ jobs:
       # does not have.
       # stdin form, per the standard, with no config file, so the exact same
       # command is runnable locally -- no mount, no config discovery. DL3008 (pin
-      # apt versions) fires on the Rust builder and is deliberately left as a
+      # apt versions) fires on both Dockerfiles and is deliberately left as a
       # visible warning, not suppressed: `--failure-threshold error` lets a
       # warning inform without blocking, and the reason sits in the Dockerfile.
       - name: Hadolint
@@ -169,6 +165,161 @@ jobs:
       # Envoy's validate mode loads every listener, cluster and TLS context, so a proxy config that would crash-loop dfe-proxy or dfe-hyperdx-proxy fails here. With no .env, the Envoy is the one deployment.example.yaml's pinned stack carries, read anonymously from the stack manifest through oras. The TLS variants get a throwaway certificate from the runner's openssl.
       - name: Proxy configs
         run: make check-proxy
+
+  # What a desktop with only Docker does: the image sets each profile up and the
+  # default one starts, serves the console and runs the demo, every step with a
+  # PATH that holds no make and no python. The default install goes to the
+  # Windows job, which reads it with the Windows compose.
+  image:
+    name: Image
+    runs-on: ubuntu-26.04
+    timeout-minutes: 50
+    env:
+      IMAGE: dfe-docker:ci
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Build the image
+        run: docker build --file docker/dfe-docker.Dockerfile --build-arg "IMAGE=$IMAGE" --tag "$IMAGE" .
+
+      # docker, curl for the console check and the few tools the checks below use. No make, no python
+      - name: Put only Docker on PATH
+        run: |
+          bin="$RUNNER_TEMP/docker-only"
+          mkdir -p "$bin" "$RUNNER_TEMP/dfe"
+          for tool in docker curl grep mkdir sha256sum; do
+            ln -s "$(command -v "$tool")" "$bin/$tool"
+          done
+          echo "DOCKER_ONLY=$bin" >> "$GITHUB_ENV"
+          echo "WORK=$RUNNER_TEMP/dfe" >> "$GITHUB_ENV"
+
+      - name: Set up every profile
+        run: |
+          export PATH="$DOCKER_ONLY"
+          if command -v make || command -v python3 || command -v python; then
+            echo "::error::make or python is still on PATH"
+            exit 1
+          fi
+          for profile in slim-grpc slim-kafka single-grpc single-kafka; do
+            mkdir "$WORK/$profile"
+            cd "$WORK/$profile"
+            docker run --rm -v "${PWD}:/dfe" "$IMAGE" init --profile "$profile"
+            docker compose config -q
+          done
+
+      - name: Set up the default profile
+        run: |
+          export PATH="$DOCKER_ONLY"
+          mkdir "$WORK/default"
+          cd "$WORK/default"
+          docker run --rm -v "${PWD}:/dfe" "$IMAGE" init
+          docker compose config -q
+          docker compose config --services > "$WORK/default.services"
+
+      # A second init, a bad profile and an upgrade, each against what it must leave alone
+      - name: Refuse and upgrade
+        run: |
+          export PATH="$DOCKER_ONLY"
+          cd "$WORK/default"
+          if docker run --rm -v "${PWD}:/dfe" "$IMAGE" init; then
+            echo "::error::init ran over an existing install"
+            exit 1
+          fi
+          secrets() { grep -h -E '^[A-Z0-9_]*(PASSWORD|SECRET|KEY)=' .env env/*.env | sha256sum; }
+          before="$(secrets)"
+          docker run --rm -v "${PWD}:/dfe" "$IMAGE" init --upgrade
+          if [ "$(secrets)" != "$before" ]; then
+            echo "::error::init --upgrade changed a minted secret"
+            exit 1
+          fi
+          docker compose config -q
+          mkdir "$WORK/bad"
+          cd "$WORK/bad"
+          if docker run --rm -v "${PWD}:/dfe" "$IMAGE" init --profile no-such-profile; then
+            echo "::error::init took a profile service_profiles.yaml does not declare"
+            exit 1
+          fi
+          shopt -s dotglob nullglob
+          left=(*)
+          if [ "${#left[@]}" -ne 0 ]; then
+            echo "::error::a refused init left ${left[*]} behind"
+            exit 1
+          fi
+
+      # A throwaway install whose stack is torn down below, so its minted secrets protect nothing
+      - name: Hand the default install to the Windows job
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: default-install
+          path: |
+            ${{ env.WORK }}/default
+            ${{ env.WORK }}/default.services
+            !${{ env.WORK }}/default/access-summary.md
+          include-hidden-files: true
+          if-no-files-found: error
+          retention-days: 1
+
+      - name: Start the default profile and reach the console
+        timeout-minutes: 20
+        run: |
+          export PATH="$DOCKER_ONLY"
+          cd "$WORK/default"
+          docker compose up -d --wait --wait-timeout 900
+          curl -fsSL --retry 5 --retry-all-errors -o /dev/null -w 'console answered %{http_code} at %{url_effective}\n' http://localhost:3000/
+
+      - name: Run the demo and take it out again
+        timeout-minutes: 15
+        run: |
+          export PATH="$DOCKER_ONLY"
+          cd "$WORK/default"
+          docker run --rm -v "${PWD}:${PWD}" -w "${PWD}" -v /var/run/docker.sock:/var/run/docker.sock "$IMAGE" demo
+          docker run --rm -v "${PWD}:${PWD}" -w "${PWD}" -v /var/run/docker.sock:/var/run/docker.sock "$IMAGE" demo-stop
+
+      - name: Show what did not come up
+        if: failure()
+        working-directory: ${{ env.WORK }}/default
+        run: |
+          docker compose ps --all
+          docker compose logs --no-color --tail 100
+
+      - name: Tear the stack down
+        if: always()
+        working-directory: ${{ env.WORK }}/default
+        run: |
+          if [ -f .env ]; then
+            docker compose --profile '*' down --volumes --remove-orphans
+          fi
+
+  # Compose on Windows splits COMPOSE_FILE on `;` unless COMPOSE_PATH_SEPARATOR in .env says otherwise
+  image-windows:
+    name: Image (Windows compose)
+    needs: image
+    runs-on: windows-2025
+    timeout-minutes: 10
+    steps:
+      - name: Fetch the default install
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: default-install
+          path: ${{ runner.temp }}/dfe
+
+      - name: Read it with the Windows compose
+        shell: pwsh
+        run: |
+          Set-Location (Join-Path $env:RUNNER_TEMP 'dfe/default')
+          docker compose version
+          $listed = docker compose config --services
+          if ($LASTEXITCODE -ne 0) { exit 1 }
+          $got = ($listed | Sort-Object) -join ','
+          $want = (Get-Content ../default.services | Sort-Object) -join ','
+          if ($got -ne $want) {
+            Write-Output "::error::Windows compose read $got where Linux read $want"
+            exit 1
+          }
+          Write-Output "Windows compose starts the same services: $got"
 
 # droast is DELIBERATELY NOT RUN HERE. That matches hyperi-ci's own posture --
 # quality/droast.py resolves it with `find_tool(recommended=False)` and info-skips

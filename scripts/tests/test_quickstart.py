@@ -8,6 +8,7 @@
 
 """The checks on the one-command quickstart that need no stack: the profile and stack choice, the demo's refusal and the .env line it writes."""
 
+import argparse
 import re
 from typing import TypedDict
 
@@ -146,6 +147,41 @@ class TestChooseStack:
         )
 
         assert chosen == case["expected"]
+
+
+class TestChoiceLine:
+    @pytest.mark.parametrize(
+        ("caller", "said", "absent"),
+        [
+            pytest.param(
+                "",
+                "make up: profile 'slim-grpc' (make line), stack '2.2.1' (default). Override with: make up PROFILE=",
+                "--profile",
+                id="make",
+            ),
+            pytest.param(
+                "init",
+                "init: profile 'slim-grpc' (given), stack '2.2.1' (default). Override with: init --profile",
+                "make",
+                id="image",
+            ),
+        ],
+    )
+    def test_names_the_command_that_ran_it(
+        self, absent: str, caller: str, said: str
+    ) -> None:
+        args = argparse.Namespace(caller=caller, command="up")
+
+        line = quickstart._choice_line(
+            args=args,
+            name="slim-grpc",
+            profile_from="make line",
+            stack_from="default",
+            version="2.2.1",
+        )
+
+        assert line.startswith(said)
+        assert absent not in line
 
 
 class TestRefusal:

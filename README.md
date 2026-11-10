@@ -47,7 +47,18 @@ See [docs/architecture.md](docs/architecture.md).
 
 ## Quickstart
 
-On a host with Docker (with Compose v2), make, git and python3:
+On macOS, Linux or Windows with only Docker, and Compose 2.26 or newer, in an empty folder:
+
+```bash
+docker run --rm -v "${PWD}:/dfe" ghcr.io/hyperi-io/dfe-docker init
+docker compose up -d
+```
+
+The console is at http://localhost:3000. `init --profile slim-grpc` picks another profile. The image's other commands, the login, upgrades and the demo among them, are in [Taking DFE for a first look](docs/evaluating.md#with-only-docker).
+
+### From a clone
+
+The developer path, on a host with Docker (with Compose v2), make, git and python3:
 
 ```bash
 git clone https://github.com/hyperi-io/dfe-docker && cd dfe-docker
@@ -67,25 +78,9 @@ make down                        # stop everything
 
 `PROFILE=` and `VERSION=` on the make line are written to `.env` (as `DFE_PROFILE` and the image pins), so later runs keep them. A `.env` that already holds pins keeps them until `VERSION=` names another stack. `make demo` needs a profile that runs dfe-transform-elastic, `single-kafka` or `single-grpc`.
 
-### Without git, make or python
+The image runs these same scripts. `init` is `make init` and the `make up` pinning, and the compose settings it writes are what the Makefile hands compose (`make print-compose-env`).
 
-Each release carries `install.sh` and a bundle of the compose files, config and templates. It needs docker with compose and curl or wget:
-
-```bash
-curl -fsSL https://github.com/hyperi-io/dfe-docker/releases/latest/download/install.sh | sh
-```
-
-or download it first and run it:
-
-```bash
-curl -fsSLO https://github.com/hyperi-io/dfe-docker/releases/latest/download/install.sh && sh install.sh
-```
-
-It checks the bundle's sha256 against the release's `SHA256SUMS`, unpacks into `./dfe`, writes `.env` with random secrets and the stack's image pins, starts `single-kafka` and prints the console login. `DFE_PROFILE=slim-grpc` picks another profile and `DFE_VERSION=X.Y.Z` a release. From then on a plain `docker compose` in `./dfe` runs the stack, and `docker compose --profile '*' down -v` removes it.
-
-Set the dials in `./dfe/.env` and run `./apply.sh` to work out the compose chain from them and start the stack, or put them in the environment of the install (`DFE_UI_EXTERNAL=false sh install.sh`), which writes them to `.env`. `apply.sh` is the Makefile's chain in POSIX sh. It acts on `DFE_DATA_ROOT`, `DFE_BIND_SCOPE`, the five `*_EXTERNAL` exposure flags, `DFE_PROXY_TLS` with `DFE_NETWORK_SUBNET`, `DFE_PROXY_CERT_DIR` and `DFE_EXTERNAL_ORIGIN` (it mints the console certificate with `openssl`), the `DFE_RECEIVER_*_PORT` keys, and the cores deployed the stack reports. The console cannot start per-source containers from an install, and `make demo` needs the clone. Only a release cut after this one carries the assets.
-
-### Prerequisites
+### Prerequisites (a clone)
 
 - Docker and Docker Compose v2
 - make, git and Python 3 (standard library only)
@@ -312,7 +307,7 @@ BUSL-1.1 - see [LICENSE](LICENSE) for details.
 
 ### What this is
 
-dfe-docker stands the whole DFE suite up as one Docker Compose stack on a single host, and it is the definition-of-done target for the suite's docker path: a change is proven when it runs on the deployment target, not because it ran on someone's laptop. It is packaging, not product - it builds no production image, publishes nothing, and provisions no ClickHouse table and no Kafka topic. dfe-engine is the only schema and topic controller, and `scripts/tests/test_engine_only_schema_control.py` fails the build on a DDL file or a topic-creating step appearing here. When the data path is wrong the fix is nearly always in a component repo. It is not the Kubernetes path either: Kubernetes stays primary and dfe-infra owns it, which is why there is deliberately no `scale` profile - Compose cannot run an HA broker or a ClickHouse cluster. `main` is protected, so every change arrives as a pull request, with Conventional Commits and a DCO sign-off ([CONTRIBUTING.md](CONTRIBUTING.md)).
+dfe-docker stands the whole DFE suite up as one Docker Compose stack on a single host, and it is the definition-of-done target for the suite's docker path: a change is proven when it runs on the deployment target, not because it ran on someone's laptop. It is packaging, not product - it builds no component image, publishes only the dfe-docker image that sets a folder up from this tree, and provisions no ClickHouse table and no Kafka topic. dfe-engine is the only schema and topic controller, and `scripts/tests/test_engine_only_schema_control.py` fails the build on a DDL file or a topic-creating step appearing here. When the data path is wrong the fix is nearly always in a component repo. It is not the Kubernetes path either: Kubernetes stays primary and dfe-infra owns it, which is why there is deliberately no `scale` profile - Compose cannot run an HA broker or a ClickHouse cluster. `main` is protected, so every change arrives as a pull request, with Conventional Commits and a DCO sign-off ([CONTRIBUTING.md](CONTRIBUTING.md)).
 
 ### Where things live
 
@@ -325,6 +320,7 @@ dfe-docker stands the whole DFE suite up as one Docker Compose stack on a single
 | `scripts/resolve_profile.py` | Reads `service_profiles.yaml` and writes the generated `.tmp/profile.mk` the Makefile includes |
 | `scripts/stack.py` | `make stack` - writes `tag@sha256` pins into `.env` from a local dfe-infra checkout (`DFE_INFRA_DIR`) or the signed OCI stack manifest |
 | `scripts/post.py` | The power-on self test `make dev` and `make ci` end with |
+| `docker/dfe-docker.Dockerfile` + `scripts/installer.py` | The `ghcr.io/hyperi-io/dfe-docker` image and its entrypoint, which copy this tree into a folder and run its scripts there. `.dockerignore` lists what the image carries. `.github/workflows/image.yml` builds it on each release and attaches `quickstart.json` from `scripts/quickstart_json.py` |
 | `scripts/test_e2e.py` + `tests/e2e/e2e-tests.yaml` | The declarative e2e suite, one stack per test |
 | `scripts/check_*.py` | The gates `make check` runs |
 | `scripts/tests/` | Unit tests over the helper scripts - the only tests CI runs |
