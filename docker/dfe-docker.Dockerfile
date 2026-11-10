@@ -21,6 +21,7 @@ FROM ${COSIGN_IMAGE} AS cosign
 FROM ${BASE_IMAGE}
 
 # make runs the Makefile's own compose chain, git fetches the demo's generator, openssl mints the console certificate
+# Unpinned (hadolint DL3008): the trixie archive drops a superseded package version, so a pinned one stops installing
 RUN apt-get update \
     && apt-get install -y --no-install-recommends git make openssl \
     && rm -rf /var/lib/apt/lists/*
@@ -39,7 +40,10 @@ COPY . .
 # latest pins the newest published stack when init runs. A release build passes the stack it was cut against, so its version tag always installs that one
 ARG STACK=latest
 ARG VERSION=dev
-ENV DFE_DOCKER_STACK=${STACK} \
+# The reference init's printed commands name, so an install from a version tag keeps using that tag
+ARG IMAGE=ghcr.io/hyperi-io/dfe-docker
+ENV DFE_DOCKER_IMAGE=${IMAGE} \
+    DFE_DOCKER_STACK=${STACK} \
     DFE_DOCKER_VERSION=${VERSION}
 
 LABEL org.opencontainers.image.description="Sets up a folder that runs the DFE stack with docker compose" \

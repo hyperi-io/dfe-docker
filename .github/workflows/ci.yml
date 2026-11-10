@@ -221,7 +221,12 @@ jobs:
           export PATH="$DOCKER_ONLY"
           mkdir "$WORK/default"
           cd "$WORK/default"
-          docker run --rm -v "${PWD}:/dfe" "$IMAGE" init
+          said="$(docker run --rm -v "${PWD}:/dfe" "$IMAGE" init)"
+          printf '%s\n' "$said"
+          if [[ "$said" != *" $IMAGE login"* ]]; then
+            echo "::error::init's printed commands do not name $IMAGE, the image that ran"
+            exit 1
+          fi
           docker compose config -q
           docker compose config --services > "$WORK/default.services"
 
