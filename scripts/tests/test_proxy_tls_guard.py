@@ -60,7 +60,7 @@ _GUARDS = (
     _UNREADABLE_KEY,
 )
 
-# Every goal that starts or self-tests the stack, ORIGIN_GOALS in the Makefile.
+# ORIGIN_GOALS in the Makefile: every goal that starts or self-tests the stack, and the one that hands a plain `docker compose` its settings.
 _GUARDED_GOALS = [
     "dev",
     "ci",
@@ -70,6 +70,7 @@ _GUARDED_GOALS = [
     "post",
     "test-source",
     "test-flows",
+    "print-compose-env",
 ]
 # The e2e suites, which start a stack per test and join ORIGIN_GOALS under console TLS only.
 _E2E_GOALS = ["test-e2e", "test-resilience"]

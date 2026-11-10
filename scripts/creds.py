@@ -72,11 +72,9 @@ from _common import (  # noqa: E402
 
 # Set to 0 to keep the password off a terminal too.
 _SHOW_KEY = "DFE_CREDS_SHOW"
-# What a password line says off a terminal, under the key it names
-_NOT_PRINTED = (
-    "                 not printed -- stdout is not a terminal, so run "
-    "`make creds` on one to see it"
-)
+# The command that prints this summary again, which the dfe-docker image names in place of make
+_COMMAND_KEY = "DFE_CREDS_COMMAND"
+_COMMAND_DEFAULT = "make creds"
 # The accounts `make accounts` creates, one file each named for its username
 _SEED_ACCOUNTS_DIR = SEED_DIR / "accounts"
 _SEED_LABEL = "Seed account"
@@ -117,6 +115,19 @@ _NEXT_STEPS = (
     "Retire the bootstrap admin from the wizard's last step once your own admin exists.",
     "Keep the break-glass password somewhere safe, then delete this file.",
 )
+
+
+def _creds_command() -> str:
+    """The command that prints this summary again, as the caller names it."""
+    return (os.environ.get(_COMMAND_KEY, "").strip()) or (_COMMAND_DEFAULT)
+
+
+def _not_printed() -> str:
+    """What a password line says off a terminal, under the key it names."""
+    return (
+        "                 not printed -- stdout is not a terminal, so run "
+        f"`{_creds_command()}` on one to see it"
+    )
 
 
 def _seed_logins(*, values: dict[str, str]) -> list[tuple[str, str, str]]:
@@ -244,7 +255,7 @@ def summary_lines(*, values: dict[str, str], reveal: bool = True) -> list[str]:
             f"    login        {admin} / the value of {_ADMIN_PASSWORD_KEY} in "
             f"{engine_env}"
         )
-        lines.append(_NOT_PRINTED)
+        lines.append(_not_printed())
     else:
         lines.append(
             f"    login        {admin} / NOT MINTED -- run `make init` to mint "
@@ -283,9 +294,9 @@ def summary_lines(*, values: dict[str, str], reveal: bool = True) -> list[str]:
         shown = account_password if reveal else f"the value of {key} in {engine_env}"
         lines.append(f"    seed account {username} / {shown}")
     if seed_logins and not (reveal):
-        lines.append(_NOT_PRINTED)
+        lines.append(_not_printed())
     lines.extend(fixture_lines(values=values))
-    lines.append("    show again   make creds")
+    lines.append(f"    show again   {_creds_command()}")
     lines.append("")
     lines.append("  Next")
     lines.append("    1. Finish the first-run wizard in the console.")
@@ -349,7 +360,7 @@ def summary_markdown(*, values: dict[str, str]) -> str:
         "",
         f"Both are also in `{engine_env}`, as `{_ADMIN_PASSWORD_KEY}` and "
         f"`{_BREAKGLASS_PASSWORD_KEY}` -- delete those two keys as well as this file. "
-        "`make creds` prints the admin one again on a terminal.",
+        f"`{_creds_command()}` prints the admin one again on a terminal.",
         "",
     ]
     if seed_logins:

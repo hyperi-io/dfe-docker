@@ -55,6 +55,7 @@ from _common import (  # noqa: E402
     _rel_path,
     _resolved_services,
 )
+from _pipeline import clickhouse_url  # noqa: E402
 from _sources import hinted_services  # noqa: E402
 from build_dev_images import SRC_REMOTE_DEFAULT  # noqa: E402
 from post import (  # noqa: E402
@@ -413,15 +414,12 @@ def _await_ready(*, instance: str) -> None:
 
 def _await_rows(
     *, before: dict[str, int | None], container: str, vendors: list[str]
-) -> dict[str, int]:
-    """Poll until every vendor table has gained rows or the generator has exited, then return each table's gain so far."""
+) -> dict[str, int | None]:
+    """Poll until every vendor table has gained rows or the generator has exited, then return each table's gain so far, None where it cannot be read."""
     deadline = time.monotonic() + LAND_TIMEOUT_SECONDS
     while True:
-        now = _counts(tables=list(before))
-        gained = {
-            table: ((now[table]) or (0)) - ((before[table]) or (0)) for table in before
-        }
-        done = all(gained[table] > 0 for table in vendors)
+        gained = row_gains(before=before, now=_counts(tables=list(before)))
+        done = all((gained[table] or 0) > 0 for table in vendors)
         if (
             (done)
             or (time.monotonic() >= deadline)
@@ -724,7 +722,8 @@ def _outcome(
     archiving, image = archive
     gained = _await_rows(before=before, container=container, vendors=vendors)
     for table, rows in gained.items():
-        _print(msg=f"  {TARGET_DB}.{table}: +{rows} rows")
+        shown = "cannot be read" if rows is None else f"+{rows} rows"
+        _print(msg=f"  {TARGET_DB}.{table}: {shown}")
     # A fetcher's table is reported whole, since its cursor holds back what a previous run already pulled
     landed = _counts(tables=[body["source"] for body in fetchers])
     for table, rows in landed.items():
@@ -732,11 +731,16 @@ def _outcome(
             _print(msg=f"  {TARGET_DB}.{table}: {rows} rows")
     for warning in fetcher_warnings(counts=landed, fetchers=fetchers):
         _print(msg=warning)
+    unread = ", ".join(
+        repr(f"{TARGET_DB}.{table}") for table in vendors if gained[table] is None
+    )
     empty = ", ".join(
-        repr(f"{TARGET_DB}.{table}") for table in vendors if gained[table] <= 0
+        repr(f"{TARGET_DB}.{table}")
+        for table in vendors
+        if gained[table] is not None and gained[table] <= 0
     )
     archived = None
-    if archiving and not (empty):
+    if archiving and not (empty or unread):
         archived = _await_archive(image=image, sources=archiving)
         _print(
             msg=f"  {ARCHIVER_SERVICE} archive of {', '.join(archiving)}: "
@@ -744,13 +748,18 @@ def _outcome(
         )
         for line in _archive_report(image=image, sources=archiving).splitlines():
             _print(msg=f"    {line}")
-    unarchived = bool(archiving) and not (empty) and not ((archived or 0) > 0)
+    unarchived = bool(archiving) and not (empty or unread) and not ((archived or 0) > 0)
     # Lines a previous stream sent can still land, so rows alone do not prove this run's generator worked
     if not (_running(container=container)):
         _print(
             msg=f"FAIL the generator in {container!r} exited, so the rows above may be "
             f"a previous stream's. Its last output:\n"
             f"{_generator_output(container=container)}"
+        )
+    elif unread:
+        _print(
+            msg=f"FAIL ClickHouse at {clickhouse_url()} answered no count for {unread}, "
+            "so whether rows landed is unknown. CLICKHOUSE_URL names the address to read it at"
         )
     elif empty:
         _print(
@@ -1235,17 +1244,9 @@ def _subset(*, held: object, wanted: object) -> bool:
 
 def _switch_on_syslog(*, base: str, token: str) -> dict:
     """Turn on the receiver's UDP and TCP syslog listener through the engine and return the reply."""
-    status, apps = _api_get_json(token=token, url=f"{base}/apps")
-    listed = apps if isinstance(apps, list) else []
-    receiver = next(
-        (
-            entry
-            for entry in listed
-            if isinstance(entry, dict) and entry.get("service") == RECEIVER_SERVICE
-        ),
-        {},
-    )
-    names = [str(name) for name in (receiver.get("instances")) or ([])]
+    # The catalogue is a few apps, so one page of the largest size holds it whole
+    status, page = _api_get_json(token=token, url=f"{base}/apps?page_size=1000")
+    names = receiver_instances(page=page)
     if (status != 200) or not (names):
         raise DemoError(
             f"the engine lists no {RECEIVER_SERVICE!r} instance (GET /apps: HTTP {status})"
@@ -1594,6 +1595,33 @@ def load_demo(*, events: Path, sources: Path) -> Demo:
         intake=intake,
         vendors=vendors,
     )
+
+
+def row_gains(
+    *, before: dict[str, int | None], now: dict[str, int | None]
+) -> dict[str, int | None]:
+    """The rows each table gained, None for a table ClickHouse gave no count for now, so an unreachable ClickHouse never reads as no rows."""
+    return {
+        table: None
+        if now.get(table) is None
+        else (now[table] or 0) - (before.get(table) or 0)
+        for table in before
+    }
+
+
+def receiver_instances(*, page: object) -> list[str]:
+    """The dfe-receiver instances a GET /apps page lists, none when it is no page or lists no receiver."""
+    items = page.get("items") if isinstance(page, dict) else None
+    listed = items if isinstance(items, list) else []
+    receiver = next(
+        (
+            entry
+            for entry in listed
+            if isinstance(entry, dict) and entry.get("service") == RECEIVER_SERVICE
+        ),
+        {},
+    )
+    return [str(name) for name in (receiver.get("instances")) or ([])]
 
 
 def refusal(*, per_source_apps: list[str], renders: bool) -> str:

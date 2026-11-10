@@ -58,7 +58,7 @@ tree=(find "${DFE_DOCKER_DIR}" -path "${DFE_DOCKER_DIR}/certs" -prune -o)
 "${tree[@]}" -type f -exec chmod g+rwX {} +
 find "${DFE_DOCKER_DIR}" -type f ! -name .env.example \( -path "${DFE_DOCKER_DIR}/.env*" -o -path "${DFE_DOCKER_DIR}/access-summary.md" -o -path "${DFE_DOCKER_DIR}/env/*" \) -exec chmod o-rwx {} +
 
-# A release bundle has no .git
+# A tree copied without its git history has no .git
 if [[ -e "${DFE_DOCKER_DIR}/.git" ]]; then
   git config --system --fixed-value --replace-all safe.directory "${DFE_DOCKER_DIR}" "${DFE_DOCKER_DIR}"
   runuser -u "${DFE_UPDATE_USER}" -- git -C "${DFE_DOCKER_DIR}" config core.sharedRepository group
