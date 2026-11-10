@@ -1,6 +1,6 @@
 # Project:   dfe-docker
 # File:      .github/workflows/ci.yml
-# Purpose:   Validate the compose stack, lint the Dockerfiles, validate the proxy configs and prove the dfe-docker image starts the stack with only Docker
+# Purpose:   Validate the compose stack, lint the Dockerfiles, validate the proxy configs, prove the dfe-docker image starts the stack with only Docker and cut releases
 #
 # License:   BUSL-1.1 - HYPERI PTY LIMITED
 # Copyright: (c) 2026 HYPERI PTY LIMITED
@@ -12,7 +12,9 @@
 # followed deliberately -- least-privilege permissions, SHA-pinned third-party
 # actions with a version comment, Title Case job names, a named runner image --
 # so that when hyperi-ci grows the container/compose gating it is currently
-# missing, this collapses into a `uses:` line rather than a rewrite.
+# missing, this collapses into a `uses:` line rather than a rewrite. The Release
+# job is assembled from hyperi-ci's shared actions for the same reason: its
+# release tail takes only those four languages.
 #
 # The runner image is named (ubuntu-26.04) rather than ubuntu-latest, so a move
 # of that label cannot swap the tools these jobs run on.
@@ -35,11 +37,29 @@ on:
   push:
     branches:
       - main
+  # The inputs `hyperi-ci release` dispatches with. A bare dispatch only validates.
   workflow_dispatch:
+    inputs:
+      tag:
+        type: string
+        required: false
+        default: ""
+        description: "Existing tag to publish a GitHub release for when it has none."
+      from-head:
+        type: string
+        required: false
+        default: ""
+        description: "'true' to release the current HEAD. The CI creates the tag."
+      bump:
+        type: string
+        required: false
+        default: "auto"
+        description: "Version for from-head: auto | patch | minor (forced) | X.Y.Z (exact)."
 
+# A release run has its own group and is never cancelled, because a cancel after the tag push leaves a tag with no GitHub release.
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+  group: "${{ github.workflow }}-${{ (inputs.tag != '' || inputs.from-head == 'true' || github.event_name == 'push' && (contains(github.event.head_commit.message, 'Release: true') || contains(github.event.head_commit.message, 'Release:true') || contains(github.event.head_commit.message, 'Publish: true') || contains(github.event.head_commit.message, 'Publish:true'))) && 'release-' || '' }}${{ github.ref }}"
+  cancel-in-progress: "${{ !(inputs.tag != '' || inputs.from-head == 'true' || github.event_name == 'push' && (contains(github.event.head_commit.message, 'Release: true') || contains(github.event.head_commit.message, 'Release:true') || contains(github.event.head_commit.message, 'Publish: true') || contains(github.event.head_commit.message, 'Publish:true'))) }}"
 
 # Least-privilege GITHUB_TOKEN default for every job.
 permissions:
@@ -49,6 +69,8 @@ permissions:
 # runner's own python3 is older and would run every helper script on it.
 env:
   PYTHON_VERSION: "3.14.7"
+  # The hyperi-ci CLI the Release job runs. The HYPERCI_INSTALL_OVERRIDE variable replaces it, as in hyperi-ci's own workflows.
+  HYPERCI_INSTALL: ${{ vars.HYPERCI_INSTALL_OVERRIDE || 'uvx --python 3.14 --no-cache --refresh hyperi-ci' }}
 
 jobs:
   compose:
@@ -332,6 +354,122 @@ jobs:
             exit 1
           }
           Write-Output "Windows compose starts the same services: $got"
+
+  # A push to main whose HEAD commit carries `Release: true`, or a `hyperi-ci
+  # release` dispatch, tags the version semantic-release computes and publishes
+  # a GitHub release. It is published with the release App's token because a
+  # release GITHUB_TOKEN publishes starts no workflow, and image.yml builds the
+  # image on `release: published`. It waits on the image jobs, so an image that
+  # fails CI never gets a tag.
+  release:
+    name: Release
+    needs: [compose, dockerfile, image, image-windows]
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-26.04
+    timeout-minutes: 20
+    # semantic-release's dry run checks push access, which needs write
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.tag || github.sha }}
+          # semantic-release reads every commit since the last tag
+          fetch-depth: 0
+          persist-credentials: false
+
+      # The trailer gate, the classification check and the version, as every hyperi-ci pipeline decides them
+      - name: Plan the release
+        id: plan
+        uses: hyperi-io/hyperi-ci/.github/actions/predict-version@main
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          tag: ${{ inputs.tag }}
+          from-head: ${{ inputs.from-head }}
+          bump: ${{ inputs.bump || 'auto' }}
+
+      - name: Install uv
+        if: steps.plan.outputs.will-release == 'true'
+        uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+        with:
+          enable-cache: false
+
+      - name: Mint the release token
+        id: bot
+        if: steps.plan.outputs.will-release == 'true'
+        uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
+        with:
+          client-id: ${{ vars.GH_APP_CLIENT_ID }}
+          private-key: ${{ secrets.GH_APP_PRIVATE_KEY }}
+          owner: ${{ github.repository_owner }}
+          repositories: ${{ github.event.repository.name }}
+          permission-contents: write
+
+      # Plan installed semantic-release and the central config in this job
+      - name: Tag (semantic-release)
+        if: steps.plan.outputs.will-release == 'true' && (github.event_name == 'push' || inputs.from-head == 'true' && inputs.bump == 'auto')
+        env:
+          GITHUB_TOKEN: ${{ steps.bot.outputs.token }}
+        run: semantic-release --repository-url "https://github.com/${GITHUB_REPOSITORY}"
+
+      - name: Tag HEAD (forced bump or exact version)
+        if: steps.plan.outputs.will-release == 'true' && inputs.from-head == 'true' && inputs.bump != 'auto' && inputs.bump != ''
+        env:
+          GH_TOKEN: ${{ steps.bot.outputs.token }}
+          RELEASE_VERSION: ${{ steps.plan.outputs.version }}
+        run: ${{ env.HYPERCI_INSTALL }} tag-head --bump "$RELEASE_VERSION"
+
+      # semantic-release tags nothing when this checkout is behind main, and gh release create would then tag main's tip
+      - name: Check the tag is on this commit
+        if: steps.plan.outputs.will-release == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RELEASE_VERSION: ${{ steps.plan.outputs.version }}
+        run: |
+          tag="v${RELEASE_VERSION}"
+          head=$(git rev-parse "HEAD^{commit}")
+          if ! ref=$(gh api "repos/${GITHUB_REPOSITORY}/git/ref/tags/${tag}" --jq '.object.type + " " + .object.sha'); then
+            echo "::error::${tag} does not exist, so no GitHub release is published. Release the current head with 'hyperi-ci release'."
+            exit 1
+          fi
+          read -r kind sha <<< "$ref"
+          if [ "$kind" = "tag" ]; then
+            sha=$(gh api "repos/${GITHUB_REPOSITORY}/git/tags/${sha}" --jq '.object.sha')
+          fi
+          if [ "$sha" != "$head" ]; then
+            echo "::error::${tag} is at ${sha} but this run checked out ${head}."
+            exit 1
+          fi
+
+      - name: Publish the GitHub release
+        if: steps.plan.outputs.will-release == 'true'
+        env:
+          GH_TOKEN: ${{ steps.bot.outputs.token }}
+          PRERELEASE: ${{ steps.plan.outputs.prerelease }}
+          RELEASE_VERSION: ${{ steps.plan.outputs.version }}
+        run: |
+          tag="v${RELEASE_VERSION}"
+          if gh release view "$tag" --repo "$GITHUB_REPOSITORY" > /dev/null 2>&1; then
+            echo "::notice::${tag} already has a GitHub release, so image.yml does not start again. Rebuild with: gh workflow run image.yml -f tag=${tag}"
+            exit 0
+          fi
+          kind=(--latest)
+          if [ "$PRERELEASE" = "true" ]; then
+            kind=(--prerelease --latest=false)
+          fi
+          gh release create "$tag" --repo "$GITHUB_REPOSITORY" --verify-tag --title "$tag" --generate-notes "${kind[@]}"
+
+      # Non-fatal: the release is already published. A tag dispatch checks out an old tag, so it commits nothing back
+      - name: Commit VERSION and CHANGELOG.md back
+        if: steps.plan.outputs.will-release == 'true' && inputs.tag == ''
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ steps.bot.outputs.token }}
+          HYPERCI_RELEASE_IDENTITY: app
+          RELEASE_BRANCH: ${{ github.ref_name }}
+          RELEASE_VERSION: ${{ steps.plan.outputs.version }}
+        run: ${{ env.HYPERCI_INSTALL }} release-commit --branch "$RELEASE_BRANCH" "$RELEASE_VERSION"
 
 # droast is DELIBERATELY NOT RUN HERE. That matches hyperi-ci's own posture --
 # quality/droast.py resolves it with `find_tool(recommended=False)` and info-skips

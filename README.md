@@ -47,7 +47,7 @@ See [docs/architecture.md](docs/architecture.md).
 
 ## Quickstart
 
-On macOS, Linux or Windows with only Docker, and Compose 2.26 or newer, in an empty folder:
+On macOS, Linux or Windows with only Docker, and Compose 2.26 or newer, in an empty folder. On Windows, use PowerShell: `${PWD}` works there and in bash and zsh, but not in cmd.exe.
 
 ```bash
 docker run --rm -v "${PWD}:/dfe" ghcr.io/hyperi-io/dfe-docker init
