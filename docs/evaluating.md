@@ -24,7 +24,7 @@ come out the other. Everything else can wait.
 
 ## With only Docker
 
-In an empty folder:
+In an empty folder. On Windows, use PowerShell: `${PWD}` works there and in bash and zsh, but not in cmd.exe.
 
 ```bash
 docker run --rm -v "${PWD}:/dfe" ghcr.io/hyperi-io/dfe-docker init
