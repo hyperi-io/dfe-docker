@@ -7,7 +7,7 @@
 # Copyright: (c) 2026 HYPERI PTY LIMITED
 
 # Built with the repo root as context, so .dockerignore decides what the image carries
-ARG BASE_IMAGE=python:3.14.10-slim-trixie@sha256:9aaa474097d094040649f2162a627c0049b408f52138d980916788d80f04802f
+ARG BASE_IMAGE=python:3.15.1-slim-trixie@sha256:533b0b2f9b5d46fd097091cf826f27902f1d6c3bca714b6dc74551356aa97a51
 # The Docker CLI and its compose plugin are static binaries, so the Alpine userland of this image never ships
 ARG DOCKER_CLI_IMAGE=docker:29.9.3-cli@sha256:2357639ad1ea7d0194134bf3292622fd4e562483966ed674e5d7c945b5f3b28d
 # The oras and cosign scripts/stack.py and scripts/_registry.py already run, at the same digests
