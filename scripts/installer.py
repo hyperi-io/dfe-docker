@@ -18,7 +18,7 @@ The dfe-docker image runs this with the folder mounted at /dfe:
 
 The compose settings are a block at the end of .env, between two marker lines, which `apply` rewrites. It holds what make otherwise hands compose: what `make print-compose-env` prints, .tmp/profile.env, COMPOSE_FILE and COMPOSE_PROFILES. A plain `docker compose up` starts every service in an active compose profile, where make names the services it starts, so the chain ends with .tmp/docker-compose.image.yml. That fragment moves each service the profile does not start, and that none of its services depends on, out of the active profiles. The block is checked by asking a plain `docker compose config --services` for exactly the services `make ci` names and their dependencies, and .env is put back when it answers anything else.
 
-`apply` rewrites the block after an edit to the settings above it, or after dfe-engine has declared or removed a per-source instance. `login` prints the access summary. `certs` mints the console TLS certificate. `demo` and `demo-stop` run `make demo-run` and `make demo-stop` against the running stack. Both need the Docker socket and the folder mounted at its own path, because compose hands the Docker host the bind-mount paths it sees.
+`apply` rewrites the block after an edit to the settings above it, or after dfe-engine has declared or removed a per-source instance. `login` prints the access summary. `certs` mints the console TLS certificate. `demo` and `demo-stop` run `make demo-run` and `make demo-stop` against the running stack. Both need the Docker socket and the folder mounted at its own path, because compose hands the Docker host the bind-mount paths it sees. `demo` also joins the stack's network, where its row counts reach ClickHouse.
 
 Two phases. The image's copy checks the mount, takes on the owner of the folder, so a Linux host gets files it owns, and copies the tree for `init`. It then runs the folder's own copy, so a folder's code always drives that folder's files.
 
@@ -45,6 +45,7 @@ from pathlib import Path
 # Bytecode for the repo modules imported below goes to .tmp/pycache, as it does under make
 sys.pycache_prefix = str(Path(__file__).resolve().parent.parent / ".tmp" / "pycache")
 
+import demo  # noqa: E402
 import resolve_profile  # noqa: E402
 import stack  # noqa: E402
 from _common import (  # noqa: E402
@@ -53,6 +54,7 @@ from _common import (  # noqa: E402
     PROFILE_MK,
     REPO_ROOT,
     SERVICE_PROFILES_FILE,
+    _dotenv_values,
     _parse_dotenv,
     write_dotenv,
 )
@@ -400,9 +402,47 @@ def _bootstrap(*, args: argparse.Namespace, argv: Sequence[str]) -> int:
 # ---------------------------------------------------------------------------
 
 
-def _make(*, args: Sequence[str], capture: bool = False) -> str:
+def _make(
+    *, args: Sequence[str], capture: bool = False, env: Mapping[str, str] | None = None
+) -> str:
     """Run one make goal in the tree and return what it printed when captured."""
-    return _run(args=["make", "--no-print-directory", *args], capture=capture).stdout
+    return _run(
+        args=["make", "--no-print-directory", *args], capture=capture, env=env
+    ).stdout
+
+
+def in_stack_clickhouse(*, settings: Mapping[str, str]) -> str:
+    """The ClickHouse HTTP address the stack's own services dial, as docker-compose.yml builds it for dfe-loader."""
+    host = (settings.get("CLICKHOUSE_HOST", "").strip()) or ("clickhouse")
+    port = (settings.get("CLICKHOUSE_EXTERNAL_HTTP_PORT", "").strip()) or ("8123")
+    return f"http://{host}:{port}"
+
+
+def _join_stack() -> dict[str, str]:
+    """Put this container on the stack's network and return the environment that points the demo's row counts at ClickHouse there.
+
+    The counts dial ClickHouse's published port on localhost, which in a container is the container itself. A CLICKHOUSE_URL in .env or the environment is kept.
+    """
+    settings = _dotenv_values()
+    if (os.environ.get("CLICKHOUSE_URL", "").strip()) or (
+        settings.get("CLICKHOUSE_URL", "").strip()
+    ):
+        return dict(os.environ)
+    network = demo._network(service=demo.RECEIVER_SERVICE)
+    joined = subprocess.run(
+        ["docker", "network", "connect", network, socket.gethostname()],
+        capture_output=True,
+        check=False,
+        encoding="utf-8",
+        errors="replace",
+        text=True,
+        timeout=COMPOSE_TIMEOUT_SECONDS,
+    )
+    if joined.returncode != 0 and "already exists" not in joined.stderr:
+        raise InstallerError(
+            f"cannot join the stack's network {network!r}: {joined.stderr.strip()}"
+        )
+    return {**os.environ, "CLICKHOUSE_URL": in_stack_clickhouse(settings=settings)}
 
 
 def _script(*, args: Sequence[str], env: Mapping[str, str] | None = None) -> None:
@@ -589,7 +629,10 @@ def _demo(*, command: str, image: str) -> None:
             )
     try:
         with _settings_only():
-            _make(args=["demo-run" if command == "demo" else "demo-stop"])
+            if command == "demo":
+                _make(args=["demo-run"], env=_join_stack())
+            else:
+                _make(args=["demo-stop"])
     finally:
         _write_block()
     if command == "demo":
@@ -668,6 +711,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         InstallerError,
         OSError,
         RegistryError,
+        demo.DemoError,
         stack.StackError,
         subprocess.TimeoutExpired,
     ) as error:

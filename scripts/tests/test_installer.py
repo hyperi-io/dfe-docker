@@ -151,6 +151,34 @@ def test_the_printed_settings_read_back_as_written() -> None:
     }
 
 
+@pytest.mark.parametrize(
+    ("settings", "url"),
+    [
+        pytest.param({}, "http://clickhouse:8123", id="bundled"),
+        pytest.param(
+            {"CLICKHOUSE_HTTP_PORT": "36003"},
+            "http://clickhouse:8123",
+            id="host-publish-moved",
+        ),
+        pytest.param(
+            {
+                "CLICKHOUSE_HOST": "ch.example.test",
+                "CLICKHOUSE_EXTERNAL_HTTP_PORT": "8443",
+            },
+            "http://ch.example.test:8443",
+            id="external",
+        ),
+        pytest.param(
+            {"CLICKHOUSE_HOST": " "}, "http://clickhouse:8123", id="blank-host"
+        ),
+    ],
+)
+def test_the_demo_reads_clickhouse_where_the_stack_dials_it(
+    settings: dict[str, str], url: str
+) -> None:
+    assert installer.in_stack_clickhouse(settings=settings) == url
+
+
 def test_every_command_the_image_prints_names_the_image() -> None:
     image = "ghcr.io/hyperi-io/dfe-docker:9.9.9"
 

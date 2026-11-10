@@ -1097,3 +1097,26 @@ class TestReceiverInstances:
         self, names: list[str], page: object
     ) -> None:
         assert demo.receiver_instances(page=page) == names
+
+
+class TestRowGains:
+    @pytest.mark.parametrize(
+        ("before", "now", "gained"),
+        [
+            pytest.param({"a": 5}, {"a": 12}, {"a": 7}, id="gained"),
+            pytest.param(
+                {"a": None}, {"a": 3}, {"a": 3}, id="table-made-during-the-run"
+            ),
+            pytest.param({"a": 5}, {"a": 5}, {"a": 0}, id="none-landed"),
+            pytest.param({"a": 5}, {"a": None}, {"a": None}, id="unreadable-now"),
+            pytest.param({"a": None}, {"a": None}, {"a": None}, id="never-readable"),
+            pytest.param({"a": 1}, {}, {"a": None}, id="not-counted"),
+        ],
+    )
+    def test_an_unreadable_count_is_not_a_zero(
+        self,
+        before: dict[str, int | None],
+        gained: dict[str, int | None],
+        now: dict[str, int | None],
+    ) -> None:
+        assert demo.row_gains(before=before, now=now) == gained
