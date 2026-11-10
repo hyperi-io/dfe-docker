@@ -176,6 +176,8 @@ jobs:
     timeout-minutes: 50
     env:
       IMAGE: dfe-docker:ci
+      # The newest published stack, pre-releases included, so the proof runs the images the compose files on this branch are written for
+      STACK: rc
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -206,7 +208,7 @@ jobs:
           for profile in slim-grpc slim-kafka single-grpc single-kafka; do
             mkdir "$WORK/$profile"
             cd "$WORK/$profile"
-            docker run --rm -v "${PWD}:/dfe" "$IMAGE" init --profile "$profile"
+            docker run --rm -v "${PWD}:/dfe" "$IMAGE" init --profile "$profile" --stack "$STACK"
             docker compose config -q
           done
 
@@ -215,7 +217,7 @@ jobs:
           export PATH="$DOCKER_ONLY"
           mkdir "$WORK/default"
           cd "$WORK/default"
-          docker run --rm -v "${PWD}:/dfe" "$IMAGE" init
+          docker run --rm -v "${PWD}:/dfe" "$IMAGE" init --stack "$STACK"
           docker compose config -q
           docker compose config --services > "$WORK/default.services"
 
@@ -230,7 +232,7 @@ jobs:
           fi
           secrets() { grep -h -E '^[A-Z0-9_]*(PASSWORD|SECRET|KEY)=' .env env/*.env | sha256sum; }
           before="$(secrets)"
-          docker run --rm -v "${PWD}:/dfe" "$IMAGE" init --upgrade
+          docker run --rm -v "${PWD}:/dfe" "$IMAGE" init --upgrade --stack "$STACK"
           if [ "$(secrets)" != "$before" ]; then
             echo "::error::init --upgrade changed a minted secret"
             exit 1
