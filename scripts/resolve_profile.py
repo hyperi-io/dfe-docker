@@ -116,15 +116,15 @@ HYPERDX_RESOLVED_BASE_URL_VAR = "DFE_HYPERDX_RESOLVED_BASE_URL"
 # The in-stack API by service name and container port; .env names an external
 # HyperDX instead, the same precedence the broker above has.
 HYPERDX_BASE_URL_ENV_VAR = "DFE_HYPERDX_BASE_URL"
-IN_STACK_HYPERDX = "http://hyperdx:8000"
+IN_STACK_HYPERDX = "http://dfe-hyperdx:8000"
 # dfe-dashboards is the one-shot that writes the engine's shipped dashboards into
-# the volume HyperDX's provisioner reads; it exits before hyperdx starts.
+# the volume HyperDX's provisioner reads; it exits before dfe-hyperdx starts.
 # dfe-hyperdx-proxy carries the two HyperDX host ports, so the infra exposure
 # dials and the `auth` profile govern one service.
 HYPERDX_SERVICES = [
     "dfe-dashboards",
+    "dfe-hyperdx",
     "dfe-hyperdx-proxy",
-    "hyperdx",
     "hyperdx-documentdb",
     "hyperdx-documentdb-tls",
 ]

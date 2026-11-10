@@ -14,15 +14,15 @@ admin:
 
 static_resources:
   clusters:
-    - name: hyperdx
+    - name: dfe-hyperdx
       dns_lookup_family: V4_ONLY
       load_assignment:
-        cluster_name: hyperdx
+        cluster_name: dfe-hyperdx
         endpoints:
           - lb_endpoints:
               - endpoint:
                   address:
-                    socket_address: { address: hyperdx, port_value: 8090 }
+                    socket_address: { address: dfe-hyperdx, port_value: 8090 }
       type: STRICT_DNS
     - name: dfe-engine
       dns_lookup_family: V4_ONLY
@@ -112,7 +112,7 @@ static_resources:
                             value: "frame-ancestors 'self' %ENVIRONMENT(DFE_HYPERDX_EMBED_ANCESTOR)%"
                       routes:
                         - match: { prefix: / }
-                          route: { cluster: hyperdx }
+                          route: { cluster: dfe-hyperdx }
                 stat_prefix: hyperdx_embed
                 upgrade_configs:
                   - upgrade_type: websocket

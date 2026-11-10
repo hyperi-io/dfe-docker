@@ -29,14 +29,14 @@ import resolve_profile
 from _common import COMPOSE_FILE, RENDERED_PROFILES, REPO_ROOT
 
 _ENGINE_SERVICE = "dfe-engine"
-_HYPERDX_SERVICE = "hyperdx"
+_HYPERDX_SERVICE = "dfe-hyperdx"
 _SESSION_KEY = "EXPRESS_SESSION_SECRET"
 _TOKEN_KEY = "TOKEN_ENCRYPTION_KEY"
 # The file `make init` mints HyperDX's own secrets into, which compose hands the container
 _HYPERDX_ENV = "hyperdx.env"
 # The hex form of the two the fork's tokenEncryption.ts parseEncryptionKey accepts.
 _HEX_AES256 = re.compile(r"[0-9a-f]{64}")
-_IN_STACK_HYPERDX = "http://hyperdx:8000"
+_IN_STACK_HYPERDX = "http://dfe-hyperdx:8000"
 _JWKS_URL = "http://dfe-engine:8000/.well-known/jwks.json"
 
 _INTERPOLATION = re.compile(r"\$\{([A-Z0-9_]+):-([^{}]*)\}")

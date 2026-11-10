@@ -381,13 +381,13 @@ The collector runs with `create_schema=false`, so it waits on the engine, which 
 
 ### HyperDX
 
-Every profile declares `hyperdx: true` and `DFE_HYPERDX_ENABLED=false` turns it off. It starts `hyperdx` (API + App), the `dfe-hyperdx-proxy` that fronts both origins, a one-shot `dfe-dashboards` that copies the engine's shipped dashboards into a volume, plus `hyperdx-documentdb`, sharing the always-on ClickHouse. `dfe-dashboards` runs the engine image's dashboards module as root, never `dfe-engine run`, so it needs no config, secrets or database.
+Every profile declares `hyperdx: true` and `DFE_HYPERDX_ENABLED=false` turns it off. It starts `dfe-hyperdx` (API + App), the `dfe-hyperdx-proxy` that fronts both origins, a one-shot `dfe-dashboards` that copies the engine's shipped dashboards into a volume, plus `hyperdx-documentdb`, sharing the always-on ClickHouse. `dfe-dashboards` runs the engine image's dashboards module as root, never `dfe-engine run`, so it needs no config, secrets or database.
 
 `hyperdx-documentdb` is PostgreSQL with the DocumentDB extensions and the Mongo-wire gateway HyperDX talks to, in one container, with its usage telemetry to a third party switched off. The gateway serves TLS only, on a certificate the one-shot `hyperdx-documentdb-tls` mints into a volume on first start and renews once it has 30 days left. It runs as root, since a fresh volume lands root-owned, and leaves the pair to uid 1000, which both documentdb-local and HyperDX run as. HyperDX gets only the CA that signed it, verifies the gateway against it and logs in with SCRAM-SHA-256.
 
 HyperDX runs in `oidc-proxy` mode, as it does on Kubernetes: it verifies the engine's ES384 token against the engine's JWKS. A caller carrying none is unauthenticated. Signing in to the console is what signs a browser in here: dfe-ui mirrors the session into a `dfe_token` cookie and cookies ignore ports. The engine identifies with a service token of its own, which is how a source added through the console reaches every HyperDX team. That token's team, `DFE_HYPERDX_TEAM`, holds no connection and no sources, because HyperDX seeds a team only from a person's login, never from the service token. Every other team gets its connection and sources on its members' first login, from the engine's answer for that member: `main` and `hunts` everywhere, plus the otel and `clickhouse_system` sources on a platform team. Each team also gets the shipped dashboards those sources can render. From hyperi-io/dfe-hyperdx#106 on, a login the engine gives no connection is retried on a later request.
 
-The same toggle points the engine at HyperDX: with it on, the engine receives `DFE_ENGINE_HYPERDX_ENABLED=true` and `DFE_ENGINE_HYPERDX_BASE_URL=http://hyperdx:8000`, so its `/api/v1/hyperdx/*` surface answers instead of returning `503 hyperdx_absent`.
+The same toggle points the engine at HyperDX: with it on, the engine receives `DFE_ENGINE_HYPERDX_ENABLED=true` and `DFE_ENGINE_HYPERDX_BASE_URL=http://dfe-hyperdx:8000`, so its `/api/v1/hyperdx/*` surface answers instead of returning `503 hyperdx_absent`.
 
 | Variable                                         | Use                                                                                  | Default                                                             |
 |--------------------------------------------------|--------------------------------------------------------------------------------------|---------------------------------------------------------------------|
@@ -395,7 +395,7 @@ The same toggle points the engine at HyperDX: with it on, the engine receives `D
 | `DFE_HYPERDX_API_PORT`                           | HyperDX API host port, on `dfe-hyperdx-proxy`                                        | `8000`                                                              |
 | `DFE_HYPERDX_APP_PORT`                           | HyperDX App UI host port, on `dfe-hyperdx-proxy`                                     | `8090`                                                              |
 | `DFE_HYPERDX_APP_URL`                            | Scheme and host only, no port, the browser uses to reach HyperDX; overrides `DFE_EXTERNAL_ORIGIN` | follows `DFE_EXTERNAL_ORIGIN`                                       |
-| `DFE_HYPERDX_BASE_URL`                           | Where the ENGINE reaches HyperDX; name an external one here                          | `http://hyperdx:8000`                                               |
+| `DFE_HYPERDX_BASE_URL`                           | Where the ENGINE reaches HyperDX; name an external one here                          | `http://dfe-hyperdx:8000`                                           |
 | `DFE_HYPERDX_TEAM`                               | Team name when the token carries no group claim                                      | `dfe`                                                               |
 | `DFE_QUERY_READER_CLICKHOUSE_PASSWORD`           | Password of `dfe_query_reader`, the platform reader HyperDX's seeded connection uses, which the engine creates on it | generated                                                           |
 | `USAGE_STATS_ENABLED`                            | `true` sends upstream HyperDX's usage stats to `in-otel.hyperdx.io`, a third party. Upstream's own default is on | `false`                                                             |
@@ -410,7 +410,7 @@ The same toggle points the engine at HyperDX: with it on, the engine receives `D
 
 `hyperdx-documentdb` has `DOCUMENTDB_USAGE_TELEMETRY` off, as upstream reports to a third party hourly. Its 128 MB `shared_buffers` run inside the service limit, its data directory is pre-initialised so a first start skips initdb and its image's own probe is retuned to gate startup. Compose gives the password a default because a `:?` would break `make down`, and `make init` mints the real one.
 
-`hyperdx` mounts only the CA from `hyperdx-documentdb-tls`, never the gateway's key. `DASHBOARD_PROVISIONER_DIR` starts the provisioner, which reruns each minute and skips a dashboard whose source the team lacks. `HYPERDX_API_PORT` and `HYPERDX_APP_PORT` are the container ports dfe-proxy dials by name. `NEXT_PUBLIC_DFE_UI_BASE_URL` is where the embedded HyperDX opens a created rule.
+`dfe-hyperdx` mounts only the CA from `hyperdx-documentdb-tls`, never the gateway's key. `DASHBOARD_PROVISIONER_DIR` starts the provisioner, which reruns each minute and skips a dashboard whose source the team lacks. `HYPERDX_API_PORT` and `HYPERDX_APP_PORT` are the container ports dfe-proxy dials by name. `NEXT_PUBLIC_DFE_UI_BASE_URL` is where the embedded HyperDX opens a created rule.
 
 ### Infra UI authentication (opt-in)
 
@@ -451,11 +451,11 @@ The engine runs as its image's user, not yours, so the two meet on a group. `mak
 | Port  | Service              | Protocol           |
 |-------|----------------------|--------------------|
 | 3000  | dfe-proxy            | Web UI (envoy fronts dfe-ui, which publishes no host port) |
-| 8000  | hyperdx              | API                |
+| 8000  | dfe-hyperdx-proxy    | HyperDX API        |
 | 8003  | dfe-engine           | HTTP API           |
 | 8080  | dfe-receiver         | HTTP ingest        |
 | 8081  | Kafbat               | Web UI             |
-| 8090  | hyperdx              | App UI             |
+| 8090  | dfe-hyperdx-proxy    | HyperDX App UI     |
 | 8123  | ClickHouse           | HTTP API           |
 | 9000  | ClickHouse           | Native protocol    |
 | 9090  | dfe-receiver         | Prometheus metrics |

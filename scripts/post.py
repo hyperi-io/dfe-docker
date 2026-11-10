@@ -227,7 +227,7 @@ HUNT_RUNNER_METRICS = ("dfe_hunt_backlog", "dfe_hunt_tick_duration_seconds")
 # HyperDX assertion. The team is created by the first identified request, its
 # sources are seeded with it, and the dashboard provisioner runs on a one-minute
 # cron -- so this polls rather than probing once.
-HYPERDX_SERVICE = "hyperdx"
+HYPERDX_SERVICE = "dfe-hyperdx"
 HYPERDX_SEEDED_SOURCES = (
     "clickhouse_system",
     "hunts",
@@ -322,18 +322,18 @@ APP_CONFIG_DIR_KEY = "DFE_ENGINE_APP_CONFIG_DIR"
 # data" for a reason with nothing to do with data.
 WEAK_SECRET_DEFAULTS = {
     "NEXTAUTH_SECRET": ("", "dfe-ui"),
-    "HYPERDX_DOCUMENTDB_PASSWORD": ("hyperdx", "hyperdx"),
+    "HYPERDX_DOCUMENTDB_PASSWORD": ("hyperdx", "dfe-hyperdx"),
     # Unset, the fork signs sessions with a key published in upstream's source
-    "EXPRESS_SESSION_SECRET": ("", "hyperdx"),
+    "EXPRESS_SESSION_SECRET": ("", "dfe-hyperdx"),
     # Unset, HyperDX stores third-party tokens in plain text
-    "TOKEN_ENCRYPTION_KEY": ("", "hyperdx"),
+    "TOKEN_ENCRYPTION_KEY": ("", "dfe-hyperdx"),
     # Unset, the engine signs its tokens with this placeholder from its own published source
     "DFE_ENGINE_API_JWT_SECRET": ("dev-secret-key-change-in-production", "dfe-engine"),
     # Empty leaves the app's user on a password the engine mints, which the app never sees.
     "DFE_HUNT_RUNNER_CLICKHOUSE_PASSWORD": ("", "dfe-hunt-runner"),
     "DFE_LOADER_CLICKHOUSE_PASSWORD": ("", "dfe-loader"),
     "DFE_OTEL_WRITER_CLICKHOUSE_PASSWORD": ("", "otel-collector"),
-    "DFE_QUERY_READER_CLICKHOUSE_PASSWORD": ("", "hyperdx"),
+    "DFE_QUERY_READER_CLICKHOUSE_PASSWORD": ("", "dfe-hyperdx"),
 }
 
 

@@ -37,8 +37,8 @@ _SERVICE_KEY_RE = re.compile(r"^  ([A-Za-z0-9._-]+):$", re.MULTILINE)
 # Each service whose own settings live in an env/<component>.env, mapped to that file
 _COMPONENT_ENV_FILES = {
     "dfe-engine": "engine.env",
+    "dfe-hyperdx": "hyperdx.env",
     "dfe-ui": "ui.env",
-    "hyperdx": "hyperdx.env",
 }
 # Planted in each of those files under a key of its own, so a service shows which it read
 _READ_FROM = "DFE_COMPOSE_TEST_READ_"

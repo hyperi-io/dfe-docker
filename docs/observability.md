@@ -35,7 +35,7 @@ aimed at one.
 | dfe-ui | none | all three on `:3000`, alongside the app |
 | dfe-proxy | 3000 | `/livez`, answered by Envoy itself |
 | otel-collector | 13133 | the `health_check` extension |
-| hyperdx | 8000 | `/health` -- third party, its own convention |
+| dfe-hyperdx | 8000 | `/health` -- upstream HyperDX's own convention |
 
 These bind `DFE_BIND_HOST` (`127.0.0.1`), so curl them from the box, not your
 laptop.
