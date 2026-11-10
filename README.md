@@ -31,11 +31,11 @@ can apply - read both if so.
 
 Two things worth knowing before you start, whichever you are:
 
-- **Only the console and HyperDX authenticate.** The DFE UI and the engine API
-  behind it ask for the login `make creds` prints, and HyperDX verifies the
+- **Only the console and Search authenticate.** The DFE UI and the engine API
+  behind it ask for the login `make creds` prints, and Search verifies the
   engine's token. Kafbat, the ingest ports and the metrics ports ask for none,
   so nothing here should be reachable by people you have not met. The opt-in
-  `auth` profile gates Kafbat and HyperDX behind oauth2-proxy with a group
+  `auth` profile gates Kafbat and Search behind oauth2-proxy with a group
   check. [operating.md](docs/operating.md) spells out exactly what is exposed.
 - **Compose is a supported production target for small environments**, not a toy.
   Kubernetes remains the primary path; this is the right answer for a single box,
@@ -154,7 +154,7 @@ no Compose-specific build.
 
 Three things to read before running this anywhere real:
 
-- **Only the console and HyperDX authenticate.** `dfe-proxy` on `:3000`
+- **Only the console and Search authenticate.** `dfe-proxy` on `:3000`
   reverse-proxies straight to the engine API and adds no login of its own, so the
   engine's login is the gate there. Put the stack behind a VPN, a tunnel, a
   firewall, or an authenticating proxy - or arm the opt-in `auth` profile, which
@@ -176,7 +176,7 @@ For `kafka` transport profiles, the Kafka backend is selected via `KAFKA_BACKEND
 make dev                           # Uses active_profile from service_profiles.yaml
 DFE_PROFILE=single-kafka make dev  # Override profile
 KAFKA_BACKEND=apache make dev      # Override Kafka backend
-DFE_HYPERDX_ENABLED=false make dev # Skip the HyperDX observability stack
+DFE_HYPERDX_ENABLED=false make dev # Skip Search and its stores
 DFE_OTEL_ENABLED=false make dev    # Skip the self-monitoring collector
 ```
 
@@ -364,7 +364,7 @@ Two ways a green run says less than it looks:
 | Add a DDL file or a topic-creating step here | Change the schema in dfe-engine | dfe-engine ships the schemas in its own image and reports healthy only once it has applied them. `scripts/tests/test_engine_only_schema_control.py` fails the build on one (#118) |
 | Give an external ClickHouse's port through `CLICKHOUSE_HTTP_PORT` or `CLICKHOUSE_NATIVE_PORT` | Set `CLICKHOUSE_EXTERNAL_HTTP_PORT` and `CLICKHOUSE_EXTERNAL_NATIVE_PORT` | The first pair is the bundled container's host publish and nothing else, so it is safe to move for a second stack; services on the network dial 8123/9000 unless the EXTERNAL pair says otherwise (#75) |
 | Move the loader's `grpc.listen` off 6000, or confuse it with the receiver's 6000 | Keep the loader on container port 6000 | dfe-engine compiles every sender's loader endpoint as `dfe-loader:6000`, so a loader listening anywhere else drops every record behind an HTTP 202 with nothing logged. The receiver's 6000 is the external Vector protocol, off unless `DFE_RECEIVER_GRPC__ENABLED=true` and unpublished until `DFE_RECEIVER_GRPC_PORT` is set. The loader's is the internal `DfeTransport/Push` and publishes no host port. `scripts/tests/test_loader_grpc_port.py` fails the build on a mismatch |
-| Publish the UIs beyond loopback and leave `DFE_EXTERNAL_ORIGIN` alone | Set it to the address browsers actually use | `DFE_BIND_SCOPE=all` with a loopback origin builds HyperDX's frame-ancestors policy and every next-auth redirect from the wrong host, so the console comes up with its observability views blocked and sends logins to the wrong machine. The Makefile now refuses the combination (#108) |
+| Publish the UIs beyond loopback and leave `DFE_EXTERNAL_ORIGIN` alone | Set it to the address browsers actually use | `DFE_BIND_SCOPE=all` with a loopback origin builds Search's frame-ancestors policy and every next-auth redirect from the wrong host, so the console comes up with its observability views blocked and sends logins to the wrong machine. The Makefile now refuses the combination (#108) |
 | Raise `REDPANDA_MEMORY` on its own | Raise `DFE_BROKER_MEMORY` above it | The broker gets at most the container limit less the host's `vm.min_free_kbytes`: `redpanda/start.sh` lowers `--memory` to that and logs a WARN naming the `DFE_BROKER_MEMORY` that restores it (`.env.example:229`, `.env.example:519`) |
 | Publish the broker's in-network listener `9092` to the host | Use the host listener on `19092` (`KAFKA_PLAINTEXT_HOST_PORT`) | `9092` advertises `kafka:9092`, a name a host client can't resolve. It also collides with an always-on dev Kafka (#36) |
 | Set `DFE_UPDATE_WIPE_STATE=1` on a box that also sets `DFE_DATA_ROOT` | Leave `DFE_DATA_ROOT` unset if you rely on the wipe | `make clean` does not chain the storage overlay, so it removes the volume objects while the bind directories keep their contents and the wipe silently becomes a no-op (`ops/daemon-update/README.md`) |

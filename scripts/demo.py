@@ -296,7 +296,7 @@ def _console_files(*, kind: str) -> list[dict]:
 
 
 def _console_url(*, path: str) -> str:
-    """Where a browser on this host opens a HyperDX page."""
+    """Where a browser on this host opens a dfe-hyperdx page."""
     origin = os.environ.get("DFE_HYPERDX_APP_URL", "").strip() or "http://localhost"
     port = os.environ.get("DFE_HYPERDX_APP_PORT", "").strip() or "8090"
     return f"{origin.rstrip('/')}:{port}{path}"
@@ -770,7 +770,7 @@ def _outcome(
         kept = " and the archiver wrote files" if archiving else ""
         _print(
             msg=f"PASS every vendor table gained rows{kept}, ready to query in the "
-            f"console or HyperDX. The stream runs until `make demo-stop` or a receiver "
+            f"console's Search. The stream runs until `make demo-stop` or a receiver "
             f"restart"
         )
         return 0

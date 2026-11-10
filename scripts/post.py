@@ -16,7 +16,7 @@ INGEST: uniquely-marked events put in at the ingest edge come out as those exact
 rows in ClickHouse. SELF-MONITORING: when the profile runs a collector, the
 stack's own telemetry is landing FRESH in the otel database, every service that
 pushes is in it under its own name (the hunt runner with its own hunt metrics),
-and each named service's stdout is landing under its own name. OBSERVABILITY: HyperDX holds the sources this deployment
+and each named service's stdout is landing under its own name. OBSERVABILITY: dfe-hyperdx holds the sources this deployment
 seeds it and the dashboards the engine ships, read over the compose network
 through the proxy that fronts it. CONSOLE: those same marked rows read back
 through the engine query API that dfe-ui uses, so the data is not merely stored but
@@ -224,7 +224,7 @@ OTEL_SERVICE_TIMEOUT_SECONDS = 180.0
 HUNT_RUNNER_SERVICE = "dfe-hunt-runner"
 HUNT_RUNNER_METRICS = ("dfe_hunt_backlog", "dfe_hunt_tick_duration_seconds")
 
-# HyperDX assertion. The team is created by the first identified request, its
+# dfe-hyperdx assertion. The team is created by the first identified request, its
 # sources are seeded with it, and the dashboard provisioner runs on a one-minute
 # cron -- so this polls rather than probing once.
 HYPERDX_SERVICE = "dfe-hyperdx"
@@ -239,9 +239,9 @@ HYPERDX_SEEDED_SOURCES = (
 HYPERDX_TIMEOUT_SECONDS = 180.0
 HYPERDX_INTERVAL_SECONDS = 5.0
 
-# HyperDX and the engine answer on UI-class ports, and whether those reach the
+# dfe-hyperdx and the engine answer on UI-class ports, and whether those reach the
 # host is a deployment dial: DFE_HYPERDX_UI_EXTERNAL=false publishes neither
-# HyperDX origin, and a published UI port binds DFE_UI_BIND_HOST rather than the
+# dfe-hyperdx origin, and a published UI port binds DFE_UI_BIND_HOST rather than the
 # ingest address. Both APIs are therefore read over the compose network, where the
 # addresses are the container ports and hold on every exposure setting.
 API_EXEC_SERVICE = "dfe-engine"
@@ -317,15 +317,15 @@ APP_CONFIG_DIR_KEY = "DFE_ENGINE_APP_CONFIG_DIR"
 # anyone with the repo already knows.
 #
 # Each maps to the service that consumes it, so a secret is only enforced when the
-# service using it is actually running. Failing a HyperDX password on a profile
-# with no HyperDX told an operator "the stack is up, but it did not prove it moves
+# service using it is actually running. Failing a dfe-hyperdx password on a profile
+# with no dfe-hyperdx told an operator "the stack is up, but it did not prove it moves
 # data" for a reason with nothing to do with data.
 WEAK_SECRET_DEFAULTS = {
     "NEXTAUTH_SECRET": ("", "dfe-ui"),
     "HYPERDX_DOCUMENTDB_PASSWORD": ("hyperdx", "dfe-hyperdx"),
     # Unset, the fork signs sessions with a key published in upstream's source
     "EXPRESS_SESSION_SECRET": ("", "dfe-hyperdx"),
-    # Unset, HyperDX stores third-party tokens in plain text
+    # Unset, dfe-hyperdx stores third-party tokens in plain text
     "TOKEN_ENCRYPTION_KEY": ("", "dfe-hyperdx"),
     # Unset, the engine signs its tokens with this placeholder from its own published source
     "DFE_ENGINE_API_JWT_SECRET": ("dev-secret-key-change-in-production", "dfe-engine"),
@@ -1496,16 +1496,16 @@ def _await_routed_row(*, database: str, name: str) -> int:
 
 
 def _hyperdx_base() -> str:
-    """The HyperDX API base URL, on the compose network through its own proxy."""
+    """The dfe-hyperdx API base URL, on the compose network through its own proxy."""
     return HYPERDX_NETWORK_BASE
 
 
 def _verify_hyperdx() -> Claim:
-    """Prove HyperDX holds its seeded sources and the release's provisioned dashboards.
+    """Prove dfe-hyperdx holds its seeded sources and the release's provisioned dashboards.
 
     Both are SERVER-side state, which is the whole point: they are what an operator
-    finds on a fresh browser, and what a browser-local HyperDX could never have.
-    Read with a console token, because HyperDX verifies the engine's JWT -- so a
+    finds on a fresh browser, and what a browser-local dfe-hyperdx could never have.
+    Read with a console token, because dfe-hyperdx verifies the engine's JWT -- so a
     pass also proves that trust works end to end.
     """
     if HYPERDX_SERVICE not in set(_resolved_services()):
@@ -1517,18 +1517,18 @@ def _verify_hyperdx() -> Claim:
     engine_base = _engine_base()
     token, status, _, fault = login(base=engine_base)
     if fault and _skip_retired(
-        base=engine_base, status=status, what="HyperDX's seeded state"
+        base=engine_base, status=status, what="dfe-hyperdx's seeded state"
     ):
         return SKIPPED
     if fault:
         _print(
-            msg=f"FAIL  {fault} -- HyperDX verifies that token, so this run cannot "
+            msg=f"FAIL  {fault} -- dfe-hyperdx verifies that token, so this run cannot "
             "read it"
         )
         return Claim(asserted=True, failed=1)
 
     base = _hyperdx_base()
-    # HyperDX creates the team, its sources and its connections on the first
+    # dfe-hyperdx creates the team, its sources and its connections on the first
     # identity-carrying request it serves, and provisions dashboards onto it from a
     # one-minute cron, so the poll below is also what starts the seeding.
     _print(msg=f"Waiting for seeded sources and provisioned dashboards at {base}")
@@ -1573,7 +1573,7 @@ def _verify_hyperdx() -> Claim:
 
     if state is None or isinstance(state[0], int):
         _print(
-            msg=f"FAIL  the HyperDX API at {base} did not accept the console token "
+            msg=f"FAIL  the dfe-hyperdx API at {base} did not accept the console token "
             f"within {HYPERDX_TIMEOUT_SECONDS:.0f}s -- it verifies that token against "
             "the engine's JWKS"
         )
@@ -1584,22 +1584,22 @@ def _verify_hyperdx() -> Claim:
     failed = 0
     if missing:
         _print(
-            msg=f"FAIL  HyperDX is missing seeded source(s) {', '.join(missing)} -- "
+            msg=f"FAIL  dfe-hyperdx is missing seeded source(s) {', '.join(missing)} -- "
             "the shipped dashboards resolve their tiles by these names"
         )
         failed = 1
     else:
         _print(
-            msg=f"PASS  HyperDX holds all {len(HYPERDX_SEEDED_SOURCES)} seeded sources"
+            msg=f"PASS  dfe-hyperdx holds all {len(HYPERDX_SEEDED_SOURCES)} seeded sources"
         )
     if provisioned < 1:
         _print(
-            msg=f"FAIL  HyperDX has no provisioned dashboard within "
+            msg=f"FAIL  dfe-hyperdx has no provisioned dashboard within "
             f"{HYPERDX_TIMEOUT_SECONDS:.0f}s -- the engine's dashboards did not reach it"
         )
         failed = 1
     else:
-        _print(msg=f"PASS  HyperDX carries {provisioned} provisioned dashboard(s)")
+        _print(msg=f"PASS  dfe-hyperdx carries {provisioned} provisioned dashboard(s)")
     return Claim(asserted=True, failed=failed)
 
 

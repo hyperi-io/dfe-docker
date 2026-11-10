@@ -8,7 +8,7 @@
 
 """The two consumers of DFE_EXTERNAL_ORIGIN that have to agree about the console.
 
-dfe-proxy re-serves HyperDX under a frame-ancestors list, and an operator reads
+dfe-proxy re-serves dfe-hyperdx under a frame-ancestors list, and an operator reads
 the console on loopback whatever address the deployment publishes it as -- so a
 list carrying the external origin alone blanks the embedded views on the box
 itself. The source runner is the other: it drives the console, and it drives it

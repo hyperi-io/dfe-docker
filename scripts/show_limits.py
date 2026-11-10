@@ -60,7 +60,7 @@ def _active_view() -> tuple[list[str], set[str] | None, str]:
 
     Default is the RESOLVED stack, because that is the number an operator sizes a
     box with. Showing every profile by default over-reports by roughly double --
-    it counts both Kafka backends, HyperDX, and every DFE service including ones
+    it counts both Kafka backends, dfe-hyperdx, and every DFE service including ones
     the active profile does not run. That is the same class of wrong number this
     command exists to eliminate, just arrived at automatically instead of by hand.
 

@@ -131,7 +131,7 @@ endif
 
 # `all` publishes the UIs on addresses this box cannot infer, and two services
 # build absolute URLs from DFE_EXTERNAL_ORIGIN -- dfe-proxy's frame-ancestors
-# policy for the embedded HyperDX views, and next-auth's redirects. At loopback
+# policy for the embedded dfe-hyperdx views, and next-auth's redirects. At loopback
 # both name the browser's own machine, so the console comes up with its
 # observability views blocked.
 #
@@ -151,12 +151,12 @@ ifeq ($(strip $(DFE_BIND_SCOPE)),all)
     ifneq (,$(filter $(ORIGIN_GOALS),$(or $(MAKECMDGOALS),help)))
         ORIGIN_UNUSABLE := $(if $(strip $(DFE_EXTERNAL_ORIGIN)),$(filter $(strip $(DFE_EXTERNAL_ORIGIN)),$(LOOPBACK_ORIGINS)),unset)
         ifneq ($(ORIGIN_UNUSABLE),)
-            $(error DFE_BIND_SCOPE=all publishes the UIs beyond loopback, so DFE_EXTERNAL_ORIGIN must name the address browsers use -- it is $(if $(strip $(DFE_EXTERNAL_ORIGIN)),'$(strip $(DFE_EXTERNAL_ORIGIN))',unset). HyperDX's frame-ancestors policy and every next-auth redirect are built from it, so the console loads with its observability views blocked and sends logins back to the wrong host. Set DFE_EXTERNAL_ORIGIN=http://<the address browsers use> in .env or the environment, or leave DFE_BIND_SCOPE=localhost)
+            $(error DFE_BIND_SCOPE=all publishes the UIs beyond loopback, so DFE_EXTERNAL_ORIGIN must name the address browsers use -- it is $(if $(strip $(DFE_EXTERNAL_ORIGIN)),'$(strip $(DFE_EXTERNAL_ORIGIN))',unset). dfe-hyperdx's frame-ancestors policy and every next-auth redirect are built from it, so the console loads with its observability views blocked and sends logins back to the wrong host. Set DFE_EXTERNAL_ORIGIN=http://<the address browsers use> in .env or the environment, or leave DFE_BIND_SCOPE=localhost)
         endif
     endif
 endif
 
-# Compose appends `:<port>` to each of these (next-auth's NEXTAUTH_URL, HyperDX's FRONTEND_URL, the oauth2-proxy callbacks), so a value that already carries a port, a path or a query builds a URL no browser can parse: dfe-ui answers 500 on `https://host:3000:3000`. DFE_EXTERNAL_ORIGIN and DFE_HYPERDX_APP_URL also feed dfe-proxy's frame-ancestors source list, where a `;` in the value starts a new directive. Each must be a scheme and a host only, on every stack and with TLS on or off.
+# Compose appends `:<port>` to each of these (next-auth's NEXTAUTH_URL, dfe-hyperdx's FRONTEND_URL, the oauth2-proxy callbacks), so a value that already carries a port, a path or a query builds a URL no browser can parse: dfe-ui answers 500 on `https://host:3000:3000`. DFE_EXTERNAL_ORIGIN and DFE_HYPERDX_APP_URL also feed dfe-proxy's frame-ancestors source list, where a `;` in the value starts a new directive. Each must be a scheme and a host only, on every stack and with TLS on or off.
 APPENDED_ORIGINS := DFE_EXTERNAL_ORIGIN DFE_HYPERDX_APP_URL DFE_OAUTH2_PROXY_EXTERNAL_ORIGIN
 # The value without the surrounding quotes compose strips and make keeps.
 origin_value = $(patsubst "%",%,$(patsubst '%',%,$(strip $($(1)))))
@@ -224,7 +224,7 @@ endef
 UI_CHAIN :=
 UI_FLAGS :=
 
-# The services whose host ports the exposure dials take away. dfe-proxy carries the console and dfe-hyperdx-proxy both HyperDX origins
+# The services whose host ports the exposure dials take away. dfe-proxy carries the console and dfe-hyperdx-proxy both dfe-hyperdx origins
 UNPUBLISHED :=
 ifeq ($(strip $(DFE_UI_EXTERNAL)),false)
     UNPUBLISHED += dfe-proxy
@@ -259,7 +259,7 @@ define newline
 
 endef
 
-# The console's HyperDX embed goes with HyperDX, auth or not, keeping the console's line. dfe-proxy's own reset drops both and a second key would be duplicate YAML
+# The console's dfe-hyperdx embed goes with dfe-hyperdx, auth or not, keeping the console's line. dfe-proxy's own reset drops both and a second key would be duplicate YAML
 EMBED_UNPUBLISHED := $(if $(filter dfe-proxy,$(UNPUBLISHED)),,$(HYPERDX_GATED))
 
 ifneq ($(strip $(UNPUBLISHED))$(EMBED_UNPUBLISHED),)
@@ -318,7 +318,7 @@ endif
 # ---------------------------------------------------------------------------
 # Console TLS (opt-in)
 #
-# DFE_PROXY_TLS=true chains compose/tls.yml, which serves the console, the HyperDX embed and both HyperDX origins over TLS with one certificate. Outside a dev posture the engine marks its OIDC cookies Secure, so a sign-in on any hostname but localhost needs it.
+# DFE_PROXY_TLS=true chains compose/tls.yml, which serves the console, the dfe-hyperdx embed and both dfe-hyperdx origins over TLS with one certificate. Outside a dev posture the engine marks its OIDC cookies Secure, so a sign-in on any hostname but localhost needs it.
 #
 # The engine trusts X-Forwarded-Proto from dfe-proxy's address alone, so that address is fixed: the last host of DFE_NETWORK_SUBNET, with every other container allocated from the first half. Make cannot do the address arithmetic, so scripts/proxy_tls.py does.
 # ---------------------------------------------------------------------------
@@ -351,7 +351,7 @@ ifneq ($(PROXY_TLS_START),)
     endif
     ifneq ($(call origin_value,DFE_HYPERDX_APP_URL),)
         ifeq ($(filter https://%,$(call origin_value,DFE_HYPERDX_APP_URL)),)
-            $(error DFE_PROXY_TLS=true serves HyperDX over https, so DFE_HYPERDX_APP_URL must start with https:// or be unset. It is '$(strip $(DFE_HYPERDX_APP_URL))')
+            $(error DFE_PROXY_TLS=true serves dfe-hyperdx over https, so DFE_HYPERDX_APP_URL must start with https:// or be unset. It is '$(strip $(DFE_HYPERDX_APP_URL))')
         endif
     endif
 endif

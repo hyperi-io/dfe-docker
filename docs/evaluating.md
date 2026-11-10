@@ -126,10 +126,10 @@ demo -   dfe-archiver archive of demo-syslog: N files
 demo -     demo-syslog_land/default/2026/11/03/01-0001-<id>.jsonl.zst  77645 bytes
 demo -     first line of the newest: {"message":"%ASA-6-302014: Teardown TCP connection ...
 demo - WARNING no rows in 'dfe.component-releases' yet. A fetcher's first poll waits 900s and none land when the stack has no egress to its upstream
-demo - PASS every vendor table gained rows and the archiver wrote files, ready to query in the console or HyperDX. The stream runs until `make demo-stop` or a receiver restart
+demo - PASS every vendor table gained rows and the archiver wrote files, ready to query in the console's Search. The stream runs until `make demo-stop` or a receiver restart
 ```
 
-`dfe.component-releases` fills about 15 minutes in, and the demo does not wait for it: an empty fetcher table only warns. A fetcher the profile cannot run or the engine cannot set up is skipped with a WARNING while the vendor demo runs on. A profile with no HyperDX gets no console pieces.
+`dfe.component-releases` fills about 15 minutes in, and the demo does not wait for it: an empty fetcher table only warns. A fetcher the profile cannot run or the engine cannot set up is skipped with a WARNING while the vendor demo runs on. A profile with no dfe-hyperdx gets no console pieces.
 
 `dfe.demo-syslog` holds the lines no detector claimed. The replay script comes from the dfe-transform-elastic release the stack pins, so the demo needs a release with agentless detection and stops before changing anything on one without it. A `make dev` stack takes `make demo DEV=1`, which reads the script from `DFE_SRC_ROOT` when that is set.
 
@@ -142,7 +142,7 @@ demo - PASS every vendor table gained rows and the archiver wrote files, ready t
 | http://localhost:8123 | ClickHouse HTTP |
 | http://localhost:8003 | dfe-engine API |
 
-The console asks for a login; Kafbat, HyperDX and the ClickHouse port do not
+The console asks for a login; Kafbat, dfe-hyperdx and the ClickHouse port do not
 authenticate you as a person. `make creds` prints the console login again.
 
 The ingest ports bind all interfaces so anything can push to them. Everything
@@ -173,7 +173,7 @@ logins -- `admin` for the console and the engine API, and `breakglass` for
 recovery -- and generates ClickHouse's password with them. `make creds` prints
 the admin one on a terminal and names the `.env` key holding the other;
 `access-summary.md`, written beside `.env` and readable only by you, carries
-both. Kafbat and HyperDX answer to anyone who can reach them on these profiles,
+both. Kafbat and dfe-hyperdx answer to anyone who can reach them on these profiles,
 the opt-in `auth` profile puts an OIDC sign-in in front of both, and nothing here
 serves TLS until you turn [console TLS](configuration.md#console-tls-opt-in) on.
 That is fine on your machine and on a throwaway demo box. It is not

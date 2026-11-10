@@ -202,7 +202,7 @@ stack manifest.
 make dev LIVE_UI=1   # dfe-ui runs `next dev` over $DFE_SRC_ROOT/dfe-ui
 ```
 
-`LIVE_UI=1` layers `compose/live-ui.yml`, which runs dfe-ui as `next dev` over your checkout instead of building its image. It still sits behind dfe-proxy on `DFE_UI_PORT`, so login, the engine API and the HyperDX embed work as they do on any stack. A saved edit reaches the browser through hot reload, which rides the websocket upgrade the proxy already allows. `docker compose logs -f dfe-ui` shows the dev server's output.
+`LIVE_UI=1` layers `compose/live-ui.yml`, which runs dfe-ui as `next dev` over your checkout instead of building its image. It still sits behind dfe-proxy on `DFE_UI_PORT`, so login, the engine API and the dfe-hyperdx embed work as they do on any stack. A saved edit reaches the browser through hot reload, which rides the websocket upgrade the proxy already allows. `docker compose logs -f dfe-ui` shows the dev server's output.
 
 The first start installs dependencies into the checkout, about 1 GB of yarn cache under its gitignored `.yarn/`; later starts install from that cache in seconds. Each route compiles on its first hit. The login page compiles as the dev server starts, so the first visit stays inside dfe-proxy's 15s route timeout.
 
@@ -227,9 +227,9 @@ Every profile is a whole stack named `<tier>-<transport>`: `slim` runs the core 
 ```bash
 DFE_PROFILE=single-kafka make dev     # override the profile
 KAFKA_BACKEND=apache make dev         # Apache Kafka instead of Redpanda
-DFE_CORE_ENABLED=false make dev       # skip engine, UI, proxy and HyperDX
+DFE_CORE_ENABLED=false make dev       # skip engine, UI, proxy and dfe-hyperdx
 DFE_CLICKHOUSE_ENABLED=false make dev # no warehouse container (external instance)
-DFE_HYPERDX_ENABLED=false make dev    # skip the HyperDX observability stack
+DFE_HYPERDX_ENABLED=false make dev    # skip the dfe-hyperdx observability stack
 make dev SERVICES="dfe-loader"        # start a subset of the resolved profile
 ```
 
@@ -370,7 +370,7 @@ The `core` footprint starts `dfe-hunt-runner`, as `make dev` does. On a profile 
 make test-e2e E2E_TESTS=search-rule-hunt
 ```
 
-A `detection:` block carrying `from_search` makes its rule the way an analyst does, in a browser. It adds HyperDX to the stack, signs in to the console as the stack's admin and opens Observe search on `main`. The search bar gets the block's `search`, held to the run's marker, and the side panel picks its `filter`. Then Create Rule, and the rule page it opens.
+A `detection:` block carrying `from_search` makes its rule the way an analyst does, in a browser. It adds dfe-hyperdx to the stack, signs in to the console as the stack's admin and opens Observe search on `main`. The search bar gets the block's `search`, held to the run's marker, and the side panel picks its `filter`. Then Create Rule, and the rule page it opens.
 
 The stored rule has to scan `dfe.main` with no SQL errors and a WHERE that carries both filters. The hunt over it is added and triggered from the console's own form, and the verdict is the rules-and-hunts one: every matching event detected once, no near miss. Each filter alone lets a near miss through, so a filter lost between the search and the rule fails it.
 
