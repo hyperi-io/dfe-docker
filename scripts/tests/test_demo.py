@@ -1057,3 +1057,66 @@ class TestArchivable:
         bodies = [*loaded.vendors, loaded.intake, *loaded.fetchers]
 
         assert [b["source"] for b in bodies if b.get("archive")] == ["demo-syslog"]
+
+
+class TestReceiverInstances:
+    @pytest.mark.parametrize(
+        ("page", "names"),
+        [
+            pytest.param(
+                {
+                    "items": [
+                        {"service": "dfe-loader", "instances": ["default"]},
+                        {"service": "dfe-receiver", "instances": ["default", "edge"]},
+                    ],
+                    "next_page_token": "",
+                },
+                ["default", "edge"],
+                id="page",
+            ),
+            pytest.param(
+                {"items": [{"service": "dfe-loader", "instances": ["default"]}]},
+                [],
+                id="no-receiver",
+            ),
+            pytest.param(
+                {"items": [{"service": "dfe-receiver", "instances": None}]},
+                [],
+                id="no-instances",
+            ),
+            pytest.param(
+                [{"service": "dfe-receiver", "instances": ["default"]}],
+                [],
+                id="bare-list",
+            ),
+            pytest.param({"type": "about:blank", "status": 401}, [], id="problem"),
+            pytest.param("", [], id="no-body"),
+        ],
+    )
+    def test_reads_the_receiver_from_the_apps_page(
+        self, names: list[str], page: object
+    ) -> None:
+        assert demo.receiver_instances(page=page) == names
+
+
+class TestRowGains:
+    @pytest.mark.parametrize(
+        ("before", "now", "gained"),
+        [
+            pytest.param({"a": 5}, {"a": 12}, {"a": 7}, id="gained"),
+            pytest.param(
+                {"a": None}, {"a": 3}, {"a": 3}, id="table-made-during-the-run"
+            ),
+            pytest.param({"a": 5}, {"a": 5}, {"a": 0}, id="none-landed"),
+            pytest.param({"a": 5}, {"a": None}, {"a": None}, id="unreadable-now"),
+            pytest.param({"a": None}, {"a": None}, {"a": None}, id="never-readable"),
+            pytest.param({"a": 1}, {}, {"a": None}, id="not-counted"),
+        ],
+    )
+    def test_an_unreadable_count_is_not_a_zero(
+        self,
+        before: dict[str, int | None],
+        gained: dict[str, int | None],
+        now: dict[str, int | None],
+    ) -> None:
+        assert demo.row_gains(before=before, now=now) == gained

@@ -85,6 +85,36 @@ def _check_demo(
         raise QuickstartError(reason)
 
 
+def _choice_line(
+    *,
+    args: argparse.Namespace,
+    name: str,
+    profile_from: str,
+    stack_from: str,
+    version: str,
+) -> str:
+    """The first line `prepare` prints: the two choices, where each came from and how to override them, in the words of the command that ran it."""
+    if args.caller:
+        given = {"make line": "given"}
+        stack_given = {"make line": args.version_from or "given"}
+        caller = args.caller
+        override = f"{caller} --profile <profile> --stack <stack version>"
+    else:
+        given = {}
+        stack_given = {}
+        caller = f"make {args.command}"
+        override = f"make {args.command} PROFILE=<profile> VERSION=<stack version>"
+    held = (
+        f"{version!r} ({stack_given.get(stack_from, stack_from)})"
+        if version
+        else "the pins already in .env"
+    )
+    return (
+        f"{caller}: profile {name!r} ({given.get(profile_from, profile_from)}), "
+        f"stack {held}. Override with: {override}"
+    )
+
+
 def _choose_profile(
     *, active: str, default: str, dotenv: str, environ: str, explicit: str, pinned: bool
 ) -> tuple[str, str]:
@@ -143,10 +173,14 @@ def _prepare(*, args: argparse.Namespace) -> None:
         if stack_from == "default"
         else requested
     )
-    held = f"{version!r} ({stack_from})" if version else "the pins already in .env"
     print(
-        f"make {args.command}: profile {name!r} ({profile_from}), stack {held}. "
-        f"Override with: make {args.command} PROFILE=<profile> VERSION=<stack version>",
+        _choice_line(
+            args=args,
+            name=name,
+            profile_from=profile_from,
+            stack_from=stack_from,
+            version=version,
+        ),
         flush=True,
     )
 
@@ -217,6 +251,11 @@ def main() -> int:
     actions = parser.add_subparsers(dest="action", required=True)
     prep = actions.add_parser("prepare", help="settle the profile and stack in .env")
     prep.add_argument("command", choices=("up", "demo"), help="the make target")
+    prep.add_argument(
+        "--caller",
+        default="",
+        help="the command a person ran, named in place of make with its own options",
+    )
     prep.add_argument("--default-profile", help="when none is set", required=True)
     prep.add_argument(
         "--dev",
@@ -225,6 +264,11 @@ def main() -> int:
     )
     prep.add_argument("--profile", default="", help="PROFILE= from the make line")
     prep.add_argument("--version", default="", help="VERSION= from the make line")
+    prep.add_argument(
+        "--version-from",
+        default="",
+        help="with --caller, where --version came from when the person did not give it",
+    )
     actions.add_parser("running", help="exit 0 when this checkout's stack runs")
     args = parser.parse_args()
     if args.action == "running":

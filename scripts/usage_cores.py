@@ -32,9 +32,6 @@ USAGE_NODE_VAR = "DFE_USAGE_NODE_NAME"
 # The node name docker-compose.yml falls back to, used here when the docker host names itself outside _NODE_NAME
 DEFAULT_NODE = "docker-host"
 
-# The cores an unlimited service carries in a release bundle, until install.sh swaps in the installing host's
-UNLIMITED_PLACEHOLDER = -1.0
-
 # The restart policy of a service that exits once its job is done
 ONE_SHOT_RESTART = "no"
 
@@ -98,13 +95,9 @@ def profile_lines(
     fragment: Path | None,
     profiles: Sequence[str],
     services: Sequence[str],
-    host: tuple[str, float] | None = None,
 ) -> list[str]:
-    """Return the usage exports for the resolved stack, empty limits where they cannot be read.
-
-    host stands in for the docker host's name and cores, so a release bundle can mark each unlimited service with UNLIMITED_PLACEHOLDER for the installer to fill in on the host it runs on.
-    """
-    node, host_cores = host or _docker_host()
+    """Return the usage exports for the resolved stack, empty limits where they cannot be read."""
+    node, host_cores = _docker_host()
     files = [COMPOSE_FILE] if fragment is None else [COMPOSE_FILE, fragment]
     try:
         # Naming the services brings in their dependencies and any whose compose profile is off, dfe-hyperdx's among them

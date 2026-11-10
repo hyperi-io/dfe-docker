@@ -47,7 +47,7 @@ endif
 # any more (both sweep every profile), and requiring a resolvable profile to STOP
 # a stack is the same lockout the compose secret comments argue against -- set
 # DFE_PROFILE to something that does not exist and you could not tear down.
-BOOTSTRAP_GOALS := init env-files creds certs up demo dev-posture e2e-posture e2e-posture-off e2e-posture-check help stack dial modes down clean demo-stop limits check check-compose check-hardfail check-dockerfile check-docs check-locks check-proxy check-python check-shell check-tests
+BOOTSTRAP_GOALS := init env-files creds certs up demo dev-posture e2e-posture e2e-posture-off e2e-posture-check help stack dial modes down clean demo-stop limits check check-compose check-hardfail check-dockerfile check-docs check-locks check-proxy check-python check-tests print-default-profile
 
 # Resolve the active profile only when a goal actually needs the compose stack
 ifneq (,$(filter-out $(BOOTSTRAP_GOALS),$(or $(MAKECMDGOALS),help)))
@@ -138,7 +138,7 @@ endif
 # Only the goals that start or self-test the stack ask for it. The bootstrap
 # goals are exempt for the reason BOOTSTRAP_GOALS gives: needing a key to stop a
 # stack, or to check a file, is a lockout.
-ORIGIN_GOALS := dev ci up apply infra post test-source test-flows
+ORIGIN_GOALS := dev ci up apply infra post test-source test-flows print-compose-env
 # The e2e suites start a stack per test and probe the console at DFE_EXTERNAL_ORIGIN's host under console TLS, so there they need what a start goal needs.
 E2E_GOALS := test-e2e test-resilience
 ifeq ($(strip $(DFE_PROXY_TLS)),true)
@@ -394,8 +394,8 @@ else ifneq ($(filter dev dev-build,$(MAKECMDGOALS)),)
 else ifeq ($(filter ci,$(MAKECMDGOALS)),)
     RESOLVE_LOCAL_ARGS = --local-overlay $(LOCAL_OVERLAY)
 endif
-# The goals that start or recreate services, the only ones that ask docker compose for the CPU limits the collector reports as cores deployed
-USAGE_GOALS := dev ci up infra apply apply-services
+# The goals that start or recreate services, or hand a plain `docker compose` what they would, the only ones that ask docker compose for the CPU limits the collector reports as cores deployed
+USAGE_GOALS := dev ci up infra apply apply-services print-compose-env
 .tmp/profile.mk: FORCE
 	@python3 scripts/resolve_profile.py $(if $(KAFBAT_GATED),--unpublished kafbat) $(if $(HYPERDX_GATED),--unpublished hyperdx) $(RESOLVE_LOCAL_ARGS) $(if $(filter $(USAGE_GOALS),$(MAKECMDGOALS)),--usage)
 ifneq ($(PROXY_TLS_START),)
@@ -611,7 +611,7 @@ infra: .env storage-dirs ## Start infrastructure services
 # ---------------------------------------------------------------------------
 
 .PHONY: check
-check: check-compose check-hardfail check-dockerfile check-docs check-proxy check-python check-shell check-tests check-locks ## Run every static check CI runs
+check: check-compose check-hardfail check-dockerfile check-docs check-proxy check-python check-tests check-locks ## Run every static check CI runs
 
 .PHONY: limits
 limits: ## Show the resource limits and totals, computed from the resolved config
@@ -631,11 +631,6 @@ print-ruff-version:
 check-python: ## Lint the helper scripts (config in ruff.toml)
 	$(RUFF) check scripts/ ops/ resources/demo/
 	$(RUFF) format --check scripts/ ops/ resources/demo/
-
-# install.sh and apply.sh run on hosts with no python, so they are held to ShellCheck's POSIX sh rules.
-.PHONY: check-shell
-check-shell: ## Lint install.sh and apply.sh with ShellCheck as POSIX sh
-	shellcheck -s sh install.sh apply.sh
 
 # Pinned for the same reason RUFF is, and installed the same way in CI
 # (PYTEST=pytest). Unit tests over the helper scripts: they
@@ -677,6 +672,25 @@ check-locks: ## Assert each inline-metadata script's lock matches its pins (relo
 print-compose-file:
 	@echo "COMPOSE_FILE=$(COMPOSE_FILE)"
 
+# What a plain `docker compose` reads from .env in a folder the dfe-docker image set up (scripts/installer.py writes it there): this run's chain and compose profiles, and each value make works out rather than reads from .env. The live UI chain is a `make dev` matter and stays out. An ORIGIN_GOALS member, because a plain `docker compose up` starts from it
+empty :=
+space := $(empty) $(empty)
+comma := ,
+.PHONY: print-compose-env
+print-compose-env:
+	$(info COMPOSE_FILE=docker-compose.yml$(STORAGE_CHAIN)$(UI_CHAIN))
+	$(info COMPOSE_PROFILES=$(subst $(space),$(comma),$(strip $(filter-out --profile,$(PROFILE_FLAGS)))))
+	$(info DFE_DEV_GID=$(DFE_DEV_GID))
+	$(info DFE_DEV_UID=$(DFE_DEV_UID))
+	$(info DFE_UI_BIND_HOST=$(DFE_UI_BIND_HOST))
+	$(if $(filter true,$(strip $(DFE_PROXY_TLS))),$(foreach key,DFE_NETWORK_IP_RANGE DFE_NETWORK_SUBNET DFE_PROXY_CERT_DIR DFE_PROXY_IP,$(info $(key)=$($(key)))))
+	@:
+
+# The profile `make up` and the dfe-docker image start when none is chosen
+.PHONY: print-default-profile
+print-default-profile:
+	@echo $(DEFAULT_PROFILE)
+
 .PHONY: check-compose
 check-compose: ## Resolve compose on the registry, dev, LIVE_UI and LOCAL paths, both Kafka backends
 	@python3 scripts/check_compose.py
@@ -699,9 +713,12 @@ check-docs: ## Assert every relative link in the docs set still resolves
 # hadolint version tracks tools.hadolint in hyperi-ci's config/versions.yaml
 # (currently v2.15.1). We additionally pin the DIGEST, which that SSoT does not
 # yet do -- see hyperi-ci#66.
+HADOLINT_IMAGE := hadolint/hadolint:v2.15.1@sha256:32dac94127fd60b7b7e3fbfc65e1383b9b5e25c9bfd7b8536de7a539fe68a12d
+
 .PHONY: check-dockerfile
-check-dockerfile: ## Lint the dev builder Dockerfile (hadolint gates on error severity)
-	docker run --rm -i hadolint/hadolint:v2.15.1@sha256:32dac94127fd60b7b7e3fbfc65e1383b9b5e25c9bfd7b8536de7a539fe68a12d hadolint --failure-threshold error - < docker/dfe-rust-builder.Dockerfile
+check-dockerfile: ## Lint the dev builder and dfe-docker image Dockerfiles (hadolint gates on error severity)
+	docker run --rm -i $(HADOLINT_IMAGE) hadolint --failure-threshold error - < docker/dfe-rust-builder.Dockerfile
+	docker run --rm -i $(HADOLINT_IMAGE) hadolint --failure-threshold error - < docker/dfe-docker.Dockerfile
 
 # Validate mode loads every listener, cluster and TLS context, so a config that would crash-loop either proxy fails here instead.
 #

@@ -8,6 +8,7 @@
 
 """The checks on the one-command quickstart that need no stack: the profile and stack choice, the demo's refusal and the .env line it writes."""
 
+import argparse
 import re
 from typing import TypedDict
 
@@ -146,6 +147,71 @@ class TestChooseStack:
         )
 
         assert chosen == case["expected"]
+
+
+class TestChoiceLine:
+    @pytest.mark.parametrize(
+        ("caller", "version_from", "stack_from", "said", "absent"),
+        [
+            pytest.param(
+                "",
+                "",
+                "default",
+                "make up: profile 'slim-grpc' (make line), stack '2.2.1' (default). Override with: make up PROFILE=",
+                "--profile",
+                id="make",
+            ),
+            pytest.param(
+                "",
+                "image default",
+                "make line",
+                "make up: profile 'slim-grpc' (make line), stack '2.2.1' (make line).",
+                "image default",
+                id="make-ignores-version-from",
+            ),
+            pytest.param(
+                "init",
+                "",
+                "default",
+                "init: profile 'slim-grpc' (given), stack '2.2.1' (default). Override with: init --profile",
+                "make",
+                id="image",
+            ),
+            pytest.param(
+                "init",
+                "given",
+                "make line",
+                "init: profile 'slim-grpc' (given), stack '2.2.1' (given).",
+                "make",
+                id="image-stack-given",
+            ),
+            pytest.param(
+                "init",
+                "image default",
+                "make line",
+                "init: profile 'slim-grpc' (given), stack '2.2.1' (image default).",
+                "make",
+                id="image-stack-baked",
+            ),
+        ],
+    )
+    def test_names_the_command_that_ran_it(
+        self, absent: str, caller: str, said: str, stack_from: str, version_from: str
+    ) -> None:
+        args = argparse.Namespace(
+            caller=caller, command="up", version_from=version_from
+        )
+
+        line = quickstart._choice_line(
+            args=args,
+            name="slim-grpc",
+            profile_from="make line",
+            stack_from=stack_from,
+            version="2.2.1",
+        )
+
+        assert line.startswith(said)
+        assert absent not in line
 
 
 class TestRefusal:

@@ -18,9 +18,39 @@ come out the other. Everything else can wait.
 
 ## What you need
 
-- Docker and Docker Compose v2
-- make, git and Python 3 (standard library only)
+- Docker and Docker Compose 2.26 or newer
+- make, git and Python 3 (standard library only), for a clone. The dfe-docker image below needs none of them
 - Network access to `ghcr.io/hyperi-io`, where the images are public and pull with no login
+
+## With only Docker
+
+In an empty folder. On Windows, use PowerShell: `${PWD}` works there and in bash and zsh, but not in cmd.exe.
+
+```bash
+docker run --rm -v "${PWD}:/dfe" ghcr.io/hyperi-io/dfe-docker init
+docker compose up -d
+```
+
+`init` copies the compose files, config and templates in, writes `.env` and `env/` with fresh secrets, pins the newest published stack by digest and ends `.env` with what a plain `docker compose` needs. It sets up `single-kafka`, and `--profile` picks another. On a Linux host the files belong to the folder's owner. `ghcr.io/hyperi-io/dfe-docker:<version>` installs the stack that release was cut against, every time.
+
+The same image runs the rest, in the same folder:
+
+| Command | What it does |
+|---|---|
+| `login` | Prints the access summary. With `docker run -t` it prints the admin password too |
+| `init --upgrade` | Copies the tree again and re-pins the stack, keeping every secret and setting. `--stack X.Y.Z` names the stack. Plain `init` refuses a folder that holds an install |
+| `apply` | Rewrites the compose settings after an edit to `.env`, or after the console adds or deletes a source. Run `docker compose up -d --remove-orphans` after it |
+| `certs` | Mints the console certificate `DFE_PROXY_TLS=true` needs |
+
+Edit settings above the `## BEGIN dfe-docker` block in `.env`. `apply` rewrites the block and `--upgrade` replaces `config/`. `docker compose --profile '*' down` stops everything, and `-v` deletes the data too.
+
+The demo needs the stack up, the Docker socket and the folder at its own path, because compose in the container hands the Docker host the paths it sees. That is Linux, macOS or a WSL shell on Windows:
+
+```bash
+docker run --rm -v "${PWD}:${PWD}" -w "${PWD}" -v /var/run/docker.sock:/var/run/docker.sock ghcr.io/hyperi-io/dfe-docker demo
+```
+
+The same command with `demo-stop` takes it out, which `docker compose down` needs first.
 
 ## Getting it running
 
