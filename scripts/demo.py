@@ -29,6 +29,7 @@ import argparse
 import json
 import os
 import re
+import secrets
 import shutil
 import subprocess
 import sys
@@ -69,6 +70,7 @@ from post import (  # noqa: E402
     _api_post_json,
     _decoded,
     _engine_base,
+    _ensure_org,
     _exec_request,
     api_put_json,
 )
@@ -87,6 +89,9 @@ SOURCES_DIR = DEMO_DIR / "sources"
 TRANSFORM_APP = "dfe-transform-elastic"
 TRANSFORM_REPO = "dfe-transform-elastic"
 TRANSFORM_VERSION_KEY = "DFE_TRANSFORM_ELASTIC_VERSION"
+# The organisation and account that complete the engine's first-run setup
+DEMO_ORG = "demo"
+DEMO_ANALYST = "demo-analyst"
 RECEIVER_SERVICE = "dfe-receiver"
 # dfe-engine main reads the catalogue from its dfe-schemas wheel and older images from the seeded /app/schemas, so this tries both in that order, at any depth because newer wheels file each entry under its tag folder
 CATALOGUE_READ = "\n".join(
@@ -505,6 +510,28 @@ def _counts(*, tables: list[str]) -> dict[str, int | None]:
     return {table: _row_count(source=table) for table in tables}
 
 
+def _complete_setup(*, base: str, token: str) -> None:
+    """Make the organisation and the real user the engine's first-run setup asks for.
+
+    Without them every console page opens on the setup wizard. Nobody logs in as the analyst, so its password is random and never shown.
+    """
+    org = _ensure_org(base=base, token=token, name=DEMO_ORG)
+    if org.fault:
+        raise DemoError(f"the demo organisation: {org.fault}")
+    account = {
+        "username": DEMO_ANALYST,
+        "password": secrets.token_urlsafe(32),
+        "name": "Demo analyst",
+        "org": DEMO_ORG,
+    }
+    status, answer = _api_post_json(f"{base}/auth/accounts", account, token=token)
+    if status not in (201, 409):
+        raise DemoError(
+            f"creating account {DEMO_ANALYST!r} returned HTTP {status}: {answer}"
+        )
+    _print(msg=f"setup complete: organisation {DEMO_ORG!r}, account {DEMO_ANALYST!r}")
+
+
 def _create(*, base: str, body: dict, token: str) -> dict:
     """Create one source from its file, then return the reply."""
     name = body["source"]
@@ -906,6 +933,7 @@ def _install(*, args: argparse.Namespace, manifest: dict) -> int:
 
     base = _engine_base()
     token = _token(base=base)
+    _complete_setup(base=base, token=token)
     replies = []
     for body in [*demo.vendors, demo.intake]:
         replies += _ensure_source(base=base, body=body, token=token)
