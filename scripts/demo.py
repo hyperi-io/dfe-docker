@@ -478,8 +478,7 @@ def _conflict_hint(*, answer: object, status: int) -> str:
     code = answer.get("code") if isinstance(answer, dict) else None
     if (status != 409) or (code != MATCH_CONFLICT):
         return ""
-    context = answer.get("context") if isinstance(answer, dict) else None
-    other = context.get("conflicting_source") if isinstance(context, dict) else None
+    other = answer.get("conflicting_source") if isinstance(answer, dict) else None
     return (
         f". Source {other!r} already matches those records: set it dormant or "
         f"delete it, then run this again"
