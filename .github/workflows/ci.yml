@@ -166,10 +166,11 @@ jobs:
       - name: Proxy configs
         run: make check-proxy
 
-  # What a desktop with only Docker does: the image sets each profile up and the
-  # default one starts, serves the console and runs the demo, every step with a
-  # PATH that holds no make and no python. The default install goes to the
-  # Windows job, which reads it with the Windows compose.
+  # What a desktop with only Docker does: the image sets each profile up, the
+  # default one starts and serves the console, and the image drives it through
+  # the Docker socket, every step with a PATH that holds no make and no python.
+  # The default install goes to the Windows job, which reads it with the
+  # Windows compose.
   image:
     name: Image
     runs-on: ubuntu-26.04
@@ -272,13 +273,14 @@ jobs:
           docker compose up -d --wait --wait-timeout 900
           curl -fsSL --retry 5 --retry-all-errors -o /dev/null -w 'console answered %{http_code} at %{url_effective}\n' http://localhost:3000/
 
-      - name: Run the demo and take it out again
-        timeout-minutes: 15
+      # demo-stop reaches the running stack the way demo does: the socket, the folder at its own path and make inside the image
+      - name: Drive the running stack from the image
+        timeout-minutes: 10
         run: |
           export PATH="$DOCKER_ONLY"
           cd "$WORK/default"
-          docker run --rm -v "${PWD}:${PWD}" -w "${PWD}" -v /var/run/docker.sock:/var/run/docker.sock "$IMAGE" demo
           docker run --rm -v "${PWD}:${PWD}" -w "${PWD}" -v /var/run/docker.sock:/var/run/docker.sock "$IMAGE" demo-stop
+          docker compose config -q
 
       - name: Show what did not come up
         if: failure()
