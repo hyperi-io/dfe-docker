@@ -17,6 +17,7 @@ import yaml
 
 import demo
 from _common import SOURCE_NAME
+from post import HuntOrg
 
 pytestmark = pytest.mark.usefixtures("engine_python_here")
 
@@ -650,6 +651,47 @@ class TestEnginePython:
 
         with pytest.raises(demo.DemoError, match="is not running"):
             ENGINE_PYTHON(code="", stdin="")
+
+
+class TestCompleteSetup:
+    @pytest.mark.parametrize(
+        ("org_fault", "status", "refused"),
+        [
+            ("", 201, None),
+            ("", 409, None),
+            ("", 500, "returned HTTP 500"),
+            ("POST /orgs returned HTTP 403: no", 201, "the demo organisation"),
+        ],
+        ids=["created", "already-there", "account-refused", "org-refused"],
+    )
+    def test_makes_the_org_then_the_account(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        org_fault: str,
+        status: int,
+        refused: str | None,
+    ) -> None:
+        posted: list[dict] = []
+
+        def ensure_org(*, base: str, token: str, name: str) -> HuntOrg:
+            return HuntOrg(name, name, name, True, org_fault)
+
+        def post(url: str, payload: dict, token: str = "") -> tuple[int, dict]:
+            posted.append(payload)
+            return status, {}
+
+        monkeypatch.setattr(demo, "_ensure_org", ensure_org)
+        monkeypatch.setattr(demo, "_api_post_json", post)
+
+        if refused is not None:
+            with pytest.raises(demo.DemoError, match=refused):
+                demo._complete_setup(base="http://engine", token="t")
+            return
+        demo._complete_setup(base="http://engine", token="t")
+
+        assert [p["username"] for p in posted] == [demo.DEMO_ANALYST]
+        assert posted[0]["org"] == demo.DEMO_ORG
+        assert len(posted[0]["password"]) >= 32
 
 
 class TestEventsDir:
