@@ -1235,17 +1235,9 @@ def _subset(*, held: object, wanted: object) -> bool:
 
 def _switch_on_syslog(*, base: str, token: str) -> dict:
     """Turn on the receiver's UDP and TCP syslog listener through the engine and return the reply."""
-    status, apps = _api_get_json(token=token, url=f"{base}/apps")
-    listed = apps if isinstance(apps, list) else []
-    receiver = next(
-        (
-            entry
-            for entry in listed
-            if isinstance(entry, dict) and entry.get("service") == RECEIVER_SERVICE
-        ),
-        {},
-    )
-    names = [str(name) for name in (receiver.get("instances")) or ([])]
+    # The catalogue is a few apps, so one page of the largest size holds it whole
+    status, page = _api_get_json(token=token, url=f"{base}/apps?page_size=1000")
+    names = receiver_instances(page=page)
     if (status != 200) or not (names):
         raise DemoError(
             f"the engine lists no {RECEIVER_SERVICE!r} instance (GET /apps: HTTP {status})"
@@ -1594,6 +1586,21 @@ def load_demo(*, events: Path, sources: Path) -> Demo:
         intake=intake,
         vendors=vendors,
     )
+
+
+def receiver_instances(*, page: object) -> list[str]:
+    """The dfe-receiver instances a GET /apps page lists, none when it is no page or lists no receiver."""
+    items = page.get("items") if isinstance(page, dict) else None
+    listed = items if isinstance(items, list) else []
+    receiver = next(
+        (
+            entry
+            for entry in listed
+            if isinstance(entry, dict) and entry.get("service") == RECEIVER_SERVICE
+        ),
+        {},
+    )
+    return [str(name) for name in (receiver.get("instances")) or ([])]
 
 
 def refusal(*, per_source_apps: list[str], renders: bool) -> str:
