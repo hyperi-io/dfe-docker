@@ -96,14 +96,16 @@ def _choice_line(
     """The first line `prepare` prints: the two choices, where each came from and how to override them, in the words of the command that ran it."""
     if args.caller:
         given = {"make line": "given"}
+        stack_given = {"make line": args.version_from or "given"}
         caller = args.caller
         override = f"{caller} --profile <profile> --stack <stack version>"
     else:
         given = {}
+        stack_given = {}
         caller = f"make {args.command}"
         override = f"make {args.command} PROFILE=<profile> VERSION=<stack version>"
     held = (
-        f"{version!r} ({given.get(stack_from, stack_from)})"
+        f"{version!r} ({stack_given.get(stack_from, stack_from)})"
         if version
         else "the pins already in .env"
     )
@@ -262,6 +264,11 @@ def main() -> int:
     )
     prep.add_argument("--profile", default="", help="PROFILE= from the make line")
     prep.add_argument("--version", default="", help="VERSION= from the make line")
+    prep.add_argument(
+        "--version-from",
+        default="",
+        help="with --caller, where --version came from when the person did not give it",
+    )
     actions.add_parser("running", help="exit 0 when this checkout's stack runs")
     args = parser.parse_args()
     if args.action == "running":

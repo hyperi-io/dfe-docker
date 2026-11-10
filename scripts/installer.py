@@ -586,6 +586,11 @@ def _init(*, args: argparse.Namespace, image: str) -> None:
         or (os.environ.get(STACK_KEY, "").strip())
         or (NEWEST_STACK)
     )
+    requested_from = (
+        "given"
+        if args.stack.strip()
+        else ("image default" if os.environ.get(STACK_KEY, "").strip() else "newest")
+    )
     with _settings_only():
         # A first install of the newest stack is quickstart.py's own default, which names it so
         fresh = requested == NEWEST_STACK and not (args.upgrade)
@@ -604,6 +609,8 @@ def _init(*, args: argparse.Namespace, image: str) -> None:
                 args.profile,
                 "--version",
                 version,
+                "--version-from",
+                requested_from,
             ]
         )
     _write_block()
