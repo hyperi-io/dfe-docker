@@ -312,14 +312,14 @@ INSTANCE_READY_URL = "http://localhost:9090/readyz"
 HYPERDX_PROFILE = "hyperdx"
 HYPERDX_SERVICES = [
     "dfe-dashboards",
+    "dfe-hyperdx",
     "dfe-hyperdx-proxy",
-    "hyperdx",
     "hyperdx-documentdb",
     "hyperdx-documentdb-tls",
 ]
 HYPERDX_ENGINE_ENVIRONMENT = {
     "DFE_ENGINE_HYPERDX_ENABLED": "true",
-    "DFE_ENGINE_HYPERDX_BASE_URL": "http://hyperdx:8000",
+    "DFE_ENGINE_HYPERDX_BASE_URL": "http://dfe-hyperdx:8000",
 }
 # HyperDX seeds a team's sources on the first request that carries an identity.
 HYPERDX_READY_TIMEOUT = 180

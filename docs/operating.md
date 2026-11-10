@@ -129,7 +129,7 @@ Per-port, as published in `docker-compose.yml`:
 
 dfe-fetcher and the three transforms run one instance per source. An instance publishes no host port, so their ingest, Vector API and metrics ports are reached over the Docker network. dfe-loader's `DfeTransport/Push` listener on 6000 is too. The receiver's Vector protocol on 6000 publishes only once `DFE_RECEIVER_GRPC_PORT` is set.
 
-`dfe-ui`, `hyperdx` and `hyperdx-documentdb` publish no host
+`dfe-ui`, `dfe-hyperdx` and `hyperdx-documentdb` publish no host
 ports at all -- they are reached over the Docker network, HyperDX through the
 proxy that holds both its origins. The collector publishes only `24224`, which the
 DOCKER DAEMON sends container stdout to; its OTLP ports stay on the Compose

@@ -150,7 +150,7 @@ the same way and its runtime image installs none of those libraries. Packaging t
 through the component's own committed `Dockerfile` with the binary in context, so
 the runtime image you test is the one the component ships.
 
-`dfe-engine`, `dfe-ui` and `hyperdx` skip the builder entirely and build straight
+`dfe-engine`, `dfe-ui` and `dfe-hyperdx` skip the builder entirely and build straight
 from their own Dockerfile.
 
 A service that is not a locally buildable DFE component (ClickHouse, the broker,
@@ -165,7 +165,7 @@ make a core-only profile compile the Rust components to emit a few files.
 
 Two of them can start without their component (`IMPLICIT_CONSUMERS`, same file):
 `dlq-init`, which a `depends_on` starts under every Rust app, and
-`dfe-dashboards`, which starts with `hyperdx` whether or not the engine runs.
+`dfe-dashboards`, which starts with `dfe-hyperdx` whether or not the engine runs.
 `make dev` builds the archiver or the engine for them even on a profile that runs neither, so every DFE image its stack starts comes from source.
 
 ### Some from source, the rest pinned

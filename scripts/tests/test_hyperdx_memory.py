@@ -23,7 +23,7 @@ import pytest
 
 import check_compose
 
-_HYPERDX_SERVICE = "hyperdx"
+_HYPERDX_SERVICE = "dfe-hyperdx"
 _ENGINE_SERVICE = "dfe-engine"
 _MEMORY_KEYS = ("DFE_HYPERDX_MEMORY", "DFE_SERVICE_MEMORY")
 # The startup peak, with room for the queries a search runs while it lasts.

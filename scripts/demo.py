@@ -150,9 +150,9 @@ MANIFEST_FILE = DEMO_DIR / "demo.json"
 INSTALLED_FILE = FETCH_ROOT / "installed.json"
 CONSOLE_DIR = DEMO_DIR / "console"
 # dfe-hyperdx's API as dfe-engine reaches it, which accepts the engine's own token. Everything the pack puts in the console is a plain, deletable object whose name starts with CONSOLE_PREFIX
-HYPERDX_API = "http://hyperdx:8000"
+HYPERDX_API = "http://dfe-hyperdx:8000"
 CONSOLE_PREFIX = "demo-"
-HYPERDX_SERVICE = "hyperdx"
+HYPERDX_SERVICE = "dfe-hyperdx"
 # The generator ends a loop only at --count or --duration, so the stream runs ten years unless removed
 STREAM_SECONDS = 315_360_000
 READY_TIMEOUT_SECONDS = 120.0

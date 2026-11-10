@@ -186,7 +186,7 @@ _RETIRED_HEALTH_PATHS = ("/healthz", "/health/live", "/health/ready", "/health/s
 _UI_EXPOSURE: dict[str, tuple[str, str]] = {
     "dfe-engine": ("product", "DFE_ENGINE_API_EXTERNAL"),
     "dfe-proxy": ("product", "DFE_UI_EXTERNAL"),
-    # HyperDX's ports sit on its proxy, never on the hyperdx container
+    # HyperDX's ports sit on its proxy, never on the dfe-hyperdx container
     "dfe-hyperdx-proxy": ("infra", "DFE_HYPERDX_UI_EXTERNAL"),
     "kafka-ui": ("infra", "DFE_KAFBAT_UI_EXTERNAL"),
 }
@@ -376,8 +376,8 @@ _CLICKHOUSE_DIAL_CASES: tuple[
     ),
 )
 
-# Services this project owns and therefore holds to that surface. hyperdx,
-# clickhouse, the brokers and kafka-ui are third-party and keep their own.
+# Services this project owns and therefore holds to that surface. dfe-hyperdx
+# keeps upstream HyperDX's surface, and clickhouse, the brokers and kafka-ui are third-party.
 _DFE_OWNED_SERVICES = {
     "dfe-archiver",
     "dfe-engine",
