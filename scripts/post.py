@@ -1368,32 +1368,32 @@ def _stale(*, at: float | None, now: float) -> bool:
 
 def _routing_sources(*, base: str, token: str) -> dict[str, float | None] | None:
     """Every routing source the engine holds, with when it was last written, or None when it cannot say."""
-    sources: dict[str, float | None] = {}
+    sources = {}
     page = ""
     while True:
         try:
             status, body = _api_get_json(
-                f"{base}/sources?search={ROUTING_SOURCE_PREFIX}&page_size=1000{page}",
                 token=token,
+                url=f"{base}/sources?search={ROUTING_SOURCE_PREFIX}&page_size=1000{page}",
             )
         except ApiUnreachable:
             return None
-        if status != 200 or not (isinstance(body, dict)):
+        if (status != 200) or not (isinstance(body, dict)):
             return None
-        for item in body.get("items") or []:
-            name = str(item.get("name") or "")
-            if not (ROUTING_SOURCE_PATTERN.fullmatch(name)):
+        for item in (body.get("items")) or ([]):
+            name = str((item.get("name")) or (""))
+            if not (ROUTING_SOURCE_PATTERN.fullmatch(string=name)):
                 continue
             try:
                 sources[name] = datetime.datetime.fromisoformat(
-                    str(item.get("updated_at") or "")
+                    str((item.get("updated_at")) or (""))
                 ).timestamp()
             except ValueError:
                 sources[name] = None
         next_token = body.get("next_page_token")
-        if not next_token:
+        if not (next_token):
             return sources
-        page = f"&page_token={quote(str(next_token), safe='')}"
+        page = f"&page_token={quote(safe='', string=str(next_token))}"
 
 
 def _sweep_stale_routing(*, base: str, database: str, token: str) -> None:

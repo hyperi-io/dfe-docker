@@ -20,13 +20,9 @@ type Keys = dict[str, str | list[str]]
 
 @dataclass(frozen=True, slots=True)
 class Route:
-    """One entry of a virtual host's `routes:` list.
+    """One entry of a virtual host's `routes:` list, with its values as written.
 
-    Attributes:
-        match: The route's match fields, values as written.
-        cluster: The cluster it forwards to, empty for a direct response.
-        status: The direct response's status, empty for a forwarded route.
-        timeout: The forwarded route's timeout as written, empty for Envoy's default.
+    An empty field is one the route does not set: a direct response has no cluster or timeout and a forwarded route has no status. An empty timeout is Envoy's default.
     """
 
     match: dict[str, str]
@@ -145,8 +141,8 @@ def _route(*, lines: list[str]) -> Route:
     if isinstance(forward, str) and direct is None:
         target = _flow(value=forward)
         return Route(
-            match=_flow(value=match),
             cluster=target["cluster"],
+            match=_flow(value=match),
             status="",
             timeout=target.get("timeout", ""),
         )
