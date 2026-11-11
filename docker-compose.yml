@@ -502,15 +502,17 @@ services:
       DFE_ENGINE_ENV: ${DFE_ENGINE_ENV:-production}
       DFE_ENGINE_HUNTS_DIR: /app/config/deploy-repo/config/hunts
       DFE_ENGINE_HUNTS_RULES_DIR: /app/config/deploy-repo/config/rules
+      DFE_ENGINE_SECRETS_PATH: /app/config/.secrets
       OTEL_EXPORTER_OTLP_ENDPOINT: ${DFE_OTEL_EXPORTER_ENDPOINT:-}
       OTEL_SERVICE_NAME: dfe-hunt-runner
     volumes:
+      # Only the alert destinations from the engine's file secrets backend, never the whole root.
       - type: volume
         source: dfe-engine-config
-        target: /app/config/alert-destinations
+        target: /app/config/.secrets/alert-destinations
         read_only: true
         volume:
-          subpath: alert-destinations
+          subpath: .secrets/alert-destinations
       - type: volume
         source: dfe-engine-config
         target: /app/config/deploy-repo/config
