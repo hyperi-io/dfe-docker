@@ -64,9 +64,21 @@ processors:
         statements:
           - set(resource.attributes["service.name"], attributes["fluent.tag"])
           - replace_pattern(body, "\\x1b\\[[0-9;]*m", "")
+          - merge_maps(cache, ExtractPatterns(body, "(?s)^\\[(?P<process>[A-Z-]+)\\] (?P<rest>.*)$"), "upsert") where attributes["fluent.tag"] == "dfe-hyperdx"
+          - set(attributes["process"], cache["process"]) where cache["process"] != nil
+          - set(body, cache["rest"]) where cache["rest"] != nil
           # The engine writes JSON lines with a level field
           - merge_maps(cache, ParseJSON(body), "upsert") where IsMatch(body, "^\\{")
           - set(severity_text, ToUpperCase(cache["level"])) where IsString(cache["level"])
+          - set(severity_text, "TRACE") where cache["level"] == 10
+          - set(severity_text, "DEBUG") where cache["level"] == 20
+          - set(severity_text, "INFO") where cache["level"] == 30
+          - set(severity_text, "WARN") where cache["level"] == 40
+          - set(severity_text, "ERROR") where cache["level"] == 50
+          - set(severity_text, "FATAL") where cache["level"] == 60
+          - set(time_unix_nano, Int(cache["time"]) * 1000000) where cache["process"] != nil and cache["time"] != nil
+          - set(body, cache["msg"]) where cache["process"] != nil and IsString(cache["msg"])
+          - set(body, Format("%s %s %v %vms", [cache["req"]["method"], cache["req"]["url"], cache["res"]["statusCode"], cache["responseTime"]])) where cache["process"] != nil and cache["req"] != nil and cache["res"] != nil
           # A Rust line's timestamp and level move to their own columns
           - merge_maps(cache, ExtractPatterns(body, "(?s)^(?P<line_time>\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(?:\\.\\d+)?Z)\\s+(?P<line_level>TRACE|DEBUG|INFO|WARN|ERROR)\\s+(?P<line_message>.*)$"), "upsert") where severity_text == ""
           - set(time, Time(cache["line_time"], "%Y-%m-%dT%H:%M:%SZ")) where cache["line_time"] != nil
