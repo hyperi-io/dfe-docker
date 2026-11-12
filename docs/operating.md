@@ -25,7 +25,7 @@ The engine's API requires a login. `make init` mints two passwords into `env/eng
 
 The engine issues `admin` with a forced change at first login, which `make post` makes and records back in `env/engine.env`. Rotate it by changing the value in `env/engine.env` and running `make up`. The value the engine last issued or the account's current password re-issues nothing, so a restart never undoes a change.
 
-The engine refuses to start when `DFE_ENGINE_AUTH_LOCAL_ADMIN_PASSWORD` is empty or the shipped default and `DFE_ENGINE_ENV` is not a dev posture. An unset `DFE_ENGINE_ENV` counts as `production`, so only a `.env` that says `dev` gets to run on the shipped password.
+The engine refuses to start when `DFE_ENGINE_AUTH_LOCAL_ADMIN_PASSWORD` is empty or the shipped default and `DFE_ENGINE_ENV` is not a dev environment. An unset `DFE_ENGINE_ENV` counts as `production`, so only a `.env` that says `dev` gets to run on the shipped password.
 
 `make init` and `make up` also write `access-summary.md` (0600, gitignored) with both minted passwords in plaintext. Retire the bootstrap admin from the console wizard's last step or `POST /api/v1/auth/setup/retire-admin` once your own admin exists, then delete `DFE_ENGINE_AUTH_LOCAL_ADMIN_PASSWORD` from `env/engine.env`. The account stays disabled and is never reseeded. Keep the break-glass password offline and delete both plaintexts, including that file: the engine keeps only the hash.
 
@@ -263,7 +263,7 @@ Two properties worth internalising. Limits are ceilings, not reservations --
 nothing is pre-allocated, so an idle service costs nothing. And Docker permits an
 equal amount of **swap** alongside a memory limit, so a 3G limit can become 3G
 RAM plus 3G swap on a swap-enabled host. Set `memswap_limit` equal to the memory
-limit per service if you need a genuinely hard cap.
+limit per service if you need a hard cap.
 
 Reservations are omitted deliberately: only memory maps outside Swarm, and a soft
 floor that half-applies reads as configuration doing more than it does. The
@@ -468,7 +468,7 @@ The other outcomes are as informative as the PASS:
   back, so the schema may not carry `_tags`. It refuses to claim a verification
   it did not make.
 - **SKIP** -- the active profile has no ingest component at all (loader-only).
-  There is nothing to prove end to end.
+  There is no ingest path to send a row through.
 - **FAIL, no otel schema** -- the collector is in the profile but never wrote its
   tables. It cannot reach ClickHouse; read its logs.
 - **FAIL, no fresh rows** -- the tables exist and nothing recent is in them, so
