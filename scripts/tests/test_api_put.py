@@ -126,6 +126,30 @@ class TestHttpPutJson:
         assert time.monotonic() - started < HOLD_SECONDS
         assert _Recording.received[0][0] == "PUT"
 
+    @pytest.mark.parametrize(
+        ("status", "answer"),
+        [(200, b'{"ok": true}'), (409, b'{"code": "match_conflict"}')],
+        ids=["ok", "refused"],
+    )
+    def test_inside_the_stack_a_request_runs_here_with_no_docker(
+        self,
+        answer: bytes,
+        engine_url: str,
+        monkeypatch: pytest.MonkeyPatch,
+        status: int,
+    ) -> None:
+        _Recording.answer = answer
+        _Recording.status = status
+        monkeypatch.setenv("DFE_IN_STACK", "true")
+        monkeypatch.setenv("PATH", "")
+
+        got, body = post._exec_request(
+            method="PUT", payload={"a": 1}, timeout=5, token="t", url=engine_url
+        )
+
+        assert (got, json.loads(body)) == (status, json.loads(answer))
+        assert _Recording.received[0][:3] == ("PUT", ROUTE, "Bearer t")
+
     def test_post_sends_its_own_method_through_the_same_path(
         self, engine_url: str
     ) -> None:

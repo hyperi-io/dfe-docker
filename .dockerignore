@@ -24,6 +24,7 @@
 !config/
 !deployment.example.yaml
 !docker-compose.yml
+!docker/dfe-docker.requirements.txt
 !env.example/
 !redpanda/
 !resources/

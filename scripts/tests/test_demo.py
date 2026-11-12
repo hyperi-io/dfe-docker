@@ -16,6 +16,7 @@ import pytest
 import yaml
 
 import demo
+import demo_seed
 from _common import SOURCE_NAME
 from post import HuntOrg
 
@@ -652,6 +653,51 @@ class TestEnginePython:
         with pytest.raises(demo.DemoError, match="is not running"):
             ENGINE_PYTHON(code="", stdin="")
 
+    @pytest.mark.parametrize(
+        ("text", "parsed", "refused"),
+        [
+            ("source: demo-syslog\n", {"source": "demo-syslog"}, False),
+            ("when: 2026-11-12\n", None, True),
+            ("a: [\n", None, True),
+        ],
+        ids=["mapping", "date-refused", "broken-yaml"],
+    )
+    def test_reads_yaml_on_its_own_interpreter_inside_the_stack(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        parsed: dict | None,
+        refused: bool,
+        text: str,
+    ) -> None:
+        def no_container(*, service: str) -> str:
+            return ""
+
+        monkeypatch.setattr(demo, "_container", no_container)
+        monkeypatch.setenv("DFE_IN_STACK", "true")
+
+        result = ENGINE_PYTHON(code=demo.YAML_TO_JSON, stdin=text)
+
+        assert (result.returncode != 0) is refused
+        if not (refused):
+            assert yaml.safe_load(result.stdout) == parsed
+
+
+class TestPrunerCommand:
+    def test_prunes_the_committed_archive_sources_to_the_manifest(self) -> None:
+        archive = demo._read_manifest(path=demo.MANIFEST_FILE)["archive"]
+
+        command = demo.pruner_command(archive=archive, tool="/archive.py")
+
+        assert command[:4] == ["python3", "-I", "/archive.py", "prune"]
+        flags = dict(zip(command[4::2], command[5::2], strict=True))
+        assert flags == {
+            "--root": demo.ARCHIVE_ROOT,
+            "--sources": ",".join(archive["sources"]),
+            "--interval-minutes": str(archive["sweep_minutes"]),
+            "--max-age-minutes": str(archive["retention_minutes"]),
+            "--max-megabytes": str(archive["max_megabytes"]),
+        }
+
 
 class TestCompleteSetup:
     @pytest.mark.parametrize(
@@ -1162,3 +1208,26 @@ class TestRowGains:
         now: dict[str, int | None],
     ) -> None:
         assert demo.row_gains(before=before, now=now) == gained
+
+
+class TestDemoSeed:
+    @pytest.mark.parametrize(
+        "argv",
+        [["sources"], ["console"], ["feed", "--feed", "/f", "--generator", "g.py"]],
+        ids=["sources", "console", "feed"],
+    )
+    def test_refuses_to_run_outside_the_published_demo(
+        self, argv: list[str], monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.delenv("DFE_IN_STACK", raising=False)
+
+        assert demo_seed.main(argv) == 1
+
+    @pytest.mark.parametrize("password", ["", "  "], ids=["unset", "blank"])
+    def test_needs_the_break_glass_password_to_log_in(
+        self, monkeypatch: pytest.MonkeyPatch, password: str
+    ) -> None:
+        monkeypatch.setenv(demo_seed.BREAKGLASS_PASSWORD_KEY, password)
+
+        with pytest.raises(demo.DemoError, match="is unset"):
+            demo_seed._token(base="http://dfe-engine:8000/api/v1")

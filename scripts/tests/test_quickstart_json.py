@@ -14,7 +14,7 @@ import pytest
 
 import quickstart_json
 import resolve_profile
-from _common import SERVICE_PROFILES_FILE
+from _common import FIRST_LOGIN_PASSWORD, SERVICE_PROFILES_FILE
 
 
 @pytest.mark.parametrize(
@@ -56,8 +56,9 @@ def test_a_release_document_from_the_committed_files() -> None:
         text=SERVICE_PROFILES_FILE.read_text(encoding="utf-8")
     )["profiles"]
 
+    default = quickstart_json.default_profile()
     document = quickstart_json.quickstart(
-        default=quickstart_json.default_profile(),
+        default=default,
         image="ghcr.io/hyperi-io/dfe-docker",
         profiles=profiles,
         stack_version="2.2.2",
@@ -65,14 +66,35 @@ def test_a_release_document_from_the_committed_files() -> None:
     )
 
     assert document["schema"] == 1
-    assert document["kind"] == "image"
-    assert [entry["name"] for entry in document["profiles"]] == list(profiles)
-    assert sum(entry["default"] for entry in document["profiles"]) == 1
-    assert {entry["transport"] for entry in document["profiles"]} <= {"grpc", "kafka"}
-    for key in ("up", "demo"):
-        assert document[key]["pinned"][0].endswith("dfe-docker:9.9.9 init")
-        assert document[key]["latest"][0].endswith("dfe-docker:latest init")
-        assert all(line.startswith("docker ") for line in document[key]["latest"])
+    assert document["kind"] == "compose"
+    assert [entry["name"] for entry in document["profiles"]] == [default]
+    assert document["profiles"][0]["default"] is True
+    assert document["profiles"][0]["transport"] in {"grpc", "kafka"}
+    assert {key: document[key] for key in ("up", "demo")} == {
+        "up": {
+            "latest": [
+                "docker compose -f oci://ghcr.io/hyperi-io/dfe-docker:compose up -d"
+            ],
+            "pinned": [
+                "docker compose -f oci://ghcr.io/hyperi-io/dfe-docker:compose-9.9.9 up -d"
+            ],
+        },
+        "demo": {
+            "latest": [
+                "docker compose -f oci://ghcr.io/hyperi-io/dfe-docker:demo up -d"
+            ],
+            "pinned": [
+                "docker compose -f oci://ghcr.io/hyperi-io/dfe-docker:demo-9.9.9 up -d"
+            ],
+        },
+    }
+    assert quickstart_json._version_key(document["min_compose"]) >= (2, 34, 0)
+    assert document["login"] == f"admin / {FIRST_LOGIN_PASSWORD}"
+    assert "dfe-docker:compose down`" in document["notes"]["up"]
+    assert "dfe-docker:demo down -v`" in document["notes"]["demo"]
+    for note in document["notes"].values():
+        assert FIRST_LOGIN_PASSWORD in note
+        assert ";" not in note
 
 
 def test_an_unknown_default_profile_is_refused() -> None:

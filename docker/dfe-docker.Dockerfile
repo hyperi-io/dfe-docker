@@ -34,6 +34,11 @@ COPY --from=cosign /ko-app/cosign /usr/local/bin/cosign
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1
 
+# The published demo's helpers read its source files with PyYAML, installed from wheels whose hashes the file pins
+COPY docker/dfe-docker.requirements.txt /tmp/requirements.txt
+RUN pip install --no-cache-dir --root-user-action=ignore --only-binary=:all: --require-hashes -r /tmp/requirements.txt \
+    && rm /tmp/requirements.txt
+
 WORKDIR /opt/dfe-docker
 COPY . .
 

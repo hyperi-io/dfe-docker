@@ -18,13 +18,25 @@ come out the other. Everything else can wait.
 
 ## What you need
 
-- Docker and Docker Compose 2.26 or newer
-- make, git and Python 3 (standard library only), for a clone. The dfe-docker image below needs none of them
+- Docker Engine 26.0 and Docker Compose 2.34 or newer for the one-line installs, Compose 2.26 or newer for the rest
+- make, git and Python 3 (standard library only), for a clone. Nothing under "With only Docker" needs them
 - Network access to `ghcr.io/hyperi-io`, where the images are public and pull with no login
 
 ## With only Docker
 
-In an empty folder. On Windows, use PowerShell: `${PWD}` works there and in bash and zsh, but not in cmd.exe.
+```bash
+docker compose -f oci://ghcr.io/hyperi-io/dfe-docker:compose up -d
+```
+
+That is the `single-kafka` stack, as Compose project `dfe`, from a compose file each release publishes beside the dfe-docker image (`:compose-<version>` keeps to one release). Point your browser to http://localhost:3000 and log in as `admin` with password `dfe-first-login`, which the console makes you change at first login. The file names no secret but that first-login password: the stack mints the rest at first start into a volume of its own, which `down -v` deletes. Every port it publishes listens on 127.0.0.1 only. `docker compose -f oci://ghcr.io/hyperi-io/dfe-docker:compose down` stops it and keeps the data.
+
+```bash
+docker compose -f oci://ghcr.io/hyperi-io/dfe-docker:demo up -d
+```
+
+The demo is the same stack as its own project, `dfe-demo`, and nothing to set up. At first start it seeds the demo's sources, dashboards and saved searches, then streams the Cisco ASA and FortiGate syslog below without stopping, beside two fetchers. It takes the same ports, so stop the stack above first. `docker compose -f oci://ghcr.io/hyperi-io/dfe-docker:demo down -v` removes all of it.
+
+For a folder you can edit, the dfe-docker image sets one up holding the compose files, config and `.env`, which takes any profile and setting. In an empty folder. On Windows, use PowerShell: `${PWD}` works there and in bash and zsh, but not in cmd.exe.
 
 ```bash
 docker run --rm -v "${PWD}:/dfe" ghcr.io/hyperi-io/dfe-docker init
