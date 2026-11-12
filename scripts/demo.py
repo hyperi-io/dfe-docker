@@ -13,7 +13,7 @@ The Sources are the POST /sources bodies under resources/demo/sources, one to a 
 
 A Source the engine lacks is created without its `state`, because a Source created dormant gets no table. One the engine holds whose working version differs from its file is written over with the file. Each is then deployed where that is outstanding and set to the `state` its file names, active when it names none. A dormant vendor table keeps filling from the intake with no per-vendor transform running.
 
-The receiver's syslog listener, UDP and TCP on 514, is switched on through the engine and `make apply` recreates what the engine says has to change along with any intake or fetcher instance not yet healthy. A fetcher the profile cannot run or the engine cannot set up is skipped with a warning, while an intake or vendor step that fails stops the run.
+The receiver's syslog listener, UDP and TCP on 514, is switched on through the engine and `make apply` recreates what the engine says has to change along with the intake's instance or the fetcher where either is not yet healthy. A fetcher the profile cannot run or the engine cannot set up is skipped with a warning, while an intake or vendor step that fails stops the run.
 
 The generator is dfe-transform-elastic's own replay script and fixtures, read from DFE_SRC_ROOT/dfe-transform-elastic on a `make dev` stack and otherwise fetched shallow at the tag DFE_TRANSFORM_ELASTIC_VERSION pins so the lines match the detector that runs. Each vendor's resources/demo/events/<source>/ replaces the fixtures of the package its variant names. It runs detached in a pinned Python container on the stack's network, looping raw syslog at dfe-receiver until `make demo-stop` or `make down` removes it. A second run replaces it.
 
@@ -137,14 +137,22 @@ GENERATOR_INPUTS = ("src/detect", FIXTURES)
 FETCH_ROOT = REPO_ROOT / ".tmp" / "demo"
 ARCHIVER_SERVICE = "dfe-archiver"
 # Where dfe-archiver writes (file:// in config/archiver/kafka.yaml), which throwaway containers mount to count, show, prune and purge what it archived
-ARCHIVE_MOUNT = "/var/data/archive"
+ARCHIVE_MOUNT = "/var/lib/dfe-archiver/archive"
 ARCHIVE_STORAGE = (
     '{{range .Mounts}}{{if eq .Destination "' + ARCHIVE_MOUNT + '"}}'
     "{{if .Name}}{{.Name}}{{else}}{{.Source}}{{end}}{{end}}{{end}}"
 )
 ARCHIVE_TIMEOUT_SECONDS = 180.0
-# Where a fetcher keeps its cursor, one directory per instance, which outlives the instance and would start a re-created source from the old window
+# Where the fetcher keeps its cursors, files per source, which outlive the source and would start a re-created one from the old window
 CURSOR_MOUNT = "/var/lib/dfe-fetcher"
+# Removes the cursor files of the sources named after the fetcher's directory, run with the cursor volume at /c
+CURSOR_REMOVER = (
+    "import pathlib, sys\n"
+    "root = pathlib.Path('/c', sys.argv[1])\n"
+    "for name in sys.argv[2:]:\n"
+    "    for path in root.glob(f'{sys.argv[1]}.{name}.*'):\n"
+    "        path.unlink()\n"
+)
 CURSOR_STORAGE = (
     '{{range .Mounts}}{{if eq .Destination "' + CURSOR_MOUNT + '"}}'
     "{{if .Name}}{{.Name}}{{else}}{{.Source}}{{end}}{{end}}{{end}}"
@@ -268,11 +276,9 @@ def _await_archive(*, image: str, sources: list[str]) -> int | None:
         time.sleep(LAND_INTERVAL_SECONDS)
 
 
-def _cursor_storage(*, name: str) -> str | None:
-    """The volume holding a fetcher source's cursor, None when the source runs no fetcher instance."""
-    container = _container(
-        service=instances.service_name(instance=name, service=FETCHER_SERVICE)
-    )
+def _cursor_storage() -> str | None:
+    """The volume holding the fetcher's cursors, None when no fetcher runs."""
+    container = _container(service=FETCHER_SERVICE)
     if not (container):
         return None
     mounted = _docker(
@@ -554,24 +560,6 @@ def _current_deployed(*, held: dict) -> bool:
     return bool(deployed) and deployed == held.get("current")
 
 
-def _declared_fetchers(
-    *, declared: dict[str, list[str]], fetchers: list[dict]
-) -> list[dict]:
-    """The fetcher sources the engine declared an instance for, warning for and skipping the rest."""
-    kept = []
-    for body in fetchers:
-        name = body["source"]
-        if name in declared.get(FETCHER_SERVICE, []):
-            kept.append(body)
-            continue
-        instance = instances.service_name(instance=name, service=FETCHER_SERVICE)
-        _print(
-            msg=f"WARNING fetcher source {name!r} is skipped: dfe-engine declared no "
-            f"{instance!r} instance for it"
-        )
-    return kept
-
-
 def _deploy(*, base: str, name: str, token: str) -> dict:
     """Deploy one source, which runs its DDL and creates its topics, then return the reply."""
     status, answer = _api_post_json(
@@ -632,7 +620,7 @@ def _ensure_fetchers(
         names = ", ".join(repr(body["source"]) for body in fetchers)
         _print(
             msg=f"WARNING this profile runs no {FETCHER_SERVICE!r}, so fetcher "
-            f"source(s) {names} are skipped. single-kafka and single-grpc run it"
+            f"source(s) {names} are skipped. single-kafka runs it"
         )
         return [], []
     kept = []
@@ -960,11 +948,8 @@ def _install(*, args: argparse.Namespace, manifest: dict) -> int:
     declared = instances.declared()
     if demo.intake["source"] not in declared.get(TRANSFORM_APP, []):
         raise DemoError(f"dfe-engine declared no {instance!r} instance for the intake")
-    fetchers = _declared_fetchers(declared=declared, fetchers=fetchers)
-    pollers = [
-        instances.service_name(instance=body["source"], service=FETCHER_SERVICE)
-        for body in fetchers
-    ]
+    # Every fetcher source runs in the one dfe-fetcher, from the file dfe-engine merges
+    pollers = [FETCHER_SERVICE] if fetchers else []
     services = runnable(
         declared=set(instances.services(instances=declared)),
         hinted=hinted_services(replies=replies),
@@ -1096,19 +1081,14 @@ def _remove_pack(*, args: argparse.Namespace, manifest: dict) -> None:
     manifest = {**manifest, "sources": _installed_sources(manifest=manifest)}
     _stop_stream(container=args.container)
     _stop_stream(container=args.pruner)
-    cursors = {
-        name: storage
-        for name in manifest["sources"]
-        if (storage := _cursor_storage(name=name))
-    }
-    # A fetcher or transform left running would recreate the topics the engine deletes with its source
+    cursors = _cursor_storage()
+    # A transform left running would recreate the topics the engine deletes with its source. The fetcher drops a deleted source on reload
     for name in manifest["sources"]:
-        for app in (FETCHER_SERVICE, TRANSFORM_APP):
-            running = _container(
-                service=instances.service_name(instance=name, service=app)
-            )
-            if running:
-                _docker(args=["rm", "--force", running])
+        running = _container(
+            service=instances.service_name(instance=name, service=TRANSFORM_APP)
+        )
+        if running:
+            _docker(args=["rm", "--force", running])
     deleted = False
     if not (_container(service=ENGINE_SERVICE)):
         _print(msg="no engine container runs, so there are no sources to remove")
@@ -1138,20 +1118,21 @@ def _remove_pack(*, args: argparse.Namespace, manifest: dict) -> None:
         except DemoError as error:
             _print(msg=f"WARNING {error}")
         INSTALLED_FILE.unlink(missing_ok=True)
-        for name, storage in cursors.items():
-            directory = instances.service_name(instance=name, service=FETCHER_SERVICE)
+        if cursors is not None:
+            # Each cursor file is `<instance_id>.<source>...`, and dfe-engine binds the one fetcher's instance_id to its app name
             _docker(
                 args=[
                     "run",
                     "--rm",
                     "--volume",
-                    f"{storage}:/c",
+                    f"{cursors}:/c",
                     args.image,
                     "python3",
                     "-I",
                     "-c",
-                    "import shutil, sys; shutil.rmtree('/c/' + sys.argv[1], ignore_errors=True)",
-                    directory,
+                    CURSOR_REMOVER,
+                    FETCHER_SERVICE,
+                    *manifest["sources"],
                 ]
             )
     storage = _archive_storage()
@@ -1679,8 +1660,8 @@ def refusal(*, per_source_apps: list[str], renders: bool) -> str:
         )
     if TRANSFORM_APP not in per_source_apps:
         return (
-            f"this profile runs no {TRANSFORM_APP!r}. Use single-kafka or single-grpc "
-            f"(DFE_PROFILE in .env), which run it per source"
+            f"this profile runs no {TRANSFORM_APP!r}. Use single-kafka "
+            f"(DFE_PROFILE in .env), which runs it per source"
         )
     return ""
 

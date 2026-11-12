@@ -216,7 +216,7 @@ def _refusal(*, apps: list[str], name: str, running: str) -> str:
         )
     return (
         f"profile {name!r} runs no {TRANSFORM_APP!r}, which the demo needs. Use "
-        "`make demo PROFILE=single-kafka` or `make demo PROFILE=single-grpc`"
+        "`make demo PROFILE=single-kafka`"
     )
 
 

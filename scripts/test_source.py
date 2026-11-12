@@ -172,8 +172,8 @@ def walk(
 ) -> int:
     """Run the source walk, then remove the containers of the sources it deleted.
 
-    A source the walk creates gets a container of its own, its transform or its
-    fetcher, which the engine stops declaring when the walk deletes the source.
+    A transformed source the walk creates gets a container of its own, which the
+    engine stops declaring when the walk deletes the source.
     A delete names no command, so that container keeps running until an apply
     removes it, and the next run that reads the stack finds it.
 

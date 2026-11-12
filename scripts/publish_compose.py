@@ -19,7 +19,7 @@ Each is generated, never edited. The tree the dfe-docker image carries is copied
 - every published port binds to 127.0.0.1, and no profile, env_file or interpolation is left, so `-f oci://` has nothing to ask.
 - the admin's issued password is FIRST_LOGIN_PASSWORD, the one value the file names on purpose, which the engine makes its owner replace at first login.
 
-The stack file is project `dfe`. The demo file is that model with the demo's per-source instances declared, its own project `dfe-demo` and containers prefixed `demo-`, plus the demo overlay: one-shots that seed its sources and console through scripts/demo_seed.py, the syslog stream `make demo` runs and the archive pruner. dfe-receiver and the instances start once the sources exist. secrets-init and the demo's helpers run the dfe-docker image --image names.
+The stack file is project `dfe`. The demo file is that model with the intake's transform instance declared, its own project `dfe-demo` and containers prefixed `demo-`, plus the demo overlay: one-shots that seed its sources and console through scripts/demo_seed.py, the syslog stream `make demo` runs and the archive pruner. dfe-receiver, dfe-fetcher and the instance start once the sources exist. Each file tells the engine which per-source instances it runs (DFE_ENGINE_DEPLOYMENT_HOSTED_INSTANCES), none for the stack file, so a source needing any other is refused at save. secrets-init and the demo's helpers run the dfe-docker image --image names.
 
 `--check FILE...` reads published files and exits 1 on any bind mount, env_file, profile, interpolation, literal secret or port off 127.0.0.1, and with `--require-digests` on any image not pinned by digest.
 
@@ -75,6 +75,13 @@ ENGINE_SERVICE = "dfe-engine"
 RECEIVER_SERVICE = "dfe-receiver"
 # Where the engine writes env files and instance indexes for a checkout's make to read, which no published install has
 APP_ENV_DIR_KEY = "DFE_ENGINE_DEPLOYMENT_APP_ENV_DIR"
+# The per-source instances a published file declares a container for, which the engine accepts a source for and refuses any other
+HOSTED_INSTANCES_KEY = "DFE_ENGINE_DEPLOYMENT_HOSTED_INSTANCES"
+# What the engine's login page tells an operator of a published install, which has no `make creds`
+CREDENTIAL_COMMAND_KEY = "DFE_ENGINE_DEPLOYMENT_CREDENTIAL_COMMAND"
+CREDENTIAL_COMMAND = f"log in with the first-login password {FIRST_LOGIN_PASSWORD}, which the console makes you change"
+# What the engine names to apply a change a running service cannot take in place, which a published install runs from the file's own OCI reference
+APPLY_COMMAND_KEY = "DFE_ENGINE_DEPLOYMENT_APPLY_COMMAND"
 ENV_DIR_NAME = "env"
 # The one host path the stack binds, which the collector reads the host's CPUs from
 HOST_PROC = "/proc"
@@ -285,11 +292,19 @@ def demo_roles(*, events: Path, sources: Path) -> dict[str, list[str]]:
 
 
 def demo_instances(*, roles: Mapping[str, Sequence[str]]) -> dict[str, list[str]]:
-    """The per-source instances the engine declares for the demo's sources: the intake's transform and one per fetcher."""
-    declared = {demo.TRANSFORM_APP: list(roles["intake"])}
-    if roles["fetcher"]:
-        declared[FETCHER_SERVICE] = list(roles["fetcher"])
-    return declared
+    """The per-source containers the demo runs: the intake's transform. Its fetcher sources share the stack's one dfe-fetcher."""
+    return {demo.TRANSFORM_APP: list(roles["intake"])}
+
+
+def apply_command(*, tag: str) -> str:
+    """The command that recreates one service of the file published under `tag`, `{service}` where the engine puts its name."""
+    return f"docker compose -f oci://{DEFAULT_IMAGE}:{tag} up -d --force-recreate {{service}}"
+
+
+def demo_hosted(*, roles: Mapping[str, Sequence[str]]) -> str:
+    """The engine's hosted-instance setting for the demo: the intake, and each vendor, which is created active and then set dormant."""
+    names = [*roles["intake"], *roles["vendor"]]
+    return f"{demo.TRANSFORM_APP}={','.join(names)}"
 
 
 def minted_secrets(*, tree: Path) -> dict[str, str]:
@@ -445,6 +460,10 @@ def published(*, container_prefix: str, model: Mapping, name: str, tree: Path) -
         }
         if env_dir:
             environment[APP_ENV_DIR_KEY] = ""
+        if service_name == ENGINE_SERVICE:
+            environment[CREDENTIAL_COMMAND_KEY] = CREDENTIAL_COMMAND
+            environment[HOSTED_INSTANCES_KEY] = ""
+            environment[APPLY_COMMAND_KEY] = apply_command(tag=PUBLISHED_STACK_TAG)
         if "environment" in original or env_dir:
             service["environment"] = environment
         if "ports" in original:
@@ -486,6 +505,8 @@ def demo_overlay(
     demo_model = json.loads(json.dumps(model))
     services = demo_model["services"]
     engine_env = services[ENGINE_SERVICE].get("environment", {})
+    engine_env[HOSTED_INSTANCES_KEY] = demo_hosted(roles=roles)
+    engine_env[APPLY_COMMAND_KEY] = apply_command(tag=PUBLISHED_DEMO_TAG)
     contract_image = str(services[TRANSFORM_ELASTIC_CONTRACT]["image"])
     sidecar = services[SIDECAR_SERVICE]
     helper = {
@@ -594,7 +615,12 @@ def demo_overlay(
             }
         ],
     }
-    held = [RECEIVER_SERVICE, *instances.services(demo_instances(roles=roles))]
+    # The one fetcher starts on a file already holding the demo's fetcher sources
+    held = [
+        RECEIVER_SERVICE,
+        *([FETCHER_SERVICE] if roles["fetcher"] else []),
+        *instances.services(demo_instances(roles=roles)),
+    ]
     for service in held:
         if service not in services:
             raise PublishError(

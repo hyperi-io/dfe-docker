@@ -1,6 +1,6 @@
 # Project:   dfe-docker
 # File:      resources/seed/sources/aws-cloudtrail.yaml
-# Purpose:   Starter AWS CloudTrail source, polled by its own dfe-fetcher instance
+# Purpose:   Starter AWS CloudTrail source, polled by the stack's one dfe-fetcher
 # Language:  YAML
 #
 # License:   BUSL-1.1

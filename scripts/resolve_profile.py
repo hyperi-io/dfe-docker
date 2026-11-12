@@ -56,6 +56,7 @@ from _common import (  # noqa: E402
     SERVICE_CONFIG_FILE,
     SERVICE_PROFILES_FILE,
     SERVICE_TO_RENDERED_CONFIG_VAR,
+    SHARED_SOURCE_APPS,
     _load_dotenv,
     _print,
     _rel_path,
@@ -269,8 +270,8 @@ APP_CONFIG_VOLUME = "dfe-app-config"
 ENGINE_CONTENT_DIR = "/app/content"
 ENGINE_CONTRACT_DIR_VAR = "DFE_ENGINE_CONTRACT_DIR"
 ENGINE_CONTRACT_SUBDIR = "contract"
-# The per-source apps are absent: dfe-engine starts one instance per source, never a profile.
-# A profile runs each one's with its PER_SOURCE_APP_KEYS key set true.
+# The per-source apps are absent: a profile runs each with its PER_SOURCE_APP_KEYS key set true,
+# a SHARED_SOURCE_APPS one as its committed service and any other one instance per source.
 SERVICES = [
     "dfe-archiver",
     "dfe-loader",
@@ -756,7 +757,7 @@ def main(argv: Sequence[str] = ()) -> int:
         instance_services = _instance_services(
             container_logs=footprint["otel"]
             and _env_truthy(default=True, name="DFE_CONTAINER_LOGS_ENABLED"),
-            enabled=source_apps,
+            enabled=[app for app in source_apps if app not in SHARED_SOURCE_APPS],
             local=local,
             profile=active_profile,
             renders=renders,
@@ -766,6 +767,7 @@ def main(argv: Sequence[str] = ()) -> int:
         # and the depends_on of whatever needs it. DFE_SERVICES is also what
         # build_dev_images.py builds and what `SERVICES=` narrows against.
         service_list = sorted(services.keys())
+        service_list.extend(app for app in source_apps if app in SHARED_SOURCE_APPS)
         # A generated instance service nothing names is a container never started.
         service_list.extend(instance_services)
         if kafka_ui_enabled:

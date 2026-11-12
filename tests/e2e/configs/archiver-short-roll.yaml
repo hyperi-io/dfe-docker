@@ -7,7 +7,7 @@
 # Copyright: (c) 2026 HYPERI PTY LIMITED
 
 archive:
-  destination: file:///var/data/archive
+  destination: file:///var/lib/dfe-archiver/archive
   roll_interval_secs: 10
 
 transport: kafka

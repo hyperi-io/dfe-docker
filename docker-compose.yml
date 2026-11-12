@@ -165,11 +165,11 @@ services:
     volumes:
       - ./config/${DFE_ARCHIVER_CONFIG:-archiver/kafka.yaml}:/etc/dfe/archiver.yaml:ro
       - dfe-app-config:/etc/dfe/apps:ro
-      - archiver-data:/var/data/archive
+      - archiver-data:/var/lib/dfe-archiver/archive
       - dlq-spool:/var/spool/dfe
 
   # ============================================================
-  # dfe-fetcher: only its per-source instances run
+  # dfe-fetcher: one container polls every fetcher source
   # ============================================================
 
   dfe-fetcher:
@@ -187,6 +187,8 @@ services:
       DFE_FETCHER_VERSION_CHECK__ENABLED: ${DFE_VERSION_CHECK_ENABLED:-true}
       DFE_FETCHER_VERSION_CHECK__SEND_INSTANCE_ID: ${DFE_VERSION_CHECK_SEND_INSTANCE_ID:-true}
       OTEL_SERVICE_NAME: dfe-fetcher
+    # dfe-engine merges every fetcher source into this one file
+    command: ["--config", "/etc/dfe/apps/dfe-fetcher/fetcher.yaml"]
     depends_on:
       dfe-engine:
         condition: service_healthy

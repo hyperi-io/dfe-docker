@@ -257,7 +257,7 @@ A name in `SERVICES` that is not part of the resolved stack is a hard error, not
 
 | Target | What it creates |
 |---|---|
-| `make sources` | `aws-cloudtrail`, `aws-guardduty` and `aws-securityhub` (each polled by its own dfe-fetcher instance) and `syslog`, which takes any record sent to the receiver with `_source: syslog`. Each lands in `dfe.<source>`. Sources a profile cannot run are skipped, so [`slim-grpc`](profiles.md#which-profile-runs-what) gets `syslog` alone |
+| `make sources` | `aws-cloudtrail`, `aws-guardduty` and `aws-securityhub` (polled by the one dfe-fetcher, which takes a single `aws` source until hyperi-io/dfe-fetcher#289, so the other two are skipped with the engine's reason) and `syslog`, which takes any record sent to the receiver with `_source: syslog`. Each lands in `dfe.<source>`. Sources a profile cannot run are skipped, so [`slim-grpc`](profiles.md#which-profile-runs-what) gets `syslog` alone |
 | `make rules` | `aws-guardduty-high-severity`, matching a GuardDuty finding rated 7 or above |
 | `make hunts` | The org, that rule and the hunt `aws-guardduty-high-severity` once `dfe.aws-guardduty` exists, running it every five minutes into `dfe.detection` |
 | `make events` | Two fake GuardDuty findings from `resources/seed/events/`, rated 8.0 and 2.0, so the hunt's next run detects the first and leaves the second |
@@ -270,7 +270,7 @@ A run of any other target creates only what the engine lacks and leaves an objec
 
 Every target but `make events` logs in as `admin` with `DFE_ENGINE_AUTH_LOCAL_ADMIN_PASSWORD` from `env/engine.env` and replaces an issued password as `make post` does. Once the setup wizard has retired `admin`, they ask at the terminal for an account that can write what the target seeds. They ask once per run and store the login nowhere. Without a terminal they stop. An account still on the password it was issued has to change it in the console first.
 
-Each fetcher source runs in its own container, which the engine declares but does not start. The deploy prints the command it needs, such as `recreate required: make apply SERVICES=dfe-fetcher-aws-guardduty`. Until then `make post` leaves the instance out of its metrics check. The fetchers read `AWS_ACCESS_KEY_ID` and `AWS_SECRET_ACCESS_KEY` from `env/fetcher.env` and cannot fetch until both are set. Compose reads that file only when it creates a container, so set the keys before `make apply`, or run it again after setting them.
+Every fetcher source runs in the one `dfe-fetcher` container, from the file the engine merges. The deploy prints the command that applies a source the running fetcher cannot take in place, such as `restart required: make apply SERVICES=dfe-fetcher`. The fetcher reads `AWS_ACCESS_KEY_ID` and `AWS_SECRET_ACCESS_KEY` from `env/fetcher.env` and cannot fetch until both are set. Compose reads that file only when it creates a container, so set the keys before `make apply`, or run it again after setting them.
 
 ## Seeding orgs and accounts
 

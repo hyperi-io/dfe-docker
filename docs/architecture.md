@@ -73,7 +73,7 @@ Each transform reads a topic and writes a topic on Kafka but pushes to the loade
 
 ## What each profile runs
 
-`slim-*` is the core data path alone: receiver, loader, engine, UI and dfe-hyperdx. `single-*` adds the per-source apps its keys enable ([profiles.md](profiles.md#per-source-apps)). The `-kafka` profiles add the broker. `single-kafka` also adds one archiver. None starts a per-source app until a source created through the engine binds one.
+`slim-*` is the core data path alone: receiver, loader, engine, UI and dfe-hyperdx. `single-kafka` adds the per-source apps its keys enable ([profiles.md](profiles.md#per-source-apps)) and one archiver. The `-kafka` profiles add the broker. dfe-fetcher runs idle until a fetcher source exists, and no transform starts until a source created through the engine binds one.
 
 ## The engine renders each app's config
 
