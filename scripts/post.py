@@ -91,6 +91,7 @@ from _common import (  # noqa: E402
     _print,
     _profile_mk_value,
     _rel_path,
+    in_stack,
 )
 from _common import _resolved_services as _profile_services  # noqa: E402
 from _pipeline import (  # noqa: E402
@@ -510,7 +511,10 @@ def _log_window(name: str) -> str:
 def _exec_request(
     *, method: str, url: str, payload: dict | None, timeout: int, token: str
 ) -> tuple[int, str]:
-    """Make one request from INSIDE the stack, returning (status, body text)."""
+    """Make one request from INSIDE the stack, returning (status, body text).
+
+    A caller already on the stack's network runs the request script on its own interpreter rather than in the engine's container.
+    """
     spec = {
         "body": json.dumps(payload) if payload is not None else "",
         "method": method,
@@ -518,17 +522,13 @@ def _exec_request(
         "token": token,
         "url": url,
     }
+    runner = (
+        [sys.executable]
+        if in_stack()
+        else ["docker", "exec", "-e", API_REQUEST_KEY, api_container(), "python"]
+    )
     result = subprocess.run(
-        [
-            "docker",
-            "exec",
-            "-e",
-            API_REQUEST_KEY,
-            api_container(),
-            "python",
-            "-c",
-            _EXEC_REQUEST_SCRIPT,
-        ],
+        [*runner, "-c", _EXEC_REQUEST_SCRIPT],
         capture_output=True,
         check=False,
         # Named on argv and valued here: argv shows in `ps`, and the spec carries

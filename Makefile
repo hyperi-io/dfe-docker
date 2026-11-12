@@ -47,7 +47,7 @@ endif
 # any more (both sweep every profile), and requiring a resolvable profile to STOP
 # a stack is the same lockout the compose secret comments argue against -- set
 # DFE_PROFILE to something that does not exist and you could not tear down.
-BOOTSTRAP_GOALS := init env-files creds certs up demo dev-posture e2e-posture e2e-posture-off e2e-posture-check help stack dial modes down clean demo-stop limits check check-compose check-hardfail check-dockerfile check-docs check-locks check-proxy check-python check-tests print-default-profile
+BOOTSTRAP_GOALS := init env-files creds certs up demo dev-posture e2e-posture e2e-posture-off e2e-posture-check help stack dial modes down clean demo-stop limits check check-compose check-hardfail check-dockerfile check-docs check-locks check-proxy check-python check-tests print-default-profile print-demo-stream publish-compose
 
 # Resolve the active profile only when a goal actually needs the compose stack
 ifneq (,$(filter-out $(BOOTSTRAP_GOALS),$(or $(MAKECMDGOALS),help)))
@@ -690,6 +690,18 @@ print-compose-env:
 .PHONY: print-default-profile
 print-default-profile:
 	@echo $(DEFAULT_PROFILE)
+
+# The replay script, protocol and rate `make demo` streams with, which the published demo streams with too
+.PHONY: print-demo-stream
+print-demo-stream:
+	@echo $(DEMO_GENERATOR) $(DEMO_PROTOCOL) $(DEMO_RATE)
+
+# The two compose files a release publishes as OCI artifacts, for the stack VERSION names (deployment.example.yaml's pin when unset). PUBLISH_IMAGE is the dfe-docker image the demo's helpers run
+PUBLISH_DIR ?= .tmp/publish
+PUBLISH_IMAGE ?= ghcr.io/hyperi-io/dfe-docker
+.PHONY: publish-compose
+publish-compose: ## Write the stack and demo compose files a release publishes into PUBLISH_DIR and check them (VERSION=X.Y.Z, PUBLISH_IMAGE=<dfe-docker image>)
+	@python3 scripts/publish_compose.py --out-dir '$(PUBLISH_DIR)' --image '$(PUBLISH_IMAGE)' --stack '$(if $(filter command line,$(origin VERSION)),$(VERSION))'
 
 .PHONY: check-compose
 check-compose: ## Resolve compose on the registry, dev, LIVE_UI and LOCAL paths, both Kafka backends

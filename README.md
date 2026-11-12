@@ -47,14 +47,19 @@ See [docs/architecture.md](docs/architecture.md).
 
 ## Quickstart
 
-On macOS, Linux or Windows with only Docker, and Compose 2.26 or newer, in an empty folder. On Windows, use PowerShell: `${PWD}` works there and in bash and zsh, but not in cmd.exe.
+On macOS, Linux or Windows with only Docker, Engine 26.0 and Compose 2.34 or newer:
 
 ```bash
-docker run --rm -v "${PWD}:/dfe" ghcr.io/hyperi-io/dfe-docker init
-docker compose up -d
+docker compose -f oci://ghcr.io/hyperi-io/dfe-docker:compose up -d
 ```
 
-The console is at http://localhost:3000. `init --profile slim-grpc` picks another profile. The image's other commands, the login, upgrades and the demo among them, are in [Taking DFE for a first look](docs/evaluating.md#with-only-docker).
+Point your browser to http://localhost:3000 and log in as `admin` with password `dfe-first-login`. The console makes you change it at first login. The demo is a throwaway stack of its own that seeds its sources and streams vendor syslog without stopping:
+
+```bash
+docker compose -f oci://ghcr.io/hyperi-io/dfe-docker:demo up -d
+```
+
+`down` with the same `-f` stops either one, and `down -v` deletes its data too. [Taking DFE for a first look](docs/evaluating.md#with-only-docker) covers both, and the dfe-docker image that sets up a folder you can edit.
 
 ### From a clone
 

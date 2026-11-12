@@ -55,6 +55,7 @@ from _common import (  # noqa: E402
     _profile_mk_value,
     _rel_path,
     _resolved_services,
+    in_stack,
 )
 from _pipeline import clickhouse_url  # noqa: E402
 from _sources import hinted_services  # noqa: E402
@@ -603,7 +604,17 @@ def _docker(
 
 
 def _engine_python(*, code: str, stdin: str) -> subprocess.CompletedProcess:
-    """Run Python in the engine's container, for the PyYAML it carries."""
+    """Run Python in the engine's container, for the PyYAML it carries, or on this interpreter inside the stack, where the dfe-docker image carries its own."""
+    if in_stack():
+        return subprocess.run(
+            [sys.executable, "-c", code],
+            capture_output=True,
+            check=False,
+            encoding="utf-8",
+            errors="replace",
+            input=stdin,
+            text=True,
+        )
     container = _container(service=ENGINE_SERVICE)
     if not (container) or not (_running(container=container)):
         raise DemoError(
@@ -1171,20 +1182,7 @@ def _start_pruner(*, archive: dict, container: str, image: str, storage: str) ->
             "--volume",
             f"{ARCHIVE_TOOL}:/archive.py:ro",
             image,
-            "python3",
-            "-I",
-            "/archive.py",
-            "prune",
-            "--root",
-            ARCHIVE_ROOT,
-            "--sources",
-            ",".join(archive["sources"]),
-            "--interval-minutes",
-            str(archive["sweep_minutes"]),
-            "--max-age-minutes",
-            str(archive["retention_minutes"]),
-            "--max-megabytes",
-            str(archive["max_megabytes"]),
+            *pruner_command(archive=archive, tool="/archive.py"),
         ],
         capture_output=True,
         check=False,
@@ -1545,6 +1543,26 @@ def listening_protocols(*, port: int, proc_net: str) -> set[str]:
         if len(fields) > 3 and fields[1].endswith(suffix) and fields[3] in ("0A", "07"):
             found.add("tcp" if fields[3] == "0A" else "udp")
     return found
+
+
+def pruner_command(*, archive: dict, tool: str) -> list[str]:
+    """The command that keeps the archive mounted at ARCHIVE_ROOT to the manifest's retention and size cap, running the archive tool at `tool`."""
+    return [
+        "python3",
+        "-I",
+        tool,
+        "prune",
+        "--root",
+        ARCHIVE_ROOT,
+        "--sources",
+        ",".join(archive["sources"]),
+        "--interval-minutes",
+        str(archive["sweep_minutes"]),
+        "--max-age-minutes",
+        str(archive["retention_minutes"]),
+        "--max-megabytes",
+        str(archive["max_megabytes"]),
+    ]
 
 
 def load_demo(*, events: Path, sources: Path) -> Demo:
