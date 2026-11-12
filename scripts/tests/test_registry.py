@@ -12,7 +12,7 @@ The stack manifest is picked by TAG. An OCI repo carries `sha-<commit>` build ta
 
 A DFE image is picked by RELEASE, and version order is not release order there: a release tagged above the line it sits in must not win.
 
-The network calls are the seam: `list_tags`, `list_releases` and `marked_latest_release` are repointed at fixed data, so what is pinned here is the selection, not the registry's or GitHub's current contents.
+The network calls are what is faked: `list_tags`, `list_releases` and `marked_latest_release` are repointed at fixed data, so what is pinned here is the selection, not the registry's or GitHub's current contents.
 """
 
 import http.server
