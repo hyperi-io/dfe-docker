@@ -65,6 +65,20 @@ def test_the_unit_tests_parse_yaml_with_the_seed_scripts_pin() -> None:
     assert f"pyyaml=={pinned.group(1)}" in declared
 
 
+def test_the_image_installs_the_seed_scripts_pyyaml_by_its_locked_hashes() -> None:
+    requirements = (REPO_ROOT / "docker" / "dfe-docker.requirements.txt").read_text(
+        encoding="utf-8"
+    )
+    lock = tomllib.loads((SCRIPTS_DIR / "seed.py.lock").read_text(encoding="utf-8"))
+    package = next(entry for entry in lock["package"] if entry["name"] == "pyyaml")
+    locked = {wheel["hash"].removeprefix("sha256:") for wheel in package["wheels"]}
+    pinned = re.findall(r"--hash=sha256:([0-9a-f]{64})", requirements)
+
+    assert f"pyyaml=={package['version']}" in requirements
+    assert pinned
+    assert set(pinned) <= locked
+
+
 @pytest.mark.parametrize("script", SCRIPTS, ids=lambda path: path.name)
 def test_each_pin_is_an_exact_version(script: Path) -> None:
     for dependency in _metadata(script)["dependencies"]:

@@ -45,7 +45,7 @@ APP_USERS = {
     "dfe_hunt_runner": ("DFE_HUNT_RUNNER_CLICKHOUSE_PASSWORD", "dfe-hunt-runner"),
     "dfe_loader": ("DFE_LOADER_CLICKHOUSE_PASSWORD", "dfe-loader"),
     "dfe_otel_writer": ("DFE_OTEL_WRITER_CLICKHOUSE_PASSWORD", "otel-collector"),
-    "dfe_query_reader": ("DFE_QUERY_READER_CLICKHOUSE_PASSWORD", "hyperdx"),
+    "dfe_query_reader": ("DFE_QUERY_READER_CLICKHOUSE_PASSWORD", "dfe-hyperdx"),
 }
 
 # The variable the engine adopts each app's password from.
@@ -56,7 +56,7 @@ ENGINE_READS = {
     "dfe_query_reader": "DFE_ENGINE_CLICKHOUSE_QUERY_READER_PASSWORD",
 }
 
-# HyperDX takes dfe_query_reader from the connection dfe-engine hands it, so its own definition names no user
+# dfe-hyperdx takes dfe_query_reader from the connection dfe-engine hands it, so its own definition names no user
 ENGINE_HANDED_USERS = {"dfe_query_reader"}
 
 

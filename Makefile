@@ -47,7 +47,7 @@ endif
 # any more (both sweep every profile), and requiring a resolvable profile to STOP
 # a stack is the same lockout the compose secret comments argue against -- set
 # DFE_PROFILE to something that does not exist and you could not tear down.
-BOOTSTRAP_GOALS := init env-files creds certs up demo dev-posture e2e-posture e2e-posture-off e2e-posture-check help stack dial modes down clean demo-stop limits check check-compose check-hardfail check-dockerfile check-docs check-locks check-proxy check-python check-shell check-tests
+BOOTSTRAP_GOALS := init env-files creds certs up demo dev-posture e2e-posture e2e-posture-off e2e-posture-check help stack dial modes down clean demo-stop limits check check-compose check-hardfail check-dockerfile check-docs check-locks check-proxy check-python check-tests print-default-profile print-demo-stream publish-compose
 
 # Resolve the active profile only when a goal actually needs the compose stack
 ifneq (,$(filter-out $(BOOTSTRAP_GOALS),$(or $(MAKECMDGOALS),help)))
@@ -131,14 +131,14 @@ endif
 
 # `all` publishes the UIs on addresses this box cannot infer, and two services
 # build absolute URLs from DFE_EXTERNAL_ORIGIN -- dfe-proxy's frame-ancestors
-# policy for the embedded HyperDX views, and next-auth's redirects. At loopback
+# policy for the embedded dfe-hyperdx views, and next-auth's redirects. At loopback
 # both name the browser's own machine, so the console comes up with its
 # observability views blocked.
 #
 # Only the goals that start or self-test the stack ask for it. The bootstrap
 # goals are exempt for the reason BOOTSTRAP_GOALS gives: needing a key to stop a
 # stack, or to check a file, is a lockout.
-ORIGIN_GOALS := dev ci up apply infra post test-source test-flows
+ORIGIN_GOALS := dev ci up apply infra post test-source test-flows print-compose-env
 # The e2e suites start a stack per test and probe the console at DFE_EXTERNAL_ORIGIN's host under console TLS, so there they need what a start goal needs.
 E2E_GOALS := test-e2e test-resilience
 ifeq ($(strip $(DFE_PROXY_TLS)),true)
@@ -151,12 +151,12 @@ ifeq ($(strip $(DFE_BIND_SCOPE)),all)
     ifneq (,$(filter $(ORIGIN_GOALS),$(or $(MAKECMDGOALS),help)))
         ORIGIN_UNUSABLE := $(if $(strip $(DFE_EXTERNAL_ORIGIN)),$(filter $(strip $(DFE_EXTERNAL_ORIGIN)),$(LOOPBACK_ORIGINS)),unset)
         ifneq ($(ORIGIN_UNUSABLE),)
-            $(error DFE_BIND_SCOPE=all publishes the UIs beyond loopback, so DFE_EXTERNAL_ORIGIN must name the address browsers use -- it is $(if $(strip $(DFE_EXTERNAL_ORIGIN)),'$(strip $(DFE_EXTERNAL_ORIGIN))',unset). HyperDX's frame-ancestors policy and every next-auth redirect are built from it, so the console loads with its observability views blocked and sends logins back to the wrong host. Set DFE_EXTERNAL_ORIGIN=http://<the address browsers use> in .env or the environment, or leave DFE_BIND_SCOPE=localhost)
+            $(error DFE_BIND_SCOPE=all publishes the UIs beyond loopback, so DFE_EXTERNAL_ORIGIN must name the address browsers use -- it is $(if $(strip $(DFE_EXTERNAL_ORIGIN)),'$(strip $(DFE_EXTERNAL_ORIGIN))',unset). dfe-hyperdx's frame-ancestors policy and every next-auth redirect are built from it, so the console loads with its observability views blocked and sends logins back to the wrong host. Set DFE_EXTERNAL_ORIGIN=http://<the address browsers use> in .env or the environment, or leave DFE_BIND_SCOPE=localhost)
         endif
     endif
 endif
 
-# Compose appends `:<port>` to each of these (next-auth's NEXTAUTH_URL, HyperDX's FRONTEND_URL, the oauth2-proxy callbacks), so a value that already carries a port, a path or a query builds a URL no browser can parse: dfe-ui answers 500 on `https://host:3000:3000`. DFE_EXTERNAL_ORIGIN and DFE_HYPERDX_APP_URL also feed dfe-proxy's frame-ancestors source list, where a `;` in the value starts a new directive. Each must be a scheme and a host only, on every stack and with TLS on or off.
+# Compose appends `:<port>` to each of these (next-auth's NEXTAUTH_URL, dfe-hyperdx's FRONTEND_URL, the oauth2-proxy callbacks), so a value that already carries a port, a path or a query builds a URL no browser can parse: dfe-ui answers 500 on `https://host:3000:3000`. DFE_EXTERNAL_ORIGIN and DFE_HYPERDX_APP_URL also feed dfe-proxy's frame-ancestors source list, where a `;` in the value starts a new directive. Each must be a scheme and a host only, on every stack and with TLS on or off.
 APPENDED_ORIGINS := DFE_EXTERNAL_ORIGIN DFE_HYPERDX_APP_URL DFE_OAUTH2_PROXY_EXTERNAL_ORIGIN
 # The value without the surrounding quotes compose strips and make keeps.
 origin_value = $(patsubst "%",%,$(patsubst '%',%,$(strip $($(1)))))
@@ -224,7 +224,7 @@ endef
 UI_CHAIN :=
 UI_FLAGS :=
 
-# The services whose host ports the exposure dials take away. dfe-proxy carries the console and dfe-hyperdx-proxy both HyperDX origins
+# The services whose host ports the exposure dials take away. dfe-proxy carries the console and dfe-hyperdx-proxy both dfe-hyperdx origins
 UNPUBLISHED :=
 ifeq ($(strip $(DFE_UI_EXTERNAL)),false)
     UNPUBLISHED += dfe-proxy
@@ -259,7 +259,7 @@ define newline
 
 endef
 
-# The console's HyperDX embed goes with HyperDX, auth or not, keeping the console's line. dfe-proxy's own reset drops both and a second key would be duplicate YAML
+# The console's dfe-hyperdx embed goes with dfe-hyperdx, auth or not, keeping the console's line. dfe-proxy's own reset drops both and a second key would be duplicate YAML
 EMBED_UNPUBLISHED := $(if $(filter dfe-proxy,$(UNPUBLISHED)),,$(HYPERDX_GATED))
 
 ifneq ($(strip $(UNPUBLISHED))$(EMBED_UNPUBLISHED),)
@@ -318,7 +318,7 @@ endif
 # ---------------------------------------------------------------------------
 # Console TLS (opt-in)
 #
-# DFE_PROXY_TLS=true chains compose/tls.yml, which serves the console, the HyperDX embed and both HyperDX origins over TLS with one certificate. Outside a dev posture the engine marks its OIDC cookies Secure, so a sign-in on any hostname but localhost needs it.
+# DFE_PROXY_TLS=true chains compose/tls.yml, which serves the console, the dfe-hyperdx embed and both dfe-hyperdx origins over TLS with one certificate. Outside a dev posture the engine marks its OIDC cookies Secure, so a sign-in on any hostname but localhost needs it.
 #
 # The engine trusts X-Forwarded-Proto from dfe-proxy's address alone, so that address is fixed: the last host of DFE_NETWORK_SUBNET, with every other container allocated from the first half. Make cannot do the address arithmetic, so scripts/proxy_tls.py does.
 # ---------------------------------------------------------------------------
@@ -351,7 +351,7 @@ ifneq ($(PROXY_TLS_START),)
     endif
     ifneq ($(call origin_value,DFE_HYPERDX_APP_URL),)
         ifeq ($(filter https://%,$(call origin_value,DFE_HYPERDX_APP_URL)),)
-            $(error DFE_PROXY_TLS=true serves HyperDX over https, so DFE_HYPERDX_APP_URL must start with https:// or be unset. It is '$(strip $(DFE_HYPERDX_APP_URL))')
+            $(error DFE_PROXY_TLS=true serves dfe-hyperdx over https, so DFE_HYPERDX_APP_URL must start with https:// or be unset. It is '$(strip $(DFE_HYPERDX_APP_URL))')
         endif
     endif
 endif
@@ -394,8 +394,8 @@ else ifneq ($(filter dev dev-build,$(MAKECMDGOALS)),)
 else ifeq ($(filter ci,$(MAKECMDGOALS)),)
     RESOLVE_LOCAL_ARGS = --local-overlay $(LOCAL_OVERLAY)
 endif
-# The goals that start or recreate services, the only ones that ask docker compose for the CPU limits the collector reports as cores deployed
-USAGE_GOALS := dev ci up infra apply apply-services
+# The goals that start or recreate services, or hand a plain `docker compose` what they would, the only ones that ask docker compose for the CPU limits the collector reports as cores deployed
+USAGE_GOALS := dev ci up infra apply apply-services print-compose-env
 .tmp/profile.mk: FORCE
 	@python3 scripts/resolve_profile.py $(if $(KAFBAT_GATED),--unpublished kafbat) $(if $(HYPERDX_GATED),--unpublished hyperdx) $(RESOLVE_LOCAL_ARGS) $(if $(filter $(USAGE_GOALS),$(MAKECMDGOALS)),--usage)
 ifneq ($(PROXY_TLS_START),)
@@ -611,7 +611,7 @@ infra: .env storage-dirs ## Start infrastructure services
 # ---------------------------------------------------------------------------
 
 .PHONY: check
-check: check-compose check-hardfail check-dockerfile check-docs check-proxy check-python check-shell check-tests check-locks ## Run every static check CI runs
+check: check-compose check-hardfail check-dockerfile check-docs check-proxy check-python check-tests check-locks ## Run every static check CI runs
 
 .PHONY: limits
 limits: ## Show the resource limits and totals, computed from the resolved config
@@ -631,11 +631,6 @@ print-ruff-version:
 check-python: ## Lint the helper scripts (config in ruff.toml)
 	$(RUFF) check scripts/ ops/ resources/demo/
 	$(RUFF) format --check scripts/ ops/ resources/demo/
-
-# install.sh and apply.sh run on hosts with no python, so they are held to ShellCheck's POSIX sh rules.
-.PHONY: check-shell
-check-shell: ## Lint install.sh and apply.sh with ShellCheck as POSIX sh
-	shellcheck -s sh install.sh apply.sh
 
 # Pinned for the same reason RUFF is, and installed the same way in CI
 # (PYTEST=pytest). Unit tests over the helper scripts: they
@@ -677,6 +672,37 @@ check-locks: ## Assert each inline-metadata script's lock matches its pins (relo
 print-compose-file:
 	@echo "COMPOSE_FILE=$(COMPOSE_FILE)"
 
+# What a plain `docker compose` reads from .env in a folder the dfe-docker image set up (scripts/installer.py writes it there): this run's chain and compose profiles, and each value make works out rather than reads from .env. The live UI chain is a `make dev` matter and stays out. An ORIGIN_GOALS member, because a plain `docker compose up` starts from it
+empty :=
+space := $(empty) $(empty)
+comma := ,
+.PHONY: print-compose-env
+print-compose-env:
+	$(info COMPOSE_FILE=docker-compose.yml$(STORAGE_CHAIN)$(UI_CHAIN))
+	$(info COMPOSE_PROFILES=$(subst $(space),$(comma),$(strip $(filter-out --profile,$(PROFILE_FLAGS)))))
+	$(info DFE_DEV_GID=$(DFE_DEV_GID))
+	$(info DFE_DEV_UID=$(DFE_DEV_UID))
+	$(info DFE_UI_BIND_HOST=$(DFE_UI_BIND_HOST))
+	$(if $(filter true,$(strip $(DFE_PROXY_TLS))),$(foreach key,DFE_NETWORK_IP_RANGE DFE_NETWORK_SUBNET DFE_PROXY_CERT_DIR DFE_PROXY_IP,$(info $(key)=$($(key)))))
+	@:
+
+# The profile `make up` and the dfe-docker image start when none is chosen
+.PHONY: print-default-profile
+print-default-profile:
+	@echo $(DEFAULT_PROFILE)
+
+# The replay script, protocol and rate `make demo` streams with, which the published demo streams with too
+.PHONY: print-demo-stream
+print-demo-stream:
+	@echo $(DEMO_GENERATOR) $(DEMO_PROTOCOL) $(DEMO_RATE)
+
+# The two compose files a release publishes as OCI artifacts, for the stack VERSION names (deployment.example.yaml's pin when unset). PUBLISH_IMAGE is the dfe-docker image the demo's helpers run
+PUBLISH_DIR ?= .tmp/publish
+PUBLISH_IMAGE ?= ghcr.io/hyperi-io/dfe-docker
+.PHONY: publish-compose
+publish-compose: ## Write the stack and demo compose files a release publishes into PUBLISH_DIR and check them (VERSION=X.Y.Z, PUBLISH_IMAGE=<dfe-docker image>)
+	@python3 scripts/publish_compose.py --out-dir '$(PUBLISH_DIR)' --image '$(PUBLISH_IMAGE)' --stack '$(if $(filter command line,$(origin VERSION)),$(VERSION))'
+
 .PHONY: check-compose
 check-compose: ## Resolve compose on the registry, dev, LIVE_UI and LOCAL paths, both Kafka backends
 	@python3 scripts/check_compose.py
@@ -699,9 +725,12 @@ check-docs: ## Assert every relative link in the docs set still resolves
 # hadolint version tracks tools.hadolint in hyperi-ci's config/versions.yaml
 # (currently v2.15.1). We additionally pin the DIGEST, which that SSoT does not
 # yet do -- see hyperi-ci#66.
+HADOLINT_IMAGE := hadolint/hadolint:v2.15.1@sha256:32dac94127fd60b7b7e3fbfc65e1383b9b5e25c9bfd7b8536de7a539fe68a12d
+
 .PHONY: check-dockerfile
-check-dockerfile: ## Lint the dev builder Dockerfile (hadolint gates on error severity)
-	docker run --rm -i hadolint/hadolint:v2.15.1@sha256:32dac94127fd60b7b7e3fbfc65e1383b9b5e25c9bfd7b8536de7a539fe68a12d hadolint --failure-threshold error - < docker/dfe-rust-builder.Dockerfile
+check-dockerfile: ## Lint the dev builder and dfe-docker image Dockerfiles (hadolint gates on error severity)
+	docker run --rm -i $(HADOLINT_IMAGE) hadolint --failure-threshold error - < docker/dfe-rust-builder.Dockerfile
+	docker run --rm -i $(HADOLINT_IMAGE) hadolint --failure-threshold error - < docker/dfe-docker.Dockerfile
 
 # Validate mode loads every listener, cluster and TLS context, so a config that would crash-loop either proxy fails here instead.
 #

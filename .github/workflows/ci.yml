@@ -1,6 +1,6 @@
 # Project:   dfe-docker
 # File:      .github/workflows/ci.yml
-# Purpose:   Validate the compose stack, lint the dev builder Dockerfile and validate the proxy configs
+# Purpose:   Validate the compose stack, lint the Dockerfiles, validate the proxy configs, prove the dfe-docker image starts the stack with only Docker and cut releases
 #
 # License:   BUSL-1.1 - HYPERI PTY LIMITED
 # Copyright: (c) 2026 HYPERI PTY LIMITED
@@ -12,7 +12,9 @@
 # followed deliberately -- least-privilege permissions, SHA-pinned third-party
 # actions with a version comment, Title Case job names, a named runner image --
 # so that when hyperi-ci grows the container/compose gating it is currently
-# missing, this collapses into a `uses:` line rather than a rewrite.
+# missing, this collapses into a `uses:` line rather than a rewrite. The Release
+# job is assembled from hyperi-ci's shared actions for the same reason: its
+# release tail takes only those four languages.
 #
 # The runner image is named (ubuntu-26.04) rather than ubuntu-latest, so a move
 # of that label cannot swap the tools these jobs run on.
@@ -35,11 +37,29 @@ on:
   push:
     branches:
       - main
+  # The inputs `hyperi-ci release` dispatches with. A bare dispatch only validates.
   workflow_dispatch:
+    inputs:
+      tag:
+        type: string
+        required: false
+        default: ""
+        description: "Existing tag to publish a GitHub release for when it has none."
+      from-head:
+        type: string
+        required: false
+        default: ""
+        description: "'true' to release the current HEAD. The CI creates the tag."
+      bump:
+        type: string
+        required: false
+        default: "auto"
+        description: "Version for from-head: auto | patch | minor (forced) | X.Y.Z (exact)."
 
+# A release run has its own group and is never cancelled, because a cancel after the tag push leaves a tag with no GitHub release.
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+  group: "${{ github.workflow }}-${{ (inputs.tag != '' || inputs.from-head == 'true' || github.event_name == 'push' && (contains(github.event.head_commit.message, 'Release: true') || contains(github.event.head_commit.message, 'Release:true') || contains(github.event.head_commit.message, 'Publish: true') || contains(github.event.head_commit.message, 'Publish:true'))) && 'release-' || '' }}${{ github.ref }}"
+  cancel-in-progress: "${{ !(inputs.tag != '' || inputs.from-head == 'true' || github.event_name == 'push' && (contains(github.event.head_commit.message, 'Release: true') || contains(github.event.head_commit.message, 'Release:true') || contains(github.event.head_commit.message, 'Publish: true') || contains(github.event.head_commit.message, 'Publish:true'))) }}"
 
 # Least-privilege GITHUB_TOKEN default for every job.
 permissions:
@@ -49,6 +69,8 @@ permissions:
 # runner's own python3 is older and would run every helper script on it.
 env:
   PYTHON_VERSION: "3.14.7"
+  # The hyperi-ci CLI the Release job runs. The HYPERCI_INSTALL_OVERRIDE variable replaces it, as in hyperi-ci's own workflows.
+  HYPERCI_INSTALL: ${{ vars.HYPERCI_INSTALL_OVERRIDE || 'uvx --python 3.14 --no-cache --refresh hyperi-ci' }}
 
 jobs:
   compose:
@@ -94,10 +116,6 @@ jobs:
       # Stdlib only, so it needs nothing installed.
       - name: Docs
         run: make check-docs
-
-      # The runner ships ShellCheck, and install.sh has to lint as POSIX sh
-      - name: Shell
-        run: make check-shell
 
       # The pin lives in the Makefile (RUFF_VERSION), so a local `make check`
       # lints with the same version this does. Installed here rather than run
@@ -150,7 +168,7 @@ jobs:
       # does not have.
       # stdin form, per the standard, with no config file, so the exact same
       # command is runnable locally -- no mount, no config discovery. DL3008 (pin
-      # apt versions) fires on the Rust builder and is deliberately left as a
+      # apt versions) fires on both Dockerfiles and is deliberately left as a
       # visible warning, not suppressed: `--failure-threshold error` lets a
       # warning inform without blocking, and the reason sits in the Dockerfile.
       - name: Hadolint
@@ -169,6 +187,382 @@ jobs:
       # Envoy's validate mode loads every listener, cluster and TLS context, so a proxy config that would crash-loop dfe-proxy or dfe-hyperdx-proxy fails here. With no .env, the Envoy is the one deployment.example.yaml's pinned stack carries, read anonymously from the stack manifest through oras. The TLS variants get a throwaway certificate from the runner's openssl.
       - name: Proxy configs
         run: make check-proxy
+
+  # What a desktop with only Docker does: the image sets each profile up and the
+  # default one starts, serves the console and runs the demo, every step with a
+  # PATH that holds no make and no python. The default install goes to the
+  # Windows job, which reads it with the Windows compose.
+  image:
+    name: Image
+    runs-on: ubuntu-26.04
+    timeout-minutes: 50
+    env:
+      IMAGE: dfe-docker:ci
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up Python
+        uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      # The stack deployment.example.yaml pins, as image.yml bakes into the :<version> image
+      - name: Build the image
+        run: docker build --file docker/dfe-docker.Dockerfile --build-arg "IMAGE=$IMAGE" --build-arg "STACK=$(python3 scripts/quickstart_json.py --print-stack)" --tag "$IMAGE" .
+
+      # docker, curl for the console check and the few tools the checks below use. No make, no python
+      - name: Put only Docker on PATH
+        run: |
+          bin="$RUNNER_TEMP/docker-only"
+          mkdir -p "$bin" "$RUNNER_TEMP/dfe"
+          for tool in docker curl grep mkdir sha256sum; do
+            ln -s "$(command -v "$tool")" "$bin/$tool"
+          done
+          echo "DOCKER_ONLY=$bin" >> "$GITHUB_ENV"
+          echo "WORK=$RUNNER_TEMP/dfe" >> "$GITHUB_ENV"
+
+      - name: Set up every profile
+        run: |
+          export PATH="$DOCKER_ONLY"
+          if command -v make || command -v python3 || command -v python; then
+            echo "::error::make or python is still on PATH"
+            exit 1
+          fi
+          for profile in slim-grpc slim-kafka single-grpc single-kafka; do
+            mkdir "$WORK/$profile"
+            cd "$WORK/$profile"
+            docker run --rm -v "${PWD}:/dfe" "$IMAGE" init --profile "$profile"
+            docker compose config -q
+          done
+
+      - name: Set up the default profile
+        run: |
+          export PATH="$DOCKER_ONLY"
+          mkdir "$WORK/default"
+          cd "$WORK/default"
+          said="$(docker run --rm -v "${PWD}:/dfe" "$IMAGE" init)"
+          printf '%s\n' "$said"
+          if [[ "$said" != *" $IMAGE login"* ]]; then
+            echo "::error::init's printed commands do not name $IMAGE, the image that ran"
+            exit 1
+          fi
+          docker compose config -q
+          docker compose config --services > "$WORK/default.services"
+
+      # A second init, a bad profile and an upgrade, each against what it must leave alone
+      - name: Refuse and upgrade
+        run: |
+          export PATH="$DOCKER_ONLY"
+          cd "$WORK/default"
+          if docker run --rm -v "${PWD}:/dfe" "$IMAGE" init; then
+            echo "::error::init ran over an existing install"
+            exit 1
+          fi
+          secrets() { grep -h -E '^[A-Z0-9_]*(PASSWORD|SECRET|KEY)=' .env env/*.env | sha256sum; }
+          before="$(secrets)"
+          docker run --rm -v "${PWD}:/dfe" "$IMAGE" init --upgrade
+          if [ "$(secrets)" != "$before" ]; then
+            echo "::error::init --upgrade changed a minted secret"
+            exit 1
+          fi
+          docker compose config -q
+          mkdir "$WORK/bad"
+          cd "$WORK/bad"
+          if docker run --rm -v "${PWD}:/dfe" "$IMAGE" init --profile no-such-profile; then
+            echo "::error::init took a profile service_profiles.yaml does not declare"
+            exit 1
+          fi
+          shopt -s dotglob nullglob
+          left=(*)
+          if [ "${#left[@]}" -ne 0 ]; then
+            echo "::error::a refused init left ${left[*]} behind"
+            exit 1
+          fi
+
+      # A throwaway install whose stack is torn down below, so its minted secrets protect nothing
+      - name: Hand the default install to the Windows job
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: default-install
+          path: |
+            ${{ env.WORK }}/default
+            ${{ env.WORK }}/default.services
+            !${{ env.WORK }}/default/access-summary.md
+          include-hidden-files: true
+          if-no-files-found: error
+          retention-days: 1
+
+      - name: Start the default profile and reach the console
+        timeout-minutes: 20
+        run: |
+          export PATH="$DOCKER_ONLY"
+          cd "$WORK/default"
+          docker compose up -d --wait --wait-timeout 900
+          curl -fsSL --retry 5 --retry-all-errors -o /dev/null -w 'console answered %{http_code} at %{url_effective}\n' http://localhost:3000/
+
+      - name: Run the demo and take it out again
+        timeout-minutes: 15
+        run: |
+          export PATH="$DOCKER_ONLY"
+          cd "$WORK/default"
+          docker run --rm -v "${PWD}:${PWD}" -w "${PWD}" -v /var/run/docker.sock:/var/run/docker.sock "$IMAGE" demo
+          docker run --rm -v "${PWD}:${PWD}" -w "${PWD}" -v /var/run/docker.sock:/var/run/docker.sock "$IMAGE" demo-stop
+          docker compose config -q
+
+      - name: Show what did not come up
+        if: failure()
+        working-directory: ${{ env.WORK }}/default
+        run: |
+          docker compose ps --all
+          docker compose logs --no-color --tail 100
+
+      - name: Tear the stack down
+        if: always()
+        working-directory: ${{ env.WORK }}/default
+        run: |
+          if [ -f .env ]; then
+            docker compose --profile '*' down --volumes --remove-orphans
+          fi
+
+  # The files a release publishes as OCI artifacts, generated from this commit and run from a folder holding nothing else, as `-f oci://` runs them. The demo file holds the whole stack plus the demo, so it starts and has to land its syslog. The stack file is read and checked
+  published:
+    name: Published compose
+    runs-on: ubuntu-26.04
+    timeout-minutes: 50
+    env:
+      IMAGE: dfe-docker:ci
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up Python
+        uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      # scripts/stack.py reads the stack's image pins through oras
+      - name: Install oras
+        uses: oras-project/setup-oras@5e2f2482b30b0cb3e14e67f89a80c88c659a7c63 # v2.0.3
+
+      - name: Build the image
+        run: docker build --file docker/dfe-docker.Dockerfile --build-arg "IMAGE=$IMAGE" --tag "$IMAGE" .
+
+      # The image is local here, so its digest is the one finding allowed
+      - name: Generate and check the published files
+        run: |
+          docker compose version
+          python3 scripts/publish_compose.py --image "$IMAGE" --out-dir "$RUNNER_TEMP/compose"
+          echo "COMPOSE_DIR=$RUNNER_TEMP/compose" >> "$GITHUB_ENV"
+
+      - name: Start the demo and reach the console
+        timeout-minutes: 25
+        working-directory: ${{ env.COMPOSE_DIR }}
+        run: |
+          docker compose -f dfe-demo.yaml up -d --wait --wait-timeout 1200
+          curl -fsSL --retry 5 --retry-all-errors -o /dev/null -w 'console answered %{http_code} at %{url_effective}\n' http://localhost:3000/
+
+      - name: Land the demo's syslog
+        timeout-minutes: 10
+        working-directory: ${{ env.COMPOSE_DIR }}
+        run: |
+          for table in cisco-asa fortinet; do
+            for attempt in $(seq 60); do
+              rows="$(docker compose -f dfe-demo.yaml exec -T clickhouse sh -c ". /run/dfe-secrets/env && clickhouse-client --password \"\$CLICKHOUSE_PASSWORD\" --query 'SELECT count() FROM dfe.\`$table\`'" || echo 0)"
+              if [ "${rows:-0}" -gt 0 ]; then
+                echo "dfe.$table holds $rows rows"
+                break
+              fi
+              if [ "$attempt" -eq 60 ]; then
+                echo "::error::no rows reached dfe.$table"
+                exit 1
+              fi
+              sleep 5
+            done
+          done
+
+      # The secrets are this runner's own: no service holds one in its environment, ClickHouse refuses its empty default password, and the admin's public first login is held for a change
+      - name: Run on secrets minted here
+        working-directory: ${{ env.COMPOSE_DIR }}
+        run: |
+          for svc in clickhouse demo-console demo-sources dfe-engine dfe-hunt-runner dfe-hyperdx dfe-loader dfe-ui hyperdx-documentdb otel-collector; do
+            held="$(docker inspect "$(docker compose -f dfe-demo.yaml ps -aq "$svc")" --format '{{range .Config.Env}}{{println .}}{{end}}' | cut -d= -f1 | grep -E '(PASSWORD|SECRET|TOKEN|KEY|MONGO_URI|IDENTITY)$' | grep -vx DFE_ENGINE_AUTH_LOCAL_ADMIN_PASSWORD || true)"
+            if [ -n "$held" ]; then
+              echo "::error::$svc holds $held in its environment"
+              exit 1
+            fi
+          done
+          if docker compose -f dfe-demo.yaml exec -T clickhouse clickhouse-client --password '' --query 'SELECT 1'; then
+            echo "::error::ClickHouse took the empty default password"
+            exit 1
+          fi
+          docker compose -f dfe-demo.yaml exec -T dfe-engine sh -c '. /run/dfe-secrets/env && test ${#DFE_ENGINE_API_JWT_SECRET} -eq 48 && test ${#DFE_ENGINE_CLICKHOUSE_PASSWORD} -eq 24'
+          docker compose -f dfe-demo.yaml exec -T dfe-engine python -c 'import json, urllib.request
+          request = urllib.request.Request("http://localhost:8000/api/v1/auth/login", data=json.dumps({"username": "admin", "password": "dfe-first-login"}).encode(), headers={"Content-Type": "application/json"})
+          with urllib.request.urlopen(request, timeout=30) as answer:
+              assert json.load(answer).get("password_change_required") is True, "the first login is not held for a change"'
+
+      - name: Show what did not come up
+        if: failure()
+        working-directory: ${{ env.COMPOSE_DIR }}
+        run: |
+          docker compose -f dfe-demo.yaml ps --all
+          docker compose -f dfe-demo.yaml logs --no-color --tail 100 secrets-init demo-sources demo-feed demo-console demo-stream dfe-receiver dfe-transform-elastic-demo-syslog
+
+      - name: Tear the demo down
+        if: always()
+        run: |
+          if [ -f "${COMPOSE_DIR:-}/dfe-demo.yaml" ]; then
+            docker compose -f "$COMPOSE_DIR/dfe-demo.yaml" down --volumes --remove-orphans
+          fi
+
+  # Compose on Windows splits COMPOSE_FILE on `;` unless COMPOSE_PATH_SEPARATOR in .env says otherwise
+  image-windows:
+    name: Image (Windows compose)
+    needs: image
+    runs-on: windows-2025
+    timeout-minutes: 10
+    steps:
+      - name: Fetch the default install
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: default-install
+          path: ${{ runner.temp }}/dfe
+
+      - name: Read it with the Windows compose
+        shell: pwsh
+        run: |
+          Set-Location (Join-Path $env:RUNNER_TEMP 'dfe/default')
+          docker compose version
+          $listed = docker compose config --services
+          if ($LASTEXITCODE -ne 0) { exit 1 }
+          $got = ($listed | Sort-Object) -join ','
+          $want = (Get-Content ../default.services | Sort-Object) -join ','
+          if ($got -ne $want) {
+            Write-Output "::error::Windows compose read $got where Linux read $want"
+            exit 1
+          }
+          Write-Output "Windows compose starts the same services: $got"
+
+  # A push to main whose HEAD commit carries `Release: true`, or a `hyperi-ci
+  # release` dispatch, tags the version semantic-release computes and publishes
+  # a GitHub release. It is published with the release App's token because a
+  # release GITHUB_TOKEN publishes starts no workflow, and image.yml builds the
+  # image on `release: published`. It waits on the image jobs, so an image that
+  # fails CI never gets a tag.
+  release:
+    name: Release
+    needs: [compose, dockerfile, image, image-windows, published]
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-26.04
+    timeout-minutes: 20
+    # semantic-release's dry run checks push access, which needs write
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.tag || github.sha }}
+          # semantic-release reads every commit since the last tag
+          fetch-depth: 0
+          persist-credentials: false
+
+      # The trailer gate, the classification check and the version, as every hyperi-ci pipeline decides them
+      - name: Plan the release
+        id: plan
+        uses: hyperi-io/hyperi-ci/.github/actions/predict-version@main
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          tag: ${{ inputs.tag }}
+          from-head: ${{ inputs.from-head }}
+          bump: ${{ inputs.bump || 'auto' }}
+
+      - name: Install uv
+        if: steps.plan.outputs.will-release == 'true'
+        uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+        with:
+          enable-cache: false
+
+      - name: Mint the release token
+        id: bot
+        if: steps.plan.outputs.will-release == 'true'
+        uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
+        with:
+          client-id: ${{ vars.GH_APP_CLIENT_ID }}
+          private-key: ${{ secrets.GH_APP_PRIVATE_KEY }}
+          owner: ${{ github.repository_owner }}
+          repositories: ${{ github.event.repository.name }}
+          permission-contents: write
+
+      # Plan installed semantic-release and the central config in this job
+      - name: Tag (semantic-release)
+        if: steps.plan.outputs.will-release == 'true' && (github.event_name == 'push' || inputs.from-head == 'true' && inputs.bump == 'auto')
+        env:
+          GITHUB_TOKEN: ${{ steps.bot.outputs.token }}
+        run: semantic-release --repository-url "https://github.com/${GITHUB_REPOSITORY}"
+
+      - name: Tag HEAD (forced bump or exact version)
+        if: steps.plan.outputs.will-release == 'true' && inputs.from-head == 'true' && inputs.bump != 'auto' && inputs.bump != ''
+        env:
+          GH_TOKEN: ${{ steps.bot.outputs.token }}
+          RELEASE_VERSION: ${{ steps.plan.outputs.version }}
+        run: ${{ env.HYPERCI_INSTALL }} tag-head --bump "$RELEASE_VERSION"
+
+      # semantic-release tags nothing when this checkout is behind main, and gh release create would then tag main's tip
+      - name: Check the tag is on this commit
+        if: steps.plan.outputs.will-release == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RELEASE_VERSION: ${{ steps.plan.outputs.version }}
+        run: |
+          tag="v${RELEASE_VERSION}"
+          head=$(git rev-parse "HEAD^{commit}")
+          if ! ref=$(gh api "repos/${GITHUB_REPOSITORY}/git/ref/tags/${tag}" --jq '.object.type + " " + .object.sha'); then
+            echo "::error::${tag} does not exist, so no GitHub release is published. Release the current head with 'hyperi-ci release'."
+            exit 1
+          fi
+          read -r kind sha <<< "$ref"
+          if [ "$kind" = "tag" ]; then
+            sha=$(gh api "repos/${GITHUB_REPOSITORY}/git/tags/${sha}" --jq '.object.sha')
+          fi
+          if [ "$sha" != "$head" ]; then
+            echo "::error::${tag} is at ${sha} but this run checked out ${head}."
+            exit 1
+          fi
+
+      - name: Publish the GitHub release
+        if: steps.plan.outputs.will-release == 'true'
+        env:
+          GH_TOKEN: ${{ steps.bot.outputs.token }}
+          PRERELEASE: ${{ steps.plan.outputs.prerelease }}
+          RELEASE_VERSION: ${{ steps.plan.outputs.version }}
+        run: |
+          tag="v${RELEASE_VERSION}"
+          if gh release view "$tag" --repo "$GITHUB_REPOSITORY" > /dev/null 2>&1; then
+            echo "::notice::${tag} already has a GitHub release, so image.yml does not start again. Rebuild with: gh workflow run image.yml -f tag=${tag}"
+            exit 0
+          fi
+          kind=(--latest)
+          if [ "$PRERELEASE" = "true" ]; then
+            kind=(--prerelease --latest=false)
+          fi
+          gh release create "$tag" --repo "$GITHUB_REPOSITORY" --verify-tag --title "$tag" --generate-notes "${kind[@]}"
+
+      # Non-fatal: the release is already published. A tag dispatch checks out an old tag, so it commits nothing back
+      - name: Commit VERSION and CHANGELOG.md back
+        if: steps.plan.outputs.will-release == 'true' && inputs.tag == ''
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ steps.bot.outputs.token }}
+          HYPERCI_RELEASE_IDENTITY: app
+          RELEASE_BRANCH: ${{ github.ref_name }}
+          RELEASE_VERSION: ${{ steps.plan.outputs.version }}
+        run: ${{ env.HYPERCI_INSTALL }} release-commit --branch "$RELEASE_BRANCH" "$RELEASE_VERSION"
 
 # droast is DELIBERATELY NOT RUN HERE. That matches hyperi-ci's own posture --
 # quality/droast.py resolves it with `find_tool(recommended=False)` and info-skips

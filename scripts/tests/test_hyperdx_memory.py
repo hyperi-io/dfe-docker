@@ -1,12 +1,12 @@
 #  Project:      dfe-docker
 #  File:         tests/test_hyperdx_memory.py
-#  Purpose:      Assert HyperDX's memory ceiling covers what the image needs to start
+#  Purpose:      Assert dfe-hyperdx's memory ceiling covers what the image needs to start
 #  Language:     Python
 #
 #  License:      BUSL-1.1
 #  Copyright:    (c) 2026 HYPERI PTY LIMITED
 
-"""HyperDX's memory ceiling on Compose.
+"""dfe-hyperdx's memory ceiling on Compose.
 
 The dfe-hyperdx image runs four Node processes. On node 24 the container holds
 about 820 MiB for its first 100 s after a start and then settles near 560 MiB, so
@@ -23,7 +23,7 @@ import pytest
 
 import check_compose
 
-_HYPERDX_SERVICE = "hyperdx"
+_HYPERDX_SERVICE = "dfe-hyperdx"
 _ENGINE_SERVICE = "dfe-engine"
 _MEMORY_KEYS = ("DFE_HYPERDX_MEMORY", "DFE_SERVICE_MEMORY")
 # The startup peak, with room for the queries a search runs while it lasts.
@@ -54,7 +54,7 @@ def test_hyperdx_has_room_for_its_startup_peak() -> None:
 
 
 def test_the_hyperdx_ceiling_moves_alone() -> None:
-    """Raising HyperDX's ceiling leaves every other service where it was."""
+    """Raising dfe-hyperdx's ceiling leaves every other service where it was."""
     default = _memory_limits()
     raised = _memory_limits(DFE_HYPERDX_MEMORY="3G")
 
@@ -63,7 +63,7 @@ def test_the_hyperdx_ceiling_moves_alone() -> None:
 
 
 def test_the_service_tier_no_longer_sets_hyperdx_memory() -> None:
-    """An operator trimming the service tier must not take HyperDX under its peak."""
+    """An operator trimming the service tier must not take dfe-hyperdx under its peak."""
     trimmed = _memory_limits(DFE_SERVICE_MEMORY="512M")
 
     assert trimmed[_ENGINE_SERVICE] == 512 * 2**20

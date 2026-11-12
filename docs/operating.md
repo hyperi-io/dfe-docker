@@ -25,11 +25,11 @@ The engine's API requires a login. `make init` mints two passwords into `env/eng
 
 The engine issues `admin` with a forced change at first login, which `make post` makes and records back in `env/engine.env`. Rotate it by changing the value in `env/engine.env` and running `make up`. The value the engine last issued or the account's current password re-issues nothing, so a restart never undoes a change.
 
-The engine refuses to start when `DFE_ENGINE_AUTH_LOCAL_ADMIN_PASSWORD` is empty or the shipped default and `DFE_ENGINE_ENV` is not a dev posture. An unset `DFE_ENGINE_ENV` counts as `production`, so only a `.env` that says `dev` gets to run on the shipped password.
+The engine refuses to start when `DFE_ENGINE_AUTH_LOCAL_ADMIN_PASSWORD` is empty or the shipped default and `DFE_ENGINE_ENV` is not a dev environment. An unset `DFE_ENGINE_ENV` counts as `production`, so only a `.env` that says `dev` gets to run on the shipped password.
 
 `make init` and `make up` also write `access-summary.md` (0600, gitignored) with both minted passwords in plaintext. Retire the bootstrap admin from the console wizard's last step or `POST /api/v1/auth/setup/retire-admin` once your own admin exists, then delete `DFE_ENGINE_AUTH_LOCAL_ADMIN_PASSWORD` from `env/engine.env`. The account stays disabled and is never reseeded. Keep the break-glass password offline and delete both plaintexts, including that file: the engine keeps only the hash.
 
-HyperDX is the one other thing that authenticates, and it does it by verifying the
+dfe-hyperdx is the one other thing that authenticates, and it does it by verifying the
 engine's token rather than by holding logins of its own. Nothing else does, and
 that is the hard limit on what "production" can mean here: the ingest edges, every
 metrics port, ClickHouse and Kafka are open to whoever can route to them. So is
@@ -69,7 +69,7 @@ flowchart LR
     user --> recv
     user --> proxy
     proxy -->|proxies /api/v1 paths| engine
-    hdx -.->|HyperDX queries for the browser| ch
+    hdx -.->|dfe-hyperdx queries for the browser| ch
 
     classDef open fill:#D55E00,color:#ffffff,stroke:#000000
     classDef loop fill:#0072B2,color:#ffffff,stroke:#000000
@@ -85,12 +85,12 @@ dfe-engine API on the Docker network (`config/proxy/envoy.yaml`). Unpublishing
 the engine's own `:8003` does not take that API off `:3000`. The proxy adds no
 authentication, so the engine's own login protects it there as on `:8003`.
 
-**HyperDX asks the engine who you are.** It runs in `oidc-proxy` mode, as it does
+**dfe-hyperdx asks the engine who you are.** It runs in `oidc-proxy` mode, as it does
 on Kubernetes: it verifies the engine's ES384 token against the engine's JWKS,
 and a caller carrying none is unauthenticated. The console mirrors its session
 into a `dfe_token` cookie and cookies ignore ports, so one console login covers
 `:8090`, `:8091` and `:8000` too. Its ClickHouse credential stays server-side --
-queries go through HyperDX's own proxy -- so the page never hands out the
+queries go through dfe-hyperdx's own proxy -- so the page never hands out the
 database password either.
 
 Everything the console does not bound still answers whoever can route to it, so
@@ -114,10 +114,10 @@ Per-port, as published in `docker-compose.yml`:
 | Host port | Service | Binds | Purpose |
 |---|---|---|---|
 | 3000 | dfe-proxy | ui | UI, plus `/api/v1/*` to the engine |
-| 8091 | dfe-proxy | ui | HyperDX, as the console frames it |
+| 8091 | dfe-proxy | ui | dfe-hyperdx, as the console frames it |
 | 8080 | dfe-receiver | ingress | HTTP ingest |
-| 8090 | dfe-hyperdx-proxy | ui | HyperDX app UI |
-| 8000 | dfe-hyperdx-proxy | ui | HyperDX API |
+| 8090 | dfe-hyperdx-proxy | ui | dfe-hyperdx app UI |
+| 8000 | dfe-hyperdx-proxy | ui | dfe-hyperdx API |
 | 8003 | dfe-engine | ui | Config and schema API (container `:8000`) |
 | 8081 | kafka-ui | ui | Kafbat UI (container `:8080`) |
 | 8123 / 9000 | clickhouse | operator | HTTP and native protocol |
@@ -129,8 +129,8 @@ Per-port, as published in `docker-compose.yml`:
 
 dfe-fetcher and the three transforms run one instance per source. An instance publishes no host port, so their ingest, Vector API and metrics ports are reached over the Docker network. dfe-loader's `DfeTransport/Push` listener on 6000 is too. The receiver's Vector protocol on 6000 publishes only once `DFE_RECEIVER_GRPC_PORT` is set.
 
-`dfe-ui`, `hyperdx` and `hyperdx-documentdb` publish no host
-ports at all -- they are reached over the Docker network, HyperDX through the
+`dfe-ui`, `dfe-hyperdx` and `hyperdx-documentdb` publish no host
+ports at all -- they are reached over the Docker network, dfe-hyperdx through the
 proxy that holds both its origins. The collector publishes only `24224`, which the
 DOCKER DAEMON sends container stdout to; its OTLP ports stay on the Compose
 network. The receiver's OTLP (`4317`, `4318`), Beats (`5044`) and HEC (`8088`) listeners publish once their port key is set in `.env`. Those `4317`/`4318` are the receiver's *ingest* edge, not the collector's.
@@ -152,7 +152,7 @@ It moves the UI ports and nothing else. Ingest and the backing services keep the
 two surfaces above, so widening the UIs never opens ClickHouse.
 
 `all` also needs `DFE_EXTERNAL_ORIGIN` set to the address browsers use. The
-console embeds HyperDX behind a `frame-ancestors` policy built from that origin,
+console embeds dfe-hyperdx behind a `frame-ancestors` policy built from that origin,
 and next-auth builds its redirects from it, so at the default both name the
 browser's own machine: the console loads with its observability views blocked and
 sends logins back to loopback. Nothing can infer the address, so `make dev`,
@@ -171,44 +171,44 @@ Each UI carries a class, and the class decides what can take it dark:
 | DFE UI | dfe-proxy | product | `DFE_UI_EXTERNAL` |
 | Engine API | dfe-engine | product | `DFE_ENGINE_API_EXTERNAL` |
 | Kafbat | kafka-ui | infra | `DFE_KAFBAT_UI_EXTERNAL` |
-| HyperDX | dfe-hyperdx-proxy | infra | `DFE_HYPERDX_UI_EXTERNAL` |
+| dfe-hyperdx | dfe-hyperdx-proxy | infra | `DFE_HYPERDX_UI_EXTERNAL` |
 
 `DFE_INFRA_UIS_EXTERNAL=false` is the kill switch: it unpublishes every
 infra-class UI at once and beats their individual flags. The product UIs are
 exempt, so locking the ops surfaces down never takes the DFE UI with it.
 
-The console frames HyperDX from dfe-proxy's `:8091`, so HyperDX's two flags unpublish that port too and the console's own `:3000` stays. Switching HyperDX off this way takes the console's observability views dark.
+The console frames dfe-hyperdx from dfe-proxy's `:8091`, so dfe-hyperdx's two flags unpublish that port too and the console's own `:3000` stays. Switching dfe-hyperdx off this way takes the console's observability views dark.
 
 Both dials take effect through `make`, which resolves the scope into `DFE_UI_BIND_HOST`, writes a `!reset` ports entry per opted-out UI into `.tmp/docker-compose.unpublish.yml` and chains it. Compose merging can add a ports mapping but never remove one, so an opt-out has to arrive as a `!reset` rather than an override. The embed alone drops through a `!override` that restates the console's line. A raw `docker compose` outside `make` therefore publishes everything on loopback.
 
 Unpublishing leaves the container running and reachable on the compose network.
 It reduces the accidental surface; it is not access control, and only the console
-and HyperDX ask for a login.
+and dfe-hyperdx ask for a login.
 
 `make check-compose` asserts all of it: that every UI follows the scope on both addresses, that no ingest or backing-service port moves with it, that each opt-out drops only its own UI and that the kill switch drops every infra UI.
 
 ## Gating the infra UIs with OIDC
 
 `DFE_AUTH_ENABLED=true` arms the `auth` profile, which puts an oauth2-proxy in
-front of each infra UI. Reaching Kafbat, or HyperDX on `:8090` and `:8000`, then
+front of each infra UI. Reaching Kafbat, or dfe-hyperdx on `:8090` and `:8000`, then
 needs an OIDC sign-in **and** membership of one of `DFE_OIDC_ALLOWED_GROUPS`
 (`dfe-infra`, `dfe-admin` by default). The group check is the gate --
 authentication alone is not, which is the same rule the Kubernetes tier applies
 at the Envoy edge.
 
-The embed on `:8091` stays outside that gate, as the Kubernetes tier's HyperDX
+The embed on `:8091` stays outside that gate, as the Kubernetes tier's dfe-hyperdx
 route does. An OIDC redirect cannot complete inside the console's frame, and
-HyperDX authenticates each caller itself from the console's `dfe_token`. So any
-console user reaches HyperDX through the embed, group or not.
+dfe-hyperdx authenticates each caller itself from the console's `dfe_token`. So any
+console user reaches dfe-hyperdx through the embed, group or not.
 
 Three proxies, one per origin, because oauth2-proxy serves a single listener and
-HyperDX is one UI across two origins:
+dfe-hyperdx is one UI across two origins:
 
 | Host port | Proxy | Upstream |
 |---|---|---|
 | 8081 | oauth2-proxy-kafbat | kafka-ui |
-| 8090 | oauth2-proxy-hyperdx | HyperDX app. Gates page access only, as HyperDX reads the engine token itself |
-| 8000 | oauth2-proxy-hyperdx-api | HyperDX API, an operator surface. `OAUTH2_PROXY_PASS_HOST_HEADER` passes HyperDX's CORS headers through untouched |
+| 8090 | oauth2-proxy-hyperdx | dfe-hyperdx app. Gates page access only, as dfe-hyperdx reads the engine token itself |
+| 8000 | oauth2-proxy-hyperdx-api | dfe-hyperdx API, an operator surface. `OAUTH2_PROXY_PASS_HOST_HEADER` passes dfe-hyperdx's CORS headers through untouched |
 
 They take those ports over and the UIs stop publishing their own, so nothing
 moves for anyone using them. All three share one cookie secret, and cookies are
@@ -221,7 +221,7 @@ proxies as well as the UIs. A gated door is still a door.
 
 Three limits, none of them cosmetic:
 
-- **It gates page access only.** Neither UI learns who signed in from the proxy: HyperDX identifies callers by the engine token. Neither gains roles or an audit trail from the proxy.
+- **It gates page access only.** Neither UI learns who signed in from the proxy: dfe-hyperdx identifies callers by the engine token. Neither gains roles or an audit trail from the proxy.
 - **An expired session on the API origin fails opaquely.** A cross-origin XHR
   that gets a redirect to the IdP is blocked by the browser, so the app shows
   failed requests rather than a login prompt. Reload the app page to sign back
@@ -241,7 +241,7 @@ Every service extends a tier in `compose/limits.yml` for its `deploy.resources.l
 |---|---|
 | `DFE_CLICKHOUSE_*` | clickhouse |
 | `DFE_BROKER_*` | kafka-apache, kafka-redpanda |
-| `DFE_SERVICE_*` | the DFE components, engine, UI, kafka-ui, HyperDX, its DocumentDB store. HyperDX's memory is `DFE_HYPERDX_MEMORY` |
+| `DFE_SERVICE_*` | the DFE components, engine, UI, kafka-ui, dfe-hyperdx, its DocumentDB store. dfe-hyperdx's memory is `DFE_HYPERDX_MEMORY` |
 | `DFE_SIDECAR_*` | the init and contract one-shots, dfe-dashboards, hyperdx-documentdb-tls, both Envoy proxies, otel-collector and the oauth2-proxy gates |
 
 For the actual values and totals, ask the stack rather than this page:
@@ -263,7 +263,7 @@ Two properties worth internalising. Limits are ceilings, not reservations --
 nothing is pre-allocated, so an idle service costs nothing. And Docker permits an
 equal amount of **swap** alongside a memory limit, so a 3G limit can become 3G
 RAM plus 3G swap on a swap-enabled host. Set `memswap_limit` equal to the memory
-limit per service if you need a genuinely hard cap.
+limit per service if you need a hard cap.
 
 Reservations are omitted deliberately: only memory maps outside Swarm, and a soft
 floor that half-applies reads as configuration doing more than it does. The
@@ -369,7 +369,7 @@ with the same value:
 | `DFE_HUNT_RUNNER_CLICKHOUSE_PASSWORD` | `dfe_hunt_runner` | dfe-hunt-runner | `SELECT` and `INSERT` on the data database |
 | `DFE_LOADER_CLICKHOUSE_PASSWORD` | `dfe_loader` | dfe-loader | `INSERT` on the data database, and its schema |
 | `DFE_OTEL_WRITER_CLICKHOUSE_PASSWORD` | `dfe_otel_writer` | otel-collector | `INSERT` on the otel tables, and server health |
-| `DFE_QUERY_READER_CLICKHOUSE_PASSWORD` | `dfe_query_reader` | The platform connection dfe-engine hands HyperDX | `SELECT` on the data database |
+| `DFE_QUERY_READER_CLICKHOUSE_PASSWORD` | `dfe_query_reader` | The platform connection dfe-engine hands dfe-hyperdx | `SELECT` on the data database |
 
 An existing `.env` takes the new keys on the next `make init`, and the engine
 creates each user on its next start.
@@ -398,8 +398,8 @@ These named volumes hold all durable state. Every path an image declares a VOLUM
 | `dfe-engine-config` / `dfe-engine-schemas` | Engine config and schemas, seeded from the engine image on first run |
 | `dfe-app-config` | What the engine renders each app's config into, one directory per app. Its own volume because `dfe-engine-config` also holds the JWT signing key and the deploy repo, which no data-plane container should read |
 | `dfe-engine-content` | Each app's config schema, which the `contract-<app>` one-shots write for the engine to read (`/app/content`) |
-| `hyperdx-dashboards` | The dashboards the `dfe-dashboards` one-shot generates from the engine image for HyperDX to read (`/etc/hyperdx/dashboards`) |
-| `hyperdx-documentdb-data` | HyperDX metadata store, DocumentDB's PostgreSQL cluster (`/data`) |
+| `hyperdx-dashboards` | The dashboards the `dfe-dashboards` one-shot generates from the engine image for dfe-hyperdx to read (`/etc/hyperdx/dashboards`) |
+| `hyperdx-documentdb-data` | dfe-hyperdx metadata store, DocumentDB's PostgreSQL cluster (`/data`) |
 | `hyperdx-documentdb-tls` | The CA and gateway certificate `hyperdx-documentdb-tls` mints, renewed when it nears expiry |
 
 `make down` stops containers and leaves every volume intact. `make clean` runs
@@ -468,7 +468,7 @@ The other outcomes are as informative as the PASS:
   back, so the schema may not carry `_tags`. It refuses to claim a verification
   it did not make.
 - **SKIP** -- the active profile has no ingest component at all (loader-only).
-  There is nothing to prove end to end.
+  There is no ingest path to send a row through.
 - **FAIL, no otel schema** -- the collector is in the profile but never wrote its
   tables. It cannot reach ClickHouse; read its logs.
 - **FAIL, no fresh rows** -- the tables exist and nothing recent is in them, so
@@ -476,7 +476,7 @@ The other outcomes are as informative as the PASS:
 
 ## Self-monitoring
 
-The stack's own telemetry goes out over OTLP to a collector, which writes the `dfe.otel_*` tables that HyperDX reads. Every profile declares `otel: true`. `DFE_OTEL_ENABLED=false` turns it off.
+The stack's own telemetry goes out over OTLP to a collector, which writes the `dfe.otel_*` tables that dfe-hyperdx reads. Every profile declares `otel: true`. `DFE_OTEL_ENABLED=false` turns it off.
 
 Every DFE app the profile runs pushes metrics and traces over OTLP, dfe-ui aside. Two things are pulled instead: the collector scrapes its own metrics on 127.0.0.1:8888 and `sql_query` reads ClickHouse. Container stdout reaches `dfe.otel_logs` through Docker's fluentd log driver and the collector's `fluent_forward` receiver, unless `DFE_CONTAINER_LOGS_ENABLED=false`. See [observability.md](observability.md), which also has the dials, what each component does and why `/metrics` still exists.
 

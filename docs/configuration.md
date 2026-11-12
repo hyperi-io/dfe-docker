@@ -44,7 +44,7 @@ The sections follow [.env.example](../.env.example): stack-wide settings first, 
 | `DFE_PROFILE`                                    | Override active profile from service_profiles.yaml                                   | -                                                                   |
 | `DFE_CLICKHOUSE_ENABLED`                         | Toggle to start the bundled ClickHouse. `false` with an external `CLICKHOUSE_HOST`, which alone does not skip it | unset, the profile decides                                          |
 | `DFE_CORE_ENABLED`                               | Toggle to turn on core components                                                    | `true`                                                              |
-| `DFE_HYPERDX_ENABLED`                            | Toggle to start HyperDX + its proxy + DocumentDB. Ignored with `DFE_CORE_ENABLED=false`, since HyperDX signs callers in with the engine's token | unset, the profile decides                                          |
+| `DFE_HYPERDX_ENABLED`                            | Toggle to start dfe-hyperdx + its proxy + DocumentDB. Ignored with `DFE_CORE_ENABLED=false`, since dfe-hyperdx signs callers in with the engine's token | unset, the profile decides                                          |
 | `DFE_OTEL_ENABLED`                               | Toggle to start the collector                                                        | unset, the profile decides                                          |
 | `KAFBAT_ENABLED`                                 | Toggle to turn on Kafbat                                                             | `true`                                                              |
 
@@ -63,15 +63,15 @@ table and the UI classes.
 | `DFE_UI_EXTERNAL`                                | Publish the DFE UI (dfe-proxy `:3000`); product class, kill switch never covers it   | `true`                                                              |
 | `DFE_ENGINE_API_EXTERNAL`                        | Publish the engine API (`:8003`); product class                                      | `true`                                                              |
 | `DFE_KAFBAT_UI_EXTERNAL`                         | Publish Kafbat (`:8081`); infra class                                                | `true`                                                              |
-| `DFE_HYPERDX_UI_EXTERNAL`                        | Publish HyperDX (`:8090` and its API `:8000`); infra class                           | `true`                                                              |
+| `DFE_HYPERDX_UI_EXTERNAL`                        | Publish dfe-hyperdx (`:8090` and its API `:8000`); infra class                           | `true`                                                              |
 
 ### External origin
 
 The scheme and host a browser reaches this box on: scheme and host only, no port and no trailing slash. Compose appends the port itself (`DFE_UI_PORT` for the console), so `make` refuses a value with a port, a path, a query, no scheme or a character no host holds, such as `;`. The same holds for `DFE_HYPERDX_APP_URL` and `DFE_OAUTH2_PROXY_EXTERNAL_ORIGIN`. Four surfaces build absolute URLs
 from the origin, and each is wrong when it says `localhost` and the browser did not: the
 DFE UI's post-logout redirect, the oauth2-proxy callbacks registered with the
-IdP, HyperDX's link-backs into the DFE UI, and the `frame-ancestors` policy the
-proxy serves HyperDX under. The first three send the browser somewhere it cannot
+IdP, dfe-hyperdx's link-backs into the DFE UI, and the `frame-ancestors` policy the
+proxy serves dfe-hyperdx under. The first three send the browser somewhere it cannot
 follow; the fourth blocks the console's embedded views outright.
 
 It defaults to `http://localhost`, and nothing infers the real one -- so
@@ -92,7 +92,7 @@ working on the box itself.
 
 ### Console TLS (opt-in)
 
-`DFE_PROXY_TLS=true` serves the console (`DFE_UI_PORT`), the HyperDX embed (`DFE_HYPERDX_EMBED_PORT`) and both HyperDX origins (`DFE_HYPERDX_APP_PORT`, `DFE_HYPERDX_API_PORT`) over TLS 1.2 or 1.3 with one certificate. Key exchange prefers hybrid post-quantum X25519MLKEM768, then P-384; TLS 1.2 offers AEAD suites only, AES-256-GCM first. OIDC sign-in needs it on any hostname but `localhost`: outside a dev posture the engine marks its OIDC state and token cookies `Secure` and a browser drops a `Secure` cookie sent over plain http.
+`DFE_PROXY_TLS=true` serves the console (`DFE_UI_PORT`), the dfe-hyperdx embed (`DFE_HYPERDX_EMBED_PORT`) and both dfe-hyperdx origins (`DFE_HYPERDX_APP_PORT`, `DFE_HYPERDX_API_PORT`) over TLS 1.2 or 1.3 with one certificate. Key exchange prefers hybrid post-quantum X25519MLKEM768, then P-384. TLS 1.2 offers AEAD suites only, AES-256-GCM first. OIDC sign-in needs it on any hostname but `localhost`: outside a dev environment the engine marks its OIDC state and token cookies `Secure` and a browser drops a `Secure` cookie sent over plain http.
 
 `make certs` mints the pair into `DFE_PROXY_CERT_DIR`: a P-384 `console.crt` and `0600` `console.key` for the host `DFE_EXTERNAL_ORIGIN` names plus `localhost` and `127.0.0.1`, along with the `ca.crt` that signed them. It deletes the CA's private key once it has signed, so trusting `ca.crt` in the browser or OS trusts that one certificate and nothing else. It never replaces a file already there. To renew or change the hostname, delete the three files, run it again and trust the new `ca.crt`. Both proxies run as the user who runs `make` under TLS, so run it as that user.
 
@@ -110,7 +110,7 @@ Set `DFE_EXTERNAL_ORIGIN=https://dfe.example.com` and make `DFE_HYPERDX_APP_URL`
 
 `make` refuses to start the stack until both files are real files the make user can read, `openssl` accepts them as a matching certificate and unencrypted key, both origins start with `https://`, `DFE_NETWORK_SUBNET` overlaps no other Docker network and the `auth` profile is off. oauth2-proxy serves no TLS here, so its callbacks could not answer an `https://` origin. Both Envoy proxies run as the make user, because the image's own uid 101 cannot read the `0600` key.
 
-dfe-proxy's two ports serve TLS only. The HyperDX ports answer TLS and plain HTTP on the same port, because the engine's admin-link probe, `make post` and the oauth2-proxy upstreams dial them over http on the compose network.
+dfe-proxy's two ports serve TLS only. The dfe-hyperdx ports answer TLS and plain HTTP on the same port, because the engine's admin-link probe, `make post` and the oauth2-proxy upstreams dial them over http on the compose network.
 
 The engine builds the callback URL from `X-Forwarded-Proto`, which it believes from dfe-proxy alone. TLS therefore pins the compose network to `DFE_NETWORK_SUBNET`, gives dfe-proxy its last host address and allocates every other container from the first half, so no other container and not the bridge gateway can hold the address the engine trusts. The default `10.207.0.0/24` sits outside Docker's stock address pools and the fleet's `172.16.0.0/12` pool. Move it when a second stack on the same host also runs TLS. Move it too when `make` reports an overlap or the range clashes with a LAN or VPN route. It must be a private (RFC 1918) network from `/16` to `/24`.
 
@@ -122,7 +122,7 @@ A certificate from a public CA verifies against the system trust store. For a pr
 
 | Variable                                         | Use                                                                                  | Default                                                             |
 |--------------------------------------------------|--------------------------------------------------------------------------------------|---------------------------------------------------------------------|
-| `DFE_PROXY_TLS`                                  | Serve the console and HyperDX over TLS (`true`\|`false`)                              | `false`                                                             |
+| `DFE_PROXY_TLS`                                  | Serve the console and dfe-hyperdx over TLS (`true`\|`false`)                              | `false`                                                             |
 | `DFE_PROXY_CERT_DIR`                             | Directory holding `console.crt` and `console.key`; a path starting `/`, `./` or `../` | `./certs`                                                           |
 | `DFE_NETWORK_SUBNET`                             | Compose network under TLS, private and `/16` to `/24`; dfe-proxy takes its last host  | `10.207.0.0/24`                                                     |
 | `DFE_PROXY_CA_BUNDLE`                            | PEM CA chain the e2e suites verify the console certificate against                   | unset: the system trust store                                       |
@@ -137,8 +137,8 @@ Ceilings, not reservations, sized for the default profile on a 16 GB box. `make 
 | `DFE_BROKER_MEMORY`                              | Memory ceiling of the broker. Keep it above `REDPANDA_MEMORY` or the broker is OOM-killed | `2560M`                                                             |
 | `DFE_CLICKHOUSE_CPUS`                            | CPU ceiling of ClickHouse                                                            | `2.0`                                                               |
 | `DFE_CLICKHOUSE_MEMORY`                          | Memory ceiling of ClickHouse                                                         | `3G`                                                                |
-| `DFE_HYPERDX_MEMORY`                             | Memory ceiling of HyperDX, which holds about 820 MiB for its first 100 s, over the service tier's | `2G`                                                                |
-| `DFE_SERVICE_CPUS`                               | CPU ceiling of the DFE components, the UI, Kafbat and HyperDX. Below 2.0 a scalo service gets one worker thread and stops answering its health check | `2.0`                                                               |
+| `DFE_HYPERDX_MEMORY`                             | Memory ceiling of dfe-hyperdx, which holds about 820 MiB for its first 100 s, over the service tier's | `2G`                                                                |
+| `DFE_SERVICE_CPUS`                               | CPU ceiling of the DFE components, the UI, Kafbat and dfe-hyperdx. Below 2.0 a scalo service gets one worker thread and stops answering its health check | `2.0`                                                               |
 | `DFE_SERVICE_MEMORY`                             | Memory ceiling of the same service tier. kafka-ui's JVM sizes its heap from it        | `768M`                                                              |
 | `DFE_SIDECAR_CPUS`                               | CPU ceiling of the one-shots, both Envoy proxies, otel-collector and the oauth2-proxy gates | `0.5`                                                               |
 | `DFE_SIDECAR_MEMORY`                             | Memory ceiling of the same sidecars                                                  | `512M`                                                              |
@@ -198,9 +198,9 @@ Compose maps them onto scalo's `version_check.enabled` and `version_check.send_i
 | `CLICKHOUSE_HOST`                                | External ClickHouse host (skips Docker container)                                    | `clickhouse`                                                        |
 | `CLICKHOUSE_HTTP_PORT`                           | Host publish of the bundled ClickHouse's HTTP port; services in the stack dial 8123 whatever it says, so it is safe to move | `8123`                                                              |
 | `CLICKHOUSE_NATIVE_PORT`                         | Host publish of the bundled ClickHouse's native port; services in the stack dial 9000 whatever it says, so it is safe to move | `9000`                                                              |
-| `CLICKHOUSE_EXTERNAL_HTTP_PORT`                  | HTTP port dfe-engine, dfe-hunt-runner, dfe-loader and the connection the engine hands HyperDX dial on an external `CLICKHOUSE_HOST`. Leave unset for the bundled container | `8123`                                                              |
+| `CLICKHOUSE_EXTERNAL_HTTP_PORT`                  | HTTP port dfe-engine, dfe-hunt-runner, dfe-loader and the connection the engine hands dfe-hyperdx dial on an external `CLICKHOUSE_HOST`. Leave unset for the bundled container | `8123`                                                              |
 | `CLICKHOUSE_EXTERNAL_NATIVE_PORT`                | Native port the collector dials on an external `CLICKHOUSE_HOST`. Leave unset for the bundled container | `9000`                                                              |
-| `CLICKHOUSE_SECURE`                              | TLS to an external `CLICKHOUSE_HOST` for dfe-engine, dfe-hunt-runner and the connection the engine hands HyperDX (`https://`), on `true`, `1` or `yes`. The collector and the loader do not read it | `false`                                                             |
+| `CLICKHOUSE_SECURE`                              | TLS to an external `CLICKHOUSE_HOST` for dfe-engine, dfe-hunt-runner and the connection the engine hands dfe-hyperdx (`https://`), on `true`, `1` or `yes`. The collector and the loader do not read it | `false`                                                             |
 | `CLICKHOUSE_DB`                                  | ClickHouse initialisation database                                                   | `default`                                                           |
 | `CLICKHOUSE_USERNAME`                            | ClickHouse admin username, which only dfe-engine connects as                         | `default`                                                           |
 | `CLICKHOUSE_PASSWORD`                            | ClickHouse admin password, which only dfe-engine connects with                       | -                                                                   |
@@ -328,7 +328,7 @@ Compose sets these on the engine itself:
 | `DFE_ENGINE_ENV` | `production` refuses to start without real auth. `.env` can set it |
 | `DFE_ENGINE_GITOPS_LOCAL_PATH` | The deploy repo, on the config volume |
 | `DFE_ENGINE_HUNTS_DIR`, `DFE_ENGINE_HUNTS_RULES_DIR` | Hunts and rules, in the deploy repo's tree with or without a repo, because that is the part dfe-hunt-runner mounts |
-| `DFE_ENGINE_HYPERDX_BASE_URL`, `DFE_ENGINE_HYPERDX_ENABLED` | Follow the footprint, like the HyperDX containers |
+| `DFE_ENGINE_HYPERDX_BASE_URL`, `DFE_ENGINE_HYPERDX_ENABLED` | Follow the footprint, like the dfe-hyperdx containers |
 | `DFE_ENGINE_PROFILE` | The tier name, which seeds its default app instances |
 | `DFE_ENGINE_SECRETS_PATH` | On the config volume, so the JWT key survives a recreate |
 | `DFE_ENGINE_STACK_VERSION`, `DFE_ENGINE_UI_VERSION` | The certified stack and the console version, for the console footer. The second is the UI pin without its digest |
@@ -360,11 +360,11 @@ Compose points the console at the engine with `INTERNAL_API_URL`, for its server
 |--------------------------------------------------|--------------------------------------------------------------------------------------|---------------------------------------------------------------------|
 | `DFE_PROXY_VERSION`                              | The `envoyproxy/envoy` tag dfe-proxy runs                                            | none, `make stack` pins it                                          |
 
-dfe-proxy re-serves HyperDX on `:8091` with a `frame-ancestors` header so the console can frame it. Compose fills that header's `DFE_HYPERDX_EMBED_ANCESTOR` with the origins allowed, loopback included.
+dfe-proxy re-serves dfe-hyperdx on `:8091` with a `frame-ancestors` header so the console can frame it. Compose fills that header's `DFE_HYPERDX_EMBED_ANCESTOR` with the origins allowed, loopback included.
 
 ### OTel collector
 
-Every profile declares `otel: true`, which starts a collector that takes the stack's own telemetry over OTLP and writes the `dfe.otel_*` tables HyperDX reads. `DFE_OTEL_ENABLED=false` turns it off. The only scrape is the collector reading its own metrics on 127.0.0.1:8888 and its OTLP ports stay on the Compose network. Full picture, including which services report today: [observability.md](observability.md).
+Every profile declares `otel: true`, which starts a collector that takes the stack's own telemetry over OTLP and writes the `dfe.otel_*` tables dfe-hyperdx reads. `DFE_OTEL_ENABLED=false` turns it off. The only scrape is the collector reading its own metrics on 127.0.0.1:8888 and its OTLP ports stay on the Compose network. Full picture, including which services report today: [observability.md](observability.md).
 
 | Variable                                         | Use                                                                                  | Default                                                             |
 |--------------------------------------------------|--------------------------------------------------------------------------------------|---------------------------------------------------------------------|
@@ -379,38 +379,38 @@ Every profile declares `otel: true`, which starts a collector that takes the sta
 
 The collector runs with `create_schema=false`, so it waits on the engine, which makes the tables. `/proc` mounts at `/hostfs/proc` for `host_metrics`' CPU scraper. `make` sets `DFE_USAGE_CPU_LIMITS` and `DFE_USAGE_NODE_NAME` for the usage rollup.
 
-### HyperDX
+### dfe-hyperdx
 
-Every profile declares `hyperdx: true` and `DFE_HYPERDX_ENABLED=false` turns it off. It starts `hyperdx` (API + App), the `dfe-hyperdx-proxy` that fronts both origins, a one-shot `dfe-dashboards` that copies the engine's shipped dashboards into a volume, plus `hyperdx-documentdb`, sharing the always-on ClickHouse. `dfe-dashboards` runs the engine image's dashboards module as root, never `dfe-engine run`, so it needs no config, secrets or database.
+Every profile declares `hyperdx: true` and `DFE_HYPERDX_ENABLED=false` turns it off. It starts `dfe-hyperdx` (API + App), the `dfe-hyperdx-proxy` that fronts both origins, a one-shot `dfe-dashboards` that copies the engine's shipped dashboards into a volume, plus `hyperdx-documentdb`, sharing the always-on ClickHouse. `dfe-dashboards` runs the engine image's dashboards module as root, never `dfe-engine run`, so it needs no config, secrets or database.
 
-`hyperdx-documentdb` is PostgreSQL with the DocumentDB extensions and the Mongo-wire gateway HyperDX talks to, in one container, with its usage telemetry to a third party switched off. The gateway serves TLS only, on a certificate the one-shot `hyperdx-documentdb-tls` mints into a volume on first start and renews once it has 30 days left. It runs as root, since a fresh volume lands root-owned, and leaves the pair to uid 1000, which both documentdb-local and HyperDX run as. HyperDX gets only the CA that signed it, verifies the gateway against it and logs in with SCRAM-SHA-256.
+`hyperdx-documentdb` is PostgreSQL with the DocumentDB extensions and the Mongo-wire gateway dfe-hyperdx talks to, in one container, with its usage telemetry to a third party switched off. The gateway serves TLS only, on a certificate the one-shot `hyperdx-documentdb-tls` mints into a volume on first start and renews once it has 30 days left. It runs as root, since a fresh volume lands root-owned, and leaves the pair to uid 1000, which both documentdb-local and dfe-hyperdx run as. dfe-hyperdx gets only the CA that signed it, verifies the gateway against it and logs in with SCRAM-SHA-256.
 
-HyperDX runs in `oidc-proxy` mode, as it does on Kubernetes: it verifies the engine's ES384 token against the engine's JWKS. A caller carrying none is unauthenticated. Signing in to the console is what signs a browser in here: dfe-ui mirrors the session into a `dfe_token` cookie and cookies ignore ports. The engine identifies with a service token of its own, which is how a source added through the console reaches every HyperDX team. That token's team, `DFE_HYPERDX_TEAM`, holds no connection and no sources, because HyperDX seeds a team only from a person's login, never from the service token. Every other team gets its connection and sources on its members' first login, from the engine's answer for that member: `main` and `hunts` everywhere, plus the otel and `clickhouse_system` sources on a platform team. Each team also gets the shipped dashboards those sources can render. From hyperi-io/dfe-hyperdx#106 on, a login the engine gives no connection is retried on a later request.
+dfe-hyperdx runs in `oidc-proxy` mode, as it does on Kubernetes: it verifies the engine's ES384 token against the engine's JWKS. A caller carrying none is unauthenticated. Signing in to the console is what signs a browser in here: dfe-ui mirrors the session into a `dfe_token` cookie and cookies ignore ports. The engine identifies with a service token of its own, which is how a source added through the console reaches every dfe-hyperdx team. That token's team, `DFE_HYPERDX_TEAM`, holds no connection and no sources, because dfe-hyperdx seeds a team only from a person's login, never from the service token. Every other team gets its connection and sources on its members' first login, from the engine's answer for that member: `main` and `hunts` everywhere, plus the otel and `clickhouse_system` sources on a platform team. Each team also gets the shipped dashboards those sources can render. From hyperi-io/dfe-hyperdx#106 on, a login the engine gives no connection is retried on a later request.
 
-The same toggle points the engine at HyperDX: with it on, the engine receives `DFE_ENGINE_HYPERDX_ENABLED=true` and `DFE_ENGINE_HYPERDX_BASE_URL=http://hyperdx:8000`, so its `/api/v1/hyperdx/*` surface answers instead of returning `503 hyperdx_absent`.
+The same toggle points the engine at dfe-hyperdx: with it on, the engine receives `DFE_ENGINE_HYPERDX_ENABLED=true` and `DFE_ENGINE_HYPERDX_BASE_URL=http://dfe-hyperdx:8000`, so its `/api/v1/hyperdx/*` surface answers instead of returning `503 hyperdx_absent`.
 
 | Variable                                         | Use                                                                                  | Default                                                             |
 |--------------------------------------------------|--------------------------------------------------------------------------------------|---------------------------------------------------------------------|
 | `DFE_HYPERDX_VERSION`                            | Version of the dfe-hyperdx fork image to use                                         | pinned by `make stack` from the SSoT (fail-loud, like every image)  |
-| `DFE_HYPERDX_API_PORT`                           | HyperDX API host port, on `dfe-hyperdx-proxy`                                        | `8000`                                                              |
-| `DFE_HYPERDX_APP_PORT`                           | HyperDX App UI host port, on `dfe-hyperdx-proxy`                                     | `8090`                                                              |
-| `DFE_HYPERDX_APP_URL`                            | Scheme and host only, no port, the browser uses to reach HyperDX; overrides `DFE_EXTERNAL_ORIGIN` | follows `DFE_EXTERNAL_ORIGIN`                                       |
-| `DFE_HYPERDX_BASE_URL`                           | Where the ENGINE reaches HyperDX; name an external one here                          | `http://hyperdx:8000`                                               |
+| `DFE_HYPERDX_API_PORT`                           | dfe-hyperdx API host port, on `dfe-hyperdx-proxy`                                        | `8000`                                                              |
+| `DFE_HYPERDX_APP_PORT`                           | dfe-hyperdx App UI host port, on `dfe-hyperdx-proxy`                                     | `8090`                                                              |
+| `DFE_HYPERDX_APP_URL`                            | Scheme and host only, no port, the browser uses to reach dfe-hyperdx; overrides `DFE_EXTERNAL_ORIGIN` | follows `DFE_EXTERNAL_ORIGIN`                                       |
+| `DFE_HYPERDX_BASE_URL`                           | Where the ENGINE reaches dfe-hyperdx; name an external one here                          | `http://dfe-hyperdx:8000`                                           |
 | `DFE_HYPERDX_TEAM`                               | Team name when the token carries no group claim                                      | `dfe`                                                               |
-| `DFE_QUERY_READER_CLICKHOUSE_PASSWORD`           | Password of `dfe_query_reader`, the platform reader HyperDX's seeded connection uses, which the engine creates on it | generated                                                           |
+| `DFE_QUERY_READER_CLICKHOUSE_PASSWORD`           | Password of `dfe_query_reader`, the platform reader dfe-hyperdx's seeded connection uses, which the engine creates on it | generated                                                           |
 | `USAGE_STATS_ENABLED`                            | `true` sends upstream HyperDX's usage stats to `in-otel.hyperdx.io`, a third party. Upstream's own default is on | `false`                                                             |
 | `NEXT_PUBLIC_THEME`                              | In `env/hyperdx.env`. UI theme: `dfe`, `hyperdx` or `clickstack`                     | `dfe`                                                               |
-| `HYPERDX_API_KEY`                                | In `env/hyperdx.env`. Ships HyperDX's own logs over OTLP when set                    | unset                                                               |
-| `HYPERDX_LOG_LEVEL`                              | In `env/hyperdx.env`. HyperDX API log level                                          | `info`                                                              |
-| `HYPERDX_DOCUMENTDB_USER`                        | DocumentDB login HyperDX uses                                                        | `hyperdx`                                                           |
+| `HYPERDX_API_KEY`                                | In `env/hyperdx.env`. Ships dfe-hyperdx's own logs over OTLP when set                    | unset                                                               |
+| `HYPERDX_LOG_LEVEL`                              | In `env/hyperdx.env`. dfe-hyperdx API log level                                          | `info`                                                              |
+| `HYPERDX_DOCUMENTDB_USER`                        | DocumentDB login dfe-hyperdx uses                                                        | `hyperdx`                                                           |
 | `HYPERDX_DOCUMENTDB_PASSWORD`                    | Password for that login                                                              | `hyperdx`                                                           |
-| `EXPRESS_SESSION_SECRET`                         | In `env/hyperdx.env`. Signs HyperDX's session cookie                                 | generated by `make init`, unset otherwise, which `make post` fails  |
-| `TOKEN_ENCRYPTION_KEY`                           | In `env/hyperdx.env`. Encrypts the third-party tokens HyperDX stores, 64 hex chars   | generated by `make init`, unset (plain text) otherwise, which `make post` fails |
+| `EXPRESS_SESSION_SECRET`                         | In `env/hyperdx.env`. Signs dfe-hyperdx's session cookie                                 | generated by `make init`, unset otherwise, which `make post` fails  |
+| `TOKEN_ENCRYPTION_KEY`                           | In `env/hyperdx.env`. Encrypts the third-party tokens dfe-hyperdx stores, 64 hex chars   | generated by `make init`, unset (plain text) otherwise, which `make post` fails |
 | `HYPERDX_DOCUMENTDB_VERSION`                     | `documentdb-local` image version, which `make stack` sets from the DFE stack SSoT once it carries one | pinned in `docker-compose.yml`                                      |
 
 `hyperdx-documentdb` has `DOCUMENTDB_USAGE_TELEMETRY` off, as upstream reports to a third party hourly. Its 128 MB `shared_buffers` run inside the service limit, its data directory is pre-initialised so a first start skips initdb and its image's own probe is retuned to gate startup. Compose gives the password a default because a `:?` would break `make down`, and `make init` mints the real one.
 
-`hyperdx` mounts only the CA from `hyperdx-documentdb-tls`, never the gateway's key. `DASHBOARD_PROVISIONER_DIR` starts the provisioner, which reruns each minute and skips a dashboard whose source the team lacks. `HYPERDX_API_PORT` and `HYPERDX_APP_PORT` are the container ports dfe-proxy dials by name. `NEXT_PUBLIC_DFE_UI_BASE_URL` is where the embedded HyperDX opens a created rule.
+`dfe-hyperdx` mounts only the CA from `hyperdx-documentdb-tls`, never the gateway's key. `DASHBOARD_PROVISIONER_DIR` starts the provisioner, which reruns each minute and skips a dashboard whose source the team lacks. `HYPERDX_API_PORT` and `HYPERDX_APP_PORT` are the container ports dfe-proxy dials by name. `NEXT_PUBLIC_DFE_UI_BASE_URL` is where the embedded dfe-hyperdx opens a created rule.
 
 ### Infra UI authentication (opt-in)
 
@@ -451,11 +451,11 @@ The engine runs as its image's user, not yours, so the two meet on a group. `mak
 | Port  | Service              | Protocol           |
 |-------|----------------------|--------------------|
 | 3000  | dfe-proxy            | Web UI (envoy fronts dfe-ui, which publishes no host port) |
-| 8000  | hyperdx              | API                |
+| 8000  | dfe-hyperdx-proxy    | dfe-hyperdx API        |
 | 8003  | dfe-engine           | HTTP API           |
 | 8080  | dfe-receiver         | HTTP ingest        |
 | 8081  | Kafbat               | Web UI             |
-| 8090  | hyperdx              | App UI             |
+| 8090  | dfe-hyperdx-proxy    | dfe-hyperdx App UI     |
 | 8123  | ClickHouse           | HTTP API           |
 | 9000  | ClickHouse           | Native protocol    |
 | 9090  | dfe-receiver         | Prometheus metrics |

@@ -73,7 +73,7 @@ Each transform reads a topic and writes a topic on Kafka but pushes to the loade
 
 ## What each profile runs
 
-`slim-*` is the core data path alone: receiver, loader, engine, UI and HyperDX. `single-*` adds the per-source apps its keys enable ([profiles.md](profiles.md#per-source-apps)). The `-kafka` profiles add the broker. `single-kafka` also adds one archiver. None starts a per-source app until a source created through the engine binds one.
+`slim-*` is the core data path alone: receiver, loader, engine, UI and dfe-hyperdx. `single-*` adds the per-source apps its keys enable ([profiles.md](profiles.md#per-source-apps)). The `-kafka` profiles add the broker. `single-kafka` also adds one archiver. None starts a per-source app until a source created through the engine binds one.
 
 ## The engine renders each app's config
 
@@ -179,7 +179,7 @@ flowchart TD
 | `kafka-ui` | `kafka-ui` (Kafbat) |
 | `dfe` | `dlq-init`, `bearer-tokens-init`, archiver, fetcher, loader, receiver, every transform instance |
 | `core` | `dfe-engine`, `dfe-ui`, `dfe-proxy` |
-| `hyperdx` | `hyperdx`, `hyperdx-documentdb`, `hyperdx-documentdb-tls` |
+| `hyperdx` | `dfe-hyperdx`, `hyperdx-documentdb`, `hyperdx-documentdb-tls` |
 | `otel` | `otel-collector` |
 
 A profile declares its whole footprint through the optional `clickhouse`, `core`,
@@ -226,7 +226,7 @@ Dev builds fetch source into a managed git cache, or from your own checkouts whe
 | `dfe-transform-vrl` | Rust | Embedded VRL transform engine; deployed once per source that has a transform | `dfe` |
 | `dfe-engine` | Python | Config and schema API; the schema authority | `core` |
 | `dfe-ui` | TypeScript | Web console | `core` |
-| `dfe-hyperdx` | TypeScript | HyperDX fork. Repo and published image are both `dfe-hyperdx` | `hyperdx` |
+| `dfe-hyperdx` | TypeScript | dfe-hyperdx fork. Repo and published image are both `dfe-hyperdx` | `hyperdx` |
 
 `dfe-transform-splack` and `dfe-transform-wasm` have repos but no service here,
 so this stack cannot run them.

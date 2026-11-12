@@ -1,17 +1,17 @@
 #  Project:      dfe-docker
 #  File:         tests/test_hyperdx.py
-#  Purpose:      Assert the engine is pointed at HyperDX, and HyperDX at the engine
+#  Purpose:      Assert the engine is pointed at dfe-hyperdx, and dfe-hyperdx at the engine
 #  Language:     Python
 #
 #  License:      BUSL-1.1
 #  Copyright:    (c) 2026 HYPERI PTY LIMITED
 
-"""The two halves of the HyperDX control surface, as a profile resolves them.
+"""The two halves of the dfe-hyperdx control surface, as a profile resolves them.
 
-The engine drives HyperDX's team, connections and sources over a token it signs
-itself, so it has to know HyperDX is there; HyperDX has to verify that token
+The engine drives dfe-hyperdx's team, connections and sources over a token it signs
+itself, so it has to know dfe-hyperdx is there; dfe-hyperdx has to verify that token
 against the engine's JWKS. With either half unset a source added through the
-console never gets its HyperDX view, and the engine answers 503 `hyperdx_absent`.
+console never gets its dfe-hyperdx view, and the engine answers 503 `hyperdx_absent`.
 Its session signing key comes from `make init`, or the fork signs with a key
 published upstream; so does its token encryption key, in a format it parses.
 
@@ -29,14 +29,14 @@ import resolve_profile
 from _common import COMPOSE_FILE, RENDERED_PROFILES, REPO_ROOT
 
 _ENGINE_SERVICE = "dfe-engine"
-_HYPERDX_SERVICE = "hyperdx"
+_HYPERDX_SERVICE = "dfe-hyperdx"
 _SESSION_KEY = "EXPRESS_SESSION_SECRET"
 _TOKEN_KEY = "TOKEN_ENCRYPTION_KEY"
-# The file `make init` mints HyperDX's own secrets into, which compose hands the container
+# The file `make init` mints dfe-hyperdx's own secrets into, which compose hands the container
 _HYPERDX_ENV = "hyperdx.env"
 # The hex form of the two the fork's tokenEncryption.ts parseEncryptionKey accepts.
 _HEX_AES256 = re.compile(r"[0-9a-f]{64}")
-_IN_STACK_HYPERDX = "http://hyperdx:8000"
+_IN_STACK_HYPERDX = "http://dfe-hyperdx:8000"
 _JWKS_URL = "http://dfe-engine:8000/.well-known/jwks.json"
 
 _INTERPOLATION = re.compile(r"\$\{([A-Z0-9_]+):-([^{}]*)\}")
@@ -52,7 +52,7 @@ _FOOTPRINT_KEYS = (
     "KAFKA_BACKEND",
 )
 
-# The dials for the fixed identity a proxy used to stamp on every HyperDX request.
+# The dials for the fixed identity a proxy used to stamp on every dfe-hyperdx request.
 # `oidc-proxy` ignores it, so one left anywhere reads as an identity that still
 # works. check_compose holds the proxies to adding no identity header at all.
 _RETIRED_IDENTITY = "DFE_HYPERDX_IDENTITY_"
@@ -206,7 +206,7 @@ def test_hyperdx_reads_each_key_make_init_mints_from_its_own_file(key: str) -> N
     # A compose `environment:` entry would outvote the minted value in env/hyperdx.env
     assert key not in _service_environment(service=_HYPERDX_SERVICE)
     assert key in init.GENERATED_SECRETS[_HYPERDX_ENV]
-    # Unset is exactly what `make post` refuses on HyperDX.
+    # Unset is exactly what `make post` refuses on dfe-hyperdx.
     assert post.WEAK_SECRET_DEFAULTS[key] == ("", _HYPERDX_SERVICE)
 
 
@@ -215,7 +215,7 @@ def test_the_session_key_is_a_signing_key() -> None:
 
 
 def test_the_minted_token_key_is_one_hyperdx_parses() -> None:
-    """HyperDX refuses to start unless the key is 64 hex chars or base64 of 32 bytes."""
+    """dfe-hyperdx refuses to start unless the key is 64 hex chars or base64 of 32 bytes."""
     minted = init._mint(_TOKEN_KEY)
 
     assert _HEX_AES256.fullmatch(minted)

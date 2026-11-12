@@ -104,10 +104,10 @@ receivers:
           static_configs:
             - targets: ["127.0.0.1:8888"]
         # The job name is the service.name the engine reads it under
-        - job_name: hyperdx
+        - job_name: dfe-hyperdx
           scrape_interval: 30s
           static_configs:
-            - targets: ["hyperdx:8000"]
+            - targets: ["dfe-hyperdx:8000"]
   # ClickHouse server health
   sql_query/clickhouse:
     collection_interval: 30s

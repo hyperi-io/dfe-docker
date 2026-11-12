@@ -186,7 +186,7 @@ _RETIRED_HEALTH_PATHS = ("/healthz", "/health/live", "/health/ready", "/health/s
 _UI_EXPOSURE: dict[str, tuple[str, str]] = {
     "dfe-engine": ("product", "DFE_ENGINE_API_EXTERNAL"),
     "dfe-proxy": ("product", "DFE_UI_EXTERNAL"),
-    # HyperDX's ports sit on its proxy, never on the hyperdx container
+    # dfe-hyperdx's ports sit on its proxy, never on the dfe-hyperdx container
     "dfe-hyperdx-proxy": ("infra", "DFE_HYPERDX_UI_EXTERNAL"),
     "kafka-ui": ("infra", "DFE_KAFBAT_UI_EXTERNAL"),
 }
@@ -208,7 +208,7 @@ _BIND_SCOPE_ADDRS = ("127.0.0.1", "0.0.0.0")
 
 # The opt-in `auth` profile fronts each infra UI with oauth2-proxy. Keyed by the
 # UI service: the proxies that front it. One proxy per ORIGIN, because
-# oauth2-proxy serves a single --http-address and HyperDX is one UI across two.
+# oauth2-proxy serves a single --http-address and dfe-hyperdx is one UI across two.
 _AUTH_PROFILE = "auth"
 _AUTH_PROXIES: dict[str, tuple[str, ...]] = {
     "dfe-hyperdx-proxy": ("oauth2-proxy-hyperdx", "oauth2-proxy-hyperdx-api"),
@@ -376,8 +376,8 @@ _CLICKHOUSE_DIAL_CASES: tuple[
     ),
 )
 
-# Services this project owns and therefore holds to that surface. hyperdx,
-# clickhouse, the brokers and kafka-ui are third-party and keep their own.
+# Services this project owns and therefore holds to that surface. dfe-hyperdx
+# keeps upstream HyperDX's surface, and clickhouse, the brokers and kafka-ui are third-party.
 _DFE_OWNED_SERVICES = {
     "dfe-archiver",
     "dfe-engine",

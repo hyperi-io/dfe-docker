@@ -16,25 +16,25 @@ admin:
 static_resources:
   clusters:
     # Fixed container ports, the DFE_HYPERDX_*_PORT dials only move the host ports
-    - name: hyperdx
+    - name: dfe-hyperdx
       dns_lookup_family: V4_ONLY
       load_assignment:
-        cluster_name: hyperdx
+        cluster_name: dfe-hyperdx
         endpoints:
           - lb_endpoints:
               - endpoint:
                   address:
-                    socket_address: { address: hyperdx, port_value: 8090 }
+                    socket_address: { address: dfe-hyperdx, port_value: 8090 }
       type: STRICT_DNS
-    - name: hyperdx-api
+    - name: dfe-hyperdx-api
       dns_lookup_family: V4_ONLY
       load_assignment:
-        cluster_name: hyperdx-api
+        cluster_name: dfe-hyperdx-api
         endpoints:
           - lb_endpoints:
               - endpoint:
                   address:
-                    socket_address: { address: hyperdx, port_value: 8000 }
+                    socket_address: { address: dfe-hyperdx, port_value: 8000 }
       type: STRICT_DNS
   listeners:
     - name: hyperdx-app
@@ -59,7 +59,7 @@ static_resources:
                       domains: ["*"]
                       routes:
                         - match: { prefix: / }
-                          route: { cluster: hyperdx }
+                          route: { cluster: dfe-hyperdx }
                 stat_prefix: hyperdx_app
                 upgrade_configs:
                   - upgrade_type: websocket
@@ -106,7 +106,7 @@ static_resources:
                       domains: ["*"]
                       routes:
                         - match: { prefix: / }
-                          route: { cluster: hyperdx }
+                          route: { cluster: dfe-hyperdx }
                 stat_prefix: hyperdx_app
                 upgrade_configs:
                   - upgrade_type: websocket
@@ -140,7 +140,7 @@ static_resources:
                       domains: ["*"]
                       routes:
                         - match: { prefix: / }
-                          route: { cluster: hyperdx-api }
+                          route: { cluster: dfe-hyperdx-api }
                 stat_prefix: hyperdx_api
                 use_remote_address: true
           transport_socket: *hyperdx_tls
@@ -160,7 +160,7 @@ static_resources:
                       domains: ["*"]
                       routes:
                         - match: { prefix: / }
-                          route: { cluster: hyperdx-api }
+                          route: { cluster: dfe-hyperdx-api }
                 stat_prefix: hyperdx_api
                 use_remote_address: true
       # BEGIN TLS

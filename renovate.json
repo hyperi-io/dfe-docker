@@ -28,6 +28,12 @@
       "description": "Group all Docker image updates regardless of where they are pinned",
       "matchDatasources": ["docker"],
       "groupName": "docker-images"
+    },
+    {
+      "description": "hyperi-ci's own workflows and actions stay on @main so CI fixes reach every run. Last so it overrides the pinning preset and the github-actions group.",
+      "matchManagers": ["github-actions"],
+      "matchDepNames": ["hyperi-io/hyperi-ci"],
+      "enabled": false
     }
   ]
 }

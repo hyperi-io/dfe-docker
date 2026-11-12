@@ -62,7 +62,7 @@ def _services(path: Path) -> dict[str, dict[str, object]]:
 
 def _runners(*, component: str) -> set[str]:
     """Return every compose service that runs component's registry image, pinned one-shots aside."""
-    image = build_dev_images.SERVICE_REPO_DIRS.get(component, component)
+    image = component
     services = {**_services(COMPOSE_FILE), **_services(COMPOSE_ONE_SHOTS_FILE)}
     runners = set()
     for service, config in services.items():
@@ -122,7 +122,7 @@ def test_a_record_of_nothing_built_is_an_empty_overlay(tmp_path: Path) -> None:
 
 
 def test_a_consumer_started_without_its_component_still_gets_it_built():
-    """hyperdx starts dfe-dashboards on a stack whose engine is off."""
+    """dfe-hyperdx starts dfe-dashboards on a stack whose engine is off."""
     services = _services(COMPOSE_FILE)
     missing = []
     for component in build_dev_images.buildable_components():
@@ -138,7 +138,7 @@ def test_a_consumer_started_without_its_component_still_gets_it_built():
 
 
 def test_dev_images_are_packaged_with_no_build_arg_the_release_does_not_set():
-    """hyperdx:local was built in browser-local mode, with authentication off."""
+    """dfe-hyperdx:local was built in browser-local mode, with authentication off."""
     for component in build_dev_images.buildable_components():
         command = build_dev_images._package_command(
             context=Path("ctx"), dockerfile=Path("ctx/Dockerfile"), service=component

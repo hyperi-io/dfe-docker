@@ -44,14 +44,14 @@ the service key and are unaffected.
 
 ## Where a DFE service's logs are
 
-With self-monitoring on, DFE's own services log through Docker's `fluentd` driver and `docker compose logs dfe-loader` still reads them back from the daemon's local copy. The same lines are in ClickHouse: search the `otel_logs` source in HyperDX or read them directly:
+With self-monitoring on, DFE's own services log through Docker's `fluentd` driver and `docker compose logs dfe-loader` still reads them back from the daemon's local copy. The same lines are in ClickHouse: search the `otel_logs` source in dfe-hyperdx or read them directly:
 
 ```bash
 docker exec dfe-clickhouse clickhouse-client --query \
   "SELECT Timestamp, Body FROM dfe.otel_logs WHERE ServiceName = 'dfe-loader' ORDER BY Timestamp DESC LIMIT 50"
 ```
 
-ClickHouse, the broker, the proxies and HyperDX keep `json-file`. To put every service back on it, set `DFE_CONTAINER_LOGS_ENABLED=false` and restart.
+ClickHouse, the broker, the proxies and dfe-hyperdx keep `json-file`. To put every service back on it, set `DFE_CONTAINER_LOGS_ENABLED=false` and restart.
 
 ## Events are accepted but nothing lands
 

@@ -29,6 +29,7 @@ import argparse
 import json
 import os
 import re
+import secrets
 import shutil
 import subprocess
 import sys
@@ -54,7 +55,9 @@ from _common import (  # noqa: E402
     _profile_mk_value,
     _rel_path,
     _resolved_services,
+    in_stack,
 )
+from _pipeline import clickhouse_url  # noqa: E402
 from _sources import hinted_services  # noqa: E402
 from build_dev_images import SRC_REMOTE_DEFAULT  # noqa: E402
 from post import (  # noqa: E402
@@ -68,6 +71,7 @@ from post import (  # noqa: E402
     _api_post_json,
     _decoded,
     _engine_base,
+    _ensure_org,
     _exec_request,
     api_put_json,
 )
@@ -86,6 +90,9 @@ SOURCES_DIR = DEMO_DIR / "sources"
 TRANSFORM_APP = "dfe-transform-elastic"
 TRANSFORM_REPO = "dfe-transform-elastic"
 TRANSFORM_VERSION_KEY = "DFE_TRANSFORM_ELASTIC_VERSION"
+# The organisation and account that complete the engine's first-run setup
+DEMO_ORG = "demo"
+DEMO_ANALYST = "demo-analyst"
 RECEIVER_SERVICE = "dfe-receiver"
 # dfe-engine main reads the catalogue from its dfe-schemas wheel and older images from the seeded /app/schemas, so this tries both in that order, at any depth because newer wheels file each entry under its tag folder
 CATALOGUE_READ = "\n".join(
@@ -149,9 +156,9 @@ MANIFEST_FILE = DEMO_DIR / "demo.json"
 INSTALLED_FILE = FETCH_ROOT / "installed.json"
 CONSOLE_DIR = DEMO_DIR / "console"
 # dfe-hyperdx's API as dfe-engine reaches it, which accepts the engine's own token. Everything the pack puts in the console is a plain, deletable object whose name starts with CONSOLE_PREFIX
-HYPERDX_API = "http://hyperdx:8000"
+HYPERDX_API = "http://dfe-hyperdx:8000"
 CONSOLE_PREFIX = "demo-"
-HYPERDX_SERVICE = "hyperdx"
+HYPERDX_SERVICE = "dfe-hyperdx"
 # The generator ends a loop only at --count or --duration, so the stream runs ten years unless removed
 STREAM_SECONDS = 315_360_000
 READY_TIMEOUT_SECONDS = 120.0
@@ -296,7 +303,7 @@ def _console_files(*, kind: str) -> list[dict]:
 
 
 def _console_url(*, path: str) -> str:
-    """Where a browser on this host opens a HyperDX page."""
+    """Where a browser on this host opens a dfe-hyperdx page."""
     origin = os.environ.get("DFE_HYPERDX_APP_URL", "").strip() or "http://localhost"
     port = os.environ.get("DFE_HYPERDX_APP_PORT", "").strip() or "8090"
     return f"{origin.rstrip('/')}:{port}{path}"
@@ -413,15 +420,12 @@ def _await_ready(*, instance: str) -> None:
 
 def _await_rows(
     *, before: dict[str, int | None], container: str, vendors: list[str]
-) -> dict[str, int]:
-    """Poll until every vendor table has gained rows or the generator has exited, then return each table's gain so far."""
+) -> dict[str, int | None]:
+    """Poll until every vendor table has gained rows or the generator has exited, then return each table's gain so far, None where it cannot be read."""
     deadline = time.monotonic() + LAND_TIMEOUT_SECONDS
     while True:
-        now = _counts(tables=list(before))
-        gained = {
-            table: ((now[table]) or (0)) - ((before[table]) or (0)) for table in before
-        }
-        done = all(gained[table] > 0 for table in vendors)
+        gained = row_gains(before=before, now=_counts(tables=list(before)))
+        done = all((gained[table] or 0) > 0 for table in vendors)
         if (
             (done)
             or (time.monotonic() >= deadline)
@@ -507,6 +511,28 @@ def _counts(*, tables: list[str]) -> dict[str, int | None]:
     return {table: _row_count(source=table) for table in tables}
 
 
+def _complete_setup(*, base: str, token: str) -> None:
+    """Make the organisation and the real user the engine's first-run setup asks for.
+
+    Without them every console page opens on the setup wizard. Nobody logs in as the analyst, so its password is random and never shown.
+    """
+    org = _ensure_org(base=base, token=token, name=DEMO_ORG)
+    if org.fault:
+        raise DemoError(f"the demo organisation: {org.fault}")
+    account = {
+        "username": DEMO_ANALYST,
+        "password": secrets.token_urlsafe(32),
+        "name": "Demo analyst",
+        "org": DEMO_ORG,
+    }
+    status, answer = _api_post_json(f"{base}/auth/accounts", account, token=token)
+    if status not in (201, 409):
+        raise DemoError(
+            f"creating account {DEMO_ANALYST!r} returned HTTP {status}: {answer}"
+        )
+    _print(msg=f"setup complete: organisation {DEMO_ORG!r}, account {DEMO_ANALYST!r}")
+
+
 def _create(*, base: str, body: dict, token: str) -> dict:
     """Create one source from its file, then return the reply."""
     name = body["source"]
@@ -578,7 +604,17 @@ def _docker(
 
 
 def _engine_python(*, code: str, stdin: str) -> subprocess.CompletedProcess:
-    """Run Python in the engine's container, for the PyYAML it carries."""
+    """Run Python in the engine's container, for the PyYAML it carries, or on this interpreter inside the stack, where the dfe-docker image carries its own."""
+    if in_stack():
+        return subprocess.run(
+            [sys.executable, "-c", code],
+            capture_output=True,
+            check=False,
+            encoding="utf-8",
+            errors="replace",
+            input=stdin,
+            text=True,
+        )
     container = _container(service=ENGINE_SERVICE)
     if not (container) or not (_running(container=container)):
         raise DemoError(
@@ -724,7 +760,8 @@ def _outcome(
     archiving, image = archive
     gained = _await_rows(before=before, container=container, vendors=vendors)
     for table, rows in gained.items():
-        _print(msg=f"  {TARGET_DB}.{table}: +{rows} rows")
+        shown = "cannot be read" if rows is None else f"+{rows} rows"
+        _print(msg=f"  {TARGET_DB}.{table}: {shown}")
     # A fetcher's table is reported whole, since its cursor holds back what a previous run already pulled
     landed = _counts(tables=[body["source"] for body in fetchers])
     for table, rows in landed.items():
@@ -732,11 +769,16 @@ def _outcome(
             _print(msg=f"  {TARGET_DB}.{table}: {rows} rows")
     for warning in fetcher_warnings(counts=landed, fetchers=fetchers):
         _print(msg=warning)
+    unread = ", ".join(
+        repr(f"{TARGET_DB}.{table}") for table in vendors if gained[table] is None
+    )
     empty = ", ".join(
-        repr(f"{TARGET_DB}.{table}") for table in vendors if gained[table] <= 0
+        repr(f"{TARGET_DB}.{table}")
+        for table in vendors
+        if gained[table] is not None and gained[table] <= 0
     )
     archived = None
-    if archiving and not (empty):
+    if archiving and not (empty or unread):
         archived = _await_archive(image=image, sources=archiving)
         _print(
             msg=f"  {ARCHIVER_SERVICE} archive of {', '.join(archiving)}: "
@@ -744,13 +786,18 @@ def _outcome(
         )
         for line in _archive_report(image=image, sources=archiving).splitlines():
             _print(msg=f"    {line}")
-    unarchived = bool(archiving) and not (empty) and not ((archived or 0) > 0)
+    unarchived = bool(archiving) and not (empty or unread) and not ((archived or 0) > 0)
     # Lines a previous stream sent can still land, so rows alone do not prove this run's generator worked
     if not (_running(container=container)):
         _print(
             msg=f"FAIL the generator in {container!r} exited, so the rows above may be "
             f"a previous stream's. Its last output:\n"
             f"{_generator_output(container=container)}"
+        )
+    elif unread:
+        _print(
+            msg=f"FAIL ClickHouse at {clickhouse_url()} answered no count for {unread}, "
+            "so whether rows landed is unknown. CLICKHOUSE_URL names the address to read it at"
         )
     elif empty:
         _print(
@@ -770,7 +817,7 @@ def _outcome(
         kept = " and the archiver wrote files" if archiving else ""
         _print(
             msg=f"PASS every vendor table gained rows{kept}, ready to query in the "
-            f"console or HyperDX. The stream runs until `make demo-stop` or a receiver "
+            f"console's Search. The stream runs until `make demo-stop` or a receiver "
             f"restart"
         )
         return 0
@@ -897,6 +944,7 @@ def _install(*, args: argparse.Namespace, manifest: dict) -> int:
 
     base = _engine_base()
     token = _token(base=base)
+    _complete_setup(base=base, token=token)
     replies = []
     for body in [*demo.vendors, demo.intake]:
         replies += _ensure_source(base=base, body=body, token=token)
@@ -1134,20 +1182,7 @@ def _start_pruner(*, archive: dict, container: str, image: str, storage: str) ->
             "--volume",
             f"{ARCHIVE_TOOL}:/archive.py:ro",
             image,
-            "python3",
-            "-I",
-            "/archive.py",
-            "prune",
-            "--root",
-            ARCHIVE_ROOT,
-            "--sources",
-            ",".join(archive["sources"]),
-            "--interval-minutes",
-            str(archive["sweep_minutes"]),
-            "--max-age-minutes",
-            str(archive["retention_minutes"]),
-            "--max-megabytes",
-            str(archive["max_megabytes"]),
+            *pruner_command(archive=archive, tool="/archive.py"),
         ],
         capture_output=True,
         check=False,
@@ -1235,17 +1270,9 @@ def _subset(*, held: object, wanted: object) -> bool:
 
 def _switch_on_syslog(*, base: str, token: str) -> dict:
     """Turn on the receiver's UDP and TCP syslog listener through the engine and return the reply."""
-    status, apps = _api_get_json(token=token, url=f"{base}/apps")
-    listed = apps if isinstance(apps, list) else []
-    receiver = next(
-        (
-            entry
-            for entry in listed
-            if isinstance(entry, dict) and entry.get("service") == RECEIVER_SERVICE
-        ),
-        {},
-    )
-    names = [str(name) for name in (receiver.get("instances")) or ([])]
+    # The catalogue is a few apps, so one page of the largest size holds it whole
+    status, page = _api_get_json(token=token, url=f"{base}/apps?page_size=1000")
+    names = receiver_instances(page=page)
     if (status != 200) or not (names):
         raise DemoError(
             f"the engine lists no {RECEIVER_SERVICE!r} instance (GET /apps: HTTP {status})"
@@ -1518,6 +1545,26 @@ def listening_protocols(*, port: int, proc_net: str) -> set[str]:
     return found
 
 
+def pruner_command(*, archive: dict, tool: str) -> list[str]:
+    """The command that keeps the archive mounted at ARCHIVE_ROOT to the manifest's retention and size cap, running the archive tool at `tool`."""
+    return [
+        "python3",
+        "-I",
+        tool,
+        "prune",
+        "--root",
+        ARCHIVE_ROOT,
+        "--sources",
+        ",".join(archive["sources"]),
+        "--interval-minutes",
+        str(archive["sweep_minutes"]),
+        "--max-age-minutes",
+        str(archive["retention_minutes"]),
+        "--max-megabytes",
+        str(archive["max_megabytes"]),
+    ]
+
+
 def load_demo(*, events: Path, sources: Path) -> Demo:
     """Read every source file under sources by role and pair each vendor source with its directory under events."""
     bodies = [
@@ -1594,6 +1641,33 @@ def load_demo(*, events: Path, sources: Path) -> Demo:
         intake=intake,
         vendors=vendors,
     )
+
+
+def row_gains(
+    *, before: dict[str, int | None], now: dict[str, int | None]
+) -> dict[str, int | None]:
+    """The rows each table gained, None for a table ClickHouse gave no count for now, so an unreachable ClickHouse never reads as no rows."""
+    return {
+        table: None
+        if now.get(table) is None
+        else (now[table] or 0) - (before.get(table) or 0)
+        for table in before
+    }
+
+
+def receiver_instances(*, page: object) -> list[str]:
+    """The dfe-receiver instances a GET /apps page lists, none when it is no page or lists no receiver."""
+    items = page.get("items") if isinstance(page, dict) else None
+    listed = items if isinstance(items, list) else []
+    receiver = next(
+        (
+            entry
+            for entry in listed
+            if isinstance(entry, dict) and entry.get("service") == RECEIVER_SERVICE
+        ),
+        {},
+    )
+    return [str(name) for name in (receiver.get("instances")) or ([])]
 
 
 def refusal(*, per_source_apps: list[str], renders: bool) -> str:

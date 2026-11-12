@@ -53,11 +53,11 @@ IMAGE_CONSUMERS: dict[str, tuple[str, ...]] = {
     "dfe-receiver": ("config-check-dfe-receiver",),
 }
 # The IMAGE_CONSUMERS a stack can start without their component, mapped to the
-# services whose `depends_on` starts them (hyperdx runs with the engine off).
+# services whose `depends_on` starts them (dfe-hyperdx runs with the engine off).
 # Plain `make dev` builds their component too, so every DFE image its stack starts comes from source
 IMPLICIT_CONSUMERS: dict[str, tuple[str, ...]] = {
     "bearer-tokens-init": ("config-check-dfe-receiver", "dfe-receiver"),
-    "dfe-dashboards": ("hyperdx",),
+    "dfe-dashboards": ("dfe-hyperdx",),
     "dlq-init": (
         "dfe-archiver",
         "dfe-fetcher",
@@ -76,11 +76,8 @@ RUST_COMPONENTS = [
     "dfe-transform-vector",
     "dfe-transform-vrl",
 ]
-SELF_CONTAINED_COMPONENTS = ["dfe-engine", "dfe-ui", "hyperdx"]
-# Compose service name -> source repo NAME (the GitHub repo and therefore the
-# checkout directory name), for the cases where they differ; hyperdx's repo and
-# image are `dfe-hyperdx`.
-SERVICE_REPO_DIRS = {"hyperdx": "dfe-hyperdx"}
+# Each component's compose service, source repo, checkout directory and image share its name
+SELF_CONTAINED_COMPONENTS = ["dfe-engine", "dfe-hyperdx", "dfe-ui"]
 # Source acquisition defaults; override via DFE_SRC_REMOTE / DFE_SRC_REF (or
 # DFE_SRC_ROOT to build local checkouts instead of the git cache).
 SRC_REMOTE_DEFAULT = "https://github.com/hyperi-io"
@@ -312,15 +309,14 @@ def _source_checkout(*, service: str) -> Path:
     you keep it). Unset -> the managed git cache. Never an assumed sibling or a
     machine-specific path: the dependency is a repo, so it travels as git config.
     """
-    repo_dir = SERVICE_REPO_DIRS.get(service, service)
     raw_root = os.environ.get("DFE_SRC_ROOT", "").strip()
     if not (raw_root):
-        return _cached_clone(repo_dir=repo_dir, service=service)
-    checkout = Path(raw_root).expanduser() / repo_dir
+        return _cached_clone(repo_dir=service, service=service)
+    checkout = Path(raw_root).expanduser() / service
     if not ((checkout / ".git").exists()):
         raise _BuilderError(
             header=service,
-            msg=f"DFE_SRC_ROOT={raw_root!r} has no {repo_dir!r} checkout -- "
+            msg=f"DFE_SRC_ROOT={raw_root!r} has no {service!r} checkout -- "
             "clone it there or unset DFE_SRC_ROOT to build from the git cache",
         )
     return checkout

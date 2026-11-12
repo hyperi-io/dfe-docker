@@ -63,11 +63,11 @@ ci`. This is the production-safe default: nothing moves until you move it.
 
 Per image, the pin is an explicit release tag plus the digest that tag resolved
 to (e.g. `DFE_ENGINE_VERSION=v1.17.13@sha256:50c4428...`), so a retagged image
-cannot change what a pinned box runs. That now covers the hyperdx fork too. Where
+cannot change what a pinned box runs. That now covers the dfe-hyperdx fork too. Where
 the SSoT has no digest for an image the render emits a bare tag instead, which
 downgrades the pin without announcing it. The registries also publish `latest`
 and `sha-<commit>` tags for every
-image, the hyperdx fork included -- none of them is ever consumed here, so what
+image, the dfe-hyperdx fork included -- none of them is ever consumed here, so what
 a release publishes and what a deploy runs stay two separate decisions.
 
 **Track-latest (opt-in).** `ops/daemon-update/install.sh` installs a systemd timer that discovers the newest certified stack tag and runs the SAME `make stack` + `make ci`, but only when something newer has shipped. It never pulls `latest`. By default it tracks STABLE releases only. `DFE_UPDATE_ALLOW_PRERELEASE=1` also takes `-rc` builds. `DFE_STACK_REPIN_IMAGES=1` on its service follows every DFE image release instead, a mix nobody certified. See [ops/daemon-update/README.md](../ops/daemon-update/README.md).
@@ -144,7 +144,7 @@ publish the UIs on every interface --
 an upgraded stack that runs `make init` (to pick up new `.env.example` keys) gets
 a real password. ClickHouse stores the default-user credential in its data volume
 on first init, so a pre-existing `clickhouse-data` volume still expects the OLD
-(blank) password and the loader/engine/HyperDX now authenticate with the new one
+(blank) password and the loader, engine and dfe-hyperdx now authenticate with the new one
 -- every query fails `Authentication failed`. A blank password is no way back:
 `make init` rewrites an empty `CLICKHOUSE_PASSWORD=` with a generated one, and
 `make post` fails a stack still on it. Adopt the generated password instead: set

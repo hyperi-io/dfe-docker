@@ -165,7 +165,7 @@ surviving CI.
 
 ## CI/CD Workflow
 
-When your pull request is merged to `main`:
+When a merge to `main` carries `Release: true` as the last line of its commit body:
 
 1. **semantic-release** analyses commit messages since the last release
 2. Determines the next version number based on commit types
@@ -173,7 +173,7 @@ When your pull request is merged to `main`:
 4. Creates a new GitHub release with release notes
 5. Publishes the package (if applicable)
 
-This happens automatically - no manual intervention required.
+A merge without the trailer runs CI and releases nothing. `hyperi-ci release` releases the current `main` without a new commit.
 
 ## Questions
 

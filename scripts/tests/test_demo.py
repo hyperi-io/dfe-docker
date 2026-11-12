@@ -16,7 +16,9 @@ import pytest
 import yaml
 
 import demo
+import demo_seed
 from _common import SOURCE_NAME
+from post import HuntOrg
 
 pytestmark = pytest.mark.usefixtures("engine_python_here")
 
@@ -651,6 +653,92 @@ class TestEnginePython:
         with pytest.raises(demo.DemoError, match="is not running"):
             ENGINE_PYTHON(code="", stdin="")
 
+    @pytest.mark.parametrize(
+        ("text", "parsed", "refused"),
+        [
+            ("source: demo-syslog\n", {"source": "demo-syslog"}, False),
+            ("when: 2026-11-12\n", None, True),
+            ("a: [\n", None, True),
+        ],
+        ids=["mapping", "date-refused", "broken-yaml"],
+    )
+    def test_reads_yaml_on_its_own_interpreter_inside_the_stack(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        parsed: dict | None,
+        refused: bool,
+        text: str,
+    ) -> None:
+        def no_container(*, service: str) -> str:
+            return ""
+
+        monkeypatch.setattr(demo, "_container", no_container)
+        monkeypatch.setenv("DFE_IN_STACK", "true")
+
+        result = ENGINE_PYTHON(code=demo.YAML_TO_JSON, stdin=text)
+
+        assert (result.returncode != 0) is refused
+        if not (refused):
+            assert yaml.safe_load(result.stdout) == parsed
+
+
+class TestPrunerCommand:
+    def test_prunes_the_committed_archive_sources_to_the_manifest(self) -> None:
+        archive = demo._read_manifest(path=demo.MANIFEST_FILE)["archive"]
+
+        command = demo.pruner_command(archive=archive, tool="/archive.py")
+
+        assert command[:4] == ["python3", "-I", "/archive.py", "prune"]
+        flags = dict(zip(command[4::2], command[5::2], strict=True))
+        assert flags == {
+            "--root": demo.ARCHIVE_ROOT,
+            "--sources": ",".join(archive["sources"]),
+            "--interval-minutes": str(archive["sweep_minutes"]),
+            "--max-age-minutes": str(archive["retention_minutes"]),
+            "--max-megabytes": str(archive["max_megabytes"]),
+        }
+
+
+class TestCompleteSetup:
+    @pytest.mark.parametrize(
+        ("org_fault", "status", "refused"),
+        [
+            ("", 201, None),
+            ("", 409, None),
+            ("", 500, "returned HTTP 500"),
+            ("POST /orgs returned HTTP 403: no", 201, "the demo organisation"),
+        ],
+        ids=["created", "already-there", "account-refused", "org-refused"],
+    )
+    def test_makes_the_org_then_the_account(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        org_fault: str,
+        status: int,
+        refused: str | None,
+    ) -> None:
+        posted: list[dict] = []
+
+        def ensure_org(*, base: str, token: str, name: str) -> HuntOrg:
+            return HuntOrg(name, name, name, True, org_fault)
+
+        def post(url: str, payload: dict, token: str = "") -> tuple[int, dict]:
+            posted.append(payload)
+            return status, {}
+
+        monkeypatch.setattr(demo, "_ensure_org", ensure_org)
+        monkeypatch.setattr(demo, "_api_post_json", post)
+
+        if refused is not None:
+            with pytest.raises(demo.DemoError, match=refused):
+                demo._complete_setup(base="http://engine", token="t")
+            return
+        demo._complete_setup(base="http://engine", token="t")
+
+        assert [p["username"] for p in posted] == [demo.DEMO_ANALYST]
+        assert posted[0]["org"] == demo.DEMO_ORG
+        assert len(posted[0]["password"]) >= 32
+
 
 class TestEventsDir:
     def test_the_cases_cover_every_committed_vendor(self) -> None:
@@ -1057,3 +1145,89 @@ class TestArchivable:
         bodies = [*loaded.vendors, loaded.intake, *loaded.fetchers]
 
         assert [b["source"] for b in bodies if b.get("archive")] == ["demo-syslog"]
+
+
+class TestReceiverInstances:
+    @pytest.mark.parametrize(
+        ("page", "names"),
+        [
+            pytest.param(
+                {
+                    "items": [
+                        {"service": "dfe-loader", "instances": ["default"]},
+                        {"service": "dfe-receiver", "instances": ["default", "edge"]},
+                    ],
+                    "next_page_token": "",
+                },
+                ["default", "edge"],
+                id="page",
+            ),
+            pytest.param(
+                {"items": [{"service": "dfe-loader", "instances": ["default"]}]},
+                [],
+                id="no-receiver",
+            ),
+            pytest.param(
+                {"items": [{"service": "dfe-receiver", "instances": None}]},
+                [],
+                id="no-instances",
+            ),
+            pytest.param(
+                [{"service": "dfe-receiver", "instances": ["default"]}],
+                [],
+                id="bare-list",
+            ),
+            pytest.param({"type": "about:blank", "status": 401}, [], id="problem"),
+            pytest.param("", [], id="no-body"),
+        ],
+    )
+    def test_reads_the_receiver_from_the_apps_page(
+        self, names: list[str], page: object
+    ) -> None:
+        assert demo.receiver_instances(page=page) == names
+
+
+class TestRowGains:
+    @pytest.mark.parametrize(
+        ("before", "now", "gained"),
+        [
+            pytest.param({"a": 5}, {"a": 12}, {"a": 7}, id="gained"),
+            pytest.param(
+                {"a": None}, {"a": 3}, {"a": 3}, id="table-made-during-the-run"
+            ),
+            pytest.param({"a": 5}, {"a": 5}, {"a": 0}, id="none-landed"),
+            pytest.param({"a": 5}, {"a": None}, {"a": None}, id="unreadable-now"),
+            pytest.param({"a": None}, {"a": None}, {"a": None}, id="never-readable"),
+            pytest.param({"a": 1}, {}, {"a": None}, id="not-counted"),
+        ],
+    )
+    def test_an_unreadable_count_is_not_a_zero(
+        self,
+        before: dict[str, int | None],
+        gained: dict[str, int | None],
+        now: dict[str, int | None],
+    ) -> None:
+        assert demo.row_gains(before=before, now=now) == gained
+
+
+class TestDemoSeed:
+    @pytest.mark.parametrize(
+        "argv",
+        [["sources"], ["console"], ["feed", "--feed", "/f", "--generator", "g.py"]],
+        ids=["sources", "console", "feed"],
+    )
+    def test_refuses_to_run_outside_the_published_demo(
+        self, argv: list[str], monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.delenv("DFE_IN_STACK", raising=False)
+
+        assert demo_seed.main(argv) == 1
+
+    @pytest.mark.parametrize("password", ["", "  "], ids=["unset", "blank"])
+    def test_needs_the_break_glass_password_to_log_in(
+        self, monkeypatch: pytest.MonkeyPatch, password: str
+    ) -> None:
+        monkeypatch.setenv(demo_seed.BREAKGLASS_PASSWORD_KEY, password)
+
+        with pytest.raises(demo.DemoError, match="is unset"):
+            demo_seed._token(base="http://dfe-engine:8000/api/v1")

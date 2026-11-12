@@ -18,9 +18,51 @@ come out the other. Everything else can wait.
 
 ## What you need
 
-- Docker and Docker Compose v2
-- make, git and Python 3 (standard library only)
+- Docker Engine 26.0 and Docker Compose 2.34 or newer for the one-line installs, Compose 2.26 or newer for the rest
+- make, git and Python 3 (standard library only), for a clone. Nothing under "With only Docker" needs them
 - Network access to `ghcr.io/hyperi-io`, where the images are public and pull with no login
+
+## With only Docker
+
+```bash
+docker compose -f oci://ghcr.io/hyperi-io/dfe-docker:compose up -d
+```
+
+That is the `single-kafka` stack, as Compose project `dfe`, from a compose file each release publishes beside the dfe-docker image (`:compose-<version>` keeps to one release). Point your browser to http://localhost:3000 and log in as `admin` with password `dfe-first-login`, which the console makes you change at first login. The file names no secret but that first-login password: the stack mints the rest at first start into a volume of its own, which `down -v` deletes. Every port it publishes listens on 127.0.0.1 only. `docker compose -f oci://ghcr.io/hyperi-io/dfe-docker:compose down` stops it and keeps the data.
+
+```bash
+docker compose -f oci://ghcr.io/hyperi-io/dfe-docker:demo up -d
+```
+
+The demo is the same stack as its own project, `dfe-demo`, and nothing to set up. At first start it seeds the demo's sources, dashboards and saved searches, then streams the Cisco ASA and FortiGate syslog below without stopping, beside two fetchers. It takes the same ports, so stop the stack above first. `docker compose -f oci://ghcr.io/hyperi-io/dfe-docker:demo down -v` removes all of it.
+
+For a folder you can edit, the dfe-docker image sets one up holding the compose files, config and `.env`, which takes any profile and setting. In an empty folder. On Windows, use PowerShell: `${PWD}` works there and in bash and zsh, but not in cmd.exe.
+
+```bash
+docker run --rm -v "${PWD}:/dfe" ghcr.io/hyperi-io/dfe-docker init
+docker compose up -d
+```
+
+`init` copies the compose files, config and templates in, writes `.env` and `env/` with fresh secrets, pins the newest published stack by digest and ends `.env` with what a plain `docker compose` needs. It sets up `single-kafka`, and `--profile` picks another. On a Linux host the files belong to the folder's owner. `ghcr.io/hyperi-io/dfe-docker:<version>` installs the stack that release was cut against, every time.
+
+The same image runs the rest, in the same folder:
+
+| Command | What it does |
+|---|---|
+| `login` | Prints the access summary. With `docker run -t` it prints the admin password too |
+| `init --upgrade` | Copies the tree again and re-pins the stack, keeping every secret and setting. `--stack X.Y.Z` names the stack. Plain `init` refuses a folder that holds an install |
+| `apply` | Rewrites the compose settings after an edit to `.env`, or after the console adds or deletes a source. Run `docker compose up -d --remove-orphans` after it |
+| `certs` | Mints the console certificate `DFE_PROXY_TLS=true` needs |
+
+Edit settings above the `## BEGIN dfe-docker` block in `.env`. `apply` rewrites the block and `--upgrade` replaces `config/`. `docker compose --profile '*' down` stops everything, and `-v` deletes the data too.
+
+The demo needs the stack up, the Docker socket and the folder at its own path, because compose in the container hands the Docker host the paths it sees. That is Linux, macOS or a WSL shell on Windows:
+
+```bash
+docker run --rm -v "${PWD}:${PWD}" -w "${PWD}" -v /var/run/docker.sock:/var/run/docker.sock ghcr.io/hyperi-io/dfe-docker demo
+```
+
+The same command with `demo-stop` takes it out, which `docker compose down` needs first.
 
 ## Getting it running
 
@@ -83,8 +125,8 @@ PY
 `_source` is what routes the event - the loader writes it to
 `<database>.<_source>`, so `"_source":"main"` lands in `dfe.main`.
 
-It will not appear instantly. The pipeline is asynchronous, and via Kafka
-genuinely so; a couple of seconds is normal.
+It will not appear instantly. The pipeline is asynchronous, Kafka most of all.
+A couple of seconds is normal.
 
 ## Raw syslog, parsed per vendor
 
@@ -126,10 +168,10 @@ demo -   dfe-archiver archive of demo-syslog: N files
 demo -     demo-syslog_land/default/2026/11/03/01-0001-<id>.jsonl.zst  77645 bytes
 demo -     first line of the newest: {"message":"%ASA-6-302014: Teardown TCP connection ...
 demo - WARNING no rows in 'dfe.component-releases' yet. A fetcher's first poll waits 900s and none land when the stack has no egress to its upstream
-demo - PASS every vendor table gained rows and the archiver wrote files, ready to query in the console or HyperDX. The stream runs until `make demo-stop` or a receiver restart
+demo - PASS every vendor table gained rows and the archiver wrote files, ready to query in the console's Search. The stream runs until `make demo-stop` or a receiver restart
 ```
 
-`dfe.component-releases` fills about 15 minutes in, and the demo does not wait for it: an empty fetcher table only warns. A fetcher the profile cannot run or the engine cannot set up is skipped with a WARNING while the vendor demo runs on. A profile with no HyperDX gets no console pieces.
+`dfe.component-releases` fills about 15 minutes in, and the demo does not wait for it: an empty fetcher table only warns. A fetcher the profile cannot run or the engine cannot set up is skipped with a WARNING while the vendor demo runs on. A profile with no dfe-hyperdx gets no console pieces.
 
 `dfe.demo-syslog` holds the lines no detector claimed. The replay script comes from the dfe-transform-elastic release the stack pins, so the demo needs a release with agentless detection and stops before changing anything on one without it. A `make dev` stack takes `make demo DEV=1`, which reads the script from `DFE_SRC_ROOT` when that is set.
 
@@ -142,7 +184,7 @@ demo - PASS every vendor table gained rows and the archiver wrote files, ready t
 | http://localhost:8123 | ClickHouse HTTP |
 | http://localhost:8003 | dfe-engine API |
 
-The console asks for a login; Kafbat, HyperDX and the ClickHouse port do not
+The console asks for a login; Kafbat, dfe-hyperdx and the ClickHouse port do not
 authenticate you as a person. `make creds` prints the console login again.
 
 The ingest ports bind all interfaces so anything can push to them. Everything
@@ -173,7 +215,7 @@ logins -- `admin` for the console and the engine API, and `breakglass` for
 recovery -- and generates ClickHouse's password with them. `make creds` prints
 the admin one on a terminal and names the `.env` key holding the other;
 `access-summary.md`, written beside `.env` and readable only by you, carries
-both. Kafbat and HyperDX answer to anyone who can reach them on these profiles,
+both. Kafbat and dfe-hyperdx answer to anyone who can reach them on these profiles,
 the opt-in `auth` profile puts an OIDC sign-in in front of both, and nothing here
 serves TLS until you turn [console TLS](configuration.md#console-tls-opt-in) on.
 That is fine on your machine and on a throwaway demo box. It is not

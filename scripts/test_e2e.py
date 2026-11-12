@@ -234,7 +234,7 @@ DFE_RECEIVER_INGEST_URL = env_or(
     "DFE_RECEIVER_INGEST_URL",
     f"http://localhost:{env_or('DFE_RECEIVER_HTTP_PORT', '8080')}/ingest",
 )
-# dfe-proxy's port, which serves the console and the HyperDX it embeds, at DFE_EXTERNAL_ORIGIN or localhost
+# dfe-proxy's port, which serves the console and the dfe-hyperdx it embeds, at DFE_EXTERNAL_ORIGIN or localhost
 DFE_UI_URL = _console_tls.console_url(environ=os.environ)
 # The HTTP checks in the test definitions name it as ${DFE_UI_URL}.
 os.environ[_console_tls.UI_URL_VAR] = DFE_UI_URL
@@ -304,24 +304,24 @@ INSTANCE_READY_URL = "http://localhost:9090/readyz"
 # ------------------------------------------------------------------------------
 # Search Rule Tests
 # - A detection test whose `detection:` block carries `from_search` makes its rule
-#   the way an analyst does: a HyperDX search in the console, a side-panel filter
+#   the way an analyst does: a dfe-hyperdx search in the console, a side-panel filter
 #   and Create Rule, then a hunt added and triggered from the console's own form.
 #   docs/developing.md#search-to-rule-to-hunt----the-console-path
 # ------------------------------------------------------------------------------
-# resolve_profile.py's HyperDX footprint, and the engine settings it exports for it.
+# resolve_profile.py's dfe-hyperdx footprint, and the engine settings it exports for it.
 HYPERDX_PROFILE = "hyperdx"
 HYPERDX_SERVICES = [
     "dfe-dashboards",
+    "dfe-hyperdx",
     "dfe-hyperdx-proxy",
-    "hyperdx",
     "hyperdx-documentdb",
     "hyperdx-documentdb-tls",
 ]
 HYPERDX_ENGINE_ENVIRONMENT = {
     "DFE_ENGINE_HYPERDX_ENABLED": "true",
-    "DFE_ENGINE_HYPERDX_BASE_URL": "http://hyperdx:8000",
+    "DFE_ENGINE_HYPERDX_BASE_URL": "http://dfe-hyperdx:8000",
 }
-# HyperDX seeds a team's sources on the first request that carries an identity.
+# dfe-hyperdx seeds a team's sources on the first request that carries an identity.
 HYPERDX_READY_TIMEOUT = 180
 # The source the search runs on, which is the table the rule has to scan.
 SEARCH_SOURCE = "main"
@@ -662,7 +662,7 @@ def resolve_services_profile(profile_name, otel=None):
     # authority; `core` adds the UI and the proxy, `otel` the collector, so a
     # complete-stack profile is tested whole. `clickhouse` and `hyperdx` are
     # ignored: the suite owns the warehouse it asserts against and carries no
-    # HyperDX assertions.
+    # dfe-hyperdx assertions.
     extra_services = []
     if str(profile.get("core", "true")).strip().lower() not in FALSY:
         extra_services += CORE_SURFACE_SERVICES
@@ -3324,7 +3324,7 @@ def run_detection(ctx, test, ingest_url):
 
 # ==============================================================================
 # Search Rule Tests
-# - The rule made from a HyperDX search in the console, the hunt added and
+# - The rule made from a dfe-hyperdx search in the console, the hunt added and
 #   triggered from the console's form, and the same exact-detections verdict
 # ==============================================================================
 
@@ -3375,8 +3375,8 @@ def complete_setup(ctx, test, token, created):
 
 
 # ------------------------------------------------------------------------------
-# HyperDX Ready
-# - HyperDX answers the console's token and holds the source the search runs on
+# dfe-hyperdx Ready
+# - dfe-hyperdx answers the console's token and holds the source the search runs on
 # ------------------------------------------------------------------------------
 def hyperdx_ready(ctx, test, token):
     url = f"{post._hyperdx_base()}/sources"
@@ -3399,11 +3399,11 @@ def hyperdx_ready(ctx, test, token):
     if names is None or SEARCH_SOURCE not in names:
         mark_fail(
             ctx,
-            f"[{test.name}] HyperDX offered no '{SEARCH_SOURCE}' source within "
+            f"[{test.name}] dfe-hyperdx offered no '{SEARCH_SOURCE}' source within "
             f"{HYPERDX_READY_TIMEOUT}s (sources: {sorted(names or [])})",
         )
         return False
-    mark_pass(ctx, f"[{test.name}] HyperDX serves the '{SEARCH_SOURCE}' source")
+    mark_pass(ctx, f"[{test.name}] dfe-hyperdx serves the '{SEARCH_SOURCE}' source")
     return True
 
 

@@ -181,11 +181,11 @@ def test_only_the_services_that_push_their_own_metrics_are_expected() -> None:
     services = [
         "dfe-engine",
         "dfe-hunt-runner",
+        "dfe-hyperdx",
         "dfe-loader",
         "dfe-transform-elastic",
         "dfe-transform-vrl-filebeat",
         "dfe-ui",
-        "hyperdx",
         "otel-collector",
     ]
 
@@ -1022,7 +1022,7 @@ def test_a_stack_without_the_runner_needs_no_runner_password(
 _APP_PASSWORDS = {
     "DFE_LOADER_CLICKHOUSE_PASSWORD": "dfe-loader",
     "DFE_OTEL_WRITER_CLICKHOUSE_PASSWORD": "otel-collector",
-    "DFE_QUERY_READER_CLICKHOUSE_PASSWORD": "hyperdx",
+    "DFE_QUERY_READER_CLICKHOUSE_PASSWORD": "dfe-hyperdx",
 }
 
 
@@ -1050,9 +1050,9 @@ def _only_this_app_password_in_play(
 
 # Each env/<component>.env secret POST enforces and the service that reads it
 _ENV_FILE_SECRETS = {
-    "EXPRESS_SESSION_SECRET": "hyperdx",
+    "EXPRESS_SESSION_SECRET": "dfe-hyperdx",
     "NEXTAUTH_SECRET": "dfe-ui",
-    "TOKEN_ENCRYPTION_KEY": "hyperdx",
+    "TOKEN_ENCRYPTION_KEY": "dfe-hyperdx",
 }
 
 

@@ -16,7 +16,7 @@
 # auth           | the three oauth2-proxy-* gates
 # dfe            | the data-plane apps and their init one-shots
 # core           | engine, hunt runner, UI, proxy and contracts
-# hyperdx        | hyperdx and its store, proxy and dashboards
+# hyperdx        | dfe-hyperdx and its store, proxy and dashboards
 
 include:
   - path: compose/one-shots.yml
@@ -502,15 +502,17 @@ services:
       DFE_ENGINE_ENV: ${DFE_ENGINE_ENV:-production}
       DFE_ENGINE_HUNTS_DIR: /app/config/deploy-repo/config/hunts
       DFE_ENGINE_HUNTS_RULES_DIR: /app/config/deploy-repo/config/rules
+      DFE_ENGINE_SECRETS_PATH: /app/config/.secrets
       OTEL_EXPORTER_OTLP_ENDPOINT: ${DFE_OTEL_EXPORTER_ENDPOINT:-}
       OTEL_SERVICE_NAME: dfe-hunt-runner
     volumes:
+      # Only the alert destinations from the engine's file secrets backend, never the whole root.
       - type: volume
         source: dfe-engine-config
-        target: /app/config/alert-destinations
+        target: /app/config/.secrets/alert-destinations
         read_only: true
         volume:
-          subpath: alert-destinations
+          subpath: .secrets/alert-destinations
       - type: volume
         source: dfe-engine-config
         target: /app/config/deploy-repo/config
@@ -645,7 +647,7 @@ services:
       start_period: 60s
       retries: 10
 
-  hyperdx:
+  dfe-hyperdx:
     image: ${IMAGE_REGISTRY:-ghcr.io/hyperi-io}/dfe-hyperdx:${DFE_HYPERDX_VERSION:?run 'make stack VERSION=X.Y.Z' to pin DFE_HYPERDX_VERSION}
     container_name: ${DFE_CONTAINER_PREFIX:-}dfe-hyperdx
     profiles: ["hyperdx"]
@@ -729,9 +731,9 @@ services:
       - ${DFE_UI_BIND_HOST:-127.0.0.1}:${DFE_HYPERDX_APP_PORT:-8090}:4180
     environment:
       OAUTH2_PROXY_REDIRECT_URL: ${DFE_OAUTH2_PROXY_EXTERNAL_ORIGIN:-${DFE_EXTERNAL_ORIGIN:-http://localhost}}:${DFE_HYPERDX_APP_PORT:-8090}/oauth2/callback
-      OAUTH2_PROXY_UPSTREAMS: http://hyperdx:8090
+      OAUTH2_PROXY_UPSTREAMS: http://dfe-hyperdx:8090
     depends_on:
-      hyperdx:
+      dfe-hyperdx:
         condition: service_healthy
         required: false
 
@@ -744,9 +746,9 @@ services:
     environment:
       OAUTH2_PROXY_PASS_HOST_HEADER: "true"
       OAUTH2_PROXY_REDIRECT_URL: ${DFE_OAUTH2_PROXY_EXTERNAL_ORIGIN:-${DFE_EXTERNAL_ORIGIN:-http://localhost}}:${DFE_HYPERDX_API_PORT:-8000}/oauth2/callback
-      OAUTH2_PROXY_UPSTREAMS: http://hyperdx:8000
+      OAUTH2_PROXY_UPSTREAMS: http://dfe-hyperdx:8000
     depends_on:
-      hyperdx:
+      dfe-hyperdx:
         condition: service_healthy
         required: false
 
