@@ -71,14 +71,15 @@ from post import (  # noqa: E402
     _api_post_json,
     _decoded,
     _engine_base,
-    _ensure_org,
     _exec_request,
     api_put_json,
 )
 from seed import (  # noqa: E402
     DEPLOY_TIMEOUT_SECONDS,
     ENGINE_FAULTS,
+    KINDS,
     SeedError,
+    _ensure,
     _row_count,
     _token,
     deploy_fault,
@@ -86,6 +87,7 @@ from seed import (  # noqa: E402
 
 DEMO_DIR = REPO_ROOT / "resources" / "demo"
 EVENTS_DIR = DEMO_DIR / "events"
+ORGS_DIR = DEMO_DIR / "orgs"
 SOURCES_DIR = DEMO_DIR / "sources"
 TRANSFORM_APP = "dfe-transform-elastic"
 TRANSFORM_REPO = "dfe-transform-elastic"
@@ -516,9 +518,8 @@ def _complete_setup(*, base: str, token: str) -> None:
 
     Without them every console page opens on the setup wizard. Nobody logs in as the analyst, so its password is random and never shown.
     """
-    org = _ensure_org(base=base, token=token, name=DEMO_ORG)
-    if org.fault:
-        raise DemoError(f"the demo organisation: {org.fault}")
+    org = _read_body(kind="orgs", path=ORGS_DIR / f"{DEMO_ORG}.yaml")
+    _ensure(base=base, body=org, kind="orgs", name=DEMO_ORG, token=token)
     account = {
         "username": DEMO_ANALYST,
         "password": secrets.token_urlsafe(32),
@@ -841,19 +842,23 @@ def _patch_json(*, payload: dict, token: str, url: str) -> tuple[int, typing.Any
     return status, _decoded(raw=body)
 
 
-def _read_source(*, path: Path) -> dict:
-    """One demo source file's POST /sources body, refused unless its `source` is the file's name."""
+def _read_body(*, kind: str, path: Path) -> dict:
+    """One demo file's POST body for a seed kind, refused unless the kind's key names the file."""
+    found = KINDS[kind]
     try:
         text = path.read_text(encoding="utf-8")
     except (OSError, UnicodeDecodeError) as error:
         raise DemoError(f"{path.name!r} is not readable YAML: {error}") from error
     body = _parsed_yaml(label=repr(path.name), text=text)
     if not (isinstance(body, dict)):
-        raise DemoError(f"{path.name!r} needs a POST /sources body, which is a mapping")
-    if body.get("source") != path.stem:
         raise DemoError(
-            f"{path.name!r} names source {body.get('source')!r}. A demo source file "
-            f"is named after the `source` it holds, so rename one to match"
+            f"{path.name!r} needs a POST {found.route} body, which is a mapping"
+        )
+    if body.get(found.key) != path.stem:
+        raise DemoError(
+            f"{path.name!r} names {found.noun} {body.get(found.key)!r}. A demo "
+            f"{found.noun} file is named after the `{found.key}` it holds, so rename "
+            f"one to match"
         )
     return body
 
@@ -1568,7 +1573,8 @@ def pruner_command(*, archive: dict, tool: str) -> list[str]:
 def load_demo(*, events: Path, sources: Path) -> Demo:
     """Read every source file under sources by role and pair each vendor source with its directory under events."""
     bodies = [
-        _read_source(path=path) for path in sorted(sources.glob(pattern="*.yaml"))
+        _read_body(kind="sources", path=path)
+        for path in sorted(sources.glob(pattern="*.yaml"))
     ]
     if not (bodies):
         raise DemoError(

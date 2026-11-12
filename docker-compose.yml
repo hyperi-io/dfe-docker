@@ -506,7 +506,7 @@ services:
       OTEL_EXPORTER_OTLP_ENDPOINT: ${DFE_OTEL_EXPORTER_ENDPOINT:-}
       OTEL_SERVICE_NAME: dfe-hunt-runner
     volumes:
-      # Only the alert destinations from the engine's file secrets backend, never the whole root.
+      # Alert destinations only, never the whole secrets root
       - type: volume
         source: dfe-engine-config
         target: /app/config/.secrets/alert-destinations

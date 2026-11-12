@@ -18,7 +18,6 @@ import yaml
 import demo
 import demo_seed
 from _common import SOURCE_NAME
-from post import HuntOrg
 
 pytestmark = pytest.mark.usefixtures("engine_python_here")
 
@@ -705,8 +704,8 @@ class TestCompleteSetup:
         [
             ("", 201, None),
             ("", 409, None),
-            ("", 500, "returned HTTP 500"),
-            ("POST /orgs returned HTTP 403: no", 201, "the demo organisation"),
+            ("", 500, (demo.DemoError, "returned HTTP 500")),
+            ("POST '/orgs' returned HTTP 403: no", 201, (demo.SeedError, "HTTP 403")),
         ],
         ids=["created", "already-there", "account-refused", "org-refused"],
     )
@@ -715,26 +714,35 @@ class TestCompleteSetup:
         monkeypatch: pytest.MonkeyPatch,
         org_fault: str,
         status: int,
-        refused: str | None,
+        refused: tuple[type[Exception], str] | None,
     ) -> None:
-        posted: list[dict] = []
-
-        def ensure_org(*, base: str, token: str, name: str) -> HuntOrg:
-            return HuntOrg(name, name, name, True, org_fault)
+        def ensure(*, base: str, body: dict, kind: str, name: str, token: str) -> None:
+            if org_fault:
+                raise demo.SeedError(org_fault)
+            ensured.append((kind, body))
 
         def post(url: str, payload: dict, token: str = "") -> tuple[int, dict]:
             posted.append(payload)
             return status, {}
 
-        monkeypatch.setattr(demo, "_ensure_org", ensure_org)
+        ensured = []
+        posted = []
+        monkeypatch.setattr(demo, "_ensure", ensure)
         monkeypatch.setattr(demo, "_api_post_json", post)
 
         if refused is not None:
-            with pytest.raises(demo.DemoError, match=refused):
+            error, match = refused
+            with pytest.raises(error, match=match):
                 demo._complete_setup(base="http://engine", token="t")
             return
         demo._complete_setup(base="http://engine", token="t")
 
+        org = {
+            "display_name": "Demo",
+            "name": demo.DEMO_ORG,
+            "org_ids": [demo.DEMO_ORG],
+        }
+        assert ensured == [("orgs", org)]
         assert [p["username"] for p in posted] == [demo.DEMO_ANALYST]
         assert posted[0]["org"] == demo.DEMO_ORG
         assert len(posted[0]["password"]) >= 32
