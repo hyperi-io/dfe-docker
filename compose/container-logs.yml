@@ -23,6 +23,8 @@ services:
     logging: *container-logs
   dfe-hunt-runner:
     logging: *container-logs
+  dfe-hyperdx:
+    logging: *container-logs
   dfe-loader:
     logging: *container-logs
   dfe-receiver:

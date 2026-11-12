@@ -51,7 +51,7 @@ docker exec dfe-clickhouse clickhouse-client --query \
   "SELECT Timestamp, Body FROM dfe.otel_logs WHERE ServiceName = 'dfe-loader' ORDER BY Timestamp DESC LIMIT 50"
 ```
 
-ClickHouse, the broker, the proxies and dfe-hyperdx keep `json-file`. To put every service back on it, set `DFE_CONTAINER_LOGS_ENABLED=false` and restart.
+dfe-hyperdx logs there too. ClickHouse, the broker and the proxies keep `json-file`. To put every service back on it, set `DFE_CONTAINER_LOGS_ENABLED=false` and restart.
 
 ## Events are accepted but nothing lands
 
