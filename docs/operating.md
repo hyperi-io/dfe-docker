@@ -393,7 +393,7 @@ These named volumes hold all durable state. Every path an image declares a VOLUM
 | `kafka-apache-secrets` / `kafka-apache-config` | Apache Kafka's TLS and property-file inputs, empty unless a deployment supplies them |
 | `archiver-data` | dfe-archiver output (`/var/lib/dfe-archiver/archive`) |
 | `dlq-spool` | Shared dead-letter spool (`/var/spool/dfe`) |
-| `fetcher-cursors` | dfe-fetcher cursors (`/var/lib/dfe-fetcher`), one directory per fetcher service |
+| `fetcher-cursors` | dfe-fetcher cursors (`/var/lib/dfe-fetcher`), one directory for the one fetcher |
 | `transform-elastic-geoip` | dfe-transform-elastic's GeoIP databases (`/var/lib/dfe/geoip`), downloaded on first start to a volume because the image root is read-only |
 | `dfe-engine-config` / `dfe-engine-schemas` | Engine config and schemas, seeded from the engine image on first run |
 | `dfe-app-config` | What the engine renders each app's config into, one directory per app. Its own volume because `dfe-engine-config` also holds the JWT signing key and the deploy repo, which no data-plane container should read |
