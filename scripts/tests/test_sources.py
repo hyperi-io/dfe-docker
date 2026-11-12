@@ -290,15 +290,8 @@ CREATE_REQUEST_CASES = [
 ENABLED_APPS_CASES = [
     EnabledAppsCase(expected=[], profile="slim-grpc"),
     EnabledAppsCase(expected=[], profile="slim-kafka"),
-    EnabledAppsCase(
-        expected=[
-            "dfe-fetcher",
-            "dfe-transform-elastic",
-            "dfe-transform-vector",
-            "dfe-transform-vrl",
-        ],
-        profile="single-grpc",
-    ),
+    # dfe-engine runs a per-source app for a source on Kafka only
+    EnabledAppsCase(expected=[], profile="single-grpc"),
     EnabledAppsCase(
         expected=[
             "dfe-fetcher",
@@ -1151,9 +1144,9 @@ class TestParse:
             assert {source.app for source in sources} <= set(enabled), test["name"]
         assert sorted(test["name"] for test in tests) == [
             "kafka-outage",
-            "loader-outage-grpc-transform-vrl",
-            "transform-vrl-kill-grpc",
-            "transform-vrl-outage-grpc",
+            "loader-outage-kafka-transform-vrl",
+            "transform-vrl-kill-kafka",
+            "transform-vrl-outage-kafka",
         ]
 
     def test_every_committed_vrl_source_test_owes_the_stamp(self) -> None:

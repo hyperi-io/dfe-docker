@@ -35,6 +35,7 @@ _SINGLE_KAFKA_RUNNING = {
     "clickhouse",
     "dfe-archiver",
     "dfe-engine",
+    "dfe-fetcher",
     "dfe-hunt-runner",
     "dfe-hyperdx",
     "dfe-hyperdx-proxy",

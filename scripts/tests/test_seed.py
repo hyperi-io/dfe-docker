@@ -285,6 +285,59 @@ def accounts_engine(monkeypatch: pytest.MonkeyPatch) -> _AccountsEngine:
     return engine
 
 
+class _SharedFetcherEngine:
+    """The engine's source create, refusing it the way a full shared fetcher does."""
+
+    REFUSAL = (
+        "source 'aws-guardduty' cannot share the one dfe-fetcher this deployment runs: "
+        "its config.sources.aws.topic is already set by another source"
+    )
+
+    def __init__(self, *, detail: str) -> None:
+        self.detail = detail
+
+    def post_json(
+        self, *, payload: dict, token: str, url: str, timeout: int = 30
+    ) -> tuple[int, object]:
+        """Refuse every create with the detail given."""
+        return 422, {"detail": self.detail}
+
+
+class TestASourceTheSharedFetcherCannotTake:
+    def test_is_skipped_with_the_engine_s_reason(
+        self, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        engine = _SharedFetcherEngine(detail=_SharedFetcherEngine.REFUSAL)
+        monkeypatch.setattr(seed, "_api_post_json", engine.post_json)
+
+        seed._create(
+            base="http://engine.invalid",
+            body={"source": "aws-guardduty"},
+            kind="sources",
+            name="aws-guardduty",
+            token="token",
+        )
+
+        err = capsys.readouterr().err
+        assert "WARNING source 'aws-guardduty' is skipped" in err
+        assert "already set by another source" in err
+
+    def test_any_other_refusal_still_stops_the_run(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        engine = _SharedFetcherEngine(detail="source 'x' asks for the bus transport")
+        monkeypatch.setattr(seed, "_api_post_json", engine.post_json)
+
+        with pytest.raises(seed.SeedError, match="HTTP 422"):
+            seed._create(
+                base="http://engine.invalid",
+                body={"source": "x"},
+                kind="sources",
+                name="x",
+                token="token",
+            )
+
+
 class TestAccountPassword:
     def test_mints_and_records_a_password_the_engine_env_lacks(
         self, engine_env: Path

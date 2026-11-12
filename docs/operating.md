@@ -127,7 +127,7 @@ Per-port, as published in `docker-compose.yml`:
 | 9093 | dfe-archiver | operator | Metrics and health |
 | 13133 | otel-collector | operator | `health_check` extension |
 
-dfe-fetcher and the three transforms run one instance per source. An instance publishes no host port, so their ingest, Vector API and metrics ports are reached over the Docker network. dfe-loader's `DfeTransport/Push` listener on 6000 is too. The receiver's Vector protocol on 6000 publishes only once `DFE_RECEIVER_GRPC_PORT` is set.
+dfe-fetcher runs one container for every source and the three transforms run one instance per source. Neither publishes a host port, so their ingest, Vector API and metrics ports are reached over the Docker network. dfe-loader's `DfeTransport/Push` listener on 6000 is too. The receiver's Vector protocol on 6000 publishes only once `DFE_RECEIVER_GRPC_PORT` is set.
 
 `dfe-ui`, `dfe-hyperdx` and `hyperdx-documentdb` publish no host
 ports at all -- they are reached over the Docker network, dfe-hyperdx through the
@@ -391,7 +391,7 @@ These named volumes hold all durable state. Every path an image declares a VOLUM
 | `clickhouse-data` | The ClickHouse warehouse (`/var/lib/clickhouse`) |
 | `kafka-apache-data` / `kafka-redpanda-data` | Broker log and offsets, per backend |
 | `kafka-apache-secrets` / `kafka-apache-config` | Apache Kafka's TLS and property-file inputs, empty unless a deployment supplies them |
-| `archiver-data` | dfe-archiver output (`/var/data/archive`) |
+| `archiver-data` | dfe-archiver output (`/var/lib/dfe-archiver/archive`) |
 | `dlq-spool` | Shared dead-letter spool (`/var/spool/dfe`) |
 | `fetcher-cursors` | dfe-fetcher cursors (`/var/lib/dfe-fetcher`), one directory per fetcher service |
 | `transform-elastic-geoip` | dfe-transform-elastic's GeoIP databases (`/var/lib/dfe/geoip`), downloaded on first start to a volume because the image root is read-only |

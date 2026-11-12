@@ -9,12 +9,14 @@
 
 """One Compose service per app instance, from the index dfe-engine writes.
 
-Some apps run one deployment per SOURCE rather than one for the stack -- the
-fetcher polls one upstream, each transform runs one source's programs. On
+Some apps run one deployment per SOURCE rather than one for the stack -- each
+transform runs one source's programs. On
 Kubernetes the layer2-apps ApplicationSet globs the engine's values overlays and
 fans out one Application per file. Compose has no such generator: it declares its
 services in a committed file and creates none at run time, so the count had to be
-hardcoded and a deployment ran exactly one fetcher however many sources it had.
+hardcoded and a deployment ran exactly one transform however many sources it had.
+dfe-fetcher needs none of this: its committed service polls every source from one
+config dfe-engine merges.
 
 This is that generator. dfe-engine renders each instance's config into its own
 directory and writes the names to ``env/<service>.instances``; the fragment here
@@ -81,10 +83,6 @@ INSTANCE_DEPENDS_ON = (
 
 INSTANCE_LABEL = "dfe.instance-of"
 """Marks a generated instance's container, with the app it runs as the value."""
-
-# The variable naming the directory an app resumes from, and the volume path its
-# committed service mounts; each instance takes its own service name under it.
-STATE_DIRS = {"dfe-fetcher": ("DFE_FETCHER_CURSOR__DIRECTORY", "/var/lib/dfe-fetcher")}
 
 # A service key in the fragment: two spaces in, as `_service_block` writes it.
 _SERVICE_KEY_RE = re.compile(r"^  ([A-Za-z0-9._-]+):$")
@@ -231,9 +229,6 @@ def _service_block(
         "    environment:",
         f"      OTEL_SERVICE_NAME: {name}",
     ]
-    if service in STATE_DIRS:
-        variable, root = STATE_DIRS[service]
-        lines.append(f"      {variable}: {root}/{name}")
     if container_logs:
         lines.append("    logging: *container-logs")
     lines += ["    ports: !reset []", "    depends_on:"]

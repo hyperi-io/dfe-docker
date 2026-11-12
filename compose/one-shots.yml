@@ -138,10 +138,10 @@ services:
     user: "0:0"
     entrypoint: ["/bin/sh", "-c"]
     command:
-      - chown -R 1000:1000 /var/spool/dfe /var/data/archive /var/lib/dfe-fetcher /var/lib/dfe/geoip
+      - chown -R 1000:1000 /var/spool/dfe /var/lib/dfe-archiver/archive /var/lib/dfe-fetcher /var/lib/dfe/geoip
     volumes:
       - dlq-spool:/var/spool/dfe
-      - archiver-data:/var/data/archive
+      - archiver-data:/var/lib/dfe-archiver/archive
       - fetcher-cursors:/var/lib/dfe-fetcher
       - transform-elastic-geoip:/var/lib/dfe/geoip
     restart: "no"
