@@ -59,7 +59,7 @@ Point your browser to http://localhost:3000 and log in as `admin` with password 
 docker compose -f oci://ghcr.io/hyperi-io/dfe-docker:demo up -d
 ```
 
-`down` with the same `-f` stops either one, and `down -v` deletes its data too. [Taking DFE for a first look](docs/evaluating.md#with-only-docker) covers both, and the dfe-docker image that sets up a folder you can edit.
+`down` with the same `-f` stops either one and `down -v` deletes its data too. [Taking DFE for a first look](docs/evaluating.md#with-only-docker) covers both and the dfe-docker image that sets up a folder you can edit.
 
 ### From a clone
 
@@ -83,7 +83,7 @@ make down                        # stop everything
 
 `PROFILE=` and `VERSION=` on the make line are written to `.env` (as `DFE_PROFILE` and the image pins), so later runs keep them. A `.env` that already holds pins keeps them until `VERSION=` names another stack. `make demo` needs a profile that runs dfe-transform-elastic, `single-kafka` or `single-grpc`.
 
-The image runs these same scripts. `init` is `make init` and the `make up` pinning, and the compose settings it writes are what the Makefile hands compose (`make print-compose-env`).
+The image runs these same scripts. `init` is `make init` and the `make up` pinning. The compose settings it writes are what the Makefile hands compose (`make print-compose-env`).
 
 ### Prerequisites (a clone)
 
@@ -312,7 +312,7 @@ BUSL-1.1 - see [LICENSE](LICENSE) for details.
 
 ### What this is
 
-dfe-docker stands the whole DFE suite up as one Docker Compose stack on a single host, and it is the definition-of-done target for the suite's docker path: a change is proven when it runs on the deployment target, not because it ran on someone's laptop. It is packaging, not product - it builds no component image, publishes only the dfe-docker image that sets a folder up from this tree, and provisions no ClickHouse table and no Kafka topic. dfe-engine is the only schema and topic controller, and `scripts/tests/test_engine_only_schema_control.py` fails the build on a DDL file or a topic-creating step appearing here. When the data path is wrong the fix is nearly always in a component repo. It is not the Kubernetes path either: Kubernetes stays primary and dfe-infra owns it, which is why there is deliberately no `scale` profile - Compose cannot run an HA broker or a ClickHouse cluster. `main` is protected, so every change arrives as a pull request, with Conventional Commits and a DCO sign-off ([CONTRIBUTING.md](CONTRIBUTING.md)).
+dfe-docker stands the whole DFE suite up as one Docker Compose stack on a single host, and it is the definition-of-done target for the suite's docker path: a change is proven when it runs on the deployment target, not because it ran on someone's laptop. It is packaging, not product - it builds no component image, publishes only the dfe-docker image that sets a folder up from this tree and provisions no ClickHouse table and no Kafka topic. dfe-engine is the only schema and topic controller, and `scripts/tests/test_engine_only_schema_control.py` fails the build on a DDL file or a topic-creating step appearing here. When the data path is wrong the fix is nearly always in a component repo. It is not the Kubernetes path either: Kubernetes stays primary and dfe-infra owns it, which is why there is deliberately no `scale` profile - Compose cannot run an HA broker or a ClickHouse cluster. `main` is protected, so every change arrives as a pull request, with Conventional Commits and a DCO sign-off ([CONTRIBUTING.md](CONTRIBUTING.md)).
 
 ### Where things live
 

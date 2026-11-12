@@ -16,7 +16,7 @@
 # auth           | the three oauth2-proxy-* gates
 # dfe            | the data-plane apps and their init one-shots
 # core           | engine, hunt runner, UI, proxy and contracts
-# hyperdx        | dfe-hyperdx and its store, proxy and dashboards
+# hyperdx        | dfe-hyperdx, its store, proxy and dashboards
 
 include:
   - path: compose/one-shots.yml

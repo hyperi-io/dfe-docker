@@ -12,9 +12,7 @@
 # followed deliberately -- least-privilege permissions, SHA-pinned third-party
 # actions with a version comment, Title Case job names, a named runner image --
 # so that when hyperi-ci grows the container/compose gating it is currently
-# missing, this collapses into a `uses:` line rather than a rewrite. The Release
-# job is assembled from hyperi-ci's shared actions for the same reason: its
-# release tail takes only those four languages.
+# missing, this collapses into a `uses:` line rather than a rewrite.
 #
 # The runner image is named (ubuntu-26.04) rather than ubuntu-latest, so a move
 # of that label cannot swap the tools these jobs run on.
@@ -37,26 +35,26 @@ on:
   push:
     branches:
       - main
-  # The inputs `hyperi-ci release` dispatches with. A bare dispatch only validates.
+  # `hyperi-ci release` sets these, a bare dispatch only validates
   workflow_dispatch:
     inputs:
-      tag:
-        type: string
-        required: false
-        default: ""
-        description: "Existing tag to publish a GitHub release for when it has none."
-      from-head:
-        type: string
-        required: false
-        default: ""
-        description: "'true' to release the current HEAD. The CI creates the tag."
       bump:
-        type: string
-        required: false
         default: "auto"
         description: "Version for from-head: auto | patch | minor (forced) | X.Y.Z (exact)."
+        required: false
+        type: string
+      from-head:
+        default: ""
+        description: "'true' to release the current HEAD. The CI creates the tag."
+        required: false
+        type: string
+      tag:
+        default: ""
+        description: "Existing tag to publish a GitHub release for when it has none."
+        required: false
+        type: string
 
-# A release run has its own group and is never cancelled, because a cancel after the tag push leaves a tag with no GitHub release.
+# Release runs are never cancelled, so no tag loses its release
 concurrency:
   group: "${{ github.workflow }}-${{ (inputs.tag != '' || inputs.from-head == 'true' || github.event_name == 'push' && (contains(github.event.head_commit.message, 'Release: true') || contains(github.event.head_commit.message, 'Release:true') || contains(github.event.head_commit.message, 'Publish: true') || contains(github.event.head_commit.message, 'Publish:true'))) && 'release-' || '' }}${{ github.ref }}"
   cancel-in-progress: "${{ !(inputs.tag != '' || inputs.from-head == 'true' || github.event_name == 'push' && (contains(github.event.head_commit.message, 'Release: true') || contains(github.event.head_commit.message, 'Release:true') || contains(github.event.head_commit.message, 'Publish: true') || contains(github.event.head_commit.message, 'Publish:true'))) }}"
@@ -69,7 +67,7 @@ permissions:
 # runner's own python3 is older and would run every helper script on it.
 env:
   PYTHON_VERSION: "3.14.7"
-  # The hyperi-ci CLI the Release job runs. The HYPERCI_INSTALL_OVERRIDE variable replaces it, as in hyperi-ci's own workflows.
+  # The Release job's CLI, replaced by HYPERCI_INSTALL_OVERRIDE
   HYPERCI_INSTALL: ${{ vars.HYPERCI_INSTALL_OVERRIDE || 'uvx --python 3.14 --no-cache --refresh hyperi-ci' }}
 
 jobs:
@@ -188,10 +186,7 @@ jobs:
       - name: Proxy configs
         run: make check-proxy
 
-  # What a desktop with only Docker does: the image sets each profile up and the
-  # default one starts, serves the console and runs the demo, every step with a
-  # PATH that holds no make and no python. The default install goes to the
-  # Windows job, which reads it with the Windows compose.
+  # A desktop with only Docker: no make and no python on PATH
   image:
     name: Image
     runs-on: ubuntu-26.04
@@ -209,11 +204,11 @@ jobs:
         with:
           python-version: ${{ env.PYTHON_VERSION }}
 
-      # The stack deployment.example.yaml pins, as image.yml bakes into the :<version> image
+      # The stack deployment.example.yaml pins, as image.yml bakes in
       - name: Build the image
         run: docker build --file docker/dfe-docker.Dockerfile --build-arg "IMAGE=$IMAGE" --build-arg "STACK=$(python3 scripts/quickstart_json.py --print-stack)" --tag "$IMAGE" .
 
-      # docker, curl for the console check and the few tools the checks below use. No make, no python
+      # docker, curl and a few check tools. No make, no python
       - name: Put only Docker on PATH
         run: |
           bin="$RUNNER_TEMP/docker-only"
@@ -252,7 +247,7 @@ jobs:
           docker compose config -q
           docker compose config --services > "$WORK/default.services"
 
-      # A second init, a bad profile and an upgrade, each against what it must leave alone
+      # Re-init, a bad profile and an upgrade must leave state alone
       - name: Refuse and upgrade
         run: |
           export PATH="$DOCKER_ONLY"
@@ -282,17 +277,17 @@ jobs:
             exit 1
           fi
 
-      # A throwaway install whose stack is torn down below, so its minted secrets protect nothing
+      # A throwaway install, so its minted secrets protect nothing
       - name: Hand the default install to the Windows job
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
+          if-no-files-found: error
+          include-hidden-files: true
           name: default-install
           path: |
             ${{ env.WORK }}/default
             ${{ env.WORK }}/default.services
             !${{ env.WORK }}/default/access-summary.md
-          include-hidden-files: true
-          if-no-files-found: error
           retention-days: 1
 
       - name: Start the default profile and reach the console
@@ -327,7 +322,35 @@ jobs:
             docker compose --profile '*' down --volumes --remove-orphans
           fi
 
-  # The files a release publishes as OCI artifacts, generated from this commit and run from a folder holding nothing else, as `-f oci://` runs them. The demo file holds the whole stack plus the demo, so it starts and has to land its syslog. The stack file is read and checked
+  # Windows splits COMPOSE_FILE unless .env sets a separator
+  image-windows:
+    name: Image (Windows compose)
+    needs: image
+    runs-on: windows-2025
+    timeout-minutes: 10
+    steps:
+      - name: Fetch the default install
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: default-install
+          path: ${{ runner.temp }}/dfe
+
+      - name: Read it with the Windows compose
+        shell: pwsh
+        run: |
+          Set-Location (Join-Path $env:RUNNER_TEMP 'dfe/default')
+          docker compose version
+          $listed = docker compose config --services
+          if ($LASTEXITCODE -ne 0) { exit 1 }
+          $got = ($listed | Sort-Object) -join ','
+          $want = (Get-Content ../default.services | Sort-Object) -join ','
+          if ($got -ne $want) {
+            Write-Output "::error::Windows compose read $got where Linux read $want"
+            exit 1
+          }
+          Write-Output "Windows compose starts the same services: $got"
+
+  # Release OCI files from this commit, run from an empty folder
   published:
     name: Published compose
     runs-on: ubuntu-26.04
@@ -352,13 +375,14 @@ jobs:
       - name: Build the image
         run: docker build --file docker/dfe-docker.Dockerfile --build-arg "IMAGE=$IMAGE" --tag "$IMAGE" .
 
-      # The image is local here, so its digest is the one finding allowed
+      # The image is local, so its digest is the one finding allowed
       - name: Generate and check the published files
         run: |
           docker compose version
           python3 scripts/publish_compose.py --image "$IMAGE" --out-dir "$RUNNER_TEMP/compose"
           echo "COMPOSE_DIR=$RUNNER_TEMP/compose" >> "$GITHUB_ENV"
 
+      # The demo file holds the whole stack plus the demo
       - name: Start the demo and reach the console
         timeout-minutes: 25
         working-directory: ${{ env.COMPOSE_DIR }}
@@ -385,7 +409,7 @@ jobs:
             done
           done
 
-      # The secrets are this runner's own: no service holds one in its environment, ClickHouse refuses its empty default password, and the admin's public first login is held for a change
+      # Secrets minted here: none in an env, no defaults accepted
       - name: Run on secrets minted here
         working-directory: ${{ env.COMPOSE_DIR }}
         run: |
@@ -420,67 +444,36 @@ jobs:
             docker compose -f "$COMPOSE_DIR/dfe-demo.yaml" down --volumes --remove-orphans
           fi
 
-  # Compose on Windows splits COMPOSE_FILE on `;` unless COMPOSE_PATH_SEPARATOR in .env says otherwise
-  image-windows:
-    name: Image (Windows compose)
-    needs: image
-    runs-on: windows-2025
-    timeout-minutes: 10
-    steps:
-      - name: Fetch the default install
-        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
-        with:
-          name: default-install
-          path: ${{ runner.temp }}/dfe
-
-      - name: Read it with the Windows compose
-        shell: pwsh
-        run: |
-          Set-Location (Join-Path $env:RUNNER_TEMP 'dfe/default')
-          docker compose version
-          $listed = docker compose config --services
-          if ($LASTEXITCODE -ne 0) { exit 1 }
-          $got = ($listed | Sort-Object) -join ','
-          $want = (Get-Content ../default.services | Sort-Object) -join ','
-          if ($got -ne $want) {
-            Write-Output "::error::Windows compose read $got where Linux read $want"
-            exit 1
-          }
-          Write-Output "Windows compose starts the same services: $got"
-
-  # A push to main whose HEAD commit carries `Release: true`, or a `hyperi-ci
-  # release` dispatch, tags the version semantic-release computes and publishes
-  # a GitHub release. It is published with the release App's token because a
-  # release GITHUB_TOKEN publishes starts no workflow, and image.yml builds the
-  # image on `release: published`. It waits on the image jobs, so an image that
-  # fails CI never gets a tag.
+  # Tags and publishes on `Release: true` or a dispatch
   release:
     name: Release
+    # An image that fails CI never gets a tag
     needs: [compose, dockerfile, image, image-windows, published]
     if: github.event_name != 'pull_request'
     runs-on: ubuntu-26.04
     timeout-minutes: 20
-    # semantic-release's dry run checks push access, which needs write
+    # A dry run checks push access, which needs write
     permissions:
       contents: write
+    # Shared actions: hyperi-ci's release takes four languages
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: ${{ inputs.tag || github.sha }}
           # semantic-release reads every commit since the last tag
           fetch-depth: 0
           persist-credentials: false
+          ref: ${{ inputs.tag || github.sha }}
 
-      # The trailer gate, the classification check and the version, as every hyperi-ci pipeline decides them
+      # Trailer gate, classification and version, as hyperi-ci does
       - name: Plan the release
         id: plan
         uses: hyperi-io/hyperi-ci/.github/actions/predict-version@main
         with:
+          bump: ${{ inputs.bump || 'auto' }}
+          from-head: ${{ inputs.from-head }}
           github-token: ${{ secrets.GITHUB_TOKEN }}
           tag: ${{ inputs.tag }}
-          from-head: ${{ inputs.from-head }}
-          bump: ${{ inputs.bump || 'auto' }}
 
       - name: Install uv
         if: steps.plan.outputs.will-release == 'true'
@@ -488,18 +481,19 @@ jobs:
         with:
           enable-cache: false
 
+      # A GITHUB_TOKEN release starts no image.yml run
       - name: Mint the release token
         id: bot
         if: steps.plan.outputs.will-release == 'true'
         uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
         with:
           client-id: ${{ vars.GH_APP_CLIENT_ID }}
-          private-key: ${{ secrets.GH_APP_PRIVATE_KEY }}
           owner: ${{ github.repository_owner }}
-          repositories: ${{ github.event.repository.name }}
           permission-contents: write
+          private-key: ${{ secrets.GH_APP_PRIVATE_KEY }}
+          repositories: ${{ github.event.repository.name }}
 
-      # Plan installed semantic-release and the central config in this job
+      # Plan installed semantic-release and its config in this job
       - name: Tag (semantic-release)
         if: steps.plan.outputs.will-release == 'true' && (github.event_name == 'push' || inputs.from-head == 'true' && inputs.bump == 'auto')
         env:
@@ -513,7 +507,7 @@ jobs:
           RELEASE_VERSION: ${{ steps.plan.outputs.version }}
         run: ${{ env.HYPERCI_INSTALL }} tag-head --bump "$RELEASE_VERSION"
 
-      # semantic-release tags nothing when this checkout is behind main, and gh release create would then tag main's tip
+      # Behind main nothing is tagged, so gh would tag main's tip
       - name: Check the tag is on this commit
         if: steps.plan.outputs.will-release == 'true'
         env:
@@ -553,7 +547,7 @@ jobs:
           fi
           gh release create "$tag" --repo "$GITHUB_REPOSITORY" --verify-tag --title "$tag" --generate-notes "${kind[@]}"
 
-      # Non-fatal: the release is already published. A tag dispatch checks out an old tag, so it commits nothing back
+      # Non-fatal: the release is out, and an old tag commits nothing
       - name: Commit VERSION and CHANGELOG.md back
         if: steps.plan.outputs.will-release == 'true' && inputs.tag == ''
         continue-on-error: true

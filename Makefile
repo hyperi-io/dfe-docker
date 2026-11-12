@@ -394,7 +394,7 @@ else ifneq ($(filter dev dev-build,$(MAKECMDGOALS)),)
 else ifeq ($(filter ci,$(MAKECMDGOALS)),)
     RESOLVE_LOCAL_ARGS = --local-overlay $(LOCAL_OVERLAY)
 endif
-# The goals that start or recreate services, or hand a plain `docker compose` what they would, the only ones that ask docker compose for the CPU limits the collector reports as cores deployed
+# Goals that start or feed compose, which need its CPU limits
 USAGE_GOALS := dev ci up infra apply apply-services print-compose-env
 .tmp/profile.mk: FORCE
 	@python3 scripts/resolve_profile.py $(if $(KAFBAT_GATED),--unpublished kafbat) $(if $(HYPERDX_GATED),--unpublished hyperdx) $(RESOLVE_LOCAL_ARGS) $(if $(filter $(USAGE_GOALS),$(MAKECMDGOALS)),--usage)
@@ -672,10 +672,11 @@ check-locks: ## Assert each inline-metadata script's lock matches its pins (relo
 print-compose-file:
 	@echo "COMPOSE_FILE=$(COMPOSE_FILE)"
 
-# What a plain `docker compose` reads from .env in a folder the dfe-docker image set up (scripts/installer.py writes it there): this run's chain and compose profiles, and each value make works out rather than reads from .env. The live UI chain is a `make dev` matter and stays out. An ORIGIN_GOALS member, because a plain `docker compose up` starts from it
+# The .env lines installer.py writes for a plain compose up
 empty :=
 space := $(empty) $(empty)
 comma := ,
+# The live UI chain is a `make dev` matter and stays out
 .PHONY: print-compose-env
 print-compose-env:
 	$(info COMPOSE_FILE=docker-compose.yml$(STORAGE_CHAIN)$(UI_CHAIN))
@@ -686,18 +687,19 @@ print-compose-env:
 	$(if $(filter true,$(strip $(DFE_PROXY_TLS))),$(foreach key,DFE_NETWORK_IP_RANGE DFE_NETWORK_SUBNET DFE_PROXY_CERT_DIR DFE_PROXY_IP,$(info $(key)=$($(key)))))
 	@:
 
-# The profile `make up` and the dfe-docker image start when none is chosen
+# The profile `make up` and the image start when none is chosen
 .PHONY: print-default-profile
 print-default-profile:
 	@echo $(DEFAULT_PROFILE)
 
-# The replay script, protocol and rate `make demo` streams with, which the published demo streams with too
+# The replay script, protocol and rate both demos stream with
 .PHONY: print-demo-stream
 print-demo-stream:
 	@echo $(DEMO_GENERATOR) $(DEMO_PROTOCOL) $(DEMO_RATE)
 
-# The two compose files a release publishes as OCI artifacts, for the stack VERSION names (deployment.example.yaml's pin when unset). PUBLISH_IMAGE is the dfe-docker image the demo's helpers run
+# Release compose files, for VERSION's stack or the pinned one
 PUBLISH_DIR ?= .tmp/publish
+# The dfe-docker image the demo's helpers run
 PUBLISH_IMAGE ?= ghcr.io/hyperi-io/dfe-docker
 .PHONY: publish-compose
 publish-compose: ## Write the stack and demo compose files a release publishes into PUBLISH_DIR and check them (VERSION=X.Y.Z, PUBLISH_IMAGE=<dfe-docker image>)
