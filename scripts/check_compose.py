@@ -376,8 +376,7 @@ _CLICKHOUSE_DIAL_CASES: tuple[
     ),
 )
 
-# Services this project owns and therefore holds to that surface. dfe-hyperdx
-# keeps upstream HyperDX's surface, and clickhouse, the brokers and kafka-ui are third-party.
+# Services this project owns, held to that surface
 _DFE_OWNED_SERVICES = {
     "dfe-archiver",
     "dfe-engine",

@@ -60,7 +60,7 @@ _GUARDS = (
     _UNREADABLE_KEY,
 )
 
-# ORIGIN_GOALS in the Makefile: every goal that starts or self-tests the stack, and the one that hands a plain `docker compose` its settings.
+# ORIGIN_GOALS in the Makefile: start, self-test, print env
 _GUARDED_GOALS = [
     "dev",
     "ci",

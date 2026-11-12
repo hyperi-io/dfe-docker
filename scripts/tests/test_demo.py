@@ -664,9 +664,9 @@ class TestEnginePython:
     def test_reads_yaml_on_its_own_interpreter_inside_the_stack(
         self,
         monkeypatch: pytest.MonkeyPatch,
+        text: str,
         parsed: dict | None,
         refused: bool,
-        text: str,
     ) -> None:
         def no_container(*, service: str) -> str:
             return ""
@@ -1190,7 +1190,7 @@ class TestReceiverInstances:
         ],
     )
     def test_reads_the_receiver_from_the_apps_page(
-        self, names: list[str], page: object
+        self, page: object, names: list[str]
     ) -> None:
         assert demo.receiver_instances(page=page) == names
 
@@ -1212,8 +1212,8 @@ class TestRowGains:
     def test_an_unreadable_count_is_not_a_zero(
         self,
         before: dict[str, int | None],
-        gained: dict[str, int | None],
         now: dict[str, int | None],
+        gained: dict[str, int | None],
     ) -> None:
         assert demo.row_gains(before=before, now=now) == gained
 
@@ -1225,11 +1225,11 @@ class TestDemoSeed:
         ids=["sources", "console", "feed"],
     )
     def test_refuses_to_run_outside_the_published_demo(
-        self, argv: list[str], monkeypatch: pytest.MonkeyPatch
+        self, monkeypatch: pytest.MonkeyPatch, argv: list[str]
     ) -> None:
         monkeypatch.delenv("DFE_IN_STACK", raising=False)
 
-        assert demo_seed.main(argv) == 1
+        assert demo_seed.main(argv=argv) == 1
 
     @pytest.mark.parametrize("password", ["", "  "], ids=["unset", "blank"])
     def test_needs_the_break_glass_password_to_log_in(

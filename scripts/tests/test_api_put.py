@@ -133,10 +133,10 @@ class TestHttpPutJson:
     )
     def test_inside_the_stack_a_request_runs_here_with_no_docker(
         self,
-        answer: bytes,
         engine_url: str,
         monkeypatch: pytest.MonkeyPatch,
         status: int,
+        answer: bytes,
     ) -> None:
         _Recording.answer = answer
         _Recording.status = status

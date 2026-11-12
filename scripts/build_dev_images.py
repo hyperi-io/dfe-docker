@@ -76,7 +76,7 @@ RUST_COMPONENTS = [
     "dfe-transform-vector",
     "dfe-transform-vrl",
 ]
-# Each component's compose service, source repo, checkout directory and image share its name
+# A component's service, repo, checkout and image share a name
 SELF_CONTAINED_COMPONENTS = ["dfe-engine", "dfe-hyperdx", "dfe-ui"]
 # Source acquisition defaults; override via DFE_SRC_REMOTE / DFE_SRC_REF (or
 # DFE_SRC_ROOT to build local checkouts instead of the git cache).

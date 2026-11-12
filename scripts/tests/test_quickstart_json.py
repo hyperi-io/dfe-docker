@@ -33,7 +33,7 @@ from _common import FIRST_LOGIN_PASSWORD, SERVICE_PROFILES_FILE
     ],
 )
 def test_min_compose_is_the_newest_feature_used(
-    expected: str, texts: list[str]
+    texts: list[str], expected: str
 ) -> None:
     assert quickstart_json.min_compose(texts=texts) == expected
 

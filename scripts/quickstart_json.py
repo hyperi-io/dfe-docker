@@ -9,13 +9,13 @@
 
 """Write the quickstart.json each dfe-docker release carries as an asset.
 
-dfe-infra's docs generator pastes its strings verbatim, so every command in it is complete and every value comes from a file this repo already reads: the default profile and its transport from the Makefile and service_profiles.yaml, the stack from deployment.example.yaml's version.pin through stack.py, the console URL from the address next-auth is handed in docker-compose.yml, and the commands from the OCI artifacts scripts/publish_compose.py writes and the release publishes beside the dfe-docker image.
+dfe-infra's docs generator pastes its strings verbatim, so every command in it is complete and every value comes from a file this repo already reads: the default profile and its transport from the Makefile and service_profiles.yaml, the stack from deployment.example.yaml's version.pin through stack.py and the console URL from the address next-auth is handed in docker-compose.yml. The commands come from the OCI artifacts scripts/publish_compose.py writes and the release publishes beside the dfe-docker image.
 
 Schema 1:
 
   schema       1
   stack        the stack the release's versioned artifacts install
-  min_compose  the oldest Docker Compose that runs a published file: the newest feature the compose files use, and `-f oci://`
+  min_compose  the oldest Docker Compose that runs a published file: the newer of the newest feature the compose files use and `-f oci://`
   min_engine   the oldest Docker Engine that mounts a volume subpath, which the published files do
   console_url  where the console answers on a default install
   login        the console login a published file issues, which the console makes its owner change
@@ -39,7 +39,7 @@ import subprocess
 import sys
 from pathlib import Path
 
-# Bytecode for the repo modules imported below goes to .tmp/pycache, as it does under make
+# Bytecode goes to .tmp/pycache, as it does under make
 sys.pycache_prefix = str(Path(__file__).resolve().parent.parent / ".tmp" / "pycache")
 
 import installer  # noqa: E402
@@ -55,16 +55,16 @@ from _common import (  # noqa: E402
 )
 
 SCHEMA = 1
-# Compose reads `-f oci://` by default from this release (docker/compose pkg/remote/oci.go: COMPOSE_EXPERIMENTAL_OCI_REMOTE defaults false in v2.33.0, true in v2.34.0)
+# The release that reads `-f oci://` without an opt-in
 OCI_REMOTE_COMPOSE = "2.34.0"
-# VolumeOptions.Subpath, API 1.45 (https://docs.docker.com/engine/release-notes/26.0/)
+# VolumeOptions.Subpath, which API 1.45 added
 MIN_ENGINE = "26.0"
 ADMIN_NAME = "admin"
-# Where next-auth is told the console lives, which is the address a browser must use for a sign-in to come back
+# Where next-auth is told the console lives
 _CONSOLE_ORIGIN = re.compile(
     r"NEXTAUTH_URL: \$\{DFE_EXTERNAL_ORIGIN:-(?P<origin>[^}]+)\}:\$\{DFE_UI_PORT:-(?P<port>\d+)\}"
 )
-# Each compose feature these files can use, the Docker Compose release that first reads it and where that release says so
+# Each feature's name, pattern, first release and source
 COMPOSE_FEATURES = (
     (
         "!reset",
@@ -109,28 +109,50 @@ class QuickstartJsonError(Exception):
     """A value the quickstart cannot be read from its file."""
 
 
-def _version_key(version: str) -> tuple[int, ...]:
-    """A Compose version as numbers, for ordering."""
-    return tuple(int(part) for part in version.split("."))
+def _artifact(*, image: str, tag: str, version: str = "") -> str:
+    """One published compose file's reference, its moving tag or that tag for one release."""
+    return f"{image}:{tag}-{version}" if version else f"{image}:{tag}"
 
 
-def compose_texts() -> list[str]:
+def _compose_command(*, ref: str, verb: str) -> str:
+    """The docker compose command that runs `verb` on a published file."""
+    return f"docker compose -f oci://{ref} {verb}"
+
+
+def _compose_texts() -> list[str]:
     """Every committed compose file: docker-compose.yml and what it includes, extends and chains."""
     files = [COMPOSE_FILE, *sorted((REPO_ROOT / "compose").glob("*.yml"))]
     return [path.read_text(encoding="utf-8") for path in files]
 
 
-def min_compose(*, texts: list[str]) -> str:
-    """The oldest Docker Compose that reads every feature the texts use."""
-    joined = "\n".join(texts)
-    used = [
-        version for _, pattern, version, _ in COMPOSE_FEATURES if pattern.search(joined)
-    ]
-    if not (used):
-        raise QuickstartJsonError(
-            "the compose files use none of the features this knows"
-        )
-    return max(used, key=_version_key)
+def _notes(*, console: str, image: str) -> dict[str, str]:
+    """What the quickstart tells someone once each command has run."""
+    login = (
+        f"Point your browser to {console} and log in as `{ADMIN_NAME}` with password "
+        f"`{FIRST_LOGIN_PASSWORD}`. The console makes you change it at first login."
+    )
+    stack_down = _compose_command(
+        ref=_artifact(image=image, tag=PUBLISHED_STACK_TAG), verb="down"
+    )
+    demo_down = _compose_command(
+        ref=_artifact(image=image, tag=PUBLISHED_DEMO_TAG), verb="down -v"
+    )
+    return {
+        "up": (
+            f"{login} Every port listens on 127.0.0.1 only. `{stack_down}` stops the "
+            "stack and keeps its data."
+        ),
+        "demo": (
+            "A throwaway stack that seeds its own sources and streams vendor syslog "
+            f"into one table per vendor, beside its fetchers. {login} It takes the "
+            f"Docker install's ports, so stop that first, and `{demo_down}` removes it all."
+        ),
+    }
+
+
+def _version_key(version: str) -> tuple[int, ...]:
+    """A Compose version as numbers, for ordering."""
+    return tuple(int(part) for part in version.split("."))
 
 
 def console_url(*, compose_text: str) -> str:
@@ -138,7 +160,7 @@ def console_url(*, compose_text: str) -> str:
     match = _CONSOLE_ORIGIN.search(compose_text)
     if match is None:
         raise QuickstartJsonError(
-            f"{COMPOSE_FILE.name} sets no NEXTAUTH_URL from DFE_EXTERNAL_ORIGIN and DFE_UI_PORT"
+            f"{COMPOSE_FILE.name!r} sets no NEXTAUTH_URL from DFE_EXTERNAL_ORIGIN and DFE_UI_PORT"
         )
     return f"{match['origin']}:{match['port']}"
 
@@ -155,46 +177,24 @@ def default_profile() -> str:
         text=True,
     )
     name = result.stdout.strip()
-    if result.returncode != 0 or not (name):
+    if (result.returncode != 0) or not (name):
         raise QuickstartJsonError(
             f"`make print-default-profile` printed no profile: {result.stderr.strip()}"
         )
     return name
 
 
-def artifact(*, image: str, tag: str, version: str = "") -> str:
-    """One published compose file's reference, its moving tag or that tag for one release."""
-    return f"{image}:{tag}-{version}" if version else f"{image}:{tag}"
-
-
-def compose_command(*, ref: str, verb: str) -> str:
-    """The docker compose command that runs `verb` on a published file."""
-    return f"docker compose -f oci://{ref} {verb}"
-
-
-def notes(*, console: str, image: str) -> dict[str, str]:
-    """What the quickstart tells someone once each command has run."""
-    login = (
-        f"Point your browser to {console} and log in as `{ADMIN_NAME}` with password "
-        f"`{FIRST_LOGIN_PASSWORD}`. The console makes you change it at first login."
-    )
-    stack_down = compose_command(
-        ref=artifact(image=image, tag=PUBLISHED_STACK_TAG), verb="down"
-    )
-    demo_down = compose_command(
-        ref=artifact(image=image, tag=PUBLISHED_DEMO_TAG), verb="down -v"
-    )
-    return {
-        "up": (
-            f"{login} Every port listens on 127.0.0.1 only. `{stack_down}` stops the "
-            "stack and keeps its data."
-        ),
-        "demo": (
-            "A throwaway stack that seeds its own sources and streams vendor syslog "
-            f"into one table per vendor, beside its fetchers. {login} It takes the "
-            f"Docker install's ports, so stop that first, and `{demo_down}` removes it all."
-        ),
-    }
+def min_compose(*, texts: list[str]) -> str:
+    """The oldest Docker Compose that reads every feature the texts use."""
+    joined = "\n".join(texts)
+    used = [
+        version for _, pattern, version, _ in COMPOSE_FEATURES if pattern.search(joined)
+    ]
+    if not (used):
+        raise QuickstartJsonError(
+            "the compose files use none of the features this knows"
+        )
+    return max(used, key=_version_key)
 
 
 def quickstart(
@@ -203,14 +203,14 @@ def quickstart(
     """The quickstart.json document for one release."""
     if default not in profiles:
         raise QuickstartJsonError(
-            f"the default profile {default!r} is not in {SERVICE_PROFILES_FILE.name}"
+            f"the default profile {default!r} is not in {SERVICE_PROFILES_FILE.name!r}"
         )
     body = profiles[default]
     console = console_url(compose_text=COMPOSE_FILE.read_text(encoding="utf-8"))
     refs = {
         kind: {
-            "latest": artifact(image=image, tag=tag),
-            "pinned": artifact(image=image, tag=tag, version=version),
+            "latest": _artifact(image=image, tag=tag),
+            "pinned": _artifact(image=image, tag=tag, version=version),
         }
         for kind, tag in (("up", PUBLISHED_STACK_TAG), ("demo", PUBLISHED_DEMO_TAG))
     }
@@ -218,7 +218,7 @@ def quickstart(
         "schema": SCHEMA,
         "stack": stack_version,
         "min_compose": max(
-            min_compose(texts=compose_texts()), OCI_REMOTE_COMPOSE, key=_version_key
+            min_compose(texts=_compose_texts()), OCI_REMOTE_COMPOSE, key=_version_key
         ),
         "min_engine": MIN_ENGINE,
         "console_url": console,
@@ -237,12 +237,12 @@ def quickstart(
         ],
         **{
             kind: {
-                form: [compose_command(ref=ref, verb="up -d")]
+                form: [_compose_command(ref=ref, verb="up -d")]
                 for form, ref in forms.items()
             }
             for kind, forms in refs.items()
         },
-        "notes": notes(console=console, image=image),
+        "notes": _notes(console=console, image=image),
     }
 
 
@@ -253,7 +253,7 @@ def main() -> int:
     parser.add_argument(
         "--image", default=installer.DEFAULT_IMAGE, help="the image repository"
     )
-    parser.add_argument("--out", type=Path, help="where to write it, else stdout")
+    parser.add_argument("--out", help="where to write it, else stdout", type=Path)
     parser.add_argument(
         "--print-stack", action="store_true", help="print the stack alone"
     )

@@ -30,7 +30,7 @@ ROLES = {
 }
 
 
-def _tree(root: Path) -> Path:
+def _tree(*, root: Path) -> Path:
     """A scratch tree holding one config file, one config directory, the collector config and env/."""
     (root / "config" / "proxy").mkdir(parents=True)
     (root / "config" / "proxy" / "envoy.yaml").write_text(
@@ -48,11 +48,11 @@ def _tree(root: Path) -> Path:
     return root
 
 
-def _bind(source: Path | str, target: str) -> dict:
+def _bind(*, source: Path | str, target: str) -> dict:
     return {"type": "bind", "source": str(source), "target": target, "read_only": True}
 
 
-def _model(tree: Path) -> dict:
+def _model(*, tree: Path) -> dict:
     return {
         "name": "scratch",
         "networks": {"default": {"name": "scratch_default", "ipam": {}}},
@@ -74,18 +74,26 @@ def _model(tree: Path) -> dict:
                 "profiles": ["core"],
                 "volumes": [
                     {"type": "volume", "source": "dfe-engine-config", "target": "/c"},
-                    _bind(tree / "env", "/app/app-env"),
-                    _bind(tree / "config" / "proxy" / "envoy.yaml", "/etc/envoy.yaml"),
+                    _bind(source=tree / "env", target="/app/app-env"),
+                    _bind(
+                        source=tree / "config" / "proxy" / "envoy.yaml",
+                        target="/etc/envoy.yaml",
+                    ),
                 ],
             },
             "clickhouse": {
                 "container_name": "dfe-clickhouse",
-                "volumes": [_bind(tree / "config" / "clickhouse", "/etc/ch/")],
+                "volumes": [
+                    _bind(source=tree / "config" / "clickhouse", target="/etc/ch/")
+                ],
             },
             "otel-collector": {
                 "volumes": [
-                    _bind(tree / COLLECTOR_CONFIG, "/etc/otelcol/config.yaml"),
-                    _bind("/proc", "/hostfs/proc"),
+                    _bind(
+                        source=tree / COLLECTOR_CONFIG,
+                        target="/etc/otelcol/config.yaml",
+                    ),
+                    _bind(source="/proc", target="/hostfs/proc"),
                 ]
             },
         },
@@ -97,10 +105,10 @@ class TestPublished:
     def test_rewrites_the_model_into_a_file_a_host_with_only_docker_runs(
         self, tmp_path: Path
     ) -> None:
-        tree = _tree(tmp_path)
+        tree = _tree(root=tmp_path)
 
         model = publish_compose.published(
-            container_prefix="demo-", model=_model(tree), name="dfe", tree=tree
+            container_prefix="demo-", model=_model(tree=tree), name="dfe", tree=tree
         )
 
         engine = model["services"]["dfe-engine"]
@@ -129,10 +137,10 @@ class TestPublished:
     def test_a_bound_directory_becomes_one_config_per_file(
         self, tmp_path: Path
     ) -> None:
-        tree = _tree(tmp_path)
+        tree = _tree(root=tmp_path)
 
         model = publish_compose.published(
-            container_prefix="", model=_model(tree), name="dfe", tree=tree
+            container_prefix="", model=_model(tree=tree), name="dfe", tree=tree
         )
 
         assert model["services"]["clickhouse"]["configs"] == [
@@ -144,10 +152,10 @@ class TestPublished:
     def test_the_collector_loses_the_host_proc_and_reads_its_own(
         self, tmp_path: Path
     ) -> None:
-        tree = _tree(tmp_path)
+        tree = _tree(root=tmp_path)
 
         model = publish_compose.published(
-            container_prefix="", model=_model(tree), name="dfe", tree=tree
+            container_prefix="", model=_model(tree=tree), name="dfe", tree=tree
         )
 
         collector = model["services"]["otel-collector"]
@@ -166,11 +174,13 @@ class TestPublished:
         ids=["docker-socket", "host-file"],
     )
     def test_refuses_a_bind_mount_it_cannot_publish(
-        self, match: str, source: str, tmp_path: Path
+        self, tmp_path: Path, source: str, match: str
     ) -> None:
-        tree = _tree(tmp_path)
-        model = _model(tree)
-        model["services"]["clickhouse"]["volumes"].append(_bind(source, "/x"))
+        tree = _tree(root=tmp_path)
+        model = _model(tree=tree)
+        model["services"]["clickhouse"]["volumes"].append(
+            _bind(source=source, target="/x")
+        )
 
         with pytest.raises(publish_compose.PublishError, match=match):
             publish_compose.published(
@@ -192,7 +202,7 @@ class TestConfigContent:
         ],
         ids=["untouched", "every-dollar-escaped", "collector-edit"],
     )
-    def test_matches_expected(self, expected: str, relative: str, text: str) -> None:
+    def test_matches_expected(self, relative: str, text: str, expected: str) -> None:
         assert publish_compose.config_content(relative=relative, text=text) == expected
 
     def test_refuses_a_collector_config_the_edit_no_longer_fits(self) -> None:
@@ -213,7 +223,7 @@ class TestInterpolations:
             ("$$${HOME} and $X", 2),
         ],
     )
-    def test_counts_what_compose_would_interpolate(self, count: int, text: str) -> None:
+    def test_counts_what_compose_would_interpolate(self, text: str, count: int) -> None:
         assert len(publish_compose.interpolations(text=text)) == count
 
 
@@ -305,7 +315,7 @@ class TestDemoRoles:
         ids=["no-intake", "no-vendor", "two-intakes"],
     )
     def test_refuses_a_demo_make_demo_would_refuse(
-        self, events: list[str], sources: dict[str, str], tmp_path: Path
+        self, tmp_path: Path, sources: dict[str, str], events: list[str]
     ) -> None:
         (tmp_path / "sources").mkdir()
         (tmp_path / "events").mkdir()
@@ -320,7 +330,7 @@ class TestDemoRoles:
             )
 
 
-def _stack(services: list[str]) -> dict:
+def _stack(*, services: list[str]) -> dict:
     service = {"deploy": {"resources": {}}, "dns_search": ["."], "image": "i"}
     model = {"services": {name: dict(service) for name in services}}
     model["services"]["dfe-engine"]["environment"] = {
@@ -354,7 +364,7 @@ class TestDemoOverlay:
         model = publish_compose.demo_overlay(
             archive=ARCHIVE,
             image="ghcr.io/hyperi-io/dfe-docker@sha256:" + "b" * 64,
-            model=_stack(DEMO_STACK),
+            model=_stack(services=DEMO_STACK),
             roles=ROLES,
             stream=["scripts/replay_syslog.py", "tcp", "20"],
         )
@@ -388,7 +398,11 @@ class TestDemoOverlay:
 
     def test_refuses_a_stack_that_declares_no_demo_instance(self) -> None:
         stack = _stack(
-            [name for name in DEMO_STACK if name != "dfe-transform-elastic-demo-syslog"]
+            services=[
+                name
+                for name in DEMO_STACK
+                if name != "dfe-transform-elastic-demo-syslog"
+            ]
         )
 
         with pytest.raises(publish_compose.PublishError, match="demo-syslog"):
@@ -407,7 +421,7 @@ class TestTags:
         [(False, ["compose-1.0.5"]), (True, ["compose-1.0.5", "compose"])],
         ids=["pre-release", "release"],
     )
-    def test_matches_expected(self, expected: list[str], moving: bool) -> None:
+    def test_matches_expected(self, moving: bool, expected: list[str]) -> None:
         assert (
             publish_compose.published_tags(
                 moving=moving, release="1.0.5", tag="compose"
@@ -424,7 +438,7 @@ MINTED = {
     OTEL_SECRET: "DFE_OTEL_WRITER_CLICKHOUSE_PASSWORD",
     JWT_SECRET: "DFE_ENGINE_API_JWT_SECRET",
 }
-# What each pinned image's registry config runs, standing in for the registry read
+# What each image's registry config runs, in place of a read
 IMAGE_COMMANDS = {
     "clickhouse": (["/entrypoint.sh"], []),
     "documentdb": (["/bin/bash", "-c", 'run.sh "$@"', "--"], []),
@@ -669,7 +683,7 @@ class TestSecretsInit:
         "template", ["@@NOT_A_SECRET@@", "x@@lower@@"], ids=["unknown-key", "not-a-key"]
     )
     def test_refuses_a_plan_naming_a_key_init_does_not_mint(
-        self, template: str, tmp_path: Path
+        self, tmp_path: Path, template: str
     ) -> None:
         plan = {"consumers": {"a": {"env": {"X": template}, "gid": os.getgid()}}}
 

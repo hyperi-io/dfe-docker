@@ -104,13 +104,13 @@ SERVICE_TO_RENDERED_CONFIG_VAR = {
 CUSTOM_ENV_SUFFIX = ".custom.env"
 # The env/<component>.env compose hands dfe-engine
 ENGINE_COMPONENT = "engine"
-# Set on a container that runs these scripts on the stack's own network, where every service answers by name and no docker CLI is needed
+# Set in a container on the stack's own network, no docker CLI
 IN_STACK_KEY = "DFE_IN_STACK"
 
-# The compose files a release publishes as OCI artifacts beside the dfe-docker image, by the tag each moves on and the stem of its versioned tag
+# The tags each published compose file moves on as an artifact
 PUBLISHED_STACK_TAG = "compose"
 PUBLISHED_DEMO_TAG = "demo"
-# The admin password the published files issue, which the engine makes its owner replace at first login
+# The admin password the engine makes its owner replace at login
 FIRST_LOGIN_PASSWORD = "dfe-first-login"
 
 # Repo constants
@@ -172,6 +172,11 @@ class ComposeConfigError(Exception):
 _LEADING_LEVEL_RE = re.compile(r"(PASS|FAIL|SKIP|WARNING)\b|(error):")
 _LEVEL_WIDTH = 8
 _RESET = "\033[0m"
+
+
+def in_stack() -> bool:
+    """Whether this process runs in a container on the stack's own network, as the published demo's one-shots do."""
+    return os.environ.get(IN_STACK_KEY, "").strip().lower() not in FALSY
 
 
 def log_line(
@@ -437,11 +442,6 @@ def _published_url(
         return f"{'https' if proxied else 'http'}://{(named) or (host)}:{port}"
     origin = _external_origin(values=values)
     return f"{(origin) or (f'http://{host}')}:{port}"
-
-
-def in_stack() -> bool:
-    """Whether this process runs in a container on the stack's own network, as the published demo's one-shots do."""
-    return os.environ.get(IN_STACK_KEY, "").strip().lower() not in FALSY
 
 
 def _load_dotenv() -> None:

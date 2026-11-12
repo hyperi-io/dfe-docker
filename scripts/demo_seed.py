@@ -19,7 +19,7 @@ sources and console log in as the break-glass account, because the bootstrap adm
 
 Exit codes:
   0  done
-  1  not inside the stack, or a step failed
+  1  a step failed or this is not inside the stack
   2  usage error
 """
 
@@ -29,7 +29,7 @@ import sys
 import time
 from pathlib import Path
 
-# Bytecode for the repo modules imported below goes to .tmp/pycache, as it does under make
+# Bytecode goes to .tmp/pycache, as it does under make
 sys.pycache_prefix = str(Path(__file__).resolve().parent.parent / ".tmp" / "pycache")
 
 import demo  # noqa: E402
@@ -39,24 +39,9 @@ from seed import ENGINE_FAULTS, SeedError  # noqa: E402
 
 BREAKGLASS_USERNAME = "breakglass"
 BREAKGLASS_PASSWORD_KEY = "DFE_ENGINE_AUTH_BREAKGLASS_PASSWORD"
-# dfe-hyperdx holds a source only once the engine has deployed it, so the console waits for that rather than failing first time
+# dfe-hyperdx holds a source once the engine deploys it
 CONSOLE_TIMEOUT_SECONDS = 600.0
 CONSOLE_INTERVAL_SECONDS = 10.0
-
-
-def _token(*, base: str) -> str:
-    """A token for the break-glass account, the demo's one admin that needs no password change."""
-    password = os.environ.get(BREAKGLASS_PASSWORD_KEY, "").strip()
-    if not (password):
-        raise demo.DemoError(
-            f"{BREAKGLASS_PASSWORD_KEY} is unset, so the demo cannot log in"
-        )
-    token, status, _ = _request_token(
-        base=base, password=password, username=BREAKGLASS_USERNAME
-    )
-    if (status != 200) or not (token):
-        raise demo.DemoError(f"login as {BREAKGLASS_USERNAME!r} returned HTTP {status}")
-    return token
 
 
 def _loaded() -> demo.Demo:
@@ -66,6 +51,39 @@ def _loaded() -> demo.Demo:
         demo=loaded, manifest=demo._read_manifest(path=demo.MANIFEST_FILE)
     )
     return loaded
+
+
+def _token(*, base: str) -> str:
+    """A token for the break-glass account, the demo's one admin that needs no password change."""
+    password = os.environ.get(BREAKGLASS_PASSWORD_KEY, "").strip()
+    if not (password):
+        raise demo.DemoError(
+            f"{BREAKGLASS_PASSWORD_KEY!r} is unset, so the demo cannot log in"
+        )
+    token, status, _ = _request_token(
+        base=base, password=password, username=BREAKGLASS_USERNAME
+    )
+    if (status != 200) or (not (token)):
+        raise demo.DemoError(f"login as {BREAKGLASS_USERNAME!r} returned HTTP {status}")
+    return token
+
+
+def install_console() -> None:
+    """Create the demo's dashboards and saved searches once dfe-hyperdx holds every source they read."""
+    token = _token(base=ENGINE_NETWORK_BASE)
+    deadline = time.monotonic() + CONSOLE_TIMEOUT_SECONDS
+    while True:
+        try:
+            links = demo._install_console(token=token)
+        except demo.DemoError as error:
+            if time.monotonic() >= deadline:
+                raise
+            _print(msg=f"waiting for dfe-hyperdx: {error}")
+            time.sleep(CONSOLE_INTERVAL_SECONDS)
+            continue
+        for line in links:
+            _print(msg=f"  console {line}")
+        return
 
 
 def seed_sources() -> None:
@@ -100,25 +118,7 @@ def stage_feed(*, feed: Path, generator: str) -> None:
     _print(msg=f"staged {generator!r} and the demo's events in {str(staged)!r}")
 
 
-def install_console() -> None:
-    """Create the demo's dashboards and saved searches once dfe-hyperdx holds every source they read."""
-    token = _token(base=ENGINE_NETWORK_BASE)
-    deadline = time.monotonic() + CONSOLE_TIMEOUT_SECONDS
-    while True:
-        try:
-            links = demo._install_console(token=token)
-        except demo.DemoError as error:
-            if time.monotonic() >= deadline:
-                raise
-            _print(msg=f"waiting for dfe-hyperdx: {error}")
-            time.sleep(CONSOLE_INTERVAL_SECONDS)
-            continue
-        for line in links:
-            _print(msg=f"  console {line}")
-        return
-
-
-def main(argv: list[str] | None = None) -> int:
+def main(*, argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
     )
@@ -126,18 +126,18 @@ def main(argv: list[str] | None = None) -> int:
     commands.add_parser("sources", help="create and deploy the demo's sources")
     feed = commands.add_parser("feed", help="stage the replay script and events")
     feed.add_argument(
-        "--feed", type=Path, required=True, help="where the stream reads it"
+        "--feed", help="where the stream reads it", required=True, type=Path
     )
     feed.add_argument(
         "--generator",
-        required=True,
         help="the replay script's path inside the dfe-transform-elastic checkout",
+        required=True,
     )
     commands.add_parser("console", help="create the demo's dashboards and searches")
     args = parser.parse_args(argv)
     if not (in_stack()):
         _print(
-            msg=f"FAIL {args.command} runs in the published demo's own containers, which set {IN_STACK_KEY}. On a checkout run `make demo`"
+            msg=f"FAIL {args.command!r} runs in the published demo's own containers, which set {IN_STACK_KEY!r}. On a checkout run `make demo`"
         )
         return 1
     try:

@@ -196,7 +196,7 @@ class TestChoiceLine:
         ],
     )
     def test_names_the_command_that_ran_it(
-        self, absent: str, caller: str, said: str, stack_from: str, version_from: str
+        self, caller: str, version_from: str, stack_from: str, said: str, absent: str
     ) -> None:
         args = argparse.Namespace(
             caller=caller, command="up", version_from=version_from

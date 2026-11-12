@@ -72,7 +72,7 @@ from _common import (  # noqa: E402
 
 # Set to 0 to keep the password off a terminal too.
 _SHOW_KEY = "DFE_CREDS_SHOW"
-# The command that prints this summary again, which the dfe-docker image names in place of make
+# The command that prints this summary again
 _COMMAND_KEY = "DFE_CREDS_COMMAND"
 _COMMAND_DEFAULT = "make creds"
 # The accounts `make accounts` creates, one file each named for its username

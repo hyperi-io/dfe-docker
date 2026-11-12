@@ -96,7 +96,7 @@ def _choice_line(
     """The first line `prepare` prints: the two choices, where each came from and how to override them, in the words of the command that ran it."""
     if args.caller:
         given = {"make line": "given"}
-        stack_given = {"make line": args.version_from or "given"}
+        stack_given = {"make line": (args.version_from) or ("given")}
         caller = args.caller
         override = f"{caller} --profile <profile> --stack <stack version>"
     else:

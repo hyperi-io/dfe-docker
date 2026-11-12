@@ -81,7 +81,7 @@ def test_a_block_with_no_end_is_refused_rather_than_cut_to_the_end() -> None:
     ],
 )
 def test_init_refuses_a_folder_it_would_overwrite(
-    said: str, state: str, upgrade: bool
+    state: str, upgrade: bool, said: str
 ) -> None:
     reason = installer.refusal(image="dfe-docker:test", state=state, upgrade=upgrade)
 
@@ -101,7 +101,7 @@ def test_init_refuses_a_folder_it_would_overwrite(
     ],
 )
 def test_the_folder_reads_as_what_it_holds(
-    names: list[str], state: str, tmp_path: Path
+    tmp_path: Path, names: list[str], state: str
 ) -> None:
     for name in names:
         (tmp_path / name).write_text("", encoding="utf-8")
@@ -134,7 +134,7 @@ def test_an_unknown_profile_is_refused_naming_every_valid_one(name: str) -> None
     ],
 )
 def test_the_mount_check_reads_mountinfo_as_the_kernel_writes_it(
-    found: bool, path: str, point: str
+    point: str, path: str, found: bool
 ) -> None:
     mountinfo = f"1 0 0:1 / / rw - overlay overlay rw\n2 1 8:1 /x {point} rw - ext4 /dev/sda1 rw\n"
 
@@ -183,7 +183,7 @@ def test_every_command_the_image_prints_names_the_image() -> None:
     image = "ghcr.io/hyperi-io/dfe-docker:9.9.9"
 
     for command in (
-        installer.run_command(image=image, args=["init"]),
+        installer.run_command(args=["init"], image=image),
         installer.login_command(image=image),
         installer.demo_command(image=image),
     ):
@@ -214,7 +214,7 @@ def _tree(*, root: Path) -> Path:
     return root
 
 
-def _apply(*, root: Path, profile: str) -> subprocess.CompletedProcess[str]:
+def _apply(*, profile: str, root: Path) -> subprocess.CompletedProcess[str]:
     """Run the folder's own copy of the installer's `apply` with this profile in .env."""
     with (root / ".env").open("a", encoding="utf-8", newline="\n") as handle:
         handle.write(f"DFE_PROFILE={profile}\n")
@@ -246,7 +246,7 @@ def _block(*, root: Path) -> dict[str, str]:
 
 @pytest.fixture
 def tree(tmp_path: Path) -> Path:
-    if shutil.which("make") is None or shutil.which("docker") is None:
+    if (shutil.which("make") is None) or (shutil.which("docker") is None):
         pytest.skip("apply runs make and `docker compose config`")
     return _tree(root=tmp_path / "dfe")
 
@@ -282,9 +282,9 @@ def tree(tmp_path: Path) -> Path:
     ],
 )
 def test_apply_leaves_a_plain_compose_starting_only_the_profile(
-    parked: set[str], profile: str, tree: Path
+    tree: Path, profile: str, parked: set[str]
 ) -> None:
-    result = _apply(root=tree, profile=profile)
+    result = _apply(profile=profile, root=tree)
 
     assert result.returncode == 0, result.stdout + result.stderr
     block = _block(root=tree)
@@ -299,8 +299,8 @@ def test_apply_leaves_a_plain_compose_starting_only_the_profile(
 
 
 def test_a_second_apply_rewrites_the_block_in_place(tree: Path) -> None:
-    first = _apply(root=tree, profile="single-kafka")
-    second = _apply(root=tree, profile="slim-grpc")
+    first = _apply(profile="single-kafka", root=tree)
+    second = _apply(profile="slim-grpc", root=tree)
 
     assert first.returncode == 0, first.stderr
     assert second.returncode == 0, second.stderr
@@ -314,7 +314,7 @@ def test_apply_puts_env_back_when_make_refuses_the_settings(tree: Path) -> None:
         handle.write("DFE_BIND_SCOPE=all\n")
     before = (tree / ".env").read_text(encoding="utf-8")
 
-    result = _apply(root=tree, profile="single-kafka")
+    result = _apply(profile="single-kafka", root=tree)
 
     assert result.returncode == 1
     assert "DFE_EXTERNAL_ORIGIN" in result.stderr

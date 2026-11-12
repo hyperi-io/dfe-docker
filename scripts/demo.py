@@ -92,7 +92,7 @@ SOURCES_DIR = DEMO_DIR / "sources"
 TRANSFORM_APP = "dfe-transform-elastic"
 TRANSFORM_REPO = "dfe-transform-elastic"
 TRANSFORM_VERSION_KEY = "DFE_TRANSFORM_ELASTIC_VERSION"
-# The organisation and account that complete the engine's first-run setup
+# The org and account the engine's first-run setup asks for
 DEMO_ORG = "demo"
 DEMO_ANALYST = "demo-analyst"
 RECEIVER_SERVICE = "dfe-receiver"
@@ -427,7 +427,7 @@ def _await_rows(
     deadline = time.monotonic() + LAND_TIMEOUT_SECONDS
     while True:
         gained = row_gains(before=before, now=_counts(tables=list(before)))
-        done = all((gained[table] or 0) > 0 for table in vendors)
+        done = all(((gained[table]) or (0)) > 0 for table in vendors)
         if (
             (done)
             or (time.monotonic() >= deadline)
@@ -605,7 +605,7 @@ def _docker(
 
 
 def _engine_python(*, code: str, stdin: str) -> subprocess.CompletedProcess:
-    """Run Python in the engine's container, for the PyYAML it carries, or on this interpreter inside the stack, where the dfe-docker image carries its own."""
+    """Run Python in the engine's container for the PyYAML it carries, or inside the stack on this interpreter, whose image carries its own."""
     if in_stack():
         return subprocess.run(
             [sys.executable, "-c", code],
@@ -779,7 +779,7 @@ def _outcome(
         if gained[table] is not None and gained[table] <= 0
     )
     archived = None
-    if archiving and not (empty or unread):
+    if archiving and not ((empty) or (unread)):
         archived = _await_archive(image=image, sources=archiving)
         _print(
             msg=f"  {ARCHIVER_SERVICE} archive of {', '.join(archiving)}: "
@@ -787,7 +787,9 @@ def _outcome(
         )
         for line in _archive_report(image=image, sources=archiving).splitlines():
             _print(msg=f"    {line}")
-    unarchived = bool(archiving) and not (empty or unread) and not ((archived or 0) > 0)
+    unarchived = (
+        bool(archiving) and not ((empty) or (unread)) and not (((archived) or (0)) > 0)
+    )
     # Lines a previous stream sent can still land, so rows alone do not prove this run's generator worked
     if not (_running(container=container)):
         _print(
@@ -797,7 +799,7 @@ def _outcome(
         )
     elif unread:
         _print(
-            msg=f"FAIL ClickHouse at {clickhouse_url()} answered no count for {unread}, "
+            msg=f"FAIL ClickHouse at {clickhouse_url()!r} answered no count for {unread}, "
             "so whether rows landed is unknown. CLICKHOUSE_URL names the address to read it at"
         )
     elif empty:
@@ -1275,7 +1277,7 @@ def _subset(*, held: object, wanted: object) -> bool:
 
 def _switch_on_syslog(*, base: str, token: str) -> dict:
     """Turn on the receiver's UDP and TCP syslog listener through the engine and return the reply."""
-    # The catalogue is a few apps, so one page of the largest size holds it whole
+    # One page of the largest size holds the whole catalogue
     status, page = _api_get_json(token=token, url=f"{base}/apps?page_size=1000")
     names = receiver_instances(page=page)
     if (status != 200) or not (names):
@@ -1550,26 +1552,6 @@ def listening_protocols(*, port: int, proc_net: str) -> set[str]:
     return found
 
 
-def pruner_command(*, archive: dict, tool: str) -> list[str]:
-    """The command that keeps the archive mounted at ARCHIVE_ROOT to the manifest's retention and size cap, running the archive tool at `tool`."""
-    return [
-        "python3",
-        "-I",
-        tool,
-        "prune",
-        "--root",
-        ARCHIVE_ROOT,
-        "--sources",
-        ",".join(archive["sources"]),
-        "--interval-minutes",
-        str(archive["sweep_minutes"]),
-        "--max-age-minutes",
-        str(archive["retention_minutes"]),
-        "--max-megabytes",
-        str(archive["max_megabytes"]),
-    ]
-
-
 def load_demo(*, events: Path, sources: Path) -> Demo:
     """Read every source file under sources by role and pair each vendor source with its directory under events."""
     bodies = [
@@ -1649,16 +1631,24 @@ def load_demo(*, events: Path, sources: Path) -> Demo:
     )
 
 
-def row_gains(
-    *, before: dict[str, int | None], now: dict[str, int | None]
-) -> dict[str, int | None]:
-    """The rows each table gained, None for a table ClickHouse gave no count for now, so an unreachable ClickHouse never reads as no rows."""
-    return {
-        table: None
-        if now.get(table) is None
-        else (now[table] or 0) - (before.get(table) or 0)
-        for table in before
-    }
+def pruner_command(*, archive: dict, tool: str) -> list[str]:
+    """The command that keeps the archive mounted at ARCHIVE_ROOT to the manifest's retention and size cap, running the archive tool at `tool`."""
+    return [
+        "python3",
+        "-I",
+        tool,
+        "prune",
+        "--root",
+        ARCHIVE_ROOT,
+        "--sources",
+        ",".join(archive["sources"]),
+        "--interval-minutes",
+        str(archive["sweep_minutes"]),
+        "--max-age-minutes",
+        str(archive["retention_minutes"]),
+        "--max-megabytes",
+        str(archive["max_megabytes"]),
+    ]
 
 
 def receiver_instances(*, page: object) -> list[str]:
@@ -1689,6 +1679,18 @@ def refusal(*, per_source_apps: list[str], renders: bool) -> str:
             f"(DFE_PROFILE in .env), which run it per source"
         )
     return ""
+
+
+def row_gains(
+    *, before: dict[str, int | None], now: dict[str, int | None]
+) -> dict[str, int | None]:
+    """The rows each table gained, None for a table ClickHouse gave no count for now, so an unreachable ClickHouse never reads as no rows."""
+    return {
+        table: None
+        if now.get(table) is None
+        else ((now[table]) or (0)) - ((before.get(table)) or (0))
+        for table in before
+    }
 
 
 def runnable(*, declared: set[str], hinted: list[str]) -> list[str]:
