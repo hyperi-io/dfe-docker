@@ -92,7 +92,7 @@ working on the box itself.
 
 ### Console TLS (opt-in)
 
-`DFE_PROXY_TLS=true` serves the console (`DFE_UI_PORT`), the dfe-hyperdx embed (`DFE_HYPERDX_EMBED_PORT`) and both dfe-hyperdx origins (`DFE_HYPERDX_APP_PORT`, `DFE_HYPERDX_API_PORT`) over TLS 1.2 or 1.3 with one certificate. Key exchange prefers hybrid post-quantum X25519MLKEM768, then P-384; TLS 1.2 offers AEAD suites only, AES-256-GCM first. OIDC sign-in needs it on any hostname but `localhost`: outside a dev posture the engine marks its OIDC state and token cookies `Secure` and a browser drops a `Secure` cookie sent over plain http.
+`DFE_PROXY_TLS=true` serves the console (`DFE_UI_PORT`), the dfe-hyperdx embed (`DFE_HYPERDX_EMBED_PORT`) and both dfe-hyperdx origins (`DFE_HYPERDX_APP_PORT`, `DFE_HYPERDX_API_PORT`) over TLS 1.2 or 1.3 with one certificate. Key exchange prefers hybrid post-quantum X25519MLKEM768, then P-384. TLS 1.2 offers AEAD suites only, AES-256-GCM first. OIDC sign-in needs it on any hostname but `localhost`: outside a dev environment the engine marks its OIDC state and token cookies `Secure` and a browser drops a `Secure` cookie sent over plain http.
 
 `make certs` mints the pair into `DFE_PROXY_CERT_DIR`: a P-384 `console.crt` and `0600` `console.key` for the host `DFE_EXTERNAL_ORIGIN` names plus `localhost` and `127.0.0.1`, along with the `ca.crt` that signed them. It deletes the CA's private key once it has signed, so trusting `ca.crt` in the browser or OS trusts that one certificate and nothing else. It never replaces a file already there. To renew or change the hostname, delete the three files, run it again and trust the new `ca.crt`. Both proxies run as the user who runs `make` under TLS, so run it as that user.
 

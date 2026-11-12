@@ -125,8 +125,8 @@ PY
 `_source` is what routes the event - the loader writes it to
 `<database>.<_source>`, so `"_source":"main"` lands in `dfe.main`.
 
-It will not appear instantly. The pipeline is asynchronous, and via Kafka
-genuinely so; a couple of seconds is normal.
+It will not appear instantly. The pipeline is asynchronous, Kafka most of all.
+A couple of seconds is normal.
 
 ## Raw syslog, parsed per vendor
 
