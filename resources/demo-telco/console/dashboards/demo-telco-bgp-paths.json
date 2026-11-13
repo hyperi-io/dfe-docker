@@ -10,7 +10,7 @@
         "displayType": "table",
         "name": "Latest AS path changes (12 hours behind, as RIPEstat publishes)",
         "source": "bgp-updates",
-        "sqlTemplate": "SELECT seen AS \"Seen\",\n       prefix AS \"Prefix\",\n       peer AS \"Peer\",\n       arrayStringConcat(previous, ' ') AS \"Previous path\",\n       arrayStringConcat(path, ' ') AS \"New path\"\nFROM (\n  SELECT _timestamp + INTERVAL 12 HOUR AS seen,\n         toString(_json.attrs.target_prefix) AS prefix,\n         concat(splitByChar('-', toString(_json.attrs.source_id))[2], ' (rrc', splitByChar('-', toString(_json.attrs.source_id))[1], ')') AS peer,\n         dynamicElement(_json.attrs.path, 'Array(Nullable(Int64))') AS path,\n         lagInFrame(path, 1, []) OVER (PARTITION BY prefix, peer ORDER BY toInt64(_json.seq) ROWS BETWEEN 1 PRECEDING AND CURRENT ROW) AS previous\n  FROM dfe.`bgp-updates`\n  WHERE $__timeFilter(_timestamp + INTERVAL 12 HOUR) AND toString(_json.type) = 'A')\nWHERE notEmpty(previous) AND previous != path\nORDER BY seen DESC\nLIMIT 25"
+        "sqlTemplate": "SELECT formatDateTime(seen - INTERVAL 12 HOUR, '%H:%i:%S') AS \"RIS time (UTC)\",\n       prefix AS \"Prefix\",\n       peer AS \"Peer\",\n       arrayStringConcat(previous, ' ') AS \"Previous path\",\n       arrayStringConcat(path, ' ') AS \"New path\"\nFROM (\n  SELECT _timestamp + INTERVAL 12 HOUR AS seen,\n         toString(_json.attrs.target_prefix) AS prefix,\n         concat(splitByChar('-', toString(_json.attrs.source_id))[2], ' (rrc', splitByChar('-', toString(_json.attrs.source_id))[1], ')') AS peer,\n         dynamicElement(_json.attrs.path, 'Array(Nullable(Int64))') AS path,\n         lagInFrame(path, 1, []) OVER (PARTITION BY prefix, peer ORDER BY toInt64(_json.seq) ROWS BETWEEN 1 PRECEDING AND CURRENT ROW) AS previous\n  FROM dfe.`bgp-updates`\n  WHERE $__timeFilter(_timestamp + INTERVAL 12 HOUR) AND toString(_json.type) = 'A')\nWHERE notEmpty(previous) AND previous != path\nORDER BY seen DESC\nLIMIT 25"
       },
       "h": 9,
       "id": "changes",
@@ -52,7 +52,8 @@
         "displayType": "line",
         "name": "AS path changes per minute",
         "source": "bgp-updates",
-        "sqlTemplate": "SELECT $__timeInterval(seen) AS ts,\n       prefix,\n       countIf(notEmpty(previous) AND previous != path) * 60 / $__interval_s AS \"changes/min\"\nFROM (\n  SELECT _timestamp + INTERVAL 12 HOUR AS seen,\n         toString(_json.attrs.target_prefix) AS prefix,\n         dynamicElement(_json.attrs.path, 'Array(Nullable(Int64))') AS path,\n         lagInFrame(path, 1, []) OVER (PARTITION BY prefix, toString(_json.attrs.source_id) ORDER BY toInt64(_json.seq) ROWS BETWEEN 1 PRECEDING AND CURRENT ROW) AS previous\n  FROM dfe.`bgp-updates`\n  WHERE $__timeFilter(_timestamp + INTERVAL 12 HOUR) AND toString(_json.type) = 'A')\nGROUP BY ts, prefix\nORDER BY ts"
+        "sqlTemplate": "SELECT $__timeInterval(seen) AS ts,\n       prefix,\n       countIf(notEmpty(previous) AND previous != path) * 60 / $__interval_s AS \"changes/min\"\nFROM (\n  SELECT _timestamp + INTERVAL 12 HOUR AS seen,\n         toString(_json.attrs.target_prefix) AS prefix,\n         dynamicElement(_json.attrs.path, 'Array(Nullable(Int64))') AS path,\n         lagInFrame(path, 1, []) OVER (PARTITION BY prefix, toString(_json.attrs.source_id) ORDER BY toInt64(_json.seq) ROWS BETWEEN 1 PRECEDING AND CURRENT ROW) AS previous\n  FROM dfe.`bgp-updates`\n  WHERE $__timeFilter(_timestamp + INTERVAL 12 HOUR) AND toString(_json.type) = 'A')\nGROUP BY ts, prefix\nORDER BY ts",
+        "fillNulls": false
       },
       "h": 6,
       "id": "perminute",
