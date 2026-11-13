@@ -87,6 +87,16 @@ VENDOR = {
     "transform": {"engine": "elastic", "variant": ASA_VARIANT},
 }
 EVENTS = {"cisco-asa": ["demo.log"]}
+BEATS = {
+    "match": {
+        "field": "data_stream.dataset",
+        "operator": "equals",
+        "value": "okta.system",
+    },
+    "source": "okta",
+    "transform": {"engine": "elastic", "variant": "filebeat.okta.default"},
+}
+BEATS_LINE = '{"data_stream": {"dataset": "okta.system"}, "message": "{}"}\n'
 # GET /sources/registry as the engine answers it, the fetcher deployed and active
 HELD_FETCHER = {
     "archive": False,
@@ -574,7 +584,7 @@ LOAD_DEMO_REFUSAL_CASES = [
     ),
     LoadDemoRefusalCase(
         events={**EVENTS, "fortinet": ["demo.log"]},
-        message="no vendor source of that name",
+        message="no vendor or Beats source of that name",
         sources={"cisco-asa.yaml": VENDOR, "intake.yaml": INTAKE},
     ),
 ]
@@ -639,6 +649,14 @@ def _write_demo(
             (root / "events" / name / file).write_text(
                 data="%ASA-6-302013: x\n", encoding="utf-8"
             )
+
+
+def _write_beats(*, line: str = BEATS_LINE, root: Path, tool: bool = True) -> None:
+    """Write the Beats source okta's events under root/events, and the pack's replay tool unless `tool` is false."""
+    (root / "events" / "okta").mkdir(parents=True)
+    (root / "events" / "okta" / "demo.log").write_text(data=line, encoding="utf-8")
+    if tool:
+        (root / "events" / demo.REPLAY_TOOL).write_text(data="", encoding="utf-8")
 
 
 class TestEnginePython:
@@ -934,6 +952,102 @@ class TestLoadDemo:
         )
 
         assert loaded.vendors == [VENDOR, fortinet]
+
+    def test_a_source_matched_on_the_beats_dataset_is_replayed_not_detected(
+        self, tmp_path: Path
+    ) -> None:
+        _write_demo(
+            events=EVENTS,
+            root=tmp_path,
+            sources={
+                "cisco-asa.yaml": VENDOR,
+                "intake.yaml": INTAKE,
+                "okta.yaml": BEATS,
+            },
+        )
+        _write_beats(root=tmp_path)
+
+        loaded = demo.load_demo(
+            events=tmp_path / "events", sources=tmp_path / "sources"
+        )
+
+        assert loaded.beats == [BEATS]
+        assert loaded.vendors == [VENDOR]
+        assert loaded.events["okta"] == tmp_path / "events" / "okta"
+
+    @pytest.mark.parametrize(
+        ("body", "line", "tool", "message"),
+        [
+            pytest.param(
+                BEATS,
+                '{"data_stream": {"dataset": "o365.audit"}}\n',
+                True,
+                "carry 'o365.audit'",
+                id="other-dataset",
+            ),
+            pytest.param(BEATS, "%ASA-6-302013: x\n", True, "carry None", id="syslog"),
+            pytest.param(
+                {"source": "okta", "transform": {"variant": "filebeat.okta.default"}},
+                BEATS_LINE,
+                True,
+                "Match the source on data_stream.dataset",
+                id="vendor-with-beats-events",
+            ),
+            pytest.param(
+                {**BEATS, "transform": {"engine": "vrl"}},
+                BEATS_LINE,
+                True,
+                "transform engine 'vrl'",
+                id="other-engine",
+            ),
+            pytest.param(BEATS, BEATS_LINE, False, "to replay them", id="no-tool"),
+        ],
+    )
+    def test_refuses_a_beats_source_the_receiver_would_not_route_its_events_to(
+        self, body: dict, line: str, message: str, tmp_path: Path, tool: bool
+    ) -> None:
+        intake = INTAKE
+        if body.get("match") is None:
+            intake = {
+                **INTAKE,
+                "transform": {
+                    "detect": {"candidates": [ASA_VARIANT, "filebeat.okta.default"]},
+                    "mode": "agentless",
+                },
+            }
+        _write_demo(
+            events=EVENTS,
+            root=tmp_path,
+            sources={
+                "cisco-asa.yaml": VENDOR,
+                "intake.yaml": intake,
+                "okta.yaml": body,
+            },
+        )
+        _write_beats(line=line, root=tmp_path, tool=tool)
+
+        with pytest.raises(demo.DemoError, match=re.escape(pattern=message)):
+            demo.load_demo(events=tmp_path / "events", sources=tmp_path / "sources")
+
+    @pytest.mark.parametrize(
+        ("lines", "expected"),
+        [
+            (["\n", BEATS_LINE], "okta.system"),
+            (["%ASA-6-302013: x\n"], None),
+            (['{"message": "x"}\n'], None),
+            (['{"data_stream": {"dataset": ""}}\n'], None),
+            (["[1]\n"], None),
+            ([], None),
+        ],
+        ids=["beats", "syslog", "no-stream", "blank-dataset", "not-an-object", "empty"],
+    )
+    def test_beats_dataset_reads_the_first_event(
+        self, expected: str | None, lines: list[str], tmp_path: Path
+    ) -> None:
+        if lines:
+            (tmp_path / "demo.log").write_text(data="".join(lines), encoding="utf-8")
+
+        assert demo.beats_dataset(events=tmp_path) == expected
 
     def test_a_fetcher_mapping_outranks_agentless_mode(self, tmp_path: Path) -> None:
         polled = {**FETCHER, "transform": {"mode": "agentless"}}
