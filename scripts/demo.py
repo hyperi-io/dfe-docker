@@ -198,12 +198,13 @@ class DemoError(Exception):
 
 
 class Demo(typing.NamedTuple):
-    """A pack's Sources by role with the events directory of each vendor and Beats source."""
+    """A pack's Sources by role with the events directory of each vendor, Beats and JSON source. A pack with no vendor has no intake."""
 
     beats: list[dict]
     events: dict[str, Path]
     fetchers: list[dict]
-    intake: dict
+    intake: dict | None
+    json: list[dict]
     vendors: list[dict]
 
 
@@ -885,7 +886,7 @@ def _resolve_generator(*, dev: bool, generator: str) -> Path:
 
 
 def _role(*, body: dict) -> str:
-    """What a demo source is for: `fetcher` with a fetcher mapping, `intake` in agentless mode, `beats` matched on the Beats dataset, else `vendor`."""
+    """What a demo source is for: `fetcher` with a fetcher mapping, `intake` in agentless mode, `beats` matched on the Beats dataset, `json` matched on another field with no transform, which lands the JSON its pack replays as sent, else `vendor`."""
     if isinstance(body.get("fetcher"), dict):
         return "fetcher"
     transform = body.get("transform")
@@ -894,6 +895,8 @@ def _role(*, body: dict) -> str:
     match = body.get("match")
     if isinstance(match, dict) and match.get("field") == BEATS_MATCH_FIELD:
         return "beats"
+    if isinstance(match, dict) and transform is None:
+        return "json"
     return "vendor"
 
 
@@ -936,6 +939,10 @@ def _install(*, args: argparse.Namespace, manifest: dict) -> int:
         raise DemoError(reason)
     demo = load_demo(events=EVENTS_DIR, sources=SOURCES_DIR)
     check_manifest(demo=demo, manifest=manifest)
+    if demo.intake is None:
+        raise DemoError(
+            f"{str(SOURCES_DIR)!r} holds no intake for `make demo` to stream to"
+        )
     checkout = _resolve_generator(dev=args.dev, generator=args.generator)
     network = _network(service=RECEIVER_SERVICE)
     kept, dropped = archivable(
@@ -1369,10 +1376,10 @@ def create_body(*, body: dict) -> dict:
 def check_manifest(*, demo: Demo | None, manifest: dict, root: Path = DEMO_DIR) -> None:
     """Refuse a pack whose manifest and files disagree, so nothing is installed that removal would not find. `demo` is None for a pack with no source files."""
     bodies = (
-        []
-        if demo is None
-        else [*demo.vendors, *demo.beats, demo.intake, *demo.fetchers]
+        [] if demo is None else [*demo.vendors, *demo.beats, *demo.json, *demo.fetchers]
     )
+    if demo is not None and demo.intake is not None:
+        bodies.append(demo.intake)
     found = sorted(body["source"] for body in bodies)
     listed = sorted(manifest["sources"])
     if found != listed:
@@ -1692,7 +1699,7 @@ def pruner_command(*, archive: dict, tool: str) -> list[str]:
 
 
 def load_demo(*, events: Path, sources: Path) -> Demo:
-    """Read every source file under sources by role and pair each vendor source with its directory under events."""
+    """Read every source file under sources by role and pair each vendor, Beats and JSON source with its directory under events. A pack with no vendor needs no intake."""
     bodies = [
         _read_source(path=path) for path in sorted(sources.glob(pattern="*.yaml"))
     ]
@@ -1705,6 +1712,58 @@ def load_demo(*, events: Path, sources: Path) -> Demo:
     fetchers = [body for body in bodies if _role(body=body) == "fetcher"]
     intakes = [body for body in bodies if _role(body=body) == "intake"]
     vendors = [body for body in bodies if _role(body=body) == "vendor"]
+    replayed = [body for body in bodies if _role(body=body) == "json"]
+    intake = (
+        _checked_intake(intakes=intakes, sources=sources, vendors=vendors)
+        if intakes or vendors
+        else None
+    )
+    names = [body["source"] for body in [*vendors, *beats, *replayed]]
+    held = (
+        {
+            path.name: path
+            for path in events.glob(pattern="*")
+            if path.is_dir() and path.name != EVENTS_LICENSES_DIR
+        }
+        if events.is_dir()
+        else {}
+    )
+    missing = [
+        name for name in names if (name not in held) or not (any(held[name].iterdir()))
+    ]
+    if missing:
+        layout = f"{events}/<source>/"
+        raise DemoError(
+            f"source(s) {', '.join(repr(name) for name in missing)} have no "
+            f"events to replay. Add each as {layout!r} holding its lines"
+        )
+    orphans = sorted(set(held) - set(names))
+    if orphans:
+        raise DemoError(
+            f"{str(events)!r} holds events for {', '.join(repr(name) for name in orphans)} "
+            f"with no vendor, Beats or JSON source of that name in {str(sources)!r}. Add "
+            f"the source or remove the directory"
+        )
+    for body in [*vendors, *beats, *replayed]:
+        _check_events_kind(body=body, events=held[body["source"]])
+    if (beats or replayed) and not ((events / REPLAY_TOOL).is_file()):
+        raise DemoError(
+            f"Beats and JSON source(s) "
+            f"{', '.join(repr(body['source']) for body in [*beats, *replayed])} need "
+            f"{str(events / REPLAY_TOOL)!r} to replay them with `{REPLAY_COMMAND}`"
+        )
+    return Demo(
+        beats=beats,
+        events={name: held[name] for name in names},
+        fetchers=fetchers,
+        intake=intake,
+        json=replayed,
+        vendors=vendors,
+    )
+
+
+def _checked_intake(*, intakes: list[dict], sources: Path, vendors: list[dict]) -> dict:
+    """The one intake, refused unless it detects exactly the vendors' variants and no two vendors replay over one fixture package."""
     if len(intakes) != 1:
         found = (", ".join(repr(f"{body['source']}.yaml") for body in intakes)) or (
             "none"
@@ -1740,50 +1799,11 @@ def load_demo(*, events: Path, sources: Path) -> Demo:
                 f"never be sent. Give each a variant naming its own package"
             )
         owners[package] = body["source"]
-    held = (
-        {
-            path.name: path
-            for path in events.glob(pattern="*")
-            if path.is_dir() and path.name != EVENTS_LICENSES_DIR
-        }
-        if events.is_dir()
-        else {}
-    )
-    names = [body["source"] for body in [*vendors, *beats]]
-    missing = [
-        name for name in names if (name not in held) or not (any(held[name].iterdir()))
-    ]
-    if missing:
-        layout = f"{events}/<source>/"
-        raise DemoError(
-            f"source(s) {', '.join(repr(name) for name in missing)} have no "
-            f"events to replay. Add each as {layout!r} holding its lines"
-        )
-    orphans = sorted(set(held) - set(names))
-    if orphans:
-        raise DemoError(
-            f"{str(events)!r} holds events for {', '.join(repr(name) for name in orphans)} "
-            f"with no vendor or Beats source of that name in {str(sources)!r}. Add the "
-            f"source or remove the directory"
-        )
-    for body in [*vendors, *beats]:
-        _check_events_kind(body=body, events=held[body["source"]])
-    if beats and not ((events / REPLAY_TOOL).is_file()):
-        raise DemoError(
-            f"Beats source(s) {', '.join(repr(body['source']) for body in beats)} need "
-            f"{str(events / REPLAY_TOOL)!r} to replay them with `{REPLAY_COMMAND}`"
-        )
-    return Demo(
-        beats=beats,
-        events={name: held[name] for name in names},
-        fetchers=fetchers,
-        intake=intake,
-        vendors=vendors,
-    )
+    return intake
 
 
-def beats_dataset(*, events: Path) -> str | None:
-    """The `data_stream.dataset` of the first event in a source's events directory, None when its events are not Beats envelopes."""
+def first_event(*, events: Path) -> dict | None:
+    """The first event in a source's events directory as a JSON object, None when it holds no file or that line is not one."""
     files = sorted(path for path in events.iterdir() if path.is_file())
     if not (files):
         return None
@@ -1793,15 +1813,40 @@ def beats_dataset(*, events: Path) -> str | None:
         record = json.loads(first)
     except json.JSONDecodeError:
         return None
-    stream = record.get("data_stream") if isinstance(record, dict) else None
-    dataset = stream.get("dataset") if isinstance(stream, dict) else None
+    return record if isinstance(record, dict) else None
+
+
+def field_value(*, field: str, record: dict) -> object:
+    """The value at a dotted field of a record, walked the way the receiver walks a match field, None where the path breaks."""
+    value: object = record
+    for part in field.split(sep="."):
+        value = value.get(part) if isinstance(value, dict) else None
+    return value
+
+
+def beats_dataset(*, events: Path) -> str | None:
+    """The `data_stream.dataset` of the first event in a source's events directory, None when its events are not Beats envelopes."""
+    record = first_event(events=events)
+    dataset = (
+        None if record is None else field_value(field=BEATS_MATCH_FIELD, record=record)
+    )
     return dataset if isinstance(dataset, str) and dataset else None
 
 
 def _check_events_kind(*, body: dict, events: Path) -> None:
-    """Refuse a source whose events the receiver would not route to it: Beats envelopes for its dataset when it matches on one, raw lines otherwise."""
+    """Refuse a source whose events the receiver would not route to it: Beats envelopes for its dataset when it matches on one, JSON carrying its match value when it is a JSON source, raw lines otherwise."""
     name = body["source"]
     dataset = beats_dataset(events=events)
+    if _role(body=body) == "json":
+        field, wanted = body["match"].get("field"), body["match"].get("value")
+        record = first_event(events=events)
+        held = None if record is None else field_value(field=str(field), record=record)
+        if held != wanted:
+            raise DemoError(
+                f"{name!r} matches {field} {wanted!r} and the first event in "
+                f"{str(events)!r} carries {held!r}. Set {field} on every record"
+            )
+        return
     if _role(body=body) == "vendor":
         if dataset is not None:
             raise DemoError(

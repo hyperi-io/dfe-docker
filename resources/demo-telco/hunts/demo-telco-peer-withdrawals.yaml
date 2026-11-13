@@ -1,0 +1,19 @@
+# Project:   dfe-docker
+# File:      resources/demo-telco/hunts/demo-telco-peer-withdrawals.yaml
+# Purpose:   The telco demo's hunt, running its BGP withdrawal rule every five minutes
+# Language:  YAML
+#
+# License:   BUSL-1.1
+# Copyright: (c) 2026 HYPERI PTY LIMITED
+
+name: demo-telco-peer-withdrawals
+display_name: BGP peers withdrawing routes
+cron: "*/5 * * * *"
+# A required label: the runner takes each detection's org from the matched row.
+customers:
+  - default
+rules:
+  - demo-telco-peer-withdrawals
+global_source_table_name: dfe.bgp-updates
+global_target_table_name: dfe.detection
+checkpoint_timestamp_field: _timestamp_load
