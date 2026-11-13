@@ -175,8 +175,13 @@ CONSOLE_DIR = DEMO_DIR / "console"
 HYPERDX_API = "http://dfe-hyperdx:8000"
 CONSOLE_PREFIX = "demo-"
 # A pack's hunts and the rules they run, one engine create body per file as resources/seed holds them
+# The upstream licence texts beside a pack's sample events, which no source replays
+EVENTS_LICENSES_DIR = "LICENSES"
 HUNTS_DIR_NAME = "hunts"
 RULES_DIR_NAME = "rules"
+# How long a rule or hunt create is tried again while the engine answers 5xx or not at all
+HUNT_INSTALL_TIMEOUT_SECONDS = 60.0
+HUNT_INSTALL_INTERVAL_SECONDS = 5.0
 HYPERDX_SERVICE = "dfe-hyperdx"
 # The generator ends a loop only at --count or --duration, so the stream runs ten years unless removed
 STREAM_SECONDS = 315_360_000
@@ -1437,10 +1442,33 @@ def pack_hunts(*, root: Path) -> PackHunts:
     return PackHunts(rules=rules, hunts=hunts)
 
 
+def _engine_call(
+    *, call: typing.Callable[[], tuple[int, typing.Any]]
+) -> tuple[int, typing.Any]:
+    """Run one engine call, again while it answers 5xx or not at all, up to HUNT_INSTALL_TIMEOUT_SECONDS.
+
+    Returns:
+        The last (status, answer), status 0 with the fault as the answer when the engine never answered.
+    """
+    deadline = time.monotonic() + HUNT_INSTALL_TIMEOUT_SECONDS
+    while True:
+        try:
+            status, answer = call()
+        except ENGINE_FAULTS as error:
+            status, answer = 0, str(error)
+        if (status != 0) and (status < 500):
+            return status, answer
+        if time.monotonic() >= deadline:
+            return status, answer
+        time.sleep(HUNT_INSTALL_INTERVAL_SECONDS)
+
+
 def install_hunts(*, base: str, root: Path, token: str) -> list[str]:
     """Create each of a pack's rules, then its hunts, that the engine lacks, and return what was done.
 
     Rules go first because the engine runs a hunt only once every rule it names compiles. One the engine already holds is left as it is, so a re-run creates only what is missing. Run it after the sources are deployed, since a rule's preview reads its source's table.
+
+    A hunt never stops the data path: a 5xx or no answer is tried again to a short deadline, and a final failure or a 4xx becomes a WARNING line. A hunt whose rule did not install is skipped, since the runner would fail on every run of it.
 
     Args:
         base: The engine's API base.
@@ -1448,30 +1476,44 @@ def install_hunts(*, base: str, root: Path, token: str) -> list[str]:
         token: An admin token.
 
     Returns:
-        One line per rule and hunt, created or already held.
-
-    Raises:
-        DemoError: The engine refused a create or answered a lookup with anything but 200 or 404.
+        One line per rule and hunt: created, already held, or a WARNING with the engine's answer.
     """
     loaded = pack_hunts(root=root)
     lines = []
+    failed: set[str] = set()
     for kind, objects in (("rules", loaded.rules), ("hunts", loaded.hunts)):
         route = KINDS[kind].route
+        noun = KINDS[kind].noun
         for name, body in objects:
-            status, answer = _api_get_json(
-                token=token, url=f"{base}{route}/{quote(safe='', string=name)}"
+            missing = sorted(set(body.get("rules") or []) & failed)
+            if missing:
+                lines.append(
+                    f"WARNING {noun} {name!r} skipped: rules {missing} did not install"
+                )
+                continue
+            url = f"{base}{route}/{quote(safe='', string=name)}"
+            status, answer = _engine_call(
+                call=lambda url=url: _api_get_json(token=token, url=url)
             )
             if status == 200:
-                lines.append(f"{KINDS[kind].noun} {name!r} already exists")
+                lines.append(f"{noun} {name!r} already exists")
                 continue
-            if status != 404:
-                raise DemoError(f"GET {route}/{name} returned HTTP {status}: {answer}")
-            status, answer = _api_post_json(f"{base}{route}", body, token=token)
-            if status != 201:
-                raise DemoError(
-                    f"creating {KINDS[kind].noun} {name!r} returned HTTP {status}: {answer}"
+            if status == 404:
+                status, answer = _engine_call(
+                    call=lambda body=body, route=route: _api_post_json(
+                        f"{base}{route}", body, token=token
+                    )
                 )
-            lines.append(f"created {KINDS[kind].noun} {name!r}")
+                if status == 201:
+                    lines.append(f"created {noun} {name!r}")
+                    continue
+                step = "creating"
+            else:
+                step = "looking up"
+            failed.add(name)
+            lines.append(
+                f"WARNING {noun} {name!r} not installed: {step} it got HTTP {status}: {answer}"
+            )
     return lines
 
 
@@ -1699,7 +1741,11 @@ def load_demo(*, events: Path, sources: Path) -> Demo:
             )
         owners[package] = body["source"]
     held = (
-        {path.name: path for path in events.glob(pattern="*") if path.is_dir()}
+        {
+            path.name: path
+            for path in events.glob(pattern="*")
+            if path.is_dir() and path.name != EVENTS_LICENSES_DIR
+        }
         if events.is_dir()
         else {}
     )

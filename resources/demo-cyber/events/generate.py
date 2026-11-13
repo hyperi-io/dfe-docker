@@ -19,10 +19,12 @@ The replay sets every record's own time and `@timestamp` to now as it sends, so 
 
 import argparse
 import copy
+import hashlib
 import importlib.util
 import itertools
 import json
 import random
+import re
 import sys
 import time
 import urllib.request
@@ -60,6 +62,44 @@ SUSPECTS = tuple(
 SUSPECT_WEIGHT = 3
 STAFF_ADDRESSES = [f"203.0.113.{n}" for n in range(20, 60)]
 DOMAIN = "example.com"
+# Every domain the upstream samples carry, moved onto the reserved example domains, in order
+DOMAIN_MAP = tuple(
+    (re.compile(pattern, flags=re.IGNORECASE), replacement)
+    for pattern, replacement in (
+        (r"frothly-my\.sharepoint\.com", "files.example.com"),
+        (r"frothly\.onmicrosoft\.com", DOMAIN),
+        (r"frothly_onmicrosoft_com", "example_com"),
+        (r"_froth_ly", "_example_com"),
+        (r"frothly\.sharepoint\.com", "sites.example.com"),
+        (r"\btheFroth\b", "allstaff"),
+        (r"\bfroth\.ly\b", DOMAIN),
+        (r"\b[a-z0-9]+\.prod\.outlook\.com\b", f"mail.{DOMAIN}"),
+        (r"\b(springfield\.gov|emaildomain\.com|email\.com|acme\.io)\b", DOMAIN),
+        (r"\b(hobbiton\.co|panther\.com)\b", DOMAIN),
+        (
+            r"\b(live\.com|naver\.com|isp\.net|rnvtelecom\.com\.br|sbcglobal\.net)\b",
+            "example.net",
+        ),
+        (r"\binfo\.org\b", "example.org"),
+    )
+)
+# The upstream tenant's name wherever it is not part of a domain
+TENANT = re.compile(r"frothly", flags=re.IGNORECASE)
+# Documentation ASNs (RFC 5398) for the network an Okta sign-in comes from
+STAFF_NETWORK = {
+    "asNumber": 64500,
+    "asOrg": "Example Networks",
+    "domain": "example.net",
+    "isProxy": False,
+    "isp": "Example ISP",
+}
+SUSPECT_NETWORK = {
+    "asNumber": 64510,
+    "asOrg": "Example Hosting",
+    "domain": "example.org",
+    "isProxy": True,
+    "isp": "Example Hosting",
+}
 # (city, state, country, lat, lon, weight)
 COUNTRIES = (
     ("Sydney", "New South Wales", "Australia", -33.8688, 151.2093, 40),
@@ -187,6 +227,26 @@ def _user(rng: random.Random, *, users: Sequence[str]) -> tuple[str, str]:
     return f"{name}@{DOMAIN}", name.capitalize()
 
 
+def _scrubbed(value: object) -> object:
+    """A copy of one sample value with every upstream domain and tenant name moved onto the example domains."""
+    if isinstance(value, dict):
+        return {key: _scrubbed(item) for key, item in value.items()}
+    if isinstance(value, list):
+        return [_scrubbed(item) for item in value]
+    if not (isinstance(value, str)):
+        return value
+    for pattern, replacement in DOMAIN_MAP:
+        value = pattern.sub(replacement, value)
+    return TENANT.sub(
+        lambda m: "Example" if m.group(0)[0].isupper() else "example", value
+    )
+
+
+def _user_key(login: str) -> str:
+    """One staff member's stable 16-hex-digit Microsoft 365 user key."""
+    return hashlib.sha256(login.encode("utf-8")).hexdigest()[:16].upper()
+
+
 def _okta_records(
     *, rng: random.Random, samples: Sequence[dict], users: Sequence[str]
 ) -> list[dict]:
@@ -235,6 +295,10 @@ def _okta_records(
                 {"geographicalContext": _geo(place), "ip": address, "version": "V4"}
             ]
         }
+        if "securityContext" in record:
+            record["securityContext"] = dict(
+                SUSPECT_NETWORK if suspect else STAFF_NETWORK
+            )
         record["uuid"] = str(uuid.UUID(int=rng.getrandbits(128), version=4))
         record["published"] = stamp.strftime(OKTA_TIME)[:-3] + "Z"
         out.append(record)
@@ -306,6 +370,13 @@ def _falcon_records(
                     "UserIp": rng.choice(SUSPECTS if suspect else STAFF_ADDRESSES),
                 }
             )
+            # The console's audit names its actor and target again among its key-value pairs
+            target = f"{rng.choice(users)}@{DOMAIN}"
+            for pair in record["event"].get("AuditKeyValues") or []:
+                if pair.get("Key") == "actor_user":
+                    pair["ValueString"] = login
+                elif pair.get("Key") == "target_name":
+                    pair["ValueString"] = target
         _falcon_times(event=record["event"], when=stamp)
         record["metadata"].update(
             {"eventCreationTime": _epoch_ms(stamp), "offset": offset}
@@ -354,6 +425,19 @@ def _o365_records(
         )
         if "ActorIpAddress" in record:
             record["ActorIpAddress"] = address
+        # One record, one identity: the actor and user key name the same person as UserId
+        key = _user_key(login)
+        for actor in record.get("Actor") or []:
+            if "@" in str(actor.get("ID", "")):
+                actor["ID"] = login
+            elif actor.get("Type") == 3:
+                actor["ID"] = key
+        held = str(record.get("UserKey", ""))
+        record["UserKey"] = (
+            f"{held.rpartition('|')[0]}|{key.lower()}@{DOMAIN}"
+            if "|membership|" in held
+            else f"{key}@{DOMAIN}"
+        )
         if (group == "login") and (rng.random() < 0.1):
             record["ResultStatus"] = "Failed"
         out.append({"o365audit": record})
@@ -402,7 +486,10 @@ def write_all(*, fixtures: Path) -> dict[str, int]:
         "o365": (fixtures / "o365" / "botsv3-o365audit.log", _o365_records),
     }
     for source, (path, build) in builders.items():
-        records = build(rng=rng, samples=_read_records(path=path), users=users)
+        records = [
+            _scrubbed(record)
+            for record in build(rng=rng, samples=_read_records(path=path), users=users)
+        ]
         lines[source] = [
             json.dumps(envelope(record=record, source=source), separators=(",", ":"))
             for record in records
@@ -443,13 +530,13 @@ def stamped(*, body: dict, now: datetime) -> dict:
 
 def _post(*, bodies: list[dict], target: str) -> None:
     """POST one batch as a JSON array, which dfe-receiver splits per element."""
-    request = urllib.request.Request(  # noqa: S310 - the target is the stack's own receiver
+    request = urllib.request.Request(
         data=json.dumps(bodies).encode("utf-8"),
         headers={"Content-Type": "application/json"},
         method="POST",
         url=target,
     )
-    with urllib.request.urlopen(request, timeout=REPLAY_TIMEOUT_SECONDS) as reply:  # noqa: S310
+    with urllib.request.urlopen(request, timeout=REPLAY_TIMEOUT_SECONDS) as reply:
         if reply.status not in (200, 202, 204):
             sys.exit(f"{target} answered HTTP {reply.status}")
 
