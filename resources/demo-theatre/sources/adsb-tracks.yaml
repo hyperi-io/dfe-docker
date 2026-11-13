@@ -6,14 +6,14 @@
 # License:   BUSL-1.1
 # Copyright: (c) 2026 HYPERI PTY LIMITED
 
-description: Live ADS-B aircraft positions within 100 nautical miles of Sydney Kingsford Smith, one row per aircraft per poll. Data from adsb.lol (https://adsb.lol), under the Open Data Commons Open Database License (ODbL) v1.0
+description: Live ADS-B aircraft positions within 100 nautical miles of Sydney Kingsford Smith, one row per aircraft per poll. Polled every 200 seconds with no retry, 432 requests a day, inside the 500 a day adsb.lol allows an address with no key. Data from adsb.lol (https://adsb.lol), under the Open Data Commons Open Database License (ODbL) v1.0
 display_name: ADS-B tracks
 fetcher:
   config:
     auth:
       mode: none
-    # Unkeyed adsb.lol allows 500 /v2 requests a day per address, and one poll every 180 seconds spends 480
-    interval_secs: 180
+    # Unkeyed adsb.lol allows 500 /v2 requests a day per address, and one poll every 200 seconds spends 432
+    interval_secs: 200
     profile:
       auth:
         accepts: [none]
@@ -36,8 +36,9 @@ fetcher:
       headers:
         Accept: application/json
         User-Agent: DFE-demo (https://github.com/hyperi-io/dfe-docker)
+      # A retry spends quota, and the next poll is 200 seconds away anyway
       retry:
-        max_retries: 1
+        max_retries: 0
         never_retry: [401, 403, 429]
       shape: incremental
     vars:
