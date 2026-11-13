@@ -136,7 +136,7 @@ def test_a_release_document_from_the_committed_files() -> None:
     assert document["packs"][0] == {
         "name": "cyber",
         "title": "Cyber",
-        "use_case": "/solutions/",
+        "use_case": "/solutions/security-monitoring/",
         "latest": [
             "docker compose -f oci://ghcr.io/hyperi-io/dfe-docker:demo-cyber up -d"
         ],
