@@ -49,6 +49,7 @@ from _common import (  # noqa: E402
     PER_SOURCE_APP_KEYS,
     PER_SOURCE_APPS_VAR,
     REPO_ROOT,
+    TRANSFORM_APP_PREFIX,
     _load_dotenv,
     _load_env_file,
     _print,
@@ -119,6 +120,11 @@ YAML_TO_JSON = "\n".join(
 # What `from-catalogue` adds to an entry on the receiver intake (dfe-engine source/catalogue.py write_request_for and _match_for)
 CATALOGUE_INTAKE = "receiver"
 RECEIVER_MATCH_FIELD = "_source"
+# The field an Elastic Agent's envelope names its source by, which a Beats source matches on and its events carry
+BEATS_MATCH_FIELD = "data_stream.dataset"
+# What replays a pack's Beats sources at the receiver: events/<REPLAY_TOOL> REPLAY_COMMAND --target --sources --loop --duration
+REPLAY_TOOL = "generate.py"
+REPLAY_COMMAND = "replay"
 # What `write_request_for` sets on every entry it compiles and a source that omits them gets anyway
 WRITE_DEFAULTS = {"archive": False, "transport": None}
 # The `state` a create gives a source, which a file naming none wants
@@ -182,8 +188,9 @@ class DemoError(Exception):
 
 
 class Demo(typing.NamedTuple):
-    """The Sources under resources/demo/sources by role with each vendor source's events directory."""
+    """A pack's Sources by role with the events directory of each vendor and Beats source."""
 
+    beats: list[dict]
     events: dict[str, Path]
     fetchers: list[dict]
     intake: dict
@@ -868,12 +875,15 @@ def _resolve_generator(*, dev: bool, generator: str) -> Path:
 
 
 def _role(*, body: dict) -> str:
-    """What a demo source is for: `fetcher` with a fetcher mapping, `intake` in agentless mode, else `vendor`."""
+    """What a demo source is for: `fetcher` with a fetcher mapping, `intake` in agentless mode, `beats` matched on the Beats dataset, else `vendor`."""
     if isinstance(body.get("fetcher"), dict):
         return "fetcher"
     transform = body.get("transform")
     if isinstance(transform, dict) and transform.get("mode") == "agentless":
         return "intake"
+    match = body.get("match")
+    if isinstance(match, dict) and match.get("field") == BEATS_MATCH_FIELD:
+        return "beats"
     return "vendor"
 
 
@@ -1348,7 +1358,11 @@ def create_body(*, body: dict) -> dict:
 
 def check_manifest(*, demo: Demo | None, manifest: dict, root: Path = DEMO_DIR) -> None:
     """Refuse a pack whose manifest and files disagree, so nothing is installed that removal would not find. `demo` is None for a pack with no source files."""
-    bodies = [] if demo is None else [*demo.vendors, demo.intake, *demo.fetchers]
+    bodies = (
+        []
+        if demo is None
+        else [*demo.vendors, *demo.beats, demo.intake, *demo.fetchers]
+    )
     found = sorted(body["source"] for body in bodies)
     listed = sorted(manifest["sources"])
     if found != listed:
@@ -1559,6 +1573,7 @@ def load_demo(*, events: Path, sources: Path) -> Demo:
             f"{str(sources)!r} holds no source files. Add one POST /sources body per "
             f"demo source as <source>.yaml"
         )
+    beats = [body for body in bodies if _role(body=body) == "beats"]
     fetchers = [body for body in bodies if _role(body=body) == "fetcher"]
     intakes = [body for body in bodies if _role(body=body) == "intake"]
     vendors = [body for body in bodies if _role(body=body) == "vendor"]
@@ -1602,29 +1617,81 @@ def load_demo(*, events: Path, sources: Path) -> Demo:
         if events.is_dir()
         else {}
     )
-    names = [body["source"] for body in vendors]
+    names = [body["source"] for body in [*vendors, *beats]]
     missing = [
         name for name in names if (name not in held) or not (any(held[name].iterdir()))
     ]
     if missing:
         layout = f"{events}/<source>/"
         raise DemoError(
-            f"vendor source(s) {', '.join(repr(name) for name in missing)} have no "
+            f"source(s) {', '.join(repr(name) for name in missing)} have no "
             f"events to replay. Add each as {layout!r} holding its lines"
         )
     orphans = sorted(set(held) - set(names))
     if orphans:
         raise DemoError(
             f"{str(events)!r} holds events for {', '.join(repr(name) for name in orphans)} "
-            f"with no vendor source of that name in {str(sources)!r}. Add the source "
-            f"or remove the directory"
+            f"with no vendor or Beats source of that name in {str(sources)!r}. Add the "
+            f"source or remove the directory"
+        )
+    for body in [*vendors, *beats]:
+        _check_events_kind(body=body, events=held[body["source"]])
+    if beats and not ((events / REPLAY_TOOL).is_file()):
+        raise DemoError(
+            f"Beats source(s) {', '.join(repr(body['source']) for body in beats)} need "
+            f"{str(events / REPLAY_TOOL)!r} to replay them with `{REPLAY_COMMAND}`"
         )
     return Demo(
+        beats=beats,
         events={name: held[name] for name in names},
         fetchers=fetchers,
         intake=intake,
         vendors=vendors,
     )
+
+
+def beats_dataset(*, events: Path) -> str | None:
+    """The `data_stream.dataset` of the first event in a source's events directory, None when its events are not Beats envelopes."""
+    files = sorted(path for path in events.iterdir() if path.is_file())
+    if not (files):
+        return None
+    with files[0].open(encoding="utf-8", errors="replace") as handle:
+        first = next((line for line in handle if line.strip()), "")
+    try:
+        record = json.loads(first)
+    except json.JSONDecodeError:
+        return None
+    stream = record.get("data_stream") if isinstance(record, dict) else None
+    dataset = stream.get("dataset") if isinstance(stream, dict) else None
+    return dataset if isinstance(dataset, str) and dataset else None
+
+
+def _check_events_kind(*, body: dict, events: Path) -> None:
+    """Refuse a source whose events the receiver would not route to it: Beats envelopes for its dataset when it matches on one, raw lines otherwise."""
+    name = body["source"]
+    dataset = beats_dataset(events=events)
+    if _role(body=body) == "vendor":
+        if dataset is not None:
+            raise DemoError(
+                f"{name!r} replays Beats envelopes for {dataset!r}, which the receiver "
+                f"routes on {BEATS_MATCH_FIELD}. Match the source on {BEATS_MATCH_FIELD} "
+                f"equals {dataset!r}"
+            )
+        return
+    wanted = body["match"].get("value")
+    if dataset != wanted:
+        raise DemoError(
+            f"{name!r} matches {BEATS_MATCH_FIELD} {wanted!r} and its events in "
+            f"{str(events)!r} carry {dataset!r}. Replay Beats envelopes for {wanted!r}"
+        )
+    transform = body.get("transform")
+    engine = transform.get("engine") if isinstance(transform, dict) else None
+    if engine != TRANSFORM_APP.removeprefix(TRANSFORM_APP_PREFIX):
+        raise DemoError(
+            f"Beats source {name!r} runs transform engine {engine!r}. A pack declares "
+            f"{TRANSFORM_APP} instances only, so set `transform.engine: "
+            f"{TRANSFORM_APP.removeprefix(TRANSFORM_APP_PREFIX)}`"
+        )
 
 
 def row_gains(

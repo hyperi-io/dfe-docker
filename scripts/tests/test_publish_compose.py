@@ -20,10 +20,19 @@ import pytest
 import demo
 import publish_compose
 import secrets_init
-from _common import FIRST_LOGIN_PASSWORD, REPO_ROOT
+from _common import FIRST_LOGIN_PASSWORD, REPO_ROOT, demo_pack_dir, demo_pack_names
 
 COLLECTOR_CONFIG = "config/otel-collector/config.yaml"
+SYSLOG_LINE = "%ASA-6-302013: x\n"
+BEATS_LINE = '{"data_stream": {"dataset": "okta.system"}, "message": "{}"}\n'
+# The committed packs with sources to seed
+SEEDED_PACKS = [
+    pack
+    for pack in ["", *demo_pack_names()]
+    if any((demo_pack_dir(pack=pack) / "sources").glob("*.yaml"))
+]
 ROLES = {
+    "beats": [],
     "fetcher": ["releases"],
     "intake": ["demo-syslog"],
     "vendor": ["cisco-asa", "fortinet"],
@@ -293,17 +302,67 @@ class TestFindings:
 
 class TestDemoRoles:
     @pytest.mark.usefixtures("engine_python_here")
-    def test_reads_the_committed_demo_as_make_demo_does(self) -> None:
+    @pytest.mark.parametrize("pack", SEEDED_PACKS, ids=lambda p: p or "demo")
+    def test_reads_each_committed_pack_as_its_seeding_does(self, pack: str) -> None:
+        root = demo_pack_dir(pack=pack)
         roles = publish_compose.demo_roles(
-            events=demo.EVENTS_DIR, sources=demo.SOURCES_DIR
+            events=root / "events", sources=root / "sources"
         )
-        loaded = demo.load_demo(events=demo.EVENTS_DIR, sources=demo.SOURCES_DIR)
+        loaded = demo.load_demo(events=root / "events", sources=root / "sources")
 
         assert roles == {
+            "beats": sorted(body["source"] for body in loaded.beats),
             "fetcher": sorted(body["source"] for body in loaded.fetchers),
             "intake": [loaded.intake["source"]],
             "vendor": sorted(body["source"] for body in loaded.vendors),
         }
+
+    @pytest.mark.parametrize(
+        ("tool", "expected"),
+        [
+            (
+                True,
+                {
+                    "beats": ["okta"],
+                    "fetcher": [],
+                    "intake": ["intake"],
+                    "vendor": ["cisco-asa"],
+                },
+            ),
+            (False, None),
+        ],
+        ids=["replayed", "no-replay-tool"],
+    )
+    def test_a_source_with_beats_events_is_replayed_not_detected(
+        self, expected: dict | None, tmp_path: Path, tool: bool
+    ) -> None:
+        (tmp_path / "sources").mkdir()
+        for name in ("cisco-asa", "intake", "okta"):
+            (tmp_path / "sources" / f"{name}.yaml").write_text(
+                "x: 1\n", encoding="utf-8"
+            )
+        for name, line in (("cisco-asa", SYSLOG_LINE), ("okta", BEATS_LINE)):
+            (tmp_path / "events" / name).mkdir(parents=True)
+            (tmp_path / "events" / name / "demo.log").write_text(line, encoding="utf-8")
+        if tool:
+            (tmp_path / "events" / "generate.py").write_text("", encoding="utf-8")
+
+        if expected is None:
+            with pytest.raises(publish_compose.PublishError, match="generate.py"):
+                publish_compose.demo_roles(
+                    events=tmp_path / "events", sources=tmp_path / "sources"
+                )
+            return
+        roles = publish_compose.demo_roles(
+            events=tmp_path / "events", sources=tmp_path / "sources"
+        )
+        assert roles == expected
+        assert publish_compose.demo_instances(roles=roles) == {
+            "dfe-transform-elastic": ["intake", "okta"]
+        }
+        assert publish_compose.demo_hosted(roles=roles) == (
+            "dfe-transform-elastic=intake,cisco-asa,okta"
+        )
 
     @pytest.mark.parametrize(
         ("sources", "events"),
@@ -340,7 +399,7 @@ class TestDemoRoles:
             events=tmp_path / "events", sources=tmp_path / "sources"
         )
 
-        assert roles == {"fetcher": [], "intake": [], "vendor": []}
+        assert roles == {"beats": [], "fetcher": [], "intake": [], "vendor": []}
         assert publish_compose.demo_instances(roles=roles) == {}
         assert publish_compose.demo_hosted(roles=roles) == ""
 
@@ -465,6 +524,7 @@ class TestDemoOverlay:
             "/opt/dfe-docker/resources/demo/archive.py"
         )
         assert model["volumes"][publish_compose.DEMO_FEED_VOLUME] == {}
+        assert "demo-beats" not in services
         # The engine accepts exactly the demo's transformed sources, so a console-added one is refused
         assert (
             services["dfe-engine"]["environment"][publish_compose.HOSTED_INSTANCES_KEY]
@@ -481,7 +541,7 @@ class TestDemoOverlay:
         stack = _stack(
             [name for name in DEMO_STACK if name != "dfe-transform-elastic-demo-syslog"]
         )
-        roles = {"fetcher": [], "intake": [], "vendor": []}
+        roles = {"beats": [], "fetcher": [], "intake": [], "vendor": []}
 
         model = publish_compose.demo_overlay(
             archive={**ARCHIVE, "sources": []},
@@ -500,7 +560,7 @@ class TestDemoOverlay:
                 "--pack",
                 "cyber",
             ]
-        for absent in ("demo-feed", "demo-stream", "demo-prune"):
+        for absent in ("demo-feed", "demo-stream", "demo-prune", "demo-beats"):
             assert absent not in services
         assert publish_compose.DEMO_FEED_VOLUME not in model.get("volumes", {})
         assert "demo-sources" in services["dfe-receiver"]["depends_on"]
@@ -511,6 +571,62 @@ class TestDemoOverlay:
             "docker compose -f oci://ghcr.io/hyperi-io/dfe-docker:demo-cyber up -d "
             "--force-recreate {service}"
         )
+
+    def test_a_pack_with_beats_sources_replays_them_and_hosts_their_transforms(
+        self,
+    ) -> None:
+        beats = ["crowdstrike", "okta"]
+        instances = [f"dfe-transform-elastic-{name}" for name in beats]
+        roles = {**ROLES, "beats": beats}
+
+        model = publish_compose.demo_overlay(
+            archive=ARCHIVE,
+            image="i",
+            model=_stack([*DEMO_STACK, *instances]),
+            pack="cyber",
+            roles=roles,
+            stream=["scripts/replay_syslog.py", "tcp", "20"],
+        )
+
+        services = model["services"]
+        replay = services["demo-beats"]
+        assert replay["entrypoint"] == [
+            "python3",
+            "-I",
+            "/opt/dfe-docker/resources/demo-cyber/events/generate.py",
+            "replay",
+            "--target",
+            "http://dfe-receiver:8080/ingest",
+            "--sources",
+            "crowdstrike,okta",
+            "--loop",
+            "--duration",
+            str(demo.STREAM_SECONDS),
+        ]
+        assert replay["depends_on"] == {
+            "demo-sources": {"condition": "service_completed_successfully"},
+            "dfe-receiver": {"condition": "service_healthy"},
+        }
+        assert replay["restart"] == "unless-stopped"
+        for held in instances:
+            assert "demo-sources" in services[held]["depends_on"]
+        assert services["dfe-engine"]["environment"][
+            publish_compose.HOSTED_INSTANCES_KEY
+        ] == ("dfe-transform-elastic=demo-syslog,cisco-asa,fortinet,crowdstrike,okta")
+        assert publish_compose.demo_instances(roles=roles) == {
+            "dfe-transform-elastic": ["demo-syslog", "crowdstrike", "okta"]
+        }
+
+    def test_refuses_a_stack_missing_a_beats_transform(self) -> None:
+        with pytest.raises(publish_compose.PublishError, match="okta"):
+            publish_compose.demo_overlay(
+                archive=ARCHIVE,
+                image="i",
+                model=_stack(DEMO_STACK),
+                pack="cyber",
+                roles={**ROLES, "beats": ["okta"]},
+                stream=["scripts/replay_syslog.py", "tcp", "20"],
+            )
 
     def test_the_demo_seeds_with_no_pack_argument(self) -> None:
         model = publish_compose.demo_overlay(

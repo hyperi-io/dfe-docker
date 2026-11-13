@@ -79,6 +79,8 @@ ADMIN_PASSWORD_KEY = "DFE_ENGINE_AUTH_LOCAL_ADMIN_PASSWORD"
 BREAKGLASS_PASSWORD_KEY = "DFE_ENGINE_AUTH_BREAKGLASS_PASSWORD"
 ENGINE_SERVICE = "dfe-engine"
 RECEIVER_SERVICE = "dfe-receiver"
+# The receiver's HTTP ingest on the stack's network, which a pack's Beats replay posts to
+RECEIVER_INGEST_URL = f"http://{RECEIVER_SERVICE}:8080/ingest"
 # Where the engine writes env files and instance indexes for a checkout's make to read, which no published install has
 APP_ENV_DIR_KEY = "DFE_ENGINE_DEPLOYMENT_APP_ENV_DIR"
 # The per-source instances a published file declares a container for, which the engine accepts a source for and refuses any other
@@ -296,28 +298,35 @@ def file_model(*, path: Path) -> dict:
 
 
 def demo_roles(*, events: Path, sources: Path) -> dict[str, list[str]]:
-    """The pack's source names by role: each vendor has an events directory, each fetcher a fetcher mapping, and the one left is the intake. A pack with no source files has none of any."""
+    """The pack's source names by role: each source with events replays them, as Beats when they are Beats envelopes and as a vendor's syslog otherwise, each fetcher has a fetcher mapping, and the one left is the intake. A pack with no source files has none of any."""
     names = sorted(path.stem for path in sources.glob("*.yaml"))
     if not (names):
-        return {"fetcher": [], "intake": [], "vendor": []}
+        return {"beats": [], "fetcher": [], "intake": [], "vendor": []}
     held = sorted(events.iterdir()) if events.is_dir() else []
-    vendors = sorted(path.name for path in held if path.is_dir() and path.name in names)
+    replayed = [path for path in held if path.is_dir() and path.name in names]
+    beats = [path.name for path in replayed if demo.beats_dataset(events=path)]
+    vendors = [path.name for path in replayed if path.name not in beats]
     fetchers = [
         name
         for name in names
         if _FETCHER_KEY.search((sources / f"{name}.yaml").read_text(encoding="utf-8"))
     ]
-    intakes = [name for name in names if name not in (*vendors, *fetchers)]
+    intakes = [name for name in names if name not in (*vendors, *beats, *fetchers)]
     if len(intakes) != 1 or not (vendors):
         raise PublishError(
             f"{str(sources)!r} needs one intake and at least one vendor source with events in {str(events)!r}, as `make demo` does. It holds {names}"
         )
-    return {"fetcher": fetchers, "intake": intakes, "vendor": vendors}
+    if beats and not ((events / demo.REPLAY_TOOL).is_file()):
+        raise PublishError(
+            f"Beats source(s) {beats} need {str(events / demo.REPLAY_TOOL)!r} to replay them"
+        )
+    return {"beats": beats, "fetcher": fetchers, "intake": intakes, "vendor": vendors}
 
 
 def demo_instances(*, roles: Mapping[str, Sequence[str]]) -> dict[str, list[str]]:
-    """The per-source containers the pack runs: the intake's transform, none without one. Its fetcher sources share the stack's one dfe-fetcher."""
-    return {demo.TRANSFORM_APP: list(roles["intake"])} if roles["intake"] else {}
+    """The per-source containers the pack runs: the transforms of the intake and of each Beats source, none without either. Its fetcher sources share the stack's one dfe-fetcher."""
+    names = [*roles["intake"], *roles["beats"]]
+    return {demo.TRANSFORM_APP: names} if names else {}
 
 
 def apply_command(*, tag: str) -> str:
@@ -326,8 +335,8 @@ def apply_command(*, tag: str) -> str:
 
 
 def demo_hosted(*, roles: Mapping[str, Sequence[str]]) -> str:
-    """The engine's hosted-instance setting for the pack: the intake, and each vendor, which is created active and then set dormant. Empty, as the stack file's is, for a pack with neither."""
-    names = [*roles["intake"], *roles["vendor"]]
+    """The engine's hosted-instance setting for the pack: the intake, each vendor, which is created active and then set dormant, and each Beats source. Empty, as the stack file's is, for a pack with none."""
+    names = [*roles["intake"], *roles["vendor"], *roles["beats"]]
     return f"{demo.TRANSFORM_APP}={','.join(names)}" if names else ""
 
 
@@ -648,6 +657,29 @@ def demo_overlay(
             )
         )
         demo_model.setdefault("volumes", {})[DEMO_FEED_VOLUME] = {}
+    if roles["beats"]:
+        services["demo-beats"] = {
+            **helper,
+            "depends_on": {
+                "demo-sources": {"condition": "service_completed_successfully"},
+                RECEIVER_SERVICE: {"condition": "service_healthy"},
+            },
+            "entrypoint": [
+                "python3",
+                "-I",
+                f"{IMAGE_TREE}/resources/{demo_pack_tag(pack=pack)}/events/{demo.REPLAY_TOOL}",
+                demo.REPLAY_COMMAND,
+                "--target",
+                RECEIVER_INGEST_URL,
+                "--sources",
+                ",".join(roles["beats"]),
+                "--loop",
+                "--duration",
+                str(demo.STREAM_SECONDS),
+            ],
+            "restart": "unless-stopped",
+            "user": DEMO_UID,
+        }
     if archive["sources"]:
         services["demo-prune"] = {
             **helper,

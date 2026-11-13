@@ -90,7 +90,7 @@ def seed_sources(*, root: Path) -> None:
     if loaded is None:
         _print(msg=f"{str(root)!r} holds no source files, so none were created")
         return
-    for body in [*loaded.vendors, loaded.intake]:
+    for body in [*loaded.vendors, *loaded.beats, loaded.intake]:
         demo._ensure_source(base=ENGINE_NETWORK_BASE, body=body, token=token)
     demo._ensure_fetchers(
         base=ENGINE_NETWORK_BASE,
