@@ -121,6 +121,16 @@ class TestPublished:
         ]
         assert engine["depends_on"] == {"clickhouse": {"condition": "service_healthy"}}
         assert engine["environment"][publish_compose.APP_ENV_DIR_KEY] == ""
+        # No checkout means no `make creds`, and the stack file runs no per-source instance
+        assert (
+            FIRST_LOGIN_PASSWORD
+            in (engine["environment"][publish_compose.CREDENTIAL_COMMAND_KEY])
+        )
+        assert engine["environment"][publish_compose.HOSTED_INSTANCES_KEY] == ""
+        assert engine["environment"][publish_compose.APPLY_COMMAND_KEY] == (
+            "docker compose -f oci://ghcr.io/hyperi-io/dfe-docker:compose up -d "
+            "--force-recreate {service}"
+        )
         assert engine["deploy"] == {"resources": {"limits": {"cpus": 2}}}
         for gone in ("profiles", "group_add", "entrypoint"):
             assert gone not in engine
@@ -349,7 +359,7 @@ DEMO_STACK = [
     "dlq-init",
     publish_compose.TRANSFORM_ELASTIC_CONTRACT,
     "dfe-transform-elastic-demo-syslog",
-    "dfe-fetcher-releases",
+    "dfe-fetcher",
 ]
 ARCHIVE = {
     "max_megabytes": 1,
@@ -373,7 +383,7 @@ class TestDemoOverlay:
         for held in (
             "dfe-receiver",
             "dfe-transform-elastic-demo-syslog",
-            "dfe-fetcher-releases",
+            "dfe-fetcher",
         ):
             assert services[held]["depends_on"]["demo-sources"] == {
                 "condition": "service_completed_successfully",
@@ -395,6 +405,23 @@ class TestDemoOverlay:
             "/opt/dfe-docker/resources/demo/archive.py"
         )
         assert model["volumes"][publish_compose.DEMO_FEED_VOLUME] == {}
+        # The engine accepts exactly the demo's transformed sources, so a console-added one is refused
+        assert (
+            services["dfe-engine"]["environment"][publish_compose.HOSTED_INSTANCES_KEY]
+            == "dfe-transform-elastic=demo-syslog,cisco-asa,fortinet"
+        )
+        assert services["dfe-engine"]["environment"][
+            publish_compose.APPLY_COMMAND_KEY
+        ] == (
+            "docker compose -f oci://ghcr.io/hyperi-io/dfe-docker:demo up -d "
+            "--force-recreate {service}"
+        )
+
+    def test_declares_no_fetcher_instance(self) -> None:
+        # Every fetcher source runs in the one committed dfe-fetcher
+        assert publish_compose.demo_instances(roles=ROLES) == {
+            "dfe-transform-elastic": ["demo-syslog"]
+        }
 
     def test_refuses_a_stack_that_declares_no_demo_instance(self) -> None:
         stack = _stack(

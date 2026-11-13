@@ -256,12 +256,8 @@ def tree(tmp_path: Path) -> Path:
     [
         pytest.param(
             "single-kafka",
-            {
-                "dfe-fetcher",
-                "dfe-transform-elastic",
-                "dfe-transform-vector",
-                "dfe-transform-vrl",
-            },
+            # The one fetcher runs for every source, and a transform runs only as a generated instance
+            {"dfe-transform-elastic", "dfe-transform-vector", "dfe-transform-vrl"},
             id="single-kafka",
         ),
         pytest.param(
@@ -271,7 +267,12 @@ def tree(tmp_path: Path) -> Path:
         ),
         pytest.param(
             "single-grpc",
-            {"dfe-archiver", "config-check-dfe-archiver", "dfe-transform-vrl"},
+            {
+                "dfe-archiver",
+                "config-check-dfe-archiver",
+                "dfe-fetcher",
+                "dfe-transform-vrl",
+            },
             id="single-grpc",
         ),
         pytest.param(
@@ -294,6 +295,8 @@ def test_apply_leaves_a_plain_compose_starting_only_the_profile(
     overlay = (tree / installer.OVERLAY).read_text(encoding="utf-8")
     for service in parked:
         assert f"  {service}:\n" in overlay
+    if profile == "single-kafka":
+        assert "  dfe-fetcher:\n" not in overlay
     assert "  dfe-receiver:\n" not in overlay
     assert "  dfe-loader:\n" not in overlay
 

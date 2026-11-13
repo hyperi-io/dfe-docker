@@ -81,7 +81,7 @@ make up VERSION=2.2.1            # an older stack
 make down                        # stop everything
 ```
 
-`PROFILE=` and `VERSION=` on the make line are written to `.env` (as `DFE_PROFILE` and the image pins), so later runs keep them. A `.env` that already holds pins keeps them until `VERSION=` names another stack. `make demo` needs a profile that runs dfe-transform-elastic, `single-kafka` or `single-grpc`.
+`PROFILE=` and `VERSION=` on the make line are written to `.env` (as `DFE_PROFILE` and the image pins), so later runs keep them. A `.env` that already holds pins keeps them until `VERSION=` names another stack. `make demo` needs a profile that runs dfe-transform-elastic, which is `single-kafka`.
 
 The image runs these same scripts. `init` is `make init` and the `make up` pinning. The compose settings it writes are what the Makefile hands compose (`make print-compose-env`).
 

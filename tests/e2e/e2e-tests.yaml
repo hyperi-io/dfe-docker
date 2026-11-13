@@ -143,9 +143,9 @@ tests:
       service: dfe-loader
       seconds: 60
 
-  # The direct gRPC chain through the vrl transform dfe-engine starts for a source made through its API, with dfe-loader stopped under it
-  - name: loader-outage-grpc-transform-vrl
-    profile: single-grpc
+  # The Kafka chain through the vrl transform dfe-engine starts for a source made through its API, with dfe-loader stopped under it. dfe-engine runs no transform for a source on direct gRPC
+  - name: loader-outage-kafka-transform-vrl
+    profile: single-kafka
     table: e2evrl
     sources:
       - &e2evrl
@@ -160,8 +160,8 @@ tests:
       seconds: 60
 
   # The same chain with the transform instance itself stopped mid-chain
-  - name: transform-vrl-outage-grpc
-    profile: single-grpc
+  - name: transform-vrl-outage-kafka
+    profile: single-kafka
     table: e2evrl
     sources:
       - *e2evrl
@@ -204,8 +204,8 @@ tests:
       workers: 16
       interval: 0.01
 
-  - name: transform-vrl-kill-grpc
-    profile: single-grpc
+  - name: transform-vrl-kill-kafka
+    profile: single-kafka
     table: e2evrl
     sources:
       - *e2evrl

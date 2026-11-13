@@ -114,6 +114,7 @@ from _common import (  # noqa: E402
     PER_SOURCE_APP_KEYS,
     REPO_ROOT,
     SERVICE_CONFIG_FILE,
+    SHARED_SOURCE_APPS,
     _dotenv_values,
     _env_file,
     _parse_dotenv,
@@ -134,7 +135,7 @@ from init import GENERATED_SECRETS, _render_secrets  # noqa: E402
 # resolves it relative to the repo like the shipped files.
 _LOCAL_SAMPLE = ["dfe-engine"]
 # The per-source app a LOCAL build names when its generated instances are checked
-_LOCAL_INSTANCE_SAMPLE = ["dfe-fetcher"]
+_LOCAL_INSTANCE_SAMPLE = ["dfe-transform-elastic"]
 _LOCAL_RENDER = REPO_ROOT / ".tmp" / "compose-check-local.yml"
 # The overlay a `make dev` build of every component writes
 _DEV_RENDER = REPO_ROOT / ".tmp" / "compose-check-dev.yml"
@@ -1690,7 +1691,7 @@ def _local_instance_failures(*, env: dict[str, str]) -> tuple[list[str], int]:
     probes = {
         app: ["compose-check"]
         for app in sorted(PER_SOURCE_APP_KEYS)
-        if instances.extendable(app)
+        if app not in SHARED_SOURCE_APPS and instances.extendable(app)
     }
     images = local_image_services(_LOCAL_INSTANCE_SAMPLE)
     config = _config_json(

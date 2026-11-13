@@ -102,7 +102,11 @@ CHOOSE_STACK_CASES = [
 ]
 REFUSAL_CASES = [
     RefusalCase(message="", name="single-kafka", running=""),
-    RefusalCase(message="", name="single-grpc", running=""),
+    RefusalCase(
+        message="profile 'single-grpc' runs no 'dfe-transform-elastic'.*PROFILE=single-kafka",
+        name="single-grpc",
+        running="",
+    ),
     RefusalCase(
         message="profile 'slim-grpc' runs no 'dfe-transform-elastic'.*PROFILE=single-kafka",
         name="slim-grpc",

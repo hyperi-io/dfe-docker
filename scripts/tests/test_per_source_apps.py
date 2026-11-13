@@ -118,9 +118,8 @@ PER_SOURCE_APPS_REFUSAL_CASES = [
 RESOLVED_EXPORT_CASES = [
     ResolvedExportCase(expected="", profile="slim-grpc"),
     ResolvedExportCase(expected="", profile="slim-kafka"),
-    ResolvedExportCase(
-        expected=f"{FETCHER} {ELASTIC} {VECTOR} {VRL}", profile="single-grpc"
-    ),
+    # dfe-engine runs a per-source app for a source on Kafka only
+    ResolvedExportCase(expected="", profile="single-grpc"),
     ResolvedExportCase(
         expected=f"{FETCHER} {ELASTIC} {VECTOR} {VRL}", profile="single-kafka"
     ),
@@ -281,29 +280,29 @@ class TestResolveProfile:
     def test_a_dev_run_puts_every_instance_it_runs_on_its_local_image(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        _index(app=FETCHER, names=["aws-cloudtrail"])
+        _index(app=ELASTIC, names=["demo-syslog"])
         _index(app=VRL, names=["cisco-ios"])
         monkeypatch.delenv("DFE_CORE_ENABLED", raising=False)
-        monkeypatch.setenv("DFE_PROFILE", "single-grpc")
+        monkeypatch.setenv("DFE_PROFILE", "single-kafka")
 
         assert resolve_profile.main(argv=["--local-per-source"]) == 0
 
         text = instances.COMPOSE_INSTANCES_FILE.read_text(encoding="utf-8")
-        assert f"      service: {FETCHER}\n    image: {FETCHER}:local\n" in text
+        assert f"      service: {ELASTIC}\n    image: {ELASTIC}:local\n" in text
         assert f"      service: {VRL}\n    image: {VRL}:local\n" in text
 
     @pytest.mark.usefixtures("dotenv")
     def test_an_apply_keeps_the_instances_the_dev_build_recorded_on_its_local_image(
         self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
     ) -> None:
-        _index(app=FETCHER, names=["aws-cloudtrail"])
+        _index(app=ELASTIC, names=["demo-syslog"])
         _index(app=VRL, names=["cisco-ios"])
         recorded = tmp_path / "docker-compose.local.yml"
         recorded.write_text(
             data=overlay_text(components=["dfe-engine", VRL]), encoding="utf-8"
         )
         monkeypatch.delenv("DFE_CORE_ENABLED", raising=False)
-        monkeypatch.setenv("DFE_PROFILE", "single-grpc")
+        monkeypatch.setenv("DFE_PROFILE", "single-kafka")
 
         assert resolve_profile.main(argv=["--local-overlay", str(recorded)]) == 0
 
@@ -315,9 +314,9 @@ class TestResolveProfile:
     def test_an_apply_with_no_recorded_build_runs_the_registry_images(
         self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
     ) -> None:
-        _index(app=FETCHER, names=["aws-cloudtrail"])
+        _index(app=ELASTIC, names=["demo-syslog"])
         monkeypatch.delenv("DFE_CORE_ENABLED", raising=False)
-        monkeypatch.setenv("DFE_PROFILE", "single-grpc")
+        monkeypatch.setenv("DFE_PROFILE", "single-kafka")
 
         absent = tmp_path / "docker-compose.local.yml"
         assert resolve_profile.main(argv=["--local-overlay", str(absent)]) == 0

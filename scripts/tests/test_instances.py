@@ -8,10 +8,11 @@
 
 """What a deployment actually runs for an app that runs one container per source.
 
-The gap these close: Compose declared one dfe-fetcher, so a deployment with two
-CrowdStrike accounts ran one of them. The count now comes from the index
+The gap these close: Compose declared one of each app, so a deployment with two
+transformed sources ran one of them. The count now comes from the index
 dfe-engine writes when it renders each instance's config, so two sources are two
-containers and no source is none.
+containers and no source is none. dfe-fetcher is the exception: its committed
+service polls every source from one merged config.
 """
 
 import re
@@ -23,7 +24,10 @@ import pytest
 import instances
 from _common import COMPOSE_FILE, COMPOSE_ONE_SHOTS_FILE, REPO_ROOT
 
+ELASTIC = "dfe-transform-elastic"
 FETCHER = "dfe-fetcher"
+# The variable naming the fetcher's cursor directory, and the volume path its service mounts
+FETCHER_STATE = ("DFE_FETCHER_CURSOR__DIRECTORY", "/var/lib/dfe-fetcher")
 VRL = "dfe-transform-vrl"
 COMPOSE_ARGS = ["-f", "docker-compose.yml", "-f", ".tmp/docker-compose.instances.yml"]
 
@@ -36,18 +40,18 @@ def _index(env_dir: Path, service: str, *names: str) -> None:
 
 
 def test_two_sources_of_one_connector_are_two_services(tmp_path: Path) -> None:
-    _index(tmp_path, FETCHER, "crowdstrike-eu", "crowdstrike-us")
+    _index(tmp_path, ELASTIC, "crowdstrike-eu", "crowdstrike-us")
 
     found = instances.declared(env_dir=tmp_path)
 
     assert instances.services(found) == [
-        "dfe-fetcher-crowdstrike-eu",
-        "dfe-fetcher-crowdstrike-us",
+        "dfe-transform-elastic-crowdstrike-eu",
+        "dfe-transform-elastic-crowdstrike-us",
     ]
 
 
 def test_a_deployment_with_no_source_declares_nothing(tmp_path: Path) -> None:
-    _index(tmp_path, FETCHER)
+    _index(tmp_path, ELASTIC)
 
     assert instances.declared(env_dir=tmp_path) == {}
 
@@ -59,42 +63,42 @@ def test_a_deployment_that_never_rendered_declares_nothing(tmp_path: Path) -> No
 def test_every_app_with_an_index_is_carried(tmp_path: Path) -> None:
     # Which apps run one per source is apps.yaml's to say, so the generator
     # discovers them rather than holding a list of its own.
-    _index(tmp_path, FETCHER, "okta-audit")
+    _index(tmp_path, ELASTIC, "okta-audit")
     _index(tmp_path, VRL, "filebeat")
 
     assert instances.services(instances.declared(env_dir=tmp_path)) == [
-        "dfe-fetcher-okta-audit",
+        "dfe-transform-elastic-okta-audit",
         "dfe-transform-vrl-filebeat",
     ]
 
 
 def test_each_service_reads_its_own_instance_config() -> None:
-    text = instances.fragment({FETCHER: ["crowdstrike-eu", "crowdstrike-us"]})
+    text = instances.fragment({ELASTIC: ["crowdstrike-eu", "crowdstrike-us"]})
 
-    assert '"/etc/dfe/apps/dfe-fetcher/crowdstrike-eu/fetcher.yaml"' in text
-    assert '"/etc/dfe/apps/dfe-fetcher/crowdstrike-us/fetcher.yaml"' in text
+    assert '"/etc/dfe/apps/dfe-transform-elastic/crowdstrike-eu/config.yaml"' in text
+    assert '"/etc/dfe/apps/dfe-transform-elastic/crowdstrike-us/config.yaml"' in text
 
 
 def test_each_service_extends_the_committed_one() -> None:
     # One definition of the image, volumes, limits and healthcheck.
     text = instances.fragment(
-        {FETCHER: ["okta-audit"]}, compose_file="docker-compose.yml"
+        {ELASTIC: ["okta-audit"]}, compose_file="docker-compose.yml"
     )
 
     assert (
-        "    extends:\n      file: docker-compose.yml\n      service: dfe-fetcher"
+        "    extends:\n      file: docker-compose.yml\n      service: dfe-transform-elastic"
         in text
     )
 
 
 def test_each_service_reads_the_custom_env_file_the_engine_names_for_it() -> None:
     # dfe-engine writes a source's extraEnv to env/<app>-<source>.custom.env.
-    text = instances.fragment({FETCHER: ["crowdstrike-eu", "crowdstrike-us"]})
+    text = instances.fragment({ELASTIC: ["crowdstrike-eu", "crowdstrike-us"]})
 
     for source in ("crowdstrike-eu", "crowdstrike-us"):
         assert (
             "    env_file:\n"
-            f"      - path: env/dfe-fetcher-{source}.custom.env\n"
+            f"      - path: env/dfe-transform-elastic-{source}.custom.env\n"
             "        required: false\n"
         ) in text
 
@@ -102,7 +106,7 @@ def test_each_service_reads_the_custom_env_file_the_engine_names_for_it() -> Non
 def test_an_instance_of_an_app_given_an_image_runs_that_image() -> None:
     # extends reads the committed service, so a LOCAL overlay never reaches an instance
     text = instances.fragment(
-        {FETCHER: ["okta-audit"], VRL: ["cisco-ios"]},
+        {ELASTIC: ["okta-audit"], VRL: ["cisco-ios"]},
         images={VRL: f"{VRL}:local"},
     )
 
@@ -114,7 +118,7 @@ def test_an_instance_of_an_app_given_an_image_runs_that_image() -> None:
 
 
 def test_an_instance_given_no_image_keeps_the_committed_one() -> None:
-    text = instances.fragment({FETCHER: ["okta-audit"]})
+    text = instances.fragment({ELASTIC: ["okta-audit"]})
 
     assert "    image: " not in text
 
@@ -122,24 +126,27 @@ def test_an_instance_given_no_image_keeps_the_committed_one() -> None:
 def test_no_instance_publishes_a_host_port() -> None:
     # N containers cannot share one host port, and nothing outside the stack
     # addresses an instance directly.
-    text = instances.fragment({FETCHER: ["a", "b"]})
+    text = instances.fragment({ELASTIC: ["a", "b"]})
 
     assert text.count("ports: !reset []") == 2
 
 
 def test_each_container_is_named_for_its_source() -> None:
-    text = instances.fragment({FETCHER: ["okta-audit"]})
+    text = instances.fragment({ELASTIC: ["okta-audit"]})
 
-    assert "  dfe-fetcher-okta-audit:" in text
-    assert "OTEL_SERVICE_NAME: dfe-fetcher-okta-audit" in text
+    assert "  dfe-transform-elastic-okta-audit:" in text
+    assert "OTEL_SERVICE_NAME: dfe-transform-elastic-okta-audit" in text
 
 
 def test_each_instance_container_carries_the_stack_prefix() -> None:
     # A container name is daemon-wide, so two stacks collide here as well as on
     # the committed services.
-    text = instances.fragment({FETCHER: ["okta-audit"]})
+    text = instances.fragment({ELASTIC: ["okta-audit"]})
 
-    assert "container_name: ${DFE_CONTAINER_PREFIX:-}dfe-fetcher-okta-audit" in text
+    assert (
+        "container_name: ${DFE_CONTAINER_PREFIX:-}dfe-transform-elastic-okta-audit"
+        in text
+    )
 
 
 def test_an_app_this_repo_has_no_service_for_is_named(tmp_path: Path) -> None:
@@ -156,17 +163,17 @@ def test_an_app_with_a_config_file_but_no_compose_service_is_named(
     # extends naming a service that is not there fails the whole compose file.
     compose = tmp_path / "docker-compose.yml"
     compose.write_text("services:\n  dfe-loader:\n    image: x\n", encoding="utf-8")
-    _index(tmp_path, FETCHER, "okta-audit")
+    _index(tmp_path, ELASTIC, "okta-audit")
 
     found = instances.declared(env_dir=tmp_path)
 
-    assert instances.unknown_apps(found, compose_file=compose) == [FETCHER]
+    assert instances.unknown_apps(found, compose_file=compose) == [ELASTIC]
 
 
 def test_the_fragment_is_removed_when_the_last_source_goes(tmp_path: Path) -> None:
     # A stale file would declare containers for sources this deployment lost.
     target = tmp_path / "docker-compose.instances.yml"
-    assert instances.write({FETCHER: ["okta-audit"]}, path=target) is True
+    assert instances.write({ELASTIC: ["okta-audit"]}, path=target) is True
 
     assert instances.write({}, path=target) is False
     assert not target.exists()
@@ -177,8 +184,8 @@ def test_the_fragment_is_written_after_its_directory_was_deleted(
 ) -> None:
     target = tmp_path / ".tmp" / "docker-compose.instances.yml"
 
-    assert instances.write(instances={FETCHER: ["okta-audit"]}, path=target) is True
-    assert instances.fragment_services(path=target) == {f"{FETCHER}-okta-audit"}
+    assert instances.write(instances={ELASTIC: ["okta-audit"]}, path=target) is True
+    assert instances.fragment_services(path=target) == {f"{ELASTIC}-okta-audit"}
 
 
 @pytest.mark.parametrize("service", sorted(instances.SERVICE_CONFIG_FILE))
@@ -197,7 +204,7 @@ def test_each_instance_container_is_labelled_with_its_app() -> None:
 
 def test_the_fragment_in_place_names_the_services_it_declares(tmp_path: Path) -> None:
     target = tmp_path / "docker-compose.instances.yml"
-    found = {FETCHER: ["okta-audit"], VRL: ["cisco-ios", "cisco-meraki"]}
+    found = {ELASTIC: ["okta-audit"], VRL: ["cisco-ios", "cisco-meraki"]}
     instances.write(found, path=target)
 
     assert instances.fragment_services(path=target) == set(instances.services(found))
@@ -205,23 +212,6 @@ def test_the_fragment_in_place_names_the_services_it_declares(tmp_path: Path) ->
 
 def test_no_fragment_declares_no_service(tmp_path: Path) -> None:
     assert instances.fragment_services(path=tmp_path / "absent.yml") == set()
-
-
-def test_each_fetcher_instance_keeps_its_cursors_in_a_directory_of_its_own() -> None:
-    text = instances.fragment(instances={FETCHER: ["crowdstrike-eu", "crowdstrike-us"]})
-
-    for source in ("crowdstrike-eu", "crowdstrike-us"):
-        assert (
-            "      DFE_FETCHER_CURSOR__DIRECTORY: "
-            f"/var/lib/dfe-fetcher/dfe-fetcher-{source}\n"
-        ) in text
-
-
-def test_an_app_that_keeps_no_state_gets_no_state_directory() -> None:
-    text = instances.fragment(instances={VRL: ["cisco-meraki"]})
-
-    for variable, _ in instances.STATE_DIRS.values():
-        assert variable not in text
 
 
 def _committed_block(*, name: str, text: str) -> str:
@@ -248,9 +238,8 @@ def _volume_at(*, block: str, target: str) -> str:
     return match.group(1)
 
 
-@pytest.mark.parametrize("app", sorted(instances.STATE_DIRS))
-def test_the_committed_service_keeps_its_state_on_a_named_volume(app: str) -> None:
-    variable, root = instances.STATE_DIRS[app]
+def test_the_committed_fetcher_keeps_its_cursors_on_a_named_volume() -> None:
+    app, (variable, root) = FETCHER, FETCHER_STATE
     compose = COMPOSE_FILE.read_text(encoding="utf-8")
     block = _committed_block(name=app, text=compose)
 
@@ -259,10 +248,9 @@ def test_the_committed_service_keeps_its_state_on_a_named_volume(app: str) -> No
     assert f"      {variable}: {root}/{app}\n" in block
 
 
-@pytest.mark.parametrize("app", sorted(instances.STATE_DIRS))
-def test_the_state_volume_is_made_writable_before_the_app_starts(app: str) -> None:
+def test_the_cursor_volume_is_made_writable_before_the_fetcher_starts() -> None:
     # Docker creates the mountpoint root-owned and the app runs as uid 1000.
-    _, root = instances.STATE_DIRS[app]
+    app, (_, root) = FETCHER, FETCHER_STATE
     compose = COMPOSE_FILE.read_text(encoding="utf-8")
     init = _committed_block(
         name="dlq-init", text=COMPOSE_ONE_SHOTS_FILE.read_text(encoding="utf-8")
@@ -274,9 +262,8 @@ def test_the_state_volume_is_made_writable_before_the_app_starts(app: str) -> No
     assert re.search(rf"chown -R 1000:1000 .*{re.escape(root)}(\s|$)", init)
 
 
-@pytest.mark.parametrize("app", sorted(instances.STATE_DIRS))
-def test_the_state_volume_moves_with_the_data_root(app: str) -> None:
-    _, root = instances.STATE_DIRS[app]
+def test_the_cursor_volume_moves_with_the_data_root() -> None:
+    app, (_, root) = FETCHER, FETCHER_STATE
     volume = _volume_at(
         block=_committed_block(name=app, text=COMPOSE_FILE.read_text(encoding="utf-8")),
         target=root,

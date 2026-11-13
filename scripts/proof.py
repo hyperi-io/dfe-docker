@@ -290,7 +290,7 @@ def source_profile_problem(*, env: dict[str, str]) -> str | None:
     return (
         f"the profile runs no per-source {', '.join(missing)}, so the engine's "
         f"instance of it is never declared and the cases would wait out their reporting timeouts. "
-        f"Run a profile that sets {keys}, such as DFE_PROFILE=single-grpc in .env"
+        f"Run a profile that sets {keys}, such as DFE_PROFILE=single-kafka in .env"
     )
 
 

@@ -18,7 +18,7 @@
 
 The hunts target also creates the orgs and rules, because the engine refuses a hunt naming an org or rule it does not hold. The accounts target creates the orgs first for the same reason, since the engine refuses an account naming an org it does not hold. Nothing else is created for a target: a rule over a source that is not deployed yet is accepted and reads nothing until it is. A hunt whose table does not exist yet is not created, because the hunt runner fails on every run of it.
 
-Each sources, rules, hunts, orgs or accounts file is the body the engine's create route takes, named for the object it creates. An account file carries no password. A new account gets the one env/engine.env already records for it as DFE_SEED_ACCOUNT_<USERNAME>_PASSWORD. Without one it gets a fresh 24-character password, recorded there before the account is created. So a volume wipe brings the account back on the same password, which `make creds` hands over. No password is ever printed. An object the engine already holds is left as it is, so a re-run creates only what is missing. The one exception is a held source that was never deployed, which is deployed. A source whose fetcher or transform app the profile does not run is skipped. The sources end with a request for the engine to bring every app in step with them, which retries a deploy whose apps did not follow. A restart the engine asks for is printed, not run: `make apply` on a `make dev` stack needs DEV=1, which this script cannot know.
+Each sources, rules, hunts, orgs or accounts file is the body the engine's create route takes, named for the object it creates. An account file carries no password. A new account gets the one env/engine.env already records for it as DFE_SEED_ACCOUNT_<USERNAME>_PASSWORD. Without one it gets a fresh 24-character password, recorded there before the account is created. So a volume wipe brings the account back on the same password, which `make creds` hands over. No password is ever printed. An object the engine already holds is left as it is, so a re-run creates only what is missing. The one exception is a held source that was never deployed, which is deployed. A source whose fetcher or transform app the profile does not run is skipped, and so is one the shared fetcher cannot take beside the others, with the engine's reason. The sources end with a request for the engine to bring every app in step with them, which retries a deploy whose apps did not follow. A restart the engine asks for is printed, not run: `make apply` on a `make dev` stack needs DEV=1, which this script cannot know.
 
 Each events file is a list of records for the source it is named for. They go to dfe-receiver, which routes them by `_source` over whichever transport the stack runs, and the run waits until the source's table holds them. Events for a source the profile cannot run are skipped. Every run sends them again, and needs no login.
 
@@ -51,6 +51,7 @@ from _common import (  # noqa: E402
     PER_SOURCE_APP_KEYS,
     PER_SOURCE_APPS_VAR,
     SEED_DIR,
+    SHARED_REFUSAL,
     SOURCE_NAME,
     TRANSFORM_APP_PREFIX,
     _env_file,
@@ -170,6 +171,10 @@ def _create(*, base: str, body: dict, kind: str, name: str, token: str) -> None:
     """Create one object, deploying it when it is a source and handing over its password when it is an account."""
     route = KINDS[kind].route
     status, answer = _api_post_json(payload=body, token=token, url=f"{base}{route}")
+    detail = answer.get("detail", answer) if isinstance(answer, dict) else answer
+    if kind == "sources" and status == 422 and SHARED_REFUSAL in str(detail):
+        _print(msg=f"WARNING source {name!r} is skipped: {detail}")
+        return
     if status != 201:
         fault = f"POST {route!r} returned HTTP {status}: {answer}"
         # A refusal can echo the request, the account's password included
