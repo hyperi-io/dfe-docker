@@ -1,7 +1,7 @@
 {
   "name": "demo-theatre-aircraft-late",
   "orderBy": "_timestamp DESC",
-  "select": "_timestamp, ifNull(nullIf(trimBoth(toString(_json.flight)), ''), upper(toString(_json.hex))) AS callsign, upper(toString(_json.hex)) AS hex, toString(_json.t) AS type, toFloat64OrNull(toString(_json.lat)) AS lat, toFloat64OrNull(toString(_json.lon)) AS lon, toString(_json.alt_baro) AS altitude, toFloat64OrNull(toString(_json.gs)) AS speed, toFloat64OrNull(toString(_json.track)) AS heading, round(toFloat64OrZero(toString(_json.seen_pos))) AS late_seconds",
+  "select": "_timestamp, if(match(trimBoth(toString(_json.flight)), '^[A-Z0-9 ]+$'), trimBoth(toString(_json.flight)), upper(toString(_json.hex))) AS callsign, upper(toString(_json.hex)) AS hex, toString(_json.t) AS type, toFloat64OrNull(toString(_json.lat)) AS lat, toFloat64OrNull(toString(_json.lon)) AS lon, toString(_json.alt_baro) AS altitude, toFloat64OrNull(toString(_json.gs)) AS speed, toFloat64OrNull(toString(_json.track)) AS heading, round(toFloat64OrZero(toString(_json.seen_pos))) AS late_seconds",
   "source": "adsb-tracks",
   "tags": [
     "demo"
