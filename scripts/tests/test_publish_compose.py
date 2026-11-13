@@ -662,6 +662,7 @@ class TestDemoOverlay:
             str(demo.STREAM_SECONDS),
         ]
         assert replay["depends_on"] == {
+            "demo-console": {"condition": "service_completed_successfully"},
             "demo-sources": {"condition": "service_completed_successfully"},
             "dfe-receiver": {"condition": "service_healthy"},
         }
@@ -705,6 +706,9 @@ class TestDemoOverlay:
             "replay",
         ]
         assert replay[replay.index("--sources") + 1] == "core-probes,ran-kpis"
+        assert services["demo-beats"]["depends_on"]["demo-console"] == {
+            "condition": "service_completed_successfully"
+        }
         for absent in ("demo-feed", "demo-stream", "demo-prune"):
             assert absent not in services
         assert "demo-sources" in services["dfe-fetcher"]["depends_on"]

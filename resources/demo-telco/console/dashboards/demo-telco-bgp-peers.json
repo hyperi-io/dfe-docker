@@ -10,7 +10,7 @@
         "displayType": "table",
         "name": "Peers by flaps, flapping first (12 hours behind, as RIPEstat publishes)",
         "source": "bgp-updates",
-        "sqlTemplate": "SELECT concat(splitByChar('-', toString(_json.attrs.source_id))[2], ' (rrc', splitByChar('-', toString(_json.attrs.source_id))[1], ')') AS \"Peer\",\n       anyIf(dynamicElement(_json.attrs.path, 'Array(Nullable(Int64))')[1], toString(_json.type) = 'A') AS \"Peer AS\",\n       countIf(toString(_json.type) = 'W') AS \"Withdrawals\",\n       countIf(toString(_json.type) = 'A') AS \"Announcements\",\n       least(\"Withdrawals\", \"Announcements\") AS \"Flaps\",\n       uniqExact(toString(_json.attrs.target_prefix)) AS \"Prefixes\"\nFROM dfe.`bgp-updates`\nWHERE $__timeFilter(_timestamp + INTERVAL 12 HOUR)\nGROUP BY 1\nORDER BY \"Flaps\" DESC, \"Withdrawals\" DESC\nLIMIT 15"
+        "sqlTemplate": "SELECT splitByChar('-', toString(_json.attrs.source_id))[2] AS \"Peer\",\n       concat('rrc', splitByChar('-', toString(_json.attrs.source_id))[1]) AS \"Collector\",\n       anyIf(dynamicElement(_json.attrs.path, 'Array(Nullable(Int64))')[1], toString(_json.type) = 'A') AS \"Peer AS\",\n       countIf(toString(_json.type) = 'W') AS \"Withdrawals\",\n       countIf(toString(_json.type) = 'A') AS \"Announcements\",\n       least(\"Withdrawals\", \"Announcements\") AS \"Flaps\",\n       uniqExact(toString(_json.attrs.target_prefix)) AS \"Prefixes\"\nFROM dfe.`bgp-updates`\nWHERE $__timeFilter(_timestamp + INTERVAL 12 HOUR)\nGROUP BY 1, 2\nORDER BY \"Flaps\" DESC, \"Withdrawals\" DESC\nLIMIT 15"
       },
       "h": 8,
       "id": "peers",

@@ -682,7 +682,9 @@ def demo_overlay(
     if replays:
         services["demo-beats"] = {
             **helper,
+            # Waiting on demo-console makes it a completed dependency, which `up --wait` accepts once it exits 0, so a console that finishes first no longer fails the wait
             "depends_on": {
+                "demo-console": {"condition": "service_completed_successfully"},
                 "demo-sources": {"condition": "service_completed_successfully"},
                 RECEIVER_SERVICE: {"condition": "service_healthy"},
             },
