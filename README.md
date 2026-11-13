@@ -18,7 +18,7 @@ It consumes the same images from the same registry as the Kubernetes path, pinne
 
 ## Quick start
 
-With only Docker, Engine 26.0 and Compose 2.34 or newer, on macOS, Linux or Windows:
+With only Docker, at the `min_engine` and `min_compose` each release's `quickstart.json` names, on macOS, Linux or Windows:
 
 ```bash
 docker compose -f oci://ghcr.io/hyperi-io/dfe-docker:compose up -d
@@ -38,7 +38,7 @@ From a clone, on a host with Docker Compose v2, make, git and Python 3:
 git clone https://github.com/hyperi-io/dfe-docker && cd dfe-docker
 make up                          # single-kafka, the newest published stable stack
 make up PROFILE=slim-grpc        # another profile
-make up VERSION=2.2.1            # an older stack
+make up VERSION=<stack version>  # an older stack
 make demo                        # the same stack with the demo stream on it
 make down                        # stop everything, keep the data
 ```

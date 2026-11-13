@@ -18,7 +18,7 @@ come out the other. Everything else can wait.
 
 ## What you need
 
-- Docker Engine 26.0 and Docker Compose 2.34 or newer for the one-line installs, Compose 2.26 or newer for the rest
+- Docker Engine and Docker Compose at the `min_engine` and `min_compose` a release's `quickstart.json` names for the one-line installs. The rest need only the oldest Compose that reads every feature in `COMPOSE_FEATURES` (`scripts/quickstart_json.py`)
 - make, git and Python 3 (standard library only), for a clone. Nothing under "With only Docker" needs them
 - Network access to `ghcr.io/hyperi-io`, where the images are public and pull with no login
 
@@ -69,7 +69,7 @@ The same command with `demo-stop` takes it out, which `docker compose down` need
 ```bash
 make up                          # single-kafka, newest published stable stack
 make up PROFILE=slim-grpc        # another profile
-make up VERSION=2.2.1            # an older stack
+make up VERSION=<stack version>  # an older stack
 ```
 
 `make up` creates `.env` and `env/`, generates the secrets, pins every image from the DFE stack manifest, starts the stack and prints the console login. Its first line says the profile and stack in use. `PROFILE=` and `VERSION=` are written to `.env`, so the next `make up` keeps them.
