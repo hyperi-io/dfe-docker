@@ -36,6 +36,8 @@ docker compose -f oci://ghcr.io/hyperi-io/dfe-docker:demo up -d
 
 The demo is the same stack as its own project, `dfe-demo`, and nothing to set up. At first start it seeds the demo's sources, dashboards and saved searches, then streams the Cisco ASA and FortiGate syslog below without stopping, beside two fetchers. It takes the same ports, so stop the stack above first. `docker compose -f oci://ghcr.io/hyperi-io/dfe-docker:demo down -v` removes all of it.
 
+Three more demos take the same two lines with the tag swapped, each as its own project on the same ports, so run one at a time: `:demo-cyber` (identity, EDR and firewall events, with the rules and hunts a SOC runs over them), `:demo-theatre` (live air and sea tracks, the picture as it is now and as it was) and `:demo-telco` (BGP updates, RAN KPIs and core probes, what a NOC watches).
+
 For a folder you can edit, the dfe-docker image sets one up holding the compose files, config and `.env`, which takes any profile and setting. In an empty folder. On Windows, use PowerShell: `${PWD}` works there and in bash and zsh, but not in cmd.exe.
 
 ```bash
