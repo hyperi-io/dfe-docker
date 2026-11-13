@@ -183,7 +183,7 @@ If you have questions about contributing, please open an issue or contact us.
 
 ### What this is
 
-dfe-docker stands the whole DFE suite up as one Docker Compose stack on a single host, and it is the definition-of-done target for the suite's docker path: a change is proven when it runs on the deployment target, not because it ran on someone's laptop. It packages the stack: it builds no component image, publishes only the dfe-docker image that sets a folder up from this tree, and provisions no ClickHouse table and no Kafka topic. dfe-engine is the only schema and topic controller, and `scripts/tests/test_engine_only_schema_control.py` fails the build on a DDL file or a topic-creating step appearing here. When the data path is wrong the fix is nearly always in a component repo. It is not the Kubernetes path either: Kubernetes stays primary and dfe-infra owns it, which is why there is deliberately no `scale` profile - Compose cannot run an HA broker or a ClickHouse cluster. `main` is protected, so every change arrives as a pull request, with Conventional Commits and a DCO sign-off ([CONTRIBUTING.md](CONTRIBUTING.md)).
+dfe-docker stands the whole DFE suite up as one Docker Compose stack on a single host, and it is the definition-of-done target for the suite's docker path: a change is proven when it runs on the deployment target, not because it ran on someone's laptop. It packages the stack: its release builds no component image and publishes only the dfe-docker image that sets a folder up from this tree (`make dev` builds component images locally, for a test rig), and it provisions no ClickHouse table and no Kafka topic. dfe-engine is the only schema and topic controller, and `scripts/tests/test_engine_only_schema_control.py` fails the build on a DDL file or a topic-creating step appearing here. When the data path is wrong the fix is nearly always in a component repo. It is not the Kubernetes path either: Kubernetes stays primary and dfe-infra owns it, which is why there is deliberately no `scale` profile - Compose cannot run an HA broker or a ClickHouse cluster. `main` is protected, so every change arrives as a pull request, with Conventional Commits and a DCO sign-off ([CONTRIBUTING.md](CONTRIBUTING.md)).
 
 ### Where things live
 
@@ -203,7 +203,7 @@ dfe-docker stands the whole DFE suite up as one Docker Compose stack on a single
 | `config/<component>/` | The config files services mount, one directory per component |
 | `.env.example` + `env.example/` | Committed templates. `make init` copies them to `.env` and `env/`, both gitignored |
 | `ops/daemon-update/` | The systemd timer that keeps a single-VM deployment on the newest certified stack |
-| `docs/` | Nine audience-scoped documents. Read [docs/architecture.md](docs/architecture.md) first |
+| `docs/` | The guides for evaluating, operating, deploying, developing and troubleshooting the stack, plus profiles, configuration and observability. Read [docs/architecture.md](docs/architecture.md) first |
 
 ### Commands that prove a change
 
@@ -240,7 +240,7 @@ Two ways a green run says less than it looks:
 | Raise `REDPANDA_MEMORY` on its own | Raise `DFE_BROKER_MEMORY` above it | The broker gets at most the container limit less the host's `vm.min_free_kbytes`: `redpanda/start.sh` lowers `--memory` to that and logs a WARN naming the `DFE_BROKER_MEMORY` that restores it (`.env.example:229`, `.env.example:519`) |
 | Publish the broker's in-network listener `9092` to the host | Use the host listener on `19092` (`KAFKA_PLAINTEXT_HOST_PORT`) | `9092` advertises `kafka:9092`, a name a host client can't resolve. It also collides with an always-on dev Kafka (#36) |
 | Set `DFE_UPDATE_WIPE_STATE=1` on a box that also sets `DFE_DATA_ROOT` | Leave `DFE_DATA_ROOT` unset if you rely on the wipe | `make clean` does not chain the storage overlay, so it removes the volume objects while the bind directories keep their contents and the wipe silently becomes a no-op (`ops/daemon-update/README.md`) |
-| Take the local `CLAUDE.md` as current | Read the file you are asking about | It is gitignored and unmaintained. It still names `dfe-operator` as the Kubernetes repo, claims `hyperi-hyperdx` floats on `:latest`, counts seven docs where there are nine, and points at a `scripts/deprecated/` directory that has been removed |
+| Take a local, gitignored note as current | Read the tracked file you are asking about | A local note is nobody's to maintain, and the ones seen so far named repos and directories that no longer exist |
 
 ### Where this sits
 
