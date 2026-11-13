@@ -22,7 +22,7 @@ Each is generated, never edited. The tree the dfe-docker image carries is copied
 
 The stack file is project `dfe`. The demo file is that model with the intake's transform instance declared, its own project `dfe-demo` and containers prefixed `demo-`, plus the demo overlay: one-shots that seed its sources and console through scripts/demo_seed.py, the syslog stream `make demo` runs and the archive pruner. dfe-receiver, dfe-fetcher and the instance start once the sources exist. Each file tells the engine which per-source instances it runs (DFE_ENGINE_DEPLOYMENT_HOSTED_INSTANCES), none for the stack file, so a source needing any other is refused at save. secrets-init and the demo's helpers run the dfe-docker image --image names.
 
-`--pack <name>` writes dfe-demo-<name>.yaml alone, the same overlay seeded from resources/demo-<name>: project `dfe-demo-<name>`, containers prefixed `demo-<name>-`, published as `demo-<name>`. A pack with no source files gets no syslog stream, transform instance or pruner, and one with no archived source gets no pruner.
+`--pack <name>` writes dfe-demo-<name>.yaml alone, the same overlay seeded from resources/demo-<name>: project `dfe-demo-<name>`, containers prefixed `demo-<name>-`, published as `demo-<name>`. A pack with no vendor source gets no syslog stream or intake transform, and one with no archived source gets no pruner. A pack's Beats and JSON sources replay through demo-beats, which runs the pack's own events/generate.py `replay` at the receiver's /ingest.
 
 `--check FILE...` reads published files and exits 1 on any bind mount, env_file, profile, interpolation, literal secret or port off 127.0.0.1, and with `--require-digests` on any image not pinned by digest.
 
@@ -134,6 +134,8 @@ PUBLIC_VALUES = {ADMIN_PASSWORD_KEY: FIRST_LOGIN_PASSWORD}
 _DOLLAR = re.compile(r"\$(\$|\{|[A-Za-z_])")
 # A demo source file's top-level fetcher mapping, which is what makes it a fetcher (demo.py _role)
 _FETCHER_KEY = re.compile(r"(?m)^fetcher:\s*$")
+_MATCH_KEY = re.compile(r"(?m)^match:\s*$")
+_TRANSFORM_KEY = re.compile(r"(?m)^transform:\s*$")
 _COMPOSE_TIMEOUT_SECONDS = 180
 # Each line the dfe-docker build context keeps, so the scratch tree holds what the image carries
 _ALLOWLIST_LINE = re.compile(r"^!(?P<path>[^*\s]+?)/?$")
@@ -298,29 +300,48 @@ def file_model(*, path: Path) -> dict:
 
 
 def demo_roles(*, events: Path, sources: Path) -> dict[str, list[str]]:
-    """The pack's source names by role: each source with events replays them, as Beats when they are Beats envelopes and as a vendor's syslog otherwise, each fetcher has a fetcher mapping, and the one left is the intake. A pack with no source files has none of any."""
+    """The pack's source names by role: each source with events replays them, as Beats when they are Beats envelopes, as JSON when its file has a match and no transform, and as a vendor's syslog otherwise, each fetcher has a fetcher mapping, and the one left is the intake. A pack with no vendor has no intake, and one with no source files has none of any."""
     names = sorted(path.stem for path in sources.glob("*.yaml"))
     if not (names):
-        return {"beats": [], "fetcher": [], "intake": [], "vendor": []}
+        return {"beats": [], "fetcher": [], "intake": [], "json": [], "vendor": []}
     held = sorted(events.iterdir()) if events.is_dir() else []
     replayed = [path for path in held if path.is_dir() and path.name in names]
     beats = [path.name for path in replayed if demo.beats_dataset(events=path)]
-    vendors = [path.name for path in replayed if path.name not in beats]
+    plain = [
+        path.name
+        for path in replayed
+        if path.name not in beats and _json_source(path=sources / f"{path.name}.yaml")
+    ]
+    vendors = [path.name for path in replayed if path.name not in (*beats, *plain)]
     fetchers = [
         name
         for name in names
         if _FETCHER_KEY.search((sources / f"{name}.yaml").read_text(encoding="utf-8"))
     ]
-    intakes = [name for name in names if name not in (*vendors, *beats, *fetchers)]
-    if len(intakes) != 1 or not (vendors):
+    intakes = [
+        name for name in names if name not in (*vendors, *beats, *plain, *fetchers)
+    ]
+    if (intakes or vendors) and (len(intakes) != 1 or not (vendors)):
         raise PublishError(
-            f"{str(sources)!r} needs one intake and at least one vendor source with events in {str(events)!r}, as `make demo` does. It holds {names}"
+            f"{str(sources)!r} needs one intake and at least one vendor source with events in {str(events)!r}, as `make demo` does, or neither. It holds {names}"
         )
-    if beats and not ((events / demo.REPLAY_TOOL).is_file()):
+    if (beats or plain) and not ((events / demo.REPLAY_TOOL).is_file()):
         raise PublishError(
-            f"Beats source(s) {beats} need {str(events / demo.REPLAY_TOOL)!r} to replay them"
+            f"Beats and JSON source(s) {[*beats, *plain]} need {str(events / demo.REPLAY_TOOL)!r} to replay them"
         )
-    return {"beats": beats, "fetcher": fetchers, "intake": intakes, "vendor": vendors}
+    return {
+        "beats": beats,
+        "fetcher": fetchers,
+        "intake": intakes,
+        "json": plain,
+        "vendor": vendors,
+    }
+
+
+def _json_source(*, path: Path) -> bool:
+    """Whether a source file is a JSON source, a receiver match with no transform, which lands what its pack replays as sent."""
+    text = path.read_text(encoding="utf-8")
+    return bool(_MATCH_KEY.search(text)) and not (_TRANSFORM_KEY.search(text))
 
 
 def demo_instances(*, roles: Mapping[str, Sequence[str]]) -> dict[str, list[str]]:
@@ -657,7 +678,8 @@ def demo_overlay(
             )
         )
         demo_model.setdefault("volumes", {})[DEMO_FEED_VOLUME] = {}
-    if roles["beats"]:
+    replays = [*roles["beats"], *roles["json"]]
+    if replays:
         services["demo-beats"] = {
             **helper,
             "depends_on": {
@@ -672,7 +694,7 @@ def demo_overlay(
                 "--target",
                 RECEIVER_INGEST_URL,
                 "--sources",
-                ",".join(roles["beats"]),
+                ",".join(replays),
                 "--loop",
                 "--duration",
                 str(demo.STREAM_SECONDS),

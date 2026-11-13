@@ -1,0 +1,32 @@
+{
+  "archive": {
+    "max_megabytes": 200,
+    "retention_minutes": 15,
+    "sources": [],
+    "sweep_minutes": 5
+  },
+  "console": {
+    "dashboards": [
+      "demo-telco-bgp-paths",
+      "demo-telco-bgp-peers",
+      "demo-telco-cells",
+      "demo-telco-probes",
+      "demo-telco-rfo"
+    ],
+    "searches": [
+      "demo-telco-cell-day",
+      "demo-telco-failures-by-cause",
+      "demo-telco-prefix-history"
+    ]
+  },
+  "hunts": [
+    "demo-telco-peer-withdrawals"
+  ],
+  "sources": [
+    "bgp-updates",
+    "core-probes",
+    "ran-kpis"
+  ],
+  "title": "Telco",
+  "use_case": "/solutions/telco/"
+}

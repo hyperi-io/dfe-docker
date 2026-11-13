@@ -1,0 +1,78 @@
+{
+  "name": "demo-telco-cells",
+  "tags": [
+    "demo"
+  ],
+  "tiles": [
+    {
+      "config": {
+        "configType": "sql",
+        "displayType": "table",
+        "name": "Cells, faulted first",
+        "source": "ran-kpis",
+        "sqlTemplate": "SELECT f.cell AS \"Cell\",\n       f.site AS \"Site\",\n       round(min(f.rsrp), 1) AS \"Worst RSRP dBm\",\n       round(any(f.rsrp_base), 1) AS \"Normal RSRP dBm\",\n       round(100 * min(f.rate_ratio)) AS \"Lowest Mbps per user, % of normal\",\n       countIf(f.rsrp_drop) AS \"RSRP drop periods\",\n       countIf(f.collapse) AS \"Collapse periods\",\n       any(g.missing) AS \"Silent periods\",\n       multiIf(\"Silent periods\" > 0, 'silent', \"Collapse periods\" > 0, 'throughput collapse', \"RSRP drop periods\" > 0, 'RSRP drop', 'normal') AS \"State\"\nFROM (SELECT k._timestamp AS _timestamp, k.cell AS cell, k.site AS site, k.rsrp AS rsrp, b.rsrp_base AS rsrp_base, k.users AS users,\n         k.dl / greatest(k.users, 1) / b.rate_base AS rate_ratio,\n         k.rsrp < b.rsrp_base - 8 AS rsrp_drop,\n         k.dl / greatest(k.users, 1) < 0.25 * b.rate_base AND k.rsrp >= b.rsrp_base - 3 AS collapse\n  FROM (SELECT _timestamp, toString(_json.cell) AS cell, toString(_json.site) AS site, toFloat64(_json.rsrp_dbm) AS rsrp, toFloat64(_json.dl_throughput_mbps) AS dl, toFloat64(_json.active_users) AS users FROM dfe.`ran-kpis` WHERE $__timeFilter(_timestamp)) AS k\n  INNER JOIN (SELECT toString(_json.cell) AS cell, median(toFloat64(_json.rsrp_dbm)) AS rsrp_base, median(toFloat64(_json.dl_throughput_mbps) / greatest(toFloat64(_json.active_users), 1)) AS rate_base FROM dfe.`ran-kpis` GROUP BY cell) AS b ON k.cell = b.cell) AS f\nLEFT JOIN (SELECT cell, toUInt64(sum(dateDiff('second', started, ended)) / 300) AS missing FROM (SELECT cell, site, previous + INTERVAL 5 MINUTE AS started, _timestamp AS ended\n  FROM (SELECT _timestamp, toString(_json.cell) AS cell, toString(_json.site) AS site,\n               lagInFrame(_timestamp, 1, toDateTime64(0, 3, 'UTC')) OVER (PARTITION BY cell ORDER BY _timestamp ROWS BETWEEN 1 PRECEDING AND CURRENT ROW) AS previous\n        FROM dfe.`ran-kpis` WHERE $__timeFilter(_timestamp))\n  WHERE toUnixTimestamp(previous) > 0 AND dateDiff('second', previous, _timestamp) > 360) GROUP BY cell) AS g ON f.cell = g.cell\nGROUP BY f.cell, f.site\nORDER BY \"Silent periods\" + \"Collapse periods\" + \"RSRP drop periods\" DESC, \"Worst RSRP dBm\"\nLIMIT 20"
+      },
+      "h": 10,
+      "id": "cells",
+      "w": 24,
+      "x": 0,
+      "y": 0
+    },
+    {
+      "config": {
+        "configType": "sql",
+        "displayType": "line",
+        "name": "Downlink throughput (Mbps), faulted cells",
+        "source": "ran-kpis",
+        "sqlTemplate": "SELECT $__timeInterval(_timestamp) AS ts,\n       toString(_json.cell) AS cell,\n       avg(toFloat64(_json.dl_throughput_mbps)) AS \"Mbps\"\nFROM dfe.`ran-kpis`\nWHERE $__timeFilter(_timestamp) AND toString(_json.cell) IN (\n  SELECT cell FROM (SELECT k._timestamp AS _timestamp, k.cell AS cell, k.site AS site, k.rsrp AS rsrp, b.rsrp_base AS rsrp_base, k.users AS users,\n         k.dl / greatest(k.users, 1) / b.rate_base AS rate_ratio,\n         k.rsrp < b.rsrp_base - 8 AS rsrp_drop,\n         k.dl / greatest(k.users, 1) < 0.25 * b.rate_base AND k.rsrp >= b.rsrp_base - 3 AS collapse\n  FROM (SELECT _timestamp, toString(_json.cell) AS cell, toString(_json.site) AS site, toFloat64(_json.rsrp_dbm) AS rsrp, toFloat64(_json.dl_throughput_mbps) AS dl, toFloat64(_json.active_users) AS users FROM dfe.`ran-kpis` WHERE $__timeFilter(_timestamp)) AS k\n  INNER JOIN (SELECT toString(_json.cell) AS cell, median(toFloat64(_json.rsrp_dbm)) AS rsrp_base, median(toFloat64(_json.dl_throughput_mbps) / greatest(toFloat64(_json.active_users), 1)) AS rate_base FROM dfe.`ran-kpis` GROUP BY cell) AS b ON k.cell = b.cell) WHERE rsrp_drop OR collapse UNION ALL SELECT cell FROM (SELECT cell, site, previous + INTERVAL 5 MINUTE AS started, _timestamp AS ended\n  FROM (SELECT _timestamp, toString(_json.cell) AS cell, toString(_json.site) AS site,\n               lagInFrame(_timestamp, 1, toDateTime64(0, 3, 'UTC')) OVER (PARTITION BY cell ORDER BY _timestamp ROWS BETWEEN 1 PRECEDING AND CURRENT ROW) AS previous\n        FROM dfe.`ran-kpis` WHERE $__timeFilter(_timestamp))\n  WHERE toUnixTimestamp(previous) > 0 AND dateDiff('second', previous, _timestamp) > 360))\nGROUP BY ts, cell\nORDER BY ts"
+      },
+      "h": 7,
+      "id": "dl",
+      "w": 12,
+      "x": 0,
+      "y": 10
+    },
+    {
+      "config": {
+        "configType": "sql",
+        "displayType": "line",
+        "name": "Average RSRP (dBm), faulted cells",
+        "source": "ran-kpis",
+        "sqlTemplate": "SELECT $__timeInterval(_timestamp) AS ts,\n       toString(_json.cell) AS cell,\n       avg(toFloat64(_json.rsrp_dbm)) AS \"dBm\"\nFROM dfe.`ran-kpis`\nWHERE $__timeFilter(_timestamp) AND toString(_json.cell) IN (\n  SELECT cell FROM (SELECT k._timestamp AS _timestamp, k.cell AS cell, k.site AS site, k.rsrp AS rsrp, b.rsrp_base AS rsrp_base, k.users AS users,\n         k.dl / greatest(k.users, 1) / b.rate_base AS rate_ratio,\n         k.rsrp < b.rsrp_base - 8 AS rsrp_drop,\n         k.dl / greatest(k.users, 1) < 0.25 * b.rate_base AND k.rsrp >= b.rsrp_base - 3 AS collapse\n  FROM (SELECT _timestamp, toString(_json.cell) AS cell, toString(_json.site) AS site, toFloat64(_json.rsrp_dbm) AS rsrp, toFloat64(_json.dl_throughput_mbps) AS dl, toFloat64(_json.active_users) AS users FROM dfe.`ran-kpis` WHERE $__timeFilter(_timestamp)) AS k\n  INNER JOIN (SELECT toString(_json.cell) AS cell, median(toFloat64(_json.rsrp_dbm)) AS rsrp_base, median(toFloat64(_json.dl_throughput_mbps) / greatest(toFloat64(_json.active_users), 1)) AS rate_base FROM dfe.`ran-kpis` GROUP BY cell) AS b ON k.cell = b.cell) WHERE rsrp_drop OR collapse UNION ALL SELECT cell FROM (SELECT cell, site, previous + INTERVAL 5 MINUTE AS started, _timestamp AS ended\n  FROM (SELECT _timestamp, toString(_json.cell) AS cell, toString(_json.site) AS site,\n               lagInFrame(_timestamp, 1, toDateTime64(0, 3, 'UTC')) OVER (PARTITION BY cell ORDER BY _timestamp ROWS BETWEEN 1 PRECEDING AND CURRENT ROW) AS previous\n        FROM dfe.`ran-kpis` WHERE $__timeFilter(_timestamp))\n  WHERE toUnixTimestamp(previous) > 0 AND dateDiff('second', previous, _timestamp) > 360))\nGROUP BY ts, cell\nORDER BY ts"
+      },
+      "h": 7,
+      "id": "rsrp",
+      "w": 12,
+      "x": 12,
+      "y": 10
+    },
+    {
+      "config": {
+        "configType": "sql",
+        "displayType": "line",
+        "name": "Downlink PRB utilisation (%) by site",
+        "source": "ran-kpis",
+        "sqlTemplate": "SELECT $__timeInterval(_timestamp) AS ts,\n       toString(_json.site) AS site,\n       avg(toFloat64(_json.prb_util_dl_pct)) AS \"PRB %\"\nFROM dfe.`ran-kpis`\nWHERE $__timeFilter(_timestamp)\nGROUP BY ts, site\nORDER BY ts"
+      },
+      "h": 7,
+      "id": "prb",
+      "w": 12,
+      "x": 0,
+      "y": 17
+    },
+    {
+      "config": {
+        "configType": "sql",
+        "displayType": "stacked_bar",
+        "name": "Active users by site",
+        "source": "ran-kpis",
+        "sqlTemplate": "SELECT ts, site, sum(users) AS \"users\"\nFROM (\n  SELECT $__timeInterval(_timestamp) AS ts, toString(_json.site) AS site, toString(_json.cell) AS cell, avg(toFloat64(_json.active_users)) AS users\n  FROM dfe.`ran-kpis`\n  WHERE $__timeFilter(_timestamp)\n  GROUP BY ts, site, cell)\nGROUP BY ts, site\nORDER BY ts"
+      },
+      "h": 7,
+      "id": "users",
+      "w": 12,
+      "x": 12,
+      "y": 17
+    }
+  ]
+}

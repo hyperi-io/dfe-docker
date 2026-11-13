@@ -1,0 +1,78 @@
+{
+  "name": "demo-telco-bgp-peers",
+  "tags": [
+    "demo"
+  ],
+  "tiles": [
+    {
+      "config": {
+        "configType": "sql",
+        "displayType": "table",
+        "name": "Peers by flaps, flapping first (12 hours behind, as RIPEstat publishes)",
+        "source": "bgp-updates",
+        "sqlTemplate": "SELECT concat(splitByChar('-', toString(_json.attrs.source_id))[2], ' (rrc', splitByChar('-', toString(_json.attrs.source_id))[1], ')') AS \"Peer\",\n       anyIf(dynamicElement(_json.attrs.path, 'Array(Nullable(Int64))')[1], toString(_json.type) = 'A') AS \"Peer AS\",\n       countIf(toString(_json.type) = 'W') AS \"Withdrawals\",\n       countIf(toString(_json.type) = 'A') AS \"Announcements\",\n       least(\"Withdrawals\", \"Announcements\") AS \"Flaps\",\n       uniqExact(toString(_json.attrs.target_prefix)) AS \"Prefixes\"\nFROM dfe.`bgp-updates`\nWHERE $__timeFilter(_timestamp + INTERVAL 12 HOUR)\nGROUP BY 1\nORDER BY \"Flaps\" DESC, \"Withdrawals\" DESC\nLIMIT 15"
+      },
+      "h": 9,
+      "id": "peers",
+      "w": 14,
+      "x": 0,
+      "y": 0
+    },
+    {
+      "config": {
+        "configType": "sql",
+        "displayType": "stacked_bar",
+        "name": "Announcements and withdrawals per minute",
+        "source": "bgp-updates",
+        "sqlTemplate": "SELECT $__timeInterval(_timestamp + INTERVAL 12 HOUR) AS ts,\n       if(toString(_json.type) = 'W', 'withdrawal', 'announcement') AS kind,\n       count() * 60 / $__interval_s AS \"updates/min\"\nFROM dfe.`bgp-updates`\nWHERE $__timeFilter(_timestamp + INTERVAL 12 HOUR)\nGROUP BY ts, kind\nORDER BY ts"
+      },
+      "h": 9,
+      "id": "updates",
+      "w": 10,
+      "x": 14,
+      "y": 0
+    },
+    {
+      "config": {
+        "configType": "sql",
+        "displayType": "line",
+        "name": "Withdrawals per minute, the five busiest peers",
+        "source": "bgp-updates",
+        "sqlTemplate": "SELECT $__timeInterval(_timestamp + INTERVAL 12 HOUR) AS ts,\n       concat(splitByChar('-', toString(_json.attrs.source_id))[2], ' (rrc', splitByChar('-', toString(_json.attrs.source_id))[1], ')') AS peer,\n       count() * 60 / $__interval_s AS \"withdrawals/min\"\nFROM dfe.`bgp-updates`\nWHERE $__timeFilter(_timestamp + INTERVAL 12 HOUR) AND toString(_json.type) = 'W' AND toString(_json.attrs.source_id) IN (\n  SELECT toString(_json.attrs.source_id) FROM dfe.`bgp-updates`\n  WHERE $__timeFilter(_timestamp + INTERVAL 12 HOUR) AND toString(_json.type) = 'W'\n  GROUP BY 1 ORDER BY count() DESC LIMIT 5)\nGROUP BY ts, peer\nORDER BY ts"
+      },
+      "h": 7,
+      "id": "flappers",
+      "w": 14,
+      "x": 0,
+      "y": 9
+    },
+    {
+      "config": {
+        "configType": "sql",
+        "displayType": "table",
+        "name": "Peers over 20 withdrawals a minute, from hunt demo-telco-peer-withdrawals",
+        "source": "bgp-updates",
+        "sqlTemplate": "SELECT toStartOfMinute(_timestamp + INTERVAL 12 HOUR) AS \"Minute\",\n       concat(splitByChar('-', toString(_json.attrs.source_id))[2], ' (rrc', splitByChar('-', toString(_json.attrs.source_id))[1], ')') AS \"Peer\",\n       count() AS \"Withdrawals\"\nFROM dfe.detection\nWHERE hunt_name = 'demo-telco-peer-withdrawals' AND $__timeFilter(_timestamp + INTERVAL 12 HOUR)\nGROUP BY 1, 2\nHAVING \"Withdrawals\" > 20\nORDER BY 1 DESC, 3 DESC\nLIMIT 20"
+      },
+      "h": 7,
+      "id": "hunt",
+      "w": 10,
+      "x": 14,
+      "y": 9
+    },
+    {
+      "config": {
+        "configType": "sql",
+        "displayType": "table",
+        "name": "Prefixes watched",
+        "source": "bgp-updates",
+        "sqlTemplate": "SELECT toString(_json.attrs.target_prefix) AS \"Prefix\",\n       anyIf(dynamicElement(_json.attrs.path, 'Array(Nullable(Int64))')[-1], toString(_json.type) = 'A') AS \"Origin AS\",\n       countIf(toString(_json.type) = 'A') AS \"Announcements\",\n       countIf(toString(_json.type) = 'W') AS \"Withdrawals\",\n       uniqExact(toString(_json.attrs.source_id)) AS \"Peers\"\nFROM dfe.`bgp-updates`\nWHERE $__timeFilter(_timestamp + INTERVAL 12 HOUR)\nGROUP BY 1\nORDER BY \"Announcements\" + \"Withdrawals\" DESC"
+      },
+      "h": 5,
+      "id": "prefixes",
+      "w": 24,
+      "x": 0,
+      "y": 16
+    }
+  ]
+}

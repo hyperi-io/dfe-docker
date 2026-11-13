@@ -1,0 +1,64 @@
+{
+  "name": "demo-telco-probes",
+  "tags": [
+    "demo"
+  ],
+  "tiles": [
+    {
+      "config": {
+        "configType": "sql",
+        "displayType": "line",
+        "name": "Failure rate (%) by procedure",
+        "source": "core-probes",
+        "sqlTemplate": "SELECT $__timeInterval(_timestamp) AS ts,\n       toString(_json.procedure) AS procedure,\n       100 * countIf(toString(_json.result) = 'failure') / count() AS \"failed %\"\nFROM dfe.`core-probes`\nWHERE $__timeFilter(_timestamp)\nGROUP BY ts, procedure\nORDER BY ts"
+      },
+      "h": 8,
+      "id": "rate",
+      "w": 14,
+      "x": 0,
+      "y": 0
+    },
+    {
+      "config": {
+        "configType": "sql",
+        "displayType": "table",
+        "name": "Failures by procedure and cause",
+        "source": "core-probes",
+        "sqlTemplate": "SELECT p.procedure AS \"Procedure\",\n       p.code AS \"Cause code\",\n       p.cause AS \"Cause\",\n       count() AS \"Failures\",\n       round(100 * count() / any(t.attempts), 1) AS \"Of attempts %\",\n       round(quantile(0.95)(p.latency)) AS \"p95 ms\"\nFROM (SELECT toString(_json.procedure) AS procedure, toString(_json.cause_code) AS code, toString(_json.cause) AS cause, toFloat64(_json.latency_ms) AS latency FROM dfe.`core-probes` WHERE $__timeFilter(_timestamp) AND toString(_json.result) = 'failure') AS p\nINNER JOIN (SELECT toString(_json.procedure) AS procedure, count() AS attempts FROM dfe.`core-probes` WHERE $__timeFilter(_timestamp) GROUP BY procedure) AS t ON p.procedure = t.procedure\nGROUP BY 1, 2, 3\nORDER BY 4 DESC\nLIMIT 15"
+      },
+      "h": 8,
+      "id": "causes",
+      "w": 10,
+      "x": 14,
+      "y": 0
+    },
+    {
+      "config": {
+        "configType": "sql",
+        "displayType": "line",
+        "name": "p95 latency (ms) by interface",
+        "source": "core-probes",
+        "sqlTemplate": "SELECT $__timeInterval(_timestamp) AS ts,\n       toString(_json.interface) AS interface,\n       quantile(0.95)(toFloat64(_json.latency_ms)) AS \"p95 ms\"\nFROM dfe.`core-probes`\nWHERE $__timeFilter(_timestamp)\nGROUP BY ts, interface\nORDER BY ts"
+      },
+      "h": 7,
+      "id": "latency",
+      "w": 14,
+      "x": 0,
+      "y": 8
+    },
+    {
+      "config": {
+        "configType": "sql",
+        "displayType": "table",
+        "name": "Procedures",
+        "source": "core-probes",
+        "sqlTemplate": "SELECT toString(_json.protocol) AS \"Protocol\",\n       toString(_json.interface) AS \"Interface\",\n       toString(_json.procedure) AS \"Procedure\",\n       count() AS \"Attempts\",\n       countIf(toString(_json.result) = 'failure') AS \"Failures\",\n       round(100 * \"Failures\" / \"Attempts\", 2) AS \"Failed %\",\n       round(median(toFloat64(_json.latency_ms)), 1) AS \"Median ms\",\n       round(quantile(0.95)(toFloat64(_json.latency_ms)), 1) AS \"p95 ms\"\nFROM dfe.`core-probes`\nWHERE $__timeFilter(_timestamp)\nGROUP BY 1, 2, 3\nORDER BY \"Failed %\" DESC"
+      },
+      "h": 7,
+      "id": "procedures",
+      "w": 10,
+      "x": 14,
+      "y": 8
+    }
+  ]
+}

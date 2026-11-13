@@ -1,0 +1,11 @@
+{
+  "name": "demo-telco-cell-day",
+  "orderBy": "_timestamp DESC",
+  "select": "_timestamp, toString(_json.cell) AS cell, toFloat64(_json.rsrp_dbm) AS rsrp_dbm, toFloat64(_json.dl_throughput_mbps) AS dl_mbps, toFloat64(_json.ul_throughput_mbps) AS ul_mbps, toFloat64(_json.prb_util_dl_pct) AS prb_pct, toInt64(_json.active_users) AS users",
+  "source": "ran-kpis",
+  "tags": [
+    "demo"
+  ],
+  "where": "toString(_json.cell) = 'NTH03-B'",
+  "whereLanguage": "sql"
+}

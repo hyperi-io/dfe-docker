@@ -35,6 +35,7 @@ ROLES = {
     "beats": [],
     "fetcher": ["releases"],
     "intake": ["demo-syslog"],
+    "json": [],
     "vendor": ["cisco-asa", "fortinet"],
 }
 
@@ -313,7 +314,8 @@ class TestDemoRoles:
         assert roles == {
             "beats": sorted(body["source"] for body in loaded.beats),
             "fetcher": sorted(body["source"] for body in loaded.fetchers),
-            "intake": [loaded.intake["source"]],
+            "intake": [] if loaded.intake is None else [loaded.intake["source"]],
+            "json": sorted(body["source"] for body in loaded.json),
             "vendor": sorted(body["source"] for body in loaded.vendors),
         }
 
@@ -326,6 +328,7 @@ class TestDemoRoles:
                     "beats": ["okta"],
                     "fetcher": [],
                     "intake": ["intake"],
+                    "json": [],
                     "vendor": ["cisco-asa"],
                 },
             ),
@@ -399,9 +402,64 @@ class TestDemoRoles:
             events=tmp_path / "events", sources=tmp_path / "sources"
         )
 
-        assert roles == {"beats": [], "fetcher": [], "intake": [], "vendor": []}
+        assert roles == {
+            "beats": [],
+            "fetcher": [],
+            "intake": [],
+            "json": [],
+            "vendor": [],
+        }
         assert publish_compose.demo_instances(roles=roles) == {}
         assert publish_compose.demo_hosted(roles=roles) == ""
+
+    @pytest.mark.parametrize(
+        ("text", "expected"),
+        [
+            ("match:\n  field: kind\n", {"json": ["kpis"], "vendor": []}),
+            ("match:\n  field: kind\ntransform:\n  x: 1\n", None),
+            ("x: 1\n", None),
+        ],
+        ids=["matched-no-transform", "matched-with-transform", "unmatched"],
+    )
+    def test_a_matched_source_with_no_transform_replays_its_json_and_needs_no_intake(
+        self, expected: dict | None, tmp_path: Path, text: str
+    ) -> None:
+        (tmp_path / "sources").mkdir()
+        (tmp_path / "sources" / "kpis.yaml").write_text(text, encoding="utf-8")
+        (tmp_path / "sources" / "bgp.yaml").write_text(
+            "fetcher:\n  x: 1\n", encoding="utf-8"
+        )
+        (tmp_path / "events" / "kpis").mkdir(parents=True)
+        (tmp_path / "events" / "generate.py").write_text("", encoding="utf-8")
+
+        if expected is None:
+            # Anything else with events is a vendor, which needs an intake to detect it
+            with pytest.raises(publish_compose.PublishError, match="needs one intake"):
+                publish_compose.demo_roles(
+                    events=tmp_path / "events", sources=tmp_path / "sources"
+                )
+            return
+        roles = publish_compose.demo_roles(
+            events=tmp_path / "events", sources=tmp_path / "sources"
+        )
+
+        assert roles == {"beats": [], "fetcher": ["bgp"], "intake": [], **expected}
+        assert publish_compose.demo_instances(roles=roles) == {}
+        assert publish_compose.demo_hosted(roles=roles) == ""
+
+    def test_refuses_json_sources_with_no_replay_tool(self, tmp_path: Path) -> None:
+        (tmp_path / "sources").mkdir()
+        (tmp_path / "sources" / "kpis.yaml").write_text(
+            "match:\n  field: kind\n", encoding="utf-8"
+        )
+        (tmp_path / "events" / "kpis").mkdir(parents=True)
+
+        with pytest.raises(
+            publish_compose.PublishError, match=r"\['kpis'\].*generate.py"
+        ):
+            publish_compose.demo_roles(
+                events=tmp_path / "events", sources=tmp_path / "sources"
+            )
 
 
 class TestDemoFile:
@@ -541,7 +599,7 @@ class TestDemoOverlay:
         stack = _stack(
             [name for name in DEMO_STACK if name != "dfe-transform-elastic-demo-syslog"]
         )
-        roles = {"beats": [], "fetcher": [], "intake": [], "vendor": []}
+        roles = {"beats": [], "fetcher": [], "intake": [], "json": [], "vendor": []}
 
         model = publish_compose.demo_overlay(
             archive={**ARCHIVE, "sources": []},
@@ -616,6 +674,45 @@ class TestDemoOverlay:
         assert publish_compose.demo_instances(roles=roles) == {
             "dfe-transform-elastic": ["demo-syslog", "crowdstrike", "okta"]
         }
+
+    def test_a_pack_of_json_sources_replays_them_with_no_transform_or_stream(
+        self,
+    ) -> None:
+        stack = _stack(
+            [name for name in DEMO_STACK if name != "dfe-transform-elastic-demo-syslog"]
+        )
+        roles = {
+            "beats": [],
+            "fetcher": ["bgp-updates"],
+            "intake": [],
+            "json": ["core-probes", "ran-kpis"],
+            "vendor": [],
+        }
+
+        model = publish_compose.demo_overlay(
+            archive={**ARCHIVE, "sources": []},
+            image="i",
+            model=stack,
+            pack="telco",
+            roles=roles,
+            stream=["scripts/replay_syslog.py", "tcp", "20"],
+        )
+
+        services = model["services"]
+        replay = services["demo-beats"]["entrypoint"]
+        assert replay[2:4] == [
+            "/opt/dfe-docker/resources/demo-telco/events/generate.py",
+            "replay",
+        ]
+        assert replay[replay.index("--sources") + 1] == "core-probes,ran-kpis"
+        for absent in ("demo-feed", "demo-stream", "demo-prune"):
+            assert absent not in services
+        assert "demo-sources" in services["dfe-fetcher"]["depends_on"]
+        assert publish_compose.demo_instances(roles=roles) == {}
+        assert (
+            services["dfe-engine"]["environment"][publish_compose.HOSTED_INSTANCES_KEY]
+            == ""
+        )
 
     def test_refuses_a_stack_missing_a_beats_transform(self) -> None:
         with pytest.raises(publish_compose.PublishError, match="okta"):

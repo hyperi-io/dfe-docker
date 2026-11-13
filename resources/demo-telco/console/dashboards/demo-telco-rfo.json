@@ -1,0 +1,36 @@
+{
+  "name": "demo-telco-rfo",
+  "tags": [
+    "demo"
+  ],
+  "tiles": [
+    {
+      "config": {
+        "configType": "sql",
+        "displayType": "table",
+        "name": "RFO timeline, from the cell counters and core probes",
+        "source": "ran-kpis",
+        "sqlTemplate": "SELECT started AS \"Started\",\n       ended AS \"Ended\",\n       dateDiff('minute', started, ended) AS \"Minutes\",\n       what AS \"What\",\n       place AS \"Where\",\n       evidence AS \"Evidence\"\nFROM (\n  SELECT min(_timestamp) AS started, max(_timestamp) + INTERVAL 5 MINUTE AS ended, 'RSRP drop' AS what, concat(cell, ' on ', site) AS place,\n         concat('RSRP down to ', toString(round(min(rsrp), 1)), ' dBm from a normal ', toString(round(any(rsrp_base), 1))) AS evidence\n  FROM (SELECT k._timestamp AS _timestamp, k.cell AS cell, k.site AS site, k.rsrp AS rsrp, b.rsrp_base AS rsrp_base, k.users AS users,\n         k.dl / greatest(k.users, 1) / b.rate_base AS rate_ratio,\n         k.rsrp < b.rsrp_base - 8 AS rsrp_drop,\n         k.dl / greatest(k.users, 1) < 0.25 * b.rate_base AND k.rsrp >= b.rsrp_base - 3 AS collapse\n  FROM (SELECT _timestamp, toString(_json.cell) AS cell, toString(_json.site) AS site, toFloat64(_json.rsrp_dbm) AS rsrp, toFloat64(_json.dl_throughput_mbps) AS dl, toFloat64(_json.active_users) AS users FROM dfe.`ran-kpis` WHERE $__timeFilter(_timestamp)) AS k\n  INNER JOIN (SELECT toString(_json.cell) AS cell, median(toFloat64(_json.rsrp_dbm)) AS rsrp_base, median(toFloat64(_json.dl_throughput_mbps) / greatest(toFloat64(_json.active_users), 1)) AS rate_base FROM dfe.`ran-kpis` GROUP BY cell) AS b ON k.cell = b.cell)\n  WHERE rsrp_drop\n  GROUP BY cell, site\n  UNION ALL\n  SELECT min(_timestamp), max(_timestamp) + INTERVAL 5 MINUTE, 'Throughput collapse', concat(cell, ' on ', site),\n         concat('Mbps per user down to ', toString(round(100 * min(rate_ratio))), '% of normal with RSRP normal and ', toString(round(avg(users))), ' users still attached')\n  FROM (SELECT k._timestamp AS _timestamp, k.cell AS cell, k.site AS site, k.rsrp AS rsrp, b.rsrp_base AS rsrp_base, k.users AS users,\n         k.dl / greatest(k.users, 1) / b.rate_base AS rate_ratio,\n         k.rsrp < b.rsrp_base - 8 AS rsrp_drop,\n         k.dl / greatest(k.users, 1) < 0.25 * b.rate_base AND k.rsrp >= b.rsrp_base - 3 AS collapse\n  FROM (SELECT _timestamp, toString(_json.cell) AS cell, toString(_json.site) AS site, toFloat64(_json.rsrp_dbm) AS rsrp, toFloat64(_json.dl_throughput_mbps) AS dl, toFloat64(_json.active_users) AS users FROM dfe.`ran-kpis` WHERE $__timeFilter(_timestamp)) AS k\n  INNER JOIN (SELECT toString(_json.cell) AS cell, median(toFloat64(_json.rsrp_dbm)) AS rsrp_base, median(toFloat64(_json.dl_throughput_mbps) / greatest(toFloat64(_json.active_users), 1)) AS rate_base FROM dfe.`ran-kpis` GROUP BY cell) AS b ON k.cell = b.cell)\n  WHERE collapse\n  GROUP BY cell, site\n  UNION ALL\n  SELECT started, ended, 'Cell silent', concat(cell, ' on ', site), 'no PM counters reported'\n  FROM (SELECT cell, site, previous + INTERVAL 5 MINUTE AS started, _timestamp AS ended\n  FROM (SELECT _timestamp, toString(_json.cell) AS cell, toString(_json.site) AS site,\n               lagInFrame(_timestamp, 1, toDateTime64(0, 3, 'UTC')) OVER (PARTITION BY cell ORDER BY _timestamp ROWS BETWEEN 1 PRECEDING AND CURRENT ROW) AS previous\n        FROM dfe.`ran-kpis` WHERE $__timeFilter(_timestamp))\n  WHERE toUnixTimestamp(previous) > 0 AND dateDiff('second', previous, _timestamp) > 360)\n  UNION ALL\n  SELECT min(minute), max(minute) + INTERVAL 1 MINUTE, concat(procedure, ' failure burst'), concat('core, ', any(interface)),\n         concat(toString(sum(failures)), ' of ', toString(sum(attempts)), ' attempts failed, mostly ', any(cause), ', p95 up to ', toString(round(max(p95))), ' ms')\n  FROM (SELECT toStartOfMinute(_timestamp) AS minute, toString(_json.procedure) AS procedure, toString(_json.interface) AS interface,\n         count() AS attempts, countIf(toString(_json.result) = 'failure') AS failures, topKIf(1)(toString(_json.cause), toString(_json.result) = 'failure')[1] AS cause, quantile(0.95)(toFloat64(_json.latency_ms)) AS p95\n  FROM dfe.`core-probes` WHERE $__timeFilter(_timestamp)\n  GROUP BY minute, procedure, interface\n  HAVING attempts >= 5 AND failures > 0.25 * attempts)\n  GROUP BY procedure)\nORDER BY started"
+      },
+      "h": 8,
+      "id": "timeline",
+      "w": 24,
+      "x": 0,
+      "y": 0
+    },
+    {
+      "config": {
+        "configType": "sql",
+        "displayType": "stacked_bar",
+        "name": "Fault signals over time",
+        "source": "ran-kpis",
+        "sqlTemplate": "SELECT ts, signal, count() AS \"signals\"\nFROM (\n  SELECT $__timeInterval(_timestamp) AS ts, if(rsrp_drop, 'RSRP drop', 'Throughput collapse') AS signal FROM (SELECT k._timestamp AS _timestamp, k.cell AS cell, k.site AS site, k.rsrp AS rsrp, b.rsrp_base AS rsrp_base, k.users AS users,\n         k.dl / greatest(k.users, 1) / b.rate_base AS rate_ratio,\n         k.rsrp < b.rsrp_base - 8 AS rsrp_drop,\n         k.dl / greatest(k.users, 1) < 0.25 * b.rate_base AND k.rsrp >= b.rsrp_base - 3 AS collapse\n  FROM (SELECT _timestamp, toString(_json.cell) AS cell, toString(_json.site) AS site, toFloat64(_json.rsrp_dbm) AS rsrp, toFloat64(_json.dl_throughput_mbps) AS dl, toFloat64(_json.active_users) AS users FROM dfe.`ran-kpis` WHERE $__timeFilter(_timestamp)) AS k\n  INNER JOIN (SELECT toString(_json.cell) AS cell, median(toFloat64(_json.rsrp_dbm)) AS rsrp_base, median(toFloat64(_json.dl_throughput_mbps) / greatest(toFloat64(_json.active_users), 1)) AS rate_base FROM dfe.`ran-kpis` GROUP BY cell) AS b ON k.cell = b.cell) WHERE rsrp_drop OR collapse\n  UNION ALL\n  SELECT $__timeInterval(started), 'Cell silent' FROM (SELECT cell, site, previous + INTERVAL 5 MINUTE AS started, _timestamp AS ended\n  FROM (SELECT _timestamp, toString(_json.cell) AS cell, toString(_json.site) AS site,\n               lagInFrame(_timestamp, 1, toDateTime64(0, 3, 'UTC')) OVER (PARTITION BY cell ORDER BY _timestamp ROWS BETWEEN 1 PRECEDING AND CURRENT ROW) AS previous\n        FROM dfe.`ran-kpis` WHERE $__timeFilter(_timestamp))\n  WHERE toUnixTimestamp(previous) > 0 AND dateDiff('second', previous, _timestamp) > 360)\n  UNION ALL\n  SELECT $__timeInterval(minute), 'Probe failure burst' FROM (SELECT toStartOfMinute(_timestamp) AS minute, toString(_json.procedure) AS procedure, toString(_json.interface) AS interface,\n         count() AS attempts, countIf(toString(_json.result) = 'failure') AS failures, topKIf(1)(toString(_json.cause), toString(_json.result) = 'failure')[1] AS cause, quantile(0.95)(toFloat64(_json.latency_ms)) AS p95\n  FROM dfe.`core-probes` WHERE $__timeFilter(_timestamp)\n  GROUP BY minute, procedure, interface\n  HAVING attempts >= 5 AND failures > 0.25 * attempts))\nGROUP BY ts, signal\nORDER BY ts"
+      },
+      "h": 7,
+      "id": "signals",
+      "w": 24,
+      "x": 0,
+      "y": 8
+    }
+  ]
+}
