@@ -7,10 +7,11 @@
 #  License:      BUSL-1.1
 #  Copyright:    (c) 2026 HYPERI PTY LIMITED
 
-"""Write the two compose files a release publishes, so a host with only Docker runs the stack with one command.
+"""Write the compose files a release publishes, so a host with only Docker runs the stack, the demo or a demo pack with one command.
 
   docker compose -f oci://ghcr.io/hyperi-io/dfe-docker:compose up -d
   docker compose -f oci://ghcr.io/hyperi-io/dfe-docker:demo up -d
+  docker compose -f oci://ghcr.io/hyperi-io/dfe-docker:demo-<pack> up -d
 
 Each is generated, never edited. The tree the dfe-docker image carries is copied into a scratch folder, set up there by scripts/installer.py exactly as the image's `init` sets up a folder, and `docker compose config` resolves what a plain `docker compose up` starts in it. That model is then made publishable:
 
@@ -20,6 +21,8 @@ Each is generated, never edited. The tree the dfe-docker image carries is copied
 - the admin's issued password is FIRST_LOGIN_PASSWORD, the one value the file names on purpose, which the engine makes its owner replace at first login.
 
 The stack file is project `dfe`. The demo file is that model with the intake's transform instance declared, its own project `dfe-demo` and containers prefixed `demo-`, plus the demo overlay: one-shots that seed its sources and console through scripts/demo_seed.py, the syslog stream `make demo` runs and the archive pruner. dfe-receiver, dfe-fetcher and the instance start once the sources exist. Each file tells the engine which per-source instances it runs (DFE_ENGINE_DEPLOYMENT_HOSTED_INSTANCES), none for the stack file, so a source needing any other is refused at save. secrets-init and the demo's helpers run the dfe-docker image --image names.
+
+`--pack <name>` writes dfe-demo-<name>.yaml alone, the same overlay seeded from resources/demo-<name>: project `dfe-demo-<name>`, containers prefixed `demo-<name>-`, published as `demo-<name>`. A pack with no vendor source gets no syslog stream or intake transform, and one with no archived source gets no pruner. A pack's Beats and JSON sources replay through demo-beats, which runs the pack's own events/generate.py `replay` at the receiver's /ingest.
 
 `--check FILE...` reads published files and exits 1 on any bind mount, env_file, profile, interpolation, literal secret or port off 127.0.0.1, and with `--require-digests` on any image not pinned by digest.
 
@@ -39,6 +42,7 @@ import subprocess
 import sys
 import tempfile
 from collections.abc import Callable, Mapping, Sequence
+from dataclasses import dataclass
 from pathlib import Path
 
 # Bytecode for the repo modules imported below goes to .tmp/pycache, as it does under make
@@ -50,6 +54,7 @@ import installer  # noqa: E402
 import instances  # noqa: E402
 import stack  # noqa: E402
 from _common import (  # noqa: E402
+    DEMO_PACK_NAME,
     ENGINE_COMPONENT,
     FETCHER_SERVICE,
     FIRST_LOGIN_PASSWORD,
@@ -59,20 +64,23 @@ from _common import (  # noqa: E402
     REPO_ROOT,
     _parse_dotenv,
     _print,
+    _rel_path,
+    demo_pack_dir,
+    demo_pack_names,
+    demo_pack_tag,
     write_dotenv,
 )
 
 STACK_PROJECT = "dfe"
-DEMO_PROJECT = "dfe-demo"
-DEMO_CONTAINER_PREFIX = "demo-"
 STACK_FILE = "dfe.yaml"
-DEMO_FILE = "dfe-demo.yaml"
 DEFAULT_IMAGE = installer.DEFAULT_IMAGE
 LOOPBACK = "127.0.0.1"
 ADMIN_PASSWORD_KEY = "DFE_ENGINE_AUTH_LOCAL_ADMIN_PASSWORD"
 BREAKGLASS_PASSWORD_KEY = "DFE_ENGINE_AUTH_BREAKGLASS_PASSWORD"
 ENGINE_SERVICE = "dfe-engine"
 RECEIVER_SERVICE = "dfe-receiver"
+# The receiver's HTTP ingest on the stack's network, which a pack's Beats replay posts to
+RECEIVER_INGEST_URL = f"http://{RECEIVER_SERVICE}:8080/ingest"
 # Where the engine writes env files and instance indexes for a checkout's make to read, which no published install has
 APP_ENV_DIR_KEY = "DFE_ENGINE_DEPLOYMENT_APP_ENV_DIR"
 # The per-source instances a published file declares a container for, which the engine accepts a source for and refuses any other
@@ -98,6 +106,8 @@ TRANSFORM_ELASTIC_CONTRACT = "contract-dfe-transform-elastic"
 # Where the dfe-docker image holds this tree
 IMAGE_TREE = "/opt/dfe-docker"
 DEMO_FEED_VOLUME = "demo-feed"
+# The service a pack's fetcher sources reach their captured polls at, the host of their `vars.replay_url`
+REPLAY_SERVICE = "demo-replay"
 DEMO_FEED_MOUNT = "/demo-feed"
 # A subdirectory, because staging the feed replaces it and a volume's root cannot be removed
 DEMO_FEED_SUBPATH = "feed"
@@ -126,6 +136,8 @@ PUBLIC_VALUES = {ADMIN_PASSWORD_KEY: FIRST_LOGIN_PASSWORD}
 _DOLLAR = re.compile(r"\$(\$|\{|[A-Za-z_])")
 # A demo source file's top-level fetcher mapping, which is what makes it a fetcher (demo.py _role)
 _FETCHER_KEY = re.compile(r"(?m)^fetcher:\s*$")
+_MATCH_KEY = re.compile(r"(?m)^match:\s*$")
+_TRANSFORM_KEY = re.compile(r"(?m)^transform:\s*$")
 _COMPOSE_TIMEOUT_SECONDS = 180
 # Each line the dfe-docker build context keeps, so the scratch tree holds what the image carries
 _ALLOWLIST_LINE = re.compile(r"^!(?P<path>[^*\s]+?)/?$")
@@ -145,6 +157,23 @@ type ImageCommand = Callable[..., tuple[list[str], list[str]]]
 
 class PublishError(Exception):
     """A step that could not be done, with what to do about it."""
+
+
+@dataclass(frozen=True, slots=True)
+class DemoFile:
+    """Where one demo pack is published: its file name, compose project, container prefix and moving tag."""
+
+    file: str
+    prefix: str
+    project: str
+    tag: str
+
+
+def demo_file(*, pack: str) -> DemoFile:
+    """The names the demo, or the named pack, publishes under."""
+    tag = demo_pack_tag(pack=pack)
+    project = f"{STACK_PROJECT}-{tag}"
+    return DemoFile(file=f"{project}.yaml", prefix=f"{tag}-", project=project, tag=tag)
 
 
 # ---------------------------------------------------------------------------
@@ -273,27 +302,63 @@ def file_model(*, path: Path) -> dict:
 
 
 def demo_roles(*, events: Path, sources: Path) -> dict[str, list[str]]:
-    """The demo's source names by role: each vendor has an events directory, each fetcher a fetcher mapping, and the one left is the intake."""
+    """The pack's source names by role: each fetcher has a fetcher mapping and is a replay where it has events, each other source with events replays them, as Beats when they are Beats envelopes, as JSON when its file has a match and no transform, and as a vendor's syslog otherwise, and the one left is the intake. A pack with no vendor and no intake file has no intake, and one with no source files has none of any."""
     names = sorted(path.stem for path in sources.glob("*.yaml"))
-    vendors = sorted(
-        path.name for path in events.iterdir() if path.is_dir() and path.name in names
-    )
+    if not (names):
+        return {
+            "beats": [],
+            "fetcher": [],
+            "intake": [],
+            "json": [],
+            "replay": [],
+            "vendor": [],
+        }
     fetchers = [
         name
         for name in names
         if _FETCHER_KEY.search((sources / f"{name}.yaml").read_text(encoding="utf-8"))
     ]
-    intakes = [name for name in names if name not in (*vendors, *fetchers)]
-    if len(intakes) != 1 or not (vendors):
+    held = sorted(events.iterdir()) if events.is_dir() else []
+    replayed = [path for path in held if path.is_dir() and path.name in names]
+    pushed = [path for path in replayed if path.name not in fetchers]
+    beats = [path.name for path in pushed if demo.beats_dataset(events=path)]
+    plain = [
+        path.name
+        for path in pushed
+        if path.name not in beats and _json_source(path=sources / f"{path.name}.yaml")
+    ]
+    vendors = [path.name for path in pushed if path.name not in (*beats, *plain)]
+    intakes = [
+        name for name in names if name not in (*vendors, *beats, *plain, *fetchers)
+    ]
+    if (intakes or vendors) and (len(intakes) != 1 or not (vendors)):
         raise PublishError(
-            f"{str(sources)!r} needs one intake and at least one vendor source with events in {str(events)!r}, as `make demo` does. It holds {names}"
+            f"{str(sources)!r} needs one intake and at least one vendor source with events in {str(events)!r}, as `make demo` does, or neither. It holds {names}"
         )
-    return {"fetcher": fetchers, "intake": intakes, "vendor": vendors}
+    if (beats or plain) and not ((events / demo.REPLAY_TOOL).is_file()):
+        raise PublishError(
+            f"Beats and JSON source(s) {[*beats, *plain]} need {str(events / demo.REPLAY_TOOL)!r} to replay them"
+        )
+    return {
+        "beats": beats,
+        "fetcher": fetchers,
+        "intake": intakes,
+        "json": plain,
+        "replay": [path.name for path in replayed if path.name in fetchers],
+        "vendor": vendors,
+    }
+
+
+def _json_source(*, path: Path) -> bool:
+    """Whether a source file is a JSON source, a receiver match with no transform, which lands what its pack replays as sent."""
+    text = path.read_text(encoding="utf-8")
+    return bool(_MATCH_KEY.search(text)) and not (_TRANSFORM_KEY.search(text))
 
 
 def demo_instances(*, roles: Mapping[str, Sequence[str]]) -> dict[str, list[str]]:
-    """The per-source containers the demo runs: the intake's transform. Its fetcher sources share the stack's one dfe-fetcher."""
-    return {demo.TRANSFORM_APP: list(roles["intake"])}
+    """The per-source containers the pack runs: the transforms of the intake and of each Beats source, none without either. Its fetcher sources share the stack's one dfe-fetcher."""
+    names = [*roles["intake"], *roles["beats"]]
+    return {demo.TRANSFORM_APP: names} if names else {}
 
 
 def apply_command(*, tag: str) -> str:
@@ -302,9 +367,9 @@ def apply_command(*, tag: str) -> str:
 
 
 def demo_hosted(*, roles: Mapping[str, Sequence[str]]) -> str:
-    """The engine's hosted-instance setting for the demo: the intake, and each vendor, which is created active and then set dormant."""
-    names = [*roles["intake"], *roles["vendor"]]
-    return f"{demo.TRANSFORM_APP}={','.join(names)}"
+    """The engine's hosted-instance setting for the pack: the intake, each vendor, which is created active and then set dormant, and each Beats source. Empty, as the stack file's is, for a pack with none."""
+    names = [*roles["intake"], *roles["vendor"], *roles["beats"]]
+    return f"{demo.TRANSFORM_APP}={','.join(names)}" if names else ""
 
 
 def minted_secrets(*, tree: Path) -> dict[str, str]:
@@ -490,51 +555,22 @@ def published(*, container_prefix: str, model: Mapping, name: str, tree: Path) -
     return result
 
 
-def demo_overlay(
+def _replay_services(
     *,
-    archive: Mapping,
-    image: str,
-    model: Mapping,
+    contract_image: str,
+    helper: Mapping,
     roles: Mapping[str, Sequence[str]],
+    seed_entrypoint: Sequence[str],
     stream: Sequence[str],
-) -> dict:
-    """The published stack model with the demo's helpers added and its data path held until the sources exist.
-
-    `stream` is the replay script, protocol and rate `make demo` streams with.
-    """
-    demo_model = json.loads(json.dumps(model))
-    services = demo_model["services"]
-    engine_env = services[ENGINE_SERVICE].get("environment", {})
-    engine_env[HOSTED_INSTANCES_KEY] = demo_hosted(roles=roles)
-    engine_env[APPLY_COMMAND_KEY] = apply_command(tag=PUBLISHED_DEMO_TAG)
-    contract_image = str(services[TRANSFORM_ELASTIC_CONTRACT]["image"])
-    sidecar = services[SIDECAR_SERVICE]
-    helper = {
-        "deploy": sidecar["deploy"],
-        "dns_search": sidecar.get("dns_search", ["."]),
-        "image": image,
-    }
-    seeding = {
-        IN_STACK_KEY: "true",
-        BREAKGLASS_PASSWORD_KEY: engine_env[BREAKGLASS_PASSWORD_KEY],
-    }
-    seed_entrypoint = ["python3", f"{IMAGE_TREE}/scripts/demo_seed.py"]
+) -> dict[str, dict]:
+    """The one-shot that stages the vendors' events and the stream that replays them at the receiver."""
     generator, protocol, rate = stream
     feed_mount = {
         "type": "volume",
         "source": DEMO_FEED_VOLUME,
         "target": DEMO_FEED_MOUNT,
     }
-    services["demo-sources"] = {
-        **helper,
-        "command": ["sources"],
-        "depends_on": {ENGINE_SERVICE: {"condition": "service_healthy"}},
-        "entrypoint": seed_entrypoint,
-        "environment": seeding,
-        "restart": "no",
-        "user": DEMO_UID,
-    }
-    services["demo-feed"] = {
+    feed = {
         **helper,
         "command": [
             "feed",
@@ -543,7 +579,7 @@ def demo_overlay(
             "--generator",
             generator,
         ],
-        "entrypoint": seed_entrypoint,
+        "entrypoint": list(seed_entrypoint),
         # The tag the stack's dfe-transform-elastic runs, so the replayed lines match its detector
         "environment": {
             IN_STACK_KEY: "true",
@@ -554,18 +590,6 @@ def demo_overlay(
         "restart": "no",
         "user": ROOT_UID,
         "volumes": [feed_mount],
-    }
-    services["demo-console"] = {
-        **helper,
-        "command": ["console"],
-        "depends_on": {
-            "demo-sources": {"condition": "service_completed_successfully"},
-            "dfe-hyperdx": {"condition": "service_healthy"},
-        },
-        "entrypoint": seed_entrypoint,
-        "environment": seeding,
-        "restart": "no",
-        "user": DEMO_UID,
     }
     # generator_command builds a `docker run`, and what follows its image is the command the stream runs
     marker = "<image>"
@@ -579,7 +603,7 @@ def demo_overlay(
         rate=float(rate),
         sources=list(roles["vendor"]),
     )
-    services["demo-stream"] = {
+    replayer = {
         **helper,
         "depends_on": {
             "demo-feed": {"condition": "service_completed_successfully"},
@@ -597,25 +621,133 @@ def demo_overlay(
             }
         ],
     }
-    services["demo-prune"] = {
-        **helper,
-        "depends_on": {
-            SIDECAR_SERVICE: {"condition": "service_completed_successfully"}
-        },
-        "entrypoint": demo.pruner_command(
-            archive=archive, tool=f"{IMAGE_TREE}/resources/demo/archive.py"
-        ),
-        "restart": "unless-stopped",
-        "user": DEMO_UID,
-        "volumes": [
-            {
-                "type": "volume",
-                "source": "archiver-data",
-                "target": demo.ARCHIVE_ROOT,
-            }
-        ],
+    return {"demo-feed": feed, "demo-stream": replayer}
+
+
+def demo_overlay(
+    *,
+    archive: Mapping,
+    image: str,
+    model: Mapping,
+    pack: str = "",
+    roles: Mapping[str, Sequence[str]],
+    stream: Sequence[str],
+) -> dict:
+    """The published stack model with the pack's helpers added and its data path held until the sources exist.
+
+    `pack` names the pack the helpers seed from, the demo's own when empty. `stream` is the replay script, protocol and rate `make demo` streams with.
+    """
+    demo_model = json.loads(json.dumps(model))
+    services = demo_model["services"]
+    engine_env = services[ENGINE_SERVICE].get("environment", {})
+    engine_env[HOSTED_INSTANCES_KEY] = demo_hosted(roles=roles)
+    engine_env[APPLY_COMMAND_KEY] = apply_command(tag=demo_pack_tag(pack=pack))
+    sidecar = services[SIDECAR_SERVICE]
+    helper = {
+        "deploy": sidecar["deploy"],
+        "dns_search": sidecar.get("dns_search", ["."]),
+        "image": image,
     }
-    # The one fetcher starts on a file already holding the demo's fetcher sources
+    seeding = {
+        IN_STACK_KEY: "true",
+        BREAKGLASS_PASSWORD_KEY: engine_env[BREAKGLASS_PASSWORD_KEY],
+    }
+    seed_entrypoint = [
+        "python3",
+        f"{IMAGE_TREE}/scripts/demo_seed.py",
+        *(["--pack", pack] if pack else []),
+    ]
+    services["demo-sources"] = {
+        **helper,
+        "command": ["sources"],
+        "depends_on": {ENGINE_SERVICE: {"condition": "service_healthy"}},
+        "entrypoint": seed_entrypoint,
+        "environment": seeding,
+        "restart": "no",
+        "user": DEMO_UID,
+    }
+    services["demo-console"] = {
+        **helper,
+        "command": ["console"],
+        "depends_on": {
+            "demo-sources": {"condition": "service_completed_successfully"},
+            "dfe-hyperdx": {"condition": "service_healthy"},
+        },
+        "entrypoint": seed_entrypoint,
+        "environment": seeding,
+        "restart": "no",
+        "user": DEMO_UID,
+    }
+    if roles["vendor"]:
+        services.update(
+            _replay_services(
+                contract_image=str(services[TRANSFORM_ELASTIC_CONTRACT]["image"]),
+                helper=helper,
+                roles=roles,
+                seed_entrypoint=seed_entrypoint,
+                stream=stream,
+            )
+        )
+        demo_model.setdefault("volumes", {})[DEMO_FEED_VOLUME] = {}
+    replays = [*roles["beats"], *roles["json"]]
+    if replays:
+        services["demo-beats"] = {
+            **helper,
+            # Waiting on demo-console makes it a completed dependency, which `up --wait` accepts once it exits 0, so a console that finishes first no longer fails the wait
+            "depends_on": {
+                "demo-console": {"condition": "service_completed_successfully"},
+                "demo-sources": {"condition": "service_completed_successfully"},
+                RECEIVER_SERVICE: {"condition": "service_healthy"},
+            },
+            "entrypoint": [
+                "python3",
+                "-I",
+                f"{IMAGE_TREE}/resources/{demo_pack_tag(pack=pack)}/events/{demo.REPLAY_TOOL}",
+                demo.REPLAY_COMMAND,
+                "--target",
+                RECEIVER_INGEST_URL,
+                "--sources",
+                ",".join(replays),
+                "--loop",
+                "--duration",
+                str(demo.STREAM_SECONDS),
+            ],
+            "restart": "unless-stopped",
+            "user": DEMO_UID,
+        }
+    # A fetcher's `replay` unit polls this by service name, so a host with no egress still fills its table
+    if roles.get("replay"):
+        services[REPLAY_SERVICE] = {
+            **helper,
+            "entrypoint": [
+                "python3",
+                f"{IMAGE_TREE}/scripts/replay_fetch.py",
+                "--pack",
+                pack,
+            ],
+            "restart": "unless-stopped",
+            "user": DEMO_UID,
+        }
+    if archive["sources"]:
+        services["demo-prune"] = {
+            **helper,
+            "depends_on": {
+                SIDECAR_SERVICE: {"condition": "service_completed_successfully"}
+            },
+            "entrypoint": demo.pruner_command(
+                archive=dict(archive), tool=f"{IMAGE_TREE}/resources/demo/archive.py"
+            ),
+            "restart": "unless-stopped",
+            "user": DEMO_UID,
+            "volumes": [
+                {
+                    "type": "volume",
+                    "source": "archiver-data",
+                    "target": demo.ARCHIVE_ROOT,
+                }
+            ],
+        }
+    # The one fetcher starts on a file already holding the pack's fetcher sources
     held = [
         RECEIVER_SERVICE,
         *([FETCHER_SERVICE] if roles["fetcher"] else []),
@@ -630,7 +762,12 @@ def demo_overlay(
             "condition": "service_completed_successfully",
             "required": True,
         }
-    demo_model.setdefault("volumes", {})[DEMO_FEED_VOLUME] = {}
+    # The fetcher's first replay poll then finds the server, which answers as soon as it starts
+    if roles.get("replay"):
+        services[FETCHER_SERVICE]["depends_on"][REPLAY_SERVICE] = {
+            "condition": "service_started",
+            "required": True,
+        }
     return demo_model
 
 
@@ -914,12 +1051,18 @@ def publish(
             _print(msg=f"published {str(path.name)!r} as {repository}:{name}")
 
 
-def generate(*, image: str, out_dir: Path, stack_version: str) -> dict[str, Path]:
-    """Write both files into out_dir and return each one's path by the tag it moves on, refusing one that holds a value the scratch install minted."""
+def generate(
+    *, image: str, out_dir: Path, pack: str = "", stack_version: str
+) -> dict[str, Path]:
+    """Write the stack and demo files into out_dir, or the named pack's file alone, and return each one's path by the tag it moves on, refusing one that holds a value the scratch install minted."""
     profile = _make_print(goal="print-default-profile")[0]
     stream = _make_print(goal="print-demo-stream")
-    manifest = demo._read_manifest(path=demo.MANIFEST_FILE)
-    roles = demo_roles(events=demo.EVENTS_DIR, sources=demo.SOURCES_DIR)
+    root = demo_pack_dir(pack=pack)
+    target = demo_file(pack=pack)
+    manifest = demo._read_manifest(path=root / demo.MANIFEST_FILE.name)
+    roles = demo_roles(
+        events=root / demo.EVENTS_DIR.name, sources=root / demo.SOURCES_DIR.name
+    )
     out_dir.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory(prefix="dfe-publish-") as scratch:
         tree = Path(scratch)
@@ -936,21 +1079,22 @@ def generate(*, image: str, out_dir: Path, stack_version: str) -> dict[str, Path
             archive=manifest["archive"],
             image=image,
             model=published(
-                container_prefix=DEMO_CONTAINER_PREFIX,
+                container_prefix=target.prefix,
                 model=with_instances,
-                name=DEMO_PROJECT,
+                name=target.project,
                 tree=tree,
             ),
+            pack=pack,
             roles=roles,
             stream=stream,
         )
     # Both files run the same images, so each config is read from the registry once
     commands = functools.cache(image_command)
     written = {}
-    for file_name, model, tag in (
-        (STACK_FILE, stack_model, PUBLISHED_STACK_TAG),
-        (DEMO_FILE, demo_model, PUBLISHED_DEMO_TAG),
-    ):
+    files = [(target.file, demo_model, target.tag)]
+    if not (pack):
+        files.insert(0, (STACK_FILE, stack_model, PUBLISHED_STACK_TAG))
+    for file_name, model, tag in files:
         secured = secure(
             image=image, image_command=commands, minted=minted, model=model
         )
@@ -987,10 +1131,15 @@ def main(argv: Sequence[str] | None = None) -> int:
         help="the dfe-docker image the demo's helpers run, by digest on a release",
     )
     parser.add_argument(
+        "--pack",
+        default="",
+        help="write the named pack's file alone, dfe-demo-<pack>.yaml from resources/demo-<pack>, in place of the stack and demo files",
+    )
+    parser.add_argument(
         "--out-dir",
         type=Path,
         default=REPO_ROOT / ".tmp" / "publish",
-        help="where to write both files",
+        help="where to write the files",
     )
     parser.add_argument(
         "--stack",
@@ -1000,7 +1149,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser.add_argument(
         "--publish",
         metavar="REPOSITORY",
-        help="push both files to this repository once they check clean, which needs a registry login",
+        help="push the files to this repository once they check clean, which needs a registry login",
     )
     parser.add_argument(
         "--release", default="", help="with --publish, the release version, no v"
@@ -1008,20 +1157,30 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser.add_argument(
         "--moving",
         action="store_true",
-        help=f"with --publish, also move the {PUBLISHED_STACK_TAG!r} and {PUBLISHED_DEMO_TAG!r} tags",
+        help=f"with --publish, also move the {PUBLISHED_STACK_TAG!r} and {PUBLISHED_DEMO_TAG!r} tags, or the pack's",
     )
     args = parser.parse_args(argv)
     if args.publish and not (args.release.strip()):
         parser.error("--publish needs --release to name the versioned tags")
+    if args.pack and (
+        not (DEMO_PACK_NAME.fullmatch(args.pack)) or args.pack not in demo_pack_names()
+    ):
+        existing = [
+            _rel_path(path=demo_pack_dir(pack=name)) for name in demo_pack_names()
+        ]
+        parser.error(
+            f"no pack {args.pack!r}: there is no {_rel_path(path=demo_pack_dir(pack=args.pack))}. The pack directories are {', '.join(existing) or 'none'}"
+        )
     try:
         if args.check:
             return check(paths=args.check, require_digests=args.require_digests)
         written = generate(
             image=args.image,
             out_dir=args.out_dir,
+            pack=args.pack,
             stack_version=args.stack.strip() or stack._dial_pin(),
         )
-        # A file is published only digest-pinned, and only once both check clean
+        # A file is published only digest-pinned, and only once every one checks clean
         code = check(
             paths=list(written.values()),
             require_digests=args.require_digests or bool(args.publish),

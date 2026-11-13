@@ -49,6 +49,7 @@ from _common import (  # noqa: E402
     PER_SOURCE_APP_KEYS,
     PER_SOURCE_APPS_VAR,
     REPO_ROOT,
+    TRANSFORM_APP_PREFIX,
     _load_dotenv,
     _load_env_file,
     _print,
@@ -78,7 +79,9 @@ from post import (  # noqa: E402
 from seed import (  # noqa: E402
     DEPLOY_TIMEOUT_SECONDS,
     ENGINE_FAULTS,
+    KINDS,
     SeedError,
+    _objects,
     _row_count,
     _token,
     deploy_fault,
@@ -119,6 +122,11 @@ YAML_TO_JSON = "\n".join(
 # What `from-catalogue` adds to an entry on the receiver intake (dfe-engine source/catalogue.py write_request_for and _match_for)
 CATALOGUE_INTAKE = "receiver"
 RECEIVER_MATCH_FIELD = "_source"
+# The field an Elastic Agent's envelope names its source by, which a Beats source matches on and its events carry
+BEATS_MATCH_FIELD = "data_stream.dataset"
+# What replays a pack's Beats sources at the receiver: events/<REPLAY_TOOL> REPLAY_COMMAND --target --sources --loop --duration
+REPLAY_TOOL = "generate.py"
+REPLAY_COMMAND = "replay"
 # What `write_request_for` sets on every entry it compiles and a source that omits them gets anyway
 WRITE_DEFAULTS = {"archive": False, "transport": None}
 # The `state` a create gives a source, which a file naming none wants
@@ -166,6 +174,14 @@ CONSOLE_DIR = DEMO_DIR / "console"
 # dfe-hyperdx's API as dfe-engine reaches it, which accepts the engine's own token. Everything the pack puts in the console is a plain, deletable object whose name starts with CONSOLE_PREFIX
 HYPERDX_API = "http://dfe-hyperdx:8000"
 CONSOLE_PREFIX = "demo-"
+# A pack's hunts and the rules they run, one engine create body per file as resources/seed holds them
+# The upstream licence texts beside a pack's sample events, which no source replays
+EVENTS_LICENSES_DIR = "LICENSES"
+HUNTS_DIR_NAME = "hunts"
+RULES_DIR_NAME = "rules"
+# How long a rule or hunt create is tried again while the engine answers 5xx or not at all
+HUNT_INSTALL_TIMEOUT_SECONDS = 60.0
+HUNT_INSTALL_INTERVAL_SECONDS = 5.0
 HYPERDX_SERVICE = "dfe-hyperdx"
 # The generator ends a loop only at --count or --duration, so the stream runs ten years unless removed
 STREAM_SECONDS = 315_360_000
@@ -182,11 +198,14 @@ class DemoError(Exception):
 
 
 class Demo(typing.NamedTuple):
-    """The Sources under resources/demo/sources by role with each vendor source's events directory."""
+    """A pack's Sources by role with the events directory of each vendor, Beats and JSON source. A pack with no vendor has no intake, and `replay` holds the fetchers whose captured polls scripts/replay_fetch.py serves."""
 
+    beats: list[dict]
     events: dict[str, Path]
     fetchers: list[dict]
-    intake: dict
+    intake: dict | None
+    json: list[dict]
+    replay: list[dict]
     vendors: list[dict]
 
 
@@ -292,10 +311,10 @@ def _cursor_storage() -> str | None:
     return mounted.stdout.strip() or None
 
 
-def _console_files(*, kind: str) -> list[dict]:
-    """The console objects of one kind (dashboards or searches) in resources/demo/console, in name order."""
+def _console_files(*, console: Path = CONSOLE_DIR, kind: str) -> list[dict]:
+    """The console objects of one kind (dashboards or searches) in a pack's console directory, in name order."""
     bodies = []
-    for path in sorted((CONSOLE_DIR / kind).glob(pattern="*.json")):
+    for path in sorted((console / kind).glob(pattern="*.json")):
         try:
             body = json.loads(path.read_text(encoding="utf-8"))
         except (OSError, UnicodeDecodeError, json.JSONDecodeError) as error:
@@ -353,7 +372,7 @@ def _remove_console(*, token: str) -> int:
     return removed
 
 
-def _install_console(*, token: str) -> list[str]:
+def _install_console(*, console: Path = CONSOLE_DIR, token: str) -> list[str]:
     """Replace the pack's dashboards and saved searches in the console and return the lines that say where to open them.
 
     The files name a source by its name, and tiles that run SQL take the connection of that source.
@@ -367,7 +386,7 @@ def _install_console(*, token: str) -> list[str]:
         ("dashboards", "/dashboards", "/dashboards"),
         ("searches", "/saved-search", "/search"),
     ):
-        for body in _console_files(kind=kind):
+        for body in _console_files(console=console, kind=kind):
             payload = resolve_console(body=body, sources=sources)
             status, made = _hyperdx(
                 method="POST", path=path, payload=payload, token=token
@@ -868,12 +887,17 @@ def _resolve_generator(*, dev: bool, generator: str) -> Path:
 
 
 def _role(*, body: dict) -> str:
-    """What a demo source is for: `fetcher` with a fetcher mapping, `intake` in agentless mode, else `vendor`."""
+    """What a demo source is for: `fetcher` with a fetcher mapping, `intake` in agentless mode, `beats` matched on the Beats dataset, `json` matched on another field with no transform, which lands the JSON its pack replays as sent, else `vendor`."""
     if isinstance(body.get("fetcher"), dict):
         return "fetcher"
     transform = body.get("transform")
     if isinstance(transform, dict) and transform.get("mode") == "agentless":
         return "intake"
+    match = body.get("match")
+    if isinstance(match, dict) and match.get("field") == BEATS_MATCH_FIELD:
+        return "beats"
+    if isinstance(match, dict) and transform is None:
+        return "json"
     return "vendor"
 
 
@@ -916,6 +940,10 @@ def _install(*, args: argparse.Namespace, manifest: dict) -> int:
         raise DemoError(reason)
     demo = load_demo(events=EVENTS_DIR, sources=SOURCES_DIR)
     check_manifest(demo=demo, manifest=manifest)
+    if demo.intake is None:
+        raise DemoError(
+            f"{str(SOURCES_DIR)!r} holds no intake for `make demo` to stream to"
+        )
     checkout = _resolve_generator(dev=args.dev, generator=args.generator)
     network = _network(service=RECEIVER_SERVICE)
     kept, dropped = archivable(
@@ -1346,23 +1374,38 @@ def create_body(*, body: dict) -> dict:
     return {key: value for key, value in body.items() if key != "state"}
 
 
-def check_manifest(*, demo: Demo, manifest: dict) -> None:
-    """Refuse a pack whose manifest and source files disagree, so nothing is installed that removal would not find."""
-    bodies = [*demo.vendors, demo.intake, *demo.fetchers]
+def check_manifest(*, demo: Demo | None, manifest: dict, root: Path = DEMO_DIR) -> None:
+    """Refuse a pack whose manifest and files disagree, so nothing is installed that removal would not find. `demo` is None for a pack with no source files."""
+    bodies = (
+        [] if demo is None else [*demo.vendors, *demo.beats, *demo.json, *demo.fetchers]
+    )
+    if demo is not None and demo.intake is not None:
+        bodies.append(demo.intake)
     found = sorted(body["source"] for body in bodies)
     listed = sorted(manifest["sources"])
     if found != listed:
         raise DemoError(
             f"{MANIFEST_FILE.name!r} lists sources {listed} and "
-            f"{str(SOURCES_DIR)!r} holds {found}. Make them the same set"
+            f"{str(root / SOURCES_DIR.name)!r} holds {found}. Make them the same set"
         )
+    console = root / CONSOLE_DIR.name
     for kind in ("dashboards", "searches"):
-        found_console = sorted(body["name"] for body in _console_files(kind=kind))
+        found_console = sorted(
+            body["name"] for body in _console_files(console=console, kind=kind)
+        )
         if found_console != sorted(manifest["console"][kind]):
             raise DemoError(
                 f"{MANIFEST_FILE.name!r} lists {kind} {sorted(manifest['console'][kind])} "
-                f"and {str(CONSOLE_DIR / kind)!r} holds {found_console}. Make them the same set"
+                f"and {str(console / kind)!r} holds {found_console}. Make them the same set"
             )
+    hunts = pack_hunts(root=root)
+    found_hunts = sorted(name for name, _ in hunts.hunts)
+    listed_hunts = sorted(manifest.get("hunts", []))
+    if found_hunts != listed_hunts:
+        raise DemoError(
+            f"{MANIFEST_FILE.name!r} lists hunts {listed_hunts} and "
+            f"{str(root / HUNTS_DIR_NAME)!r} holds {found_hunts}. Make them the same set"
+        )
     archiving = sorted(body["source"] for body in bodies if body.get("archive"))
     if archiving != sorted(manifest["archive"]["sources"]):
         raise DemoError(
@@ -1370,6 +1413,116 @@ def check_manifest(*, demo: Demo, manifest: dict) -> None:
             f"{sorted(manifest['archive']['sources'])} and the files that archive are "
             f"{archiving}. Make them the same set"
         )
+
+
+class PackHunts(typing.NamedTuple):
+    """A pack's rules and hunts as (name, create body), each in file name order."""
+
+    rules: list[tuple[str, dict]]
+    hunts: list[tuple[str, dict]]
+
+
+def pack_hunts(*, root: Path) -> PackHunts:
+    """Read a pack's rules and hunts, refusing a hunt that runs a rule the pack does not carry.
+
+    Args:
+        root: The pack directory.
+
+    Returns:
+        The pack's rules and hunts, both empty for a pack with neither directory.
+
+    Raises:
+        DemoError: A file that is not a create body named for its object, or a hunt naming a rule with no file.
+    """
+    try:
+        rules = _objects(directory=root / RULES_DIR_NAME, key=KINDS["rules"].key)
+        hunts = _objects(directory=root / HUNTS_DIR_NAME, key=KINDS["hunts"].key)
+    except SeedError as error:
+        raise DemoError(str(error)) from error
+    carried = {name for name, _ in rules}
+    for name, body in hunts:
+        missing = sorted(set(body.get("rules") or []) - carried)
+        if missing:
+            raise DemoError(
+                f"hunt {name!r} runs rules {missing}, which {str(root / RULES_DIR_NAME)!r} "
+                f"does not hold. Add each as <rule>.yaml"
+            )
+    return PackHunts(rules=rules, hunts=hunts)
+
+
+def _engine_call(
+    *, call: typing.Callable[[], tuple[int, typing.Any]]
+) -> tuple[int, typing.Any]:
+    """Run one engine call, again while it answers 5xx or not at all, up to HUNT_INSTALL_TIMEOUT_SECONDS.
+
+    Returns:
+        The last (status, answer), status 0 with the fault as the answer when the engine never answered.
+    """
+    deadline = time.monotonic() + HUNT_INSTALL_TIMEOUT_SECONDS
+    while True:
+        try:
+            status, answer = call()
+        except ENGINE_FAULTS as error:
+            status, answer = 0, str(error)
+        if (status != 0) and (status < 500):
+            return status, answer
+        if time.monotonic() >= deadline:
+            return status, answer
+        time.sleep(HUNT_INSTALL_INTERVAL_SECONDS)
+
+
+def install_hunts(*, base: str, root: Path, token: str) -> list[str]:
+    """Create each of a pack's rules, then its hunts, that the engine lacks, and return what was done.
+
+    Rules go first because the engine runs a hunt only once every rule it names compiles. One the engine already holds is left as it is, so a re-run creates only what is missing. Run it after the sources are deployed, since a rule's preview reads its source's table.
+
+    A hunt never stops the data path: a 5xx or no answer is tried again to a short deadline, and a final failure or a 4xx becomes a WARNING line. A hunt whose rule did not install is skipped, since the runner would fail on every run of it.
+
+    Args:
+        base: The engine's API base.
+        root: The pack directory.
+        token: An admin token.
+
+    Returns:
+        One line per rule and hunt: created, already held, or a WARNING with the engine's answer.
+    """
+    loaded = pack_hunts(root=root)
+    lines = []
+    failed: set[str] = set()
+    for kind, objects in (("rules", loaded.rules), ("hunts", loaded.hunts)):
+        route = KINDS[kind].route
+        noun = KINDS[kind].noun
+        for name, body in objects:
+            missing = sorted(set(body.get("rules") or []) & failed)
+            if missing:
+                lines.append(
+                    f"WARNING {noun} {name!r} skipped: rules {missing} did not install"
+                )
+                continue
+            url = f"{base}{route}/{quote(safe='', string=name)}"
+            status, answer = _engine_call(
+                call=lambda url=url: _api_get_json(token=token, url=url)
+            )
+            if status == 200:
+                lines.append(f"{noun} {name!r} already exists")
+                continue
+            if status == 404:
+                status, answer = _engine_call(
+                    call=lambda body=body, route=route: _api_post_json(
+                        f"{base}{route}", body, token=token
+                    )
+                )
+                if status == 201:
+                    lines.append(f"created {noun} {name!r}")
+                    continue
+                step = "creating"
+            else:
+                step = "looking up"
+            failed.add(name)
+            lines.append(
+                f"WARNING {noun} {name!r} not installed: {step} it got HTTP {status}: {answer}"
+            )
+    return lines
 
 
 def resolve_console(*, body: dict, sources: dict[str, dict]) -> dict:
@@ -1547,7 +1700,10 @@ def pruner_command(*, archive: dict, tool: str) -> list[str]:
 
 
 def load_demo(*, events: Path, sources: Path) -> Demo:
-    """Read every source file under sources by role and pair each vendor source with its directory under events."""
+    """Read every source file under sources by role and pair each vendor, Beats and JSON source with its directory under events.
+
+    A pack with no vendor and no intake file needs no intake. A fetcher's events directory is its replay, never a vendor's events or an orphan.
+    """
     bodies = [
         _read_source(path=path) for path in sorted(sources.glob(pattern="*.yaml"))
     ]
@@ -1556,9 +1712,64 @@ def load_demo(*, events: Path, sources: Path) -> Demo:
             f"{str(sources)!r} holds no source files. Add one POST /sources body per "
             f"demo source as <source>.yaml"
         )
+    beats = [body for body in bodies if _role(body=body) == "beats"]
     fetchers = [body for body in bodies if _role(body=body) == "fetcher"]
     intakes = [body for body in bodies if _role(body=body) == "intake"]
     vendors = [body for body in bodies if _role(body=body) == "vendor"]
+    replayed = [body for body in bodies if _role(body=body) == "json"]
+    intake = (
+        _checked_intake(intakes=intakes, sources=sources, vendors=vendors)
+        if intakes or vendors
+        else None
+    )
+    names = [body["source"] for body in [*vendors, *beats, *replayed]]
+    held = (
+        {
+            path.name: path
+            for path in events.glob(pattern="*")
+            if path.is_dir() and path.name != EVENTS_LICENSES_DIR
+        }
+        if events.is_dir()
+        else {}
+    )
+    missing = [
+        name for name in names if (name not in held) or not (any(held[name].iterdir()))
+    ]
+    if missing:
+        layout = f"{events}/<source>/"
+        raise DemoError(
+            f"source(s) {', '.join(repr(name) for name in missing)} have no "
+            f"events to replay. Add each as {layout!r} holding its lines"
+        )
+    replays = [body for body in fetchers if body["source"] in held]
+    orphans = sorted(set(held) - set(names) - {body["source"] for body in replays})
+    if orphans:
+        raise DemoError(
+            f"{str(events)!r} holds events for {', '.join(repr(name) for name in orphans)} "
+            f"with no vendor, Beats, JSON or fetcher source of that name in "
+            f"{str(sources)!r}. Add the source or remove the directory"
+        )
+    for body in [*vendors, *beats, *replayed]:
+        _check_events_kind(body=body, events=held[body["source"]])
+    if (beats or replayed) and not ((events / REPLAY_TOOL).is_file()):
+        raise DemoError(
+            f"Beats and JSON source(s) "
+            f"{', '.join(repr(body['source']) for body in [*beats, *replayed])} need "
+            f"{str(events / REPLAY_TOOL)!r} to replay them with `{REPLAY_COMMAND}`"
+        )
+    return Demo(
+        beats=beats,
+        events={name: held[name] for name in names},
+        fetchers=fetchers,
+        intake=intake,
+        json=replayed,
+        replay=replays,
+        vendors=vendors,
+    )
+
+
+def _checked_intake(*, intakes: list[dict], sources: Path, vendors: list[dict]) -> dict:
+    """The one intake, refused unless it detects exactly the vendors' variants and no two vendors replay over one fixture package."""
     if len(intakes) != 1:
         found = (", ".join(repr(f"{body['source']}.yaml") for body in intakes)) or (
             "none"
@@ -1594,34 +1805,76 @@ def load_demo(*, events: Path, sources: Path) -> Demo:
                 f"never be sent. Give each a variant naming its own package"
             )
         owners[package] = body["source"]
-    held = (
-        {path.name: path for path in events.glob(pattern="*") if path.is_dir()}
-        if events.is_dir()
-        else {}
+    return intake
+
+
+def first_event(*, events: Path) -> dict | None:
+    """The first event in a source's events directory as a JSON object, None when it holds no file or that line is not one."""
+    files = sorted(path for path in events.iterdir() if path.is_file())
+    if not (files):
+        return None
+    with files[0].open(encoding="utf-8", errors="replace") as handle:
+        first = next((line for line in handle if line.strip()), "")
+    try:
+        record = json.loads(first)
+    except json.JSONDecodeError:
+        return None
+    return record if isinstance(record, dict) else None
+
+
+def field_value(*, field: str, record: dict) -> object:
+    """The value at a dotted field of a record, walked the way the receiver walks a match field, None where the path breaks."""
+    value: object = record
+    for part in field.split(sep="."):
+        value = value.get(part) if isinstance(value, dict) else None
+    return value
+
+
+def beats_dataset(*, events: Path) -> str | None:
+    """The `data_stream.dataset` of the first event in a source's events directory, None when its events are not Beats envelopes."""
+    record = first_event(events=events)
+    dataset = (
+        None if record is None else field_value(field=BEATS_MATCH_FIELD, record=record)
     )
-    names = [body["source"] for body in vendors]
-    missing = [
-        name for name in names if (name not in held) or not (any(held[name].iterdir()))
-    ]
-    if missing:
-        layout = f"{events}/<source>/"
+    return dataset if isinstance(dataset, str) and dataset else None
+
+
+def _check_events_kind(*, body: dict, events: Path) -> None:
+    """Refuse a source whose events the receiver would not route to it: Beats envelopes for its dataset when it matches on one, JSON carrying its match value when it is a JSON source, raw lines otherwise."""
+    name = body["source"]
+    dataset = beats_dataset(events=events)
+    if _role(body=body) == "json":
+        field, wanted = body["match"].get("field"), body["match"].get("value")
+        record = first_event(events=events)
+        held = None if record is None else field_value(field=str(field), record=record)
+        if held != wanted:
+            raise DemoError(
+                f"{name!r} matches {field} {wanted!r} and the first event in "
+                f"{str(events)!r} carries {held!r}. Set {field} on every record"
+            )
+        return
+    if _role(body=body) == "vendor":
+        if dataset is not None:
+            raise DemoError(
+                f"{name!r} replays Beats envelopes for {dataset!r}, which the receiver "
+                f"routes on {BEATS_MATCH_FIELD}. Match the source on {BEATS_MATCH_FIELD} "
+                f"equals {dataset!r}"
+            )
+        return
+    wanted = body["match"].get("value")
+    if dataset != wanted:
         raise DemoError(
-            f"vendor source(s) {', '.join(repr(name) for name in missing)} have no "
-            f"events to replay. Add each as {layout!r} holding its lines"
+            f"{name!r} matches {BEATS_MATCH_FIELD} {wanted!r} and its events in "
+            f"{str(events)!r} carry {dataset!r}. Replay Beats envelopes for {wanted!r}"
         )
-    orphans = sorted(set(held) - set(names))
-    if orphans:
+    transform = body.get("transform")
+    engine = transform.get("engine") if isinstance(transform, dict) else None
+    if engine != TRANSFORM_APP.removeprefix(TRANSFORM_APP_PREFIX):
         raise DemoError(
-            f"{str(events)!r} holds events for {', '.join(repr(name) for name in orphans)} "
-            f"with no vendor source of that name in {str(sources)!r}. Add the source "
-            f"or remove the directory"
+            f"Beats source {name!r} runs transform engine {engine!r}. A pack declares "
+            f"{TRANSFORM_APP} instances only, so set `transform.engine: "
+            f"{TRANSFORM_APP.removeprefix(TRANSFORM_APP_PREFIX)}`"
         )
-    return Demo(
-        events={name: held[name] for name in names},
-        fetchers=fetchers,
-        intake=intake,
-        vendors=vendors,
-    )
 
 
 def row_gains(

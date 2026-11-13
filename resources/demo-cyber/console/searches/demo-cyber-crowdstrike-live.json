@@ -1,0 +1,11 @@
+{
+  "name": "demo-cyber-crowdstrike-live",
+  "orderBy": "_timestamp DESC",
+  "select": "_timestamp, event_kind, event_action, event_severity, host_name, user_name, rule_name, threat_tactic_name, replaceOne(IPv6NumToString(assumeNotNull(source_ip)), '::ffff:', '') AS address",
+  "source": "crowdstrike",
+  "tags": [
+    "demo"
+  ],
+  "where": "",
+  "whereLanguage": "sql"
+}

@@ -18,7 +18,7 @@ come out the other. Everything else can wait.
 
 ## What you need
 
-- Docker Engine 26.0 and Docker Compose 2.34 or newer for the one-line installs, Compose 2.26 or newer for the rest
+- Docker Engine and Docker Compose at the `min_engine` and `min_compose` a release's `quickstart.json` names for the one-line installs. The rest need only the oldest Compose that reads every feature in `COMPOSE_FEATURES` (`scripts/quickstart_json.py`)
 - make, git and Python 3 (standard library only), for a clone. Nothing under "With only Docker" needs them
 - Network access to `ghcr.io/hyperi-io`, where the images are public and pull with no login
 
@@ -35,6 +35,8 @@ docker compose -f oci://ghcr.io/hyperi-io/dfe-docker:demo up -d
 ```
 
 The demo is the same stack as its own project, `dfe-demo`, and nothing to set up. At first start it seeds the demo's sources, dashboards and saved searches, then streams the Cisco ASA and FortiGate syslog below without stopping, beside two fetchers. It takes the same ports, so stop the stack above first. `docker compose -f oci://ghcr.io/hyperi-io/dfe-docker:demo down -v` removes all of it.
+
+Three more demos take the same two lines with the tag swapped, each as its own project on the same ports, so run one at a time: `:demo-cyber` (identity, EDR and firewall events, with the rules and hunts a SOC runs over them), `:demo-theatre` (live air and sea tracks, the picture as it is now and as it was) and `:demo-telco` (BGP updates, RAN KPIs and core probes, what a NOC watches).
 
 For a folder you can edit, the dfe-docker image sets one up holding the compose files, config and `.env`, which takes any profile and setting. In an empty folder. On Windows, use PowerShell: `${PWD}` works there and in bash and zsh, but not in cmd.exe.
 
@@ -69,7 +71,7 @@ The same command with `demo-stop` takes it out, which `docker compose down` need
 ```bash
 make up                          # single-kafka, newest published stable stack
 make up PROFILE=slim-grpc        # another profile
-make up VERSION=2.2.1            # an older stack
+make up VERSION=<stack version>  # an older stack
 ```
 
 `make up` creates `.env` and `env/`, generates the secrets, pins every image from the DFE stack manifest, starts the stack and prints the console login. Its first line says the profile and stack in use. `PROFILE=` and `VERSION=` are written to `.env`, so the next `make up` keeps them.

@@ -3,6 +3,17 @@
 Rendered by CI and committed back at the end of a release -- do not edit by
 hand. Release notes also appear on the GitHub Releases page, one per tag.
 
+## [1.0.6](https://github.com/hyperi-io/dfe-docker/compare/v1.0.5...v1.0.6) (2026-11-13)
+
+### Bug Fixes
+
+* **demo:** add the cyber demo pack's sources, events and console ([#384](https://github.com/hyperi-io/dfe-docker/issues/384)) ([0eae396](https://github.com/hyperi-io/dfe-docker/commit/0eae396bd8955bb16891fa7cb2ef3d39c344e368))
+* **demo:** add the telco demo pack ([#389](https://github.com/hyperi-io/dfe-docker/issues/389)) ([7a45cd3](https://github.com/hyperi-io/dfe-docker/commit/7a45cd37440652cc2eed4bb499e6f1db6659c8fc))
+* **demo:** add the theatre and battlespace demo pack ([#386](https://github.com/hyperi-io/dfe-docker/issues/386)) ([863c6bc](https://github.com/hyperi-io/dfe-docker/commit/863c6bcd09c32dc6fb7cbec89f07d4486741aa08))
+* **demo:** publish one compose file per demo pack ([#383](https://github.com/hyperi-io/dfe-docker/issues/383)) ([e729085](https://github.com/hyperi-io/dfe-docker/commit/e7290857ade15242d1174d26d07fb6387ffc3bbe))
+* **demo:** replay a pack's Beats sources and host their transforms ([#385](https://github.com/hyperi-io/dfe-docker/issues/385)) ([be05917](https://github.com/hyperi-io/dfe-docker/commit/be059173adff716d18d35bef7516cdad149d359c))
+* **otel:** log HyperDX under dfe-hyperdx ([#371](https://github.com/hyperi-io/dfe-docker/issues/371)) ([b28bdc6](https://github.com/hyperi-io/dfe-docker/commit/b28bdc642f3273c00636fb3f260fd1d8c002c584))
+
 ## [1.0.5](https://github.com/hyperi-io/dfe-docker/compare/v1.0.4...v1.0.5) (2026-11-12)
 
 ### Bug Fixes

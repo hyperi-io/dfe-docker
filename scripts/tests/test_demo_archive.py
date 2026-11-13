@@ -6,7 +6,7 @@
 #  License:      BUSL-1.1
 #  Copyright:    (c) 2026 HYPERI PTY LIMITED
 
-"""The checks on the demo pack that need no stack: resources/demo/archive.py over a temporary archive, and demo.json against resources/demo/sources."""
+"""The checks on the demo packs that need no stack: resources/demo/archive.py over a temporary archive, and each pack's demo.json against its files."""
 
 import importlib.util
 import json
@@ -16,7 +16,8 @@ from pathlib import Path
 import pytest
 
 import demo
-from _common import REPO_ROOT
+import demo_seed
+from _common import DEMO_PACK_NAME, REPO_ROOT, demo_pack_dir, demo_pack_names
 
 pytestmark = pytest.mark.usefixtures("engine_python_here")
 
@@ -122,14 +123,31 @@ def test_show_names_the_newest_objects_and_a_sample_line(tmp_path: Path) -> None
 
 
 class TestManifest:
-    def test_the_committed_manifest_matches_the_committed_sources(self) -> None:
-        manifest = demo._read_manifest(path=demo.MANIFEST_FILE)
-        loaded = demo.load_demo(events=demo.EVENTS_DIR, sources=demo.SOURCES_DIR)
+    @pytest.mark.parametrize(
+        "pack", ["", *demo_pack_names()], ids=lambda p: p or "demo"
+    )
+    def test_each_committed_manifest_matches_its_pack(self, pack: str) -> None:
+        root = demo_pack_dir(pack=pack)
+        manifest = demo._read_manifest(path=root / "demo.json")
 
-        demo.check_manifest(demo=loaded, manifest=manifest)
+        # What the published file's seeding one-shots load, and refuse on
+        demo_seed._loaded(root=root)
 
+        assert not (pack) or DEMO_PACK_NAME.fullmatch(pack)
         assert manifest["archive"]["retention_minutes"] <= 15
         assert manifest["archive"]["max_megabytes"] <= 200
+
+    def test_a_pack_with_no_source_files_must_list_none(self, tmp_path: Path) -> None:
+        manifest = json.loads(
+            demo_pack_dir(pack="cyber")
+            .joinpath("demo.json")
+            .read_text(encoding="utf-8")
+        )
+        manifest["sources"] = ["okta"]
+        (tmp_path / "demo.json").write_text(json.dumps(manifest), encoding="utf-8")
+
+        with pytest.raises(demo.DemoError, match="Make them the same set"):
+            demo_seed._loaded(root=tmp_path)
 
     @pytest.mark.parametrize(
         ("change", "message"),
@@ -160,6 +178,145 @@ class TestManifest:
 
         with pytest.raises(demo.DemoError, match=message):
             demo.check_manifest(demo=loaded, manifest=manifest)
+
+    def test_the_cyber_pack_carries_each_rule_its_hunt_runs(self) -> None:
+        hunts = demo.pack_hunts(root=demo_pack_dir(pack="cyber"))
+
+        assert [name for name, _ in hunts.hunts] == ["demo-cyber-drop-sign-in"]
+        assert [name for name, _ in hunts.rules] == ["demo-cyber-drop-sign-in"]
+        assert hunts.rules[0][1]["cel_filter"]
+
+    @pytest.mark.parametrize(
+        ("gets", "posts", "expected", "post_calls"),
+        [
+            pytest.param(
+                [404],
+                [201],
+                ["created rule", "created hunt"],
+                2,
+                id="created",
+            ),
+            pytest.param(
+                [200],
+                [],
+                ["rule 'r' already exists", "hunt 'h' already exists"],
+                0,
+                id="held",
+            ),
+            pytest.param(
+                [503, 404],
+                [502, 201],
+                ["created rule", "created hunt"],
+                3,
+                id="5xx_retried",
+            ),
+            pytest.param(
+                [404],
+                [500],
+                ["WARNING rule 'r' not installed", "WARNING hunt 'h' skipped"],
+                None,
+                id="5xx_to_deadline",
+            ),
+            pytest.param(
+                [404],
+                [422],
+                ["WARNING rule 'r' not installed", "WARNING hunt 'h' skipped"],
+                1,
+                id="4xx_not_retried",
+            ),
+            pytest.param(
+                ["down"],
+                [],
+                [
+                    "WARNING rule 'r' not installed: looking up it got HTTP 0",
+                    "WARNING hunt 'h' skipped",
+                ],
+                0,
+                id="unreachable",
+            ),
+        ],
+    )
+    def test_installs_hunts_and_warns_rather_than_failing(
+        self,
+        monkeypatch,
+        tmp_path: Path,
+        gets: list,
+        posts: list,
+        expected: list,
+        post_calls,
+    ) -> None:
+        for kind, body in (
+            ("rules", {"name": "r", "user_sql": "SELECT 1"}),
+            ("hunts", {"name": "h", "rules": ["r"]}),
+        ):
+            (tmp_path / kind).mkdir()
+            (tmp_path / kind / f"{body['name']}.yaml").write_text(
+                json.dumps(body), encoding="utf-8"
+            )
+        answers = {"get": list(gets), "post": list(posts)}
+        calls = {"get": 0, "post": 0}
+
+        def answer(kind: str) -> tuple[int, dict]:
+            calls[kind] += 1
+            queue = answers[kind]
+            status = queue.pop(0) if len(queue) > 1 else queue[0]
+            if status == "down":
+                raise demo.ENGINE_FAULTS[0]("dfe-engine: timed out")
+            return status, {"detail": f"HTTP {status}"}
+
+        monkeypatch.setattr(demo, "_api_get_json", lambda **_: answer("get"))
+        monkeypatch.setattr(demo, "_api_post_json", lambda *_, **__: answer("post"))
+        monkeypatch.setattr(demo, "HUNT_INSTALL_TIMEOUT_SECONDS", 0.2)
+        monkeypatch.setattr(demo, "HUNT_INSTALL_INTERVAL_SECONDS", 0.01)
+
+        lines = demo.install_hunts(base="http://engine", root=tmp_path, token="t")
+
+        assert len(lines) == len(expected)
+        for line, start in zip(lines, expected, strict=True):
+            assert line.startswith(start)
+        if post_calls is None:
+            assert calls["post"] > 1
+        else:
+            assert calls["post"] == post_calls
+
+    @pytest.mark.parametrize(
+        ("rule", "hunt", "listed", "message"),
+        [
+            pytest.param("r", {"name": "h", "rules": ["r"]}, ["h"], "", id="agrees"),
+            pytest.param(
+                "r", {"name": "h", "rules": ["r"]}, [], "lists hunts", id="unlisted"
+            ),
+            pytest.param(
+                "r", {"name": "h", "rules": ["gone"]}, ["h"], "does not hold", id="rule"
+            ),
+            pytest.param(
+                "r", {"name": "other", "rules": ["r"]}, ["h"], "named for", id="name"
+            ),
+        ],
+    )
+    def test_refuses_hunts_that_disagree_with_the_manifest_or_rules(
+        self, tmp_path: Path, rule: str, hunt: dict, listed: list, message: str
+    ) -> None:
+        for kind, name, body in (
+            ("rules", rule, {"name": rule, "user_sql": "SELECT 1"}),
+            ("hunts", "h", hunt),
+        ):
+            (tmp_path / kind).mkdir()
+            (tmp_path / kind / f"{name}.yaml").write_text(
+                json.dumps(body), encoding="utf-8"
+            )
+        manifest = {
+            "archive": {"sources": []},
+            "console": {"dashboards": [], "searches": []},
+            "hunts": listed,
+            "sources": [],
+        }
+
+        if not (message):
+            demo.check_manifest(demo=None, manifest=manifest, root=tmp_path)
+            return
+        with pytest.raises(demo.DemoError, match=message):
+            demo.check_manifest(demo=None, manifest=manifest, root=tmp_path)
 
     @pytest.mark.parametrize(
         "text",

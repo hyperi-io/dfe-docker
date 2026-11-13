@@ -62,7 +62,7 @@ than ever pull `latest`. `make dial` sets the pin from the deployment dial's
 ci`. This is the production-safe default: nothing moves until you move it.
 
 Per image, the pin is an explicit release tag plus the digest that tag resolved
-to (e.g. `DFE_ENGINE_VERSION=v1.17.13@sha256:50c4428...`), so a retagged image
+to (e.g. `DFE_ENGINE_VERSION=v<version>@sha256:<digest>`), so a retagged image
 cannot change what a pinned box runs. That now covers the dfe-hyperdx fork too. Where
 the SSoT has no digest for an image the render emits a bare tag instead, which
 downgrades the pin without announcing it. The registries also publish `latest`

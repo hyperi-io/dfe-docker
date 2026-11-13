@@ -1,0 +1,11 @@
+{
+  "name": "demo-cyber-okta-live",
+  "orderBy": "_timestamp DESC",
+  "select": "_timestamp, event_action, event_outcome, user_name, replaceOne(IPv6NumToString(assumeNotNull(client_ip)), '::ffff:', '') AS address, client_geo_city_name, client_geo_country_name, user_agent_name, user_agent_os_name",
+  "source": "okta",
+  "tags": [
+    "demo"
+  ],
+  "where": "",
+  "whereLanguage": "sql"
+}

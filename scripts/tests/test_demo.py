@@ -8,6 +8,8 @@
 
 """The checks on `make demo` that need no stack: its committed Sources and events and the pure steps between the engine, the pins and docker."""
 
+import importlib.util
+import json
 import re
 from pathlib import Path
 from typing import TypedDict
@@ -87,6 +89,22 @@ VENDOR = {
     "transform": {"engine": "elastic", "variant": ASA_VARIANT},
 }
 EVENTS = {"cisco-asa": ["demo.log"]}
+BEATS = {
+    "match": {
+        "field": "data_stream.dataset",
+        "operator": "equals",
+        "value": "okta.system",
+    },
+    "source": "okta",
+    "transform": {"engine": "elastic", "variant": "filebeat.okta.default"},
+}
+BEATS_LINE = '{"data_stream": {"dataset": "okta.system"}, "message": "{}"}\n'
+# A receiver source with no transform, which lands the JSON its pack replays as sent
+JSON_SOURCE = {
+    "match": {"field": "demo.kind", "operator": "equals", "value": "kpis"},
+    "source": "kpis",
+}
+JSON_LINE = '{"demo": {"kind": "kpis"}, "timestamp": "2026-11-16T00:00:00Z"}\n'
 # GET /sources/registry as the engine answers it, the fetcher deployed and active
 HELD_FETCHER = {
     "archive": False,
@@ -574,8 +592,18 @@ LOAD_DEMO_REFUSAL_CASES = [
     ),
     LoadDemoRefusalCase(
         events={**EVENTS, "fortinet": ["demo.log"]},
-        message="no vendor source of that name",
+        message="no vendor, Beats, JSON or fetcher source of that name",
         sources={"cisco-asa.yaml": VENDOR, "intake.yaml": INTAKE},
+    ),
+    LoadDemoRefusalCase(
+        events={"registry": ["demo.log"], "stray": ["demo.log"]},
+        message="events for 'stray' with no vendor, Beats, JSON or fetcher source",
+        sources={"registry.yaml": FETCHER},
+    ),
+    LoadDemoRefusalCase(
+        events={},
+        message="'kpis' have no events to replay",
+        sources={"kpis.yaml": JSON_SOURCE},
     ),
 ]
 REFUSAL_REASON_CASES = [
@@ -639,6 +667,14 @@ def _write_demo(
             (root / "events" / name / file).write_text(
                 data="%ASA-6-302013: x\n", encoding="utf-8"
             )
+
+
+def _write_beats(*, line: str = BEATS_LINE, root: Path, tool: bool = True) -> None:
+    """Write the Beats source okta's events under root/events, and the pack's replay tool unless `tool` is false."""
+    (root / "events" / "okta").mkdir(parents=True)
+    (root / "events" / "okta" / "demo.log").write_text(data=line, encoding="utf-8")
+    if tool:
+        (root / "events" / demo.REPLAY_TOOL).write_text(data="", encoding="utf-8")
 
 
 class TestEnginePython:
@@ -910,6 +946,37 @@ class TestLoadDemo:
         assert loaded.fetchers == [FETCHER]
         assert loaded.events == {"cisco-asa": tmp_path / "events" / "cisco-asa"}
 
+    @pytest.mark.parametrize(
+        "events", [{}, {"registry": ["demo.log"]}], ids=["live", "replayed"]
+    )
+    def test_a_pack_of_fetchers_alone_needs_no_intake(
+        self, events: dict[str, list[str]], tmp_path: Path
+    ) -> None:
+        _write_demo(events=events, root=tmp_path, sources={"registry.yaml": FETCHER})
+
+        loaded = demo.load_demo(
+            events=tmp_path / "events", sources=tmp_path / "sources"
+        )
+
+        assert loaded == demo.Demo(
+            beats=[],
+            events={},
+            fetchers=[FETCHER],
+            intake=None,
+            json=[],
+            replay=[FETCHER] if events else [],
+            vendors=[],
+        )
+        demo.check_manifest(
+            demo=loaded,
+            manifest={
+                "archive": {"sources": []},
+                "console": {"dashboards": [], "searches": []},
+                "sources": ["registry"],
+            },
+            root=tmp_path,
+        )
+
     def test_accepts_candidates_in_any_order(self, tmp_path: Path) -> None:
         fortinet = {"source": "fortinet", "transform": {"variant": FORTINET_VARIANT}}
         intake = {
@@ -934,6 +1001,165 @@ class TestLoadDemo:
         )
 
         assert loaded.vendors == [VENDOR, fortinet]
+
+    def test_a_pack_of_json_and_fetcher_sources_needs_no_intake(
+        self, tmp_path: Path
+    ) -> None:
+        _write_demo(
+            events={},
+            root=tmp_path,
+            sources={"kpis.yaml": JSON_SOURCE, "registry.yaml": FETCHER},
+        )
+        (tmp_path / "events" / "kpis").mkdir(parents=True)
+        (tmp_path / "events" / "kpis" / "demo.log").write_text(
+            data=JSON_LINE, encoding="utf-8"
+        )
+        (tmp_path / "events" / demo.REPLAY_TOOL).write_text(data="", encoding="utf-8")
+
+        loaded = demo.load_demo(
+            events=tmp_path / "events", sources=tmp_path / "sources"
+        )
+
+        assert loaded == demo.Demo(
+            beats=[],
+            events={"kpis": tmp_path / "events" / "kpis"},
+            fetchers=[FETCHER],
+            intake=None,
+            json=[JSON_SOURCE],
+            replay=[],
+            vendors=[],
+        )
+        demo.check_manifest(
+            demo=loaded,
+            manifest={
+                "archive": {"sources": []},
+                "console": {"dashboards": [], "searches": []},
+                "sources": ["kpis", "registry"],
+            },
+            root=tmp_path,
+        )
+
+    @pytest.mark.parametrize(
+        ("line", "tool", "message"),
+        [
+            ('{"demo": {"kind": "other"}}\n', True, "carries 'other'"),
+            ('{"kind": "kpis"}\n', True, "carries None"),
+            ("%ASA-6-302013: x\n", True, "carries None"),
+            (JSON_LINE, False, "need"),
+        ],
+        ids=["other-value", "field-missing", "not-json", "no-replay-tool"],
+    )
+    def test_refuses_a_json_source_the_receiver_would_not_route_its_events_to(
+        self, line: str, message: str, tmp_path: Path, tool: bool
+    ) -> None:
+        _write_demo(events={}, root=tmp_path, sources={"kpis.yaml": JSON_SOURCE})
+        (tmp_path / "events" / "kpis").mkdir(parents=True)
+        (tmp_path / "events" / "kpis" / "demo.log").write_text(
+            data=line, encoding="utf-8"
+        )
+        if tool:
+            (tmp_path / "events" / demo.REPLAY_TOOL).write_text(
+                data="", encoding="utf-8"
+            )
+
+        with pytest.raises(demo.DemoError, match=message):
+            demo.load_demo(events=tmp_path / "events", sources=tmp_path / "sources")
+
+    def test_a_source_matched_on_the_beats_dataset_is_replayed_not_detected(
+        self, tmp_path: Path
+    ) -> None:
+        _write_demo(
+            events=EVENTS,
+            root=tmp_path,
+            sources={
+                "cisco-asa.yaml": VENDOR,
+                "intake.yaml": INTAKE,
+                "okta.yaml": BEATS,
+            },
+        )
+        _write_beats(root=tmp_path)
+
+        loaded = demo.load_demo(
+            events=tmp_path / "events", sources=tmp_path / "sources"
+        )
+
+        assert loaded.beats == [BEATS]
+        assert loaded.vendors == [VENDOR]
+        assert loaded.events["okta"] == tmp_path / "events" / "okta"
+
+    @pytest.mark.parametrize(
+        ("body", "line", "tool", "message"),
+        [
+            pytest.param(
+                BEATS,
+                '{"data_stream": {"dataset": "o365.audit"}}\n',
+                True,
+                "carry 'o365.audit'",
+                id="other-dataset",
+            ),
+            pytest.param(BEATS, "%ASA-6-302013: x\n", True, "carry None", id="syslog"),
+            pytest.param(
+                {"source": "okta", "transform": {"variant": "filebeat.okta.default"}},
+                BEATS_LINE,
+                True,
+                "Match the source on data_stream.dataset",
+                id="vendor-with-beats-events",
+            ),
+            pytest.param(
+                {**BEATS, "transform": {"engine": "vrl"}},
+                BEATS_LINE,
+                True,
+                "transform engine 'vrl'",
+                id="other-engine",
+            ),
+            pytest.param(BEATS, BEATS_LINE, False, "to replay them", id="no-tool"),
+        ],
+    )
+    def test_refuses_a_beats_source_the_receiver_would_not_route_its_events_to(
+        self, body: dict, line: str, message: str, tmp_path: Path, tool: bool
+    ) -> None:
+        intake = INTAKE
+        if body.get("match") is None:
+            intake = {
+                **INTAKE,
+                "transform": {
+                    "detect": {"candidates": [ASA_VARIANT, "filebeat.okta.default"]},
+                    "mode": "agentless",
+                },
+            }
+        _write_demo(
+            events=EVENTS,
+            root=tmp_path,
+            sources={
+                "cisco-asa.yaml": VENDOR,
+                "intake.yaml": intake,
+                "okta.yaml": body,
+            },
+        )
+        _write_beats(line=line, root=tmp_path, tool=tool)
+
+        with pytest.raises(demo.DemoError, match=re.escape(pattern=message)):
+            demo.load_demo(events=tmp_path / "events", sources=tmp_path / "sources")
+
+    @pytest.mark.parametrize(
+        ("lines", "expected"),
+        [
+            (["\n", BEATS_LINE], "okta.system"),
+            (["%ASA-6-302013: x\n"], None),
+            (['{"message": "x"}\n'], None),
+            (['{"data_stream": {"dataset": ""}}\n'], None),
+            (["[1]\n"], None),
+            ([], None),
+        ],
+        ids=["beats", "syslog", "no-stream", "blank-dataset", "not-an-object", "empty"],
+    )
+    def test_beats_dataset_reads_the_first_event(
+        self, expected: str | None, lines: list[str], tmp_path: Path
+    ) -> None:
+        if lines:
+            (tmp_path / "demo.log").write_text(data="".join(lines), encoding="utf-8")
+
+        assert demo.beats_dataset(events=tmp_path) == expected
 
     def test_a_fetcher_mapping_outranks_agentless_mode(self, tmp_path: Path) -> None:
         polled = {**FETCHER, "transform": {"mode": "agentless"}}
@@ -1231,3 +1457,202 @@ class TestDemoSeed:
 
         with pytest.raises(demo.DemoError, match="is unset"):
             demo_seed._token(base="http://dfe-engine:8000/api/v1")
+
+
+# The telco pack's generator, a script beside its events, loaded the way demo-beats runs it
+_TELCO_SPEC = importlib.util.spec_from_file_location(
+    "telco_generate", demo.DEMO_DIR.parent / "demo-telco" / "events" / demo.REPLAY_TOOL
+)
+assert _TELCO_SPEC is not None and _TELCO_SPEC.loader is not None
+telco = importlib.util.module_from_spec(_TELCO_SPEC)
+_TELCO_SPEC.loader.exec_module(telco)
+
+
+class TestTelcoGenerator:
+    @staticmethod
+    def _kpis(root: Path, lines: list[str]) -> Path:
+        """Write lines as ran-kpis/demo.log under root and return root."""
+        (root / "ran-kpis").mkdir(parents=True)
+        (root / "ran-kpis" / "demo.log").write_text(
+            "\n".join(lines) + "\n", encoding="utf-8"
+        )
+        return root
+
+    def test_the_committed_events_are_what_the_generator_writes(self) -> None:
+        rng = telco.random.Random(telco.SEED)
+        expected = {
+            "ran-kpis": telco.ran_kpis(rng=rng),
+            "core-probes": telco.core_probes(rng=rng),
+        }
+        for source, records in expected.items():
+            lines = [json.dumps(record, separators=(",", ":")) for record in records]
+            committed = (telco.HERE / source / "demo.log").read_text(encoding="utf-8")
+            assert committed == "\n".join(lines) + "\n", source
+
+    def test_counters_stay_inside_what_a_cell_can_report(self) -> None:
+        records = telco.ran_kpis(rng=telco.random.Random(telco.SEED))
+
+        assert len(records) == 288 * 20 - 2
+        for record in records:
+            assert 0 < record["prb_util_dl_pct"] <= 100
+            assert -140 <= record["rsrp_dbm"] <= -44
+            assert record["dl_throughput_mbps"] >= 0
+            assert record["ul_throughput_mbps"] >= 0
+            assert record["active_users"] >= 0
+
+    def test_each_fault_lands_in_its_window(self) -> None:
+        rng = telco.random.Random(telco.SEED)
+        kpis = telco.ran_kpis(rng=rng)
+        probes = telco.core_probes(rng=rng)
+        start = telco.START.timestamp()
+
+        def minute(record: dict) -> int:
+            when = telco.datetime.fromisoformat(record["timestamp"]).timestamp()
+            return int((when - start) // 60)
+
+        def cell(name: str, first: int, last: int) -> list[dict]:
+            return [r for r in kpis if r["cell"] == name and first <= minute(r) < last]
+
+        dropped, before = cell("NTH03-B", 1380, 1415), cell("NTH03-B", 1350, 1380)
+        assert (
+            max(r["rsrp_dbm"] for r in dropped) < min(r["rsrp_dbm"] for r in before) - 8
+        )
+        collapsed, healthy = cell("AIR07-A", 1395, 1425), cell("AIR07-A", 1365, 1395)
+        assert max(r["dl_throughput_mbps"] for r in collapsed) < 0.2 * min(
+            r["dl_throughput_mbps"] for r in healthy
+        )
+        assert cell("CBD01-C", 1405, 1415) == []
+        assert len(cell("CBD01-C", 1395, 1425)) == 4
+
+        burst = [
+            r
+            for r in probes
+            if r["procedure"] == "Update-Location" and 1406 <= minute(r) < 1418
+        ]
+        assert sum(r["result"] == "failure" for r in burst) > 0.3 * len(burst)
+        for record in probes:
+            assert 0 < record["latency_ms"] <= telco.TIMEOUT_MS
+
+    def test_reads_records_oldest_first(self, tmp_path: Path) -> None:
+        root = self._kpis(
+            tmp_path,
+            [
+                '{"timestamp":"2026-11-16T00:10:00.000Z","n":2}',
+                "",
+                '{"timestamp":"2026-11-16T00:00:00+00:00","n":1}',
+            ],
+        )
+
+        records = telco.read_records(root=root, sources=["ran-kpis"])
+
+        assert [record["n"] for _, record in records] == [1, 2]
+        assert records[1][0] - records[0][0] == 600
+
+    @pytest.mark.parametrize(
+        ("lines", "sources", "message"),
+        [
+            (["not json"], ["ran-kpis"], "demo.log:1 has no RFC 3339 timestamp"),
+            (['{"n": 1}'], ["ran-kpis"], "demo.log:1 has no RFC 3339 timestamp"),
+            (['{"timestamp": "yesterday"}'], ["ran-kpis"], "no RFC 3339 timestamp"),
+            (['{"timestamp": "2026-11-16T00:00:00"}'], ["ran-kpis"], "no offset"),
+            ([""], ["ran-kpis"], "no records"),
+            (['{"timestamp": "2026-11-16T00:00:00Z"}'], ["bgp-updates"], "Pick from"),
+        ],
+        ids=["not-json", "no-timestamp", "not-rfc3339", "naive", "empty", "unknown"],
+    )
+    def test_refuses_records_it_cannot_place_in_time(
+        self, lines: list[str], message: str, sources: list[str], tmp_path: Path
+    ) -> None:
+        root = self._kpis(tmp_path, lines)
+
+        with pytest.raises(ValueError, match=message):
+            telco.read_records(root=root, sources=sources)
+
+    @pytest.mark.parametrize(
+        ("span", "period"),
+        [(0.0, 3600.0), (3600.0, 3600.0), (3601.0, 7200.0), (86_340.0, 86_400.0)],
+        ids=["one-record", "exact-hour", "just-over", "a-day"],
+    )
+    def test_a_round_is_the_span_rounded_up_to_whole_hours(
+        self, period: float, span: float
+    ) -> None:
+        assert telco.round_seconds(times=[100.0, 100.0 + span]) == period
+
+    def test_backfills_the_first_round_then_sends_each_record_as_its_time_comes(
+        self,
+    ) -> None:
+        now = [10_000.0]
+        sleeps: list[float] = []
+        batches: list[list[dict]] = []
+
+        def sleep(seconds: float) -> None:
+            sleeps.append(seconds)
+            now[0] += seconds
+
+        def post(*, batch: list[dict], target: str) -> None:
+            batches.append(list(batch))
+
+        # 2,000 records a minute apart: a span of 1,999 minutes, so a 34 hour round
+        records = [
+            (60.0 * index, {"timestamp": "", "n": index}) for index in range(2000)
+        ]
+
+        sent = telco.replay(
+            clock=lambda: now[0],
+            duration=34 * 3600.0 + 60.0,
+            loop=True,
+            post=post,
+            records=records,
+            sleep=sleep,
+            target="http://r/ingest",
+        )
+
+        sent_records = [record for batch in batches for record in batch]
+        assert sent == len(sent_records) == 4000
+        assert all(len(batch) <= telco.REPLAY_BATCH for batch in batches)
+        # The newest record lands at the start, the oldest 1,999 minutes before it
+        assert sent_records[1999] == telco.stamped(
+            record=records[1999][1], when=10_000.0
+        )
+        assert sent_records[0] == telco.stamped(
+            record=records[0][1], when=10_000.0 - 60.0 * 1999
+        )
+        # The first round goes at once in full batches, and the second starts 41 minutes after it
+        assert sleeps[:4] == [0.0, 0.0, 0.0, 41 * 60.0]
+        assert set(sleeps[4:]) == {60.0}
+
+    def test_stops_at_the_duration_and_sends_one_round_without_loop(self) -> None:
+        now = [0.0]
+        sent_batches: list[int] = []
+
+        def sleep(seconds: float) -> None:
+            now[0] += seconds
+
+        def post(*, batch: list[dict], target: str) -> None:
+            sent_batches.append(len(batch))
+
+        records = [(60.0 * index, {"timestamp": "", "n": index}) for index in range(10)]
+
+        once = telco.replay(
+            clock=lambda: now[0],
+            duration=10_000.0,
+            loop=False,
+            post=post,
+            records=records,
+            sleep=sleep,
+            target="t",
+        )
+        now[0] = 0.0
+        bounded = telco.replay(
+            clock=lambda: now[0],
+            duration=3600.0 - 540.0 + 120.0,
+            loop=True,
+            post=post,
+            records=records,
+            sleep=sleep,
+            target="t",
+        )
+
+        assert once == 10
+        # One backfilled round, then the second round's first three records before the deadline
+        assert bounded == 10 + 3

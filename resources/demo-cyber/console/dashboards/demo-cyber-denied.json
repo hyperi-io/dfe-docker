@@ -1,0 +1,64 @@
+{
+  "name": "demo-cyber-denied",
+  "tags": [
+    "demo"
+  ],
+  "tiles": [
+    {
+      "config": {
+        "configType": "sql",
+        "displayType": "stacked_bar",
+        "name": "Denied connections per minute, by firewall",
+        "source": "cisco-asa",
+        "sqlTemplate": "SELECT $__timeInterval(t) AS ts,\n       firewall,\n       count() * 60 / $__interval_s AS \"denied/min\"\nFROM (SELECT _timestamp_load AS t, 'Cisco ASA' AS firewall, replaceOne(IPv6NumToString(assumeNotNull(source_ip)), '::ffff:', '') AS src, if(coalesce(cisco_asa_rule_name, '') = '', concat('ASA ', coalesce(event_code, '')), cisco_asa_rule_name) AS rule\n      FROM dfe.`cisco-asa`\n      WHERE $__timeFilter(_timestamp_load) AND event_outcome = 'failure' AND event_action != 'logon-failed'\n      UNION ALL\n      SELECT _timestamp_load AS t, 'FortiGate' AS firewall, replaceOne(IPv6NumToString(assumeNotNull(source_ip)), '::ffff:', '') AS src, concat('policy ', toString(rule_id)) AS rule\n      FROM dfe.fortinet\n      WHERE $__timeFilter(_timestamp_load) AND event_action = 'deny')\nGROUP BY ts, firewall\nORDER BY ts"
+      },
+      "h": 6,
+      "id": "rate",
+      "w": 16,
+      "x": 0,
+      "y": 0
+    },
+    {
+      "config": {
+        "configType": "sql",
+        "displayType": "number",
+        "name": "Denied connections in the time range",
+        "source": "cisco-asa",
+        "sqlTemplate": "SELECT count() AS \"denied\"\nFROM (SELECT _timestamp_load AS t, 'Cisco ASA' AS firewall, replaceOne(IPv6NumToString(assumeNotNull(source_ip)), '::ffff:', '') AS src, if(coalesce(cisco_asa_rule_name, '') = '', concat('ASA ', coalesce(event_code, '')), cisco_asa_rule_name) AS rule\n      FROM dfe.`cisco-asa`\n      WHERE $__timeFilter(_timestamp_load) AND event_outcome = 'failure' AND event_action != 'logon-failed'\n      UNION ALL\n      SELECT _timestamp_load AS t, 'FortiGate' AS firewall, replaceOne(IPv6NumToString(assumeNotNull(source_ip)), '::ffff:', '') AS src, concat('policy ', toString(rule_id)) AS rule\n      FROM dfe.fortinet\n      WHERE $__timeFilter(_timestamp_load) AND event_action = 'deny')"
+      },
+      "h": 6,
+      "id": "total",
+      "w": 8,
+      "x": 16,
+      "y": 0
+    },
+    {
+      "config": {
+        "configType": "sql",
+        "displayType": "table",
+        "name": "Top denied sources",
+        "source": "cisco-asa",
+        "sqlTemplate": "SELECT firewall AS \"Firewall\",\n       src AS \"Source\",\n       rule AS \"Rule\",\n       count() AS \"Denied\"\nFROM (SELECT _timestamp_load AS t, 'Cisco ASA' AS firewall, replaceOne(IPv6NumToString(assumeNotNull(source_ip)), '::ffff:', '') AS src, if(coalesce(cisco_asa_rule_name, '') = '', concat('ASA ', coalesce(event_code, '')), cisco_asa_rule_name) AS rule\n      FROM dfe.`cisco-asa`\n      WHERE $__timeFilter(_timestamp_load) AND event_outcome = 'failure' AND event_action != 'logon-failed'\n      UNION ALL\n      SELECT _timestamp_load AS t, 'FortiGate' AS firewall, replaceOne(IPv6NumToString(assumeNotNull(source_ip)), '::ffff:', '') AS src, concat('policy ', toString(rule_id)) AS rule\n      FROM dfe.fortinet\n      WHERE $__timeFilter(_timestamp_load) AND event_action = 'deny')\nGROUP BY 1, 2, 3\nORDER BY 4 DESC\nLIMIT 12"
+      },
+      "h": 9,
+      "id": "sources",
+      "w": 14,
+      "x": 0,
+      "y": 6
+    },
+    {
+      "config": {
+        "configType": "sql",
+        "displayType": "table",
+        "name": "Denied by rule",
+        "source": "cisco-asa",
+        "sqlTemplate": "SELECT firewall AS \"Firewall\",\n       rule AS \"Rule\",\n       count() AS \"Denied\",\n       uniqExact(src) AS \"Sources\"\nFROM (SELECT _timestamp_load AS t, 'Cisco ASA' AS firewall, replaceOne(IPv6NumToString(assumeNotNull(source_ip)), '::ffff:', '') AS src, if(coalesce(cisco_asa_rule_name, '') = '', concat('ASA ', coalesce(event_code, '')), cisco_asa_rule_name) AS rule\n      FROM dfe.`cisco-asa`\n      WHERE $__timeFilter(_timestamp_load) AND event_outcome = 'failure' AND event_action != 'logon-failed'\n      UNION ALL\n      SELECT _timestamp_load AS t, 'FortiGate' AS firewall, replaceOne(IPv6NumToString(assumeNotNull(source_ip)), '::ffff:', '') AS src, concat('policy ', toString(rule_id)) AS rule\n      FROM dfe.fortinet\n      WHERE $__timeFilter(_timestamp_load) AND event_action = 'deny')\nGROUP BY 1, 2\nORDER BY 3 DESC\nLIMIT 12"
+      },
+      "h": 9,
+      "id": "rules",
+      "w": 10,
+      "x": 14,
+      "y": 6
+    }
+  ]
+}
