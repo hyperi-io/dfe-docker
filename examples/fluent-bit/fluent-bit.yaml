@@ -1,0 +1,26 @@
+# Project:   dfe-docker
+# File:      examples/fluent-bit/fluent-bit.yaml
+# Purpose:   Fluent Bit tailing a JSON app log and forwarding it to dfe-receiver
+# Language:  YAML
+#
+# License:   BUSL-1.1
+# Copyright: (c) 2026 HYPERI PTY LIMITED
+
+# No time_key, so each line's own timestamp field travels with the record and DFE reads it from there.
+parsers:
+  - name: app_json
+    format: json
+
+pipeline:
+  inputs:
+    - name: tail
+      tag: inventory
+      path: /samples/inventory.log
+      read_from_head: true
+      parser: app_json
+
+  outputs:
+    - name: forward
+      match: "*"
+      host: dfe-receiver
+      port: 24224
