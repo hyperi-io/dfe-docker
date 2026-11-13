@@ -1,0 +1,50 @@
+{
+  "name": "demo-theatre-altitude",
+  "tags": [
+    "demo"
+  ],
+  "tiles": [
+    {
+      "config": {
+        "configType": "sql",
+        "displayType": "stacked_bar",
+        "name": "Aircraft by altitude band",
+        "source": "adsb-tracks",
+        "sqlTemplate": "SELECT toStartOfInterval(ts, INTERVAL 5 MINUTE) AS bucket,\n       substring(multiIf(grounded, '1 ground', altitude IS NULL, '0 unknown', altitude < 10000, '2 under 10k ft', altitude < 20000, '3 10k-20k ft', altitude < 30000, '4 20k-30k ft', '5 over 30k ft'), 3) AS band,\n       uniqExact(hex) AS aircraft\nFROM (SELECT _timestamp AS ts,\n       upper(toString(_json.hex)) AS hex,\n       ifNull(nullIf(trimBoth(toString(_json.flight)), ''), upper(toString(_json.hex))) AS track,\n       toFloat64OrNull(toString(_json.lat)) AS lat,\n       toFloat64OrNull(toString(_json.lon)) AS lon,\n       toFloat64OrNull(toString(_json.track)) AS heading,\n       toFloat64OrNull(toString(_json.gs)) AS speed,\n       toString(_json.alt_baro) = 'ground' AS grounded,\n       toInt32OrNull(toString(_json.alt_baro)) AS altitude,\n       toInt32OrNull(toString(_json.baro_rate)) AS rate,\n       toString(_json.t) AS type\nFROM dfe.`adsb-tracks`\nWHERE $__timeFilter(_timestamp))\nGROUP BY bucket, multiIf(grounded, '1 ground', altitude IS NULL, '0 unknown', altitude < 10000, '2 under 10k ft', altitude < 20000, '3 10k-20k ft', altitude < 30000, '4 20k-30k ft', '5 over 30k ft')\nORDER BY bucket, multiIf(grounded, '1 ground', altitude IS NULL, '0 unknown', altitude < 10000, '2 under 10k ft', altitude < 20000, '3 10k-20k ft', altitude < 30000, '4 20k-30k ft', '5 over 30k ft')"
+      },
+      "h": 8,
+      "id": "bands",
+      "w": 16,
+      "x": 0,
+      "y": 0
+    },
+    {
+      "config": {
+        "configType": "sql",
+        "displayType": "table",
+        "name": "Altitude bands now",
+        "source": "adsb-tracks",
+        "sqlTemplate": "SELECT substring(band, 3) AS \"Band\",\n       count() AS \"Aircraft\",\n       round(avg(speed)) AS \"Average speed (kn)\"\nFROM (\n  SELECT hex, argMax(multiIf(grounded, '1 ground', altitude IS NULL, '0 unknown', altitude < 10000, '2 under 10k ft', altitude < 20000, '3 10k-20k ft', altitude < 30000, '4 20k-30k ft', '5 over 30k ft'), ts) AS band, argMax(speed, ts) AS speed\n  FROM (SELECT _timestamp AS ts,\n       upper(toString(_json.hex)) AS hex,\n       ifNull(nullIf(trimBoth(toString(_json.flight)), ''), upper(toString(_json.hex))) AS track,\n       toFloat64OrNull(toString(_json.lat)) AS lat,\n       toFloat64OrNull(toString(_json.lon)) AS lon,\n       toFloat64OrNull(toString(_json.track)) AS heading,\n       toFloat64OrNull(toString(_json.gs)) AS speed,\n       toString(_json.alt_baro) = 'ground' AS grounded,\n       toInt32OrNull(toString(_json.alt_baro)) AS altitude,\n       toInt32OrNull(toString(_json.baro_rate)) AS rate,\n       toString(_json.t) AS type\nFROM dfe.`adsb-tracks`\nWHERE $__timeFilter(_timestamp))\n  WHERE ts > now() - INTERVAL 6 MINUTE\n  GROUP BY hex\n)\nGROUP BY band\nORDER BY band"
+      },
+      "h": 8,
+      "id": "now",
+      "w": 8,
+      "x": 16,
+      "y": 0
+    },
+    {
+      "config": {
+        "configType": "sql",
+        "displayType": "table",
+        "name": "Climbing and descending now",
+        "source": "adsb-tracks",
+        "sqlTemplate": "SELECT track AS \"Callsign\",\n       argMax(type, ts) AS \"Type\",\n       argMax(altitude, ts) AS \"Altitude (ft)\",\n       argMax(rate, ts) AS \"Climb rate (ft/min)\",\n       round(argMax(speed, ts)) AS \"Speed (kn)\"\nFROM (SELECT _timestamp AS ts,\n       upper(toString(_json.hex)) AS hex,\n       ifNull(nullIf(trimBoth(toString(_json.flight)), ''), upper(toString(_json.hex))) AS track,\n       toFloat64OrNull(toString(_json.lat)) AS lat,\n       toFloat64OrNull(toString(_json.lon)) AS lon,\n       toFloat64OrNull(toString(_json.track)) AS heading,\n       toFloat64OrNull(toString(_json.gs)) AS speed,\n       toString(_json.alt_baro) = 'ground' AS grounded,\n       toInt32OrNull(toString(_json.alt_baro)) AS altitude,\n       toInt32OrNull(toString(_json.baro_rate)) AS rate,\n       toString(_json.t) AS type\nFROM dfe.`adsb-tracks`\nWHERE $__timeFilter(_timestamp))\nWHERE ts > now() - INTERVAL 6 MINUTE AND NOT grounded\nGROUP BY track\nHAVING abs(\"Climb rate (ft/min)\") >= 500\nORDER BY abs(\"Climb rate (ft/min)\") DESC\nLIMIT 20"
+      },
+      "h": 8,
+      "id": "median",
+      "w": 24,
+      "x": 0,
+      "y": 8
+    }
+  ]
+}

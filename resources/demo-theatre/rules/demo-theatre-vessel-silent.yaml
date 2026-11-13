@@ -1,0 +1,16 @@
+# Project:   dfe-docker
+# File:      resources/demo-theatre/rules/demo-theatre-vessel-silent.yaml
+# Purpose:   The theatre demo's rule: a vessel whose last AIS report has just passed five minutes old
+# Language:  YAML
+#
+# License:   BUSL-1.1
+# Copyright: (c) 2026 HYPERI PTY LIMITED
+
+name: demo-theatre-vessel-silent
+display_name: Vessel silent for five minutes
+severity: medium
+source: ais-tracks
+source_type: raw
+# Each poll lands every vessel's latest report, so a report between 300 and 310 seconds old matches on one poll per silence.
+# A rule reads only its own row, so the track coming back is the demo-theatre-churn dashboard's returning tracks.
+user_sql: "SELECT * FROM dfe.`ais-tracks` WHERE dateDiff('second', fromUnixTimestamp64Milli(toInt64OrZero(toString(`ais-tracks`._json.properties.timestampExternal))), `ais-tracks`._timestamp) BETWEEN 300 AND 309"

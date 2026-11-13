@@ -1,0 +1,50 @@
+{
+  "name": "demo-theatre-churn",
+  "tags": [
+    "demo"
+  ],
+  "tiles": [
+    {
+      "config": {
+        "configType": "sql",
+        "displayType": "stacked_bar",
+        "name": "New and dropped tracks per 5 minutes",
+        "source": "adsb-tracks",
+        "sqlTemplate": "SELECT at, concat(feed, ' ', kind) AS change, count() AS tracks\nFROM (\n  SELECT feed, bucket AS at, 'new' AS kind\n  FROM (\n    SELECT feed, track, bucket,\n           lagInFrame(bucket, 1, toDateTime(0, 'UTC')) OVER (PARTITION BY feed, track ORDER BY bucket ROWS BETWEEN 1 PRECEDING AND CURRENT ROW) AS before,\n           min(bucket) OVER (PARTITION BY feed) AS first\n    FROM (SELECT DISTINCT feed, track, toStartOfInterval(ts, INTERVAL 5 MINUTE) AS bucket\n  FROM (\n    SELECT 'air' AS feed, ts, hex AS track FROM (SELECT _timestamp AS ts,\n       upper(toString(_json.hex)) AS hex,\n       ifNull(nullIf(trimBoth(toString(_json.flight)), ''), upper(toString(_json.hex))) AS track,\n       toFloat64OrNull(toString(_json.lat)) AS lat,\n       toFloat64OrNull(toString(_json.lon)) AS lon,\n       toFloat64OrNull(toString(_json.track)) AS heading,\n       toFloat64OrNull(toString(_json.gs)) AS speed,\n       toString(_json.alt_baro) = 'ground' AS grounded,\n       toInt32OrNull(toString(_json.alt_baro)) AS altitude,\n       toInt32OrNull(toString(_json.baro_rate)) AS rate,\n       toString(_json.t) AS type\nFROM dfe.`adsb-tracks`\nWHERE $__timeFilter(_timestamp))\n    UNION ALL\n    SELECT 'sea' AS feed, ts, track FROM (SELECT _timestamp AS ts,\n       toString(_json.mmsi) AS track,\n       toFloat64OrNull(toString(_json.geometry.coordinates[2])) AS lat,\n       toFloat64OrNull(toString(_json.geometry.coordinates[1])) AS lon,\n       toFloat64OrNull(toString(_json.properties.cog)) AS heading,\n       toFloat64OrNull(toString(_json.properties.sog)) AS speed,\n       toInt32OrNull(toString(_json.properties.navStat)) AS status\nFROM dfe.`ais-tracks`\nWHERE $__timeFilter(_timestamp))\n  ))\n  )\n  WHERE before != bucket - INTERVAL 5 MINUTE AND bucket > first\n  UNION ALL\n  SELECT feed, bucket + INTERVAL 5 MINUTE AS at, 'dropped' AS kind\n  FROM (\n    SELECT feed, track, bucket,\n           leadInFrame(bucket, 1, toDateTime(0, 'UTC')) OVER (PARTITION BY feed, track ORDER BY bucket ROWS BETWEEN CURRENT ROW AND 1 FOLLOWING) AS after,\n           max(bucket) OVER (PARTITION BY feed) AS last\n    FROM (SELECT DISTINCT feed, track, toStartOfInterval(ts, INTERVAL 5 MINUTE) AS bucket\n  FROM (\n    SELECT 'air' AS feed, ts, hex AS track FROM (SELECT _timestamp AS ts,\n       upper(toString(_json.hex)) AS hex,\n       ifNull(nullIf(trimBoth(toString(_json.flight)), ''), upper(toString(_json.hex))) AS track,\n       toFloat64OrNull(toString(_json.lat)) AS lat,\n       toFloat64OrNull(toString(_json.lon)) AS lon,\n       toFloat64OrNull(toString(_json.track)) AS heading,\n       toFloat64OrNull(toString(_json.gs)) AS speed,\n       toString(_json.alt_baro) = 'ground' AS grounded,\n       toInt32OrNull(toString(_json.alt_baro)) AS altitude,\n       toInt32OrNull(toString(_json.baro_rate)) AS rate,\n       toString(_json.t) AS type\nFROM dfe.`adsb-tracks`\nWHERE $__timeFilter(_timestamp))\n    UNION ALL\n    SELECT 'sea' AS feed, ts, track FROM (SELECT _timestamp AS ts,\n       toString(_json.mmsi) AS track,\n       toFloat64OrNull(toString(_json.geometry.coordinates[2])) AS lat,\n       toFloat64OrNull(toString(_json.geometry.coordinates[1])) AS lon,\n       toFloat64OrNull(toString(_json.properties.cog)) AS heading,\n       toFloat64OrNull(toString(_json.properties.sog)) AS speed,\n       toInt32OrNull(toString(_json.properties.navStat)) AS status\nFROM dfe.`ais-tracks`\nWHERE $__timeFilter(_timestamp))\n  ))\n  )\n  WHERE after != bucket + INTERVAL 5 MINUTE AND bucket < last\n)\nGROUP BY at, change\nORDER BY at"
+      },
+      "h": 8,
+      "id": "churn",
+      "w": 16,
+      "x": 0,
+      "y": 0
+    },
+    {
+      "config": {
+        "configType": "sql",
+        "displayType": "table",
+        "name": "Tracks that stopped reporting",
+        "source": "adsb-tracks",
+        "sqlTemplate": "SELECT feed AS \"Feed\",\n       track AS \"Track\",\n       formatDateTime(max(ts), '%H:%i:%S') AS \"Last report (UTC)\",\n       dateDiff('minute', max(ts), now()) AS \"Minutes since\"\nFROM (\n  SELECT 'air' AS feed, ts, track FROM (SELECT _timestamp AS ts,\n       upper(toString(_json.hex)) AS hex,\n       ifNull(nullIf(trimBoth(toString(_json.flight)), ''), upper(toString(_json.hex))) AS track,\n       toFloat64OrNull(toString(_json.lat)) AS lat,\n       toFloat64OrNull(toString(_json.lon)) AS lon,\n       toFloat64OrNull(toString(_json.track)) AS heading,\n       toFloat64OrNull(toString(_json.gs)) AS speed,\n       toString(_json.alt_baro) = 'ground' AS grounded,\n       toInt32OrNull(toString(_json.alt_baro)) AS altitude,\n       toInt32OrNull(toString(_json.baro_rate)) AS rate,\n       toString(_json.t) AS type\nFROM dfe.`adsb-tracks`\nWHERE $__timeFilter(_timestamp))\n  UNION ALL\n  SELECT 'sea' AS feed, ts, track FROM (SELECT _timestamp AS ts,\n       toString(_json.mmsi) AS track,\n       toFloat64OrNull(toString(_json.geometry.coordinates[2])) AS lat,\n       toFloat64OrNull(toString(_json.geometry.coordinates[1])) AS lon,\n       toFloat64OrNull(toString(_json.properties.cog)) AS heading,\n       toFloat64OrNull(toString(_json.properties.sog)) AS speed,\n       toInt32OrNull(toString(_json.properties.navStat)) AS status\nFROM dfe.`ais-tracks`\nWHERE $__timeFilter(_timestamp))\n)\nGROUP BY feed, track\nHAVING max(ts) < now() - INTERVAL 7 MINUTE\nORDER BY max(ts) DESC\nLIMIT 50"
+      },
+      "h": 8,
+      "id": "dropped",
+      "w": 8,
+      "x": 16,
+      "y": 0
+    },
+    {
+      "config": {
+        "configType": "sql",
+        "displayType": "table",
+        "name": "Tracks back after five minutes silent",
+        "source": "adsb-tracks",
+        "sqlTemplate": "SELECT feed AS \"Feed\",\n       any(track) AS \"Track\",\n       formatDateTime(before, '%H:%i:%S') AS \"Last report before (UTC)\",\n       formatDateTime(ts, '%H:%i:%S') AS \"Back at (UTC)\",\n       dateDiff('minute', before, ts) AS \"Silent (min)\"\nFROM (\n  SELECT feed, id, track, ts,\n         lagInFrame(ts, 1, ts) OVER (PARTITION BY feed, id ORDER BY ts ROWS BETWEEN 1 PRECEDING AND CURRENT ROW) AS before\n  FROM (\n    SELECT 'air' AS feed, hex AS id, track, ts FROM (SELECT _timestamp AS ts,\n       upper(toString(_json.hex)) AS hex,\n       ifNull(nullIf(trimBoth(toString(_json.flight)), ''), upper(toString(_json.hex))) AS track,\n       toFloat64OrNull(toString(_json.lat)) AS lat,\n       toFloat64OrNull(toString(_json.lon)) AS lon,\n       toFloat64OrNull(toString(_json.track)) AS heading,\n       toFloat64OrNull(toString(_json.gs)) AS speed,\n       toString(_json.alt_baro) = 'ground' AS grounded,\n       toInt32OrNull(toString(_json.alt_baro)) AS altitude,\n       toInt32OrNull(toString(_json.baro_rate)) AS rate,\n       toString(_json.t) AS type\nFROM dfe.`adsb-tracks`\nWHERE $__timeFilter(_timestamp))\n    UNION ALL\n    SELECT 'sea' AS feed, track AS id, track, ts FROM (SELECT _timestamp AS ts,\n       toString(_json.mmsi) AS track,\n       toFloat64OrNull(toString(_json.geometry.coordinates[2])) AS lat,\n       toFloat64OrNull(toString(_json.geometry.coordinates[1])) AS lon,\n       toFloat64OrNull(toString(_json.properties.cog)) AS heading,\n       toFloat64OrNull(toString(_json.properties.sog)) AS speed,\n       toInt32OrNull(toString(_json.properties.navStat)) AS status\nFROM dfe.`ais-tracks`\nWHERE $__timeFilter(_timestamp))\n  )\n)\nWHERE dateDiff('second', before, ts) >= 300\nGROUP BY feed, id, before, ts\nORDER BY ts DESC\nLIMIT 50"
+      },
+      "h": 7,
+      "id": "back",
+      "w": 24,
+      "x": 0,
+      "y": 8
+    }
+  ]
+}

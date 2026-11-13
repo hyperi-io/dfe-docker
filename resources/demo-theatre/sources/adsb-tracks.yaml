@@ -1,0 +1,57 @@
+# Project:   dfe-docker
+# File:      resources/demo-theatre/sources/adsb-tracks.yaml
+# Purpose:   The theatre pack's air picture: live ADS-B positions round Sydney from adsb.lol
+# Language:  YAML
+#
+# License:   BUSL-1.1
+# Copyright: (c) 2026 HYPERI PTY LIMITED
+
+description: Live ADS-B aircraft positions within 100 nautical miles of Sydney Kingsford Smith, one row per aircraft per poll. Data from adsb.lol (https://adsb.lol), under the Open Data Commons Open Database License (ODbL) v1.0
+display_name: ADS-B tracks
+fetcher:
+  config:
+    auth:
+      mode: none
+    # Unkeyed adsb.lol allows 500 /v2 requests a day per address, and one poll every 180 seconds spends 480
+    interval_secs: 180
+    profile:
+      auth:
+        accepts: [none]
+      base_url: "{{ vars.api_url }}"
+      endpoints:
+        # The captured polls scripts/replay_fetch.py serves, which answer with no aircraft while adsb.lol is reachable
+        - base_url: "{{ vars.replay_url }}"
+          path: /adsb-tracks
+          rows:
+            at: /ac
+            decoder: json_at
+          timeout_secs: 10
+          unit: replay
+        - path: "/v2/point/{{ vars.lat }}/{{ vars.lon }}/{{ vars.radius_nm }}"
+          rows:
+            at: /ac
+            decoder: json_at
+          timeout_secs: 20
+          unit: point
+      headers:
+        Accept: application/json
+        User-Agent: DFE-demo (https://github.com/hyperi-io/dfe-docker)
+      retry:
+        max_retries: 1
+        never_retry: [401, 403, 429]
+      shape: incremental
+    vars:
+      api_url: https://api.adsb.lol
+      lat: "-33.94"
+      lon: "151.18"
+      radius_nm: "100"
+      replay_url: http://demo-replay:8080
+  source_type: rest
+  topic: own
+header:
+  type: common-header/timeseries
+  version: 1.0.1
+schema:
+  meta_schema: meta/syslog
+  meta_schema_version: 1.0.0
+source: adsb-tracks
