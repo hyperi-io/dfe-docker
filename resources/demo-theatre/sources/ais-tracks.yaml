@@ -1,0 +1,67 @@
+# Project:   dfe-docker
+# File:      resources/demo-theatre/sources/ais-tracks.yaml
+# Purpose:   The theatre pack's sea picture: live AIS positions in the Gulf of Finland from Digitraffic
+# Language:  YAML
+#
+# License:   BUSL-1.1
+# Copyright: (c) 2026 HYPERI PTY LIMITED
+
+description: Live AIS vessel positions within 60 km of Helsinki that reported in the last ten minutes, one row per vessel per poll. Data from Fintraffic's Digitraffic marine API (https://www.digitraffic.fi), under the Creative Commons Attribution 4.0 International licence (CC BY 4.0)
+display_name: AIS tracks
+fetcher:
+  config:
+    auth:
+      mode: none
+    interval_secs: 10
+    profile:
+      auth:
+        accepts: [none]
+      base_url: "{{ vars.api_url }}"
+      endpoints:
+        # The captured polls scripts/replay_fetch.py serves, which answer with no vessels while Digitraffic is reachable
+        - base_url: "{{ vars.replay_url }}"
+          path: /ais-tracks
+          rows:
+            at: /features
+            decoder: json_at
+          timeout_secs: 10
+          unit: replay
+        - path: /api/ais/v1/locations
+          # The vessels that reported in the last ten minutes
+          query:
+            from: "{{ int(window.end) - 600000 }}"
+            latitude: "{{ vars.lat }}"
+            longitude: "{{ vars.lon }}"
+            radius: "{{ vars.radius_km }}"
+          rows:
+            at: /features
+            decoder: json_at
+          timeout_secs: 20
+          unit: locations
+      # Digitraffic answers 406 without the Accept and gzip headers, and asks every client to name itself
+      headers:
+        Accept: application/json
+        Accept-Encoding: gzip
+        Digitraffic-User: DFE-demo
+        User-Agent: DFE-demo (https://github.com/hyperi-io/dfe-docker)
+      retry:
+        max_retries: 1
+        never_retry: [401, 403, 406]
+      shape: incremental
+      window:
+        format: epoch_millis
+    vars:
+      api_url: https://meri.digitraffic.fi
+      lat: "60.1"
+      lon: "24.95"
+      radius_km: "60"
+      replay_url: http://demo-replay:8080
+  source_type: rest
+  topic: own
+header:
+  type: common-header/timeseries
+  version: 1.0.1
+schema:
+  meta_schema: meta/syslog
+  meta_schema_version: 1.0.0
+source: ais-tracks

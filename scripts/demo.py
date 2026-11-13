@@ -198,13 +198,14 @@ class DemoError(Exception):
 
 
 class Demo(typing.NamedTuple):
-    """A pack's Sources by role with the events directory of each vendor, Beats and JSON source. A pack with no vendor has no intake."""
+    """A pack's Sources by role with the events directory of each vendor, Beats and JSON source. A pack with no vendor has no intake, and `replay` holds the fetchers whose captured polls scripts/replay_fetch.py serves."""
 
     beats: list[dict]
     events: dict[str, Path]
     fetchers: list[dict]
     intake: dict | None
     json: list[dict]
+    replay: list[dict]
     vendors: list[dict]
 
 
@@ -1699,7 +1700,10 @@ def pruner_command(*, archive: dict, tool: str) -> list[str]:
 
 
 def load_demo(*, events: Path, sources: Path) -> Demo:
-    """Read every source file under sources by role and pair each vendor, Beats and JSON source with its directory under events. A pack with no vendor needs no intake."""
+    """Read every source file under sources by role and pair each vendor, Beats and JSON source with its directory under events.
+
+    A pack with no vendor and no intake file needs no intake. A fetcher's events directory is its replay, never a vendor's events or an orphan.
+    """
     bodies = [
         _read_source(path=path) for path in sorted(sources.glob(pattern="*.yaml"))
     ]
@@ -1737,12 +1741,13 @@ def load_demo(*, events: Path, sources: Path) -> Demo:
             f"source(s) {', '.join(repr(name) for name in missing)} have no "
             f"events to replay. Add each as {layout!r} holding its lines"
         )
-    orphans = sorted(set(held) - set(names))
+    replays = [body for body in fetchers if body["source"] in held]
+    orphans = sorted(set(held) - set(names) - {body["source"] for body in replays})
     if orphans:
         raise DemoError(
             f"{str(events)!r} holds events for {', '.join(repr(name) for name in orphans)} "
-            f"with no vendor, Beats or JSON source of that name in {str(sources)!r}. Add "
-            f"the source or remove the directory"
+            f"with no vendor, Beats, JSON or fetcher source of that name in "
+            f"{str(sources)!r}. Add the source or remove the directory"
         )
     for body in [*vendors, *beats, *replayed]:
         _check_events_kind(body=body, events=held[body["source"]])
@@ -1758,6 +1763,7 @@ def load_demo(*, events: Path, sources: Path) -> Demo:
         fetchers=fetchers,
         intake=intake,
         json=replayed,
+        replay=replays,
         vendors=vendors,
     )
 

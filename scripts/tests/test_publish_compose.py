@@ -36,6 +36,7 @@ ROLES = {
     "fetcher": ["releases"],
     "intake": ["demo-syslog"],
     "json": [],
+    "replay": [],
     "vendor": ["cisco-asa", "fortinet"],
 }
 
@@ -303,7 +304,10 @@ class TestFindings:
 
 class TestDemoRoles:
     @pytest.mark.usefixtures("engine_python_here")
-    @pytest.mark.parametrize("pack", SEEDED_PACKS, ids=lambda p: p or "demo")
+    # Every committed pack shape: syslog vendors, Beats, JSON with a fetcher, fetchers with replays
+    @pytest.mark.parametrize(
+        "pack", ["", "cyber", "telco", "theatre"], ids=lambda p: p or "demo"
+    )
     def test_reads_each_committed_pack_as_its_seeding_does(self, pack: str) -> None:
         root = demo_pack_dir(pack=pack)
         roles = publish_compose.demo_roles(
@@ -311,11 +315,13 @@ class TestDemoRoles:
         )
         loaded = demo.load_demo(events=root / "events", sources=root / "sources")
 
+        assert pack in SEEDED_PACKS
         assert roles == {
             "beats": sorted(body["source"] for body in loaded.beats),
             "fetcher": sorted(body["source"] for body in loaded.fetchers),
             "intake": [] if loaded.intake is None else [loaded.intake["source"]],
             "json": sorted(body["source"] for body in loaded.json),
+            "replay": sorted(body["source"] for body in loaded.replay),
             "vendor": sorted(body["source"] for body in loaded.vendors),
         }
 
@@ -329,6 +335,7 @@ class TestDemoRoles:
                     "fetcher": [],
                     "intake": ["intake"],
                     "json": [],
+                    "replay": [],
                     "vendor": ["cisco-asa"],
                 },
             ),
@@ -386,7 +393,9 @@ class TestDemoRoles:
         for name in events:
             (tmp_path / "events" / name).mkdir()
 
-        with pytest.raises(publish_compose.PublishError, match="needs one intake"):
+        with pytest.raises(
+            publish_compose.PublishError, match="one intake and at least one vendor"
+        ):
             publish_compose.demo_roles(
                 events=tmp_path / "events", sources=tmp_path / "sources"
             )
@@ -407,6 +416,7 @@ class TestDemoRoles:
             "fetcher": [],
             "intake": [],
             "json": [],
+            "replay": [],
             "vendor": [],
         }
         assert publish_compose.demo_instances(roles=roles) == {}
@@ -430,6 +440,8 @@ class TestDemoRoles:
             "fetcher:\n  x: 1\n", encoding="utf-8"
         )
         (tmp_path / "events" / "kpis").mkdir(parents=True)
+        # A fetcher's events are its replay, never a vendor's
+        (tmp_path / "events" / "bgp").mkdir()
         (tmp_path / "events" / "generate.py").write_text("", encoding="utf-8")
 
         if expected is None:
@@ -443,7 +455,13 @@ class TestDemoRoles:
             events=tmp_path / "events", sources=tmp_path / "sources"
         )
 
-        assert roles == {"beats": [], "fetcher": ["bgp"], "intake": [], **expected}
+        assert roles == {
+            "beats": [],
+            "fetcher": ["bgp"],
+            "intake": [],
+            "replay": ["bgp"],
+            **expected,
+        }
         assert publish_compose.demo_instances(roles=roles) == {}
         assert publish_compose.demo_hosted(roles=roles) == ""
 
@@ -599,7 +617,14 @@ class TestDemoOverlay:
         stack = _stack(
             [name for name in DEMO_STACK if name != "dfe-transform-elastic-demo-syslog"]
         )
-        roles = {"beats": [], "fetcher": [], "intake": [], "json": [], "vendor": []}
+        roles = {
+            "beats": [],
+            "fetcher": [],
+            "intake": [],
+            "json": [],
+            "replay": [],
+            "vendor": [],
+        }
 
         model = publish_compose.demo_overlay(
             archive={**ARCHIVE, "sources": []},
@@ -618,7 +643,13 @@ class TestDemoOverlay:
                 "--pack",
                 "cyber",
             ]
-        for absent in ("demo-feed", "demo-stream", "demo-prune", "demo-beats"):
+        for absent in (
+            "demo-feed",
+            "demo-stream",
+            "demo-prune",
+            "demo-beats",
+            "demo-replay",
+        ):
             assert absent not in services
         assert publish_compose.DEMO_FEED_VOLUME not in model.get("volumes", {})
         assert "demo-sources" in services["dfe-receiver"]["depends_on"]
@@ -687,6 +718,7 @@ class TestDemoOverlay:
             "fetcher": ["bgp-updates"],
             "intake": [],
             "json": ["core-probes", "ran-kpis"],
+            "replay": [],
             "vendor": [],
         }
 
@@ -729,6 +761,52 @@ class TestDemoOverlay:
                 stream=["scripts/replay_syslog.py", "tcp", "20"],
             )
 
+    def test_a_pack_of_fetchers_alone_serves_their_replay_and_streams_nothing(
+        self,
+    ) -> None:
+        stack = _stack(
+            [name for name in DEMO_STACK if name != "dfe-transform-elastic-demo-syslog"]
+        )
+        fetchers = ["adsb-tracks", "ais-tracks"]
+        roles = {
+            "beats": [],
+            "fetcher": fetchers,
+            "intake": [],
+            "json": [],
+            "replay": fetchers,
+            "vendor": [],
+        }
+
+        model = publish_compose.demo_overlay(
+            archive={**ARCHIVE, "sources": []},
+            image="i",
+            model=stack,
+            pack="theatre",
+            roles=roles,
+            stream=["scripts/replay_syslog.py", "tcp", "20"],
+        )
+
+        services = model["services"]
+        replay = services[publish_compose.REPLAY_SERVICE]
+        assert replay["entrypoint"] == [
+            "python3",
+            "/opt/dfe-docker/scripts/replay_fetch.py",
+            "--pack",
+            "theatre",
+        ]
+        assert (replay["image"], replay["restart"]) == ("i", "unless-stopped")
+        for absent in ("demo-feed", "demo-stream", "demo-prune"):
+            assert absent not in services
+        assert services["dfe-fetcher"]["depends_on"]["demo-replay"] == {
+            "condition": "service_started",
+            "required": True,
+        }
+        assert "demo-sources" in services["dfe-fetcher"]["depends_on"]
+        assert (
+            services["dfe-engine"]["environment"][publish_compose.HOSTED_INSTANCES_KEY]
+            == ""
+        )
+
     def test_the_demo_seeds_with_no_pack_argument(self) -> None:
         model = publish_compose.demo_overlay(
             archive=ARCHIVE,
@@ -743,6 +821,7 @@ class TestDemoOverlay:
                 "python3",
                 "/opt/dfe-docker/scripts/demo_seed.py",
             ]
+        assert publish_compose.REPLAY_SERVICE not in model["services"]
 
     def test_declares_no_fetcher_instance(self) -> None:
         # Every fetcher source runs in the one committed dfe-fetcher

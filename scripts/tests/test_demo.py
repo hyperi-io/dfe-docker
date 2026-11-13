@@ -592,8 +592,13 @@ LOAD_DEMO_REFUSAL_CASES = [
     ),
     LoadDemoRefusalCase(
         events={**EVENTS, "fortinet": ["demo.log"]},
-        message="no vendor, Beats or JSON source of that name",
+        message="no vendor, Beats, JSON or fetcher source of that name",
         sources={"cisco-asa.yaml": VENDOR, "intake.yaml": INTAKE},
+    ),
+    LoadDemoRefusalCase(
+        events={"registry": ["demo.log"], "stray": ["demo.log"]},
+        message="events for 'stray' with no vendor, Beats, JSON or fetcher source",
+        sources={"registry.yaml": FETCHER},
     ),
     LoadDemoRefusalCase(
         events={},
@@ -941,6 +946,37 @@ class TestLoadDemo:
         assert loaded.fetchers == [FETCHER]
         assert loaded.events == {"cisco-asa": tmp_path / "events" / "cisco-asa"}
 
+    @pytest.mark.parametrize(
+        "events", [{}, {"registry": ["demo.log"]}], ids=["live", "replayed"]
+    )
+    def test_a_pack_of_fetchers_alone_needs_no_intake(
+        self, events: dict[str, list[str]], tmp_path: Path
+    ) -> None:
+        _write_demo(events=events, root=tmp_path, sources={"registry.yaml": FETCHER})
+
+        loaded = demo.load_demo(
+            events=tmp_path / "events", sources=tmp_path / "sources"
+        )
+
+        assert loaded == demo.Demo(
+            beats=[],
+            events={},
+            fetchers=[FETCHER],
+            intake=None,
+            json=[],
+            replay=[FETCHER] if events else [],
+            vendors=[],
+        )
+        demo.check_manifest(
+            demo=loaded,
+            manifest={
+                "archive": {"sources": []},
+                "console": {"dashboards": [], "searches": []},
+                "sources": ["registry"],
+            },
+            root=tmp_path,
+        )
+
     def test_accepts_candidates_in_any_order(self, tmp_path: Path) -> None:
         fortinet = {"source": "fortinet", "transform": {"variant": FORTINET_VARIANT}}
         intake = {
@@ -990,6 +1026,7 @@ class TestLoadDemo:
             fetchers=[FETCHER],
             intake=None,
             json=[JSON_SOURCE],
+            replay=[],
             vendors=[],
         )
         demo.check_manifest(

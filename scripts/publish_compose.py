@@ -106,6 +106,8 @@ TRANSFORM_ELASTIC_CONTRACT = "contract-dfe-transform-elastic"
 # Where the dfe-docker image holds this tree
 IMAGE_TREE = "/opt/dfe-docker"
 DEMO_FEED_VOLUME = "demo-feed"
+# The service a pack's fetcher sources reach their captured polls at, the host of their `vars.replay_url`
+REPLAY_SERVICE = "demo-replay"
 DEMO_FEED_MOUNT = "/demo-feed"
 # A subdirectory, because staging the feed replaces it and a volume's root cannot be removed
 DEMO_FEED_SUBPATH = "feed"
@@ -300,24 +302,32 @@ def file_model(*, path: Path) -> dict:
 
 
 def demo_roles(*, events: Path, sources: Path) -> dict[str, list[str]]:
-    """The pack's source names by role: each source with events replays them, as Beats when they are Beats envelopes, as JSON when its file has a match and no transform, and as a vendor's syslog otherwise, each fetcher has a fetcher mapping, and the one left is the intake. A pack with no vendor has no intake, and one with no source files has none of any."""
+    """The pack's source names by role: each fetcher has a fetcher mapping and is a replay where it has events, each other source with events replays them, as Beats when they are Beats envelopes, as JSON when its file has a match and no transform, and as a vendor's syslog otherwise, and the one left is the intake. A pack with no vendor and no intake file has no intake, and one with no source files has none of any."""
     names = sorted(path.stem for path in sources.glob("*.yaml"))
     if not (names):
-        return {"beats": [], "fetcher": [], "intake": [], "json": [], "vendor": []}
-    held = sorted(events.iterdir()) if events.is_dir() else []
-    replayed = [path for path in held if path.is_dir() and path.name in names]
-    beats = [path.name for path in replayed if demo.beats_dataset(events=path)]
-    plain = [
-        path.name
-        for path in replayed
-        if path.name not in beats and _json_source(path=sources / f"{path.name}.yaml")
-    ]
-    vendors = [path.name for path in replayed if path.name not in (*beats, *plain)]
+        return {
+            "beats": [],
+            "fetcher": [],
+            "intake": [],
+            "json": [],
+            "replay": [],
+            "vendor": [],
+        }
     fetchers = [
         name
         for name in names
         if _FETCHER_KEY.search((sources / f"{name}.yaml").read_text(encoding="utf-8"))
     ]
+    held = sorted(events.iterdir()) if events.is_dir() else []
+    replayed = [path for path in held if path.is_dir() and path.name in names]
+    pushed = [path for path in replayed if path.name not in fetchers]
+    beats = [path.name for path in pushed if demo.beats_dataset(events=path)]
+    plain = [
+        path.name
+        for path in pushed
+        if path.name not in beats and _json_source(path=sources / f"{path.name}.yaml")
+    ]
+    vendors = [path.name for path in pushed if path.name not in (*beats, *plain)]
     intakes = [
         name for name in names if name not in (*vendors, *beats, *plain, *fetchers)
     ]
@@ -334,6 +344,7 @@ def demo_roles(*, events: Path, sources: Path) -> dict[str, list[str]]:
         "fetcher": fetchers,
         "intake": intakes,
         "json": plain,
+        "replay": [path.name for path in replayed if path.name in fetchers],
         "vendor": vendors,
     }
 
@@ -704,6 +715,19 @@ def demo_overlay(
             "restart": "unless-stopped",
             "user": DEMO_UID,
         }
+    # A fetcher's `replay` unit polls this by service name, so a host with no egress still fills its table
+    if roles.get("replay"):
+        services[REPLAY_SERVICE] = {
+            **helper,
+            "entrypoint": [
+                "python3",
+                f"{IMAGE_TREE}/scripts/replay_fetch.py",
+                "--pack",
+                pack,
+            ],
+            "restart": "unless-stopped",
+            "user": DEMO_UID,
+        }
     if archive["sources"]:
         services["demo-prune"] = {
             **helper,
@@ -736,6 +760,12 @@ def demo_overlay(
             )
         services[service].setdefault("depends_on", {})["demo-sources"] = {
             "condition": "service_completed_successfully",
+            "required": True,
+        }
+    # The fetcher's first replay poll then finds the server, which answers as soon as it starts
+    if roles.get("replay"):
+        services[FETCHER_SERVICE]["depends_on"][REPLAY_SERVICE] = {
+            "condition": "service_started",
             "required": True,
         }
     return demo_model
