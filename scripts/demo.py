@@ -79,7 +79,9 @@ from post import (  # noqa: E402
 from seed import (  # noqa: E402
     DEPLOY_TIMEOUT_SECONDS,
     ENGINE_FAULTS,
+    KINDS,
     SeedError,
+    _objects,
     _row_count,
     _token,
     deploy_fault,
@@ -172,6 +174,9 @@ CONSOLE_DIR = DEMO_DIR / "console"
 # dfe-hyperdx's API as dfe-engine reaches it, which accepts the engine's own token. Everything the pack puts in the console is a plain, deletable object whose name starts with CONSOLE_PREFIX
 HYPERDX_API = "http://dfe-hyperdx:8000"
 CONSOLE_PREFIX = "demo-"
+# A pack's hunts and the rules they run, one engine create body per file as resources/seed holds them
+HUNTS_DIR_NAME = "hunts"
+RULES_DIR_NAME = "rules"
 HYPERDX_SERVICE = "dfe-hyperdx"
 # The generator ends a loop only at --count or --duration, so the stream runs ten years unless removed
 STREAM_SECONDS = 315_360_000
@@ -1380,6 +1385,14 @@ def check_manifest(*, demo: Demo | None, manifest: dict, root: Path = DEMO_DIR) 
                 f"{MANIFEST_FILE.name!r} lists {kind} {sorted(manifest['console'][kind])} "
                 f"and {str(console / kind)!r} holds {found_console}. Make them the same set"
             )
+    hunts = pack_hunts(root=root)
+    found_hunts = sorted(name for name, _ in hunts.hunts)
+    listed_hunts = sorted(manifest.get("hunts", []))
+    if found_hunts != listed_hunts:
+        raise DemoError(
+            f"{MANIFEST_FILE.name!r} lists hunts {listed_hunts} and "
+            f"{str(root / HUNTS_DIR_NAME)!r} holds {found_hunts}. Make them the same set"
+        )
     archiving = sorted(body["source"] for body in bodies if body.get("archive"))
     if archiving != sorted(manifest["archive"]["sources"]):
         raise DemoError(
@@ -1387,6 +1400,79 @@ def check_manifest(*, demo: Demo | None, manifest: dict, root: Path = DEMO_DIR) 
             f"{sorted(manifest['archive']['sources'])} and the files that archive are "
             f"{archiving}. Make them the same set"
         )
+
+
+class PackHunts(typing.NamedTuple):
+    """A pack's rules and hunts as (name, create body), each in file name order."""
+
+    rules: list[tuple[str, dict]]
+    hunts: list[tuple[str, dict]]
+
+
+def pack_hunts(*, root: Path) -> PackHunts:
+    """Read a pack's rules and hunts, refusing a hunt that runs a rule the pack does not carry.
+
+    Args:
+        root: The pack directory.
+
+    Returns:
+        The pack's rules and hunts, both empty for a pack with neither directory.
+
+    Raises:
+        DemoError: A file that is not a create body named for its object, or a hunt naming a rule with no file.
+    """
+    try:
+        rules = _objects(directory=root / RULES_DIR_NAME, key=KINDS["rules"].key)
+        hunts = _objects(directory=root / HUNTS_DIR_NAME, key=KINDS["hunts"].key)
+    except SeedError as error:
+        raise DemoError(str(error)) from error
+    carried = {name for name, _ in rules}
+    for name, body in hunts:
+        missing = sorted(set(body.get("rules") or []) - carried)
+        if missing:
+            raise DemoError(
+                f"hunt {name!r} runs rules {missing}, which {str(root / RULES_DIR_NAME)!r} "
+                f"does not hold. Add each as <rule>.yaml"
+            )
+    return PackHunts(rules=rules, hunts=hunts)
+
+
+def install_hunts(*, base: str, root: Path, token: str) -> list[str]:
+    """Create each of a pack's rules, then its hunts, that the engine lacks, and return what was done.
+
+    Rules go first because the engine runs a hunt only once every rule it names compiles. One the engine already holds is left as it is, so a re-run creates only what is missing. Run it after the sources are deployed, since a rule's preview reads its source's table.
+
+    Args:
+        base: The engine's API base.
+        root: The pack directory.
+        token: An admin token.
+
+    Returns:
+        One line per rule and hunt, created or already held.
+
+    Raises:
+        DemoError: The engine refused a create or answered a lookup with anything but 200 or 404.
+    """
+    loaded = pack_hunts(root=root)
+    lines = []
+    for kind, objects in (("rules", loaded.rules), ("hunts", loaded.hunts)):
+        route = KINDS[kind].route
+        for name, body in objects:
+            status, answer = _api_get_json(
+                token=token, url=f"{base}{route}/{quote(safe='', string=name)}"
+            )
+            if status == 200:
+                lines.append(f"{KINDS[kind].noun} {name!r} already exists")
+                continue
+            if status != 404:
+                raise DemoError(f"GET {route}/{name} returned HTTP {status}: {answer}")
+            status, answer = _api_post_json(f"{base}{route}", body, token=token)
+            if status != 201:
+                raise DemoError(
+                    f"creating {KINDS[kind].noun} {name!r} returned HTTP {status}: {answer}"
+                )
+            lines.append(f"created {KINDS[kind].noun} {name!r}")
+    return lines
 
 
 def resolve_console(*, body: dict, sources: dict[str, dict]) -> dict:

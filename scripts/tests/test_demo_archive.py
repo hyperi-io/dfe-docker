@@ -179,6 +179,52 @@ class TestManifest:
         with pytest.raises(demo.DemoError, match=message):
             demo.check_manifest(demo=loaded, manifest=manifest)
 
+    def test_the_cyber_pack_carries_each_rule_its_hunt_runs(self) -> None:
+        hunts = demo.pack_hunts(root=demo_pack_dir(pack="cyber"))
+
+        assert [name for name, _ in hunts.hunts] == ["demo-cyber-drop-sign-in"]
+        assert [name for name, _ in hunts.rules] == ["demo-cyber-drop-sign-in"]
+        assert hunts.rules[0][1]["cel_filter"]
+
+    @pytest.mark.parametrize(
+        ("rule", "hunt", "listed", "message"),
+        [
+            pytest.param("r", {"name": "h", "rules": ["r"]}, ["h"], "", id="agrees"),
+            pytest.param(
+                "r", {"name": "h", "rules": ["r"]}, [], "lists hunts", id="unlisted"
+            ),
+            pytest.param(
+                "r", {"name": "h", "rules": ["gone"]}, ["h"], "does not hold", id="rule"
+            ),
+            pytest.param(
+                "r", {"name": "other", "rules": ["r"]}, ["h"], "named for", id="name"
+            ),
+        ],
+    )
+    def test_refuses_hunts_that_disagree_with_the_manifest_or_rules(
+        self, tmp_path: Path, rule: str, hunt: dict, listed: list, message: str
+    ) -> None:
+        for kind, name, body in (
+            ("rules", rule, {"name": rule, "user_sql": "SELECT 1"}),
+            ("hunts", "h", hunt),
+        ):
+            (tmp_path / kind).mkdir()
+            (tmp_path / kind / f"{name}.yaml").write_text(
+                json.dumps(body), encoding="utf-8"
+            )
+        manifest = {
+            "archive": {"sources": []},
+            "console": {"dashboards": [], "searches": []},
+            "hunts": listed,
+            "sources": [],
+        }
+
+        if not (message):
+            demo.check_manifest(demo=None, manifest=manifest, root=tmp_path)
+            return
+        with pytest.raises(demo.DemoError, match=message):
+            demo.check_manifest(demo=None, manifest=manifest, root=tmp_path)
+
     @pytest.mark.parametrize(
         "text",
         [

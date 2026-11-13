@@ -11,7 +11,7 @@
 
 The demo compose file scripts/publish_compose.py writes runs this from the dfe-docker image with DFE_IN_STACK set, so each engine and dfe-hyperdx call goes to the service by name and the image's own PyYAML reads the source files. `--pack <name>` seeds from resources/demo-<name> in place of resources/demo. One command per one-shot:
 
-  sources  create, deploy and set the state of every source under the pack's sources/, then turn on the receiver's syslog listener. dfe-receiver and the per-source instances wait for it to exit 0. A pack with no source files only completes the engine's first-run setup.
+  sources  create, deploy and set the state of every source under the pack's sources/, then turn on the receiver's syslog listener and create the rules and hunts under the pack's rules/ and hunts/. dfe-receiver and the per-source instances wait for it to exit 0. A pack with no source files only completes the engine's first-run setup.
   feed     fetch dfe-transform-elastic's replay script at the tag DFE_TRANSFORM_ELASTIC_VERSION pins and stage it under --feed with the pack's events in place of its fixtures, which the stream replays.
   console  create the pack's dashboards and saved searches, waiting up to CONSOLE_TIMEOUT_SECONDS for dfe-hyperdx to hold the sources they read.
 
@@ -99,6 +99,8 @@ def seed_sources(*, root: Path) -> None:
         token=token,
     )
     demo._switch_on_syslog(base=ENGINE_NETWORK_BASE, token=token)
+    for line in demo.install_hunts(base=ENGINE_NETWORK_BASE, root=root, token=token):
+        _print(msg=line)
 
 
 def stage_feed(*, feed: Path, generator: str, root: Path) -> None:
