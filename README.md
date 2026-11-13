@@ -63,7 +63,7 @@ Pick the page for what you are doing:
 - [docs/observability.md](docs/observability.md): health endpoints, self-telemetry and what a passing self test proves.
 - [docs/profiles.md](docs/profiles.md) and [docs/architecture.md](docs/architecture.md): how the profiles and the pieces fit together.
 
-The suite's published docs are at <https://dfe.docs.hyperi.io>.
+The suite's published docs are at <https://dfe.docs.hyperi.io>, and this repository's pages at <https://dfe.docs.hyperi.io/dfe-docker/>.
 
 ## Help and contributing
 
