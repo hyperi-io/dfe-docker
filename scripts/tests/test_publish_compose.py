@@ -329,6 +329,76 @@ class TestDemoRoles:
                 events=tmp_path / "events", sources=tmp_path / "sources"
             )
 
+    @pytest.mark.parametrize("dirs", [[], ["sources", "events"]], ids=["bare", "empty"])
+    def test_a_pack_with_no_source_files_has_no_roles(
+        self, dirs: list[str], tmp_path: Path
+    ) -> None:
+        for name in dirs:
+            (tmp_path / name).mkdir()
+
+        roles = publish_compose.demo_roles(
+            events=tmp_path / "events", sources=tmp_path / "sources"
+        )
+
+        assert roles == {"fetcher": [], "intake": [], "vendor": []}
+        assert publish_compose.demo_instances(roles=roles) == {}
+        assert publish_compose.demo_hosted(roles=roles) == ""
+
+
+class TestDemoFile:
+    @pytest.mark.parametrize(
+        ("pack", "expected"),
+        [
+            ("", ("dfe-demo.yaml", "demo-", "dfe-demo", "demo")),
+            (
+                "cyber",
+                ("dfe-demo-cyber.yaml", "demo-cyber-", "dfe-demo-cyber", "demo-cyber"),
+            ),
+            (
+                "theatre",
+                (
+                    "dfe-demo-theatre.yaml",
+                    "demo-theatre-",
+                    "dfe-demo-theatre",
+                    "demo-theatre",
+                ),
+            ),
+        ],
+        ids=["demo", "cyber", "theatre"],
+    )
+    def test_a_pack_renders_its_own_project_and_prefix(
+        self, expected: tuple[str, str, str, str], pack: str, tmp_path: Path
+    ) -> None:
+        target = publish_compose.demo_file(pack=pack)
+        tree = _tree(tmp_path)
+
+        model = publish_compose.published(
+            container_prefix=target.prefix,
+            model=_model(tree),
+            name=target.project,
+            tree=tree,
+        )
+
+        assert (target.file, target.prefix, target.project, target.tag) == expected
+        assert model["name"] == target.project
+        assert model["services"]["dfe-engine"]["container_name"] == (
+            f"{target.prefix}dfe-engine"
+        )
+
+    @pytest.mark.parametrize(
+        "argv",
+        [["--pack", "nope"], ["--pack", "../demo"], ["--pack", "Cyber"]],
+        ids=["no-directory", "path", "upper-case"],
+    )
+    def test_an_unknown_pack_exits_2_naming_the_packs_that_exist(
+        self, argv: list[str], capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        with pytest.raises(SystemExit) as exited:
+            publish_compose.main(argv)
+
+        assert exited.value.code == 2
+        assert "resources/demo-cyber" in capsys.readouterr().err
+
 
 def _stack(services: list[str]) -> dict:
     service = {"deploy": {"resources": {}}, "dns_search": ["."], "image": "i"}
@@ -406,6 +476,56 @@ class TestDemoOverlay:
             "docker compose -f oci://ghcr.io/hyperi-io/dfe-docker:demo up -d "
             "--force-recreate {service}"
         )
+
+    def test_a_pack_with_no_sources_seeds_itself_and_replays_nothing(self) -> None:
+        stack = _stack(
+            [name for name in DEMO_STACK if name != "dfe-transform-elastic-demo-syslog"]
+        )
+        roles = {"fetcher": [], "intake": [], "vendor": []}
+
+        model = publish_compose.demo_overlay(
+            archive={**ARCHIVE, "sources": []},
+            image="i",
+            model=stack,
+            pack="cyber",
+            roles=roles,
+            stream=["scripts/replay_syslog.py", "tcp", "20"],
+        )
+
+        services = model["services"]
+        for helper in ("demo-sources", "demo-console"):
+            assert services[helper]["entrypoint"] == [
+                "python3",
+                "/opt/dfe-docker/scripts/demo_seed.py",
+                "--pack",
+                "cyber",
+            ]
+        for absent in ("demo-feed", "demo-stream", "demo-prune"):
+            assert absent not in services
+        assert publish_compose.DEMO_FEED_VOLUME not in model.get("volumes", {})
+        assert "demo-sources" in services["dfe-receiver"]["depends_on"]
+        assert "demo-sources" not in services["dfe-fetcher"].get("depends_on", {})
+        engine = services["dfe-engine"]["environment"]
+        assert engine[publish_compose.HOSTED_INSTANCES_KEY] == ""
+        assert engine[publish_compose.APPLY_COMMAND_KEY] == (
+            "docker compose -f oci://ghcr.io/hyperi-io/dfe-docker:demo-cyber up -d "
+            "--force-recreate {service}"
+        )
+
+    def test_the_demo_seeds_with_no_pack_argument(self) -> None:
+        model = publish_compose.demo_overlay(
+            archive=ARCHIVE,
+            image="i",
+            model=_stack(DEMO_STACK),
+            roles=ROLES,
+            stream=["scripts/replay_syslog.py", "tcp", "20"],
+        )
+
+        for helper in ("demo-sources", "demo-feed", "demo-console"):
+            assert model["services"][helper]["entrypoint"] == [
+                "python3",
+                "/opt/dfe-docker/scripts/demo_seed.py",
+            ]
 
     def test_declares_no_fetcher_instance(self) -> None:
         # Every fetcher source runs in the one committed dfe-fetcher
