@@ -1,0 +1,25 @@
+# Project:   dfe-docker
+# File:      resources/demo-cyber/sources/crowdstrike.yaml
+# Purpose:   The cyber demo's CrowdStrike Falcon events, from its engine catalogue entry on the Beats intake
+# Language:  YAML
+#
+# License:   BUSL-1.1
+# Copyright: (c) 2026 HYPERI PTY LIMITED
+
+description: The falcon data stream of the Elastic crowdstrike integration.
+display_name: crowdstrike.falcon
+from_catalogue_intake: beats
+from_catalogue_item: crowdstrike
+# The data stream an Elastic Agent stamps on every event it ships
+match:
+  field: data_stream.dataset
+  operator: equals
+  value: crowdstrike.falcon
+schema:
+  additional_fields: additional/crowdstrike/falcon
+  derived_schema: derived/crowdstrike/falcon
+  meta_schema: meta/elastic/ecs
+source: crowdstrike
+transform:
+  engine: elastic
+  variant: filebeat.crowdstrike.default

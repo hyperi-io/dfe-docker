@@ -1,0 +1,11 @@
+{
+  "name": "demo-cyber-denied-drop",
+  "orderBy": "_timestamp DESC",
+  "select": "_timestamp, event_action, event_outcome, replaceOne(IPv6NumToString(assumeNotNull(source_ip)), '::ffff:', '') AS source, source_port, replaceOne(IPv6NumToString(assumeNotNull(destination_ip)), '::ffff:', '') AS destination, destination_port, network_transport, network_bytes, event_original, cisco_asa_rule_name",
+  "source": "cisco-asa",
+  "tags": [
+    "demo"
+  ],
+  "where": "event_outcome = 'failure' AND event_action != 'logon-failed' AND arrayExists(n -> isIPAddressInRange(replaceOne(IPv6NumToString(assumeNotNull(source_ip)), '::ffff:', ''), n), ['42.128.0.0/12', '42.160.0.0/12', '42.208.0.0/12', '147.16.0.0/14', '196.16.0.0/14', '101.134.0.0/15', '112.142.0.0/15', '168.80.0.0/15'])",
+  "whereLanguage": "sql"
+}

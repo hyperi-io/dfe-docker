@@ -1,0 +1,11 @@
+{
+  "name": "demo-cyber-failed-sign-ins",
+  "orderBy": "_timestamp DESC",
+  "select": "_timestamp, event_action, event_outcome, user_name, replaceOne(IPv6NumToString(assumeNotNull(client_ip)), '::ffff:', '') AS address, client_geo_city_name, client_geo_country_name, user_agent_name",
+  "source": "okta",
+  "tags": [
+    "demo"
+  ],
+  "where": "event_action = 'user.session.start' AND event_outcome = 'failure' AND _timestamp > now() - INTERVAL 1 HOUR",
+  "whereLanguage": "sql"
+}
