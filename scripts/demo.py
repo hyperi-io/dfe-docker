@@ -79,7 +79,9 @@ from post import (  # noqa: E402
 from seed import (  # noqa: E402
     DEPLOY_TIMEOUT_SECONDS,
     ENGINE_FAULTS,
+    KINDS,
     SeedError,
+    _objects,
     _row_count,
     _token,
     deploy_fault,
@@ -172,6 +174,14 @@ CONSOLE_DIR = DEMO_DIR / "console"
 # dfe-hyperdx's API as dfe-engine reaches it, which accepts the engine's own token. Everything the pack puts in the console is a plain, deletable object whose name starts with CONSOLE_PREFIX
 HYPERDX_API = "http://dfe-hyperdx:8000"
 CONSOLE_PREFIX = "demo-"
+# A pack's hunts and the rules they run, one engine create body per file as resources/seed holds them
+# The upstream licence texts beside a pack's sample events, which no source replays
+EVENTS_LICENSES_DIR = "LICENSES"
+HUNTS_DIR_NAME = "hunts"
+RULES_DIR_NAME = "rules"
+# How long a rule or hunt create is tried again while the engine answers 5xx or not at all
+HUNT_INSTALL_TIMEOUT_SECONDS = 60.0
+HUNT_INSTALL_INTERVAL_SECONDS = 5.0
 HYPERDX_SERVICE = "dfe-hyperdx"
 # The generator ends a loop only at --count or --duration, so the stream runs ten years unless removed
 STREAM_SECONDS = 315_360_000
@@ -1380,6 +1390,14 @@ def check_manifest(*, demo: Demo | None, manifest: dict, root: Path = DEMO_DIR) 
                 f"{MANIFEST_FILE.name!r} lists {kind} {sorted(manifest['console'][kind])} "
                 f"and {str(console / kind)!r} holds {found_console}. Make them the same set"
             )
+    hunts = pack_hunts(root=root)
+    found_hunts = sorted(name for name, _ in hunts.hunts)
+    listed_hunts = sorted(manifest.get("hunts", []))
+    if found_hunts != listed_hunts:
+        raise DemoError(
+            f"{MANIFEST_FILE.name!r} lists hunts {listed_hunts} and "
+            f"{str(root / HUNTS_DIR_NAME)!r} holds {found_hunts}. Make them the same set"
+        )
     archiving = sorted(body["source"] for body in bodies if body.get("archive"))
     if archiving != sorted(manifest["archive"]["sources"]):
         raise DemoError(
@@ -1387,6 +1405,116 @@ def check_manifest(*, demo: Demo | None, manifest: dict, root: Path = DEMO_DIR) 
             f"{sorted(manifest['archive']['sources'])} and the files that archive are "
             f"{archiving}. Make them the same set"
         )
+
+
+class PackHunts(typing.NamedTuple):
+    """A pack's rules and hunts as (name, create body), each in file name order."""
+
+    rules: list[tuple[str, dict]]
+    hunts: list[tuple[str, dict]]
+
+
+def pack_hunts(*, root: Path) -> PackHunts:
+    """Read a pack's rules and hunts, refusing a hunt that runs a rule the pack does not carry.
+
+    Args:
+        root: The pack directory.
+
+    Returns:
+        The pack's rules and hunts, both empty for a pack with neither directory.
+
+    Raises:
+        DemoError: A file that is not a create body named for its object, or a hunt naming a rule with no file.
+    """
+    try:
+        rules = _objects(directory=root / RULES_DIR_NAME, key=KINDS["rules"].key)
+        hunts = _objects(directory=root / HUNTS_DIR_NAME, key=KINDS["hunts"].key)
+    except SeedError as error:
+        raise DemoError(str(error)) from error
+    carried = {name for name, _ in rules}
+    for name, body in hunts:
+        missing = sorted(set(body.get("rules") or []) - carried)
+        if missing:
+            raise DemoError(
+                f"hunt {name!r} runs rules {missing}, which {str(root / RULES_DIR_NAME)!r} "
+                f"does not hold. Add each as <rule>.yaml"
+            )
+    return PackHunts(rules=rules, hunts=hunts)
+
+
+def _engine_call(
+    *, call: typing.Callable[[], tuple[int, typing.Any]]
+) -> tuple[int, typing.Any]:
+    """Run one engine call, again while it answers 5xx or not at all, up to HUNT_INSTALL_TIMEOUT_SECONDS.
+
+    Returns:
+        The last (status, answer), status 0 with the fault as the answer when the engine never answered.
+    """
+    deadline = time.monotonic() + HUNT_INSTALL_TIMEOUT_SECONDS
+    while True:
+        try:
+            status, answer = call()
+        except ENGINE_FAULTS as error:
+            status, answer = 0, str(error)
+        if (status != 0) and (status < 500):
+            return status, answer
+        if time.monotonic() >= deadline:
+            return status, answer
+        time.sleep(HUNT_INSTALL_INTERVAL_SECONDS)
+
+
+def install_hunts(*, base: str, root: Path, token: str) -> list[str]:
+    """Create each of a pack's rules, then its hunts, that the engine lacks, and return what was done.
+
+    Rules go first because the engine runs a hunt only once every rule it names compiles. One the engine already holds is left as it is, so a re-run creates only what is missing. Run it after the sources are deployed, since a rule's preview reads its source's table.
+
+    A hunt never stops the data path: a 5xx or no answer is tried again to a short deadline, and a final failure or a 4xx becomes a WARNING line. A hunt whose rule did not install is skipped, since the runner would fail on every run of it.
+
+    Args:
+        base: The engine's API base.
+        root: The pack directory.
+        token: An admin token.
+
+    Returns:
+        One line per rule and hunt: created, already held, or a WARNING with the engine's answer.
+    """
+    loaded = pack_hunts(root=root)
+    lines = []
+    failed: set[str] = set()
+    for kind, objects in (("rules", loaded.rules), ("hunts", loaded.hunts)):
+        route = KINDS[kind].route
+        noun = KINDS[kind].noun
+        for name, body in objects:
+            missing = sorted(set(body.get("rules") or []) & failed)
+            if missing:
+                lines.append(
+                    f"WARNING {noun} {name!r} skipped: rules {missing} did not install"
+                )
+                continue
+            url = f"{base}{route}/{quote(safe='', string=name)}"
+            status, answer = _engine_call(
+                call=lambda url=url: _api_get_json(token=token, url=url)
+            )
+            if status == 200:
+                lines.append(f"{noun} {name!r} already exists")
+                continue
+            if status == 404:
+                status, answer = _engine_call(
+                    call=lambda body=body, route=route: _api_post_json(
+                        f"{base}{route}", body, token=token
+                    )
+                )
+                if status == 201:
+                    lines.append(f"created {noun} {name!r}")
+                    continue
+                step = "creating"
+            else:
+                step = "looking up"
+            failed.add(name)
+            lines.append(
+                f"WARNING {noun} {name!r} not installed: {step} it got HTTP {status}: {answer}"
+            )
+    return lines
 
 
 def resolve_console(*, body: dict, sources: dict[str, dict]) -> dict:
@@ -1613,7 +1741,11 @@ def load_demo(*, events: Path, sources: Path) -> Demo:
             )
         owners[package] = body["source"]
     held = (
-        {path.name: path for path in events.glob(pattern="*") if path.is_dir()}
+        {
+            path.name: path
+            for path in events.glob(pattern="*")
+            if path.is_dir() and path.name != EVENTS_LICENSES_DIR
+        }
         if events.is_dir()
         else {}
     )

@@ -2,14 +2,40 @@
   "archive": {
     "max_megabytes": 200,
     "retention_minutes": 15,
-    "sources": [],
+    "sources": [
+      "demo-syslog"
+    ],
     "sweep_minutes": 5
   },
   "console": {
-    "dashboards": [],
-    "searches": []
+    "dashboards": [
+      "demo-cyber-denied",
+      "demo-cyber-drop",
+      "demo-cyber-edr",
+      "demo-cyber-o365-admin",
+      "demo-cyber-sign-ins"
+    ],
+    "searches": [
+      "demo-cyber-cisco-asa-live",
+      "demo-cyber-crowdstrike-live",
+      "demo-cyber-denied-drop",
+      "demo-cyber-failed-sign-ins",
+      "demo-cyber-fortinet-live",
+      "demo-cyber-o365-live",
+      "demo-cyber-okta-live"
+    ]
   },
-  "sources": [],
+  "hunts": [
+    "demo-cyber-drop-sign-in"
+  ],
+  "sources": [
+    "cisco-asa",
+    "crowdstrike",
+    "demo-syslog",
+    "fortinet",
+    "o365",
+    "okta"
+  ],
   "title": "Cyber",
-  "use_case": "/solutions/"
+  "use_case": "/solutions/security-monitoring/"
 }
