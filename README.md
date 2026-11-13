@@ -11,7 +11,7 @@ The whole DFE stack on one host with Docker Compose, from pinned release images 
 - Pins every image by digest from a certified DFE stack release with `make stack`. With a pin unset the stack refuses to start rather than pull `latest`.
 - Starts from the registry images with `make up`, or builds chosen components from source with `make dev`.
 - Runs Kafka or Redpanda as the broker, with opt-in overlays for TLS, storage and an oauth2-proxy `auth` profile.
-- Proves the running stack moves data from the ingest edge to a ClickHouse row with `make post`, which fails a run that asserted nothing.
+- Checks that the running stack moves data from the ingest edge to a ClickHouse row with `make post`, which fails if an enabled run asserts nothing. `DFE_POST_ENABLED=false` skips it.
 - Loads seed sources, rules and hunts into a running engine with `make sources`, `make rules` and `make hunts`.
 
 It consumes the same images from the same registry as the Kubernetes path, pinned from the same stack release. There is no promotion step and no Compose-specific build.
