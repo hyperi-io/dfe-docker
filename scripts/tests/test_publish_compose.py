@@ -121,7 +121,7 @@ class TestPublished:
         ]
         assert engine["depends_on"] == {"clickhouse": {"condition": "service_healthy"}}
         assert engine["environment"][publish_compose.APP_ENV_DIR_KEY] == ""
-        # No checkout means no `make creds`, and the stack file runs no per-source instance
+        # No checkout means no `make creds` and no per-source instance
         assert (
             FIRST_LOGIN_PASSWORD
             in (engine["environment"][publish_compose.CREDENTIAL_COMMAND_KEY])
@@ -405,7 +405,7 @@ class TestDemoOverlay:
             "/opt/dfe-docker/resources/demo/archive.py"
         )
         assert model["volumes"][publish_compose.DEMO_FEED_VOLUME] == {}
-        # The engine accepts exactly the demo's transformed sources, so a console-added one is refused
+        # Only the demo's transformed sources, a console one is refused
         assert (
             services["dfe-engine"]["environment"][publish_compose.HOSTED_INSTANCES_KEY]
             == "dfe-transform-elastic=demo-syslog,cisco-asa,fortinet"

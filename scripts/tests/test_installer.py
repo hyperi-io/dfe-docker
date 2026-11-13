@@ -256,7 +256,7 @@ def tree(tmp_path: Path) -> Path:
     [
         pytest.param(
             "single-kafka",
-            # The one fetcher runs for every source, and a transform runs only as a generated instance
+            # One fetcher for every source, transforms only as instances
             {"dfe-transform-elastic", "dfe-transform-vector", "dfe-transform-vrl"},
             id="single-kafka",
         ),

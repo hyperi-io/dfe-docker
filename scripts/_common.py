@@ -71,9 +71,9 @@ PER_SOURCE_APP_KEYS = {
     "dfe-transform-vrl": "transform_vrl_enabled",
 }
 PER_SOURCE_APPS_VAR = "DFE_PER_SOURCE_APPS"
-# The per-source apps whose committed service runs every source from one config dfe-engine merges (apps.yaml shared_instance), so no instance is generated for them
+# Shared-instance apps: one config, no generated instances
 SHARED_SOURCE_APPS = frozenset({FETCHER_SERVICE})
-# What dfe-engine's refusal says when the one shared container cannot take a source beside the ones it runs (appmgmt/appconfig.py _shared_merge)
+# The engine's refusal for a source the shared app cannot take
 SHARED_REFUSAL = "cannot share the one"
 # A source's `transform.engine` runs the app this prefix names (dfe-engine appmgmt/catalogue.py TRANSFORM_SERVICE_PREFIX)
 TRANSFORM_APP_PREFIX = "dfe-transform-"

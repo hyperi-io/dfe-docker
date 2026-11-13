@@ -1691,7 +1691,7 @@ def _local_instance_failures(*, env: dict[str, str]) -> tuple[list[str], int]:
     probes = {
         app: ["compose-check"]
         for app in sorted(PER_SOURCE_APP_KEYS)
-        if app not in SHARED_SOURCE_APPS and instances.extendable(app)
+        if app not in SHARED_SOURCE_APPS and instances.extendable(service=app)
     }
     images = local_image_services(_LOCAL_INSTANCE_SAMPLE)
     config = _config_json(

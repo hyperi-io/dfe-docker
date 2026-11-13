@@ -26,7 +26,7 @@ from _common import COMPOSE_FILE, COMPOSE_ONE_SHOTS_FILE, REPO_ROOT
 
 ELASTIC = "dfe-transform-elastic"
 FETCHER = "dfe-fetcher"
-# The variable naming the fetcher's cursor directory, and the volume path its service mounts
+# The fetcher's cursor directory variable and its mount path
 FETCHER_STATE = ("DFE_FETCHER_CURSOR__DIRECTORY", "/var/lib/dfe-fetcher")
 VRL = "dfe-transform-vrl"
 COMPOSE_ARGS = ["-f", "docker-compose.yml", "-f", ".tmp/docker-compose.instances.yml"]
@@ -73,7 +73,7 @@ def test_every_app_with_an_index_is_carried(tmp_path: Path) -> None:
 
 
 def test_each_service_reads_its_own_instance_config() -> None:
-    text = instances.fragment({ELASTIC: ["crowdstrike-eu", "crowdstrike-us"]})
+    text = instances.fragment(instances={ELASTIC: ["crowdstrike-eu", "crowdstrike-us"]})
 
     assert '"/etc/dfe/apps/dfe-transform-elastic/crowdstrike-eu/config.yaml"' in text
     assert '"/etc/dfe/apps/dfe-transform-elastic/crowdstrike-us/config.yaml"' in text
@@ -93,7 +93,7 @@ def test_each_service_extends_the_committed_one() -> None:
 
 def test_each_service_reads_the_custom_env_file_the_engine_names_for_it() -> None:
     # dfe-engine writes a source's extraEnv to env/<app>-<source>.custom.env.
-    text = instances.fragment({ELASTIC: ["crowdstrike-eu", "crowdstrike-us"]})
+    text = instances.fragment(instances={ELASTIC: ["crowdstrike-eu", "crowdstrike-us"]})
 
     for source in ("crowdstrike-eu", "crowdstrike-us"):
         assert (
@@ -118,7 +118,7 @@ def test_an_instance_of_an_app_given_an_image_runs_that_image() -> None:
 
 
 def test_an_instance_given_no_image_keeps_the_committed_one() -> None:
-    text = instances.fragment({ELASTIC: ["okta-audit"]})
+    text = instances.fragment(instances={ELASTIC: ["okta-audit"]})
 
     assert "    image: " not in text
 
@@ -126,13 +126,13 @@ def test_an_instance_given_no_image_keeps_the_committed_one() -> None:
 def test_no_instance_publishes_a_host_port() -> None:
     # N containers cannot share one host port, and nothing outside the stack
     # addresses an instance directly.
-    text = instances.fragment({ELASTIC: ["a", "b"]})
+    text = instances.fragment(instances={ELASTIC: ["a", "b"]})
 
     assert text.count("ports: !reset []") == 2
 
 
 def test_each_container_is_named_for_its_source() -> None:
-    text = instances.fragment({ELASTIC: ["okta-audit"]})
+    text = instances.fragment(instances={ELASTIC: ["okta-audit"]})
 
     assert "  dfe-transform-elastic-okta-audit:" in text
     assert "OTEL_SERVICE_NAME: dfe-transform-elastic-okta-audit" in text
@@ -141,7 +141,7 @@ def test_each_container_is_named_for_its_source() -> None:
 def test_each_instance_container_carries_the_stack_prefix() -> None:
     # A container name is daemon-wide, so two stacks collide here as well as on
     # the committed services.
-    text = instances.fragment({ELASTIC: ["okta-audit"]})
+    text = instances.fragment(instances={ELASTIC: ["okta-audit"]})
 
     assert (
         "container_name: ${DFE_CONTAINER_PREFIX:-}dfe-transform-elastic-okta-audit"
@@ -167,13 +167,13 @@ def test_an_app_with_a_config_file_but_no_compose_service_is_named(
 
     found = instances.declared(env_dir=tmp_path)
 
-    assert instances.unknown_apps(found, compose_file=compose) == [ELASTIC]
+    assert instances.unknown_apps(compose_file=compose, instances=found) == [ELASTIC]
 
 
 def test_the_fragment_is_removed_when_the_last_source_goes(tmp_path: Path) -> None:
     # A stale file would declare containers for sources this deployment lost.
     target = tmp_path / "docker-compose.instances.yml"
-    assert instances.write({ELASTIC: ["okta-audit"]}, path=target) is True
+    assert instances.write(instances={ELASTIC: ["okta-audit"]}, path=target) is True
 
     assert instances.write({}, path=target) is False
     assert not target.exists()

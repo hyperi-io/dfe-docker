@@ -145,9 +145,9 @@ ARCHIVE_STORAGE = (
     "{{if .Name}}{{.Name}}{{else}}{{.Source}}{{end}}{{end}}{{end}}"
 )
 ARCHIVE_TIMEOUT_SECONDS = 180.0
-# Where the fetcher keeps its cursors, files per source, which outlive the source and would start a re-created one from the old window
+# Fetcher cursors outlive their source, so a re-made one resumes
 CURSOR_MOUNT = "/var/lib/dfe-fetcher"
-# Removes the cursor files of the sources named after the fetcher's directory, run with the cursor volume at /c
+# Removes the named sources' cursor files from the volume at /c
 CURSOR_REMOVER = (
     "import pathlib, sys\n"
     "root = pathlib.Path('/c', sys.argv[1])\n"
@@ -955,7 +955,7 @@ def _install(*, args: argparse.Namespace, manifest: dict) -> int:
     declared = instances.declared()
     if demo.intake["source"] not in declared.get(TRANSFORM_APP, []):
         raise DemoError(f"dfe-engine declared no {instance!r} instance for the intake")
-    # Every fetcher source runs in the one dfe-fetcher, from the file dfe-engine merges
+    # Every fetcher source runs in the one dfe-fetcher
     pollers = [FETCHER_SERVICE] if fetchers else []
     services = runnable(
         declared=set(instances.services(instances=declared)),
@@ -1089,7 +1089,7 @@ def _remove_pack(*, args: argparse.Namespace, manifest: dict) -> None:
     _stop_stream(container=args.container)
     _stop_stream(container=args.pruner)
     cursors = _cursor_storage()
-    # A transform left running would recreate the topics the engine deletes with its source. The fetcher drops a deleted source on reload
+    # A running transform recreates deleted topics, a fetcher won't
     for name in manifest["sources"]:
         running = _container(
             service=instances.service_name(instance=name, service=TRANSFORM_APP)
@@ -1126,7 +1126,7 @@ def _remove_pack(*, args: argparse.Namespace, manifest: dict) -> None:
             _print(msg=f"WARNING {error}")
         INSTALLED_FILE.unlink(missing_ok=True)
         if cursors is not None:
-            # Each cursor file is `<instance_id>.<source>...`, and dfe-engine binds the one fetcher's instance_id to its app name
+            # Files are `<instance_id>.<source>...`, the id is the app name
             _docker(
                 args=[
                     "run",

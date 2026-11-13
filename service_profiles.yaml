@@ -66,8 +66,7 @@ profiles:
       dfe-receiver:
         config_path: receiver/kafka.yaml
 
-  # dfe-engine runs a fetcher or transform for a source on Kafka only, so on gRPC
-  # single runs no per-source app.
+  # The engine runs per-source apps on Kafka only, none here
   single-grpc:
     transport: grpc
     clickhouse: true
