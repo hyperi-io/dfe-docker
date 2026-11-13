@@ -85,6 +85,39 @@ DOMAIN_MAP = tuple(
 )
 # The upstream tenant's name wherever it is not part of a domain
 TENANT = re.compile(r"frothly", flags=re.IGNORECASE)
+# Each upstream sample persona moved onto one of our own, the same person in every source
+PERSONAS = {
+    # Display names first, so a full name maps as one person
+    "Alice Green": "Alice",
+    "Eric Montgomery": "Erin",
+    "Homer Simpson": "Dave",
+    "John Doe": "Oscar",
+    "UBA Bank Management": "Payments Team",
+    "Vanessa Johns": "Victor",
+    "abungstein": "heidi",
+    "bgist": "bob",
+    "bstoll": "trent",
+    "btun": "ivan",
+    "eric.montgomery": "erin",
+    "fyodor": "frank",
+    "ghoppy": "grace",
+    "homer": "dave",
+    "hyunki1984": "supplier",
+    "jacobsmythe": "judy",
+    "john.doe": "oscar",
+    "jwortoski": "walter",
+    "klagerfield": "carol",
+    "mkraeusen": "mallory",
+    "pcerf": "peggy",
+    "ubabankafrica": "payments",
+    "vanessajohns": "victor",
+}
+# A persona name is a whole token: not inside another word, but next to an underscore or a dot
+PERSONA = re.compile(
+    "(?<![A-Za-z0-9])("
+    + "|".join(re.escape(name) for name in sorted(PERSONAS, key=len, reverse=True))
+    + ")(?![A-Za-z0-9])"
+)
 # Documentation ASNs (RFC 5398) for the network an Okta sign-in comes from
 STAFF_NETWORK = {
     "asNumber": 64500,
@@ -228,13 +261,14 @@ def _user(rng: random.Random, *, users: Sequence[str]) -> tuple[str, str]:
 
 
 def _scrubbed(value: object) -> object:
-    """A copy of one sample value with every upstream domain and tenant name moved onto the example domains."""
+    """A copy of one sample value with every upstream persona, domain and tenant name moved onto our own."""
     if isinstance(value, dict):
         return {key: _scrubbed(item) for key, item in value.items()}
     if isinstance(value, list):
         return [_scrubbed(item) for item in value]
     if not (isinstance(value, str)):
         return value
+    value = PERSONA.sub(lambda m: PERSONAS[m.group(1)], value)
     for pattern, replacement in DOMAIN_MAP:
         value = pattern.sub(replacement, value)
     return TENANT.sub(
@@ -375,7 +409,7 @@ def _falcon_records(
             for pair in record["event"].get("AuditKeyValues") or []:
                 if pair.get("Key") == "actor_user":
                     pair["ValueString"] = login
-                elif pair.get("Key") == "target_name":
+                elif pair.get("Key") in ("target_name", "action_target_name"):
                     pair["ValueString"] = target
         _falcon_times(event=record["event"], when=stamp)
         record["metadata"].update(
