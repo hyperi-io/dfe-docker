@@ -6,7 +6,7 @@
 #  License:      BUSL-1.1
 #  Copyright:    (c) 2026 HYPERI PTY LIMITED
 
-"""The checks on the demo pack that need no stack: resources/demo/archive.py over a temporary archive, and demo.json against resources/demo/sources."""
+"""The checks on the demo packs that need no stack: resources/demo/archive.py over a temporary archive, and each pack's demo.json against its files."""
 
 import importlib.util
 import json
@@ -16,7 +16,8 @@ from pathlib import Path
 import pytest
 
 import demo
-from _common import REPO_ROOT
+import demo_seed
+from _common import DEMO_PACK_NAME, REPO_ROOT, demo_pack_dir, demo_pack_names
 
 pytestmark = pytest.mark.usefixtures("engine_python_here")
 
@@ -122,14 +123,31 @@ def test_show_names_the_newest_objects_and_a_sample_line(tmp_path: Path) -> None
 
 
 class TestManifest:
-    def test_the_committed_manifest_matches_the_committed_sources(self) -> None:
-        manifest = demo._read_manifest(path=demo.MANIFEST_FILE)
-        loaded = demo.load_demo(events=demo.EVENTS_DIR, sources=demo.SOURCES_DIR)
+    @pytest.mark.parametrize(
+        "pack", ["", *demo_pack_names()], ids=lambda p: p or "demo"
+    )
+    def test_each_committed_manifest_matches_its_pack(self, pack: str) -> None:
+        root = demo_pack_dir(pack=pack)
+        manifest = demo._read_manifest(path=root / "demo.json")
 
-        demo.check_manifest(demo=loaded, manifest=manifest)
+        # What the published file's seeding one-shots load, and refuse on
+        demo_seed._loaded(root=root)
 
+        assert not (pack) or DEMO_PACK_NAME.fullmatch(pack)
         assert manifest["archive"]["retention_minutes"] <= 15
         assert manifest["archive"]["max_megabytes"] <= 200
+
+    def test_a_pack_with_no_source_files_must_list_none(self, tmp_path: Path) -> None:
+        manifest = json.loads(
+            demo_pack_dir(pack="cyber")
+            .joinpath("demo.json")
+            .read_text(encoding="utf-8")
+        )
+        manifest["sources"] = ["okta"]
+        (tmp_path / "demo.json").write_text(json.dumps(manifest), encoding="utf-8")
+
+        with pytest.raises(demo.DemoError, match="Make them the same set"):
+            demo_seed._loaded(root=tmp_path)
 
     @pytest.mark.parametrize(
         ("change", "message"),

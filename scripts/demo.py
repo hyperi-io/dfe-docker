@@ -292,10 +292,10 @@ def _cursor_storage() -> str | None:
     return mounted.stdout.strip() or None
 
 
-def _console_files(*, kind: str) -> list[dict]:
-    """The console objects of one kind (dashboards or searches) in resources/demo/console, in name order."""
+def _console_files(*, console: Path = CONSOLE_DIR, kind: str) -> list[dict]:
+    """The console objects of one kind (dashboards or searches) in a pack's console directory, in name order."""
     bodies = []
-    for path in sorted((CONSOLE_DIR / kind).glob(pattern="*.json")):
+    for path in sorted((console / kind).glob(pattern="*.json")):
         try:
             body = json.loads(path.read_text(encoding="utf-8"))
         except (OSError, UnicodeDecodeError, json.JSONDecodeError) as error:
@@ -353,7 +353,7 @@ def _remove_console(*, token: str) -> int:
     return removed
 
 
-def _install_console(*, token: str) -> list[str]:
+def _install_console(*, console: Path = CONSOLE_DIR, token: str) -> list[str]:
     """Replace the pack's dashboards and saved searches in the console and return the lines that say where to open them.
 
     The files name a source by its name, and tiles that run SQL take the connection of that source.
@@ -367,7 +367,7 @@ def _install_console(*, token: str) -> list[str]:
         ("dashboards", "/dashboards", "/dashboards"),
         ("searches", "/saved-search", "/search"),
     ):
-        for body in _console_files(kind=kind):
+        for body in _console_files(console=console, kind=kind):
             payload = resolve_console(body=body, sources=sources)
             status, made = _hyperdx(
                 method="POST", path=path, payload=payload, token=token
@@ -1346,22 +1346,25 @@ def create_body(*, body: dict) -> dict:
     return {key: value for key, value in body.items() if key != "state"}
 
 
-def check_manifest(*, demo: Demo, manifest: dict) -> None:
-    """Refuse a pack whose manifest and source files disagree, so nothing is installed that removal would not find."""
-    bodies = [*demo.vendors, demo.intake, *demo.fetchers]
+def check_manifest(*, demo: Demo | None, manifest: dict, root: Path = DEMO_DIR) -> None:
+    """Refuse a pack whose manifest and files disagree, so nothing is installed that removal would not find. `demo` is None for a pack with no source files."""
+    bodies = [] if demo is None else [*demo.vendors, demo.intake, *demo.fetchers]
     found = sorted(body["source"] for body in bodies)
     listed = sorted(manifest["sources"])
     if found != listed:
         raise DemoError(
             f"{MANIFEST_FILE.name!r} lists sources {listed} and "
-            f"{str(SOURCES_DIR)!r} holds {found}. Make them the same set"
+            f"{str(root / SOURCES_DIR.name)!r} holds {found}. Make them the same set"
         )
+    console = root / CONSOLE_DIR.name
     for kind in ("dashboards", "searches"):
-        found_console = sorted(body["name"] for body in _console_files(kind=kind))
+        found_console = sorted(
+            body["name"] for body in _console_files(console=console, kind=kind)
+        )
         if found_console != sorted(manifest["console"][kind]):
             raise DemoError(
                 f"{MANIFEST_FILE.name!r} lists {kind} {sorted(manifest['console'][kind])} "
-                f"and {str(CONSOLE_DIR / kind)!r} holds {found_console}. Make them the same set"
+                f"and {str(console / kind)!r} holds {found_console}. Make them the same set"
             )
     archiving = sorted(body["source"] for body in bodies if body.get("archive"))
     if archiving != sorted(manifest["archive"]["sources"]):

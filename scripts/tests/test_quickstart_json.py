@@ -8,13 +8,79 @@
 
 """The checks on scripts/quickstart_json.py, which need make and nothing else."""
 
+import json
 import shutil
+from pathlib import Path
 
 import pytest
 
 import quickstart_json
 import resolve_profile
-from _common import FIRST_LOGIN_PASSWORD, SERVICE_PROFILES_FILE
+from _common import FIRST_LOGIN_PASSWORD, SERVICE_PROFILES_FILE, demo_pack_names
+
+IMAGE = "ghcr.io/hyperi-io/dfe-docker"
+
+
+def _pack(root: Path, name: str, manifest: object) -> None:
+    (root / name).mkdir()
+    text = manifest if isinstance(manifest, str) else json.dumps(manifest)
+    (root / name / "demo.json").write_text(text, encoding="utf-8")
+
+
+def test_schema_2_lists_the_packs_in_directory_order(tmp_path: Path) -> None:
+    _pack(tmp_path, "demo", {"sources": []})
+    _pack(tmp_path, "demo-theatre", {"title": "Theatre", "use_case": "/solutions/t/"})
+    _pack(tmp_path, "demo-cyber", {"title": " Cyber ", "use_case": "/solutions/"})
+    (tmp_path / "demo-notes.json").write_text("{}", encoding="utf-8")
+
+    packs = quickstart_json.demo_packs(image=IMAGE, root=tmp_path, version="1.2.3")
+
+    assert [(pack["name"], pack["title"]) for pack in packs] == [
+        ("cyber", "Cyber"),
+        ("theatre", "Theatre"),
+    ]
+    assert packs[1]["pinned"] == [
+        f"docker compose -f oci://{IMAGE}:demo-theatre-1.2.3 up -d"
+    ]
+    assert (
+        quickstart_json.demo_packs(image=IMAGE, root=tmp_path / "x", version="1") == []
+    )
+
+
+@pytest.mark.parametrize(
+    ("name", "manifest", "match"),
+    [
+        pytest.param("demo-a", "[", "not readable JSON", id="malformed"),
+        pytest.param("demo-a", [], "no JSON object", id="not-an-object"),
+        pytest.param("demo-a", {"use_case": "/solutions/"}, "`title`", id="no-title"),
+        pytest.param(
+            "demo-a", {"title": " ", "use_case": "/solutions/"}, "`title`", id="blank"
+        ),
+        pytest.param("demo-a", {"title": "A"}, "`use_case`", id="no-use-case"),
+        pytest.param(
+            "demo-a",
+            {"title": "A", "use_case": "https://hyperi.io/solutions/"},
+            "`use_case`",
+            id="full-url",
+        ),
+        pytest.param(
+            "demo-a", {"title": "A", "use_case": "solutions"}, "`use_case`", id="bare"
+        ),
+        pytest.param(
+            "demo-Cyber",
+            {"title": "A", "use_case": "/solutions/"},
+            "lower-case words",
+            id="bad-name",
+        ),
+    ],
+)
+def test_a_pack_it_cannot_describe_is_refused(
+    manifest: object, match: str, name: str, tmp_path: Path
+) -> None:
+    _pack(tmp_path, name, manifest)
+
+    with pytest.raises(quickstart_json.QuickstartJsonError, match=match):
+        quickstart_json.demo_packs(image=IMAGE, root=tmp_path, version="1.2.3")
 
 
 @pytest.mark.parametrize(
@@ -65,8 +131,20 @@ def test_a_release_document_from_the_committed_files() -> None:
         version="9.9.9",
     )
 
-    assert document["schema"] == 1
+    assert document["schema"] == 2
     assert document["kind"] == "compose"
+    assert document["packs"][0] == {
+        "name": "cyber",
+        "title": "Cyber",
+        "use_case": "/solutions/",
+        "latest": [
+            "docker compose -f oci://ghcr.io/hyperi-io/dfe-docker:demo-cyber up -d"
+        ],
+        "pinned": [
+            "docker compose -f oci://ghcr.io/hyperi-io/dfe-docker:demo-cyber-9.9.9 up -d"
+        ],
+    }
+    assert [pack["name"] for pack in document["packs"]] == demo_pack_names()
     assert [entry["name"] for entry in document["profiles"]] == [default]
     assert document["profiles"][0]["default"] is True
     assert document["profiles"][0]["transport"] in {"grpc", "kafka"}

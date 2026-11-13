@@ -123,6 +123,10 @@ REPO_ROOT = __find_repo_root()
 # both minted passwords in plaintext. Gitignored, 0600, meant to be deleted.
 ACCESS_SUMMARY_FILE = REPO_ROOT / "access-summary.md"
 CONFIG_DIR = REPO_ROOT / "config"
+# The demo's own pack is resources/demo, and each named pack sits beside it as resources/demo-<pack>, the tag its file publishes under
+DEMO_PACKS_ROOT = REPO_ROOT / "resources"
+# A pack name lands in a compose project, container names and an OCI tag
+DEMO_PACK_NAME = re.compile(r"[a-z][a-z0-9]*(-[a-z0-9]+)*")
 DEPLOYMENT_DIAL = REPO_ROOT / "deployment.yaml"
 DEPLOYMENT_DIAL_TEMPLATE = REPO_ROOT / "deployment.example.yaml"
 DOTENV_FILE = REPO_ROOT / ".env"
@@ -441,6 +445,26 @@ def _published_url(
         return f"{'https' if proxied else 'http'}://{(named) or (host)}:{port}"
     origin = _external_origin(values=values)
     return f"{(origin) or (f'http://{host}')}:{port}"
+
+
+def demo_pack_dir(*, pack: str, root: Path = DEMO_PACKS_ROOT) -> Path:
+    """Where a demo pack's files live: resources/demo for the demo, resources/demo-<pack> for a named pack."""
+    return root / demo_pack_tag(pack=pack)
+
+
+def demo_pack_names(*, root: Path = DEMO_PACKS_ROOT) -> list[str]:
+    """The named demo packs, one per resources/demo-<pack>/ directory, in directory order."""
+    prefix = f"{PUBLISHED_DEMO_TAG}-"
+    return [
+        path.name.removeprefix(prefix)
+        for path in sorted(root.glob(f"{prefix}*"))
+        if path.is_dir()
+    ]
+
+
+def demo_pack_tag(*, pack: str) -> str:
+    """The tag a demo pack's compose file moves on, which also names its directory, project and containers."""
+    return f"{PUBLISHED_DEMO_TAG}-{pack}" if pack else PUBLISHED_DEMO_TAG
 
 
 def in_stack() -> bool:

@@ -11,9 +11,9 @@
 
 dfe-infra's docs generator pastes its strings verbatim, so every command in it is complete and every value comes from a file this repo already reads: the default profile and its transport from the Makefile and service_profiles.yaml, the stack from deployment.example.yaml's version.pin through stack.py, the console URL from the address next-auth is handed in docker-compose.yml, and the commands from the OCI artifacts scripts/publish_compose.py writes and the release publishes beside the dfe-docker image.
 
-Schema 1:
+Schema 2 is schema 1 plus `packs`:
 
-  schema       1
+  schema       2
   stack        the stack the release's versioned artifacts install
   min_compose  the oldest Docker Compose that runs a published file: the newest feature the compose files use, and `-f oci://`
   min_engine   the oldest Docker Engine that mounts a volume subpath, which the published files do
@@ -23,6 +23,7 @@ Schema 1:
   profiles     [{name, default, transport, ref_latest, ref_pinned}], the one profile the stack file runs, default true
   up, demo     {latest: [command], pinned: [command]}, the one command that starts the stack and the demo
   notes        {up, demo}, what to do once each command has run
+  packs        [{name, title, use_case, latest: [command], pinned: [command]}], one per resources/demo-<name>/ directory in directory order, `title` and `use_case` from its demo.json, `use_case` the hyperi.io path that describes it such as /solutions/theatre-and-battlespace/
 
 `--print-stack` prints the stack alone, which the release workflow builds the version-tagged image with.
 
@@ -47,14 +48,23 @@ import resolve_profile  # noqa: E402
 import stack  # noqa: E402
 from _common import (  # noqa: E402
     COMPOSE_FILE,
+    DEMO_PACK_NAME,
+    DEMO_PACKS_ROOT,
     FIRST_LOGIN_PASSWORD,
     PUBLISHED_DEMO_TAG,
     PUBLISHED_STACK_TAG,
     REPO_ROOT,
     SERVICE_PROFILES_FILE,
+    _rel_path,
+    demo_pack_dir,
+    demo_pack_names,
+    demo_pack_tag,
 )
 
-SCHEMA = 1
+SCHEMA = 2
+PACK_MANIFEST = "demo.json"
+# A path on hyperi.io, such as /solutions/theatre-and-battlespace/
+_USE_CASE = re.compile(r"/([a-z0-9]+(-[a-z0-9]+)*/)*")
 # Compose reads `-f oci://` by default from this release (docker/compose pkg/remote/oci.go: COMPOSE_EXPERIMENTAL_OCI_REMOTE defaults false in v2.33.0, true in v2.34.0)
 OCI_REMOTE_COMPOSE = "2.34.0"
 # VolumeOptions.Subpath, API 1.45 (https://docs.docker.com/engine/release-notes/26.0/)
@@ -197,6 +207,51 @@ def notes(*, console: str, image: str) -> dict[str, str]:
     }
 
 
+def demo_packs(*, image: str, root: Path = DEMO_PACKS_ROOT, version: str) -> list[dict]:
+    """Each named demo pack in directory order, with its title and use case from its demo.json and the one command that starts it."""
+    found = []
+    for name in demo_pack_names(root=root):
+        path = demo_pack_dir(pack=name, root=root) / PACK_MANIFEST
+        label = _rel_path(path=path)
+        if not (DEMO_PACK_NAME.fullmatch(name)):
+            raise QuickstartJsonError(
+                f"{label}: a pack name is lower-case words joined by `-`, which {name!r} is not"
+            )
+        try:
+            manifest = json.loads(path.read_text(encoding="utf-8"))
+        except (UnicodeDecodeError, json.JSONDecodeError) as error:
+            raise QuickstartJsonError(
+                f"{label} is not readable JSON: {error}"
+            ) from error
+        if not (isinstance(manifest, dict)):
+            raise QuickstartJsonError(f"{label} holds no JSON object")
+        title = manifest.get("title")
+        use_case = manifest.get("use_case")
+        if not (isinstance(title, str)) or not (title.strip()):
+            raise QuickstartJsonError(f"{label} needs a `title`")
+        if not (isinstance(use_case, str)) or not (_USE_CASE.fullmatch(use_case)):
+            raise QuickstartJsonError(
+                f"{label} needs a `use_case`, the hyperi.io path that describes the pack, such as /solutions/"
+            )
+        tag = demo_pack_tag(pack=name)
+        refs = {
+            "latest": artifact(image=image, tag=tag),
+            "pinned": artifact(image=image, tag=tag, version=version),
+        }
+        found.append(
+            {
+                "name": name,
+                "title": title.strip(),
+                "use_case": use_case,
+                **{
+                    form: [compose_command(ref=ref, verb="up -d")]
+                    for form, ref in refs.items()
+                },
+            }
+        )
+    return found
+
+
 def quickstart(
     *, default: str, image: str, profiles: dict, stack_version: str, version: str
 ) -> dict:
@@ -243,6 +298,7 @@ def quickstart(
             for kind, forms in refs.items()
         },
         "notes": notes(console=console, image=image),
+        "packs": demo_packs(image=image, version=version),
     }
 
 

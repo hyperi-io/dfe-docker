@@ -327,13 +327,39 @@ jobs:
             docker compose --profile '*' down --volumes --remove-orphans
           fi
 
-  # The files a release publishes as OCI artifacts, generated from this commit and run from a folder holding nothing else, as `-f oci://` runs them. The demo file holds the whole stack plus the demo, so it starts and has to land its syslog. The stack file is read and checked
+  # One Published compose leg per demo pack: resources/demo, then each resources/demo-<pack> directory in byte order, as scripts/_common.py demo_pack_names lists them
+  demo-packs:
+    name: Demo Packs
+    runs-on: ubuntu-26.04
+    timeout-minutes: 5
+    outputs:
+      dirs: ${{ steps.list.outputs.dirs }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: List the packs
+        id: list
+        run: |
+          dirs="$({ echo demo; find resources -mindepth 1 -maxdepth 1 -type d -name 'demo-*' -printf '%f\n' | LC_ALL=C sort; } | jq -Rnc '[inputs]')"
+          echo "dirs=$dirs" | tee -a "$GITHUB_OUTPUT"
+
+  # The files a release publishes as OCI artifacts, generated from this commit and run from a folder holding nothing else, as `-f oci://` runs them. Each demo file holds the whole stack plus its pack, so it starts and has to land the data its pack replays. The demo leg also writes the stack file, which is read and checked
   published:
-    name: Published compose
+    name: Published compose (${{ matrix.pack }})
+    needs: demo-packs
     runs-on: ubuntu-26.04
     timeout-minutes: 50
+    strategy:
+      fail-fast: false
+      matrix:
+        pack: ${{ fromJSON(needs.demo-packs.outputs.dirs) }}
     env:
       IMAGE: dfe-docker:ci
+      PACK_DIR: resources/${{ matrix.pack }}
+      FILE: dfe-${{ matrix.pack }}.yaml
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -354,25 +380,41 @@ jobs:
 
       # The image is local here, so its digest is the one finding allowed
       - name: Generate and check the published files
+        env:
+          PACK: ${{ matrix.pack }}
         run: |
           docker compose version
-          python3 scripts/publish_compose.py --image "$IMAGE" --out-dir "$RUNNER_TEMP/compose"
+          pack=()
+          if [ "$PACK" != demo ]; then
+            pack=(--pack "${PACK#demo-}")
+          fi
+          python3 scripts/publish_compose.py --image "$IMAGE" --out-dir "$RUNNER_TEMP/compose" "${pack[@]}"
           echo "COMPOSE_DIR=$RUNNER_TEMP/compose" >> "$GITHUB_ENV"
 
       - name: Start the demo and reach the console
         timeout-minutes: 25
         working-directory: ${{ env.COMPOSE_DIR }}
         run: |
-          docker compose -f dfe-demo.yaml up -d --wait --wait-timeout 1200
+          docker compose -f "$FILE" up -d --wait --wait-timeout 1200
           curl -fsSL --retry 5 --retry-all-errors -o /dev/null -w 'console answered %{http_code} at %{url_effective}\n' http://localhost:3000/
 
-      - name: Land the demo's syslog
+      # Every source with events the pack replays, which need no egress, so a pack whose demo.json lists no sources checks none. Fetcher tables wait on their upstream and are not checked
+      - name: Land the pack's data
         timeout-minutes: 10
         working-directory: ${{ env.COMPOSE_DIR }}
         run: |
-          for table in cisco-asa fortinet; do
+          tables=()
+          for source in $(jq -r '.sources[]' "$GITHUB_WORKSPACE/$PACK_DIR/demo.json"); do
+            if [ -d "$GITHUB_WORKSPACE/$PACK_DIR/events/$source" ]; then
+              tables+=("$source")
+            fi
+          done
+          if [ "${#tables[@]}" -eq 0 ]; then
+            echo "$PACK_DIR replays no source, so no table is checked"
+          fi
+          for table in "${tables[@]}"; do
             for attempt in $(seq 60); do
-              rows="$(docker compose -f dfe-demo.yaml exec -T clickhouse sh -c ". /run/dfe-secrets/env && clickhouse-client --password \"\$CLICKHOUSE_PASSWORD\" --query 'SELECT count() FROM dfe.\`$table\`'" || echo 0)"
+              rows="$(docker compose -f "$FILE" exec -T clickhouse sh -c ". /run/dfe-secrets/env && clickhouse-client --password \"\$CLICKHOUSE_PASSWORD\" --query 'SELECT count() FROM dfe.\`$table\`'" || echo 0)"
               if [ "${rows:-0}" -gt 0 ]; then
                 echo "dfe.$table holds $rows rows"
                 break
@@ -390,18 +432,18 @@ jobs:
         working-directory: ${{ env.COMPOSE_DIR }}
         run: |
           for svc in clickhouse demo-console demo-sources dfe-engine dfe-hunt-runner dfe-hyperdx dfe-loader dfe-ui hyperdx-documentdb otel-collector; do
-            held="$(docker inspect "$(docker compose -f dfe-demo.yaml ps -aq "$svc")" --format '{{range .Config.Env}}{{println .}}{{end}}' | cut -d= -f1 | grep -E '(PASSWORD|SECRET|TOKEN|KEY|MONGO_URI|IDENTITY)$' | grep -vx DFE_ENGINE_AUTH_LOCAL_ADMIN_PASSWORD || true)"
+            held="$(docker inspect "$(docker compose -f "$FILE" ps -aq "$svc")" --format '{{range .Config.Env}}{{println .}}{{end}}' | cut -d= -f1 | grep -E '(PASSWORD|SECRET|TOKEN|KEY|MONGO_URI|IDENTITY)$' | grep -vx DFE_ENGINE_AUTH_LOCAL_ADMIN_PASSWORD || true)"
             if [ -n "$held" ]; then
               echo "::error::$svc holds $held in its environment"
               exit 1
             fi
           done
-          if docker compose -f dfe-demo.yaml exec -T clickhouse clickhouse-client --password '' --query 'SELECT 1'; then
+          if docker compose -f "$FILE" exec -T clickhouse clickhouse-client --password '' --query 'SELECT 1'; then
             echo "::error::ClickHouse took the empty default password"
             exit 1
           fi
-          docker compose -f dfe-demo.yaml exec -T dfe-engine sh -c '. /run/dfe-secrets/env && test ${#DFE_ENGINE_API_JWT_SECRET} -eq 48 && test ${#DFE_ENGINE_CLICKHOUSE_PASSWORD} -eq 24'
-          docker compose -f dfe-demo.yaml exec -T dfe-engine python -c 'import json, urllib.request
+          docker compose -f "$FILE" exec -T dfe-engine sh -c '. /run/dfe-secrets/env && test ${#DFE_ENGINE_API_JWT_SECRET} -eq 48 && test ${#DFE_ENGINE_CLICKHOUSE_PASSWORD} -eq 24'
+          docker compose -f "$FILE" exec -T dfe-engine python -c 'import json, urllib.request
           request = urllib.request.Request("http://localhost:8000/api/v1/auth/login", data=json.dumps({"username": "admin", "password": "dfe-first-login"}).encode(), headers={"Content-Type": "application/json"})
           with urllib.request.urlopen(request, timeout=30) as answer:
               assert json.load(answer).get("password_change_required") is True, "the first login is not held for a change"'
@@ -410,14 +452,21 @@ jobs:
         if: failure()
         working-directory: ${{ env.COMPOSE_DIR }}
         run: |
-          docker compose -f dfe-demo.yaml ps --all
-          docker compose -f dfe-demo.yaml logs --no-color --tail 100 secrets-init demo-sources demo-feed demo-console demo-stream dfe-receiver dfe-transform-elastic-demo-syslog
+          docker compose -f "$FILE" ps --all
+          # The helpers and data path this pack's file runs, since a pack with no syslog has no stream or transform instance
+          services=()
+          for svc in $(docker compose -f "$FILE" config --services); do
+            case "$svc" in
+              secrets-init | demo-* | dfe-receiver | dfe-transform-elastic-*) services+=("$svc") ;;
+            esac
+          done
+          docker compose -f "$FILE" logs --no-color --tail 100 "${services[@]}"
 
       - name: Tear the demo down
         if: always()
         run: |
-          if [ -f "${COMPOSE_DIR:-}/dfe-demo.yaml" ]; then
-            docker compose -f "$COMPOSE_DIR/dfe-demo.yaml" down --volumes --remove-orphans
+          if [ -f "${COMPOSE_DIR:-}/$FILE" ]; then
+            docker compose -f "$COMPOSE_DIR/$FILE" down --volumes --remove-orphans
           fi
 
   # Compose on Windows splits COMPOSE_FILE on `;` unless COMPOSE_PATH_SEPARATOR in .env says otherwise
