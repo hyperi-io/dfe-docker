@@ -442,6 +442,42 @@ def test_the_committed_dial_pins_a_stack_version() -> None:
     )
 
 
+def test_the_committed_dial_pins_a_release(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv(name=stack.PRERELEASE_PIN_VAR, raising=False)
+    assert stack.release_pin() == stack._dial_pin()
+
+
+@pytest.mark.parametrize(
+    ("pin", "opt_in", "outcome"),
+    [
+        ("2.2.2", "", "2.2.2"),
+        ("2.2.2-rc.5", "", None),
+        ("2.2.2-rc.5", "1", "2.2.2-rc.5"),
+        ("2.3.0-beta.1", "", None),
+    ],
+    ids=["release", "rc-refused", "rc-opted-in", "beta-refused"],
+)
+def test_a_release_reads_only_a_ga_pin(
+    pin: str,
+    opt_in: str,
+    outcome: str | None,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    dial = tmp_path / "deployment.example.yaml"
+    dial.write_text(data=f"version:\n  pin: {pin}\n", encoding="utf-8")
+    monkeypatch.setattr(name="DEPLOYMENT_DIAL_TEMPLATE", target=stack, value=dial)
+    if opt_in:
+        monkeypatch.setenv(name=stack.PRERELEASE_PIN_VAR, value=opt_in)
+    else:
+        monkeypatch.delenv(name=stack.PRERELEASE_PIN_VAR, raising=False)
+    if outcome is None:
+        with pytest.raises(expected_exception=stack.StackError, match="prerelease"):
+            stack.release_pin()
+    else:
+        assert stack.release_pin() == outcome
+
+
 def _calls(log: Path) -> list[list[str]]:
     return [json.loads(line) for line in log.read_text(encoding="utf-8").splitlines()]
 

@@ -407,6 +407,28 @@ def _dial_pin() -> str:
     return pin.strip()
 
 
+# A `-` after the three numbers marks a prerelease (2.2.2-rc.5), which main never ships.
+_PRERELEASE = re.compile(r"^\d+\.\d+\.\d+-")
+# A development branch that has to pin an rc sets this. main never does.
+PRERELEASE_PIN_VAR = "DFE_DOCKER_PRERELEASE_PIN"
+
+
+def release_pin() -> str:
+    """Return the pinned stack, refusing a prerelease unless the branch opts in.
+
+    A release builds its image and compose artefacts from this pin, so an rc here
+    puts a candidate stack in front of everyone who runs the hero install.
+    """
+    pin = _dial_pin()
+    if _PRERELEASE.match(pin) and os.environ.get(PRERELEASE_PIN_VAR) != "1":
+        raise StackError(
+            f"{_rel_path(path=DEPLOYMENT_DIAL_TEMPLATE)!r} pins {pin}, a prerelease. "
+            f"A release ships a GA stack only. A development branch sets "
+            f"{PRERELEASE_PIN_VAR}=1."
+        )
+    return pin
+
+
 def _pin_value(*, key: str, pins: dict[str, str]) -> str:
     """Return the value one pin line sets, refusing a missing or undigested pin."""
     if key not in pins:
