@@ -19,9 +19,11 @@ The stack is VERSION= on the make line. With none given, a .env that holds no im
 
 `running` exits 0 when this checkout has a running dfe-receiver, which is how `make demo` knows whether to start the stack first.
 
+`over-demo` exits 1 when the `make demo` stream container is running, so `make ci` refuses before its `down` removes the pack's sources under a start that already named their services.
+
 Exit codes:
-  0  prepared or the stack is running
-  1  a choice cannot be made or `running` found no stack
+  0  prepared, the stack is running, or no demo pack is streaming
+  1  a choice cannot be made, `running` found no stack, or `over-demo` found the pack streaming
   2  usage error
 """
 
@@ -244,6 +246,39 @@ def _running() -> bool:
     return result.returncode == 0 and bool(result.stdout.split())
 
 
+def _demo_running(*, container: str) -> bool:
+    """Whether the `make demo` stream container is running."""
+    result = subprocess.run(
+        [
+            "docker",
+            "ps",
+            "--quiet",
+            "--filter",
+            "status=running",
+            "--filter",
+            f"name=^{container}$",
+        ],
+        capture_output=True,
+        check=False,
+        encoding="utf-8",
+        errors="replace",
+        text=True,
+        timeout=DOCKER_TIMEOUT_SECONDS,
+    )
+    return result.returncode == 0 and bool(result.stdout.split())
+
+
+def _demo_refusal(*, container: str, running: bool) -> str:
+    """Why `make ci` cannot start over the demo pack, empty when it can."""
+    if not running:
+        return ""
+    return (
+        f"the `make demo` pack is streaming here ({container}). Its removal "
+        "mid-start drops the per-source services the start already named. Run "
+        "`make demo-stop` first, then `make up`, and `make demo` again after it"
+    )
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
@@ -270,9 +305,23 @@ def main() -> int:
         help="with --caller, where --version came from when the person did not give it",
     )
     actions.add_parser("running", help="exit 0 when this checkout's stack runs")
+    over = actions.add_parser(
+        "over-demo", help="exit 1 when the `make demo` pack is streaming"
+    )
+    over.add_argument(
+        "--container", required=True, help="the demo stream container's name"
+    )
     args = parser.parse_args()
     if args.action == "running":
         return 0 if _running() else 1
+    if args.action == "over-demo":
+        refusal = _demo_refusal(
+            container=args.container, running=_demo_running(container=args.container)
+        )
+        if refusal:
+            _print(msg=f"FAIL {refusal}")
+            return 1
+        return 0
     try:
         _prepare(args=args)
     except (QuickstartError, RegistryError, stack.StackError) as error:

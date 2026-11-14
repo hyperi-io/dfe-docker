@@ -532,6 +532,7 @@ dev-build: ## Build local DFE images from source (no start; honours LOCAL). Clon
 # Pull before down, so a failed pull leaves the running stack up.
 .PHONY: ci
 ci: env-files storage-dirs  ## Pull and start infra and registry DFE images. Prints no credentials -- run `make creds` for those
+	@python3 scripts/quickstart.py over-demo --container '$(DEMO_CONTAINER)'
 	@rm -f $(LOCAL_OVERLAY)
 	docker compose -f docker-compose.yml $(STORAGE_FLAGS) $(UI_FLAGS) $(PROFILE_FLAGS) pull
 	docker compose -f docker-compose.yml $(STORAGE_FLAGS) $(UI_FLAGS) $(PROFILE_FLAGS) pull $(ACTIVE_SERVICES)
