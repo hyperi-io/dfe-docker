@@ -21,6 +21,7 @@ come out the other. Everything else can wait.
 - Docker Engine and Docker Compose at the `min_engine` and `min_compose` a release's `quickstart.json` names for the one-line installs. The rest need only the oldest Compose that reads every feature in `COMPOSE_FEATURES` (`scripts/quickstart_json.py`)
 - make, git and Python 3 (standard library only), for a clone. Nothing under "With only Docker" needs them
 - Network access to `ghcr.io/hyperi-io`, where the images are public and pull with no login
+- About 2.5 GB of RAM free: that is the default stack at idle. Its memory limits are sized for a 16 GB box, see [configuration](configuration.md)
 
 ## With only Docker
 
