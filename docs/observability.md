@@ -101,7 +101,7 @@ refused/failed counts (`otelcol_*`) into the same pipeline as everything else.
 nothing that does. Enabling push does not disable it: a Prometheus estate and an
 OTLP one are both served.
 
-dfe-engine's Overview counts cores from the usage rollup dfe-schemas declares. That rollup reads the Kubernetes shape, so the collector reports Compose in it:
+dfe-engine's Overview counts cores from the usage rollup dfe-schemas declares. That rollup reads the Kubernetes metric names, so the collector reports Compose in it:
 
 | Reading | Where it comes from here | Table |
 |---|---|---|
@@ -127,7 +127,7 @@ Every profile declares `otel: true`. `DFE_OTEL_ENABLED=false` turns it off.
 | `DFE_OTEL_HEALTH_PORT` | `13133` | the `health_check` extension |
 | `DFE_ENGINE_API_METRICS_BACKEND` in `env/engine.env` | `opentelemetry` | makes dfe-engine push. `prometheus` serves `/metrics` only |
 
-The endpoint picks the shape. Enabling the profile points services at the bundled
+The endpoint decides where services push. Enabling the profile points services at the bundled
 collector. Name your own endpoint and they push there instead, which is how you
 feed an external OTLP backend with no bundled collector at all.
 
@@ -218,7 +218,7 @@ Of the host's own metrics only its CPUs are collected, for the usage readings.
 - **Routing**, where the engine renders the tier's app config. A source created
   through the API reaches the running receiver, and a record matching its rule
   lands in a table of its own. The source is named for the run (`postroute`
-  and 8 hex digits) and deleted afterwards, then its table is dropped, because the engine's source delete leaves the table. A run first sweeps that shape's sources and tables older than an hour, which a killed run left.
+  and 8 hex digits) and deleted afterwards, then its table is dropped, because the engine's source delete leaves the table. A run first sweeps the `postroute` sources and tables older than an hour, which a killed run left.
 
 Once every claim has run, the three ingest rows are deleted: a lightweight `DELETE`, or a mutation (`ALTER TABLE ... DELETE`) on a table whose projections refuse one. A delete that does not finish within 60s is reported, never failed.
 

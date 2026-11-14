@@ -235,7 +235,7 @@ make dev SERVICES="dfe-loader"        # start a subset of the resolved profile
 
 Those four flags mirror the `clickhouse`, `core`, `kafbat` and `hyperdx` keys a
 profile may declare, and they win over it -- `.env` is what a deploy writes, the
-profile is the committed shape. Leave them unset and the profile decides.
+profile is the committed setting. Leave them unset and the profile decides.
 
 Two of those need a warning.
 
