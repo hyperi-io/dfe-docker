@@ -274,7 +274,7 @@ Every fetcher source runs in the one `dfe-fetcher` container, from the file the 
 
 ## Seeding orgs and accounts
 
-`make accounts` creates the orgs first, because the engine refuses an account naming an org it does not hold. An account file carries no password. A new account gets a 24-character one, recorded in `env/engine.env` as `DFE_SEED_ACCOUNT_<USERNAME>_PASSWORD` before the account is created. `make creds` hands it over the way it hands over `admin`. A volume wipe deletes the orgs and accounts, so run both targets again after one. An account comes back on the password already recorded.
+`make accounts` creates the orgs first, because the engine refuses an account naming an org it does not hold. An account file carries no password. A new account gets a 32-character one, recorded in `env/engine.env` as `DFE_SEED_ACCOUNT_<USERNAME>_PASSWORD` before the account is created. `make creds` hands it over the way it hands over `admin`. A volume wipe deletes the orgs and accounts, so run both targets again after one. An account comes back on the password already recorded.
 
 ## Proving the pipeline works
 

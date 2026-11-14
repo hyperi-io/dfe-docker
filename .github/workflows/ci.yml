@@ -434,7 +434,7 @@ jobs:
             echo "::error::ClickHouse took the empty default password"
             exit 1
           fi
-          docker compose -f "$FILE" exec -T dfe-engine sh -c '. /run/dfe-secrets/env && test ${#DFE_ENGINE_API_JWT_SECRET} -eq 48 && test ${#DFE_ENGINE_CLICKHOUSE_PASSWORD} -eq 24'
+          docker compose -f "$FILE" exec -T dfe-engine sh -c '. /run/dfe-secrets/env && test ${#DFE_ENGINE_API_JWT_SECRET} -eq 64 && test ${#DFE_ENGINE_CLICKHOUSE_PASSWORD} -eq 32'
           docker compose -f "$FILE" exec -T dfe-engine python -c 'import json, urllib.request
           request = urllib.request.Request("http://localhost:8000/api/v1/auth/login", data=json.dumps({"username": "admin", "password": "dfe-first-login"}).encode(), headers={"Content-Type": "application/json"})
           with urllib.request.urlopen(request, timeout=30) as answer:

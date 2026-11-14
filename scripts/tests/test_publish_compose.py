@@ -18,6 +18,7 @@ from pathlib import Path
 import pytest
 
 import demo
+import init
 import publish_compose
 import secrets_init
 from _common import FIRST_LOGIN_PASSWORD, REPO_ROOT, demo_pack_dir, demo_pack_names
@@ -1077,10 +1078,11 @@ class TestSecretsInit:
         assert (tmp_path / "otel-collector" / "CLICKHOUSE_PASSWORD").read_text(
             encoding="utf-8"
         ) == first
-        assert re.fullmatch(r"[A-Za-z0-9]{24}", first)
+        assert re.fullmatch(rf"[A-Za-z0-9]{{{init._LEN_CREDENTIAL}}}", first)
         env = (tmp_path / "dfe-hyperdx" / "env").read_text(encoding="utf-8")
         assert re.fullmatch(
-            r"MONGO_URI='mongodb://u:[A-Za-z0-9]{24}@h/db\?a=1&b=2'\n", env
+            rf"MONGO_URI='mongodb://u:[A-Za-z0-9]{{{init._LEN_CREDENTIAL}}}@h/db\?a=1&b=2'\n",
+            env,
         )
         assert stat.S_IMODE((tmp_path / "dfe-hyperdx" / "env").stat().st_mode) == 0o440
         assert stat.S_IMODE((tmp_path / "dfe-hyperdx").stat().st_mode) == 0o750
@@ -1106,7 +1108,9 @@ class TestSecretsInit:
             text=True,
         ).stdout
 
-        assert re.fullmatch(r"mongodb://u:[A-Za-z0-9]{24}@h/db\?a=1&b=2", sourced)
+        assert re.fullmatch(
+            rf"mongodb://u:[A-Za-z0-9]{{{init._LEN_CREDENTIAL}}}@h/db\?a=1&b=2", sourced
+        )
 
     @pytest.mark.parametrize(
         "template", ["@@NOT_A_SECRET@@", "x@@lower@@"], ids=["unknown-key", "not-a-key"]
