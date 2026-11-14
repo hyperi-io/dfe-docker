@@ -419,12 +419,12 @@ jobs:
             done
           done
 
-      # The secrets are this runner's own: no service holds one in its environment, ClickHouse refuses its empty default password, and the admin's public first login is held for a change
+      # The secrets are this runner's own: no service holds one in its environment, ClickHouse refuses its empty default password, and the login the file prints is held for a change
       - name: Run on secrets minted here
         working-directory: ${{ env.COMPOSE_DIR }}
         run: |
           for svc in clickhouse demo-console demo-sources dfe-engine dfe-hunt-runner dfe-hyperdx dfe-loader dfe-ui hyperdx-documentdb otel-collector; do
-            held="$(docker inspect "$(docker compose -f "$FILE" ps -aq "$svc")" --format '{{range .Config.Env}}{{println .}}{{end}}' | cut -d= -f1 | grep -E '(PASSWORD|SECRET|TOKEN|KEY|MONGO_URI|IDENTITY)$' | grep -vx DFE_ENGINE_AUTH_LOCAL_ADMIN_PASSWORD || true)"
+            held="$(docker inspect "$(docker compose -f "$FILE" ps -aq "$svc")" --format '{{range .Config.Env}}{{println .}}{{end}}' | cut -d= -f1 | grep -E '(PASSWORD|SECRET|TOKEN|KEY|MONGO_URI|IDENTITY)$' || true)"
             if [ -n "$held" ]; then
               echo "::error::$svc holds $held in its environment"
               exit 1
@@ -435,8 +435,14 @@ jobs:
             exit 1
           fi
           docker compose -f "$FILE" exec -T dfe-engine sh -c '. /run/dfe-secrets/env && test ${#DFE_ENGINE_API_JWT_SECRET} -eq 64 && test ${#DFE_ENGINE_CLICKHOUSE_PASSWORD} -eq 32'
-          docker compose -f "$FILE" exec -T dfe-engine python -c 'import json, urllib.request
-          request = urllib.request.Request("http://localhost:8000/api/v1/auth/login", data=json.dumps({"username": "admin", "password": "dfe-first-login"}).encode(), headers={"Content-Type": "application/json"})
+          login="$(docker compose -f "$FILE" run --rm secrets-init login)"
+          DFE_LOGIN_NAME="$(printf '%s\n' "$login" | sed -n 's/^Console login: \(.*\) \/ .*$/\1/p')"
+          DFE_LOGIN_PASSWORD="$(printf '%s\n' "$login" | sed -n 's/^Console login: .* \/ \(.*\)$/\1/p')"
+          echo "::add-mask::$DFE_LOGIN_PASSWORD"
+          test "${#DFE_LOGIN_PASSWORD}" -eq 32
+          export DFE_LOGIN_NAME DFE_LOGIN_PASSWORD
+          docker compose -f "$FILE" exec -T -e DFE_LOGIN_NAME -e DFE_LOGIN_PASSWORD dfe-engine python -c 'import json, os, urllib.request
+          request = urllib.request.Request("http://localhost:8000/api/v1/auth/login", data=json.dumps({"username": os.environ["DFE_LOGIN_NAME"], "password": os.environ["DFE_LOGIN_PASSWORD"]}).encode(), headers={"Content-Type": "application/json"})
           with urllib.request.urlopen(request, timeout=30) as answer:
               assert json.load(answer).get("password_change_required") is True, "the first login is not held for a change"'
 

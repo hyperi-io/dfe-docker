@@ -16,7 +16,7 @@ import pytest
 
 import quickstart_json
 import resolve_profile
-from _common import FIRST_LOGIN_PASSWORD, SERVICE_PROFILES_FILE, demo_pack_names
+from _common import SERVICE_PROFILES_FILE, demo_pack_names
 
 IMAGE = "ghcr.io/hyperi-io/dfe-docker"
 
@@ -39,9 +39,16 @@ def test_schema_2_lists_the_packs_in_directory_order(tmp_path: Path) -> None:
         ("cyber", "Cyber"),
         ("theatre", "Theatre"),
     ]
-    assert packs[1]["pinned"] == [
-        f"docker compose -f oci://{IMAGE}:demo-theatre-1.2.3 up -d"
-    ]
+    for pack in packs:
+        tag = f"demo-{pack['name']}"
+        assert pack["latest"] == [
+            f"docker compose -f oci://{IMAGE}:{tag} up -d",
+            f"docker compose -f oci://{IMAGE}:{tag} run --rm secrets-init login",
+        ]
+        assert pack["pinned"] == [
+            f"docker compose -f oci://{IMAGE}:{tag}-1.2.3 up -d",
+            f"docker compose -f oci://{IMAGE}:{tag}-1.2.3 run --rm secrets-init login",
+        ]
     assert (
         quickstart_json.demo_packs(image=IMAGE, root=tmp_path / "x", version="1") == []
     )
@@ -138,40 +145,55 @@ def test_a_release_document_from_the_committed_files() -> None:
         "title": "Cyber",
         "use_case": "/solutions/security-monitoring/",
         "latest": [
-            "docker compose -f oci://ghcr.io/hyperi-io/dfe-docker:demo-cyber up -d"
+            "docker compose -f oci://ghcr.io/hyperi-io/dfe-docker:demo-cyber up -d",
+            "docker compose -f oci://ghcr.io/hyperi-io/dfe-docker:demo-cyber run --rm secrets-init login",
         ],
         "pinned": [
-            "docker compose -f oci://ghcr.io/hyperi-io/dfe-docker:demo-cyber-9.9.9 up -d"
+            "docker compose -f oci://ghcr.io/hyperi-io/dfe-docker:demo-cyber-9.9.9 up -d",
+            "docker compose -f oci://ghcr.io/hyperi-io/dfe-docker:demo-cyber-9.9.9 run --rm secrets-init login",
         ],
     }
     assert [pack["name"] for pack in document["packs"]] == demo_pack_names()
+    # Every pack lists the same two lines as `up` and `demo`, with only its tag changed
+    for pack in document["packs"]:
+        for form, suffix in (("latest", ""), ("pinned", "-9.9.9")):
+            ref = f"ghcr.io/hyperi-io/dfe-docker:demo-{pack['name']}{suffix}"
+            assert pack[form] == [
+                f"docker compose -f oci://{ref} up -d",
+                f"docker compose -f oci://{ref} run --rm secrets-init login",
+            ]
     assert [entry["name"] for entry in document["profiles"]] == [default]
     assert document["profiles"][0]["default"] is True
     assert document["profiles"][0]["transport"] in {"grpc", "kafka"}
     assert {key: document[key] for key in ("up", "demo")} == {
         "up": {
             "latest": [
-                "docker compose -f oci://ghcr.io/hyperi-io/dfe-docker:compose up -d"
+                "docker compose -f oci://ghcr.io/hyperi-io/dfe-docker:compose up -d",
+                "docker compose -f oci://ghcr.io/hyperi-io/dfe-docker:compose run --rm secrets-init login",
             ],
             "pinned": [
-                "docker compose -f oci://ghcr.io/hyperi-io/dfe-docker:compose-9.9.9 up -d"
+                "docker compose -f oci://ghcr.io/hyperi-io/dfe-docker:compose-9.9.9 up -d",
+                "docker compose -f oci://ghcr.io/hyperi-io/dfe-docker:compose-9.9.9 run --rm secrets-init login",
             ],
         },
         "demo": {
             "latest": [
-                "docker compose -f oci://ghcr.io/hyperi-io/dfe-docker:demo up -d"
+                "docker compose -f oci://ghcr.io/hyperi-io/dfe-docker:demo up -d",
+                "docker compose -f oci://ghcr.io/hyperi-io/dfe-docker:demo run --rm secrets-init login",
             ],
             "pinned": [
-                "docker compose -f oci://ghcr.io/hyperi-io/dfe-docker:demo-9.9.9 up -d"
+                "docker compose -f oci://ghcr.io/hyperi-io/dfe-docker:demo-9.9.9 up -d",
+                "docker compose -f oci://ghcr.io/hyperi-io/dfe-docker:demo-9.9.9 run --rm secrets-init login",
             ],
         },
     }
     assert quickstart_json._version_key(document["min_compose"]) >= (2, 34, 0)
-    assert document["login"] == f"admin / {FIRST_LOGIN_PASSWORD}"
+    assert document["login"] == "printed by the second command in `up` and `demo`"
     assert "dfe-docker:compose down`" in document["notes"]["up"]
     assert "dfe-docker:demo down -v`" in document["notes"]["demo"]
     for note in document["notes"].values():
-        assert FIRST_LOGIN_PASSWORD in note
+        assert "second command prints" in note
+        assert "dfe-first-login" not in note
         assert ";" not in note
 
 

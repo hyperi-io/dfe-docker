@@ -21,7 +21,7 @@ import demo
 import init
 import publish_compose
 import secrets_init
-from _common import FIRST_LOGIN_PASSWORD, REPO_ROOT, demo_pack_dir, demo_pack_names
+from _common import REPO_ROOT, demo_pack_dir, demo_pack_names
 
 COLLECTOR_CONFIG = "config/otel-collector/config.yaml"
 SYSLOG_LINE = "%ASA-6-302013: x\n"
@@ -126,9 +126,9 @@ class TestPublished:
         assert engine["depends_on"] == {"clickhouse": {"condition": "service_healthy"}}
         assert engine["environment"][publish_compose.APP_ENV_DIR_KEY] == ""
         # No checkout means no `make creds`, and the stack file runs no per-source instance
-        assert (
-            FIRST_LOGIN_PASSWORD
-            in (engine["environment"][publish_compose.CREDENTIAL_COMMAND_KEY])
+        assert engine["environment"][publish_compose.CREDENTIAL_COMMAND_KEY] == (
+            "docker compose -f oci://ghcr.io/hyperi-io/dfe-docker:compose "
+            "run --rm secrets-init login"
         )
         assert engine["environment"][publish_compose.HOSTED_INSTANCES_KEY] == ""
         assert engine["environment"][publish_compose.APPLY_COMMAND_KEY] == (
@@ -233,6 +233,11 @@ class TestInterpolations:
             ("${HOME}", 1),
             ("$HOME", 1),
             ("$$${HOME} and $X", 2),
+            ("${DFE_ADMIN_NAME:-}", 0),
+            ("${DFE_ADMIN_PASSWORD:-}", 0),
+            ("${DFE_ADMIN_PASSWORD}", 1),
+            ("${DFE_ADMIN_NAME:-root}", 1),
+            ("${DFE_ADMIN_PASSWORD:-} ${HOME}", 1),
         ],
     )
     def test_counts_what_compose_would_interpolate(self, count: int, text: str) -> None:
@@ -288,19 +293,55 @@ class TestFindings:
             "unlooped ports": 2,
         }
 
-    def test_the_first_login_password_is_the_one_public_value(self) -> None:
+    @pytest.mark.parametrize(
+        ("service", "key", "value", "kind"),
+        [
+            ("secrets-init", "DFE_ADMIN_PASSWORD", "${DFE_ADMIN_PASSWORD:-}", None),
+            ("secrets-init", "DFE_ADMIN_NAME", "${DFE_ADMIN_NAME:-}", None),
+            (
+                "dfe-engine",
+                "DFE_ADMIN_PASSWORD",
+                "${DFE_ADMIN_PASSWORD:-}",
+                "interpolation",
+            ),
+            (
+                "dfe-engine",
+                "DFE_ADMIN_NAME",
+                "${DFE_ADMIN_NAME:-}",
+                "interpolation",
+            ),
+            (
+                "secrets-init",
+                "DFE_ADMIN_PASSWORD",
+                "${DFE_ADMIN_PASSWORD:-letmein}",
+                "literal secrets",
+            ),
+            ("secrets-init", "DFE_ADMIN_PASSWORD", "a-literal", "literal secrets"),
+            (
+                "dfe-engine",
+                "DFE_ENGINE_AUTH_LOCAL_ADMIN_PASSWORD",
+                "a-literal",
+                "literal secrets",
+            ),
+        ],
+    )
+    def test_only_secrets_init_may_read_the_chosen_login_from_the_shell(
+        self, key: str, kind: str | None, service: str, value: str
+    ) -> None:
         model = {
             "services": {
-                "dfe-engine": {
-                    "environment": {
-                        "DFE_ENGINE_AUTH_LOCAL_ADMIN_PASSWORD": FIRST_LOGIN_PASSWORD
-                    },
+                service: {
+                    "environment": {key: value},
                     "image": "x@sha256:" + "0" * 64,
                 }
             }
         }
 
-        assert publish_compose.findings(model=model, text="")["literal secrets"] == []
+        found = publish_compose.findings(model=model, text="")
+
+        assert {k: len(hits) for k, hits in found.items() if hits} == (
+            {kind: 1} if kind else {}
+        )
 
 
 class TestDemoRoles:
@@ -863,10 +904,12 @@ class TestTags:
 CH_SECRET = "c" * 24
 OTEL_SECRET = "o" * 24
 JWT_SECRET = "j" * 48
+ADMIN_SECRET = "a" * 32
 MINTED = {
     CH_SECRET: "CLICKHOUSE_PASSWORD",
     OTEL_SECRET: "DFE_OTEL_WRITER_CLICKHOUSE_PASSWORD",
     JWT_SECRET: "DFE_ENGINE_API_JWT_SECRET",
+    ADMIN_SECRET: "DFE_ENGINE_AUTH_LOCAL_ADMIN_PASSWORD",
 }
 # What each pinned image's registry config runs, standing in for the registry read
 IMAGE_COMMANDS = {
@@ -900,6 +943,15 @@ def _secret_stack() -> dict:
                     ]
                 },
                 "image": "clickhouse",
+            },
+            "dfe-engine": {
+                "command": ["serve"],
+                "entrypoint": ["dfe-engine"],
+                "environment": {
+                    "DFE_ENGINE_API_JWT_SECRET": JWT_SECRET,
+                    "DFE_ENGINE_AUTH_LOCAL_ADMIN_PASSWORD": ADMIN_SECRET,
+                },
+                "image": "engine",
             },
             "dfe-hunt-runner": {
                 "command": ["run"],
@@ -953,7 +1005,16 @@ class TestSecure:
         }
         init = model["services"]["secrets-init"]
         assert (init["user"], init["image"]) == ("0:0", "dfe-docker@sha256:" + "d" * 64)
+        assert init["environment"] == {
+            "DFE_ADMIN_NAME": "${DFE_ADMIN_NAME:-}",
+            "DFE_ADMIN_PASSWORD": "${DFE_ADMIN_PASSWORD:-}",
+        }
         assert model["volumes"]["dfe-secrets"] == {}
+        assert plan["consumers"]["dfe-engine"]["env"] == {
+            "DFE_ENGINE_API_JWT_SECRET": "@@DFE_ENGINE_API_JWT_SECRET@@",
+            "DFE_ENGINE_AUTH_LOCAL_ADMIN_NAME": "@@DFE_ENGINE_AUTH_LOCAL_ADMIN_NAME@@",
+            "DFE_ENGINE_AUTH_LOCAL_ADMIN_PASSWORD": "@@DFE_ENGINE_AUTH_LOCAL_ADMIN_PASSWORD@@",
+        }
 
     def test_a_consumer_sources_its_own_directory_and_then_runs_what_it_ran(
         self,
@@ -1026,7 +1087,7 @@ class TestSecure:
 
 
 class TestMintedSecrets:
-    def test_reads_every_generated_secret_but_the_public_first_login(
+    def test_reads_every_generated_secret_the_admin_password_too(
         self, tmp_path: Path
     ) -> None:
         (tmp_path / "env").mkdir()
@@ -1036,13 +1097,14 @@ class TestMintedSecrets:
         for name in ("engine.env", "hyperdx.env", "ui.env"):
             (tmp_path / "env" / name).write_text("", encoding="utf-8")
         (tmp_path / "env" / "engine.env").write_text(
-            f"DFE_ENGINE_AUTH_LOCAL_ADMIN_PASSWORD={FIRST_LOGIN_PASSWORD}\nDFE_ENGINE_AUTH_BREAKGLASS_PASSWORD=bg\n",
+            "DFE_ENGINE_AUTH_LOCAL_ADMIN_PASSWORD=adm\nDFE_ENGINE_AUTH_BREAKGLASS_PASSWORD=bg\n",
             encoding="utf-8",
         )
 
         assert publish_compose.minted_secrets(tree=tmp_path) == {
-            "ch": "CLICKHOUSE_PASSWORD",
+            "adm": "DFE_ENGINE_AUTH_LOCAL_ADMIN_PASSWORD",
             "bg": "DFE_ENGINE_AUTH_BREAKGLASS_PASSWORD",
+            "ch": "CLICKHOUSE_PASSWORD",
         }
 
 
@@ -1128,6 +1190,142 @@ class TestSecretsInit:
         else:
             with pytest.raises(secrets_init.SecretsError, match="does not mint"):
                 secrets_init.apply(plan=plan, root=tmp_path)
+
+
+class TestAdminLogin:
+    def _plan(self) -> dict:
+        return {
+            "consumers": {
+                "dfe-engine": {
+                    "env": {
+                        "DFE_ENGINE_AUTH_LOCAL_ADMIN_NAME": "@@DFE_ENGINE_AUTH_LOCAL_ADMIN_NAME@@",
+                        "DFE_ENGINE_AUTH_LOCAL_ADMIN_PASSWORD": "@@DFE_ENGINE_AUTH_LOCAL_ADMIN_PASSWORD@@",
+                    },
+                    "gid": os.getgid(),
+                }
+            }
+        }
+
+    def _engine_env(self, root: Path) -> dict[str, str]:
+        sourced = subprocess.run(
+            [
+                "sh",
+                "-c",
+                '. "$0" && printf "%s\\n%s" "$DFE_ENGINE_AUTH_LOCAL_ADMIN_NAME" "$DFE_ENGINE_AUTH_LOCAL_ADMIN_PASSWORD"',
+                str(root / "dfe-engine" / "env"),
+            ],
+            capture_output=True,
+            check=True,
+            text=True,
+        ).stdout
+        name, password = sourced.split("\n")
+        return {"name": name, "password": password}
+
+    def test_mints_a_password_for_admin_and_login_prints_what_the_engine_reads(
+        self, tmp_path: Path
+    ) -> None:
+        printed = secrets_init.login(root=tmp_path)
+        secrets_init.apply(plan=self._plan(), root=tmp_path)
+
+        engine = self._engine_env(tmp_path)
+        assert engine["name"] == "admin"
+        assert re.fullmatch(
+            rf"[A-Za-z0-9]{{{init._LEN_CREDENTIAL}}}", engine["password"]
+        )
+        assert printed == (
+            f"Console login: admin / {engine['password']}\n"
+            "The console makes you change this password at first login.\n"
+        )
+        assert secrets_init.login(root=tmp_path) == printed
+
+    def test_a_chosen_login_is_used_kept_and_replaced_by_a_later_choice(
+        self, tmp_path: Path
+    ) -> None:
+        chosen = {"DFE_ADMIN_NAME": "kerry", "DFE_ADMIN_PASSWORD": "a chosen phrase 1"}
+        secrets_init.apply(environ=chosen, plan=self._plan(), root=tmp_path)
+        assert self._engine_env(tmp_path) == {
+            "name": "kerry",
+            "password": "a chosen phrase 1",
+        }
+
+        secrets_init.apply(environ={}, plan=self._plan(), root=tmp_path)
+        assert self._engine_env(tmp_path)["password"] == "a chosen phrase 1"
+        assert "kerry / a chosen phrase 1" in secrets_init.login(root=tmp_path)
+
+        secrets_init.apply(
+            environ={"DFE_ADMIN_PASSWORD": "another phrase 22"},
+            plan=self._plan(),
+            root=tmp_path,
+        )
+        assert self._engine_env(tmp_path) == {
+            "name": "kerry",
+            "password": "another phrase 22",
+        }
+
+    def test_login_ignores_the_shell_so_it_prints_what_the_engine_was_given(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        secrets_init.apply(plan=self._plan(), root=tmp_path)
+        before = secrets_init.login(root=tmp_path)
+        monkeypatch.setenv("DFE_ADMIN_PASSWORD", "never printed 123")
+
+        assert secrets_init.login(root=tmp_path) == before
+
+    @pytest.mark.parametrize(
+        ("variable", "value", "why"),
+        [
+            ("DFE_ADMIN_PASSWORD", "short", "at least 12 characters"),
+            ("DFE_ADMIN_PASSWORD", "x" * 11, "at least 12 characters"),
+            ("DFE_ADMIN_PASSWORD", "x" * 73, "at most 72 bytes"),
+            ("DFE_ADMIN_PASSWORD", "é" * 37, "at most 72 bytes"),
+            ("DFE_ADMIN_PASSWORD", "changeme", "at least 12 characters"),
+            ("DFE_ADMIN_PASSWORD", "  changeme  ", "shipped placeholder"),
+            ("DFE_ADMIN_PASSWORD", "twelve chars\nand more", "control character"),
+            ("DFE_ADMIN_PASSWORD", "twelve\tchars here", "control character"),
+            ("DFE_ADMIN_NAME", "-admin", "letters, digits"),
+            ("DFE_ADMIN_NAME", "two words", "letters, digits"),
+            ("DFE_ADMIN_NAME", "a/b", "letters, digits"),
+            ("DFE_ADMIN_NAME", "a" * 129, "letters, digits"),
+        ],
+    )
+    def test_refuses_a_login_the_engine_would_not_take_naming_the_variable_only(
+        self, tmp_path: Path, variable: str, value: str, why: str
+    ) -> None:
+        with pytest.raises(secrets_init.SecretsError, match=why) as refused:
+            secrets_init.apply(
+                environ={variable: value}, plan=self._plan(), root=tmp_path
+            )
+
+        assert variable in str(refused.value)
+        assert value.strip() not in str(refused.value)
+        assert not (
+            tmp_path / ".minted" / "DFE_ENGINE_AUTH_LOCAL_ADMIN_PASSWORD"
+        ).exists()
+
+    def test_main_prints_the_login_and_fails_a_refused_choice_with_a_message(
+        self,
+        capsys: pytest.CaptureFixture[str],
+        monkeypatch: pytest.MonkeyPatch,
+        tmp_path: Path,
+    ) -> None:
+        plan = tmp_path / "plan.json"
+        plan.write_text(json.dumps(self._plan()), encoding="utf-8")
+        root = tmp_path / "root"
+        root.mkdir()
+        args = ["--plan", str(plan), "--root", str(root)]
+
+        assert secrets_init.main([*args, "login"]) == 0
+        out = capsys.readouterr().out
+        assert re.fullmatch(
+            r"Console login: admin / [A-Za-z0-9]{32}\nThe console makes you change this password at first login\.\n",
+            out,
+        )
+
+        monkeypatch.setenv("DFE_ADMIN_PASSWORD", "short")
+        assert secrets_init.main(args) == 1
+        assert "DFE_ADMIN_PASSWORD must be at least 12 characters" in (
+            capsys.readouterr().err
+        )
 
 
 def test_the_scratch_tree_holds_what_the_image_carries() -> None:

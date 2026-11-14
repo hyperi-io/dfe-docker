@@ -316,6 +316,15 @@ The engine reads its settings under `DFE_ENGINE_`, so `env/engine.env` takes tho
 | `DFE_ENGINE_CLICKHOUSE_DEFAULT_TTL_DAYS`         | In `env/engine.env`. Days every time-series table keeps rows, the OTel tables included. 0 disables the default TTL and a source or dfe-schemas TTL overrides it | `90`                                                                |
 | `DFE_ENGINE_API_METRICS_BACKEND`                 | In `env/engine.env`. Metrics backend of dfe-engine. `opentelemetry` is dual (push + `/metrics`) | `opentelemetry`                                                     |
 
+A compose file published for `docker compose -f oci://` reads two more, from the shell that runs `up` and nowhere else. `docker compose -f oci://ghcr.io/hyperi-io/dfe-docker:compose run --rm secrets-init login` prints the login the stack holds.
+
+| Variable                                         | Use                                                                                  | Default                                                             |
+|--------------------------------------------------|--------------------------------------------------------------------------------------|---------------------------------------------------------------------|
+| `DFE_ADMIN_NAME`                                 | The everyday admin's login name, which becomes `DFE_ENGINE_AUTH_LOCAL_ADMIN_NAME`. Letters, digits, `.`, `_` and `-`, starting with a letter or digit | `admin`                                                             |
+| `DFE_ADMIN_PASSWORD`                             | That login's password, which becomes `DFE_ENGINE_AUTH_LOCAL_ADMIN_PASSWORD`. 12 to 72 bytes of printable characters, not `changeme` | minted at first start                                               |
+
+Both land in the stack's secrets volume, so a later `up` with neither set keeps them and only `down -v` mints afresh. The engine reads a new password when it next starts.
+
 Compose sets these on the engine itself:
 
 | Variable | Why |

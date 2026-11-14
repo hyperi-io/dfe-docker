@@ -17,8 +17,8 @@ Each is generated, never edited. The tree the dfe-docker image carries is copied
 
 - every bind mount of a file in the tree becomes a compose config with the file inline, `$` escaped, at the same target. The engine's env/ directory, which nothing outside a checkout reads, is dropped with the setting that names it. The collector's host /proc goes and it reads its own, which shows the host's CPUs.
 - no secret ships. Every environment value holding one the scratch install minted leaves the file, and a secrets-init one-shot (scripts/secrets_init.py) mints it on the host at first start into the stack's own volume. Each service that read one gets a directory of that volume holding only its own, read-only, and either a shell that sources its env file before it execs the image's own command, or, for the collector, which has no shell, its config's file provider.
-- every published port binds to 127.0.0.1, and no profile, env_file or interpolation is left, so `-f oci://` has nothing to ask.
-- the admin's issued password is FIRST_LOGIN_PASSWORD, the one value the file names on purpose, which the engine makes its owner replace at first login.
+- every published port binds to 127.0.0.1, and no profile, env_file or other interpolation is left, so `-f oci://` has nothing to ask.
+- the admin's issued password is minted like the rest, and `docker compose -f oci://... run --rm secrets-init login` prints it. A person may choose the admin's name and password with DFE_ADMIN_NAME and DFE_ADMIN_PASSWORD in the shell that runs `up`. They are the one interpolation the file keeps, on secrets-init alone, and nothing else in it reads the shell.
 
 The stack file is project `dfe`. The demo file is that model with the intake's transform instance declared, its own project `dfe-demo` and containers prefixed `demo-`, plus the demo overlay: one-shots that seed its sources and console through scripts/demo_seed.py, the syslog stream `make demo` runs and the archive pruner. dfe-receiver, dfe-fetcher and the instance start once the sources exist. Each file tells the engine which per-source instances it runs (DFE_ENGINE_DEPLOYMENT_HOSTED_INSTANCES), none for the stack file, so a source needing any other is refused at save. secrets-init and the demo's helpers run the dfe-docker image --image names.
 
@@ -52,30 +52,29 @@ import demo  # noqa: E402
 import init  # noqa: E402
 import installer  # noqa: E402
 import instances  # noqa: E402
+import secrets_init  # noqa: E402
 import stack  # noqa: E402
 from _common import (  # noqa: E402
     DEMO_PACK_NAME,
-    ENGINE_COMPONENT,
     FETCHER_SERVICE,
-    FIRST_LOGIN_PASSWORD,
     IN_STACK_KEY,
+    LOGIN_VERB,
     PUBLISHED_DEMO_TAG,
     PUBLISHED_STACK_TAG,
     REPO_ROOT,
+    SECRETS_SERVICE,
     _parse_dotenv,
     _print,
     _rel_path,
     demo_pack_dir,
     demo_pack_names,
     demo_pack_tag,
-    write_dotenv,
 )
 
 STACK_PROJECT = "dfe"
 STACK_FILE = "dfe.yaml"
 DEFAULT_IMAGE = installer.DEFAULT_IMAGE
 LOOPBACK = "127.0.0.1"
-ADMIN_PASSWORD_KEY = "DFE_ENGINE_AUTH_LOCAL_ADMIN_PASSWORD"
 BREAKGLASS_PASSWORD_KEY = "DFE_ENGINE_AUTH_BREAKGLASS_PASSWORD"
 ENGINE_SERVICE = "dfe-engine"
 RECEIVER_SERVICE = "dfe-receiver"
@@ -87,7 +86,6 @@ APP_ENV_DIR_KEY = "DFE_ENGINE_DEPLOYMENT_APP_ENV_DIR"
 HOSTED_INSTANCES_KEY = "DFE_ENGINE_DEPLOYMENT_HOSTED_INSTANCES"
 # What the engine's login page tells an operator of a published install, which has no `make creds`
 CREDENTIAL_COMMAND_KEY = "DFE_ENGINE_DEPLOYMENT_CREDENTIAL_COMMAND"
-CREDENTIAL_COMMAND = f"log in with the first-login password {FIRST_LOGIN_PASSWORD}, which the console makes you change"
 # What the engine names to apply a change a running service cannot take in place, which a published install runs from the file's own OCI reference
 APPLY_COMMAND_KEY = "DFE_ENGINE_DEPLOYMENT_APPLY_COMMAND"
 ENV_DIR_NAME = "env"
@@ -113,7 +111,6 @@ DEMO_FEED_MOUNT = "/demo-feed"
 DEMO_FEED_SUBPATH = "feed"
 DEMO_UID = "1000:1000"
 ROOT_UID = "0:0"
-SECRETS_SERVICE = "secrets-init"
 SECRETS_VOLUME = "dfe-secrets"
 SECRETS_ROOT = "/secrets"
 SECRETS_MOUNT = "/run/dfe-secrets"
@@ -130,8 +127,11 @@ WRAPPER_NAME = "dfe-secrets"
 FILE_CONSUMERS = {"otel-collector": "config/otel-collector/config.yaml"}
 # Environment names that hold a secret wherever they are set, and not a path to one
 _SECRET_NAME = re.compile(r"(PASSWORD|SECRET|TOKEN|KEY|MONGO_URI|IDENTITY)$")
-# The values a published file names on purpose
-PUBLIC_VALUES = {ADMIN_PASSWORD_KEY: FIRST_LOGIN_PASSWORD}
+# The only interpolations a published file keeps, each on the one service that reads it: a person's own choice of the admin's name and password. The default is empty, so a later `up` with neither set keeps what the volume holds
+CHOSEN_LOGIN = {
+    secrets_init.ADMIN_NAME_VAR: f"${{{secrets_init.ADMIN_NAME_VAR}:-}}",
+    secrets_init.ADMIN_PASSWORD_VAR: f"${{{secrets_init.ADMIN_PASSWORD_VAR}:-}}",
+}
 # A `$` that compose would interpolate: one followed by `{` or a name, where `$$` is the escape
 _DOLLAR = re.compile(r"\$(\$|\{|[A-Za-z_])")
 # A demo source file's top-level fetcher mapping, which is what makes it a fetcher (demo.py _role)
@@ -218,17 +218,8 @@ def _installer(*, args: Sequence[str], tree: Path) -> None:
 
 
 def install(*, profile: str, stack_version: str, tree: Path) -> None:
-    """Set the scratch tree up as the image's `init` sets a folder up, then issue the first-login password."""
+    """Set the scratch tree up as the image's `init` sets a folder up."""
     _installer(args=["init", "--stack", stack_version, "--profile", profile], tree=tree)
-    engine_env = tree / ENV_DIR_NAME / f"{ENGINE_COMPONENT}.env"
-    write_dotenv(
-        path=engine_env,
-        text=init._set_live(
-            text=engine_env.read_text(encoding="utf-8"),
-            key=ADMIN_PASSWORD_KEY,
-            value=FIRST_LOGIN_PASSWORD,
-        ),
-    )
 
 
 def declare_instances(*, declared: Mapping[str, Sequence[str]], tree: Path) -> None:
@@ -366,6 +357,11 @@ def apply_command(*, tag: str) -> str:
     return f"docker compose -f oci://{DEFAULT_IMAGE}:{tag} up -d --force-recreate {{service}}"
 
 
+def login_command(*, tag: str) -> str:
+    """The command that prints the admin login of the file published under `tag`, which the engine's login page tells an operator to run."""
+    return f"docker compose -f oci://{DEFAULT_IMAGE}:{tag} {LOGIN_VERB}"
+
+
 def demo_hosted(*, roles: Mapping[str, Sequence[str]]) -> str:
     """The engine's hosted-instance setting for the pack: the intake, each vendor, which is created active and then set dormant, and each Beats source. Empty, as the stack file's is, for a pack with none."""
     names = [*roles["intake"], *roles["vendor"], *roles["beats"]]
@@ -381,7 +377,7 @@ def minted_secrets(*, tree: Path) -> dict[str, str]:
         )
         values = _parse_dotenv(text=path.read_text(encoding="utf-8"))
         for key in keys:
-            if values.get(key) and key not in PUBLIC_VALUES:
+            if values.get(key):
                 found[values[key]] = key
     return found
 
@@ -526,7 +522,7 @@ def published(*, container_prefix: str, model: Mapping, name: str, tree: Path) -
         if env_dir:
             environment[APP_ENV_DIR_KEY] = ""
         if service_name == ENGINE_SERVICE:
-            environment[CREDENTIAL_COMMAND_KEY] = CREDENTIAL_COMMAND
+            environment[CREDENTIAL_COMMAND_KEY] = login_command(tag=PUBLISHED_STACK_TAG)
             environment[HOSTED_INSTANCES_KEY] = ""
             environment[APPLY_COMMAND_KEY] = apply_command(tag=PUBLISHED_STACK_TAG)
         if "environment" in original or env_dir:
@@ -642,6 +638,7 @@ def demo_overlay(
     engine_env = services[ENGINE_SERVICE].get("environment", {})
     engine_env[HOSTED_INSTANCES_KEY] = demo_hosted(roles=roles)
     engine_env[APPLY_COMMAND_KEY] = apply_command(tag=demo_pack_tag(pack=pack))
+    engine_env[CREDENTIAL_COMMAND_KEY] = login_command(tag=demo_pack_tag(pack=pack))
     sidecar = services[SIDECAR_SERVICE]
     helper = {
         "deploy": sidecar["deploy"],
@@ -858,6 +855,10 @@ def secure(
         )
         if not (templates):
             continue
+        if name == ENGINE_SERVICE:
+            templates[secrets_init.ADMIN_NAME_KEY] = PLACEHOLDER.format(
+                key=secrets_init.ADMIN_NAME_KEY
+            )
         gid = SECRETS_GID_BASE + len(consumers) + 1
         service["environment"] = {
             key: value
@@ -909,6 +910,7 @@ def secure(
             "--root",
             SECRETS_ROOT,
         ],
+        "environment": dict(CHOSEN_LOGIN),
         "image": image,
         "restart": "no",
         "user": ROOT_UID,
@@ -953,7 +955,9 @@ def render(*, model: Mapping, tag: str, stack_version: str) -> str:
 
 
 def interpolations(*, text: str) -> list[str]:
-    """Every `$` in the text compose would interpolate."""
+    """Every `$` in the text compose would interpolate, except the chosen login's own references."""
+    for reference in CHOSEN_LOGIN.values():
+        text = text.replace(reference, "")
     return [
         text[match.start() : match.start() + 24]
         for match in _DOLLAR.finditer(text)
@@ -977,8 +981,10 @@ def findings(*, model: Mapping, text: str) -> dict[str, list[str]]:
             if not (isinstance(volume, dict)) or volume.get("type") == "bind":
                 found["bind mounts"].append(f"{name}: {volume}")
         for key, value in (service.get("environment") or {}).items():
-            public = PUBLIC_VALUES.get(key)
-            if value and _SECRET_NAME.search(key) and value != public:
+            chosen = CHOSEN_LOGIN.get(key)
+            if value and value == chosen and name != SECRETS_SERVICE:
+                found["interpolation"].append(f"{name}: {key}")
+            elif value and _SECRET_NAME.search(key) and value != chosen:
                 found["literal secrets"].append(f"{name}: {key}")
         for key in ("env_file", "profiles"):
             if service.get(key):
@@ -1033,7 +1039,7 @@ def published_tags(*, moving: bool, release: str, tag: str) -> list[str]:
 def publish(
     *, files: Mapping[str, Path], moving: bool, release: str, repository: str
 ) -> None:
-    """Push each file as a compose OCI artifact under its tags, answering yes to compose's checks, which flag the first-login password and the inline configs."""
+    """Push each file as a compose OCI artifact under its tags, answering yes to compose's checks, which flag the inline configs and the login's interpolation."""
     for tag, path in files.items():
         for name in published_tags(moving=moving, release=release, tag=tag):
             with tempfile.TemporaryDirectory(prefix="dfe-publish-") as empty:
