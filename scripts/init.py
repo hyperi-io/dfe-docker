@@ -79,8 +79,8 @@ from _common import (  # noqa: E402
 _SECRET_ALPHABET = string.ascii_letters + string.digits
 _LEN_CREDENTIAL = 32  # DB / service credentials
 _LEN_KEY = 64  # signing keys and other long-lived key material
-# oauth2-proxy decodes its cookie secret to an AES key and accepts exactly 16, 24
-# or 32 bytes, so it takes the credential length rather than the key length.
+# oauth2-proxy base64-decodes its cookie secret and needs 16, 24 or 32 bytes, so 32
+# characters, which decode to a 24-byte AES key, rather than the key length.
 _LEN_COOKIE = _LEN_CREDENTIAL
 # dfe-hyperdx takes TOKEN_ENCRYPTION_KEY as 64 hex chars or base64 of exactly 32 bytes
 # and refuses to start on anything else; hex keeps it alphanumeric.
