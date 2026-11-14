@@ -1178,7 +1178,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             image=args.image,
             out_dir=args.out_dir,
             pack=args.pack,
-            stack_version=args.stack.strip() or stack._dial_pin(),
+            stack_version=args.stack.strip() or stack.release_pin(),
         )
         # A file is published only digest-pinned, and only once every one checks clean
         code = check(

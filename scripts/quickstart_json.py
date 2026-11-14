@@ -318,7 +318,7 @@ def main() -> int:
     )
     args = parser.parse_args()
     try:
-        stack_version = stack._dial_pin()
+        stack_version = stack.release_pin()
         if args.print_stack:
             print(stack_version)
             return 0

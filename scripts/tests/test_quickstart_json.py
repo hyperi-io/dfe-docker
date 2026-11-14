@@ -184,3 +184,17 @@ def test_an_unknown_default_profile_is_refused() -> None:
             stack_version="2.2.2",
             version="9.9.9",
         )
+
+
+def test_print_stack_refuses_a_prerelease_pin(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    def refuse() -> str:
+        raise quickstart_json.stack.StackError("pins 2.2.2-rc.5, a prerelease")
+
+    monkeypatch.setattr(quickstart_json.stack, "release_pin", refuse)
+    monkeypatch.setattr("sys.argv", ["quickstart_json.py", "--print-stack"])
+    assert quickstart_json.main() == 1
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert "prerelease" in captured.err
