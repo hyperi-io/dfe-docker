@@ -350,7 +350,7 @@ operator may not even run. The check lives in the power-on self test instead:
 `make post` exits non-zero while any is still at its default.
 
 Be aware of the gap that leaves. The self test auto-runs after `make dev` /
-`make ci` but is currently **non-fatal** there, so those commands still succeed
+`make ci` but is **non-fatal** there, so those commands still succeed
 with a default secret in place -- you get a loud message, not a failure. If you
 want it enforced, run `make post` as its own step and check the exit code.
 

@@ -5,16 +5,8 @@
 # License:   BUSL-1.1 - HYPERI PTY LIMITED
 # Copyright: (c) 2026 HYPERI PTY LIMITED
 #
-# Why this is hand-written rather than a `uses: hyperi-io/hyperi-ci/...` call:
-# hyperi-ci's reusable workflows are per-language (python / rust / go / ts) and
-# its language detection returns nothing for a compose-packaging repo, so there
-# is no reusable workflow to call for this shape. The house conventions are
-# followed deliberately -- least-privilege permissions, SHA-pinned third-party
-# actions with a version comment, Title Case job names, a named runner image --
-# so that when hyperi-ci grows the container/compose gating it is currently
-# missing, this collapses into a `uses:` line rather than a rewrite. The Release
-# job is assembled from hyperi-ci's shared actions for the same reason: its
-# release tail takes only those four languages.
+# Hand-written because hyperi-ci has no reusable workflow for a compose-packaging
+# repo. It follows the house conventions so it can collapse into a `uses:` line.
 #
 # The runner image is named (ubuntu-26.04) rather than ubuntu-latest, so a move
 # of that label cannot swap the tools these jobs run on.

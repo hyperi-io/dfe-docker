@@ -185,9 +185,8 @@ RESTORE_TIMEOUT_SECONDS = 300
 
 # ------------------------------------------------------------------------------
 # Load Dotenv
-# - Shared with init/stack/resolve_profile via _common. This file used to carry a
-#   third private copy of the same parser, and three copies of "how do we read
-#   .env" is three chances to disagree with docker compose about it.
+# - Shared with init/stack/resolve_profile via _common, so every reader parses
+#   .env the way docker compose does.
 # - Every rendered-config variable is then blanked. `make` exports the engine's
 #   render paths, and compose inherits them unless each service is sent back to
 #   the config this suite mounts for it.
@@ -804,14 +803,8 @@ def filter_build_output(text):
 def build_images(mode, dfe_services):
     """Build the dev images, or explain why there is nothing to build.
 
-    This used to run `docker compose build <services>`, which built NOTHING: no
-    service in either compose file declares a `build:` key, and compose answers a
-    build request for image-only services with `No services to build` and exit 0.
-    So it logged "Building images for ..." and moved on, and in dev mode the run
-    then used whatever stale `<service>:local` images happened to exist. A silent
-    no-op that reads like a safety net is worse than no safety net.
-
-    The real builder is scripts/build_dev_images.py -- each Rust component
+    Not `docker compose build`: no service in either compose file declares a
+    `build:` key, so compose builds nothing and exits 0. The real builder is scripts/build_dev_images.py -- each Rust component
     compiled from local source, then packaged by the component's own Dockerfile.
     """
     dfe_services = sorted(dfe_services)
@@ -857,11 +850,6 @@ def build_images(mode, dfe_services):
 # ------------------------------------------------------------------------------
 def run_cmd(args, capture=False, cwd=None):
     """Run a command and hand back the CompletedProcess; callers judge the result.
-
-    There is no `check` parameter. There used to be, and both of its branches
-    returned the same thing -- so every call site passed `check=False` to opt out
-    of something that never happened. A parameter that does nothing is worse than
-    no parameter: it reads as a safety net.
 
     `encoding`/`errors` are explicit because `text=True` alone decodes with the
     LOCALE encoding, so one non-UTF-8 byte in captured container output would

@@ -10,8 +10,7 @@
 """Render the deployment dial into dfe-docker's .env and env/engine.env.
 
 The deployment dial (``deployment.yaml``) is the single SSoT a deployment turns:
-one file the whole automation reads, authored by hand today and populated by the
-QA GUI wizard later. This renders the docker-vm SLICE of that dial into the flat
+one file the whole automation reads. This renders the docker-vm SLICE of that dial into the flat
 .env docker compose consumes and the engine's own retention into env/engine.env,
 so a redeploy is a dial edit plus ``make dial && make stack && make ci``.
 
