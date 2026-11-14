@@ -24,6 +24,8 @@ With only Docker, at the `min_engine` and `min_compose` each release's `quicksta
 docker compose -f oci://ghcr.io/hyperi-io/dfe-docker:compose up -d
 ```
 
+The default stack idles at about 2.5 GB of RAM. Its memory limits are sized for a 16 GB box, see [configuration](docs/configuration.md).
+
 Point your browser to http://localhost:3000 and log in as `admin` with the password `dfe-first-login`. The console makes you change it at first login. The demo is a throwaway stack of its own that seeds its sources and streams firewall syslog through them beside two fetchers:
 
 ```bash
