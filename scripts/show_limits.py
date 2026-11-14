@@ -9,10 +9,8 @@
 
 """Report the stack's resource limits, computed rather than written down.
 
-This exists because the totals used to live in a comment and in three documents,
-and they were wrong in all four the moment a service changed tier. A number that
-has to be maintained by hand is a number that will be stale, and a stale number in
-a document is worse than no number, because people believe it.
+A total maintained by hand goes stale the moment a service changes tier, so it is
+computed here instead.
 
 So: ask Compose. It reports per-service limits for the profile set you name, plus
 a total, and the two Kafka backends are called out because they are mutually

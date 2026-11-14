@@ -722,9 +722,8 @@ check-docs: ## Assert every relative link in the docs set still resolves
 # `info` turns every one of those into a blocked build and pushes people towards
 # blanket ignores. Suppressed findings tell you nothing; visible ones do.
 #
-# hadolint version tracks tools.hadolint in hyperi-ci's config/versions.yaml
-# (currently v2.15.1). We additionally pin the DIGEST, which that SSoT does not
-# yet do -- see hyperi-ci#66.
+# hadolint version tracks tools.hadolint in hyperi-ci's config/versions.yaml,
+# and the digest is pinned here as well.
 HADOLINT_IMAGE := hadolint/hadolint:v2.15.1@sha256:32dac94127fd60b7b7e3fbfc65e1383b9b5e25c9bfd7b8536de7a539fe68a12d
 
 .PHONY: check-dockerfile
@@ -880,11 +879,8 @@ ps: ## Show running containers, and warn about a deleted source's container stil
 	docker compose ps
 	@python3 scripts/instances.py --stale -- $(APPLY_FLAGS) $(PROFILE_FLAGS)
 
-# Tears down across EVERY profile, not just the active one. It used to pass only
-# the active profile's services, which meant switching profiles left the previous
-# profile's containers running -- still holding host ports, and still answering
-# health probes for a pipeline that was no longer wired up. Anything discovering
-# services by probing then found the stray. Volumes survive; `make clean` is the
+# Tears down across EVERY profile, so a switched profile leaves no container
+# holding host ports or answering probes. Volumes survive; `make clean` is the
 # one that deletes data.
 .PHONY: down
 down: demo-stop ## Stop and remove containers across all profiles and the `make demo` pack (keeps volumes)
