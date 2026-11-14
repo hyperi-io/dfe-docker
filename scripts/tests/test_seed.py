@@ -18,6 +18,7 @@ from typing import TypedDict
 import pytest
 
 import _common
+import init
 import seed
 
 # The key `make accounts` records the `ops` seed account's password under
@@ -347,7 +348,7 @@ class TestAccountPassword:
 
         password = seed._account_password(username="ops")
 
-        assert len(password) == 24
+        assert len(password) == init._LEN_CREDENTIAL
         assert set(password) <= set(string.ascii_letters + string.digits)
         values = _common._env_file_values(component=_common.ENGINE_COMPONENT)
         assert values == {"DFE_ENGINE_API_JWT_SECRET": "kept", _OPS_KEY: password}

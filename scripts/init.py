@@ -72,27 +72,24 @@ from _common import (  # noqa: E402
 # tops up an existing .env that predates the key, so an operator who already set a
 # password keeps it.
 # HyperI password standard (hyperi-ai standards/universal/security.md): generated
-# secrets are ALPHANUMERIC ONLY -- `token_urlsafe` emits `-`/`_`, which are shell
-# metacharacters that truncate a password in a URL-form DSN, and which the policy
-# forbids. Length is the entropy control, not the charset: over a 62-symbol
-# alphabet (5.95 bits/char), 24 chars is ~143 bits (128-bit tier: service and DB
-# credentials) and 48 is ~286 bits (256-bit tier: long-lived key-protecting
-# secrets). The 24/48 split is fixed; the surrounding policy is WIP.
+# secrets are letters and digits only, because `-`, `_` and other symbols get
+# rewritten or truncated by shells, .env files and URL-form DSNs. Over 62 symbols,
+# a 32-character credential is about 190 bits and a 64-character key about 381,
+# above the 128-bit and 256-bit floors of 22 and 43 characters.
 _SECRET_ALPHABET = string.ascii_letters + string.digits
-_LEN_CREDENTIAL = 24  # DB / service credentials
-_LEN_KEY = 48  # signing keys and other long-lived key material
+_LEN_CREDENTIAL = 32  # DB / service credentials
+_LEN_KEY = 64  # signing keys and other long-lived key material
 # oauth2-proxy decodes its cookie secret to an AES key and accepts exactly 16, 24
-# or 32 bytes. The key tier's 48 is rejected outright, so this one is its own
-# length rather than a tier -- 32 for AES-256, the strongest of the three.
-_LEN_COOKIE = 32
+# or 32 bytes, so it takes the credential length rather than the key length.
+_LEN_COOKIE = _LEN_CREDENTIAL
 # dfe-hyperdx takes TOKEN_ENCRYPTION_KEY as 64 hex chars or base64 of exactly 32 bytes
 # and refuses to start on anything else; hex keeps it alphanumeric.
 _LEN_HEX_AES256 = 64
 _HEX_SECRETS = frozenset({"TOKEN_ENCRYPTION_KEY"})
 
-# File -> name -> length tier. DB passwords are the 128-bit credential tier, and
+# File -> name -> length. DB and service passwords take the credential length, and
 # the dfe-ui NextAuth, engine JWT and dfe-hyperdx session values are session-signing
-# KEYS, so they take the 256-bit tier.
+# keys, so they take the key length.
 GENERATED_SECRETS = {
     DOTENV_FILE.name: {
         # Keeper's digest identity: a changed value locks the server out of its own znodes.

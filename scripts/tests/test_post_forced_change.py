@@ -22,6 +22,7 @@ from pathlib import Path
 import pytest
 
 import _common
+import init
 import post
 
 _ISSUED = "IssuedByMakeInit0123456789"
@@ -149,7 +150,7 @@ def test_an_issued_password_is_replaced_recorded_and_logged_in_again(
         {"token": "token-1", "current_password": _ISSUED, "new_password": recorded}
     ]
     assert engine.password == recorded != _ISSUED
-    assert len(recorded) == 24
+    assert len(recorded) == init._LEN_CREDENTIAL
     assert recorded.isalnum()
     assert post.os.environ[post.ADMIN_PASSWORD_KEY] == recorded
 
