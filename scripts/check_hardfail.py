@@ -109,9 +109,10 @@ def main() -> int:
     try:
         pin = release_pin()
     except StackError as error:
-        _print(msg=str(error))
+        _print(msg=f"FAIL {error}")
         return 1
-    _print(msg=f"OK   the stack pin {pin} is a release")
+    allowed = " (prerelease allowed for this branch)" if "-" in pin else ""
+    _print(msg=f"OK   the stack pin is {pin}{allowed}")
 
     required = _required_compose_vars()
     if not (required):

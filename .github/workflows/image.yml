@@ -74,9 +74,11 @@ jobs:
         id: release
         run: |
           version="${TAG#v}"
+          # Assigned on its own line so a prerelease pin fails this step, not the publish.
+          stack="$(python3 scripts/quickstart_json.py --print-stack)"
           {
             echo "version=${version:-0.0.0-pr}"
-            echo "stack=$(python3 scripts/quickstart_json.py --print-stack)"
+            echo "stack=$stack"
             echo "push=${{ github.event_name != 'pull_request' }}"
           } >> "$GITHUB_OUTPUT"
 

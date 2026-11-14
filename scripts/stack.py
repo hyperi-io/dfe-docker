@@ -423,8 +423,8 @@ def release_pin() -> str:
     if _PRERELEASE.match(pin) and os.environ.get(PRERELEASE_PIN_VAR) != "1":
         raise StackError(
             f"{_rel_path(path=DEPLOYMENT_DIAL_TEMPLATE)!r} pins {pin}, a prerelease. "
-            f"A release ships a GA stack only. A development branch sets "
-            f"{PRERELEASE_PIN_VAR}=1."
+            f"A release ships a GA stack only, and CI refuses this pin on any branch. "
+            f"A development branch sets {PRERELEASE_PIN_VAR}=1 to run the checks locally."
         )
     return pin
 
