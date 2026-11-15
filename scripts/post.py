@@ -199,7 +199,7 @@ CONTAINER_LOG_SERVICES = ("dfe-engine", "dfe-loader", "dfe-receiver")
 
 # The services whose OWN metrics have to reach the otel database, as name prefixes
 # so a per-source instance (dfe-transform-vrl-filebeat) is covered by its app.
-# dfe-ui carries the OTel API and no SDK, so it does not push.
+# dfe-ui pushes over OTLP/HTTP under its own ServiceName, so it is checked like the rest.
 OTEL_PUSHER_PREFIXES = (
     "dfe-archiver",
     "dfe-engine",
@@ -210,6 +210,7 @@ OTEL_PUSHER_PREFIXES = (
     "dfe-transform-elastic",
     "dfe-transform-vector",
     "dfe-transform-vrl",
+    "dfe-ui",
 )
 # Metrics only: traces are sampled at 0.05, so a service missing from them is a
 # sampling outcome rather than one that is not exporting.
@@ -872,7 +873,7 @@ def _verify_self_monitoring() -> Claim:
     if counts is None:
         _print(
             msg=f"FAIL  no {database} table could be read within "
-            f"{OTEL_TIMEOUT_SECONDS:.0f}s -- the collector never wrote its schema"
+            f"{OTEL_TIMEOUT_SECONDS:.0f}s -- dfe-engine has not created the otel tables"
         )
         return Claim(asserted=True, failed=1)
     landed = {table: count for table, count in counts.items() if count}

@@ -195,6 +195,7 @@ def test_only_the_services_that_push_their_own_metrics_are_expected() -> None:
         "dfe-loader",
         "dfe-transform-elastic",
         "dfe-transform-vrl-filebeat",
+        "dfe-ui",
     ]
 
 
