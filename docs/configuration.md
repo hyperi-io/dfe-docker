@@ -241,12 +241,15 @@ Only `single-kafka` runs dfe-archiver, so archiving needs a Kafka profile ([prof
 | Variable                                         | Use                                                                                  | Default                                                             |
 |--------------------------------------------------|--------------------------------------------------------------------------------------|---------------------------------------------------------------------|
 | `DFE_FETCHER_VERSION`                            | Version of dfe-fetcher to use                                                        | none -- `make stack` pins it; unset is a hard-fail                                                            |
+| `DFE_FETCHER_INPUT_DIR`                          | Absolute host directory mounted read only into dfe-fetcher at `/mnt/input`           | unset, nothing mounted                                                |
 | `AWS_ACCESS_KEY_ID`                              | AWS access key. Goes in `env/fetcher.env`, NOT `.env` -- the fetcher config reads it via `env:`  | -                                    |
 | `AWS_SECRET_ACCESS_KEY`                          | AWS secret key. Same file as above                                                   | -                                                                   |
 | `AZURE_CLIENT_ID`                                | In `env/fetcher.env`. Client ID an Azure source names with `env:AZURE_CLIENT_ID`     | -                                                                   |
 | `AZURE_CLIENT_SECRET`                            | In `env/fetcher.env`. That client's secret, named the same way                       | -                                                                   |
 | `AZURE_SUBSCRIPTION_ID`                          | In `env/fetcher.env`. Subscription an Azure source reads                             | -                                                                   |
 | `AZURE_TENANT_ID`                                | In `env/fetcher.env`. Tenant the client belongs to                                   | -                                                                   |
+
+A `sources.file` source reads files from the fetcher's container, so its include globs name the container path, such as `/mnt/input/*.log`. Set `DFE_FETCHER_INPUT_DIR` to the host directory holding them. `make` mounts it only when the key is set and a path that does not exist stops the start.
 
 The AWS **region** and poll interval are not environment variables: they are literals in each source's fetcher config (`region: us-west-2` and `interval_secs` in `resources/seed/sources/aws-*.yaml`, 30 seconds and 300 for GuardDuty, whose every poll stores all its findings again), because only the two credential fields are `env:`-interpolated.
 
@@ -267,6 +270,7 @@ The AWS **region** and poll interval are not environment variables: they are lit
 | `DFE_RECEIVER_GRPC_PORT`                         | Host port for the receiver's Vector gRPC listener (container port 6000)             | unset, unpublished                                                  |
 | `DFE_RECEIVER_HEC_PORT`                          | Host port for the receiver's HEC listener (container port 8088)                     | unset, unpublished                                                  |
 | `DFE_RECEIVER_HTTP_PORT`                         | Receiver HTTP port                                                                   | `8080`                                                              |
+| `DFE_RECEIVER_HTTPS_PORT`                        | Host port for TLS ingest to the receiver, which dfe-proxy serves on container port 8443. Needs `DFE_PROXY_TLS=true` | unset, unpublished                                                  |
 | `DFE_RECEIVER_IPFIX_PORT`                        | Host UDP port for the receiver's flow listener on container port 4739 (IPFIX)        | unset, unpublished                                                  |
 | `DFE_RECEIVER_MAX_BODY_SIZE`                     | Largest record the receiver accepts in bytes, under every broker's 8 MiB message limit | `8000000`                                                           |
 | `DFE_RECEIVER_NETFLOW_PORT`                      | Host UDP port for the receiver's flow listener on container port 2055 (NetFlow)      | unset, unpublished                                                  |
@@ -279,6 +283,8 @@ The AWS **region** and poll interval are not environment variables: they are lit
 | `DFE_RECEIVER_SYSLOG_UDP_PORT`                   | Host UDP port for the receiver's syslog listener (container port 514)                | unset, unpublished                                                  |
 
 Setting a listener's port key publishes it through a fragment `make` writes, so a raw `docker compose` outside `make` does not publish it. The listener still has to be enabled in the receiver's config, such as `DFE_RECEIVER_GRPC__ENABLED=true` in `env/receiver.env`. Syslog takes `DFE_RECEIVER_SYSLOG__ENABLED=true` and `DFE_RECEIVER_SYSLOG__ACCEPT_UNAUTHENTICATED=true`. Its UDP and plain TCP listeners bind whenever syslog is on and have no handshake to authenticate at, so the receiver refuses to start without the second key, even when only the TLS port is published. Flow takes `DFE_RECEIVER_FLOW__ENABLED=true`.
+
+`DFE_RECEIVER_HTTPS_PORT` publishes TLS ingest to the receiver's HTTP listener, bound to `DFE_INGRESS_BIND_HOST`. dfe-proxy terminates it with the same `console.crt` and `console.key` as the console and forwards to `dfe-receiver:8080`, so callers on the compose network keep posting plain http. It exists only under `DFE_PROXY_TLS=true` and `make` refuses the key without it. A pusher outside the stack connects to the hostname the certificate names and trusts the `ca.crt` beside the pair.
 
 A host port under 1024, such as 514, needs a Docker daemon allowed to bind it. Rootless Docker is not, so pick a high port such as 1514 there.
 

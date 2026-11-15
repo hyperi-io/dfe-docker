@@ -256,13 +256,15 @@ _FRAGMENT_DIALS = {
     "DFE_ENGINE_API_EXTERNAL": "false",
     "DFE_PROXY_TLS": "true",
     "DFE_RECEIVER_BEATS_PORT": "5044",
+    "DFE_RECEIVER_HTTPS_PORT": "8443",
     "DFE_RECEIVER_SYSLOG_UDP_PORT": "1514",
+    "DFE_FETCHER_INPUT_DIR": "/srv/compose-check-input",
 }
 # Console TLS refuses to start beside the auth profile, so `make dev` runs once per side, each held to the chain its own dials produce. The TLS run also needs what that refusal and the TLS precheck look for: an https origin and a certificate pair openssl accepts.
 _DEV_PATH_CERT_DIR = REPO_ROOT / ".tmp" / "compose-check-certs"
 _DEV_PATH_BIN_DIR = REPO_ROOT / ".tmp" / "compose-check-bin"
 _DEV_PATH_RUNS = {
-    "auth": {"DFE_PROXY_TLS": "false"},
+    "auth": {"DFE_PROXY_TLS": "false", "DFE_RECEIVER_HTTPS_PORT": ""},
     "console TLS": {
         "DFE_AUTH_ENABLED": "false",
         "DFE_AUTH_RESOLVED": "false",

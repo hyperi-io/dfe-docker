@@ -29,6 +29,7 @@ _AUTH = "cannot start with the auth profile"
 _BARE_CERT_DIR = "must be a path starting with"
 _CLOSED_CERT_DIR = "exists but this user cannot open it"
 _CRASHED = "precheck failed before it could check the console TLS setup"
+_HTTPS_INGEST = "publishes dfe-proxy's TLS ingest listener"
 _HTTP_HYPERDX = "DFE_HYPERDX_APP_URL must start with https://"
 _HTTP_ORIGIN = "DFE_EXTERNAL_ORIGIN must start with https://"
 _MISSING_CERT = "needs the certificate ./certs/console.crt"
@@ -46,6 +47,7 @@ _GUARDS = (
     _BARE_CERT_DIR,
     _CLOSED_CERT_DIR,
     _CRASHED,
+    _HTTPS_INGEST,
     _HTTP_HYPERDX,
     _HTTP_ORIGIN,
     _MISSING_CERT,
@@ -541,6 +543,40 @@ def test_an_empty_dial_reads_as_false(makefile: Path) -> None:
     assert result.returncode == 0, result.stderr
     assert not ([guard for guard in _GUARDS if guard in result.stderr])
     assert "compose/tls.yml" not in chain.stdout
+
+
+@pytest.mark.parametrize(
+    ("goal", "tls", "refused"),
+    [
+        *[(goal, "false", True) for goal in _GUARDED_GOALS],
+        *[(goal, "true", False) for goal in _GUARDED_GOALS],
+        *[(goal, "false", False) for goal in _UNGUARDED_GOALS],
+    ],
+)
+def test_the_https_ingest_key_needs_the_tls_dial_to_start(
+    goal: str, makefile: Path, refused: bool, tls: str
+) -> None:
+    result = _make(
+        cwd=makefile,
+        goal=goal,
+        **{**_TLS_ON, "DFE_PROXY_TLS": tls, "DFE_RECEIVER_HTTPS_PORT": "8443"},
+    )
+
+    assert (result.returncode != 0) == refused, result.stderr
+    assert (_HTTPS_INGEST in result.stderr) == refused
+
+
+@pytest.mark.parametrize(("key", "chained"), [("8443", True), ("", False)])
+def test_the_https_ingest_key_chains_its_fragment_only_under_the_dial(
+    chained: bool, key: str, makefile: Path
+) -> None:
+    result = _make(
+        cwd=makefile,
+        goal="print-compose-file",
+        **{**_TLS_ON, "DFE_RECEIVER_HTTPS_PORT": key},
+    )
+
+    assert (".tmp/docker-compose.receiver-https.yml" in result.stdout) == chained
 
 
 @pytest.mark.parametrize("goal", _UNGUARDED_GOALS)

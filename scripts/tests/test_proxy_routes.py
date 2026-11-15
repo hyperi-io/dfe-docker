@@ -22,6 +22,9 @@ _CONSOLE_CONFIGS = ["envoy.yaml", "envoy.tls.yaml"]
 _ALL_CONFIGS = [*_CONSOLE_CONFIGS, "hyperdx.yaml", "hyperdx.tls.yaml"]
 _CONSOLE_LISTENER = "ingress"
 _NORMALISING = ("normalize_path", "merge_slashes")
+# The receiver ingest listener, which only the TLS configs carry, and the one route it has: match, cluster, status, timeout
+_INGEST_LISTENER = "receiver-ingest"
+_INGEST_ROUTES = [({"prefix": "/"}, "dfe-receiver", "", "120s")]
 # Console routes in match order: match, cluster, status, timeout
 _CONSOLE_ROUTES = [
     ({"path": "/livez"}, "", "200", ""),
@@ -61,6 +64,34 @@ def test_the_console_matches_and_forwards_the_canonical_path(name: str) -> None:
             "normalize_path": "true",
             "merge_slashes": "true",
         }
+
+
+@pytest.mark.parametrize(
+    ("name", "routes"),
+    [
+        ("envoy.yaml", []),
+        ("envoy.tls.yaml", _INGEST_ROUTES),
+        ("hyperdx.yaml", []),
+        ("hyperdx.tls.yaml", []),
+    ],
+)
+def test_only_the_console_tls_config_forwards_to_the_receiver(
+    name: str, routes: list[tuple[dict[str, str], str, str, str]]
+) -> None:
+    ingest = [m for m in _managers(name) if m.listener == _INGEST_LISTENER]
+    forwarded = {
+        route.cluster
+        for manager in _managers(name)
+        for host in manager.virtual_hosts
+        for route in host.routes
+    }
+
+    assert ("dfe-receiver" in forwarded) == bool(routes)
+    assert [
+        [(r.match, r.cluster, r.status, r.timeout) for r in host.routes]
+        for manager in ingest
+        for host in manager.virtual_hosts
+    ] == ([routes] if routes else [])
 
 
 @pytest.mark.parametrize("name", _ALL_CONFIGS)

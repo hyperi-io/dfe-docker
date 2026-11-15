@@ -567,7 +567,7 @@ def _proxy_text(name: str) -> str:
         ("hyperdx.yaml", 2),
         ("hyperdx.tls.yaml", 4),
         ("envoy.yaml", 2),
-        ("envoy.tls.yaml", 2),
+        ("envoy.tls.yaml", 3),
     ],
 )
 def test_no_proxy_adds_an_identity_header(hosts: int, name: str) -> None:
