@@ -17,6 +17,7 @@ import re
 from pathlib import Path
 
 import pytest
+import yaml
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 PROXY_DIR = REPO_ROOT / "config" / "proxy"
@@ -24,21 +25,26 @@ PROXY_DIR = REPO_ROOT / "config" / "proxy"
 _BEGIN = "# BEGIN TLS"
 _END = "# END TLS"
 _PAIRS = [("envoy.yaml", "envoy.tls.yaml"), ("hyperdx.yaml", "hyperdx.tls.yaml")]
-# Each config's listeners by name and port and whether they also answer plain HTTP on the same port.
+# Each config's listeners by name and port, the ones only its TLS config carries, and whether they also answer plain HTTP on the same port.
 _LISTENERS = [
     (
         "envoy.yaml",
         "envoy.tls.yaml",
         {"hyperdx-embed": "8091", "ingress": "8080"},
+        {"receiver-ingest": "8443"},
         False,
     ),
     (
         "hyperdx.yaml",
         "hyperdx.tls.yaml",
         {"hyperdx-api": "8000", "hyperdx-app": "8090"},
+        {},
         True,
     ),
 ]
+# Listeners that terminate TLS with the console certificate, against the listener that defines those settings.
+_CONSOLE_TLS_LISTENER = "ingress"
+_CONSOLE_TLS_SHARERS = ["hyperdx-embed", "receiver-ingest"]
 _LISTENER_ITEM = "    - "
 _LISTENER_NAME = re.compile(r"^    [ -] name: (\S+)$")
 # The key a filter chain's network filters sit under, with or without the list dash.
@@ -132,22 +138,46 @@ def test_stripping_the_tls_blocks_gives_back_the_plain_config(
     assert _past_header(text=_strip_tls(text=tls_text)) == _past_header(text=plain_text)
 
 
-@pytest.mark.parametrize(("plain", "tls", "listeners", "dual"), _LISTENERS)
+@pytest.mark.parametrize(("plain", "tls", "listeners", "tls_only", "dual"), _LISTENERS)
 def test_every_listener_terminates_tls_once_and_only_in_the_tls_config(
-    dual: bool, listeners: dict[str, str], plain: str, tls: str
+    dual: bool,
+    listeners: dict[str, str],
+    plain: str,
+    tls: str,
+    tls_only: dict[str, str],
 ) -> None:
     encrypted = _listeners(text=(PROXY_DIR / tls).read_text(encoding="utf-8"))
     unencrypted = _listeners(text=(PROXY_DIR / plain).read_text(encoding="utf-8"))
 
-    assert sorted(encrypted) == sorted(listeners)
+    assert sorted(encrypted) == sorted({**listeners, **tls_only})
     assert sorted(unencrypted) == sorted(listeners)
-    for name, port in listeners.items():
+    for name, port in {**listeners, **tls_only}.items():
         block = "\n".join(encrypted[name])
         assert f"port_value: {port}" in block
         assert block.count("transport_socket:") == 1, name
         assert ("transport_protocol: tls" in block) == dual, name
         assert ("tls_inspector" in block) == dual, name
-        assert "transport_socket:" not in "\n".join(unencrypted[name])
+        if name in unencrypted:
+            assert "transport_socket:" not in "\n".join(unencrypted[name])
+
+
+def _tls_socket(*, listener: str) -> dict:
+    """Return the downstream TLS settings one listener of envoy.tls.yaml serves, anchors resolved."""
+    loaded = yaml.safe_load((PROXY_DIR / "envoy.tls.yaml").read_text(encoding="utf-8"))
+    named = {item["name"]: item for item in loaded["static_resources"]["listeners"]}
+    return named[listener]["filter_chains"][0]["transport_socket"]
+
+
+@pytest.mark.parametrize("listener", _CONSOLE_TLS_SHARERS)
+def test_a_listener_on_the_console_certificate_serves_the_console_tls_settings(
+    listener: str,
+) -> None:
+    settings = _tls_socket(listener=_CONSOLE_TLS_LISTENER)
+    params = settings["typed_config"]["common_tls_context"]["tls_params"]
+
+    assert _tls_socket(listener=listener) == settings
+    assert params["cipher_suites"]
+    assert params["ecdh_curves"][0] == "X25519MLKEM768"
 
 
 def test_each_tls_chain_repeats_the_plain_filters_after_it() -> None:

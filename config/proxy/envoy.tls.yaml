@@ -8,6 +8,7 @@
 #
 # Mounted instead of envoy.yaml when DFE_PROXY_TLS=true
 # Must equal envoy.yaml plus the marked TLS blocks (test_proxy_tls_config.py)
+# The receiver-ingest listener exists only here: TLS is its whole purpose
 
 admin:
   address:
@@ -45,6 +46,18 @@ static_resources:
                   address:
                     socket_address: { address: dfe-ui, port_value: 3000 }
       type: STRICT_DNS
+    # BEGIN TLS
+    - name: dfe-receiver
+      dns_lookup_family: V4_ONLY
+      load_assignment:
+        cluster_name: dfe-receiver
+        endpoints:
+          - lb_endpoints:
+              - endpoint:
+                  address:
+                    socket_address: { address: dfe-receiver, port_value: 8080 }
+      type: STRICT_DNS
+    # END TLS
   listeners:
     - name: ingress
       address:
@@ -149,3 +162,30 @@ static_resources:
           # An http embed inside the https console is blocked as mixed content
           transport_socket: *console_tls
           # END TLS
+    # BEGIN TLS
+    # External pushers send to the receiver here, over the console's certificate
+    - name: receiver-ingest
+      address:
+        socket_address: { address: 0.0.0.0, port_value: 8443 }
+      filter_chains:
+        - filters:
+            - name: envoy.filters.network.http_connection_manager
+              typed_config:
+                "@type": type.googleapis.com/envoy.extensions.filters.network.http_connection_manager.v3.HttpConnectionManager
+                http_filters:
+                  - name: envoy.filters.http.router
+                    typed_config:
+                      "@type": type.googleapis.com/envoy.extensions.filters.http.router.v3.Router
+                route_config:
+                  name: receiver_ingest
+                  virtual_hosts:
+                    - name: receiver
+                      domains: ["*"]
+                      routes:
+                        # The timeout bounds the wait for the receiver's reply. The receiver enforces its own body size and request timeout
+                        - match: { prefix: / }
+                          route: { cluster: dfe-receiver, timeout: 120s }
+                stat_prefix: receiver_ingest
+                use_remote_address: true
+          transport_socket: *console_tls
+    # END TLS
