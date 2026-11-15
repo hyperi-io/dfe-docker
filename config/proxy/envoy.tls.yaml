@@ -182,7 +182,7 @@ static_resources:
                     - name: receiver
                       domains: ["*"]
                       routes:
-                        # The receiver's own body limit (DFE_RECEIVER_MAX_BODY_SIZE) decides what is too big, and 120 s leaves room for a slow upload
+                        # The timeout bounds the wait for the receiver's reply. The receiver enforces its own body size and request timeout
                         - match: { prefix: / }
                           route: { cluster: dfe-receiver, timeout: 120s }
                 stat_prefix: receiver_ingest

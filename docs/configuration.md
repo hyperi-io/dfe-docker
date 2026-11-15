@@ -249,7 +249,7 @@ Only `single-kafka` runs dfe-archiver, so archiving needs a Kafka profile ([prof
 | `AZURE_SUBSCRIPTION_ID`                          | In `env/fetcher.env`. Subscription an Azure source reads                             | -                                                                   |
 | `AZURE_TENANT_ID`                                | In `env/fetcher.env`. Tenant the client belongs to                                   | -                                                                   |
 
-A `sources.file` source reads files from the fetcher's container, so its include globs name the container path, such as `/mnt/input/*.log`. Set `DFE_FETCHER_INPUT_DIR` to the host directory holding them. `make` mounts it only when the key is set and a path that does not exist stops the start.
+A `sources.file` source reads files from the fetcher's container, so its globs name the container path, such as `/mnt/input/*.log`. A dump source lists them under `paths` and a tail source under `include`. Set `DFE_FETCHER_INPUT_DIR` to the host directory holding them. `make` mounts it only when the key is set, and a path that does not exist stops the start. The fetcher image runs as uid 1000, so that user must be able to read the directory. A `0700` directory owned by root passes the start and fails when the source runs.
 
 The AWS **region** and poll interval are not environment variables: they are literals in each source's fetcher config (`region: us-west-2` and `interval_secs` in `resources/seed/sources/aws-*.yaml`, 30 seconds and 300 for GuardDuty, whose every poll stores all its findings again), because only the two credential fields are `env:`-interpolated.
 
@@ -285,6 +285,8 @@ The AWS **region** and poll interval are not environment variables: they are lit
 Setting a listener's port key publishes it through a fragment `make` writes, so a raw `docker compose` outside `make` does not publish it. The listener still has to be enabled in the receiver's config, such as `DFE_RECEIVER_GRPC__ENABLED=true` in `env/receiver.env`. Syslog takes `DFE_RECEIVER_SYSLOG__ENABLED=true` and `DFE_RECEIVER_SYSLOG__ACCEPT_UNAUTHENTICATED=true`. Its UDP and plain TCP listeners bind whenever syslog is on and have no handshake to authenticate at, so the receiver refuses to start without the second key, even when only the TLS port is published. Flow takes `DFE_RECEIVER_FLOW__ENABLED=true`.
 
 `DFE_RECEIVER_HTTPS_PORT` publishes TLS ingest to the receiver's HTTP listener, bound to `DFE_INGRESS_BIND_HOST`. dfe-proxy terminates it with the same `console.crt` and `console.key` as the console and forwards to `dfe-receiver:8080`, so callers on the compose network keep posting plain http. It exists only under `DFE_PROXY_TLS=true` and `make` refuses the key without it. A pusher outside the stack connects to the hostname the certificate names and trusts the `ca.crt` beside the pair.
+
+The receiver sees dfe-proxy as the TCP peer, so its `ip_filter` cannot tell pushers apart on this port. Its rate limit and auth-failure events key on dfe-proxy too, until `server.trusted_proxies` in the receiver's config file lists dfe-proxy's address, the last host of `DFE_NETWORK_SUBNET`. That key has no environment spelling.
 
 A host port under 1024, such as 514, needs a Docker daemon allowed to bind it. Rootless Docker is not, so pick a high port such as 1514 there.
 
