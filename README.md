@@ -51,7 +51,7 @@ make down                        # stop everything, keep the data
 
 ## Configuration
 
-A profile is `<tier>-<transport>`: `slim-grpc`, `slim-kafka`, `single-grpc` or `single-kafka`. `slim` is the core data path alone and `single` adds the per-source apps. There is no `scale` tier, because Compose cannot scale out. `KAFKA_BACKEND=apache` swaps Redpanda, which is BSL, for Apache Kafka on the kafka profiles.
+A profile is `<tier>-<transport>`: `slim-grpc`, `slim-kafka`, `single-grpc` or `single-kafka`. `slim` is the core data path alone. `single-kafka` adds the per-source apps and the archiver, and `single-grpc` runs what `slim-grpc` does, because the engine runs per-source apps on Kafka only. There is no `scale` tier, because Compose cannot scale out. `KAFKA_BACKEND=apache` swaps Redpanda, which is BSL, for Apache Kafka on the kafka profiles.
 
 Each service reads its own `env/<service>.env`, created from `env.example/` by `make init`, which never overwrites a file and reports the keys an old `.env` is missing. Only the console and Search authenticate. The ingest ports, Kafbat and the metrics ports ask for no login, so put the stack behind a VPN, a tunnel or a firewall before anyone you have not met can reach it, or arm the `auth` profile. Every variable, the port map and the image list are in [docs/configuration.md](docs/configuration.md).
 

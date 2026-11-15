@@ -15,21 +15,9 @@ These are real and open. Each one has a symptom that misleads.
 Several of these look like something else entirely, so read them before you go deep
 into [troubleshooting](troubleshooting.md).
 
-## Stray containers from a previous profile (fixed, but worth recognising)
-
-`make down` now runs `docker compose -f docker-compose.yml --profile "*" down
---remove-orphans`, so it tears down every profile and keeps volumes. Switching
-profiles no longer strands anything.
-
-On an older checkout it is still profile-scoped: switch from a profile with a receiver to one without and the old receiver keeps running, keeps answering on `:8080` and keeps its ports. The misleading part is that the stray is wired to a pipeline that is no longer running, so anything probing ports rather than asking the profile finds it and reports a data-path failure that is really a stale container. That is why `scripts/post.py` resolves its ingest edge from `.tmp/profile.mk` instead of probing.
-
-If you suspect strays, `docker ps` and compare uptimes: a container minutes older than the rest is the giveaway.
-
 ## `.env` shadows command-line environment variables through make
 
 The Makefile does `-include .env`. GNU make gives makefile assignments precedence over environment variables and re-exports them to recipes. So for any key with a live (uncommented) assignment in `.env`, `VAR=x make ...` silently no-ops: the child process sees the `.env` value.
-
-This was reproduced with a throwaway Makefile carrying the same `-include .env`, not against a target in this repo, which has no `make show`.
 
 This bites hardest after `make stack` writes live `*_VERSION` pins into `.env` and after `make init` writes the generated secrets. Three ways around it:
 
@@ -56,7 +44,7 @@ flowchart LR
     class load notmade
 ```
 
-`config/loader/kafka.yaml` subscribes by `topic_regex: .*_(land|load)`. scalo drops `<base>_land` from the subscription whenever `<base>_load` exists. `dfe-engine` creates the bootstrap topic set `dfe-schemas` declares, which is `main_land` and the five DLQ topics, so `main_load` exists only once a transform first produces to it.
+`config/loader/kafka.yaml` names no topics, so the loader auto-discovers every topic ending in `_land` or `_load` (its `routing.topic_suffixes` default). scalo drops `<base>_land` from the subscription whenever `<base>_load` exists. `dfe-engine` creates the bootstrap topic set `dfe-schemas` declares, which is `main_land` and the five DLQ topics, so `main_load` exists only once a transform first produces to it.
 
 Once a transform runs, the loader therefore reads `main_land` until that first write, then switches to `main_load`. The first records land twice: once raw, once transformed. Create the transform's `_load` topic before sending anything to avoid it. The e2e suite does, from each test's `expected_topics`.
 
@@ -70,7 +58,7 @@ persists and keeps suppressing `main_land` on every later run. Delete it:
 docker compose exec kafka-redpanda rpk topic delete main_load -X brokers=kafka:9092
 ```
 
-The e2e harness now does this for itself: `clean_topics` deletes the `_load`
+The e2e harness does this itself: `clean_topics` deletes the `_load`
 sibling of every expected `_land` topic, so a run depends on the test definition
 rather than on the broker's history.
 
