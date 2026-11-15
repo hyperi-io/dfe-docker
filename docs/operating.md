@@ -133,7 +133,7 @@ dfe-fetcher runs one container for every source and the three transforms run one
 ports at all -- they are reached over the Docker network, dfe-hyperdx through the
 proxy that holds both its origins. The collector publishes only `24224`, which the
 DOCKER DAEMON sends container stdout to; its OTLP ports stay on the Compose
-network. The receiver's OTLP (`4317`, `4318`), Beats (`5044`) and HEC (`8088`) listeners publish once their port key is set in `.env`. Those `4317`/`4318` are the receiver's *ingest* edge, not the collector's.
+network. The receiver's OTLP (`4317`, `4318`), Beats (`5044`), HEC (`8088`), syslog (`514` UDP and TCP, `6514`) and flow (`2055`, `4739`, `6343` UDP) listeners publish once their port key is set in `.env`. Those `4317`/`4318` are the receiver's *ingest* edge, not the collector's.
 
 Setting `DFE_BIND_HOST=0.0.0.0` opens every operator port at once, including a
 ClickHouse whose `CLICKHOUSE_PASSWORD` defaults to empty and which runs with

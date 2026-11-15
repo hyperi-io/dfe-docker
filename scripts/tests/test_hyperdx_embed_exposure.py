@@ -152,8 +152,16 @@ def test_the_hyperdx_dials_govern_the_embed_and_leave_the_console(
         pytest.param({}, set(), id="none-set"),
         pytest.param(
             {"DFE_RECEIVER_BEATS_PORT": "15044"},
-            {("15044", "5044")},
+            {("15044", "5044", "tcp")},
             id="one-on-its-own-host-port",
+        ),
+        pytest.param(
+            {
+                "DFE_RECEIVER_SYSLOG_UDP_PORT": "1514",
+                "DFE_RECEIVER_SYSLOG_TCP_PORT": "1514",
+            },
+            {("1514", "514", "udp"), ("1514", "514", "tcp")},
+            id="syslog-udp-and-tcp-share-a-host-port",
         ),
         pytest.param(
             {
@@ -162,20 +170,32 @@ def test_the_hyperdx_dials_govern_the_embed_and_leave_the_console(
                 "DFE_RECEIVER_HEC_PORT": "8088",
                 "DFE_RECEIVER_OTLP_GRPC_PORT": "4317",
                 "DFE_RECEIVER_OTLP_HTTP_PORT": "4318",
+                "DFE_RECEIVER_SYSLOG_UDP_PORT": "514",
+                "DFE_RECEIVER_SYSLOG_TCP_PORT": "514",
+                "DFE_RECEIVER_SYSLOG_TLS_PORT": "6514",
+                "DFE_RECEIVER_NETFLOW_PORT": "2055",
+                "DFE_RECEIVER_IPFIX_PORT": "4739",
+                "DFE_RECEIVER_SFLOW_PORT": "6343",
             },
             {
-                ("4317", "4317"),
-                ("4318", "4318"),
-                ("5044", "5044"),
-                ("6000", "6000"),
-                ("8088", "8088"),
+                ("4317", "4317", "tcp"),
+                ("4318", "4318", "tcp"),
+                ("5044", "5044", "tcp"),
+                ("6000", "6000", "tcp"),
+                ("8088", "8088", "tcp"),
+                ("514", "514", "udp"),
+                ("514", "514", "tcp"),
+                ("6514", "6514", "tcp"),
+                ("2055", "2055", "udp"),
+                ("4739", "4739", "udp"),
+                ("6343", "6343", "udp"),
             },
             id="all",
         ),
     ],
 )
 def test_a_receiver_port_key_publishes_its_listener(
-    checkout: Path, settings: dict[str, str], published: set[tuple[str, str]]
+    checkout: Path, settings: dict[str, str], published: set[tuple[str, str, str]]
 ) -> None:
     if shutil.which("docker") is None:
         pytest.skip("`docker compose config` renders the model this asserts on")
@@ -194,7 +214,11 @@ def test_a_receiver_port_key_publishes_its_listener(
     assert model is not None
     ports = model["services"]["dfe-receiver"].get("ports") or []
     assert {
-        (str(port.get("published")), str(port.get("target")))
+        (
+            str(port.get("published")),
+            str(port.get("target")),
+            str(port.get("protocol", "tcp")),
+        )
         for port in ports
         if str(port.get("target")) not in _RECEIVER_BASE
     } == published
