@@ -12,6 +12,7 @@ The deployment keys go to .env and the engine's own retention to env/engine.env,
 the file compose hands the engine.
 """
 
+import re
 from pathlib import Path
 
 import pytest
@@ -19,7 +20,7 @@ import pytest
 import render_dial
 
 _DIAL = """\
-substrate: docker-vm
+platform: docker-vm
 profile: slim-grpc
 retention:
   default_ttl_days: 30
@@ -55,4 +56,26 @@ def test_a_retention_with_no_engine_env_refuses_before_writing_anything(
 
     assert render_dial.main() == 1
     assert "env/engine.env" in capsys.readouterr().err
+    assert dotenv.read_text(encoding="utf-8") == "# DFE_PROFILE=\n"
+
+
+@pytest.mark.parametrize(
+    ("first_line", "message"),
+    [
+        ("substrate: docker-vm", "the dial key `substrate` was renamed to `platform`"),
+        ("platform: k8s", "handles platform 'docker-vm', the dial says 'k8s'"),
+        ("", "has no `platform:` key - set `platform: docker-vm`"),
+    ],
+    ids=["retired key", "other platform", "no platform"],
+)
+def test_a_dial_without_platform_docker_vm_is_refused(
+    dial: Path, dotenv: Path, first_line: str, message: str
+) -> None:
+    dotenv.write_text("# DFE_PROFILE=\n", encoding="utf-8", newline="\n")
+    dial.write_text(
+        f"{first_line}\nprofile: slim-grpc\n", encoding="utf-8", newline="\n"
+    )
+
+    with pytest.raises(SystemExit, match=re.escape(message)):
+        render_dial.main()
     assert dotenv.read_text(encoding="utf-8") == "# DFE_PROFILE=\n"

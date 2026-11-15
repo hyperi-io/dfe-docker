@@ -2083,7 +2083,7 @@ def verify_self_monitoring(ctx, test_name):
         mark_fail(
             ctx,
             f"[{test_name}] no '{database}' table readable within "
-            f"{OTEL_TIMEOUT_SECONDS:.0f}s - the collector never wrote its schema",
+            f"{OTEL_TIMEOUT_SECONDS:.0f}s - dfe-engine has not created the otel tables",
         )
         return
     landed = {table: count for table, count in counts.items() if count}

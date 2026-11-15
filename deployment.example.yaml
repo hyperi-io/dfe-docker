@@ -21,9 +21,9 @@
 ## estate endpoints stay blank here and are injected by the operator's own
 ## tooling at deploy time.
 
-## Which substrate this deployment targets. This renderer requires docker-vm.
-## (docker-vm | k8s -- the k8s substrate renders via dfe-infra into a DeployContext.)
-substrate: docker-vm
+## Which platform this deployment targets. This renderer requires docker-vm.
+## (docker-vm | k8s -- a k8s deployment renders via dfe-infra into a DeployContext.)
+platform: docker-vm
 
 ## Image registry hosting the published dfe-* images, pulled anonymously.
 registry: ghcr.io/hyperi-io
@@ -58,11 +58,11 @@ docker:
   kafka_backend: redpanda   # apache | redpanda
   kafbat_enabled: "true"
   core_enabled: "true"
-  hyperdx_enabled: "false"
+  hyperdx_enabled: "true"
   ## Self-monitoring. otel_enabled starts the bundled collector; setting
   ## otel_exporter_endpoint instead pushes to an OTLP backend of your own.
   ## Blank endpoint exports nothing.
-  otel_enabled: "false"
+  otel_enabled: "true"
   otel_exporter_endpoint: ""
   post_enabled: "true"
   ## Host exposure. bind_host is the OPERATOR surface (127.0.0.1 on a laptop,

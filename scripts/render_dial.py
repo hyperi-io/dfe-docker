@@ -151,11 +151,21 @@ def main() -> int:
     dial = _parse_yaml_subset(
         text=DEPLOYMENT_DIAL.read_text(encoding="utf-8", errors="replace")
     )
-    substrate = _scalar(dial, ("substrate",))
-    if substrate != "docker-vm":
+    platform = _scalar(dial, ("platform",))
+    if platform is None and _scalar(dial, ("substrate",)) is not None:
         raise SystemExit(
-            f"render_dial: this renderer handles substrate 'docker-vm', the dial "
-            f"says {substrate!r} - the k8s substrate renders via dfe-infra"
+            "render_dial: the dial key `substrate` was renamed to `platform` - "
+            f"change `substrate:` to `platform:` in {_rel_path(path=DEPLOYMENT_DIAL)}"
+        )
+    if platform is None:
+        raise SystemExit(
+            f"render_dial: {_rel_path(path=DEPLOYMENT_DIAL)} has no `platform:` "
+            "key - set `platform: docker-vm`"
+        )
+    if platform != "docker-vm":
+        raise SystemExit(
+            f"render_dial: this renderer handles platform 'docker-vm', the dial "
+            f"says {platform!r} - a k8s deployment renders via dfe-infra"
         )
 
     targets = [

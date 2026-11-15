@@ -164,10 +164,12 @@ _KAFKA_DEFAULT_BACKEND = resolve_profile.SERVICE_KAFKA_OPTIONS[
 
 # Tokio sizes its worker pool from `available_parallelism()`, which reads the
 # cgroup CPU quota and FLOORS it. A ceiling under 2.0 therefore leaves a scalo
-# service with a single worker thread, and its synchronous Kafka poll loop owns
-# that thread -- so the operator surface (/livez, /readyz, /metrics) accepts
-# connections and answers none of them while the data path keeps working.
-# Observed on dfe-archiver at 1.5 (docs/operating.md#dfe_service_cpus-has-a-floor-of-20-and-it-is-not-about-speed).
+# service with a single worker thread, and dfe-archiver at 1.5 stopped answering
+# /livez, /readyz and /metrics while its data path kept working
+# (docs/operating.md#dfe_service_cpus-has-a-floor-of-20-and-it-is-not-about-speed).
+# A Kafka loop holding that thread was the cause. scalo-rs now polls on tokio's
+# blocking pool, and nobody has measured whether one worker still starves the
+# operator surface at 1.5, so the floor stays until a healthcheck run says so.
 #
 # Keyed off the health path rather than a service list so a service added later is
 # covered without anyone remembering this file exists. Both `*z` paths count: the
