@@ -18,12 +18,12 @@ Schema 2 is schema 1 plus `packs`:
   min_compose  the oldest Docker Compose that runs a published file: the newest feature the compose files use, and `-f oci://`
   min_engine   the oldest Docker Engine that mounts a volume subpath, which the published files do
   console_url  where the console answers on a default install
-  login        the console login a published file issues, which the console makes its owner change
+  login        where the console login comes from: the file mints the password at first start and the second command in `up` and `demo` prints it, which the console makes its owner change
   kind         "compose"
   profiles     [{name, default, transport, ref_latest, ref_pinned}], the one profile the stack file runs, default true
-  up, demo     {latest: [command], pinned: [command]}, the one command that starts the stack and the demo
+  up, demo     {latest: [command], pinned: [command]}, the command that starts the stack and the demo, then the one that prints its console login
   notes        {up, demo}, what to do once each command has run
-  packs        [{name, title, use_case, latest: [command], pinned: [command]}], one per resources/demo-<name>/ directory in directory order, `title` and `use_case` from its demo.json, `use_case` the hyperi.io path that describes it such as /solutions/theatre-and-battlespace/
+  packs        [{name, title, use_case, latest: [command], pinned: [command]}], each list its `up` pair with the pack's tag, one per resources/demo-<name>/ directory in directory order, `title` and `use_case` from its demo.json, `use_case` the hyperi.io path that describes it such as /solutions/theatre-and-battlespace/
 
 `--print-stack` prints the stack alone, which the release workflow builds the version-tagged image with.
 
@@ -50,7 +50,7 @@ from _common import (  # noqa: E402
     COMPOSE_FILE,
     DEMO_PACK_NAME,
     DEMO_PACKS_ROOT,
-    FIRST_LOGIN_PASSWORD,
+    LOGIN_VERB,
     PUBLISHED_DEMO_TAG,
     PUBLISHED_STACK_TAG,
     REPO_ROOT,
@@ -69,7 +69,6 @@ _USE_CASE = re.compile(r"/([a-z0-9]+(-[a-z0-9]+)*/)*")
 OCI_REMOTE_COMPOSE = "2.34.0"
 # VolumeOptions.Subpath, API 1.45 (https://docs.docker.com/engine/release-notes/26.0/)
 MIN_ENGINE = "26.0"
-ADMIN_NAME = "admin"
 # Where next-auth is told the console lives, which is the address a browser must use for a sign-in to come back
 _CONSOLE_ORIGIN = re.compile(
     r"NEXTAUTH_URL: \$\{DFE_EXTERNAL_ORIGIN:-(?P<origin>[^}]+)\}:\$\{DFE_UI_PORT:-(?P<port>\d+)\}"
@@ -182,11 +181,19 @@ def compose_command(*, ref: str, verb: str) -> str:
     return f"docker compose -f oci://{ref} {verb}"
 
 
+def start_commands(*, ref: str) -> list[str]:
+    """The command that starts a published file, then the one that prints its console login."""
+    return [
+        compose_command(ref=ref, verb="up -d"),
+        compose_command(ref=ref, verb=LOGIN_VERB),
+    ]
+
+
 def notes(*, console: str, image: str) -> dict[str, str]:
     """What the quickstart tells someone once each command has run."""
     login = (
-        f"Point your browser to {console} and log in as `{ADMIN_NAME}` with password "
-        f"`{FIRST_LOGIN_PASSWORD}`. The console makes you change it at first login."
+        f"Point your browser to {console} and log in with the name and password the "
+        "second command prints. The console makes you change it at first login."
     )
     stack_down = compose_command(
         ref=artifact(image=image, tag=PUBLISHED_STACK_TAG), verb="down"
@@ -243,10 +250,7 @@ def demo_packs(*, image: str, root: Path = DEMO_PACKS_ROOT, version: str) -> lis
                 "name": name,
                 "title": title.strip(),
                 "use_case": use_case,
-                **{
-                    form: [compose_command(ref=ref, verb="up -d")]
-                    for form, ref in refs.items()
-                },
+                **{form: start_commands(ref=ref) for form, ref in refs.items()},
             }
         )
     return found
@@ -277,7 +281,7 @@ def quickstart(
         ),
         "min_engine": MIN_ENGINE,
         "console_url": console,
-        "login": f"{ADMIN_NAME} / {FIRST_LOGIN_PASSWORD}",
+        "login": "printed by the second command in `up` and `demo`",
         "kind": "compose",
         "profiles": [
             {
@@ -291,10 +295,7 @@ def quickstart(
             }
         ],
         **{
-            kind: {
-                form: [compose_command(ref=ref, verb="up -d")]
-                for form, ref in forms.items()
-            }
+            kind: {form: start_commands(ref=ref) for form, ref in forms.items()}
             for kind, forms in refs.items()
         },
         "notes": notes(console=console, image=image),

@@ -114,8 +114,11 @@ IN_STACK_KEY = "DFE_IN_STACK"
 # The compose files a release publishes as OCI artifacts beside the dfe-docker image, by the tag each moves on and the stem of its versioned tag
 PUBLISHED_STACK_TAG = "compose"
 PUBLISHED_DEMO_TAG = "demo"
-# The admin password the published files issue, which the engine makes its owner replace at first login
-FIRST_LOGIN_PASSWORD = "dfe-first-login"
+# The one-shot the published files mint their secrets with, and the argument that makes it print the admin login
+SECRETS_SERVICE = "secrets-init"
+LOGIN_COMMAND = "login"
+# The docker compose verb that starts it with that argument, which waits on nothing and removes the container after
+LOGIN_VERB = f"run --rm {SECRETS_SERVICE} {LOGIN_COMMAND}"
 
 # Repo constants
 REPO_ROOT = __find_repo_root()

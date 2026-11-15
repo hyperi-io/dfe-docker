@@ -27,17 +27,21 @@ come out the other. Everything else can wait.
 
 ```bash
 docker compose -f oci://ghcr.io/hyperi-io/dfe-docker:compose up -d
+docker compose -f oci://ghcr.io/hyperi-io/dfe-docker:compose run --rm secrets-init login
 ```
 
-That is the `single-kafka` stack, as Compose project `dfe`, from a compose file each release publishes beside the dfe-docker image (`:compose-<version>` keeps to one release). Point your browser to http://localhost:3000 and log in as `admin` with password `dfe-first-login`, which the console makes you change at first login. The file names no secret but that first-login password: the stack mints the rest at first start into a volume of its own, which `down -v` deletes. Every port it publishes listens on 127.0.0.1 only. `docker compose -f oci://ghcr.io/hyperi-io/dfe-docker:compose down` stops it and keeps the data.
+That is the `single-kafka` stack, as Compose project `dfe`, from a compose file each release publishes beside the dfe-docker image (`:compose-<version>` keeps to one release). The file names no secret: the stack mints them at first start into a volume of its own, which `down -v` deletes. Point your browser to http://localhost:3000 and log in with the name and password the second command prints. The console makes you change the password at first login. Every port it publishes listens on 127.0.0.1 only. `docker compose -f oci://ghcr.io/hyperi-io/dfe-docker:compose down` stops it and keeps the data.
+
+To choose your own, see [Choosing the admin login](#choosing-the-admin-login).
 
 ```bash
 docker compose -f oci://ghcr.io/hyperi-io/dfe-docker:demo up -d
+docker compose -f oci://ghcr.io/hyperi-io/dfe-docker:demo run --rm secrets-init login
 ```
 
 The demo is the same stack as its own project, `dfe-demo`, and nothing to set up. At first start it seeds the demo's sources, dashboards and saved searches, then streams the Cisco ASA and FortiGate syslog below without stopping, beside two fetchers. It takes the same ports, so stop the stack above first. `docker compose -f oci://ghcr.io/hyperi-io/dfe-docker:demo down -v` removes all of it.
 
-Three more demos take the same two lines with the tag swapped, each as its own project on the same ports, so run one at a time: `:demo-cyber` (identity, EDR and firewall events, with the rules and hunts a SOC runs over them), `:demo-theatre` (live air and sea tracks, the picture as it is now and as it was) and `:demo-telco` (BGP updates, RAN KPIs and core probes, what a NOC watches).
+Three more demos take the same two commands with the tag swapped, each as its own project on the same ports, so run one at a time: `:demo-cyber` (identity, EDR and firewall events, with the rules and hunts a SOC runs over them), `:demo-theatre` (live air and sea tracks, the picture as it is now and as it was) and `:demo-telco` (BGP updates, RAN KPIs and core probes, what a NOC watches).
 
 For a folder you can edit, the dfe-docker image sets one up holding the compose files, config and `.env`, which takes any profile and setting. In an empty folder. On Windows, use PowerShell: `${PWD}` works there and in bash and zsh, but not in cmd.exe.
 
@@ -66,6 +70,18 @@ docker run --rm -v "${PWD}:${PWD}" -w "${PWD}" -v /var/run/docker.sock:/var/run/
 ```
 
 The same command with `demo-stop` takes it out, which `docker compose down` needs first.
+
+## Choosing the admin login
+
+The published files take the admin's name and password from the shell, set `DFE_ADMIN_NAME` and `DFE_ADMIN_PASSWORD` in the shell that runs `up`. Both are optional.
+
+```bash
+DFE_ADMIN_NAME=ada DFE_ADMIN_PASSWORD='a long passphrase' docker compose -f oci://ghcr.io/hyperi-io/dfe-docker:compose up -d
+```
+
+In PowerShell, set `$env:DFE_ADMIN_NAME` and `$env:DFE_ADMIN_PASSWORD` first. The login command then prints what you chose, and the console still makes you change the password at first login. A password is 12 to 72 bytes of printable characters and is not `changeme`. A name starts with a letter or digit and holds letters, digits, `.`, `_` and `-`. A value the engine would refuse fails the secrets-init step, and `docker compose -f oci://ghcr.io/hyperi-io/dfe-docker:compose logs secrets-init` names the variable. Typed on a command line, the password stays in your shell history, and it stays in the stopped secrets-init container's environment, where `docker inspect` shows it, until `down` removes the container.
+
+The volume keeps the login, so a later `up` with neither variable set leaves it alone. A new password replaces the stored one, and the engine reads it when it next starts, so add `up -d --force-recreate dfe-engine` to the command that sets it. A new name adds that account, and the old one stays.
 
 ## Getting it running
 

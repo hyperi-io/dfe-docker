@@ -15,7 +15,7 @@ The demo compose file scripts/publish_compose.py writes runs this from the dfe-d
   feed     fetch dfe-transform-elastic's replay script at the tag DFE_TRANSFORM_ELASTIC_VERSION pins and stage it under --feed with the pack's events in place of its fixtures, which the stream replays.
   console  create the pack's dashboards and saved searches, waiting up to CONSOLE_TIMEOUT_SECONDS for dfe-hyperdx to hold the sources they read.
 
-sources and console log in as the break-glass account, because the bootstrap admin keeps its first-login password until the person running the demo replaces it. The stack is the demo's own, so every source they touch is one sources created.
+sources and console log in as the break-glass account, because the bootstrap admin keeps its issued password until the person running the demo replaces it. The stack is the demo's own, so every source they touch is one sources created.
 
 Exit codes:
   0  done
