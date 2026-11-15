@@ -272,7 +272,7 @@ ifneq ($(strip $(UNPUBLISHED))$(EMBED_UNPUBLISHED),)
 endif
 
 # A receiver listener's host port publishes once its key is set. The listener itself is enabled in the receiver's config
-RECEIVER_LISTENERS := BEATS:5044 GRPC:6000 HEC:8088 OTLP_GRPC:4317 OTLP_HTTP:4318
+RECEIVER_LISTENERS := BEATS:5044 GRPC:6000 HEC:8088 OTLP_GRPC:4317 OTLP_HTTP:4318 SYSLOG_UDP:514/udp SYSLOG_TCP:514 SYSLOG_TLS:6514 NETFLOW:2055/udp IPFIX:4739/udp SFLOW:6343/udp
 RECEIVER_PORTS_SET := $(strip $(foreach listener,$(RECEIVER_LISTENERS),$(if $(strip $(DFE_RECEIVER_$(firstword $(subst :, ,$(listener)))_PORT)),$(listener))))
 
 ifneq ($(RECEIVER_PORTS_SET),)

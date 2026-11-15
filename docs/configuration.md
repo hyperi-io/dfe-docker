@@ -267,12 +267,20 @@ The AWS **region** and poll interval are not environment variables: they are lit
 | `DFE_RECEIVER_GRPC_PORT`                         | Host port for the receiver's Vector gRPC listener (container port 6000)             | unset, unpublished                                                  |
 | `DFE_RECEIVER_HEC_PORT`                          | Host port for the receiver's HEC listener (container port 8088)                     | unset, unpublished                                                  |
 | `DFE_RECEIVER_HTTP_PORT`                         | Receiver HTTP port                                                                   | `8080`                                                              |
+| `DFE_RECEIVER_IPFIX_PORT`                        | Host UDP port for the receiver's flow listener on container port 4739 (IPFIX)        | unset, unpublished                                                  |
 | `DFE_RECEIVER_MAX_BODY_SIZE`                     | Largest record the receiver accepts in bytes, under every broker's 8 MiB message limit | `8000000`                                                           |
+| `DFE_RECEIVER_NETFLOW_PORT`                      | Host UDP port for the receiver's flow listener on container port 2055 (NetFlow)      | unset, unpublished                                                  |
 | `DFE_RECEIVER_OTLP_GRPC_PORT`                    | Host port for the receiver's OTLP gRPC listener (container port 4317)               | unset, unpublished                                                  |
 | `DFE_RECEIVER_OTLP_HTTP_PORT`                    | Host port for the receiver's OTLP HTTP listener (container port 4318)               | unset, unpublished                                                  |
 | `DFE_RECEIVER_PROMETHEUS_PORT`                   | Receiver Prometheus port                                                             | `9090`                                                              |
+| `DFE_RECEIVER_SFLOW_PORT`                        | Host UDP port for the receiver's flow listener on container port 6343 (sFlow)        | unset, unpublished                                                  |
+| `DFE_RECEIVER_SYSLOG_TCP_PORT`                   | Host TCP port for the receiver's syslog listener (container port 514)                | unset, unpublished                                                  |
+| `DFE_RECEIVER_SYSLOG_TLS_PORT`                   | Host TCP port for the receiver's syslog over TLS listener (container port 6514)      | unset, unpublished                                                  |
+| `DFE_RECEIVER_SYSLOG_UDP_PORT`                   | Host UDP port for the receiver's syslog listener (container port 514)                | unset, unpublished                                                  |
 
-Setting a listener's port key publishes it through a fragment `make` writes, so a raw `docker compose` outside `make` does not publish it. The listener still has to be enabled in the receiver's config, such as `DFE_RECEIVER_GRPC__ENABLED=true` in `env/receiver.env`.
+Setting a listener's port key publishes it through a fragment `make` writes, so a raw `docker compose` outside `make` does not publish it. The listener still has to be enabled in the receiver's config, such as `DFE_RECEIVER_GRPC__ENABLED=true` in `env/receiver.env`. Syslog takes `DFE_RECEIVER_SYSLOG__ENABLED=true`, and over plain UDP or TCP also `DFE_RECEIVER_SYSLOG__ACCEPT_UNAUTHENTICATED=true`, because those senders have no handshake to authenticate at. Flow takes `DFE_RECEIVER_FLOW__ENABLED=true`.
+
+A host port under 1024, such as 514, needs a Docker daemon allowed to bind it. Rootless Docker is not, so pick a high port such as 1514 there.
 
 `make` also sets `DFE_RECEIVER_DLQ_MODE` from the profile: `file_only` on a direct gRPC profile and empty on Kafka, which keeps the receiver's `cascade` default.
 
@@ -473,7 +481,7 @@ The engine runs as its image's user, not yours, so the two meet on a group. `mak
 | 13133 | otel-collector       | health_check       |
 | 19092 | Kafka (any backend)  | Plaintext host     |
 
-The receiver's other listeners publish once their port key is set: 4317 (OTLP gRPC), 4318 (OTLP HTTP), 5044 (Beats), 6000 (Vector gRPC) and 8088 (HEC).
+The receiver's other listeners publish once their port key is set: 4317 (OTLP gRPC), 4318 (OTLP HTTP), 5044 (Beats), 6000 (Vector gRPC), 8088 (HEC), 514 UDP and TCP and 6514 (syslog), and 2055, 4739 and 6343 UDP (flow).
 
 dfe-fetcher and the transforms run one instance per source. An instance publishes no host port.
 
