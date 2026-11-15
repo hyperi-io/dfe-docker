@@ -17,7 +17,7 @@ Each @@KEY@@ is a GENERATED_SECRETS key. Its value is minted by init.py's own ru
 
 The admin login is the one pair a person may choose. DFE_ADMIN_NAME and DFE_ADMIN_PASSWORD, when set and not empty, replace the stored name and password on that run, after the password is checked against what the engine accepts. Unset, the stored values stay, and a first run mints the password and names the admin `admin`.
 
-`login` as the last argument prints the stored name and password, minting them first when the stack has not started, and writes nothing else.
+`login` as the last argument prints the stored name and password. It mints them first when none are stored and writes no service's files.
 
 Exit codes:
   0  every service's files written, or the login printed
@@ -111,6 +111,8 @@ def refused(*, key: str, value: str, variable: str) -> str | None:
         if not ADMIN_NAME.fullmatch(value):
             return f"{variable} must be letters, digits, `.`, `_` and `-`, starting with a letter or digit, at most 128 characters"
         return None
+    if not value.strip():
+        return f"{variable} is blank, which the engine refuses"
     if not value.isprintable():
         return f"{variable} holds a newline, tab or other control character"
     if len(value) < MIN_PASSWORD_LENGTH:

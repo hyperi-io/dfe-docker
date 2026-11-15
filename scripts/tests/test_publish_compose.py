@@ -24,6 +24,8 @@ import secrets_init
 from _common import REPO_ROOT, demo_pack_dir, demo_pack_names
 
 COLLECTOR_CONFIG = "config/otel-collector/config.yaml"
+CHOSEN_NAME = "${DFE_ADMIN_NAME:-}"
+CHOSEN_PASSWORD = "${DFE_ADMIN_PASSWORD:-}"
 SYSLOG_LINE = "%ASA-6-302013: x\n"
 BEATS_LINE = '{"data_stream": {"dataset": "okta.system"}, "message": "{}"}\n'
 # The committed packs with sources to seed
@@ -224,24 +226,32 @@ class TestConfigContent:
 
 class TestInterpolations:
     @pytest.mark.parametrize(
-        ("text", "count"),
+        ("text", "allowed", "count"),
         [
-            ("", 0),
-            ("a$", 0),
-            ("$$code", 0),
-            ("$${HOME}", 0),
-            ("${HOME}", 1),
-            ("$HOME", 1),
-            ("$$${HOME} and $X", 2),
-            ("${DFE_ADMIN_NAME:-}", 0),
-            ("${DFE_ADMIN_PASSWORD:-}", 0),
-            ("${DFE_ADMIN_PASSWORD}", 1),
-            ("${DFE_ADMIN_NAME:-root}", 1),
-            ("${DFE_ADMIN_PASSWORD:-} ${HOME}", 1),
+            ("", (), 0),
+            ("a$", (), 0),
+            ("$$code", (), 0),
+            ("$${HOME}", (), 0),
+            ("${HOME}", (), 1),
+            ("$HOME", (), 1),
+            ("$$${HOME} and $X", (), 2),
+            (CHOSEN_NAME, (), 1),
+            (CHOSEN_NAME, (CHOSEN_NAME,), 0),
+            (CHOSEN_PASSWORD, (CHOSEN_PASSWORD,), 0),
+            (CHOSEN_PASSWORD, (CHOSEN_NAME,), 1),
+            ("${DFE_ADMIN_PASSWORD}", (CHOSEN_PASSWORD,), 1),
+            ("${DFE_ADMIN_NAME:-root}", (CHOSEN_NAME,), 1),
+            (f"{CHOSEN_PASSWORD} ${{HOME}}", (CHOSEN_PASSWORD,), 1),
+            (f"{CHOSEN_PASSWORD} {CHOSEN_PASSWORD}", (CHOSEN_PASSWORD,), 1),
+            (f"${CHOSEN_PASSWORD}", (CHOSEN_PASSWORD,), 0),
         ],
     )
-    def test_counts_what_compose_would_interpolate(self, count: int, text: str) -> None:
-        assert len(publish_compose.interpolations(text=text)) == count
+    def test_counts_what_compose_would_interpolate(
+        self, allowed: tuple[str, ...], count: int, text: str
+    ) -> None:
+        found = publish_compose.interpolations(allowed=allowed, text=text)
+
+        assert len(found) == count
 
 
 class TestFindings:
@@ -342,6 +352,67 @@ class TestFindings:
         assert {k: len(hits) for k, hits in found.items() if hits} == (
             {kind: 1} if kind else {}
         )
+
+    @pytest.mark.parametrize(
+        ("where", "refused"),
+        [
+            ("secrets-init-env", False),
+            ("secrets-init-command", True),
+            ("secrets-init-other-key", True),
+            ("secrets-init-image", True),
+            ("another-service-command", True),
+            ("another-service-env", True),
+            ("another-service-image", True),
+            ("config-body", True),
+            ("secrets-init-twice", True),
+        ],
+    )
+    def test_the_chosen_login_reference_is_read_nowhere_but_secrets_init_env(
+        self, refused: bool, where: str
+    ) -> None:
+        digest = "@sha256:" + "0" * 64
+        model = {
+            "configs": {"c": {"content": "x: 1\n"}},
+            "services": {
+                "secrets-init": {
+                    "environment": {
+                        "DFE_ADMIN_NAME": CHOSEN_NAME,
+                        "DFE_ADMIN_PASSWORD": CHOSEN_PASSWORD,
+                    },
+                    "image": f"i{digest}",
+                },
+                "dfe-engine": {"image": f"e{digest}"},
+            },
+        }
+        services = model["services"]
+        match where:
+            case "secrets-init-command":
+                services["secrets-init"]["command"] = ["echo", CHOSEN_PASSWORD]
+            case "secrets-init-other-key":
+                services["secrets-init"]["environment"]["OTHER"] = CHOSEN_NAME
+            case "secrets-init-image":
+                services["secrets-init"]["image"] = f"{CHOSEN_NAME}{digest}"
+            case "another-service-command":
+                services["dfe-engine"]["command"] = ["echo", CHOSEN_PASSWORD]
+            case "another-service-env":
+                services["dfe-engine"]["environment"] = {"X": CHOSEN_PASSWORD}
+            case "another-service-image":
+                services["dfe-engine"]["image"] = f"{CHOSEN_PASSWORD}{digest}"
+            case "config-body":
+                model["configs"]["c"]["content"] = f"x: {CHOSEN_PASSWORD}\n"
+            case "secrets-init-twice":
+                services["secrets-init"]["environment"]["DFE_ADMIN_PASSWORD"] = (
+                    f"{CHOSEN_PASSWORD}{CHOSEN_PASSWORD}"
+                )
+
+        found = publish_compose.findings(model=model, text=json.dumps(model))
+
+        blocking = [
+            kind
+            for kind, hits in found.items()
+            if hits and kind in ("interpolation", "literal secrets")
+        ]
+        assert bool(blocking) is refused
 
 
 class TestDemoRoles:
@@ -1280,6 +1351,8 @@ class TestAdminLogin:
             ("DFE_ADMIN_PASSWORD", "é" * 37, "at most 72 bytes"),
             ("DFE_ADMIN_PASSWORD", "changeme", "at least 12 characters"),
             ("DFE_ADMIN_PASSWORD", "  changeme  ", "shipped placeholder"),
+            ("DFE_ADMIN_PASSWORD", " " * 12, "is blank"),
+            ("DFE_ADMIN_PASSWORD", " " * 5, "is blank"),
             ("DFE_ADMIN_PASSWORD", "twelve chars\nand more", "control character"),
             ("DFE_ADMIN_PASSWORD", "twelve\tchars here", "control character"),
             ("DFE_ADMIN_NAME", "-admin", "letters, digits"),
@@ -1297,7 +1370,7 @@ class TestAdminLogin:
             )
 
         assert variable in str(refused.value)
-        assert value.strip() not in str(refused.value)
+        assert not value.strip() or value.strip() not in str(refused.value)
         assert not (
             tmp_path / ".minted" / "DFE_ENGINE_AUTH_LOCAL_ADMIN_PASSWORD"
         ).exists()

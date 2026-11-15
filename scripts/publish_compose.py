@@ -954,10 +954,10 @@ def render(*, model: Mapping, tag: str, stack_version: str) -> str:
     )
 
 
-def interpolations(*, text: str) -> list[str]:
-    """Every `$` in the text compose would interpolate, except the chosen login's own references."""
-    for reference in CHOSEN_LOGIN.values():
-        text = text.replace(reference, "")
+def interpolations(*, allowed: Sequence[str] = (), text: str) -> list[str]:
+    """Every `$` in the text compose would interpolate, each `allowed` reference excepted once."""
+    for reference in allowed:
+        text = re.sub(rf"(?<!\$){re.escape(reference)}", "", text, count=1)
     return [
         text[match.start() : match.start() + 24]
         for match in _DOLLAR.finditer(text)
@@ -967,10 +967,20 @@ def interpolations(*, text: str) -> list[str]:
 
 def findings(*, model: Mapping, text: str) -> dict[str, list[str]]:
     """What stops a file publishing, or running from `-f oci://` with no questions and nothing off loopback, by kind."""
+    secrets_env = (model["services"].get(SECRETS_SERVICE) or {}).get(
+        "environment"
+    ) or {}
     found: dict[str, list[str]] = {
         "bind mounts": [],
         "env_file": [],
-        "interpolation": interpolations(text=text),
+        "interpolation": interpolations(
+            allowed=[
+                value
+                for key, value in secrets_env.items()
+                if value and value == CHOSEN_LOGIN.get(key)
+            ],
+            text=text,
+        ),
         "literal secrets": [],
         "profiles": [],
         "undigested images": [],

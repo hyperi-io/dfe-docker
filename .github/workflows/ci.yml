@@ -430,6 +430,13 @@ jobs:
               exit 1
             fi
           done
+          # secrets-init declares the admin's chosen name and password, which are empty on a run that chose none
+          init_env="$(docker inspect "$(docker compose -f "$FILE" ps -aq secrets-init)" --format '{{range .Config.Env}}{{println .}}{{end}}')"
+          held="$(printf '%s\n' "$init_env" | cut -d= -f1 | grep -E '(PASSWORD|SECRET|TOKEN|KEY|MONGO_URI|IDENTITY)$' | grep -vx DFE_ADMIN_PASSWORD || true)"
+          if [ -n "$held" ] || printf '%s\n' "$init_env" | grep -Eq '^DFE_ADMIN_(NAME|PASSWORD)=.'; then
+            echo "::error::secrets-init holds $held or a chosen admin login in its environment"
+            exit 1
+          fi
           if docker compose -f "$FILE" exec -T clickhouse clickhouse-client --password '' --query 'SELECT 1'; then
             echo "::error::ClickHouse took the empty default password"
             exit 1
