@@ -426,6 +426,7 @@ services:
       DFE_ENGINE_KAFKA_BOOTSTRAP_SERVERS: ${DFE_KAFKA_BOOTSTRAP_SERVERS:-}
       DFE_ENGINE_PROFILE: ${DFE_STACK_PROFILE:-docker-slim}
       DFE_ENGINE_SECRETS_PATH: /app/config/.secrets
+      DFE_ENGINE_STACK_IMAGES: ${IMAGE_REGISTRY:-ghcr.io/hyperi-io}/dfe-archiver:${DFE_ARCHIVER_VERSION},${IMAGE_REGISTRY:-ghcr.io/hyperi-io}/dfe-engine:${DFE_ENGINE_VERSION},${IMAGE_REGISTRY:-ghcr.io/hyperi-io}/dfe-fetcher:${DFE_FETCHER_VERSION},${IMAGE_REGISTRY:-ghcr.io/hyperi-io}/dfe-hyperdx:${DFE_HYPERDX_VERSION},${IMAGE_REGISTRY:-ghcr.io/hyperi-io}/dfe-loader:${DFE_LOADER_VERSION},${IMAGE_REGISTRY:-ghcr.io/hyperi-io}/dfe-receiver:${DFE_RECEIVER_VERSION},${IMAGE_REGISTRY:-ghcr.io/hyperi-io}/dfe-transform-elastic:${DFE_TRANSFORM_ELASTIC_VERSION},${IMAGE_REGISTRY:-ghcr.io/hyperi-io}/dfe-transform-vector:${DFE_TRANSFORM_VECTOR_VERSION},${IMAGE_REGISTRY:-ghcr.io/hyperi-io}/dfe-transform-vrl:${DFE_TRANSFORM_VRL_VERSION},${IMAGE_REGISTRY:-ghcr.io/hyperi-io}/dfe-ui:${DFE_UI_VERSION}
       DFE_ENGINE_STACK_VERSION: ${DFE_STACK_VERSION:-}
       DFE_ENGINE_TRANSPORT_BUS_PRESENT: ${DFE_TRANSPORT_BUS_PRESENT:-false}
       DFE_ENGINE_TRANSPORT_DEFAULT: ${DFE_TRANSPORT_DEFAULT:-direct}

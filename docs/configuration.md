@@ -358,6 +358,7 @@ Compose sets these on the engine itself:
 | `DFE_ENGINE_HYPERDX_BASE_URL`, `DFE_ENGINE_HYPERDX_ENABLED` | Follow the footprint, like the dfe-hyperdx containers |
 | `DFE_ENGINE_PROFILE` | The tier name, which seeds its default app instances |
 | `DFE_ENGINE_SECRETS_PATH` | On the config volume, so the JWT key survives a recreate |
+| `DFE_ENGINE_STACK_IMAGES` | Every DFE app image the stack runs, by digest. The stack the console shows is the published one these match, with `DFE_STACK_VERSION` as the offline fallback |
 | `DFE_ENGINE_STACK_VERSION`, `DFE_ENGINE_UI_VERSION` | The certified stack and the console version, for the console footer. The second is the UI pin without its digest |
 | `DFE_ENGINE_TRANSPORT_BUS_PRESENT`, `DFE_ENGINE_TRANSPORT_DEFAULT` | From the profile. Their defaults are slim-grpc's |
 
