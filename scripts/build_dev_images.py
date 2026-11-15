@@ -67,6 +67,9 @@ IMPLICIT_CONSUMERS: dict[str, tuple[str, ...]] = {
     ),
     "hyperdx-documentdb-tls": ("hyperdx-documentdb",),
 }
+# The engine names its stack from the registry digests this lists, which no local build carries
+ENGINE_SERVICE = "dfe-engine"
+STACK_IMAGES_KEY = "DFE_ENGINE_STACK_IMAGES"
 RUST_COMPONENTS = [
     "dfe-archiver",
     "dfe-fetcher",
@@ -374,9 +377,16 @@ def overlay_text(components: list[str]) -> str:
     services = sorted(local_image_services(components=components).items())
     if not (services):
         return f"{header}\nservices: {{}}\n"
+    local = dict(services)
     lines = [header, "services:"]
-    for service, image in services:
-        lines += [f"  {service}:", f"    image: {image}", ""]
+    for service in sorted({*local, ENGINE_SERVICE}):
+        lines.append(f"  {service}:")
+        if service in local:
+            lines.append(f"    image: {local[service]}")
+        if service == ENGINE_SERVICE:
+            # A local build is no published stack, so the engine reports DFE_ENGINE_STACK_VERSION instead
+            lines += ["    environment:", f'      {STACK_IMAGES_KEY}: ""']
+        lines.append("")
     return "\n".join(lines).rstrip("\n") + "\n"
 
 

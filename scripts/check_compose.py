@@ -1745,6 +1745,15 @@ def _local_overlay_failures(*, env: dict[str, str]) -> tuple[list[str], int]:
                 f"{_LOCAL_RENDER.name}: {service} runs {got}, not {image} -- a "
                 "LOCAL build leaves a follower on the registry image"
             )
+    made += 1
+    stack_images = (services.get(_ENGINE_SERVICE, {}).get("environment") or {}).get(
+        _STACK_IMAGES_KEY
+    )
+    if stack_images != "":
+        failures.append(
+            f"{_LOCAL_RENDER.name}: {_ENGINE_SERVICE} gets {_STACK_IMAGES_KEY}="
+            f"{stack_images!r}, not empty -- a LOCAL build is no published stack"
+        )
     for service, service_config in sorted(services.items()):
         if service in want:
             continue
