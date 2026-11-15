@@ -199,6 +199,38 @@ def test_only_the_services_that_push_their_own_metrics_are_expected() -> None:
     ]
 
 
+@pytest.mark.parametrize(
+    ("ui_version", "expects_ui"),
+    [
+        ("v1.7.34@sha256:" + "0" * 64, False),
+        ("v1.7.39", False),
+        ("v1.7.40", True),
+        ("1.7.44@sha256:" + "0" * 64, True),
+        ("v2.0.0", True),
+        ("", True),
+        ("local", True),
+    ],
+    ids=[
+        "2.2.1 pin",
+        "just before",
+        "first pusher",
+        "unprefixed",
+        "major",
+        "unset",
+        "local build",
+    ],
+)
+def test_dfe_ui_is_expected_only_from_the_release_that_pushes_metrics(
+    ui_version: str, expects_ui: bool
+) -> None:
+    expected = post._otel_expected_services(
+        services=["dfe-engine", "dfe-ui"], unapplied=set(), ui_version=ui_version
+    )
+
+    assert ("dfe-ui" in expected) is expects_ui
+    assert "dfe-engine" in expected
+
+
 def test_an_instance_make_apply_has_not_created_is_not_expected() -> None:
     services = [
         "dfe-fetcher-aws-cloudtrail",

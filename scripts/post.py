@@ -212,6 +212,9 @@ OTEL_PUSHER_PREFIXES = (
     "dfe-transform-vrl",
     "dfe-ui",
 )
+# dfe-ui pushes metrics from this release on, so an older pin is not expected to.
+UI_VERSION_KEY = "DFE_UI_VERSION"
+UI_PUSHES_METRICS_FROM = (1, 7, 40)
 # Metrics only: traces are sampled at 0.05, so a service missing from them is a
 # sampling outcome rather than one that is not exporting.
 OTEL_METRICS_TABLES = (
@@ -896,12 +899,26 @@ def _verify_self_monitoring() -> Claim:
     return Claim(asserted=True, failed=failed)
 
 
-def _otel_expected_services(*, services: list[str], unapplied: set[str]) -> list[str]:
+def _ui_pushes_metrics(*, ui_version: str) -> bool:
+    """Return False only for a dfe-ui release tag older than UI_PUSHES_METRICS_FROM, so a local or unparsed build is still checked."""
+    tag = ui_version.split("@", 1)[0].strip().removeprefix("v")
+    parts = tag.split(".")
+    if len(parts) != 3 or not all(part.isdigit() for part in parts):
+        return True
+    return tuple(int(part) for part in parts) >= UI_PUSHES_METRICS_FROM
+
+
+def _otel_expected_services(
+    *, services: list[str], unapplied: set[str], ui_version: str = ""
+) -> list[str]:
     """The services whose own metrics have to be in the otel database, less the instances `make apply` has not created."""
+    skip_ui = not _ui_pushes_metrics(ui_version=ui_version)
     return sorted(
         service
         for service in services
-        if service.startswith(OTEL_PUSHER_PREFIXES) and service not in unapplied
+        if service.startswith(OTEL_PUSHER_PREFIXES)
+        and service not in unapplied
+        and not (skip_ui and service == "dfe-ui")
     )
 
 
@@ -978,7 +995,11 @@ def _verify_service_metrics(*, database: str) -> int:
             f'expected here; `make apply SERVICES="{names}"` creates them, with DEV=1 '
             "on a `make dev` stack"
         )
-    expected = _otel_expected_services(services=services, unapplied=unapplied)
+    expected = _otel_expected_services(
+        services=services,
+        unapplied=unapplied,
+        ui_version=os.environ.get(UI_VERSION_KEY, ""),
+    )
     if not (expected):
         _print(
             msg="      note: this profile runs no service that pushes its own metrics"
