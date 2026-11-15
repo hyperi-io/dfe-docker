@@ -116,7 +116,7 @@ make dev    # build :local images from local component source, then start
 make ci     # pull the pinned GHCR images, then start
 ```
 
-`make dev` builds the `:local` images, then starts with the overlay the build writes, `.tmp/docker-compose.local.yml`, which repoints each component it built at `<service>:local`. `make ci` names no overlay, so it runs registry images only.
+`make dev` builds the `:local` images, then starts with the overlay the build writes, `.tmp/docker-compose.local.yml`, which repoints each component it built at `<service>:local`. It also empties the engine's `DFE_ENGINE_STACK_IMAGES`, so the console shows `DFE_STACK_VERSION`. `make ci` names no overlay, so it runs registry images only.
 
 Both start targets run `make env-files` first: it asserts every
 `env.example/<service>.env` has a counterpart in `env/`, runs `make init` for the
@@ -174,7 +174,7 @@ Two of them can start without their component (`IMPLICIT_CONSUMERS`, same file):
 make dev LOCAL="dfe-engine dfe-ui"   # build these two; everything else from GHCR
 ```
 
-The build writes `.tmp/docker-compose.local.yml` repointing only the named components and the services sharing their image at `:local`. `SERVICES` still filters what starts and a name outside the resolved stack is a hard error.
+The build writes `.tmp/docker-compose.local.yml` repointing only the named components and the services sharing their image at `:local`, and empties the engine's `DFE_ENGINE_STACK_IMAGES`, so the console shows `DFE_STACK_VERSION`. `SERVICES` still filters what starts and a name outside the resolved stack is a hard error.
 
 ### Where it looks for your source
 

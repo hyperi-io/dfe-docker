@@ -18,6 +18,8 @@ running the registry image beside a local build.
 import re
 from pathlib import Path
 
+import pytest
+
 import build_dev_images
 from _common import COMPOSE_FILE, COMPOSE_ONE_SHOTS_FILE
 
@@ -147,3 +149,38 @@ def test_dev_images_are_packaged_with_no_build_arg_the_release_does_not_set():
         assert "--build-arg" not in command, component
         assert command[-1] == "ctx"
         assert f"{component}:local" in command
+
+
+def _engine_block(*, components: list[str]) -> list[str]:
+    """The lines of the dfe-engine service in the overlay built for `components`."""
+    lines = build_dev_images.overlay_text(components=components).splitlines()
+    start = lines.index("  dfe-engine:")
+    block = []
+    for line in lines[start + 1 :]:
+        if not line.startswith("    "):
+            break
+        block.append(line)
+    return block
+
+
+@pytest.mark.parametrize(
+    ("components", "engine_image"),
+    [
+        pytest.param(["dfe-engine"], True, id="the_engine_itself"),
+        pytest.param(["dfe-loader"], False, id="another_app"),
+        pytest.param(["dfe-ui", "dfe-fetcher"], False, id="several_apps"),
+    ],
+)
+def test_a_local_build_empties_the_engines_stack_images(
+    components: list[str], engine_image: bool
+) -> None:
+    block = _engine_block(components=components)
+
+    assert '      DFE_ENGINE_STACK_IMAGES: ""' in block
+    assert ("    image: dfe-engine:local" in block) is engine_image
+
+
+def test_an_overlay_of_nothing_built_leaves_the_stack_images_alone() -> None:
+    text = build_dev_images.overlay_text(components=[])
+
+    assert "DFE_ENGINE_STACK_IMAGES" not in text

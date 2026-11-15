@@ -77,11 +77,14 @@ Beyond resolution, these semantic assertions ride along.
 - Every path a pinned image declares as a VOLUME must be mounted from a named volume or a bind, and wherever the daemon holds the image, `_IMAGE_VOLUMES` must list exactly the paths it declares. See `_image_volume_drift`.
 - No committed service may carry a name a generated per-source instance can take.
   See `_instance_name_collisions`.
+- The engine's DFE_ENGINE_STACK_IMAGES must list every DFE app image the stack runs,
+  each pinned by digest, and no other image. See `_stack_images_mismatches`.
 - Every service dfe-engine renders, and every instance the generator declares,
   must read the custom env file the engine writes for it, last; no service may
   read one the engine does not write. See `_custom_env_mismatches`.
 """
 
+import hashlib
 import json
 import os
 import re
@@ -1232,6 +1235,75 @@ def _version_check_failures(*, env: dict[str, str]) -> tuple[list[str], int]:
     return failures, made
 
 
+# The engine names the stack it runs from these, so each entry is an app image a stack manifest lists
+_STACK_IMAGES_KEY = "DFE_ENGINE_STACK_IMAGES"
+_STACK_IMAGE_PREFIX = "dfe-"
+_DIGEST_REF = re.compile(r"@sha256:[0-9a-f]{64}$")
+
+
+def _image_name(*, reference: str) -> str:
+    """Return the name of `registry/path/name[:tag][@sha256:digest]`."""
+    return reference.split("@", 1)[0].rsplit("/", 1)[-1].split(":", 1)[0]
+
+
+def _stack_images_mismatches(*, config: dict) -> list[str]:
+    """Return one message per way the engine's DFE_ENGINE_STACK_IMAGES differs from the DFE app images the model runs.
+
+    Every service counts, so the hunt runner's copy of the engine image adds no second entry and no image a service runs is left out. An entry with no digest cannot match a stack manifest, and an image that is not a DFE app matches none.
+    """
+    services = config.get("services", {})
+    engine = services.get(_ENGINE_SERVICE)
+    if engine is None:
+        return [f"{_ENGINE_SERVICE}: not in the stack"]
+    value = str((engine.get("environment") or {}).get(_STACK_IMAGES_KEY) or "")
+    listed = [entry.strip() for entry in value.split(",") if entry.strip()]
+    running = {
+        str(service["image"])
+        for service in services.values()
+        if _image_name(reference=str(service.get("image", ""))).startswith(
+            _STACK_IMAGE_PREFIX
+        )
+    }
+    failures = [
+        f"{_STACK_IMAGES_KEY} lists {entry!r}, which carries no sha256 digest"
+        for entry in listed
+        if not _DIGEST_REF.search(entry)
+    ]
+    failures.extend(
+        f"{_STACK_IMAGES_KEY} lists {entry!r}, which no service runs as a DFE app"
+        for entry in sorted(set(listed) - running)
+    )
+    failures.extend(
+        f"{_STACK_IMAGES_KEY} leaves out {image!r}, which a service runs"
+        for image in sorted(running - set(listed))
+    )
+    failures.extend(
+        f"{_STACK_IMAGES_KEY} lists {entry!r} {listed.count(entry)} times"
+        for entry in sorted({entry for entry in listed if listed.count(entry) > 1})
+    )
+    return failures
+
+
+def _stack_images_failures(*, env: dict[str, str]) -> tuple[list[str], int]:
+    """Return (messages, assertions made) for DFE_ENGINE_STACK_IMAGES on the registry path.
+
+    Each mandatory key gets a digest-shaped value of its own, so a pin that never reaches the list shows as a missing entry. The checkout's .env is not loaded.
+    """
+    pinned = {
+        **env,
+        **{
+            name: f"v0.0.0@sha256:{hashlib.sha256(name.encode()).hexdigest()}"
+            for name in _required_compose_vars()
+        },
+    }
+    config = _config_json(
+        env=pinned, files=[COMPOSE_FILE.name], env_file=_empty_env_file()
+    )
+    if config is None:
+        return (["docker-compose.yml did not resolve with every pin digested"], 0)
+    return _stack_images_mismatches(config=config), 1
+
+
 def _proxy_tls_mismatches(*, config: dict, tls: dict[str, str] | None) -> list[str]:
     """Return one message per way the proxies, the network and the engine differ from the console TLS side they are on.
 
@@ -1673,6 +1745,15 @@ def _local_overlay_failures(*, env: dict[str, str]) -> tuple[list[str], int]:
                 f"{_LOCAL_RENDER.name}: {service} runs {got}, not {image} -- a "
                 "LOCAL build leaves a follower on the registry image"
             )
+    made += 1
+    stack_images = (services.get(_ENGINE_SERVICE, {}).get("environment") or {}).get(
+        _STACK_IMAGES_KEY
+    )
+    if stack_images != "":
+        failures.append(
+            f"{_LOCAL_RENDER.name}: {_ENGINE_SERVICE} gets {_STACK_IMAGES_KEY}="
+            f"{stack_images!r}, not empty -- a LOCAL build is no published stack"
+        )
     for service, service_config in sorted(services.items()):
         if service in want:
             continue
@@ -2109,6 +2190,16 @@ def _checks() -> int:
     _print(
         msg="The release-check dial opts out and never defaults off: every app resolves "
         f"to true unless .env says otherwise ({version_made} assertions)"
+    )
+
+    stack_images_failures, stack_images_made = _stack_images_failures(env=env)
+    for message in stack_images_failures:
+        _print(msg=f"FAIL {message}")
+    if stack_images_failures:
+        return 1
+    _print(
+        msg=f"{_ENGINE_SERVICE} names the stack from every DFE app image the stack "
+        f"runs, each by digest, and no other ({stack_images_made} assertion)"
     )
 
     tls_failures, tls_made = _proxy_tls_failures(env=env)
