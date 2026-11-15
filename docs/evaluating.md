@@ -155,9 +155,9 @@ PY
 It will not appear instantly. The pipeline is asynchronous, Kafka most of all.
 A couple of seconds is normal.
 
-## Raw syslog, parsed per vendor
+## Raw syslog, parsed per device
 
-`make demo` streams Cisco ASA and FortiGate firewall logs into the running stack as raw syslog. dfe-transform-elastic works out which device sent each line, parses it and lands it in that vendor's own table. Palo Alto and Cisco IOS wait on [dfe-transform-elastic#133](https://github.com/hyperi-io/dfe-transform-elastic/issues/133).
+`make demo` streams Cisco ASA and FortiGate firewall logs into the running stack as raw syslog. dfe-transform-elastic works out which device sent each line, parses it and lands it in that device's own table. Palo Alto and Cisco IOS wait on [dfe-transform-elastic#133](https://github.com/hyperi-io/dfe-transform-elastic/issues/133).
 
 It needs a profile that runs dfe-transform-elastic per source, which is `single-kafka` (the default). On a clone with no stack running, `make demo` does the `make up` steps first. It refuses a profile without dfe-transform-elastic before it starts anything and never moves a running stack to another profile.
 
@@ -178,7 +178,7 @@ The demo is one set of pieces, listed in [`resources/demo/demo.json`](../resourc
 | Console | [`resources/demo/console/`](../resources/demo/console/) | A dashboard per source and one for the stack's health, and saved searches with a live tail for each streamed source. All are named `demo-` |
 | Tables | `dfe.cisco-asa`, `dfe.fortinet`, `dfe.demo-syslog`, `dfe.component-releases`, `dfe.wikipedia-recentchanges` | `make demo-stop` leaves them, with their rows, because only the engine issues ClickHouse DDL and it never drops a table. The next `make demo` carries on in them, and `make clean` removes them with the volumes |
 
-Each vendor replays about 6,000 sample lines from [`resources/demo/events/<source>/`](../resources/demo/events/), ten minutes at the default rate before a line repeats, which `python3 resources/demo/events/generate.py` regenerates. The run turns on dfe-receiver's syslog listener (UDP and TCP on port 514) and recreates what that changes. It returns once every vendor table has gained rows and the archive holds a file, and leaves the stream running:
+Each device replays about 6,000 sample lines from [`resources/demo/events/<source>/`](../resources/demo/events/), ten minutes at the default rate before a line repeats, which `python3 resources/demo/events/generate.py` regenerates. The run turns on dfe-receiver's syslog listener (UDP and TCP on port 514) and recreates what that changes. It returns once every vendor table has gained rows and the archive holds a file, and leaves the stream running:
 
 ```text
 demo -   console demo-cisco-asa: http://localhost:8090/dashboards/<id>
@@ -196,7 +196,7 @@ demo - WARNING no rows in 'dfe.component-releases' yet. A fetcher's first poll w
 demo - PASS every vendor table gained rows and the archiver wrote files, ready to query in the console's Search. The stream runs until `make demo-stop` or a receiver restart
 ```
 
-`dfe.component-releases` fills about 15 minutes in, and the demo does not wait for it: an empty fetcher table only warns. A fetcher the profile cannot run or the engine cannot set up is skipped with a WARNING while the vendor demo runs on. A stack with the console's Search switched off gets no console pieces.
+`dfe.component-releases` fills about 15 minutes in, and the demo does not wait for it: an empty fetcher table only warns. A fetcher the profile cannot run or the engine cannot set up is skipped with a WARNING while the firewall stream runs on. A stack with the console's Search switched off gets no console pieces.
 
 `dfe.demo-syslog` holds the lines no detector claimed. The replay script comes from the dfe-transform-elastic release the stack pins, so the demo needs a release with agentless detection and stops before changing anything on one without it. A `make dev` stack takes `make demo DEV=1`, which reads the script from `DFE_SRC_ROOT` when that is set.
 

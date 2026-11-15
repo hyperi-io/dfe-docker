@@ -14,7 +14,7 @@ Copyright: (c) 2026 HYPERI PTY LIMITED
 
 ## What a passing self test proves
 
-`make post` makes up to seven claims and each one the profile can make must hold:
+`make post` makes up to seven claims. Each one it asserts must hold, and it ends by printing how many it asserted and which it skipped. A run passes with at least one claim asserted and none failed, so read that line: once the bootstrap admin is retired, the observability, console, hunts and routing claims have no login to run with and skip.
 
 - Ingest: Three marked events posted at the profile's ingest edge come back
   as those exact rows in `dfe.main` inside 60s.
@@ -39,8 +39,6 @@ Copyright: (c) 2026 HYPERI PTY LIMITED
   lands in a table of its own. The source is named for the run (`postroute`
   and 8 hex digits) and deleted afterwards, then its table is dropped, because the engine's source delete leaves the table. A run first sweeps the `postroute` sources and tables older than an hour, which a killed run left.
 
-Once every claim has run, the three ingest rows are deleted: a lightweight `DELETE`, or a mutation (`ALTER TABLE ... DELETE`) on a table whose projections refuse one. A delete that does not finish within 60s is reported, never failed.
-
 The freshness window is what makes the second claim mean "streaming now" rather
 than "streamed once". The first two are the pair the Kubernetes bootstrap smoke
 asserts as CORE 1 and CORE 2.
@@ -55,6 +53,8 @@ The e2e test `complete-single-node-stack` asserts them, plus the HTTP surface th
 make post                        # run against an already-running stack
 DFE_POST_ENABLED=false make ci   # opt out
 ```
+
+Once every claim has run, the three ingest rows are deleted: a lightweight `DELETE`, or a mutation (`ALTER TABLE ... DELETE`) on a table whose projections refuse one. A delete that does not finish within 60s is reported, never failed.
 
 Tunables: `DFE_POST_HOST` (default `localhost`), `DFE_POST_DATABASE` (`dfe`), `DFE_POST_TABLE` (`main`). It proves nothing about profiles you are not running, or about throughput.
 

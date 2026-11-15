@@ -29,7 +29,7 @@ dfe-hyperdx is one UI across two origins:
 |---|---|---|
 | 8081 | oauth2-proxy-kafbat | kafka-ui |
 | 8090 | oauth2-proxy-hyperdx | dfe-hyperdx app. Gates page access only, as dfe-hyperdx reads the engine token itself |
-| 8000 | oauth2-proxy-hyperdx-api | dfe-hyperdx API, an operator surface. `OAUTH2_PROXY_PASS_HOST_HEADER` passes dfe-hyperdx's CORS headers through untouched |
+| 8000 | oauth2-proxy-hyperdx-api | dfe-hyperdx API, an operator surface. `OAUTH2_PROXY_PASS_HOST_HEADER` forwards the request's Host header to dfe-hyperdx |
 
 They take those ports over and the UIs stop publishing their own, so nothing
 moves for anyone using them. All three share one cookie secret, and cookies are
@@ -38,7 +38,7 @@ URIs (`<origin>:<port>/oauth2/callback`) with the IdP, and make sure it emits a
 groups claim or every sign-in is refused.
 
 The infra kill switch still wins: `DFE_INFRA_UIS_EXTERNAL=false` unpublishes the
-proxies as well as the UIs. A gated door is still a door.
+proxies as well as the UIs.
 
 ## Three limits
 
