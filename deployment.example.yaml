@@ -23,7 +23,7 @@
 
 ## Which platform this deployment targets. This renderer requires docker-vm.
 ## (docker-vm | k8s -- a k8s deployment renders via dfe-infra into a DeployContext.)
-substrate: docker-vm
+platform: docker-vm
 
 ## Image registry hosting the published dfe-* images, pulled anonymously.
 registry: ghcr.io/hyperi-io

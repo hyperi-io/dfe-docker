@@ -19,7 +19,7 @@ import pytest
 import render_dial
 
 _DIAL = """\
-substrate: docker-vm
+platform: docker-vm
 profile: slim-grpc
 retention:
   default_ttl_days: 30
@@ -55,4 +55,22 @@ def test_a_retention_with_no_engine_env_refuses_before_writing_anything(
 
     assert render_dial.main() == 1
     assert "env/engine.env" in capsys.readouterr().err
+    assert dotenv.read_text(encoding="utf-8") == "# DFE_PROFILE=\n"
+
+
+@pytest.mark.parametrize(
+    "first_line",
+    ["substrate: docker-vm", "platform: k8s", ""],
+    ids=["retired key", "other platform", "no platform"],
+)
+def test_a_dial_without_platform_docker_vm_is_refused(
+    dial: Path, dotenv: Path, first_line: str
+) -> None:
+    dotenv.write_text("# DFE_PROFILE=\n", encoding="utf-8", newline="\n")
+    dial.write_text(
+        f"{first_line}\nprofile: slim-grpc\n", encoding="utf-8", newline="\n"
+    )
+
+    with pytest.raises(SystemExit, match="handles platform 'docker-vm'"):
+        render_dial.main()
     assert dotenv.read_text(encoding="utf-8") == "# DFE_PROFILE=\n"
