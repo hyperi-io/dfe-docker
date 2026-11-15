@@ -18,9 +18,8 @@ Start with the state of the stack, then the [known issues](known-issues.md), the
 ## Reading the stack's state
 
 `docker compose ps` (or `make ps`) is the first call. It shows which containers
-exist and their health, but only for the profile resolved from `.env` -- see the
-first [known issue](known-issues.md), because a stray container from a previous profile will
-not show up there while still holding its ports. `make ps` also warns about a
+exist and their health. `make down` tears down every profile, so a switch of
+profile leaves no stray holding the old ports. `make ps` also warns about a
 per-source container whose source was deleted, which `make apply` removes.
 
 Health endpoints, straight from the host. Every DFE service serves `/livez`,
@@ -33,7 +32,7 @@ curl -sf http://localhost:8003/readyz     # engine ready?
 curl -sf http://localhost:13133/          # collector healthy? (otel profile only)
 ```
 
-Ports bind `DFE_BIND_HOST` (`127.0.0.1`), so curl them from the box. The full
+These bind `127.0.0.1` by default, so curl them from the box. The full
 port table, which path each HEALTHCHECK uses and why, and dfe-ui's 200-on-unknown
 -paths trap are in [observability.md](observability.md).
 
@@ -42,13 +41,11 @@ raw `docker exec` / `docker inspect` / `docker logs` below needs that prefix on
 the name -- `docker exec accept-dfe-clickhouse ...`. `docker compose` calls take
 the service key and are unaffected.
 
-## Where a DFE service's logs are
-
 With self-monitoring on, DFE's own services log through Docker's `fluentd` driver and `docker compose logs dfe-loader` still reads them back from the daemon's local copy. The same lines are in ClickHouse: search the `otel_logs` source in dfe-hyperdx or read them directly:
 
 ```bash
-docker exec dfe-clickhouse clickhouse-client --query \
-  "SELECT Timestamp, Body FROM dfe.otel_logs WHERE ServiceName = 'dfe-loader' ORDER BY Timestamp DESC LIMIT 50"
+docker compose exec clickhouse sh -c 'clickhouse-client --password "$CLICKHOUSE_PASSWORD" --query \
+  "SELECT Timestamp, Body FROM dfe.otel_logs WHERE ServiceName = '"'"'dfe-loader'"'"' ORDER BY Timestamp DESC LIMIT 50"'
 ```
 
 dfe-hyperdx logs there too. ClickHouse, the broker and the proxies keep `json-file`. To put every service back on it, set `DFE_CONTAINER_LOGS_ENABLED=false` and restart.
@@ -90,8 +87,8 @@ is healthy.
 
 **Then the topic.** On a Kafka profile, do not check that the topic exists -- check
 what the loader actually SUBSCRIBED to. Those are different questions, and the gap
-between them is where this hides: with `topic_regex`, the loader logs its resolved
-set once at startup, and a topic can exist, be produced to, and still not be in it.
+between them is where this hides: the loader logs the topic set it resolved, and
+a topic can exist, be produced to, and still not be in it.
 
 ```bash
 docker compose logs dfe-loader | grep "Resolved Kafka topics"
@@ -99,7 +96,7 @@ docker compose exec kafka-redpanda rpk group describe dfe-loader -X brokers=kafk
 ```
 
 If the topic the receiver produces to is missing from the resolved list, read the
-`main_load` issue above -- a `_load` sibling suppresses the `_land` topic.
+[`main_load` issue](known-issues.md#a-_load-topic-changes-what-the-loader-reads) -- a `_load` sibling suppresses the `_land` topic.
 Kafbat on `:8081` shows the produced-to topic and its high watermark, which is the
 other half of the picture.
 
@@ -114,14 +111,6 @@ mountpoint owned by root and no service can write inside it. The `dlq-init`
 one-shot (`chown -R 1000:1000` over the spool, the archive, the fetcher cursors and the GeoIP store) fixes that before
 the services start.
 
-## An app stops at its config check
-
-`service "config-check-dfe-loader" didn't complete successfully: exit 1` means the loader's config failed its own check, and the loader was never started. `docker compose logs config-check-dfe-loader` shows the app's error. Fix the config, then run `make apply SERVICES=dfe-loader`, which runs the check again first.
-
-## The receiver's bearer-token mount
-
-dfe-receiver mounts `.secrets/ingest/bearer-tokens` from the `dfe-engine-config` volume as a subpath, which Docker refuses when the path does not exist. The `bearer-tokens-init` one-shot creates it first, as uid 1000 and owner-only like the engine's other secrets. It is a directory mount so the engine's token rewrites reach the running receiver.
-
 `archiver-data`, mounted at `/var/lib/dfe-archiver/archive`, has the same problem and the same
 fix. Without it every archive write fails with `Permission denied (os error 13)`,
 and because dfe-archiver commits an offset only after a write succeeds, it never
@@ -129,15 +118,21 @@ commits one: the lag grows and nothing is archived.
 
 `fetcher-cursors`, mounted at `/var/lib/dfe-fetcher`, gets the same fix. Without it every fetcher logs `Cursor directory is not writable` and re-fetches its lookback window on each restart.
 
-Without it, dfe-archiver crash-loops on `DLQ init failed ... Permission denied
+Without it on the spool, dfe-archiver crash-loops on `DLQ init failed ... Permission denied
 (os error 13)` -- it creates its DLQ writer eagerly at startup. The others create
 theirs lazily on first dead-letter, so they look healthy until something needs to
 dead-letter, which is the worst moment to find the DLQ never worked.
 
+## An app stops at a one-shot
+
+`service "config-check-dfe-loader" didn't complete successfully: exit 1` means the loader's config failed its own check, and the loader was never started. `docker compose logs config-check-dfe-loader` shows the app's error. Fix the config, then run `make apply SERVICES=dfe-loader`, which runs the check again first.
+
+dfe-receiver mounts `.secrets/ingest/bearer-tokens` from the `dfe-engine-config` volume as a subpath, which Docker refuses when the path does not exist. The `bearer-tokens-init` one-shot creates it first, as uid 1000 and owner-only like the engine's other secrets. It is a directory mount so the engine's token rewrites reach the running receiver.
+
 Per-service volumes do not fix it: a fresh volume is root-owned too, because
-ownership is inherited from a path the image does not have. The real fix is for
-the component images to create `/var/spool/dfe` as appuser. The one-shot reuses
-the archiver image because that image is already pinned.
+ownership is inherited from a path the image does not have, and no component
+image creates `/var/spool/dfe` as appuser. The one-shot reuses the archiver image
+because that image is already pinned.
 
 Three ways that arrangement fails:
 

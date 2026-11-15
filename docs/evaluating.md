@@ -95,9 +95,17 @@ make up VERSION=<stack version>  # an older stack
 
 The stack refuses to start on unpinned images rather than quietly pulling `latest`, which is why `make up` pins first. On something you might later deploy, "which image am I running?" should never have a vague answer. `make init` and `make stack VERSION=X.Y.Z` do the two steps by hand.
 
-`make ci` finishes by running the power-on self test, which injects a few marked
+`make up` finishes by running the power-on self test, which injects a few marked
 events and proves they reached ClickHouse. If it prints `PASS`, the pipeline
 works - you have already seen the thing you came to see.
+
+```bash
+make down    # stop the containers, keep the data
+make clean   # stop everything and DELETE the volumes, including ClickHouse
+```
+
+`make clean` really does delete the warehouse. On a laptop that is usually what
+you want. Anywhere else, read it twice.
 
 ## Seeing your own data go through
 
@@ -147,9 +155,9 @@ PY
 It will not appear instantly. The pipeline is asynchronous, Kafka most of all.
 A couple of seconds is normal.
 
-## Raw syslog, parsed per vendor
+## Raw syslog, parsed per device
 
-`make demo` streams Cisco ASA and FortiGate firewall logs into the running stack as raw syslog. dfe-transform-elastic works out which device sent each line, parses it and lands it in that vendor's own table. Palo Alto and Cisco IOS come back once [dfe-receiver#212](https://github.com/hyperi-io/dfe-receiver/issues/212) and [dfe-transform-elastic#133](https://github.com/hyperi-io/dfe-transform-elastic/issues/133) land.
+`make demo` streams Cisco ASA and FortiGate firewall logs into the running stack as raw syslog. dfe-transform-elastic works out which device sent each line, parses it and lands it in that device's own table. Palo Alto and Cisco IOS wait on [dfe-transform-elastic#133](https://github.com/hyperi-io/dfe-transform-elastic/issues/133).
 
 It needs a profile that runs dfe-transform-elastic per source, which is `single-kafka` (the default). On a clone with no stack running, `make demo` does the `make up` steps first. It refuses a profile without dfe-transform-elastic before it starts anything and never moves a running stack to another profile.
 
@@ -160,19 +168,17 @@ make demo DEMO_RATE=100        # replaces a running stream with a faster one
 make demo-stop                 # removes the whole demo, as does `make down`
 ```
 
-### One pack
-
 The demo is one set of pieces, listed in [`resources/demo/demo.json`](../resources/demo/demo.json). `make demo` installs all of it and `make demo-stop` removes all of it. A re-run replaces the pieces and never duplicates them, and a piece that fails to install takes the rest out again. `make up` installs none of it.
 
 | Piece | Where | What it is |
 |-------|-------|------------|
 | Sources | [`resources/demo/sources/`](../resources/demo/sources/) | One `POST /sources` body per file: the `demo-syslog` intake, the `cisco-asa` and `fortinet` tables, and two fetchers |
-| Fetchers | `wikipedia-recentchanges`, `component-releases` | Pull beside the receiver's push. `wikipedia-recentchanges` polls the MediaWiki recent changes API every 5 seconds, asking each window once (about 3 changes a second, with the first poll bringing in the last hour). `component-releases` takes the latest GitHub release of each public DFE component every 15 minutes, to stay inside GitHub's 60 unauthenticated requests an hour |
-| Archive | `demo-syslog` has `archive: true` | On a Kafka profile dfe-archiver writes the raw syslog lines to the `archiver-data` volume (`file:///var/lib/dfe-archiver/archive`). dfe-archiver has no retention of its own, so the pack runs a pruner that keeps the archive to 15 minutes and 200 MB. A gRPC profile runs no archiver, so there the Source is created without archiving. The archiver has to read the `DFE_ARCHIVER_` env names, which the archiver stack 2.2.1 pins (v1.7.39) does not, so on that stack the archive check fails and the demo removes itself |
-| Console | [`resources/demo/console/`](../resources/demo/console/) | A dashboard per source and one for the stack's health, and a saved search per source with a live tail. All are named `demo-` |
+| Fetchers | `wikipedia-recentchanges`, `component-releases` | Pull beside the receiver's push. `wikipedia-recentchanges` polls the MediaWiki recent changes API every 5 seconds, asking each window once, with the first poll bringing in the last hour. `component-releases` takes the latest GitHub release of each public DFE component every 15 minutes, to stay inside GitHub's 60 unauthenticated requests an hour |
+| Archive | `demo-syslog` has `archive: true` | On a Kafka profile dfe-archiver writes the raw syslog lines to the `archiver-data` volume (`file:///var/lib/dfe-archiver/archive`). dfe-archiver has no retention of its own, so the pack runs a pruner that keeps the archive to 15 minutes and 200 MB. A gRPC profile runs no archiver, so there the Source is created without archiving |
+| Console | [`resources/demo/console/`](../resources/demo/console/) | A dashboard per source and one for the stack's health, and saved searches with a live tail for each streamed source. All are named `demo-` |
 | Tables | `dfe.cisco-asa`, `dfe.fortinet`, `dfe.demo-syslog`, `dfe.component-releases`, `dfe.wikipedia-recentchanges` | `make demo-stop` leaves them, with their rows, because only the engine issues ClickHouse DDL and it never drops a table. The next `make demo` carries on in them, and `make clean` removes them with the volumes |
 
-Each vendor replays about 6,000 sample lines from [`resources/demo/events/<source>/`](../resources/demo/events/), ten minutes at the default rate before a line repeats, which `python3 resources/demo/events/generate.py` regenerates. The run turns on dfe-receiver's syslog listener (UDP and TCP on port 514) and recreates what that changes. It returns once every vendor table has gained rows and the archive holds a file, and leaves the stream running:
+Each device replays about 6,000 sample lines from [`resources/demo/events/<source>/`](../resources/demo/events/), ten minutes at the default rate before a line repeats, which `python3 resources/demo/events/generate.py` regenerates. The run turns on dfe-receiver's syslog listener (UDP and TCP on port 514) and recreates what that changes. It returns once every vendor table has gained rows and the archive holds a file, and leaves the stream running:
 
 ```text
 demo -   console demo-cisco-asa: http://localhost:8090/dashboards/<id>
@@ -190,7 +196,7 @@ demo - WARNING no rows in 'dfe.component-releases' yet. A fetcher's first poll w
 demo - PASS every vendor table gained rows and the archiver wrote files, ready to query in the console's Search. The stream runs until `make demo-stop` or a receiver restart
 ```
 
-`dfe.component-releases` fills about 15 minutes in, and the demo does not wait for it: an empty fetcher table only warns. A fetcher the profile cannot run or the engine cannot set up is skipped with a WARNING while the vendor demo runs on. A profile with no dfe-hyperdx gets no console pieces.
+`dfe.component-releases` fills about 15 minutes in, and the demo does not wait for it: an empty fetcher table only warns. A fetcher the profile cannot run or the engine cannot set up is skipped with a WARNING while the firewall stream runs on. A stack with the console's Search switched off gets no console pieces.
 
 `dfe.demo-syslog` holds the lines no detector claimed. The replay script comes from the dfe-transform-elastic release the stack pins, so the demo needs a release with agentless detection and stops before changing anything on one without it. A `make dev` stack takes `make demo DEV=1`, which reads the script from `DFE_SRC_ROOT` when that is set.
 
@@ -198,13 +204,14 @@ demo - PASS every vendor table gained rows and the archiver wrote files, ready t
 
 | Where | What |
 |-------|------|
-| http://localhost:3000 | DFE UI |
+| http://localhost:3000 | The DFE console |
 | http://localhost:8081 | Kafka UI (topics, consumer groups, lag) |
 | http://localhost:8123 | ClickHouse HTTP |
 | http://localhost:8003 | dfe-engine API |
 
-The console asks for a login; Kafbat, dfe-hyperdx and the ClickHouse port do not
-authenticate you as a person. `make creds` prints the console login again.
+The console asks for a login, and its Search views take the same one. Kafbat asks
+for none, and ClickHouse takes the password `make init` generated. `make creds`
+prints the console login again.
 
 The ingest ports bind all interfaces so anything can push to them. Everything
 else -- every web UI included -- binds loopback by default, so the four links
@@ -213,18 +220,6 @@ on every interface, and needs `DFE_EXTERNAL_ORIGIN` set to the address browsers
 use -- `make` stops and says so otherwise. Read the auth section of
 [operating.md](operating.md) before you widen anything.
 
-## Stopping
-
-```bash
-make down    # stop the containers, keep the data
-make clean   # stop everything and DELETE the volumes, including ClickHouse
-```
-
-`make clean` really does delete the warehouse. On a laptop that is usually what
-you want; anywhere else, read it twice.
-
-## What this is and is not
-
 It **is** the same image, from the same registry, that a Kubernetes deployment
 would run. There is no separate "demo build" - what you are evaluating is the
 real thing, packaged differently.
@@ -232,11 +227,11 @@ real thing, packaged differently.
 It is **not** secured, though it is not open either. `make init` mints two
 logins -- `admin` for the console and the engine API, and `breakglass` for
 recovery -- and generates ClickHouse's password with them. `make creds` prints
-the admin one on a terminal and names the `.env` key holding the other;
+the admin one on a terminal and names the `env/engine.env` key holding the other.
 `access-summary.md`, written beside `.env` and readable only by you, carries
-both. Kafbat and dfe-hyperdx answer to anyone who can reach them on these profiles,
-the opt-in `auth` profile puts an OIDC sign-in in front of both, and nothing here
-serves TLS until you turn [console TLS](configuration.md#console-tls-opt-in) on.
+both. Kafbat answers anyone who can reach it. The `auth` profile adds an OIDC
+sign-in to Kafbat and the console's Search origins. Nothing here serves TLS until
+you turn [console TLS](configuration.md#console-tls-opt-in) on.
 That is fine on your machine and on a throwaway demo box. It is not
 fine on anything reachable by people you have not met.
 

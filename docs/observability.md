@@ -14,11 +14,11 @@ Three surfaces, three different questions.
 
 | Surface | Answers | Where |
 |---|---|---|
-| Health endpoints | is this process alive, can it work right now | `/livez`, `/readyz` |
+| Health endpoints | is this process alive, and is it ready to work | `/livez`, `/readyz` |
 | Self-telemetry | what has the stack been doing | the `dfe.otel_*` tables |
-| The self test | did an event actually get through | `make post` |
+| The self test | did an event actually get through | `make post`, in [self-test.md](self-test.md) |
 
-Ingested data is a different question -- [troubleshooting.md](troubleshooting.md).
+Ingested data is a different question -- [troubleshooting.md](troubleshooting.md). What `make post` claims is in [self-test.md](self-test.md), and the components and transports in [architecture.md](architecture.md).
 
 ## The health surface is three paths, with no aliases
 
@@ -37,15 +37,15 @@ aimed at one.
 | otel-collector | 13133 | the `health_check` extension |
 | dfe-hyperdx | 8000 | `/health` -- upstream HyperDX's own convention |
 
-These bind `DFE_BIND_HOST` (`127.0.0.1`), so curl them from the box, not your
-laptop.
+The metrics ports bind `DFE_BIND_HOST` and the engine, proxy and dfe-hyperdx
+ports `DFE_UI_BIND_HOST`, both `127.0.0.1` by default, so curl them from the box,
+not your laptop.
 
 On dfe-ui, an unknown path returns the 200 app shell rather than a 404 -- Next.js
 routes anything it does not recognise to the page. Only the three paths above are
 real there.
 
-## Compose picks liveness or readiness for you
-
+Compose picks liveness or readiness for you.
 Compose has no readiness condition. `depends_on: service_healthy` is the only
 startup gate, so anything others wait on must report READINESS.
 
@@ -54,6 +54,7 @@ startup gate, so anything others wait on must report READINESS.
 | dfe-loader | `/readyz` | receiver and fetcher wait on it |
 | dfe-engine | `/readyz` | loader and proxy wait on it, and it provisions their schema |
 | dfe-proxy, dfe-hyperdx-proxy | Envoy admin `/ready` on 9901 | no curl in the image, so bash `/dev/tcp` sends the request |
+| dfe-hyperdx | `/health` on 8000 | its own convention, through `node`, as the image has no curl |
 | everything else | `/livez` | nothing gates on them |
 | otel-collector | none | distroless, so nothing inside can probe `:13133` |
 
@@ -62,7 +63,7 @@ the receiver starts against it.
 
 Kubernetes has separate probes and ignores `HEALTHCHECK`, so it never chooses.
 
-## Self-telemetry is pushed, never scraped
+## Self-telemetry is pushed, bar four pulls
 
 The stack's own telemetry leaves by a different door from the data it ingests, so
 a broken ingest pipeline cannot take the reporting on it down too.
@@ -75,6 +76,7 @@ flowchart LR
     chsrv[(ClickHouse system tables)] -->|sql_query pull| col
     host("docker host /proc") -->|host_metrics pull| col
     col -->|self-telemetry :8888| col
+    hdxm["dfe-hyperdx :8000"] -->|prometheus scrape| col
     col -->|clickhouse exporter| ch[(dfe.otel_* tables)]
     ch -.->|queries it| hdx["dfe-hyperdx"]
 
@@ -86,20 +88,20 @@ Services PUSH. dfe-hyperdx reads ClickHouse rather than receiving anything -- th
 fork ships no OTLP receiver, so the collector's exporter writes the tables it
 queries. This is the same chain Kubernetes runs.
 
-Three of the collector's inputs are PULLS, not pushes, because their sources cannot
-push. `host_metrics` reads the docker host's CPUs for the usage readings below.
+Four of the collector's inputs are PULLS, because their sources cannot push. `host_metrics` reads the docker host's CPUs for the usage readings below.
 `sql_query` reads ClickHouse's own `system.metrics`, `system.events` and
 `system.parts` on a 30s interval -- the `:9363` Prometheus endpoint is not exposed
 by the stack's image, and these system tables are readable on any provider,
 managed ClickHouse included. The `prometheus` receiver scrapes the collector's own
-`service.telemetry` endpoint on loopback, which is what puts queue depth and
-refused/failed counts (`otelcol_*`) into the same pipeline as everything else.
+`service.telemetry` endpoint on 127.0.0.1:8888, which puts queue depth and
+refused/failed counts (`otelcol_*`) into the same pipeline, and dfe-hyperdx's API
+at `dfe-hyperdx:8000`. `sql_query/usage` is the fourth, below.
 
 `sql_query` and `prometheus` are what the pre-canned DFE ClickHouse Health and DFE Pipeline Health dashboards read. Without them those dashboards render empty here while working on Kubernetes.
 
-`/metrics` is a SEPARATE pathway, for anything that scrapes. This repo ships
-nothing that does. Enabling push does not disable it: a Prometheus estate and an
-OTLP one are both served.
+`/metrics` is a SEPARATE pathway, for anything that scrapes. Nothing in this
+repo scrapes a DFE app's `/metrics`, and enabling push does not disable it, so a
+Prometheus estate and an OTLP one are both served.
 
 dfe-engine's Overview counts cores from the usage rollup dfe-schemas declares. That rollup reads the Kubernetes metric names, so the collector reports Compose in it:
 
@@ -115,9 +117,11 @@ All three carry `k8s.node.name`, the docker host's name, which joins a service's
 - A one-shot (`restart: "no"`) exits once its job is done and does not count. A service with no CPU limit (`DFE_SERVICE_CPUS=0`, say) counts every core on the host.
 - `make dev`, `ci`, `up`, `infra` and `apply` read the limits from the compose model of what `up` starts and hand them to the collector as `DFE_USAGE_CPU_LIMITS` and `DFE_USAGE_NODE_NAME`. A collector started by a plain `docker compose up` has neither, so cores deployed reads as not measured. `make apply` recreates the collector when an added or deleted source moved them.
 
-## Turning self-monitoring on and off
+## What reports, and turning it off
 
 Every profile declares `otel: true`. `DFE_OTEL_ENABLED=false` turns it off.
+Container stdout reaches `dfe.otel_logs` through Docker's fluentd log driver
+unless `DFE_CONTAINER_LOGS_ENABLED=false`, below.
 
 | Variable | Default | Effect |
 |---|---|---|
@@ -135,21 +139,21 @@ The collector's OTLP ports are NOT published. Self-monitoring stays on the
 Compose network. Note `4317`/`4318` on the host are dfe-receiver's OTLP INGEST
 edge -- data coming in from your estate, pointing the other way.
 
-## What reports
+What reports:
 
 | Component | Pushes? | Why |
 |---|---|---|
-| the six Rust services | metrics and traces, when built against scalo >= 2.10.11 | scalo's `metrics` feature pulls `otel-metrics` and `otel-tracing`, so OTLP export is on by default (scalo-rs#30) |
-| dfe-engine | metrics and traces, on the `opentelemetry` backend `env/engine.env` ships | scalo-py has an exporter. Its CLI defaults the backend to `opentelemetry` from v2.29.14 (scalo-py#11) |
+| the seven Rust services | metrics and traces | scalo's `metrics` feature pulls `otel-metrics` and `otel-tracing`, so OTLP export is on by default (scalo-rs#30) |
+| dfe-engine | metrics and traces, on the `opentelemetry` backend `env/engine.env` ships | scalo-py's exporter, whose CLI defaults the backend to `opentelemetry` (scalo-py#11) |
 | dfe-hunt-runner | metrics, as `dfe_hunt_*` | it has no listener to scrape and its default `opentelemetry` backend pushes on `OTEL_EXPORTER_OTLP_ENDPOINT` alone |
-| dfe-ui | no metrics | `@opentelemetry/api` only, no SDK. Serves `/metrics` on `:3000` |
+| dfe-ui | metrics, over OTLP/HTTP | `@opentelemetry/sdk-metrics` from its `instrumentation.ts`, on `DFE_OTEL_EXPORTER_HTTP_ENDPOINT`. It also serves `/metrics` on `:3000`. The self test does not require its rows (`OTEL_PUSHER_PREFIXES` in `scripts/post.py`) |
 | every DFE service | LOGS, via Docker's log driver | nothing in the stack exports logs over OTLP, so stdout is shipped instead -- see below |
 
 `OTEL_EXPORTER_OTLP_ENDPOINT` is set on every service regardless, so a rebuilt
 component starts reporting with no config change here.
 
 Each Rust service pushes the scalo chassis set -- the `worker_pool_*` family,
-`process_*` and `container_*` -- plus whatever it defines itself; the loader adds
+`process_*` and `container_*` -- plus whatever it defines itself, and the loader adds
 `rdkafka_*`. What decides whether a service reports is the scalo version its image
 links, not this repo's configuration.
 
@@ -192,46 +196,3 @@ what it is sent. Without an ack the driver counts those lines as delivered, and 
 service starting beside the collector loses its startup lines.
 
 Of the host's own metrics only its CPUs are collected, for the usage readings.
-
-## What a passing self test proves
-
-`make post` makes up to seven claims and each one the profile can make must hold:
-
-- **Ingest.** Three marked events posted at the profile's ingest edge come back
-  as those exact rows in `dfe.main` inside 60s.
-- **Self-monitoring**, when a collector is running. Rows in the `dfe.otel_*` tables
-  NEWER than five minutes, and a row in `dfe.otel_logs` under each of
-  `dfe-engine`, `dfe-loader` and `dfe-receiver` written since that container
-  started. On the gRPC tier the loader logs at startup and is quiet after it, so
-  a five-minute window can age its only lines out while the earlier claims run.
-  Every service that pushes has fresh metric rows under its own name, and the hunt
-  runner also reports `dfe_hunt_backlog` and `dfe_hunt_tick_duration_seconds`.
-- **Observability**, when dfe-hyperdx is running. Its API returns the six seeded
-  sources and at least one provisioned dashboard, read through the proxy that
-  gives it an identity.
-- **Console.** Those same marked rows read back through the engine query API.
-- **Hunts.** A hunt created while the runner is up is picked up without a
-  restart, and a run queued through the API detects exactly the events its rule
-  matches and none of its near misses.
-- **Subscription**, where the tier has a bus. The loader is fetching at least one
-  topic. It skips on the gRPC tiers.
-- **Routing**, where the engine renders the tier's app config. A source created
-  through the API reaches the running receiver, and a record matching its rule
-  lands in a table of its own. The source is named for the run (`postroute`
-  and 8 hex digits) and deleted afterwards, then its table is dropped, because the engine's source delete leaves the table. A run first sweeps the `postroute` sources and tables older than an hour, which a killed run left.
-
-Once every claim has run, the three ingest rows are deleted: a lightweight `DELETE`, or a mutation (`ALTER TABLE ... DELETE`) on a table whose projections refuse one. A delete that does not finish within 60s is reported, never failed.
-
-The freshness window is what makes the second claim mean "streaming now" rather
-than "streamed once". The first two are the pair the Kubernetes bootstrap smoke
-asserts as CORE 1 and CORE 2.
-
-`complete-single-node-stack` asserts them, plus the HTTP surface through the
-proxy. Outcomes and opt-out:
-[operating.md](operating.md#the-power-on-self-test-and-what-a-pass-proves).
-
-## Related
-
-- [operating.md](operating.md) -- exposure, limits, secrets, upgrades, the dial
-- [troubleshooting.md](troubleshooting.md) -- reading stack state, diagnosing failures
-- [architecture.md](architecture.md) -- components, transports, how data moves

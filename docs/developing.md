@@ -96,9 +96,9 @@ one command from having one.
 
 The two accounts are durable in different ways, deliberately. The engine issues `admin` from `env/engine.env` with a forced change at first login, which `make post` makes and records back in `env/engine.env`. A new value there is a rotation. The last issued value or the account's current password re-issues nothing. `breakglass` is hashed into the engine's deploy repo on its first boot and the variable is ignored from then on, so it still works when the engine, the UI and `env/engine.env` are all gone. `make creds` says where its password lives rather than printing it. Once the setup wizard has retired `admin`, `make post` skips the checks that log in and still proves the rest.
 
-The engine **refuses to start** on an empty or `changeme` `DFE_ENGINE_AUTH_LOCAL_ADMIN_PASSWORD` unless `DFE_ENGINE_ENV` names a dev posture. `make check-compose` asserts the compose file never hands it one, so that is caught before a container crash-loops.
+The engine **refuses to start** on an empty or `changeme` `DFE_ENGINE_AUTH_LOCAL_ADMIN_PASSWORD` unless `DFE_ENGINE_ENV` names a dev environment. `make check-compose` asserts the compose file never hands it one, so that is caught before a container crash-loops.
 
-`make dev` is the exception and says so: it writes the known default password into `env/engine.env` and `DFE_ENGINE_ENV=dev` into `.env`, because a dev loop should not need a lookup to log in. The engine accepts the default in that posture and makes the admin replace it at first login. A `.env` already on a dev posture keeps the replacement `make post` recorded. It **refuses** (exit 2) to run when `.env` already declares a non-dev `DFE_ENGINE_ENV`: downgrading a deployment's posture and overwriting its admin password is not a build target's call. Start that stack with `make up`.
+`make dev` is the exception and says so: it writes the known default password into `env/engine.env` and `DFE_ENGINE_ENV=dev` into `.env`, because a dev loop should not need a lookup to log in. The engine accepts the default in that environment and makes the admin replace it at first login. A `.env` already in a dev environment keeps the replacement `make post` recorded. It **refuses** (exit 2) to run when `.env` already declares a non-dev `DFE_ENGINE_ENV`: downgrading a deployment's environment and overwriting its admin password is not a build target's call. Start that stack with `make up`.
 
 When it does rewrite, it copies each file it replaces to `<name>.bak-<utc>` beside it first, mode 0600, then prints the paths: a minted password is gone once overwritten. A run with nothing to change writes neither.
 
@@ -109,7 +109,7 @@ make dev              # local images, DFE_ENGINE_ENV=dev, known default password
 make dev AUTH=real    # local images, minted password, DFE_ENGINE_ENV=production
 ```
 
-## Dev mode compiles your source; registry mode pulls GHCR
+## Dev mode compiles your source, registry mode pulls GHCR
 
 ```bash
 make dev    # build :local images from local component source, then start
@@ -143,7 +143,7 @@ flowchart LR
     own --> img
 ```
 
-**This repo owns the build; the component owns the runtime.** The shared builder
+**This repo owns the build, and the component owns the runtime.** The shared builder
 image is where the toolchain, hyperi-ci's static C library prefix (librdkafka,
 OpenSSL, zstd, zlib) and the pinned Rust version live, so every component compiles
 the same way and its runtime image installs none of those libraries. Packaging then goes
@@ -188,9 +188,8 @@ Source comes via git, never an assumed directory layout:
   fails the build rather than silently building someone's stray edits.
 - **Local work -- set `DFE_SRC_ROOT`.** Point it at the directory holding your
   `dfe-*` checkouts (in `.env` or the `make` command line) and the builder uses
-  those working trees as they stand, uncommitted changes included. This is the
-  explicit replacement for the old sibling-checkout assumption -- nothing is
-  inferred from where this repo happens to live.
+  those working trees as they stand, uncommitted changes included. Nothing is inferred
+  from where this repo lives.
 
 `make stack`'s local-render path is explicit the same way: it uses a dfe-infra
 checkout only when `DFE_INFRA_DIR` names one, and otherwise pulls the signed OCI
@@ -204,7 +203,7 @@ make dev LIVE_UI=1   # dfe-ui runs `next dev` over $DFE_SRC_ROOT/dfe-ui
 
 `LIVE_UI=1` layers `compose/live-ui.yml`, which runs dfe-ui as `next dev` over your checkout instead of building its image. It still sits behind dfe-proxy on `DFE_UI_PORT`, so login, the engine API and the dfe-hyperdx embed work as they do on any stack. A saved edit reaches the browser through hot reload, which rides the websocket upgrade the proxy already allows. `docker compose logs -f dfe-ui` shows the dev server's output.
 
-The first start installs dependencies into the checkout, about 1 GB of yarn cache under its gitignored `.yarn/`; later starts install from that cache in seconds. Each route compiles on its first hit. The login page compiles as the dev server starts, so the first visit stays inside dfe-proxy's 15s route timeout.
+The first start installs dependencies into the checkout, a yarn cache under its gitignored `.yarn/`, and later starts install from that cache in seconds. Each route compiles on its first hit. The login page compiles as the dev server starts, so the first visit stays inside dfe-proxy's 15s route timeout.
 
 Next.js only accepts hot-reload connections from `localhost` or the host it serves on. The console does not finish loading without one. Live mode serves on the hostname `DFE_EXTERNAL_ORIGIN` names, so the console works there and on `localhost`. An origin that is an IP address cannot be served on by name, so browse that stack by hostname or on `localhost` instead.
 
@@ -219,7 +218,7 @@ Live mode needs a Linux host: on macOS the container's install would swap the na
 ## Picking a profile
 
 `service_profiles.yaml` decides which DFE services run and which config each
-mounts. `active_profile` is the default; `DFE_PROFILE` overrides it for one
+mounts. `active_profile` is the default, and `DFE_PROFILE` overrides it for one
 invocation.
 
 Every profile is a whole stack named `<tier>-<transport>`: `slim` runs the core data path, `single` adds the per-source apps, over `grpc` or `kafka`. Only `single-kafka` runs the archiver. Which profile runs what: [profiles.md](profiles.md). There is no `scale` tier: Compose cannot run an HA broker or a ClickHouse cluster.
@@ -233,8 +232,9 @@ DFE_HYPERDX_ENABLED=false make dev    # skip the dfe-hyperdx observability stack
 make dev SERVICES="dfe-loader"        # start a subset of the resolved profile
 ```
 
-Those four flags mirror the `clickhouse`, `core`, `kafbat` and `hyperdx` keys a
-profile may declare, and they win over it -- `.env` is what a deploy writes, the
+`DFE_CLICKHOUSE_ENABLED`, `DFE_CORE_ENABLED`, `KAFBAT_ENABLED`, `DFE_HYPERDX_ENABLED`
+and `DFE_OTEL_ENABLED` mirror the `clickhouse`, `core`, `kafbat`, `hyperdx` and
+`otel` keys a profile may declare, and they win over it -- `.env` is what a deploy writes, the
 profile is the committed setting. Leave them unset and the profile decides.
 
 Two of those need a warning.
@@ -246,35 +246,10 @@ and dead-letters them, so the data path looks broken when it is really unprovisi
 Use it when you are working on the UI or proxy against tables that already exist,
 not on a fresh stack.
 
-`make dev SERVICES="..."` no longer starts a subset on top of a running stack:
-`dev` depends on `down`, which now tears down every profile first.
+`make dev SERVICES="..."` does not start a subset on top of a running stack,
+because `dev` depends on `down`, which tears down every profile first.
 
 A name in `SERVICES` that is not part of the resolved stack is a hard error, not a silent no-op. Adding a config to a profile that does not exist on disk is caught too: `resolve_profile.py` validates every `config_path` before writing `.tmp/profile.mk`.
-
-## Seeding a starter set
-
-`make sources`, `make rules` and `make hunts` create a starter set of detection content on a running stack through the engine API, from `resources/seed/`. `make hunts` also creates the orgs and rules, because the engine refuses a hunt without them. A rule over an undeployed source reads nothing until its source is deployed. A hunt whose table does not exist is not created, because the runner would fail every run. `make hunts` creates it once `make sources` has made the table, on a profile that runs the source.
-
-| Target | What it creates |
-|---|---|
-| `make sources` | `aws-cloudtrail`, `aws-guardduty` and `aws-securityhub` (polled by the one dfe-fetcher, which takes a single `aws` source until hyperi-io/dfe-fetcher#289, so the other two are skipped with the engine's reason) and `syslog`, which takes any record sent to the receiver with `_source: syslog`. Each lands in `dfe.<source>`. Sources a profile cannot run are skipped, so [`slim-grpc`](profiles.md#which-profile-runs-what) gets `syslog` alone |
-| `make rules` | `aws-guardduty-high-severity`, matching a GuardDuty finding rated 7 or above |
-| `make hunts` | The org, that rule and the hunt `aws-guardduty-high-severity` once `dfe.aws-guardduty` exists, running it every five minutes into `dfe.detection` |
-| `make events` | Two fake GuardDuty findings from `resources/seed/events/`, rated 8.0 and 2.0, so the hunt's next run detects the first and leaves the second |
-| `make orgs` | The org `default`, for records with no tenant id, which is where `make events` lands |
-| `make accounts` | That org, then the admin account `ops` in `dfe-admins` |
-
-`make events` posts its records to dfe-receiver tagged with the source each file is named for, which routes them over the stack's transport, Kafka or gRPC. It waits until the source's table holds them and fails if they do not arrive, so it needs the source deployed by `make sources`, dfe-receiver and an engine that renders the apps' config. It skips the records of a source `make sources` skipped. It sends the records again on every run and needs no login. The hunt that finds them runs in dfe-hunt-runner.
-
-A run of any other target creates only what the engine lacks and leaves an object it already holds as it is, so editing a seed file changes nothing on a stack that has the object. Delete the object and the next run creates it from the file. A source is deployed as it is created, which creates its table. A source the engine holds undeployed is deployed. `make sources` ends by asking the engine to bring every app in step with the sources, which retries a deploy whose apps did not take it.
-
-Every target but `make events` logs in as `admin` with `DFE_ENGINE_AUTH_LOCAL_ADMIN_PASSWORD` from `env/engine.env` and replaces an issued password as `make post` does. Once the setup wizard has retired `admin`, they ask at the terminal for an account that can write what the target seeds. They ask once per run and store the login nowhere. Without a terminal they stop. An account still on the password it was issued has to change it in the console first.
-
-Every fetcher source runs in the one `dfe-fetcher` container, from the file the engine merges. The deploy prints the command that applies a source the running fetcher cannot take in place, such as `restart required: make apply SERVICES=dfe-fetcher`. The fetcher reads `AWS_ACCESS_KEY_ID` and `AWS_SECRET_ACCESS_KEY` from `env/fetcher.env` and cannot fetch until both are set. Compose reads that file only when it creates a container, so set the keys before `make apply`, or run it again after setting them.
-
-## Seeding orgs and accounts
-
-`make accounts` creates the orgs first, because the engine refuses an account naming an org it does not hold. An account file carries no password. A new account gets a 32-character one, recorded in `env/engine.env` as `DFE_SEED_ACCOUNT_<USERNAME>_PASSWORD` before the account is created. `make creds` hands it over the way it hands over `admin`. A volume wipe deletes the orgs and accounts, so run both targets again after one. An account comes back on the password already recorded.
 
 ## Proving the pipeline works
 
@@ -313,7 +288,7 @@ The runner brings ClickHouse and `dfe-engine` up first and gates on the engine's
 health, because the engine provisions `dfe.main` and registers the schemas the
 loader pre-warms. Then it asserts **two** things per test: the row-count delta
 from a per-test baseline, and that those rows carry this run's marker in `_tags`.
-The delta alone would pass on somebody else's rows; the marker alone would not
+The delta alone would pass on somebody else's rows, and the marker alone would not
 notice a partial load. A marker column it cannot locate is reported, never
 silently treated as a pass.
 
@@ -336,7 +311,7 @@ Two things about the runner worth knowing before you debug it:
 
 - **It waits on named services, never on a whole profile.** `docker compose up
   --wait` counts a container that EXITS as a failure even on exit 0, and the
-  topic-init services are one-shots that must exit. Waiting on the profile sweeps
+  init one-shots must exit. Waiting on the profile sweeps
   them in and fails regardless of broker health.
 - **It deletes the `_load` sibling of every expected `_land` topic before each run.** Broker volumes outlive containers, so a `main_load` left by any transform run suppresses `main_land` for every non-transform loader thereafter. See [known-issues.md](known-issues.md#a-_load-topic-changes-what-the-loader-reads). Deleting it per run makes a run depend on the test definition, not on broker history.
 
@@ -421,7 +396,7 @@ that is a finding about the console rather than about the pipeline.
 
 `make proof` runs the filebeat and vector cases on every stack version, each transform checkout cloned at the tag the stack pins, so a pin of either transform is proven through its data path.
 
-## Static checks
+### Static checks
 
 `make check` runs what CI runs, so a green local run means a green pipeline.
 
@@ -429,11 +404,11 @@ that is a finding about the console rather than about the pipeline.
 |---|---|
 | `make check-compose` | `docker compose config` on the registry, dev, `LIVE_UI=1` and `LOCAL=` paths, against both Kafka backends, plus the CPU floor and dev-overlay coverage assertions |
 | `make check-hardfail` | asserts an unpinned checkout refuses to resolve instead of pulling `latest` |
-| `make check-dockerfile` | hadolint on `docker/dfe-rust-builder.Dockerfile` |
-| `make check-docs` | asserts every relative link across the README and the five docs resolves |
+| `make check-dockerfile` | hadolint on `docker/dfe-rust-builder.Dockerfile` and `docker/dfe-docker.Dockerfile` |
+| `make check-docs` | asserts every relative link across the README and every page under `docs/` resolves |
 | `make check-proxy` | `envoy --mode validate` on both proxy configs and their console TLS variants, on the Envoy the stack pins |
-| `make check-python` | `ruff check` and `ruff format --check` on `scripts/` |
-| `make check-tests` | `pytest scripts/tests` -- unit tests over the credential helpers |
+| `make check-python` | `ruff check` and `ruff format --check` on `scripts/`, `ops/` and the demo packs |
+| `make check-tests` | `pytest scripts/tests` -- unit tests over the helper scripts |
 | `make check-locks` | `uv lock --check` on each script that declares packages inline, so a pin moved without `uv lock --script <script>` fails here rather than mid-suite |
 
 `check-compose` is hermetic: it reads the mandatory `${VAR:?}` keys out of the
@@ -443,7 +418,7 @@ resolves. It also refuses a `DFE_SERVICE_CPUS` under 2.0 on any service that gat
 on `/readyz` -- see [operating.md](operating.md#dfe_service_cpus-has-a-floor-of-20-and-it-is-not-about-speed)
 for why a lower ceiling takes health endpoints dark.
 
-`check-docs` resolves the file half of every relative link; it does not fetch
+`check-docs` resolves the file half of every relative link. It does not fetch
 external URLs and does not check `#anchors`, so a live file with a stale anchor
 still passes.
 
@@ -453,9 +428,25 @@ network the first time. The rest need none.
 
 `check-proxy` validates on the Envoy in `DFE_PROXY_VERSION`. With that unset it asks `scripts/stack.py --print DFE_PROXY_VERSION` for the one the stack at `VERSION` pins, falling back to `deployment.example.yaml`'s `version.pin`. That lookup reads the stack manifest anonymously through `oras`. The check mints a throwaway P-384 certificate with the host's `openssl` for the TLS variants.
 
-## Port collisions on a shared dev host
+## What bites
 
-The broker publishes one host port, `19092`. A shared dev box very often already runs a Kafka or Redpanda on `9092`, which does not clash because the in-network listener `kafka:9092` is not published. If something holds `19092`, move it:
+**`make down` tears down every profile, not just the active one.** It runs `docker compose -f docker-compose.yml --profile "*" down --remove-orphans` and keeps volumes. A profile-scoped `down` would leave the archiver running after a switch from `single-kafka` to `slim-kafka`. A stray like that is why the self test asks the resolved profile what should be there instead of probing ports.
+
+The consequence to know: because `make dev` and `make ci` depend on `down`, a
+`make dev SERVICES="dfe-loader"` does not restart just that service on top of a
+running stack -- everything is stopped first.
+
+**`.env` shadows a command-line environment variable through make.** The Makefile does `-include .env`. GNU make re-exports a variable that came from the environment using the *makefile's* value. So with `DFE_PROFILE` set in `.env`, `DFE_PROFILE=single-kafka make dev` silently uses the `.env` value. If an override appears to do nothing, check `.env` first. Comment the key out there or use `make -e`.
+
+**Compose `environment:` beats `env/<service>.env`.** A key listed in a service's
+`environment:` block in `docker-compose.yml` wins over the same key in the
+per-service env file. `LOG_LEVEL` is forwarded by compose, so setting it in
+`env/receiver.env` does nothing, while a key compose does not forward reaches the
+container fine.
+
+**A one-shot's `sh -c` command is a list of one.** Compose splits a scalar `command:` into argv, so `sh -c` would run only its first word.
+
+**Port collisions on a shared dev host.** The broker publishes one host port, `19092`. A shared dev box very often already runs a Kafka or Redpanda on `9092`, which does not clash because the in-network listener `kafka:9092` is not published. If something holds `19092`, move it:
 
 ```bash
 make test-e2e KAFKA_PLAINTEXT_HOST_PORT=29192
@@ -473,7 +464,7 @@ make test-e2e E2E_TESTS="simple-receiver-to-loader-grpc rules-and-hunts"
 The same reasoning applies to ClickHouse (`CLICKHOUSE_HTTP_PORT`,
 `CLICKHOUSE_NATIVE_PORT`) and every `*_PROMETHEUS_PORT`: services in the stack
 dial ClickHouse on 8123/9000 whatever its host publish is. The
-`CLICKHOUSE_EXTERNAL_*_PORT` pair is not a host port; it is only for an
+`CLICKHOUSE_EXTERNAL_*_PORT` pair is not a host port. It is only for an
 external `CLICKHOUSE_HOST`.
 
 `make dev` and `make ci` try to bind every host port the resolved stack publishes before starting and refuse with the variable to set for each one already taken (scripts/port_check.py).
@@ -483,24 +474,6 @@ Beside another stack on the same daemon, ports are not enough, because every
 and `DFE_E2E_COMPOSE_FILES` naming an extra compose file (`:`-separated) the
 suite chains onto every `up`, one that re-prefixes each `container_name`.
 
-## Sharp edges
-
-**`make down` tears down every profile, not just the active one.** It runs `docker compose -f docker-compose.yml --profile "*" down --remove-orphans` and keeps volumes. A profile-scoped `down` would leave the archiver running after a switch from `single-kafka` to `slim-kafka`. A stray like that is why the self test asks the resolved profile what should be there instead of probing ports.
-
-The consequence to know: because `make dev` and `make ci` depend on `down`, a
-`make dev SERVICES="dfe-loader"` no longer restarts just that service on top of a
-running stack -- everything is stopped first.
-
-**`.env` shadows a command-line environment variable through make.** The Makefile does `-include .env`. GNU make re-exports a variable that came from the environment using the *makefile's* value. So with `DFE_PROFILE` set in `.env`, `DFE_PROFILE=single-kafka make dev` silently uses the `.env` value. If an override appears to do nothing, check `.env` first. Comment the key out there or use `make -e`.
-
-**Compose `environment:` beats `env/<service>.env`.** A key listed in a service's
-`environment:` block in `docker-compose.yml` wins over the same key in the
-per-service env file. `LOG_LEVEL` is forwarded by compose, so setting it in
-`env/receiver.env` does nothing; a key compose does not forward reaches the
-container fine.
-
-**A one-shot's `sh -c` command is a list of one.** Compose splits a scalar `command:` into argv, so `sh -c` would run only its first word.
-
 **A build failure in dev mode is usually a component-repo problem.** The builder
 compiles from staged source with no `target/` -- it uses a cache mount rather than
 your local build artefacts, so a first build after a toolchain change is slow, and
@@ -508,6 +481,7 @@ a compile error is yours, not the harness's.
 
 ## Related
 
+- [seeding.md](seeding.md) -- the starter sources, rules, hunts, orgs and accounts
 - [architecture.md](architecture.md) -- components, transports, how data moves
 - [observability.md](observability.md) -- health surface, self-telemetry, the self test
 - [configuration.md](configuration.md) -- every variable, port and image
