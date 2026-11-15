@@ -278,7 +278,7 @@ The AWS **region** and poll interval are not environment variables: they are lit
 | `DFE_RECEIVER_SYSLOG_TLS_PORT`                   | Host TCP port for the receiver's syslog over TLS listener (container port 6514)      | unset, unpublished                                                  |
 | `DFE_RECEIVER_SYSLOG_UDP_PORT`                   | Host UDP port for the receiver's syslog listener (container port 514)                | unset, unpublished                                                  |
 
-Setting a listener's port key publishes it through a fragment `make` writes, so a raw `docker compose` outside `make` does not publish it. The listener still has to be enabled in the receiver's config, such as `DFE_RECEIVER_GRPC__ENABLED=true` in `env/receiver.env`. Syslog takes `DFE_RECEIVER_SYSLOG__ENABLED=true`, and over plain UDP or TCP also `DFE_RECEIVER_SYSLOG__ACCEPT_UNAUTHENTICATED=true`, because those senders have no handshake to authenticate at. Flow takes `DFE_RECEIVER_FLOW__ENABLED=true`.
+Setting a listener's port key publishes it through a fragment `make` writes, so a raw `docker compose` outside `make` does not publish it. The listener still has to be enabled in the receiver's config, such as `DFE_RECEIVER_GRPC__ENABLED=true` in `env/receiver.env`. Syslog takes `DFE_RECEIVER_SYSLOG__ENABLED=true` and `DFE_RECEIVER_SYSLOG__ACCEPT_UNAUTHENTICATED=true`. Its UDP and plain TCP listeners bind whenever syslog is on and have no handshake to authenticate at, so the receiver refuses to start without the second key, even when only the TLS port is published. Flow takes `DFE_RECEIVER_FLOW__ENABLED=true`.
 
 A host port under 1024, such as 514, needs a Docker daemon allowed to bind it. Rootless Docker is not, so pick a high port such as 1514 there.
 
