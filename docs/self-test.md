@@ -60,7 +60,7 @@ Tunables: `DFE_POST_HOST` (default `localhost`), `DFE_POST_DATABASE` (`dfe`), `D
 
 - FAIL on weak secrets: a key in `WEAK_SECRET_DEFAULTS` (`scripts/post.py`) that a running service reads is unset or at its default, or the bundled ClickHouse has no password. Run `make init`.
 - FAIL, schema not converged: dfe-engine did not report its `schema` readiness check true within 300 seconds. `GET /api/v1/system/schema` on the engine names the object that failed.
-- SKIP, schema convergence not checked: the engine names no `schema` check on `/readyz` and answers 404 on `/api/v1/system/schema`, as every engine before v1.21.0 does. The rest of the run still asserts the rows land.
+- SKIP, schema convergence not checked: the engine names no `schema` check on `/readyz` and answers 404 on `/api/v1/system/schema`, as an engine that predates the schema check does. The rest of the run still asserts the rows land.
 - FAIL, not ready: the profile declares an ingest component that never became ready within 90 seconds. A skip is a different outcome.
 - FAIL, marker unreadable: rows arrived but the marker could not be read back, so the schema may not carry `_tags`. It refuses to claim a check it did not make.
 - SKIP: the profile has no ingest component at all, so there is no ingest path to send a row through. A run in which every claim skipped fails, because it proved nothing.
