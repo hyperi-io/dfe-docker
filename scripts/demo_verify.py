@@ -573,15 +573,29 @@ def check_parsed(*, pack: Pack, stack: Stack) -> Result:
 
 
 def check_unclaimed(*, pack: Pack, stack: Stack) -> Result:
-    """The intake's own table and the default table hold nothing."""
-    # A source waiting on a fix lands in the default table until it is made, so that table is not read
-    tables = [
-        *([pack.intake] if pack.intake else []),
-        *([] if pack.waiting_sources else [DEFAULT_TABLE]),
+    """The intake's own table and the default table hold nothing, bar rows of a source waiting on a fix, and no waiting source has its own rows yet."""
+    # A waiting source lands in the default table until the fix ships, so only its rows are left out of the count
+    leave_out = ""
+    for source in pack.waiting_sources:
+        table_ref(table=source)
+        leave_out += f" AND NOT startsWith(toString(_source), '{source}')"
+    tables = [*([pack.intake] if pack.intake else []), DEFAULT_TABLE]
+    queries = [
+        f"SELECT count() FROM {table_ref(table=table)}"
+        + (f" WHERE 1{leave_out}" if table == DEFAULT_TABLE else "")
+        for table in tables
     ]
-    counts = count_tables(stack=stack, tables=tables)
+    waiting = [
+        f"SELECT count() FROM {table_ref(table=s)}" for s in pack.waiting_sources
+    ]
+    replies = run_sql(queries=[*queries, *waiting], stack=stack)
+    counts: dict[str, int | None] = {}
+    for table, reply in zip(tables, replies, strict=False):
+        rows = rows_of(reply=reply)
+        number = first_number(rows=rows) if rows else None
+        counts[table] = None if number is None else int(number)
     failures = []
-    for table, rows in counts.items():
+    for (table, rows), sql in zip(counts.items(), queries, strict=True):
         if rows == 0:
             continue
         why = (
@@ -592,13 +606,26 @@ def check_unclaimed(*, pack: Pack, stack: Stack) -> Result:
         failures.append(
             Failure(
                 "unclaimed",
-                f"{table_ref(table=table)} {why}. Query: SELECT substring(toJSONString(_json), 1, 300) "
-                f"FROM {table_ref(table=table)} LIMIT 3",
+                f"{table_ref(table=table)} {why}. Query: {sql}",
             )
         )
+    for source, reply in zip(
+        pack.waiting_sources, replies[len(queries) :], strict=True
+    ):
+        rows = rows_of(reply=reply)
+        number = first_number(rows=rows) if rows else None
+        if number:
+            failures.append(
+                Failure(
+                    "unclaimed",
+                    f"{table_ref(table=source)} holds {int(number)} rows, so {source} no longer waits on {pack.waiting_reason}. "
+                    f"Remove it from {VERIFY_FILE} waiting",
+                    retry=False,
+                )
+            )
     held = ", ".join(f"{table} {rows}" for table, rows in counts.items())
     if pack.waiting_sources:
-        held += f"; {DEFAULT_TABLE} not read, {', '.join(pack.waiting_sources)} wait on {pack.waiting_reason}"
+        held += f"; {', '.join(pack.waiting_sources)} rows left out of {DEFAULT_TABLE}, waiting on {pack.waiting_reason}"
     return Result("unclaimed", held, tuple(failures))
 
 
@@ -840,45 +867,37 @@ def check_search(*, pack: Pack, stack: Stack) -> Result:
     if isinstance(read, str):
         return Result("search", "", (Failure("search", read),))
     _, searches, tables = read
-    found = searches.get(names[0])
-    table = tables.get(str(found.get("source"))) if found else None
-    if not found or not table:
-        return Result(
-            "search",
-            "",
-            (
+    failures: list[Failure] = []
+    plan: list[tuple[str, str]] = []
+    for name in names:
+        found = searches.get(name)
+        table = tables.get(str(found.get("source"))) if found else None
+        if not found or not table:
+            failures.append(
                 Failure(
                     "search",
-                    f"saved search {names[0]} is not installed or reads no table",
-                ),
-            ),
+                    f"saved search {name} is not installed or reads no table",
+                )
+            )
+            continue
+        plan.append((name, search_query(search=found, table=table)))
+    replies = run_sql(queries=[sql for _, sql in plan], stack=stack, identity="console")
+    for (name, sql), reply in zip(plan, replies, strict=True):
+        rows = rows_of(reply=reply)
+        if rows is None:
+            why = f"got {fault_of(reply=reply)}"
+        elif not first_number(rows=rows):
+            why = "returned no rows"
+        else:
+            continue
+        failures.append(
+            Failure("search", f"{name} as the console login {why}. Query: {sql}")
         )
-    sql = search_query(search=found, table=table)
-    (reply,) = run_sql(queries=[sql], stack=stack, identity="console")
-    rows = rows_of(reply=reply)
-    if rows is None:
-        return Result(
-            "search",
-            "",
-            (
-                Failure(
-                    "search",
-                    f"{names[0]} as the console login got {fault_of(reply=reply)}. Query: {sql}",
-                ),
-            ),
-        )
-    if not first_number(rows=rows):
-        return Result(
-            "search",
-            "",
-            (
-                Failure(
-                    "search",
-                    f"{names[0]} as the console login returned no rows. Query: {sql}",
-                ),
-            ),
-        )
-    return Result("search", f"{names[0]} returned rows as the console login")
+    return Result(
+        "search",
+        f"{len(plan)} saved searches returned rows as the console login",
+        tuple(failures),
+    )
 
 
 def check_fetchers(*, pack: Pack, stack: Stack) -> Result:

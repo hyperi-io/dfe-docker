@@ -687,10 +687,10 @@ def test_search_skips_a_search_that_may_return_nothing() -> None:
         stack=stack,
     )
 
-    assert result.detail.startswith("demo-t-b returned rows")
+    assert result.detail.startswith("1 saved searches returned rows")
 
 
-def test_a_source_waiting_on_a_fix_is_named_by_fetchers_and_unclaimed_skips_the_default_table() -> (
+def test_a_waiting_source_is_named_by_fetchers_and_only_its_rows_leave_the_default_table_count() -> (
     None
 ):
     waiting = pack(
@@ -698,7 +698,16 @@ def test_a_source_waiting_on_a_fix_is_named_by_fetchers_and_unclaimed_skips_the_
         waiting_sources=["wiki"],
         waiting_reason="a loader fix",
     )
-    stack = Answers(landing({"demo-syslog": 0, "main": 5}))
+
+    def answer(request: dv.Request) -> dv.Reply:
+        query = request.payload["query"]
+        if "dfe.`main`" in query:
+            return rows(
+                0 if "NOT startsWith(toString(_source), 'wiki')" in query else 5
+            )
+        return rows(0)
+
+    stack = Answers(answer)
 
     fetchers = only("fetchers", pack=waiting, stack=stack)
     unclaimed = only("unclaimed", pack=waiting, stack=stack)
@@ -706,7 +715,32 @@ def test_a_source_waiting_on_a_fix_is_named_by_fetchers_and_unclaimed_skips_the_
     assert fetchers.skipped
     assert "skipped wiki: waiting on a loader fix" in fetchers.detail
     assert not unclaimed.failures
-    assert "main not read, wiki wait on a loader fix" in unclaimed.detail
+    assert "wiki rows left out of main" in unclaimed.detail
+
+
+def test_another_source_s_row_in_the_default_table_still_fails_while_one_waits() -> (
+    None
+):
+    waiting = pack(waiting_sources=["wiki"], waiting_reason="a loader fix")
+    stack = Answers(
+        lambda request: rows(2) if "dfe.`main`" in request.payload["query"] else rows(0)
+    )
+
+    unclaimed = only("unclaimed", pack=waiting, stack=stack)
+
+    assert "dfe.`main` holds 2 rows no source claimed" in unclaimed.failures[0].detail
+
+
+def test_a_waiting_entry_fails_once_the_source_holds_rows_of_its_own() -> None:
+    waiting = pack(waiting_sources=["wiki"], waiting_reason="a loader fix")
+    stack = Answers(
+        lambda request: rows(3) if "dfe.`wiki`" in request.payload["query"] else rows(0)
+    )
+
+    unclaimed = only("unclaimed", pack=waiting, stack=stack)
+
+    assert "no longer waits on a loader fix" in unclaimed.failures[0].detail
+    assert "Remove it from verify.json waiting" in unclaimed.failures[0].detail
 
 
 def test_search_names_why_the_console_login_could_not_be_read() -> None:
@@ -718,3 +752,21 @@ def test_search_names_why_the_console_login_could_not_be_read() -> None:
     assert (
         result.failures[0].detail == "secrets-init login exited 1 and printed no line"
     )
+
+
+def test_search_runs_every_saved_search_and_names_the_one_that_returns_nothing() -> (
+    None
+):
+    second = {**SEARCH, "name": "demo-t-b", "where": "empty = 1"}
+    answer = console(dashboards=[], searches=[SEARCH, second])
+    stack = Answers(
+        lambda request: answer(
+            request, lambda sql: rows(0) if "empty = 1" in sql else rows(3)
+        )
+    )
+
+    result = only(
+        "search", pack=pack(searches=["demo-t-live", "demo-t-b"]), stack=stack
+    )
+
+    assert [failure.detail.split(" ")[0] for failure in result.failures] == ["demo-t-b"]
