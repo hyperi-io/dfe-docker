@@ -121,6 +121,20 @@ def _make(*, repo_dir: Path, target: Sequence[str]) -> None:
         raise UpdateError(f"{command!r} failed (exit {result.returncode})")
 
 
+def _identities(*, image: str) -> set[str]:
+    """Return the names one image reference answers to, so `x:1` and `x:1@sha256:a` match.
+
+    A reference with a digest answers to its name:tag and to its name@digest. One without answers to its name:tag.
+    """
+    named, _, digest = image.partition("@")
+    name, separator, _tag = named.rpartition(":")
+    repository = name if separator and "/" not in _tag else named
+    identities = {named}
+    if digest:
+        identities.add(f"{repository}@{digest}")
+    return identities
+
+
 def _images_in_use(*, repo_dir: Path) -> set[str]:
     """Return the image of every container on the host, running or stopped."""
     listed = _docker(args=("ps", "-a", "--format", "{{.Image}}"), repo_dir=repo_dir)
@@ -150,8 +164,11 @@ def _prune_images(*, previous: set[str], repo_dir: Path) -> None:
             message=f"warning: image prune skipped, cannot list what is in use: {error}"
         )
         return
+    kept = {identity for image in keep for identity in _identities(image=image)}
     removed = 0
-    for image in sorted(previous - keep):
+    for image in sorted(previous):
+        if _identities(image=image) & kept:
+            continue
         try:
             result = _docker(args=("image", "rm", image), repo_dir=repo_dir)
         except OSError as error:
