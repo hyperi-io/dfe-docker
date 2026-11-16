@@ -18,7 +18,7 @@ fetcher:
         accepts: [none]
       base_url: "{{ vars.api_url }}"
       endpoints:
-        # The captured polls scripts/replay_fetch.py serves, which answer with no vessels while Digitraffic is reachable
+        # The captured polls scripts/replay_fetch.py serves, which answer with no vessels while Digitraffic answers with vessels
         - base_url: "{{ vars.replay_url }}"
           path: /ais-tracks
           rows:
