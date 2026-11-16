@@ -4798,6 +4798,27 @@ def run_test(ctx, mode, test, persistent_services):
 
 
 # ------------------------------------------------------------------------------
+# Settle Known Issue
+# - A test that names a `known_issue` is expected to fail on it: its failures are
+#   reported as one skip citing the issue, and a clean run fails, so a fix is
+#   noticed and the key removed
+# ------------------------------------------------------------------------------
+def settle_known_issue(ctx, test, failures):
+    issue = test.outage.known_issue
+    if failures:
+        ctx.failed -= failures
+        mark_skip(
+            ctx,
+            f"[{test.name}] KNOWN ISSUE {issue}: {failures} check(s) failed as expected",
+        )
+    else:
+        mark_fail(
+            ctx,
+            f"[{test.name}] passed, so {issue} looks fixed: remove its `known_issue`",
+        )
+
+
+# ------------------------------------------------------------------------------
 # Run Checks
 # - The test's own flow on a healthy stack: an outage, a detection or a send, then the stamp, topic, HTTP and self-monitoring checks it owes
 # ------------------------------------------------------------------------------
@@ -4807,7 +4828,10 @@ def run_checks(
     ingest_service = "dfe-receiver"
     ingest_url = DFE_RECEIVER_INGEST_URL
     if test.outage:
+        failed_before = ctx.failed
         run_outage(ctx, test, effective_services, ingest_url, ingest_service)
+        if test.outage.known_issue:
+            settle_known_issue(ctx, test, ctx.failed - failed_before)
     elif test.detection:
         run_detection(ctx, test, ingest_url)
     else:

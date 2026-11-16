@@ -111,6 +111,15 @@ def test_a_kill_under_a_pause_is_read_whole() -> None:
     assert plan.sources == {"main": "tests/e2e/data/events.jsonl"}
 
 
+def test_a_plan_carries_the_issue_a_test_fails_on() -> None:
+    plan = _plan(
+        {"service": "dfe-receiver", "known_issue": "hyperi-io/dfe-receiver#278"}
+    )
+
+    assert plan.known_issue == "hyperi-io/dfe-receiver#278"
+    assert _plan({"service": "dfe-receiver"}).known_issue == ""
+
+
 @pytest.mark.parametrize("loss", _outage.LOSS_MODES)
 def test_every_loss_mode_is_read(loss: str) -> None:
     assert _plan({"service": "dfe-loader", "loss": loss}).loss == loss

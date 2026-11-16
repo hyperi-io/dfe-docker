@@ -81,6 +81,7 @@ OUTAGE_KEYS = frozenset(
         "interval",
         "loss",
         "expect_refusals",
+        "known_issue",
         "spool",
         "poison",
         "dead_letters",
@@ -113,6 +114,7 @@ class OutagePlan:
         pause_seconds: How long it stays frozen before the signal.
         loss: What a lost accepted record means, one of LOSS_MODES.
         expect_refusals: Fail unless some request was refused while the outage ran.
+        known_issue: The tracked issue this test fails on today, empty for none.
         spool_service: The service whose disk spool is read, empty for none.
         spool_path: The spool directory inside that service's container.
         spool_must_stay_empty: Fail when anything is written under the spool.
@@ -136,6 +138,7 @@ class OutagePlan:
     pause_seconds: int = 0
     loss: str = "forbidden"
     expect_refusals: bool = False
+    known_issue: str = ""
     spool_service: str = ""
     spool_path: str = ""
     spool_must_stay_empty: bool = False
@@ -311,6 +314,7 @@ def outage_plan(
         pause_seconds=pause_seconds,
         loss=loss,
         expect_refusals=_flag(outage, "expect_refusals", "outage"),
+        known_issue=str(outage.get("known_issue") or ""),
         spool_service=str(spool.get("service") or ""),
         spool_path=str(spool.get("path") or ""),
         spool_must_stay_empty=_flag(spool, "must_stay_empty", "outage 'spool'"),

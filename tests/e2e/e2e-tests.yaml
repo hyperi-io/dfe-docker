@@ -70,6 +70,9 @@
 # must lose records: a control that cannot fail proves nothing. The `-sigterm-`
 # twins stop the same hop gracefully instead.
 #
+# `known_issue: <issue>` marks a test that fails on that issue today. Its failures are
+# reported as a skip citing the issue, and a clean run fails so the key gets removed.
+#
 # A test whose archiver subscribes to its landing topic and archives to a
 # file:// destination also asserts the archiver wrote a file during the test.
 #
@@ -360,6 +363,7 @@ tests:
   - name: receiver-sigterm-grpc-loader-paused
     profile: slim-grpc
     outage:
+      known_issue: hyperi-io/dfe-receiver#278
       service: dfe-receiver
       seconds: 20
       pause:
@@ -373,6 +377,7 @@ tests:
     expected_topics:
       - main_land
     outage:
+      known_issue: hyperi-io/dfe-receiver#278
       service: dfe-receiver
       seconds: 20
       pause:
