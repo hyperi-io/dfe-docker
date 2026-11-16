@@ -22,7 +22,7 @@ Every call into the stack goes through one `docker compose exec` into dfe-engine
   sources    every pack source is deployed and in the state its file declares
   hunts      each rule of each hunt the pack ships wrote detections, and the hunt wrote no more than its `max_alerts`
   console    every dashboard and saved search the pack names is installed and its queries return rows
-  search     a saved search's query answers through the engine's query API as the console login
+  search     a saved search's query, written as the console sends it, runs through the engine's query API as the console login, and returns rows unless zero_ok names it
   dlq        dfe.dlq and each dead-letter topic exist and hold nothing
 
 What a pack expects is data in resources/<pack>/verify.json:
@@ -410,10 +410,22 @@ def expand_macros(*, sql: str) -> str:
     return sql.replace("$__interval_s", str(CONSOLE_INTERVAL_SECONDS))
 
 
+# A `_json.` path the console has not already wrapped in toString
+BARE_JSON_PATH = re.compile(r"(?<!toString\()\b_json((?:\.[A-Za-z_][A-Za-z0-9_]*)+)")
+
+
+def console_form(*, expression: str) -> str:
+    """A saved search's select or where as the console sends it, each bare `_json.` path wrapped in toString.
+
+    The console's ClickHouse proxy does that, so a function that needs the path as a Dynamic (`dynamicElement`) errors there and not through the engine's query API.
+    """
+    return BARE_JSON_PATH.sub(r"toString(_json\1)", expression)
+
+
 def search_query(*, search: dict, table: str) -> str:
     """The count a saved search's select and where read from its table, which errors where either is wrong."""
-    where = str(search.get("where") or "").strip() or "1"
-    select = str(search.get("select") or "").strip() or "*"
+    where = console_form(expression=str(search.get("where") or "").strip() or "1")
+    select = console_form(expression=str(search.get("select") or "").strip() or "*")
     return (
         f"SELECT count() FROM (SELECT {select} FROM {table_ref(table=table)} "
         f"WHERE {where} LIMIT 100)"
@@ -852,14 +864,10 @@ def check_console(*, pack: Pack, stack: Stack) -> Result:
 
 
 def check_search(*, pack: Pack, stack: Stack) -> Result:
-    """A saved search's query returns rows through the engine's query API as the console login."""
-    names = [name for name in pack.searches if name not in pack.zero_ok]
+    """A saved search's query runs through the engine's query API as the console login, and returns rows unless verify.json lets it return none."""
+    names = list(pack.searches)
     if not names:
-        return Result(
-            "search",
-            f"{pack.name} installs no saved search that must return rows",
-            skipped=True,
-        )
+        return Result("search", f"{pack.name} installs no saved search", skipped=True)
     fault = getattr(stack, "login_fault", "")
     if fault:
         return Result("search", "", (Failure("search", fault),))
@@ -886,18 +894,18 @@ def check_search(*, pack: Pack, stack: Stack) -> Result:
         rows = rows_of(reply=reply)
         if rows is None:
             why = f"got {fault_of(reply=reply)}"
-        elif not first_number(rows=rows):
+        elif name not in pack.zero_ok and not first_number(rows=rows):
             why = "returned no rows"
         else:
             continue
         failures.append(
             Failure("search", f"{name} as the console login {why}. Query: {sql}")
         )
-    return Result(
-        "search",
-        f"{len(plan)} saved searches returned rows as the console login",
-        tuple(failures),
-    )
+    may_be_empty = [name for name, _ in plan if name in pack.zero_ok]
+    held = f"{len(plan) - len(may_be_empty)} saved searches returned rows as the console login"
+    if may_be_empty:
+        held += f", and {len(may_be_empty)} that may return none ran without an error"
+    return Result("search", held, tuple(failures))
 
 
 def check_fetchers(*, pack: Pack, stack: Stack) -> Result:
