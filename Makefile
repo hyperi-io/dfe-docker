@@ -345,12 +345,12 @@ ifneq ($(strip $(DFE_RECEIVER_HTTPS_PORT)),)
     endif
 endif
 
-# These goals recreate services on the network that already exists with no `make down` first; the e2e suites keep ClickHouse, and so its network, between tests. Docker cannot re-address a live network, so a stack whose network predates a DFE_PROXY_TLS flip would leave every recreated service Exited.
+# These goals recreate services on the network that exists, with no `make down` first, and the e2e suites keep ClickHouse and its network between tests. Docker cannot re-address a live network, so a stack whose network predates a DFE_PROXY_TLS flip would leave every recreated service Exited.
 NETWORK_REUSE_GOALS := apply apply-services infra $(E2E_GOALS)
 PROXY_NETWORK_REUSE := $(filter $(NETWORK_REUSE_GOALS),$(or $(MAKECMDGOALS),help))
 # Compose names the default network after the project, which is COMPOSE_PROJECT_NAME or this directory.
 PROXY_PROJECT := $(or $(strip $(COMPOSE_PROJECT_NAME)),$(notdir $(CURDIR)))
-# The certificate pair, the subnet and the network as Docker holds it now; the helper prints the first problem and nothing when there is none.
+# The certificate pair, the subnet and the network as Docker holds it now. The helper prints the first problem, and nothing when there is none.
 # A helper that exits non-zero printed no problem because it checked nothing, so that exit becomes the problem and the start is refused.
 ifneq ($(PROXY_TLS_START)$(PROXY_NETWORK_REUSE),)
     $(CERT_DIR_REFUSAL)
@@ -699,7 +699,7 @@ check-proxy: ## Validate the Envoy proxy configs, plain and TLS, on the Envoy th
 # Testing
 # ---------------------------------------------------------------------------
 
-# The suite starts each test's stack from its own -f list. Under console TLS that stack needs the TLS fragment and the network it pins, so the suite takes every fragment `make ci` chains, the exposure opt-outs and container logs included; with TLS off it keeps its own list. DFE_E2E_COMPOSE_FILES follows either way, and the suite skips the empty entries the colons leave.
+# The suite starts each test's stack from its own -f list. Under console TLS that stack needs the TLS fragment and the network it pins, so the suite takes every fragment `make ci` chains, the exposure opt-outs and container logs included. With TLS off it keeps its own list. DFE_E2E_COMPOSE_FILES follows either way, and the suite skips the empty entries the colons leave.
 E2E_COMPOSE_FILES = $(if $(filter true,$(strip $(DFE_PROXY_TLS))),$(UI_CHAIN)):$(strip $(DFE_E2E_COMPOSE_FILES))
 
 # The scripts that import packages beyond the standard library declare them inline (PEP 723) and lock them beside the script, so uv installs exactly the hashed set and a host needs only uv.

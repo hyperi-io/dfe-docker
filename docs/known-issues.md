@@ -10,7 +10,7 @@ Copyright: (c) 2026 HYPERI PTY LIMITED
 
 # Known issues
 
-These are real and open. Each one has a symptom that misleads.
+These are open, and each has a symptom that misleads.
 
 Several of these look like something else entirely, so read them before you go deep
 into [troubleshooting](troubleshooting.md).
@@ -61,9 +61,9 @@ flowchart LR
 
 Once a transform runs, the loader therefore reads `main_land` until that first write, then switches to `main_load`. The first records land twice: once raw, once transformed. Create the transform's `_load` topic before sending anything to avoid it. The e2e suite does, from each test's `expected_topics`.
 
-**Do not close this gap by adding `main_load` to the bootstrap topic set.** The loader auto-discovers topics and scalo suppresses `<base>_land` whenever `<base>_load` exists, on the reasoning that a `_load` topic means a transform has already produced the loadable form. Creating `main_load` on every Kafka profile therefore drops `main_land` from the subscription of every loader not running a transform, which is most of them. The symptom is maximally misleading: ingest returns 200, the receiver produces to `main_land`, the topic shows a rising high watermark and no rows reach ClickHouse.
+**Do not close this gap by adding `main_load` to the bootstrap topic set.** The loader auto-discovers topics and scalo suppresses `<base>_land` whenever `<base>_load` exists, on the reasoning that a `_load` topic means a transform has produced the loadable form. Creating `main_load` on every Kafka profile therefore drops `main_land` from the subscription of every loader not running a transform, which is most of them. The symptom is maximally misleading: ingest returns 200, the receiver produces to `main_land`, the topic shows a rising high watermark and no rows reach ClickHouse.
 
-Reverting the change does not restore a broker that already has the topic.
+Reverting the change does not restore a broker that has the topic.
 `kafka-apache-data` and `kafka-redpanda-data` outlive the containers, so the topic
 persists and keeps suppressing `main_land` on every later run. `rpk topic list` in the broker container shows whether it is there. Delete it:
 

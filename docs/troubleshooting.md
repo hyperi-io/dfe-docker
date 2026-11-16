@@ -19,8 +19,8 @@ Start with the state of the stack, then the [known issues](known-issues.md), the
 
 `docker compose ps` (or `make ps`) is the first call. It shows which containers
 exist and their health. `make down` tears down every profile, so a switch of
-profile leaves no stray holding the old ports. `make ps` also warns about a
-per-source container whose source was deleted, which `make apply` removes.
+profile leaves no stray holding the old ports. `make ps` warns about a
+per-source container left by a deleted source, which `make apply` removes.
 
 Health endpoints, straight from the host. Every DFE service serves `/livez`,
 `/readyz` and `/metrics` and nothing else -- the retired `/health*` paths 404, so
@@ -48,14 +48,14 @@ docker compose exec clickhouse sh -c 'clickhouse-client --password "$CLICKHOUSE_
   "SELECT Timestamp, Body FROM dfe.otel_logs WHERE ServiceName = '"'"'dfe-loader'"'"' ORDER BY Timestamp DESC LIMIT 50"'
 ```
 
-dfe-hyperdx logs there too. ClickHouse, the broker and the proxies keep `json-file`. To put every service back on it, set `DFE_CONTAINER_LOGS_ENABLED=false` and restart.
+dfe-hyperdx logs there. ClickHouse, the broker and the proxies keep `json-file`. To put every service back on it, set `DFE_CONTAINER_LOGS_ENABLED=false` and restart.
 
 ## Events are accepted but nothing lands
 
 The ingest edge returning 2xx only means the event was accepted. Work down this
 order.
 
-This diagram shows the first two checks.
+This diagram shows the loader checked before the schema.
 
 ```mermaid
 flowchart LR
@@ -91,7 +91,8 @@ If the engine has not provisioned, the loader holds every message pending-schema
 and dead-letters after a timeout. Check `dfe.main` exists and that the engine
 is healthy.
 
-This diagram shows the last two checks, on a Kafka profile.
+On Kafka, this diagram shows the subscription checked before the dead letters.
+
 
 ```mermaid
 flowchart LR
@@ -156,15 +157,15 @@ commits one: the lag grows and nothing is archived.
 
 `fetcher-cursors`, mounted at `/var/lib/dfe-fetcher`, gets the same fix. Without it every fetcher logs `Cursor directory is not writable` and re-fetches its lookback window on each restart.
 
-Per-service volumes do not fix it: a fresh volume is root-owned too, because
+Per-service volumes do not fix it: a fresh volume is root-owned, because
 ownership is inherited from a path the image does not have, and no component
 image creates `/var/spool/dfe` as appuser. The one-shot reuses the archiver image
-because that image is already pinned.
+because that image is pinned.
 
 Three ways that arrangement fails:
 
 1. `required: false` on the dependents means a **failed** dlq-init does not stop
-   them -- Compose logs one warning and carries on with a zero exit. Watch for
+   them -- Compose logs one warning and goes on with a zero exit. Watch for
    the warning.
 2. uid 1000 is hard-coded and nothing verifies it, so an image that renumbers
    appuser breaks the DLQ silently.
@@ -178,12 +179,12 @@ Files under `/var/spool/dfe/dlq` mean events were accepted and then could not be
 docker compose exec dfe-loader ls -la /var/spool/dfe/dlq/loader
 ```
 
-A row ClickHouse refuses with no working DLQ to take it is lost. The loader logs `No working DLQ` and counts it in `dfe_loader_rows_lost_total`, so any count there is data loss.
+A row ClickHouse rejects with no working DLQ to take it is lost. The loader logs `No working DLQ` and counts it in `dfe_loader_rows_lost_total`, so any count there is data loss.
 
 ## An app stops at a one-shot
 
 `service "config-check-dfe-loader" didn't complete successfully: exit 1` means the loader's config failed its own check, and the loader was never started. `docker compose logs config-check-dfe-loader` shows the app's error. Fix the config, then run `make apply SERVICES=dfe-loader`, which runs the check again first.
 
-dfe-receiver mounts `.secrets/ingest/bearer-tokens` from the `dfe-engine-config` volume as a subpath, which Docker refuses when the path does not exist. The `bearer-tokens-init` one-shot creates it first, as uid 1000 and owner-only like the engine's other secrets. It is a directory mount so the engine's token rewrites reach the running receiver.
+dfe-receiver mounts `.secrets/ingest/bearer-tokens` from the `dfe-engine-config` volume as a subpath, which Docker rejects when the path does not exist. The `bearer-tokens-init` one-shot creates it first, as uid 1000 and owner-only like the engine's other secrets. It is a directory mount so the engine's token rewrites reach the running receiver.
 
 For the ports and settings behind all of this, see [operating.md](operating.md) and [configuration.md](configuration.md).

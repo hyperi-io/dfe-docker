@@ -19,7 +19,7 @@ make test-resilience
 make test-resilience E2E_TESTS="clickhouse-outage loader-outage-grpc"
 ```
 
-Opt-in: `make test-e2e` never runs these, and refuses one named in `E2E_TESTS`.
+Opt-in: `make test-e2e` never runs these, and rejects one listed in `E2E_TESTS`.
 An `outage:` test sends steady load and, once its first records land, stops the
 named service for `seconds`, starts it again in a `finally`, and keeps sending
 for 30 s. It then asserts every other DFE service ran straight through (same
@@ -28,7 +28,7 @@ refusal such as 503 passes, silence fails), every accepted record landed, and on
 every consumer group is back at zero lag. They stop services, so they never run
 in `make post` either.
 
-An outage's `method` is `stop` by default, a graceful stop that lets the service drain what it holds. `method: kill` sends SIGKILL and a crash gets no drain, so a record the service held in memory survives only if its acknowledgement was held until the next hop had it. The `*-kill-*` tests kill the loader and receiver on Kafka and the loader and vrl transform on direct gRPC. They pass only when every record answered 2xx lands, duplicates counted but allowed. Where the killed service is the receiver itself, a request in flight while it is down may go unanswered but silence outside that window still fails.
+An outage's `method` is `stop` by default, a graceful stop that lets the service drain what it holds. `method: kill` sends SIGKILL and a crash gets no drain, so a record the service held in memory survives only if its acknowledgement was held until the next hop had it. The `*-kill-*` tests kill the loader, the receiver and the VRL transform on Kafka, and the loader on direct gRPC. They pass only when every record answered 2xx lands, duplicates counted but allowed. Where the killed service is the receiver itself, a request in flight while it is down may go unanswered but silence outside that window still fails.
 
 A kill that catches nothing in flight proves nothing about a crash, so a kill test fails on it. For the receiver or a gRPC hop that means no request out at the instant the container exited. For a Kafka consumer it means nothing its group had left uncommitted just before the kill. The kill tests raise the load with `workers` and `interval` (the default is 4 workers each waiting 0.5 s) so that a kill lands with records in flight.
 
@@ -41,9 +41,9 @@ DFE_INFRA_DIR=../dfe-infra make test-source SOURCE_ARGS="--case elastic"
 DFE_INFRA_DIR=../dfe-infra make test-source SOURCE_ARGS="--case vector"
 ```
 
-Above, sources come through the API. This one creates one in the console, attaches a transform, deploys it, feeds it real data and reads the rows back, driving a browser to do it. The runner is dfe-infra's (`scripts/acceptance/source/run.py`), the same one `dfe-ops acceptance --suite source` calls for Kubernetes.
+Above, sources come through the API. This one creates one in the console, attaches a transform, deploys it, feeds it data and reads the rows back, driving a browser to do it. The runner is dfe-infra's (`scripts/acceptance/source/run.py`), the same one `dfe-ops acceptance --suite source` calls for Kubernetes.
 
-`scripts/test_source.py` supplies what this repo owns: the published ports, the archiver container, the admin login from `.env` and `make apply` for each service the engine says must restart, which is what creates the source's own transform container. Run `make test-source DEV=1` against a `make dev` stack so that apply keeps the local images. `SOURCE_ARGS` reaches the runner untouched (`--keep`, `--per-module`, `--headed`).
+`scripts/test_source.py` supplies what this repo owns: the published ports, the archiver container, the admin login from `env/engine.env` and `make apply` for each service the engine says must restart, which is what creates the source's own transform container. Run `make test-source DEV=1` against a `make dev` stack so that apply keeps the local images. `SOURCE_ARGS` reaches the runner untouched (`--keep`, `--per-module`, `--headed`).
 
 Beyond a running stack it needs `DFE_INFRA_DIR` (the runner), `DFE_ENGINE_REPO` and `DFE_TRANSFORM_VRL_REPO` (the corpus wrapper, the bundled pipeline), a dfe-transform-vector checkout for the vector case (`DFE_TRANSFORM_VECTOR_REPO`, else the one beside the engine repo) and an interpreter carrying Playwright (`DFE_ACCEPTANCE_PYTHON` where the system one is externally managed). The cloudwatch case polls a real AWS upstream and writes nothing to it: put the two `AWS_*` credentials in `env/fetcher.env` and `DFE_AWS_REGION` in `.env`.
 
@@ -51,7 +51,7 @@ Every step is a report row and a screenshot under `--shots-dir` (`.tmp/source`).
 A step the console cannot do falls back to the engine API and says so, because
 that is a finding about the console rather than about the pipeline.
 
-`make proof` runs the filebeat and vector cases on every stack version, each transform checkout cloned at the tag the stack pins, so a pin of either transform is proven through its data path.
+`make proof` runs the filebeat and vector cases on every stack version. Each transform checkout is cloned at an explicit ref override when one is set, else at the tag the stack pins, else at its default branch with a WARN, and only the pinned tag proves that pin.
 
 ## Static checks run what CI runs
 
@@ -60,7 +60,8 @@ that is a finding about the console rather than about the pipeline.
 | Target | What it does |
 |---|---|
 | `make check-compose` | `docker compose config` on the registry, dev, `LIVE_UI=1` and `LOCAL=` paths, against both Kafka backends, plus the CPU floor and dev-overlay coverage assertions |
-| `make check-hardfail` | asserts an unpinned checkout refuses to resolve instead of pulling `latest` |
+| `make check-hardfail` | asserts an unpinned checkout fails to resolve rather than pull `latest` |
+
 | `make check-dockerfile` | hadolint on `docker/dfe-rust-builder.Dockerfile` and `docker/dfe-docker.Dockerfile` |
 | `make check-docs` | asserts every relative link across the README and every page under `docs/` resolves |
 | `make check-proxy` | `envoy --mode validate` on both proxy configs and their console TLS variants, on the Envoy the stack pins |
@@ -71,7 +72,7 @@ that is a finding about the console rather than about the pipeline.
 `check-compose` is hermetic: it reads the mandatory `${VAR:?}` keys out of the
 compose file and substitutes placeholders, so it reads neither the stack SSoT nor
 the registry. It validates compose *structure*, not that any digest
-resolves. It also refuses a `DFE_SERVICE_CPUS` under 2.0 on any service that gates
+resolves. It rejects a `DFE_SERVICE_CPUS` under 2.0 on any service that gates
 on `/readyz` -- see [operating.md](operating.md#dfe_service_cpus-has-a-floor-of-20-and-it-is-not-about-speed)
 for why a lower ceiling takes health endpoints dark.
 
@@ -79,8 +80,7 @@ for why a lower ceiling takes health endpoints dark.
 external URLs and does not check `#anchors`, so a live file with a stale anchor
 still passes.
 
-`check-dockerfile` pulls the pinned hadolint image, `check-tests` resolves the
-pinned pytest through `uvx` and `check-locks` the pinned uv, so those want a
-network the first time. The rest need none.
+`check-python`, `check-tests` and `check-locks` fetch their pinned tools through `uvx`, `check-dockerfile` pulls the pinned hadolint image and `check-proxy` pulls Envoy, so those want a network the first time.
+
 
 `check-proxy` validates on the Envoy in `DFE_PROXY_VERSION`. With that unset it asks `scripts/stack.py --print DFE_PROXY_VERSION` for the one the stack at `VERSION` pins, falling back to `deployment.example.yaml`'s `version.pin`. That lookup reads the stack manifest anonymously through `oras`. The check mints a throwaway P-384 certificate with the host's `openssl` for the TLS variants.

@@ -44,7 +44,7 @@ proxies as well as the UIs.
 
 ## Three limits
 
-It gates page access only. Neither UI learns from the proxy who signed in, because dfe-hyperdx identifies callers by the engine token, and neither gains roles or an audit trail from it.
+It gates page access only. Neither UI learns from the proxy who signed in, because dfe-hyperdx identifies callers by the engine token, and neither gets roles or an audit trail from it.
 
 An expired session on the API origin fails opaquely. The browser blocks a cross-origin XHR that gets a redirect to the IdP, so the app shows failed requests rather than a login prompt. Reload the app page to sign back in.
 

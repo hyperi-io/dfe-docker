@@ -24,7 +24,7 @@ Copyright: (c) 2026 HYPERI PTY LIMITED
   started. On the gRPC tier the loader logs at startup and is quiet after it, so
   a five-minute window can age its only lines out while the earlier claims run.
   Every service that pushes has fresh metric rows under its own name, and the hunt
-  runner also reports `dfe_hunt_backlog` and `dfe_hunt_tick_duration_seconds`.
+  runner reports `dfe_hunt_backlog` and `dfe_hunt_tick_duration_seconds`.
 - Observability, when dfe-hyperdx is running. Its API returns the six seeded
   sources and at least one provisioned dashboard, read through the proxy that
   gives it an identity.
@@ -36,7 +36,7 @@ Copyright: (c) 2026 HYPERI PTY LIMITED
   topic. It skips on the gRPC tiers.
 - Routing, where the engine renders the tier's app config. A source created
   through the API reaches the running receiver, and a record matching its rule
-  lands in a table of its own. The source is named for the run (`postroute`
+  lands in a table of its own. The source is called after the run (`postroute`
   and 8 hex digits) and deleted afterwards, then its table is dropped, because the engine's source delete leaves the table. A run first sweeps the `postroute` sources and tables older than an hour, which a killed run left.
 
 The freshness window is what makes the second claim mean "streaming now" rather
@@ -56,7 +56,7 @@ DFE_POST_ENABLED=false make ci   # opt out
 
 It is not a Docker `HEALTHCHECK`, which runs inside one container with no view of the others and repeats forever, so it would inject test events into a production ingest path on a timer.
 
-Once every claim has run, the three ingest rows are deleted: a lightweight `DELETE`, or a mutation (`ALTER TABLE ... DELETE`) on a table whose projections refuse one. A delete that does not finish within 60s is reported, never failed.
+Once every claim has run, the three ingest rows are deleted: a lightweight `DELETE`, or a mutation (`ALTER TABLE ... DELETE`) on a table with projections that refuse one. A delete that does not finish within 60s is reported, never failed.
 
 Tunables: `DFE_POST_HOST` (default `localhost`), `DFE_POST_DATABASE` (`dfe`), `DFE_POST_TABLE` (`main`). It proves nothing about profiles you are not running, or about throughput.
 
@@ -64,7 +64,7 @@ Tunables: `DFE_POST_HOST` (default `localhost`), `DFE_POST_DATABASE` (`dfe`), `D
 - FAIL, schema not converged: dfe-engine did not report its `schema` readiness check true within 300 seconds. `GET /api/v1/system/schema` on the engine names the object that failed.
 - SKIP, schema convergence not checked: the engine names no `schema` check on `/readyz` and answers 404 on `/api/v1/system/schema`, as an engine that predates the schema check does. The rest of the run still asserts the rows land.
 - FAIL, not ready: the profile declares an ingest component that never became ready within 90 seconds. A skip is a different outcome.
-- FAIL, marker unreadable: rows arrived but the marker could not be read back, so the schema may not carry `_tags`. It refuses to claim a check it did not make.
+- FAIL, marker unreadable: rows arrived but the marker could not be read back, so the schema may not have `_tags`. It will not claim a check it did not make.
 - SKIP: the profile has no ingest component at all, so there is no ingest path to send a row through. A run in which every claim skipped fails, because it proved nothing.
 - FAIL, no otel table readable within 120s: nothing could read the otel tables, which dfe-engine creates from dfe-schemas. Read the engine's and the collector's logs.
 - FAIL, no fresh rows: the tables exist and nothing recent is in them, so the services are not exporting ([common-failures.md](common-failures.md#the-self-test-fails-on-self-telemetry)).

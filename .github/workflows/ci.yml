@@ -5,11 +5,8 @@
 # License:   BUSL-1.1 - HYPERI PTY LIMITED
 # Copyright: (c) 2026 HYPERI PTY LIMITED
 #
-# Hand-written because hyperi-ci has no reusable workflow for a compose-packaging repo.
-#
-# The runner image is named (ubuntu-26.04) rather than ubuntu-latest, so a move
-# of that label cannot swap the tools these jobs run on.
-#
+# Hand-written: hyperi-ci has no reusable workflow for a compose-packaging repo.
+# ubuntu-26.04 is named, not ubuntu-latest, so a label move cannot swap the tools.
 # Renovate automerges patch and digest updates once this workflow passes.
 
 name: CI
@@ -47,8 +44,7 @@ concurrency:
 permissions:
   contents: read
 
-# The house Python floor, one patch the pinned setup-python can install; the
-# runner's own python3 is older and would run every helper script on it.
+# The house Python floor. The runner's own python3 is older.
 env:
   PYTHON_VERSION: "3.14.7"
   # The hyperi-ci CLI the Release job runs. The HYPERCI_INSTALL_OVERRIDE variable replaces it, as in hyperi-ci's own workflows.
@@ -146,10 +142,8 @@ jobs:
       - name: Proxy configs
         run: make check-proxy
 
-  # What a desktop with only Docker does: the image sets each profile up and the
-  # default one starts, serves the console and runs the demo, every step with a
-  # PATH that holds no make and no python. The default install goes to the
-  # Windows job, which reads it with the Windows compose.
+# Only Docker on PATH: each profile is set up, and the default one starts, serves
+# the console and runs the demo. The Windows job runs the default install.
   image:
     name: Image
     runs-on: ubuntu-26.04
@@ -468,12 +462,8 @@ jobs:
           }
           Write-Output "Windows compose starts the same services: $got"
 
-  # A push to main whose HEAD commit carries `Release: true`, or a `hyperi-ci
-  # release` dispatch, tags the version semantic-release computes and publishes
-  # a GitHub release. It is published with the release App's token because a
-  # release GITHUB_TOKEN publishes starts no workflow, and image.yml builds the
-  # image on `release: published`. It waits on the image jobs, so an image that
-  # fails CI never gets a tag.
+# Tags and publishes a release on `Release: true` or a `hyperi-ci release` dispatch,
+# after the image jobs. The App's token publishes it so image.yml starts on it.
   release:
     name: Release
     needs: [compose, dockerfile, image, image-windows, published]

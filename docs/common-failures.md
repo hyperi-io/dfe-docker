@@ -11,7 +11,7 @@ Copyright: (c) 2026 HYPERI PTY LIMITED
 # Common failures
 
 Each section is one symptom and what causes it. If none matches, read the stack's
-state first: [troubleshooting](troubleshooting.md). The open problems whose symptoms
+state first: [troubleshooting](troubleshooting.md). The open problems with symptoms that
 mislead are in [known issues](known-issues.md).
 
 ## A service is unhealthy but the data is landing
@@ -78,10 +78,10 @@ The gRPC-only tests need no broker at all:
 make test-e2e E2E_TESTS="simple-receiver-to-loader-grpc rules-and-hunts"
 ```
 
-Also check for a stray container from a previous profile before assuming the
+Check for a stray container from a previous profile before assuming the
 port belongs to something else.
 
-## Compose refuses to start: `is missing a value`
+## Compose will not start: `is missing a value`
 
 The stack is unpinned. Image versions come from the DFE stack SSoT, not from defaults, so there is no silent `latest` fallback:
 
@@ -89,7 +89,7 @@ The stack is unpinned. Image versions come from the DFE stack SSoT, not from def
 make stack VERSION=X.Y.Z
 ```
 
-`make check-hardfail` asserts this property holds. It runs compose with nothing set and requires that it fails for the right reason, then reads every `image:` directly and requires it to resolve to a digest, because compose aborts on the first missing variable and that run alone would miss a second.
+`make check-hardfail` asserts this property holds. It runs compose with nothing set and needs it to fail for the right reason, then reads every `image:` directly and needs it to resolve to a digest, because compose aborts on the first missing variable and that run alone would miss a second.
 
 ## `PyYAML is not installed in this interpreter`
 

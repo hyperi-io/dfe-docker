@@ -14,13 +14,14 @@ Copyright: (c) 2026 HYPERI PTY LIMITED
 make dev LIVE_UI=1   # dfe-ui runs `next dev` over $DFE_SRC_ROOT/dfe-ui
 ```
 
-`LIVE_UI=1` layers `compose/live-ui.yml`, which runs dfe-ui as `next dev` over your checkout instead of building its image. It still sits behind dfe-proxy on `DFE_UI_PORT`, so login, the engine API and the dfe-hyperdx embed work as they do on any stack. A saved edit reaches the browser through hot reload, which rides the websocket upgrade the proxy already allows. `docker compose logs -f dfe-ui` shows the dev server's output.
+`LIVE_UI=1` layers `compose/live-ui.yml`, which runs dfe-ui as `next dev` over your checkout instead of building its image. It still sits behind dfe-proxy on `DFE_UI_PORT`, so login, the engine API and the dfe-hyperdx embed work as they do on any stack. A saved edit reaches the browser through hot reload, which rides the websocket upgrade the proxy allows. `docker compose logs -f dfe-ui` shows the dev server's output.
 
-The first start installs dependencies into the checkout, a yarn cache under its gitignored `.yarn/`, and later starts install from that cache in seconds. Each route compiles on its first hit. The login page compiles as the dev server starts, so the first visit stays inside dfe-proxy's 15s route timeout.
+The first start installs dependencies into the checkout, a yarn cache under its gitignored `.yarn/`, and later starts install from that cache in seconds. Each route compiles on its first hit. A background request warms the login page as the dev server starts, so a first visit after that compile stays inside dfe-proxy's 15s route timeout.
+
 
 Next.js only accepts hot-reload connections from `localhost` or the host it serves on. The console does not finish loading without one. Live mode serves on the hostname `DFE_EXTERNAL_ORIGIN` names, so the console works there and on `localhost`. An origin that is an IP address cannot be served on by name, so browse that stack by hostname or on `localhost` instead.
 
-`make apply SERVICES=dfe-ui DEV=1 LIVE_UI=1` swaps a running dev stack's console into live mode and leaves every other service running. A stack started with `LOCAL` takes the same `LOCAL` with dfe-ui left out. The same command without `LIVE_UI` and with the stack's own `LOCAL` runs `dfe-ui:local` again, which exists only if an earlier `make dev` built it.
+`make apply SERVICES=dfe-ui DEV=1 LIVE_UI=1` recreates a running dev stack's console in live mode. Like every `make apply`, it removes the containers of deleted sources and brings the collector up to date. A stack started with `LOCAL` takes the same `LOCAL` with dfe-ui left out. The same command without `LIVE_UI` and with the stack's own `LOCAL` runs `dfe-ui:local` again, which exists only if an earlier `make dev` built it.
 
 ## Live mode needs Linux and a trusted network
 

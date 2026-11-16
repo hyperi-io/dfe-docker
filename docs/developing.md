@@ -15,7 +15,7 @@ test it against.
 
 You do not develop *this* repo to change component behaviour -- it is packaging.
 What you get from it is a running pipeline that either pulls published images or
-compiles your local component source. The suites that prove events traverse it are in [testing.md](testing.md) and [checks.md](checks.md).
+compiles your local component source. The suites that test events traverse it are in [testing.md](testing.md) and [checks.md](checks.md).
 
 Read [architecture.md](architecture.md) first if you have not: which services
 exist, and how a profile decides which of them run.
@@ -51,7 +51,7 @@ make ci                    # pull and start, self test
 
 `make stack VERSION=X.Y.Z[-rc.N]` rewrites only the `*_VERSION` pins in `.env`, so your ports, hosts, credentials and profile survive. It renders from a local dfe-infra checkout only when `DFE_INFRA_DIR` names one (`scripts/dfe-stack render --target docker --stack VERSION`). Otherwise it resolves `ghcr.io/hyperi-io/dfe-stack-manifest:VERSION` to a digest, checks with `cosign verify` that dfe-infra's release workflow signed it and pulls it with `oras`, running either through Docker where it is not installed.
 
-`make stack VERSION=latest` pins the newest published stack (`rc` ranks pre-releases too) and records the word in `.env`, so a re-run moves forward. `DFE_STACK_REPIN_IMAGES=1` also repins every DFE image at the release its GitHub repo marks Latest, a combination nobody certified. [deploying.md](deploying.md#staying-current-pinned-or-track-latest) has both. Skipping `make stack` aborts every compose command with a message naming the missing pin.
+`make stack VERSION=latest` pins the newest published stack (`rc` ranks pre-releases) and records the word in `.env`, so a re-run moves forward. `DFE_STACK_REPIN_IMAGES=1` repins every DFE image at the release its GitHub repo marks Latest, a combination nobody certified. [deploying.md](deploying.md#staying-current-pinned-or-track-latest) has both. Skipping `make stack` aborts every compose command with a message naming the missing pin.
 
 ## Logging in the first time
 
@@ -66,13 +66,13 @@ two random passwords into `env/engine.env` and prints neither.
 
 The password prints to a terminal only. A pipe, a file, CI or `DFE_CREDS_SHOW=0` gets the `env/engine.env` key holding it instead. `make ci` prints no login, which is why `make up` exists. The engine's login page names `make creds` while first-run setup is incomplete. How the two accounts rotate and survive is in [operating.md](operating.md#only-the-console-and-its-search-authenticate).
 
-The engine refuses to start on an empty or `changeme` `DFE_ENGINE_AUTH_LOCAL_ADMIN_PASSWORD` unless `DFE_ENGINE_ENV` names a dev environment, and `make check-compose` asserts the compose file never hands it one.
+The engine will not start on an empty or `changeme` `DFE_ENGINE_AUTH_LOCAL_ADMIN_PASSWORD` unless `DFE_ENGINE_ENV` names a dev environment, and `make check-compose` asserts the compose file never hands it one.
 
-`make dev` is the exception and says so: it writes the known default password into `env/engine.env` and `DFE_ENGINE_ENV=dev` into `.env`, because a dev loop should not need a lookup to log in. The engine accepts the default in that environment and makes the admin replace it at first login. A `.env` already in a dev environment keeps the replacement `make post` recorded. It **refuses** (exit 2) to run when `.env` already declares a non-dev `DFE_ENGINE_ENV`: downgrading a deployment's environment and overwriting its admin password is not a build target's call. Start that stack with `make up`.
+`make dev` is the exception and says so: it writes the known default password into `env/engine.env` and `DFE_ENGINE_ENV=dev` into `.env`, because a dev loop should not need a lookup to log in. The engine accepts the default in that environment and makes the admin replace it at first login. A `.env` in a dev environment keeps the replacement `make post` recorded. It stops (exit 2) rather than run when `.env` declares a non-dev `DFE_ENGINE_ENV`: downgrading a deployment's environment and overwriting its admin password is not a build target's call. Start that stack with `make up`.
 
 When it does rewrite, it copies each file it replaces to `<name>.bak-<utc>` beside it first, mode 0600, then prints the paths: a minted password is gone once overwritten. A run with nothing to change writes neither.
 
-`AUTH=real` is the same local build against a deployment's authentication flow, for when the login is the thing under test. It mints a password and writes `DFE_ENGINE_ENV=production`, leaving either alone where it is already real, so it never refuses. `make creds` reads the password back.
+`AUTH=real` is the same local build against a deployment's authentication flow, for when the login is the thing under test. It mints a password and writes `DFE_ENGINE_ENV=production`, and leaves either as it is where a deployment set it, so it never stops. `make creds` reads the password back.
 
 ```bash
 make dev              # local images, DFE_ENGINE_ENV=dev, known default password until replaced
@@ -86,7 +86,7 @@ make dev    # build :local images from local component source, then start
 make ci     # pull the pinned GHCR images, then start
 ```
 
-`make dev` builds the `:local` images, then starts with the overlay the build writes, `.tmp/docker-compose.local.yml`, which repoints each component it built at `<service>:local` and empties the engine's `DFE_ENGINE_STACK_IMAGES`, so the console shows `DFE_STACK_VERSION`. `make ci` names no overlay. Both run `make env-files` first, which creates any `env/<service>.env` a release added and warns, never edits, when a template gains a key.
+`make dev` builds the `:local` images, then starts with the overlay the build writes, `.tmp/docker-compose.local.yml`, which repoints each component it built at `<service>:local` and empties the engine's `DFE_ENGINE_STACK_IMAGES`, so the console shows `DFE_STACK_VERSION`. `make ci` names no overlay. Both run `make env-files` first, which creates any `env/<service>.env` a release added and warns, never edits, when a template adds a key.
 
 `scripts/build_dev_images.py` builds the `:local` images in two stages for every
 Rust component. This diagram shows the two stages.
@@ -134,7 +134,7 @@ Two of them can start without their component (`IMPLICIT_CONSUMERS`, same file):
 make dev LOCAL="dfe-engine dfe-ui"   # build these two; everything else from GHCR
 ```
 
-The build writes `.tmp/docker-compose.local.yml` repointing only the named components and the services sharing their image at `:local`, and empties the engine's `DFE_ENGINE_STACK_IMAGES`, so the console shows `DFE_STACK_VERSION`. `SERVICES` still filters what starts and a name outside the resolved stack is a hard error.
+The build writes `.tmp/docker-compose.local.yml` repointing only the components it lists and the services sharing their image at `:local`, and empties the engine's `DFE_ENGINE_STACK_IMAGES`, so the console shows `DFE_STACK_VERSION`. `SERVICES` still filters what starts and a name outside the resolved stack is a hard error.
 
 Source comes via git, never an assumed directory layout:
 
@@ -179,24 +179,24 @@ Two of those need a warning.
 authority** -- nothing else provisions the ClickHouse tables or registers the
 schemas the loader pre-warms. Without it the loader holds messages pending-schema
 and dead-letters them, so the data path looks broken when it is really unprovisioned.
-Use it when you are working on the UI or proxy against tables that already exist,
+Use it when you are working on the UI or proxy against existing tables,
 not on a fresh stack.
 
 `make dev SERVICES="..."` does not start a subset on top of a running stack,
 because `dev` depends on `down`, which tears down every profile first.
 
-A name in `SERVICES` that is not part of the resolved stack is a hard error, not a silent no-op. Adding a config to a profile that does not exist on disk is caught too: `resolve_profile.py` validates every `config_path` before writing `.tmp/profile.mk`.
+A name in `SERVICES` that is not part of the resolved stack is a hard error, not a silent no-op. Adding a config to a profile that does not exist on disk is caught: `resolve_profile.py` validates every `config_path` before writing `.tmp/profile.mk`.
 
 ## What bites
 
-`make down` tears down every profile, not just the active one: `docker compose -f docker-compose.yml --profile "*" down --remove-orphans`, keeping volumes. `make dev` and `make ci` run it first, so `make dev SERVICES="dfe-loader"` stops everything else too.
+`make down` tears down every profile, not just the active one: `docker compose -f docker-compose.yml --profile "*" down --remove-orphans`, keeping volumes. `make dev` and `make ci` run it first, so `make dev SERVICES="dfe-loader"` stops everything else.
 
 A key set in `.env` beats the same variable in your shell through make, so `DFE_PROFILE=single-kafka make dev` uses the `.env` value. [known-issues.md](known-issues.md#env-shadows-command-line-environment-variables-through-make) has the ways round it.
 
 Compose `environment:` beats `env/<service>.env`. A key listed in a service's
 `environment:` block in `docker-compose.yml` wins over the same key in the
 per-service env file. `LOG_LEVEL` is forwarded by compose, so setting it in
-`env/receiver.env` does nothing, while a key compose does not forward reaches the
+`env/receiver.env` does nothing, but a key compose does not forward reaches the
 container fine.
 
 A one-shot's `sh -c` command is a list of one. Compose splits a scalar `command:` into argv, so `sh -c` would run only its first word.
@@ -207,7 +207,7 @@ dial ClickHouse on 8123/9000 whatever its host publish is. The
 `CLICKHOUSE_EXTERNAL_*_PORT` pair is not a host port. It is only for an
 external `CLICKHOUSE_HOST`.
 
-`make dev` and `make ci` try to bind every host port the resolved stack publishes before starting and refuse with the variable to set for each one already taken (scripts/port_check.py).
+`make dev` and `make ci` try to bind every host port the resolved stack publishes before starting and refuse with the variable to set for each one in use (scripts/port_check.py).
 
 Beside another stack on the same daemon, ports are not enough, because every
 `container_name` is daemon-wide. Set `COMPOSE_PROJECT_NAME`, the ports above,

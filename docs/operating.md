@@ -16,11 +16,11 @@ and the broker in [broker.md](broker.md).
 
 ## Only the console and its Search authenticate
 
-The engine's API requires a login. `make init` mints two passwords into `env/engine.env` and `make creds` hands them over: `admin` from `DFE_ENGINE_AUTH_LOCAL_ADMIN_PASSWORD`, and the `breakglass` recovery admin, whose hash the engine commits to its deploy repo on first boot and which therefore outlives the engine, the UI and `env/engine.env`.
+The engine's API needs a login. `make init` mints two passwords into `env/engine.env` and `make creds` hands them over: `admin` from `DFE_ENGINE_AUTH_LOCAL_ADMIN_PASSWORD`, and the `breakglass` recovery admin. The engine commits its hash to its deploy repo on first boot, so it outlives the engine, the UI and `env/engine.env`.
 
-The engine issues `admin` with a forced change at first login, which `make post` makes and records back in `env/engine.env`. Rotate it by changing the value there and running `make up`. The value the engine last issued, or the account's current password, re-issues nothing, so a restart never undoes a change. The engine refuses to start when that password is empty or the shipped default and `DFE_ENGINE_ENV` is not a dev environment, and compose sets an unset `DFE_ENGINE_ENV` to `production`.
+The engine issues `admin` with a forced change at first login, which `make post` makes and records back in `env/engine.env`. Rotate it by changing the value there and running `make up`. The value the engine last issued, or the account's current password, re-issues nothing, so a restart never undoes a change. The engine will not start when that password is empty or the shipped default and `DFE_ENGINE_ENV` is not a dev environment, and compose sets an unset `DFE_ENGINE_ENV` to `production`.
 
-`make init` and `make up` also write `access-summary.md` (0600, gitignored) with both passwords in plaintext. Once your own admin exists, retire the bootstrap admin from the console wizard's last step or `POST /api/v1/auth/setup/retire-admin`, then delete `DFE_ENGINE_AUTH_LOCAL_ADMIN_PASSWORD` from `env/engine.env`. The account stays disabled and is never reseeded. Keep the break-glass password offline and delete both plaintexts, that file included: the engine keeps only the hash.
+`make init` and `make up` write `access-summary.md` (0600, gitignored) with both passwords in plaintext. Once your own admin exists, retire the bootstrap admin from the console wizard's last step or `POST /api/v1/auth/setup/retire-admin`, then delete `DFE_ENGINE_AUTH_LOCAL_ADMIN_PASSWORD` from `env/engine.env`. The account stays disabled and is never reseeded. Keep the break-glass password offline and delete both plaintexts, that file included: the engine keeps only the hash.
 
 dfe-hyperdx, the console's Search, authenticates by verifying the engine's token and holds no logins of its own. ClickHouse takes its generated password. Nothing else authenticates. The ingest edges, every metrics port and Kafka answer whoever can route to them, and so does Kafbat unless the `auth` profile is armed, where the gate is at the proxy, not inside the UI.
 
@@ -72,11 +72,11 @@ Behind those ports, dfe-proxy sends `/api/v1/*` to the engine ([architecture.md]
 
 **The engine API is reachable from wherever the console is.** `dfe-proxy` reverse-proxies `/api/v1/*` straight through to the dfe-engine API on the Docker network (`config/proxy/envoy.yaml`), so unpublishing the engine's own `:8003` does not take that API off `:3000`. The proxy adds no authentication, and the engine's own login protects it there as on `:8003`.
 
-**dfe-hyperdx asks the engine who you are.** It runs in `oidc-proxy` mode, as on Kubernetes: it verifies the engine's ES384 token against the engine's JWKS, and a caller carrying none is unauthenticated. The console mirrors its session into a `dfe_token` cookie and cookies ignore ports, so one console login covers `:8090`, `:8091` and `:8000` too. Its ClickHouse credential stays server-side, because queries go through dfe-hyperdx's own proxy.
+**dfe-hyperdx asks the engine who you are.** It runs in `oidc-proxy` mode, as on Kubernetes: it verifies the engine's ES384 token against the engine's JWKS, and a caller carrying none is unauthenticated. The console mirrors its session into a `dfe_token` cookie and cookies ignore ports, so one console login covers `:8090`, `:8091` and `:8000`. Its ClickHouse credential stays server-side, because queries go through dfe-hyperdx's own proxy.
 
 dfe-docker never assumes an OIDC issuer exists, and no profile may require one. The `auth` profile ([auth-profile.md](auth-profile.md)) scopes OIDC to the infra UIs while the issuer runs. Ingest edges, machine API paths, `/.well-known`, `/livez`, every metrics port, ClickHouse and Kafka stay outside it. The Kubernetes tier does the same, applying OIDC per interactive route rather than at the Gateway, so a machine path is never redirected to a login.
 
-Everything the console does not bound still answers whoever can route to it, so put the stack behind something: a VPN, an SSH tunnel, a firewall, or an authenticating reverse proxy in front of `:3000`. The bindings below reduce the accidental surface. They are not access control.
+Everything else answers whoever can route to it, so put the stack behind a VPN, an SSH tunnel, a firewall or an authenticating reverse proxy in front of `:3000`. The bindings below reduce the accidental surface. They are not access control.
 
 ## Port exposure is split by audience
 
@@ -107,7 +107,7 @@ Per-port, as published in `docker-compose.yml`:
 | 13133 | otel-collector | operator | `health_check` extension |
 | 24224 | otel-collector | operator | `fluent_forward`, where the Docker daemon sends container stdout |
 
-dfe-fetcher runs one container for every source and the three transforms run one instance per source. Neither publishes a host port, so their ingest, Vector API and metrics ports are reached over the Docker network. dfe-loader's `scalo.transport.v1.Transport/Push` listener on 6000 is too. The receiver's Vector protocol on 6000 publishes only once `DFE_RECEIVER_GRPC_PORT` is set.
+dfe-fetcher runs one container for every source and the three transforms run one instance per source. Neither publishes a host port, so their ingest, Vector API and metrics ports are reached over the Docker network. So is dfe-loader's `scalo.transport.v1.Transport/Push` listener on 6000. The receiver's Vector protocol on 6000 publishes only once `DFE_RECEIVER_GRPC_PORT` is set.
 
 `dfe-ui`, `dfe-hyperdx` and `hyperdx-documentdb` publish no host
 ports at all -- they are reached over the Docker network, dfe-hyperdx through the
@@ -129,7 +129,7 @@ Every web UI publishes by default. `DFE_BIND_SCOPE` says where:
 It moves the UI ports and nothing else. Ingest and the backing services keep the
 two surfaces above, so widening the UIs never opens ClickHouse.
 
-`all` also needs `DFE_EXTERNAL_ORIGIN` set to the address browsers use. The
+`all` needs `DFE_EXTERNAL_ORIGIN` set to the address browsers use. The
 console embeds dfe-hyperdx behind a `frame-ancestors` policy built from that origin,
 and next-auth builds its redirects from it, so at the default both name the
 browser's own machine: the console loads with its observability views blocked and
@@ -139,7 +139,7 @@ sends logins back to loopback. Nothing can infer the address, so `make dev`,
 broken in that one place. The lifecycle and check goals are exempt -- `make down`
 has to work whatever the configuration says.
 
-Each UI carries a class, and the class decides what can take it dark:
+Each UI has a class, and the class decides what can take it dark:
 
 | UI | Service | Class | Flag |
 |---|---|---|---|
@@ -152,7 +152,7 @@ Each UI carries a class, and the class decides what can take it dark:
 infra-class UI at once and beats their individual flags. The product UIs are
 exempt, so locking the ops surfaces down never takes the DFE UI with it.
 
-The console frames dfe-hyperdx from dfe-proxy's `:8091`, so dfe-hyperdx's two flags unpublish that port too and the console's own `:3000` stays. Switching dfe-hyperdx off this way takes the console's observability views dark.
+The console frames dfe-hyperdx from dfe-proxy's `:8091`, so dfe-hyperdx's two flags unpublish that port and the console's own `:3000` stays. Switching dfe-hyperdx off this way takes the console's observability views dark.
 
 Both dials take effect through `make`, which resolves the scope into `DFE_UI_BIND_HOST`, writes a `!reset` ports entry per opted-out UI into `.tmp/docker-compose.unpublish.yml` and chains it. Compose merging can add a ports mapping but never remove one, so an opt-out has to arrive as a `!reset` rather than an override. The embed alone drops through a `!override` that restates the console's line. A raw `docker compose` outside `make` therefore publishes everything on loopback.
 
@@ -177,7 +177,7 @@ Every service extends a tier in `compose/limits.yml` for its `deploy.resources.l
 make limits
 ```
 
-The sizing assumes a 16 GB box **that is also running an operating system and
+The sizing assumes a 16 GB box **that is running an operating system and
 whatever else that box does**: 16 GB of RAM is not 16 GB of headroom. A box with
 every profile enabled wants retuning, not these defaults.
 
@@ -192,11 +192,12 @@ cleanly, and a smaller cap risks an OOM kill on one.
 
 ### `DFE_SERVICE_CPUS` has a floor of 2.0, and it is not about speed
 
-Below 2.0 the DFE services do not slow down. Their health endpoints stop answering while the pipeline carries on moving data.
+Below 2.0 a scalo service with its one worker thread held by its Kafka loop did not slow down. Its health endpoints stopped answering while the pipeline carried on moving data.
+
 
 Tokio sizes its worker pool from `available_parallelism()`, which reads the
 cgroup CPU quota and floors it, so any ceiling under 2.0 leaves a scalo service
-with exactly **one** worker thread. A service whose Kafka loop held that thread
+with exactly **one** worker thread. A service with its Kafka loop on that thread
 never scheduled the HTTP server carrying `/readyz`, `/livez` and `/metrics`: it
 accepted the connection and then answered nothing at all.
 
@@ -205,10 +206,10 @@ forever while events archive normally. `TOKIO_WORKER_THREADS=4` at that same
 ceiling restores the endpoints, which is how you tell worker-thread starvation
 from a shortage of CPU.
 
-`make check-compose` refuses any value under 2.0 on a service that gates on
+`make check-compose` rejects any value under 2.0 on a service that gates on
 `/readyz`, so you cannot ship this by accident. scalo-rs polls Kafka on
 tokio's blocking pool (`src/transport/kafka/mod.rs` in scalo-rs), and nobody has
-measured whether an image built on it still needs the floor, so keep it.
+tested whether an image built on it still needs the floor, so keep it.
 
 ## Deploying, upgrading and the self test
 
@@ -225,6 +226,6 @@ A deploy turns one file -- `deployment.yaml` -- and pins one stack version. `mak
 - [observability.md](observability.md) -- health surface, self-telemetry, the self test
 - [configuration.md](configuration.md) -- every variable, port and image
 - [troubleshooting.md](troubleshooting.md) -- reading stack state
-- [known-issues.md](known-issues.md) -- open problems whose symptoms mislead
+- [known-issues.md](known-issues.md) -- open problems with misleading symptoms
 - [common-failures.md](common-failures.md) -- the failures seen most often, by symptom
 - [architecture.md](architecture.md) -- components, transports, and how data moves
