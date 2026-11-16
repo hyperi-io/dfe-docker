@@ -298,6 +298,9 @@ tests:
       interval: 0.01
       loss: required
 
+  # A frozen loader backs the receiver's sender up to its flow-control window, so
+  # the receiver holds almost nothing in memory when it dies and loses nothing
+  # reliably.
   - name: receiver-kill-grpc-loader-paused-acks-off
     profile: slim-grpc
     config_overrides:
@@ -312,7 +315,7 @@ tests:
         seconds: 10
       workers: 16
       interval: 0.01
-      loss: required
+      loss: unreliable
 
   - name: receiver-kill-kafka-broker-paused-acks-off
     profile: slim-kafka

@@ -782,20 +782,21 @@ def zstd_frames(data: bytes) -> bytes:
     """Return every zstd frame embedded in `data`, decompressed and joined.
 
     A disk spool frames each record and compresses its body, so the records sit
-    between the queue's own headers. Returns empty when this Python has no zstd
-    module or `data` holds no frame.
+    between the queue's own headers. Returns empty when `zstandard` is not
+    installed or `data` holds no frame.
     """
     try:
-        from compression import zstd
+        import zstandard
     except ImportError:
         return b""
     out = []
     start = data.find(ZSTD_MAGIC)
     while start >= 0:
-        decompressor = zstd.ZstdDecompressor()
         try:
-            out.append(decompressor.decompress(data[start:]))
-        except zstd.ZstdError:
+            out.append(
+                zstandard.ZstdDecompressor().decompressobj().decompress(data[start:])
+            )
+        except zstandard.ZstdError:
             pass
         start = data.find(ZSTD_MAGIC, start + len(ZSTD_MAGIC))
     return b"".join(out)

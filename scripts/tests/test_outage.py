@@ -567,9 +567,9 @@ def test_markers_are_counted_once_a_line_for_this_load_only() -> None:
 
 
 def test_zstd_frames_between_spool_headers_are_read() -> None:
-    zstd = pytest.importorskip("compression.zstd")
-    first = zstd.compress(b'{"_marker":"e2e-1-spill-000001"}')
-    second = zstd.compress(b'{"_marker":"e2e-1-spill-000002"}')
+    zstd = pytest.importorskip("zstandard")
+    first = zstd.ZstdCompressor().compress(b'{"_marker":"e2e-1-spill-000001"}')
+    second = zstd.ZstdCompressor().compress(b'{"_marker":"e2e-1-spill-000002"}')
     spooled = b"HDR1" + first + b"\x00\x00HDR2" + second + b"\x00"
 
     records = _outage.zstd_frames(spooled)

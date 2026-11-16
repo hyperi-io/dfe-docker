@@ -21,6 +21,7 @@
 # dependencies = [
 #     "playwright==1.63.0",
 #     "pyyaml==6.0.3",
+#     "zstandard==0.25.0",
 # ]
 # ///
 
@@ -2678,7 +2679,7 @@ def verify_outage_landing(ctx, test, sent):
         f"{tally.unaccepted}"
     )
     if tally.lost:
-        LOGGER.info(f"    lost sequence numbers: {list(tally.lost)}")
+        LOGGER.info(f"    first lost sequence numbers: {list(tally.lost[:20])}")
     judge_loss(ctx, test, tally, f"'{test.database}.{test.table}'")
     return rows
 
