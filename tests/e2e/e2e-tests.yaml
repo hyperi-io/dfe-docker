@@ -37,6 +37,39 @@
 # tests run only under `make test-resilience`, never in the default
 # `make test-e2e`.
 #
+# `pause: {service, seconds}` freezes a service first, so the one taken down
+# dies holding records. The signal lands at the end of the pause and the thaw
+# follows. Under a pause a graceful stop sends SIGTERM before the thaw, so the
+# drain meets the paused service coming back. An outage with a `pause` and no
+# `service` only freezes: `expect_refusals: true` then fails unless a request was
+# refused while it ran.
+#
+# `loss` says what an accepted record that never lands means. `forbidden`, the
+# default, fails on one. `required` fails a control that lost nothing, `unreliable`
+# reports that as non-discriminating, and `tolerated` only records the count.
+# Duplicates are counted per phase and reported, never failed.
+#
+# `spool: {service, path, must_stay_empty, must_replay}` reads a service's disk
+# spool before the load, at the signal and at the end. `must_replay` fails unless
+# every record on the spool at the signal lands after the restart.
+#
+# `poison: {data_file, every, limit}` sends a record the sink refuses, one in every
+# `every` once the outage begins, `limit` at most. `dead_letters: {service, path}`
+# requires each accepted one named in that file dead-letter queue. A
+# `dead_letters` with no `path` counts the drop metric instead and needs `limit: 1`,
+# because the metric names no record.
+#
+# `archive: {services, path}` requires every accepted record in an archived file,
+# duplicates allowed. The archivers are stopped gracefully first when the archive
+# is short, which closes every open file.
+#
+# Acknowledgements. The tests that kill a hop prove no record the stack answered
+# 2xx is lost while every hop holds its acknowledgement until delivery
+# (`acknowledgements.enabled`, the default). Their `-acks-off` twins run the same
+# outage with every hop between the load and ClickHouse answering at receipt, and
+# must lose records: a control that cannot fail proves nothing. The `-sigterm-`
+# twins stop the same hop gracefully instead.
+#
 # A test whose archiver subscribes to its landing topic and archives to a
 # file:// destination also asserts the archiver wrote a file during the test.
 #
@@ -200,7 +233,10 @@ tests:
     outage:
       service: dfe-loader
       method: kill
-      seconds: 30
+      seconds: 20
+      pause:
+        service: clickhouse
+        seconds: 10
       workers: 16
       interval: 0.01
 
@@ -215,6 +251,239 @@ tests:
       seconds: 30
       workers: 16
       interval: 0.01
+
+  # The kill lands on a hop holding what it took while its next hop was frozen.
+  # The receiver dies with the loader paused, and with the broker paused.
+  - name: receiver-kill-grpc-loader-paused
+    profile: slim-grpc
+    outage:
+      service: dfe-receiver
+      method: kill
+      seconds: 20
+      pause:
+        service: dfe-loader
+        seconds: 10
+      workers: 16
+      interval: 0.01
+
+  - name: receiver-kill-kafka-broker-paused
+    profile: slim-kafka
+    expected_topics:
+      - main_land
+    outage:
+      service: dfe-receiver
+      method: kill
+      seconds: 20
+      pause:
+        service: kafka
+        seconds: 10
+      workers: 16
+      interval: 0.01
+
+  # The same kills with acknowledgements off on every hop to ClickHouse. Each must
+  # lose records.
+  - name: loader-kill-grpc-acks-off
+    profile: slim-grpc
+    config_overrides:
+      dfe-loader: tests/e2e/configs/loader-grpc-acks-off.yaml
+      dfe-receiver: tests/e2e/configs/receiver-grpc-acks-off.yaml
+    outage:
+      service: dfe-loader
+      method: kill
+      seconds: 20
+      pause:
+        service: clickhouse
+        seconds: 10
+      workers: 16
+      interval: 0.01
+      loss: required
+
+  - name: receiver-kill-grpc-loader-paused-acks-off
+    profile: slim-grpc
+    config_overrides:
+      dfe-loader: tests/e2e/configs/loader-grpc-acks-off.yaml
+      dfe-receiver: tests/e2e/configs/receiver-grpc-acks-off.yaml
+    outage:
+      service: dfe-receiver
+      method: kill
+      seconds: 20
+      pause:
+        service: dfe-loader
+        seconds: 10
+      workers: 16
+      interval: 0.01
+      loss: required
+
+  - name: receiver-kill-kafka-broker-paused-acks-off
+    profile: slim-kafka
+    expected_topics:
+      - main_land
+    config_overrides:
+      dfe-loader: tests/e2e/configs/loader-kafka-acks-off.yaml
+      dfe-receiver: tests/e2e/configs/receiver-kafka-acks-off.yaml
+    outage:
+      service: dfe-receiver
+      method: kill
+      seconds: 20
+      pause:
+        service: kafka
+        seconds: 10
+      workers: 16
+      interval: 0.01
+      loss: required
+
+  # The kills as graceful stops: SIGTERM, a drain, then SIGKILL only if the stop
+  # timeout runs out.
+  - name: loader-sigterm-grpc
+    profile: slim-grpc
+    outage:
+      service: dfe-loader
+      seconds: 20
+      pause:
+        service: clickhouse
+        seconds: 10
+      workers: 16
+      interval: 0.01
+
+  - name: receiver-sigterm-grpc-loader-paused
+    profile: slim-grpc
+    outage:
+      service: dfe-receiver
+      seconds: 20
+      pause:
+        service: dfe-loader
+        seconds: 10
+      workers: 16
+      interval: 0.01
+
+  - name: receiver-sigterm-kafka-broker-paused
+    profile: slim-kafka
+    expected_topics:
+      - main_land
+    outage:
+      service: dfe-receiver
+      seconds: 20
+      pause:
+        service: kafka
+        seconds: 10
+      workers: 16
+      interval: 0.01
+
+  - name: loader-sigterm-kafka
+    profile: slim-kafka
+    expected_topics:
+      - main_land
+    outage:
+      service: dfe-loader
+      seconds: 20
+      workers: 16
+      interval: 0.01
+
+  - name: transform-vrl-sigterm-kafka
+    profile: single-kafka
+    table: e2evrl
+    sources:
+      - *e2evrl
+    outage:
+      service: dfe-transform-vrl-e2evrl
+      seconds: 20
+      workers: 16
+      interval: 0.01
+
+  # Disk spillover serves answers given at enqueue only. With acknowledgements off
+  # the spool fills while the loader is frozen. The kill loses what was in memory,
+  # and every record on the spool at the signal must replay after the restart and
+  # land.
+  - name: receiver-kill-spillover-acks-off
+    profile: slim-grpc
+    config_overrides:
+      dfe-loader: tests/e2e/configs/loader-grpc-acks-off.yaml
+      dfe-receiver: tests/e2e/configs/receiver-grpc-spillover-acks-off.yaml
+    outage:
+      service: dfe-receiver
+      method: kill
+      seconds: 20
+      pause:
+        service: dfe-loader
+        seconds: 10
+      loss: tolerated
+      spool:
+        service: dfe-receiver
+        path: /tmp/dfe-receiver-spillover
+        must_replay: true
+
+  # With acknowledgements held, spillover opens no spool: the loader frozen past
+  # the receiver's hold is answered 503 and nothing reaches the disk.
+  - name: receiver-spillover-acks-on-builds-no-spool
+    profile: slim-grpc
+    config_overrides:
+      dfe-receiver: tests/e2e/configs/receiver-grpc-spillover.yaml
+    outage:
+      pause:
+        service: dfe-loader
+        seconds: 40
+      expect_refusals: true
+      spool:
+        service: dfe-receiver
+        path: /tmp/dfe-receiver-spillover
+        must_stay_empty: true
+
+  # A record ClickHouse refuses, one in every ten from the outage on, with good
+  # records behind it and the loader killed while holding both. The good ones
+  # land, and each refused one reaches the loader's file dead-letter queue or its
+  # dropped count without holding up the records behind it.
+  - name: loader-kill-grpc-poison
+    profile: slim-grpc
+    config_overrides:
+      dfe-loader: tests/e2e/configs/loader-grpc-dead-letters.yaml
+    outage:
+      service: dfe-loader
+      method: kill
+      seconds: 20
+      pause:
+        service: clickhouse
+        seconds: 10
+      workers: 16
+      interval: 0.01
+      poison:
+        data_file: tests/e2e/data/poison-integer-overflow.jsonl
+        every: 10
+      dead_letters:
+        service: dfe-loader
+        path: /var/spool/dfe/dlq
+
+  # The archiver killed or stopped partway through a 30 s roll. Every accepted
+  # record has to be in an archived file once the archiver is back and stopped
+  # cleanly: duplicates pass, gaps fail.
+  - name: archiver-kill-mid-roll
+    profile: single-kafka
+    config_overrides: &archive-roll
+      dfe-archiver: tests/e2e/configs/archiver-kafka-archive-roll.yaml
+    expected_topics:
+      - main_land
+    outage:
+      service: dfe-archiver
+      method: kill
+      seconds: 20
+      workers: 16
+      interval: 0.01
+      archive:
+        services: [dfe-archiver]
+        path: /var/lib/dfe-archiver/archive
+
+  - name: archiver-sigterm-mid-roll
+    profile: single-kafka
+    config_overrides: *archive-roll
+    expected_topics:
+      - main_land
+    outage:
+      service: dfe-archiver
+      seconds: 20
+      workers: 16
+      interval: 0.01
+      archive:
+        services: [dfe-archiver]
+        path: /var/lib/dfe-archiver/archive
 
   # The broker down under load with every Kafka app consuming, each transform included: the e2evector and e2eelastic records keep the vector and elastic instances' own topics moving, so their groups have to catch up too
   - name: kafka-outage

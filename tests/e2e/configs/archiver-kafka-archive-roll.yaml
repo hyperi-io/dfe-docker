@@ -1,0 +1,27 @@
+# Project:   dfe-docker
+# File:      tests/e2e/configs/archiver-kafka-archive-roll.yaml
+# Purpose:   dfe-archiver on a 30 s roll with a 15 s buffer age
+# Language:  YAML
+#
+# License:   BUSL-1.1
+# Copyright: (c) 2026 HYPERI PTY LIMITED
+#
+# A 30 s roll keeps a file open through the outage, and a 15 s buffer age means
+# the archiver holds records in memory when the signal lands. Uncompressed, so
+# the test reads the archive as it lands.
+
+transport: kafka
+
+kafka:
+  topics:
+    - main_land
+
+archive:
+  destination: file:///var/lib/dfe-archiver/archive
+  roll_interval_secs: 30
+
+buffer:
+  flush_age_secs: 15
+
+compression:
+  enabled: false

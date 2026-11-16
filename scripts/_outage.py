@@ -20,6 +20,8 @@ Starting and stopping containers stays with the suite, which owns the compose
 project.
 """
 
+import base64
+import binascii
 import http.client
 import json
 import re
@@ -27,7 +29,7 @@ import threading
 import time
 from collections import Counter
 from collections.abc import Callable, Iterable, Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
 from urllib.error import HTTPError, URLError
@@ -64,44 +66,269 @@ METHODS = {
     ),
 }
 DEFAULT_METHOD = "stop"
+# What an accepted record that never lands means. `forbidden` fails on one,
+# `required` fails when there is none, so a control that could not lose shows
+# as non-discriminating, `unreliable` reports that instead of failing, and
+# `tolerated` only records the count.
+LOSS_MODES = ("forbidden", "required", "unreliable", "tolerated")
+OUTAGE_KEYS = frozenset(
+    {
+        "service",
+        "seconds",
+        "method",
+        "pause",
+        "workers",
+        "interval",
+        "loss",
+        "expect_refusals",
+        "spool",
+        "poison",
+        "dead_letters",
+        "archive",
+        "sources",
+    }
+)
+PAUSE_KEYS = frozenset({"service", "seconds"})
+SPOOL_KEYS = frozenset({"service", "path", "must_stay_empty", "must_replay"})
+POISON_KEYS = frozenset({"data_file", "every", "limit"})
+DEAD_LETTER_KEYS = frozenset({"service", "path"})
+ARCHIVE_KEYS = frozenset({"services", "path"})
+# The metric a pipeline counts a dead letter in when it has nowhere to put it.
+DEAD_LETTERS_DROPPED = "pipeline_dead_letters_dropped_total"
 # scalo's default topic_exclude, which a dfe-archiver that discovers its topics keeps
 ARCHIVER_EXCLUDE = re.compile(r"^__|_dlq$")
 
 
-def config_problems(outage: Mapping, default_seconds: int) -> list[str]:
-    """Say what is wrong with one test's `outage:` block, empty when nothing is."""
-    problems = []
-    if not outage.get("service"):
-        problems.append("outage names no 'service' to stop")
+@dataclass(frozen=True, slots=True)
+class OutagePlan:
+    """What one outage test does to the stack, and what it expects of the result.
+
+    Attributes:
+        service: The service stopped or killed, empty when the test only pauses one.
+        seconds: How long that service stays down.
+        workers: How many load workers send at once.
+        interval: Seconds each worker waits after an answer before its next request.
+        method: How it is taken down, one of METHODS.
+        pause_service: A service frozen first, empty for none.
+        pause_seconds: How long it stays frozen before the signal.
+        loss: What a lost accepted record means, one of LOSS_MODES.
+        expect_refusals: Fail unless some request was refused while the outage ran.
+        spool_service: The service whose disk spool is read, empty for none.
+        spool_path: The spool directory inside that service's container.
+        spool_must_stay_empty: Fail when anything is written under the spool.
+        spool_must_replay: Fail unless every record spooled at the signal lands.
+        poison_file: Records the sink refuses, sent among the good ones.
+        poison_every: One record in this many is a poison record.
+        poison_limit: How many poison records to send at most, 0 for no limit.
+        dead_letter_service: The service that dead-letters what the sink refuses.
+        dead_letter_path: Its file dead-letter directory, empty when it has none.
+        archive_services: The archivers whose output must hold every accepted record.
+        archive_path: Their shared archive directory.
+        sources: The data file the load sends per `_source`, empty for the test's own.
+    """
+
+    service: str
+    seconds: int
+    workers: int
+    interval: float
+    method: str = DEFAULT_METHOD
+    pause_service: str = ""
+    pause_seconds: int = 0
+    loss: str = "forbidden"
+    expect_refusals: bool = False
+    spool_service: str = ""
+    spool_path: str = ""
+    spool_must_stay_empty: bool = False
+    spool_must_replay: bool = False
+    poison_file: str = ""
+    poison_every: int = 0
+    poison_limit: int = 0
+    dead_letter_service: str = ""
+    dead_letter_path: str = ""
+    archive_services: tuple[str, ...] = ()
+    archive_path: str = ""
+    sources: Mapping[str, str] = field(default_factory=dict)
+
+
+def _whole_number(value: object, what: str) -> int:
+    """Return `value` as a whole number above 0, else raise naming `what`."""
+    if isinstance(value, bool) or not isinstance(value, (int, str)):
+        raise ValueError(f"{what} must be a whole number above 0, got {value!r}")
     try:
-        seconds = int(outage.get("seconds", default_seconds))
-    except (TypeError, ValueError):
-        seconds = 0
-    if seconds < 1:
-        problems.append("outage 'seconds' must be a whole number above 0")
-    if not isinstance(outage.get("sources") or {}, dict):
-        problems.append("outage 'sources' must map each _source to a data file")
-    workers = outage.get("workers", 1)
-    if isinstance(workers, bool) or not isinstance(workers, int) or workers < 1:
-        problems.append("outage 'workers' must be a whole number above 0")
-    interval = outage.get("interval", 0)
-    if (
-        isinstance(interval, bool)
-        or not isinstance(interval, int | float)
-        or interval < 0
-    ):
-        problems.append("outage 'interval' must be a number of seconds, 0 or more")
+        number = int(value)
+    except ValueError:
+        raise ValueError(
+            f"{what} must be a whole number above 0, got {value!r}"
+        ) from None
+    if number < 1:
+        raise ValueError(f"{what} must be a whole number above 0, got {value!r}")
+    return number
+
+
+def _seconds_from_zero(value: object, what: str) -> float:
+    """Return `value` as seconds, 0 allowed, else raise naming `what`."""
+    if isinstance(value, bool) or not isinstance(value, (int, float)) or value < 0:
+        raise ValueError(
+            f"{what} must be a number of seconds, 0 or more, got {value!r}"
+        )
+    return float(value)
+
+
+def _unknown_keys(block: Mapping, known: frozenset[str], what: str) -> None:
+    """Raise when `block` carries a key outside `known`, so a typo is not a silent default."""
+    unknown = sorted(str(key) for key in block if key not in known)
+    if unknown:
+        raise ValueError(f"{what} has unknown key(s): {', '.join(unknown)}")
+
+
+def _flag(block: Mapping, key: str, what: str) -> bool:
+    """Return a YAML boolean, refusing a string that only looks like one."""
+    value = block.get(key, False)
+    if not isinstance(value, bool):
+        raise ValueError(f"{what} '{key}' must be true or false, got {value!r}")
+    return value
+
+
+def _block(outage: Mapping, key: str, known: frozenset[str], needs: tuple[str, ...]):
+    """Return the `key` mapping of an outage block, empty when absent.
+
+    Raises:
+        ValueError: If it is not a mapping, carries an unknown key, or misses one
+            of `needs`.
+    """
+    block = outage.get(key) or {}
+    if not isinstance(block, Mapping):
+        raise ValueError(f"outage '{key}' must map {', '.join(needs)}")
+    _unknown_keys(block, known, f"outage '{key}'")
+    if block and not all(block.get(name) for name in needs):
+        raise ValueError(f"outage '{key}' needs {' and '.join(repr(n) for n in needs)}")
+    return block
+
+
+def outage_plan(
+    outage: Mapping,
+    default_seconds: int,
+    *,
+    default_workers: int,
+    default_interval: float,
+) -> OutagePlan:
+    """Validate a test's `outage:` block and return what it asks for.
+
+    Args:
+        outage: The block as the test definition carries it.
+        default_seconds: How long a service stays down when `seconds` is absent.
+        default_workers: How many load workers send when `workers` is absent.
+        default_interval: Each worker's pause between requests when `interval`
+            is absent.
+
+    Returns:
+        The plan the suite runs.
+
+    Raises:
+        ValueError: If a key is unknown, a value is out of range, or the block
+            neither takes a service down nor pauses one.
+    """
+    _unknown_keys(outage, OUTAGE_KEYS, "outage")
+    service = str(outage.get("service") or "")
+    pause = outage.get("pause") or {}
+    if not isinstance(pause, Mapping):
+        raise ValueError("outage 'pause' must map 'service' and 'seconds'")
+    _unknown_keys(pause, PAUSE_KEYS, "outage 'pause'")
+    if not (service) and not (pause):
+        raise ValueError("outage names no 'service' to stop and no 'pause'")
+    if not (service) and ("seconds" in outage or "method" in outage):
+        raise ValueError("outage 'seconds' and 'method' need a 'service' to take down")
+
     method = outage.get("method", DEFAULT_METHOD)
     if not isinstance(method, str) or method not in METHODS:
-        problems.append(
-            f"outage 'method' must be one of {', '.join(METHODS)}, got '{method}'"
+        raise ValueError(
+            f"outage 'method' must be one of {', '.join(METHODS)}, got {method!r}"
         )
-    return problems
+    seconds = (
+        _whole_number(outage.get("seconds", default_seconds), "outage 'seconds'")
+        if service
+        else 0
+    )
+    workers = _whole_number(outage.get("workers", default_workers), "outage 'workers'")
+    interval = _seconds_from_zero(
+        outage.get("interval", default_interval), "outage 'interval'"
+    )
+
+    pause_service = str(pause.get("service") or "")
+    pause_seconds = 0
+    if pause:
+        if not (pause_service):
+            raise ValueError("outage 'pause' names no 'service'")
+        if pause_service == service:
+            raise ValueError("outage 'pause' cannot freeze the service it takes down")
+        pause_seconds = _whole_number(pause.get("seconds"), "outage 'pause' 'seconds'")
+
+    loss = str(outage.get("loss", "forbidden"))
+    if loss not in LOSS_MODES:
+        raise ValueError(
+            f"outage 'loss' must be one of {', '.join(LOSS_MODES)}, got {loss!r}"
+        )
+
+    spool = _block(outage, "spool", SPOOL_KEYS, ("service", "path"))
+    poison = _block(outage, "poison", POISON_KEYS, ("data_file", "every"))
+    dead_letters = _block(outage, "dead_letters", DEAD_LETTER_KEYS, ("service",))
+    if bool(poison) != bool(dead_letters):
+        raise ValueError(
+            "outage 'poison' and 'dead_letters' go together: a record the sink "
+            "refuses is judged by where it was dead-lettered"
+        )
+    poison_every = (
+        _whole_number(poison.get("every"), "outage 'poison' 'every'") if poison else 0
+    )
+    if poison and poison_every < 2:
+        raise ValueError("outage 'poison' 'every' must leave good records between")
+    poison_limit = (
+        _whole_number(poison["limit"], "outage 'poison' 'limit'")
+        if "limit" in poison
+        else 0
+    )
+    if dead_letters and not dead_letters.get("path") and poison_limit != 1:
+        raise ValueError(
+            "outage 'dead_letters' with no 'path' has only the drop count, which "
+            "names no record, so it can stand for one: set poison 'limit: 1'"
+        )
+    archive = _block(outage, "archive", ARCHIVE_KEYS, ("services", "path"))
+    archive_services = archive.get("services") or []
+    if not isinstance(archive_services, list):
+        raise ValueError("outage 'archive' 'services' must list the archivers")
+
+    sources = outage.get("sources") or {}
+    if not isinstance(sources, Mapping):
+        raise ValueError("outage 'sources' must map each _source to a data file")
+
+    return OutagePlan(
+        service=service,
+        seconds=seconds,
+        workers=workers,
+        interval=interval,
+        method=method,
+        pause_service=pause_service,
+        pause_seconds=pause_seconds,
+        loss=loss,
+        expect_refusals=_flag(outage, "expect_refusals", "outage"),
+        spool_service=str(spool.get("service") or ""),
+        spool_path=str(spool.get("path") or ""),
+        spool_must_stay_empty=_flag(spool, "must_stay_empty", "outage 'spool'"),
+        spool_must_replay=_flag(spool, "must_replay", "outage 'spool'"),
+        poison_file=str(poison.get("data_file") or ""),
+        poison_every=poison_every,
+        poison_limit=poison_limit,
+        dead_letter_service=str(dead_letters.get("service") or ""),
+        dead_letter_path=str(dead_letters.get("path") or ""),
+        archive_services=tuple(str(name) for name in archive_services),
+        archive_path=str(archive.get("path") or ""),
+        sources={str(source): str(path) for source, path in sources.items()},
+    )
 
 
-def method_of(outage: Mapping) -> Method:
-    """The way a validated `outage:` block takes its service down."""
-    return METHODS[outage.get("method", DEFAULT_METHOD)]
+def method_of(plan: OutagePlan) -> Method:
+    """The way a plan takes its service down."""
+    return METHODS[plan.method]
 
 
 def record_marker(prefix: str, seq: int) -> str:
@@ -130,6 +357,7 @@ class Sent:
         error: Why no answer arrived, empty when one did.
         started: When the request went out, as a unix time.
         seconds: How long the request took.
+        poison: Whether the record is one the sink refuses.
     """
 
     seq: int
@@ -139,11 +367,17 @@ class Sent:
     error: str
     started: float
     seconds: float
+    poison: bool = False
+
+    @property
+    def answered_2xx(self) -> bool:
+        """Whether the receiver answered the request with a 2xx."""
+        return self.status is not None and 200 <= self.status < 300
 
     @property
     def accepted(self) -> bool:
-        """Whether the receiver took the record, which obliges it to land."""
-        return self.status is not None and 200 <= self.status < 300
+        """Whether the receiver took a good record, which obliges it to land."""
+        return self.answered_2xx and not (self.poison)
 
     @property
     def outcome(self) -> str:
@@ -192,7 +426,10 @@ class SteadyLoad:
     """Send marked records from several workers until stopped, keeping every answer.
 
     `phase` is read as each request goes out, so the caller moves the whole load
-    from one part of the outage to the next by assigning it.
+    from one part of the outage to the next by assigning it. With `poison`, once
+    the outage begins every `poison_every`-th record is one of those instead,
+    routed to the first source, so the path is proven before the first one.
+    `poison_limit` stops the poison after that many, 0 for no limit.
     """
 
     def __init__(
@@ -204,6 +441,9 @@ class SteadyLoad:
         workers: int,
         interval: float,
         timeout: float,
+        poison: Sequence[dict] = (),
+        poison_every: int = 0,
+        poison_limit: int = 0,
     ) -> None:
         """Prepare the workers without sending anything.
 
@@ -214,10 +454,16 @@ class SteadyLoad:
             raise ValueError("the load has no record to send")
         if workers < 1:
             raise ValueError(f"the load needs at least one worker, got {workers}")
+        if poison and poison_every < 2:
+            raise ValueError("poison needs good records between, every 2 or more")
         self.phase = PHASES[0]
         self._url = url
         self._prefix = prefix
         self._records = list(records)
+        self._poison = list(poison)
+        self._poison_every = poison_every if poison else 0
+        self._poison_limit = poison_limit
+        self._poisoned = 0
         self._interval = interval
         self._timeout = timeout
         self._lock = threading.Lock()
@@ -245,16 +491,27 @@ class SteadyLoad:
         with self._lock:
             return list(self._sent)
 
-    def _claim(self) -> tuple[int, str, dict]:
+    def _claim(self) -> tuple[int, str, dict, bool]:
+        every = self._poison_every
         with self._lock:
             seq = self._next
             self._next += 1
+            poison = (
+                bool(every)
+                and self.phase != PHASES[0]
+                and seq % every == every - 1
+                and not (self._poison_limit and self._poisoned >= self._poison_limit)
+            )
+            self._poisoned += poison
+        if poison:
+            event = self._poison[(seq // every) % len(self._poison)]
+            return seq, self._records[0][0], event, True
         source, event = self._records[seq % len(self._records)]
-        return seq, source, event
+        return seq, source, event, False
 
     def _run(self) -> None:
         while not self._stop.is_set():
-            seq, source, event = self._claim()
+            seq, source, event, poison = self._claim()
             phase = self.phase
             body = marked_event(
                 marker=record_marker(self._prefix, seq), source=source, extra=event
@@ -270,6 +527,7 @@ class SteadyLoad:
                 error=error,
                 started=started,
                 seconds=time.monotonic() - clock,
+                poison=poison,
             )
             with self._lock:
                 self._sent.append(record)
@@ -293,8 +551,27 @@ def slowest_by_phase(sent: Iterable[Sent]) -> dict[str, float]:
 
 
 def accepted_by_seq(sent: Iterable[Sent], source: str) -> dict[int, str]:
-    """Map each record of `source` the receiver accepted to the phase it was sent in."""
+    """Map each good record of `source` the receiver accepted to the phase it was sent in."""
     return {r.seq: r.phase for r in sent if r.accepted and r.source == source}
+
+
+def poison_by_seq(sent: Iterable[Sent]) -> dict[int, str]:
+    """Map each poison record the receiver accepted to the phase it was sent in."""
+    return {r.seq: r.phase for r in sent if r.poison and r.answered_2xx}
+
+
+def phase_by_seq(sent: Iterable[Sent]) -> dict[int, str]:
+    """Map every record the load sent, answered or not and of any source, to its phase.
+
+    Sources can share a table, so a duplicate row of another source's record is
+    placed by the phase it was sent in too.
+    """
+    return {r.seq: r.phase for r in sent}
+
+
+def refused(record: Sent) -> bool:
+    """Whether the receiver answered the request with anything but a 2xx."""
+    return record.status is not None and not (record.answered_2xx)
 
 
 @dataclass(frozen=True, slots=True)
@@ -308,12 +585,20 @@ class Outage:
         healthy: When the service was healthy again after it was started.
         uncommitted: Records a killed Kafka consumer's group had not committed
             just before the kill, None when nobody read them.
+        started: When the outage began: the pause when the test freezes a service
+            first, else the command that took the service down.
+        spool_at_peak: The spool's files as {path: bytes}, read just before the
+            signal, None when the test names no spool or it could not be read.
+        dropped_at_peak: The dead-letter drop count, read just before the signal.
     """
 
     issued: float
     down: float
     healthy: float
     uncommitted: int | None = None
+    started: float = 0.0
+    spool_at_peak: Mapping[str, bytes] | None = None
+    dropped_at_peak: float | None = None
 
 
 def overlapping(sent: Iterable[Sent], start: float, end: float) -> list[Sent]:
@@ -347,20 +632,31 @@ def consumer_group(config: Path) -> str:
     return ""
 
 
-def unexplained_silence(
-    sent: Iterable[Sent], down: tuple[float, float] | None = None
-) -> list[Sent]:
-    """The requests nothing answered, less those in flight while the ingest edge was down.
+def unanswered(
+    sent: Iterable[Sent],
+    window: tuple[float, float] | None,
+    *,
+    in_flight: bool = True,
+) -> tuple[list[Sent], list[Sent]]:
+    """Split the requests nothing answered into (excused, unexcused).
 
-    `down` is the unix-time span from the moment the service the load posts to was
-    taken down until it was healthy again. Nothing was there to answer a request
-    overlapping it, so only silence outside it means a running edge dropped one.
+    `window` runs from the moment the service the load posts to was taken down
+    until it was healthy again, None when it stayed up, which excuses nothing.
+    Nothing was there to answer a request sent inside it. One already in flight
+    at the signal is excused only when `in_flight`: a kill cannot answer it, a
+    graceful stop has to.
     """
-    silent = [record for record in sent if record.status is None]
-    if down is None:
-        return silent
-    excused = set(overlapping(silent, *down))
-    return [record for record in silent if record not in excused]
+    excused: list[Sent] = []
+    unexcused: list[Sent] = []
+    for record in sent:
+        if record.status is not None:
+            continue
+        inside = window is not None and bool(overlapping([record], *window))
+        if inside and (in_flight or record.started >= window[0]):
+            excused.append(record)
+        else:
+            unexcused.append(record)
+    return excused, unexcused
 
 
 def rows_per_seq(grouped: str, prefix: str) -> Counter[int]:
@@ -423,6 +719,8 @@ class Landing:
         lost: Accepted records with no row, in sequence order.
         duplicates: Rows beyond the first, over every record of the load.
         unaccepted: Records with a row that the receiver never answered 2xx.
+        lost_by_phase: The lost records, counted by the phase each was sent in.
+        duplicated_by_phase: Records with more than one row, counted by phase sent.
     """
 
     accepted: int
@@ -430,19 +728,181 @@ class Landing:
     lost: tuple[int, ...]
     duplicates: int
     unaccepted: int
+    lost_by_phase: Mapping[str, int] = field(default_factory=dict)
+    duplicated_by_phase: Mapping[str, int] = field(default_factory=dict)
+
+    @property
+    def duplicated(self) -> int:
+        """How many records landed more than once."""
+        return sum(self.duplicated_by_phase.values())
 
 
-def landing(accepted: Iterable[int], rows: Mapping[int, int]) -> Landing:
-    """Tally the accepted records against the rows each landed as."""
-    owed = set(accepted)
+def landing(
+    accepted: Mapping[int, str],
+    rows: Mapping[int, int],
+    phases: Mapping[int, str] | None = None,
+) -> Landing:
+    """Tally the accepted records against the rows each landed as.
+
+    Args:
+        accepted: The accepted records, by sequence number, to the phase sent in.
+        rows: Rows per landed record, as `landed_rows` reads them.
+        phases: Every record the load sent to its phase, so a duplicate of a
+            record the receiver refused is placed too. Defaults to `accepted`.
+
+    Returns:
+        The tally. A duplicate is reported, never judged: at-least-once allows it.
+    """
     present = {seq for seq, count in rows.items() if count > 0}
+    lost = tuple(sorted(set(accepted) - present))
+    placed = accepted if phases is None else phases
     return Landing(
-        accepted=len(owed),
-        landed=len(owed & present),
-        lost=tuple(sorted(owed - present)),
+        accepted=len(accepted),
+        landed=len(set(accepted) & present),
+        lost=lost,
         duplicates=sum(count - 1 for count in rows.values() if count > 1),
-        unaccepted=len(present - owed),
+        unaccepted=len(present - set(accepted)),
+        lost_by_phase=dict(Counter(accepted[seq] for seq in lost)),
+        duplicated_by_phase=dict(
+            Counter(placed.get(seq, "unknown") for seq, n in rows.items() if n > 1)
+        ),
     )
+
+
+def grown(before: Mapping[str, int], after: Mapping[str, int]) -> list[str]:
+    """The files in `after` that are new since `before`, or larger than they were there."""
+    return sorted(path for path, size in after.items() if size > before.get(path, -1))
+
+
+# The first four bytes of every zstd frame.
+ZSTD_MAGIC = b"\x28\xb5\x2f\xfd"
+
+
+def zstd_frames(data: bytes) -> bytes:
+    """Return every zstd frame embedded in `data`, decompressed and joined.
+
+    A disk spool frames each record and compresses its body, so the records sit
+    between the queue's own headers. Returns empty when this Python has no zstd
+    module or `data` holds no frame.
+    """
+    try:
+        from compression import zstd
+    except ImportError:
+        return b""
+    out = []
+    start = data.find(ZSTD_MAGIC)
+    while start >= 0:
+        decompressor = zstd.ZstdDecompressor()
+        try:
+            out.append(decompressor.decompress(data[start:]))
+        except zstd.ZstdError:
+            pass
+        start = data.find(ZSTD_MAGIC, start + len(ZSTD_MAGIC))
+    return b"".join(out)
+
+
+def count_markers(data: bytes, prefix: str) -> Counter[int]:
+    """How many lines of `data` name each record of this load, by sequence number.
+
+    A record can name itself twice, in its marker tag and in the default message
+    that carries the marker too, so a line counts once however often it does.
+    """
+    pattern = re.compile(re.escape(prefix.encode()) + rb"-(\d{6})(?!\d)")
+    counts: Counter[int] = Counter()
+    for line in data.splitlines():
+        counts.update({int(match.group(1)) for match in pattern.finditer(line)})
+    return counts
+
+
+def markers_in(data: bytes, prefix: str) -> set[int]:
+    """Every record of this load named anywhere in `data`, by sequence number."""
+    return set(count_markers(data, prefix))
+
+
+def dead_letter_markers(ndjson: str, prefix: str) -> set[int]:
+    """Every record of this load in a file dead-letter queue's NDJSON.
+
+    Each line carries the refused record base64-encoded in `payload`. A line that
+    is not such an entry is skipped rather than guessed at.
+    """
+    found: set[int] = set()
+    for line in ndjson.splitlines():
+        try:
+            entry = json.loads(line)
+            payload = base64.b64decode(entry["payload"], validate=True)
+        except (ValueError, KeyError, TypeError, binascii.Error):
+            continue
+        found |= markers_in(payload, prefix)
+    return found
+
+
+_LABEL = re.compile(r'(\w+)="((?:[^"\\]|\\.)*)"')
+
+
+def metric_samples(exposition: str, name: str) -> list[tuple[dict[str, str], float]]:
+    """Every sample of a Prometheus metric whose name ends in `name`, with its labels.
+
+    A service prefixes the metrics its library registers with its own namespace,
+    so `dfe_loader_pipeline_dead_letters_dropped_total` is a sample of `name`.
+    """
+    samples = []
+    for line in exposition.splitlines():
+        if not line or line.startswith("#"):
+            continue
+        labels: dict[str, str] = {}
+        if "{" in line:
+            series, rest = line[: line.index("{")], line[line.rindex("}") + 1 :]
+            labels = dict(_LABEL.findall(line[line.index("{") : line.rindex("}")]))
+        else:
+            series, _, rest = line.partition(" ")
+        if series != name and not series.endswith(f"_{name}"):
+            continue
+        try:
+            samples.append((labels, float(rest.split()[0])))
+        except (IndexError, ValueError):
+            continue
+    return samples
+
+
+def metric_total(exposition: str, name: str) -> float | None:
+    """Sum every sample of the metric `metric_samples` reads, else None."""
+    samples = metric_samples(exposition, name)
+    return sum(value for _, value in samples) if samples else None
+
+
+def metric_by_label(exposition: str, name: str, label: str) -> dict[str, float]:
+    """Sum the metric's samples per value of `label`, empty for a sample without it."""
+    totals: dict[str, float] = {}
+    for labels, value in metric_samples(exposition, name):
+        key = labels.get(label, "")
+        totals[key] = totals.get(key, 0.0) + value
+    return totals
+
+
+def account_poison(
+    accepted: Iterable[int],
+    lettered: Iterable[int],
+    sent: int,
+    dropped: float | None,
+) -> tuple[set[int], set[int]]:
+    """Split the accepted poison records the dead-letter files lack into (counted, gone).
+
+    A file entry names its record, so each counts once however often a replay
+    wrote it. The drop count names none and counts every attempt: a record
+    dropped before a kill and again on replay counts twice, and would cover one
+    lost without a trace. So the count stands for a record only when the load
+    sent that one poison record alone.
+
+    Args:
+        accepted: The poison records the receiver answered 2xx, by sequence number.
+        lettered: The records found in the dead-letter files.
+        sent: How many poison records the load sent, answered or not.
+        dropped: How far the drop count rose over the test, None when unread.
+    """
+    missing = set(accepted) - set(lettered)
+    if sent == 1 and len(missing) == 1 and (dropped or 0.0) >= 1:
+        return missing, set()
+    return set(), missing
 
 
 @dataclass(frozen=True, slots=True)
