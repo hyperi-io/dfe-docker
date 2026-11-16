@@ -61,8 +61,8 @@ RENDERED_PROFILES = ("slim-grpc", "slim-kafka", "single-grpc", "single-kafka")
 
 # What a Kafka dfe-loader subscribes to when its config names no topics and no topic_regex (dfe-loader src/kafka/transport.rs LANDING_TOPIC_INCLUDE)
 LOADER_DEFAULT_TOPIC_REGEX = "_(land|load)$"
-# The consumer group a Kafka dfe-loader commits as when its config names none
-LOADER_DEFAULT_GROUP = "dfe-loader"
+# The consumer group a Kafka app commits as when its config names none, by the directory its config lives in
+DEFAULT_GROUPS = {"loader": "dfe-loader", "archiver": "dfe-archiver"}
 
 # Each app dfe-engine starts one container per source of, never as a profile's service, with the profile key that runs it and the variable resolve_profile.py writes the enabled apps to
 FETCHER_SERVICE = "dfe-fetcher"

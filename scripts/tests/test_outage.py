@@ -488,6 +488,11 @@ def test_a_loader_config_with_no_group_commits_as_the_default(tmp_path) -> None:
 
     assert _outage.consumer_group(generated) == "dfe-loader"
 
+    archiver = tmp_path / "archiver-kafka-archive-roll.yaml"
+    archiver.write_text("transport: kafka\n", encoding="utf-8")
+
+    assert _outage.consumer_group(archiver) == "dfe-archiver"
+
 
 def test_rows_are_counted_per_record_of_this_load_only() -> None:
     grouped = "\n".join(

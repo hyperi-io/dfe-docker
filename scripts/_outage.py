@@ -35,7 +35,7 @@ from pathlib import Path
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
-from _common import LOADER_DEFAULT_GROUP, _config_topics
+from _common import DEFAULT_GROUPS, _config_topics
 from _pipeline import MARKER_EXPRESSIONS, ch_int, ch_query, escape_literal, marked_event
 
 PHASES = ("before", "during", "after")
@@ -626,14 +626,17 @@ def unix_time(stamp: str) -> float | None:
 def consumer_group(config: Path) -> str:
     """The Kafka consumer group one service config commits as, empty when it names none.
 
-    A dfe-loader config that names none commits as the loader's own default group.
+    A dfe-loader or dfe-archiver config that names none commits as the app's own
+    default group.
     """
     for raw in config.read_text(encoding="utf-8", errors="replace").splitlines():
         line = raw.strip()
         if line.startswith("group: "):
             return line.split(": ", 1)[1].strip().strip("\"'")
-    is_loader = config.parent.name == "loader" or config.name.startswith("loader-")
-    return LOADER_DEFAULT_GROUP if is_loader else ""
+    for app, group in DEFAULT_GROUPS.items():
+        if config.parent.name == app or config.name.startswith(f"{app}-"):
+            return group
+    return ""
 
 
 def unanswered(

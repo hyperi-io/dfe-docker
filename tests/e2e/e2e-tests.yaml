@@ -179,6 +179,9 @@ tests:
   # The Kafka chain through the vrl transform dfe-engine starts for a source made through its API, with dfe-loader stopped under it. dfe-engine runs no transform for a source on direct gRPC
   - name: loader-outage-kafka-transform-vrl
     profile: single-kafka
+    # The archiver commits only when it rolls a file, every 300s by default
+    config_overrides:
+      dfe-archiver: tests/e2e/configs/archiver-short-roll.yaml
     table: e2evrl
     sources:
       - &e2evrl
@@ -195,6 +198,9 @@ tests:
   # The same chain with the transform instance itself stopped mid-chain
   - name: transform-vrl-outage-kafka
     profile: single-kafka
+    # The archiver commits only when it rolls a file, every 300s by default
+    config_overrides:
+      dfe-archiver: tests/e2e/configs/archiver-short-roll.yaml
     table: e2evrl
     sources:
       - *e2evrl
@@ -242,6 +248,9 @@ tests:
 
   - name: transform-vrl-kill-kafka
     profile: single-kafka
+    # The archiver commits only when it rolls a file, every 300s by default
+    config_overrides:
+      dfe-archiver: tests/e2e/configs/archiver-short-roll.yaml
     table: e2evrl
     sources:
       - *e2evrl
@@ -384,6 +393,9 @@ tests:
 
   - name: transform-vrl-sigterm-kafka
     profile: single-kafka
+    # The archiver commits only when it rolls a file, every 300s by default
+    config_overrides:
+      dfe-archiver: tests/e2e/configs/archiver-short-roll.yaml
     table: e2evrl
     sources:
       - *e2evrl
