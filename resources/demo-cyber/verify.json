@@ -3,7 +3,7 @@
     "demo-cyber-anonymous-link": {
       "max_alerts": 126
     },
-    "demo-cyber-drop-sign-in": {
+    "demo-cyber-bad-network-sign-in": {
       "max_alerts": 126
     },
     "demo-cyber-ransomware": {
