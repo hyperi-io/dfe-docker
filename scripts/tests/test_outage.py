@@ -482,6 +482,13 @@ def test_a_consumer_config_names_the_group_it_commits_as(tmp_path) -> None:
     assert _outage.consumer_group(receiver) == ""
 
 
+def test_a_loader_config_with_no_group_commits_as_the_default(tmp_path) -> None:
+    generated = tmp_path / "loader-e2e-20261116-main.yaml"
+    generated.write_text("transport: kafka\n", encoding="utf-8")
+
+    assert _outage.consumer_group(generated) == "dfe-loader"
+
+
 def test_rows_are_counted_per_record_of_this_load_only() -> None:
     grouped = "\n".join(
         [
@@ -578,24 +585,24 @@ def test_zstd_frames_between_spool_headers_are_read() -> None:
     assert _outage.zstd_frames(b"no frame here") == b""
 
 
-def test_a_dead_letter_is_found_in_its_base64_payload() -> None:
-    def entry(payload: bytes) -> str:
+def test_a_dead_letter_is_found_as_an_event_or_in_its_base64_raw() -> None:
+    def raw(payload: bytes) -> str:
         return json.dumps(
-            {"reason": "sink_rejected", "payload": base64.b64encode(payload).decode()}
+            {"_raw": base64.b64encode(payload).decode(), "_raw_encoding": "base64"}
         )
 
     ndjson = "\n".join(
         [
-            entry(b'{"_marker":"e2e-1-poison-000009","big":1}'),
-            entry(b'{"_marker":"e2e-2-poison-000019"}'),
-            json.dumps({"reason": "sink_rejected", "payload": "not base64!"}),
-            json.dumps({"reason": "no payload"}),
+            json.dumps({"_json": {"_tags": {"marker": "e2e-1-poison-000009"}}}),
+            json.dumps({"_raw": "plain e2e-1-poison-000019 text"}),
+            json.dumps({"_json": {"_tags": {"marker": "e2e-2-poison-000039"}}}),
+            raw(b'{"_marker":"e2e-1-poison-000029"}'),
+            json.dumps({"_raw": "not base64!", "_raw_encoding": "base64"}),
             "not json",
-            entry(b'{"_marker":"e2e-1-poison-000029"}'),
         ]
     )
 
-    assert _outage.dead_letter_markers(ndjson, "e2e-1-poison") == {9, 29}
+    assert _outage.dead_letter_markers(ndjson, "e2e-1-poison") == {9, 19, 29}
 
 
 def test_a_metric_is_summed_across_labels_and_namespaces() -> None:
@@ -774,6 +781,17 @@ def test_expected_consumers_count_each_subscriber_of_a_topic(tmp_path) -> None:
     counts = _outage.expected_consumers([archiver, vrl, vector, receiver])
 
     assert counts == {"main_land": 3}
+
+
+def test_a_generated_loader_config_reads_the_loaders_default_pattern(tmp_path) -> None:
+    generated = tmp_path / "loader-e2e-20261116-main.yaml"
+    generated.write_text("transport: kafka\n", encoding="utf-8")
+    direct = tmp_path / "loader-grpc.yaml"
+    direct.write_text("transport: grpc\n", encoding="utf-8")
+
+    counts = _outage.expected_consumers([generated, direct], ["main_land"])
+
+    assert counts == {"main_land": 1}
 
 
 def test_a_pattern_subscriber_is_owed_a_commit_on_each_topic_it_reads(

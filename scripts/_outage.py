@@ -35,7 +35,7 @@ from pathlib import Path
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
-from _common import _config_topics
+from _common import LOADER_DEFAULT_GROUP, _config_topics
 from _pipeline import MARKER_EXPRESSIONS, ch_int, ch_query, escape_literal, marked_event
 
 PHASES = ("before", "during", "after")
@@ -624,12 +624,16 @@ def unix_time(stamp: str) -> float | None:
 
 
 def consumer_group(config: Path) -> str:
-    """The Kafka consumer group one service config commits as, empty when it names none."""
+    """The Kafka consumer group one service config commits as, empty when it names none.
+
+    A dfe-loader config that names none commits as the loader's own default group.
+    """
     for raw in config.read_text(encoding="utf-8", errors="replace").splitlines():
         line = raw.strip()
         if line.startswith("group: "):
             return line.split(": ", 1)[1].strip().strip("\"'")
-    return ""
+    is_loader = config.parent.name == "loader" or config.name.startswith("loader-")
+    return LOADER_DEFAULT_GROUP if is_loader else ""
 
 
 def unanswered(
@@ -823,17 +827,26 @@ def markers_in(data: bytes, prefix: str) -> set[int]:
 def dead_letter_markers(ndjson: str, prefix: str) -> set[int]:
     """Every record of this load in a file dead-letter queue's NDJSON.
 
-    Each line carries the refused record base64-encoded in `payload`. A line that
-    is not such an entry is skipped rather than guessed at.
+    Each line is a DFE event. A payload that is a JSON object sits under `_json`
+    as itself, any other under `_raw`, base64 when `_raw_encoding` says so. A line
+    that is not JSON is skipped rather than guessed at.
     """
     found: set[int] = set()
     for line in ndjson.splitlines():
         try:
             entry = json.loads(line)
-            payload = base64.b64decode(entry["payload"], validate=True)
-        except (ValueError, KeyError, TypeError, binascii.Error):
+        except ValueError:
             continue
-        found |= markers_in(payload, prefix)
+        if not isinstance(entry, dict):
+            continue
+        found |= markers_in(line.encode(), prefix)
+        if entry.get("_raw_encoding") == "base64":
+            try:
+                found |= markers_in(
+                    base64.b64decode(entry["_raw"], validate=True), prefix
+                )
+            except (KeyError, TypeError, binascii.Error):
+                continue
     return found
 
 
