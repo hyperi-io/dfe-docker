@@ -98,6 +98,10 @@ CONTENT_EDITS = {
         ("from its /proc at /hostfs", "from the collector's own /proc"),
     )
 }
+# Detection rows one rule writes in one hunt run on a demo, past which the run writes a summary row carrying the true match count. A replay loops the same events, so an uncapped rule that matches one writes its whole window every five minutes
+HUNT_RUNNER_SERVICE = "dfe-hunt-runner"
+MAX_DETECTIONS_KEY = "DFE_ENGINE_HUNTS_MAX_DETECTIONS_PER_RUN"
+DEMO_MAX_DETECTIONS = 20
 # The service whose deploy limits and DNS settings the demo's helpers take
 SIDECAR_SERVICE = "dlq-init"
 TRANSFORM_ELASTIC_CONTRACT = "contract-dfe-transform-elastic"
@@ -639,6 +643,13 @@ def demo_overlay(
     engine_env[HOSTED_INSTANCES_KEY] = demo_hosted(roles=roles)
     engine_env[APPLY_COMMAND_KEY] = apply_command(tag=demo_pack_tag(pack=pack))
     engine_env[CREDENTIAL_COMMAND_KEY] = login_command(tag=demo_pack_tag(pack=pack))
+    if HUNT_RUNNER_SERVICE not in services:
+        raise PublishError(
+            f"the demo model has no {HUNT_RUNNER_SERVICE!r} to cap the pack's hunts on"
+        )
+    services[HUNT_RUNNER_SERVICE].setdefault("environment", {})[MAX_DETECTIONS_KEY] = (
+        str(DEMO_MAX_DETECTIONS)
+    )
     sidecar = services[SIDECAR_SERVICE]
     helper = {
         "deploy": sidecar["deploy"],

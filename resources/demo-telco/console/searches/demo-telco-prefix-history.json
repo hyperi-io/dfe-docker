@@ -6,6 +6,6 @@
   "tags": [
     "demo"
   ],
-  "where": "toString(_json.attrs.target_prefix) = '172.69.12.0/24'",
+  "where": "toString(_json.attrs.target_prefix) = '173.82.227.0/24'",
   "whereLanguage": "sql"
 }

@@ -1,0 +1,14 @@
+# Project:   dfe-docker
+# File:      resources/demo-cyber/rules/demo-cyber-anonymous-link.yaml
+# Purpose:   The cyber demo's rule: an anonymous sharing link used to open a Microsoft 365 file
+# Language:  YAML
+#
+# License:   BUSL-1.1
+# Copyright: (c) 2026 HYPERI PTY LIMITED
+
+name: demo-cyber-anonymous-link
+display_name: Anonymous link used on a Microsoft 365 file
+severity: medium
+source: o365
+source_type: raw
+user_sql: "SELECT * FROM dfe.`o365` WHERE event_action = 'AnonymousLinkUsed'"

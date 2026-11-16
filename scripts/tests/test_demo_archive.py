@@ -179,12 +179,18 @@ class TestManifest:
         with pytest.raises(demo.DemoError, match=message):
             demo.check_manifest(demo=loaded, manifest=manifest)
 
-    def test_the_cyber_pack_carries_each_rule_its_hunt_runs(self) -> None:
-        hunts = demo.pack_hunts(root=demo_pack_dir(pack="cyber"))
+    @pytest.mark.parametrize("pack", ["", *demo_pack_names()])
+    def test_each_pack_carries_each_rule_its_hunts_run(self, pack: str) -> None:
+        root = demo_pack_dir(pack=pack)
+        manifest = json.loads((root / "demo.json").read_text(encoding="utf-8"))
 
-        assert [name for name, _ in hunts.hunts] == ["demo-cyber-drop-sign-in"]
-        assert [name for name, _ in hunts.rules] == ["demo-cyber-drop-sign-in"]
-        assert hunts.rules[0][1]["cel_filter"]
+        hunts = demo.pack_hunts(root=root)
+
+        assert sorted(name for name, _ in hunts.hunts) == sorted(manifest["hunts"])
+        assert manifest["hunts"], f"{root.name} ships no hunt"
+        ran = {rule for _, body in hunts.hunts for rule in body["rules"]}
+        assert ran == {name for name, _ in hunts.rules}
+        assert all(body["user_sql"] for _, body in hunts.rules)
 
     @pytest.mark.parametrize(
         ("gets", "posts", "expected", "post_calls"),
@@ -395,8 +401,9 @@ class TestConsole:
             assert len(ids) == len(set(ids)), body["name"]
             for tile in body["tiles"]:
                 assert tile["config"]["configType"] == "sql", tile["id"]
-                assert "$__timeFilter" in tile["config"]["sqlTemplate"] or (
-                    "component-releases" in tile["config"]["sqlTemplate"]
+                sql = tile["config"]["sqlTemplate"]
+                assert "$__timeFilter" in sql or (
+                    "component-releases" in sql or "feodo-c2" in sql
                 ), tile["id"]
 
 
@@ -406,7 +413,7 @@ class TestInstalledSources:
     ) -> None:
         marker = tmp_path / "installed.json"
         monkeypatch.setattr(demo, "INSTALLED_FILE", marker)
-        manifest = {"sources": ["cisco-asa", "fortinet", "wikipedia-recentchanges"]}
+        manifest = {"sources": ["cisco-asa", "fortinet", "feodo-c2"]}
 
         assert demo._installed_sources(manifest=manifest) == []
 

@@ -1,0 +1,53 @@
+{
+  "hunts": {
+    "demo-asa-logon-failed": {
+      "max_alerts": 126
+    },
+    "demo-fortinet-ssh-denied": {
+      "max_alerts": 126
+    }
+  },
+  "parsed": {
+    "cisco-asa": {
+      "fields": [
+        "event_action",
+        "source_ip",
+        "destination_ip",
+        "observer_vendor"
+      ],
+      "min_ratio": 0.9
+    },
+    "fortinet": {
+      "fields": [
+        "event_action",
+        "event_outcome",
+        "source_ip",
+        "destination_ip",
+        "source_port",
+        "network_transport",
+        "observer_vendor"
+      ],
+      "min_ratio": 0.99
+    }
+  },
+  "zero_ok": [
+    "demo-stack-health/archerr",
+    "demo-syslog/unclaimed",
+    "demo-syslog-unclaimed",
+    "demo-component-releases/latest",
+    "demo-component-releases/polls",
+    "demo-component-releases-all",
+    "demo-feodo-c2/total",
+    "demo-feodo-c2/families",
+    "demo-feodo-c2/servers",
+    "demo-feodo-c2/polls",
+    "demo-feodo-c2-all",
+    "demo-feodo-c2-online"
+  ],
+  "waiting": {
+    "reason": "a fetcher and engine that land a dump unit in its own table, where the 2.2.2 ones land it in dfe.main",
+    "sources": [
+      "feodo-c2"
+    ]
+  }
+}

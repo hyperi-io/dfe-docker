@@ -1219,31 +1219,32 @@ class TestLoadDemo:
         fetchers = {body["source"]: body["fetcher"] for body in loaded.fetchers}
         releases = fetchers["component-releases"]["config"]
 
-        assert sorted(fetchers) == ["component-releases", "wikipedia-recentchanges"]
+        assert sorted(fetchers) == ["component-releases", "feodo-c2"]
         assert all(fetcher["topic"] == "own" for fetcher in fetchers.values())
         # Unauthenticated GitHub allows 60 requests an hour per IP and each poll spends one per repo
         assert releases["interval_secs"] >= 60 * len(releases["vars"]["repos"])
         for name in [loaded.intake["source"], *loaded.events, *fetchers]:
             assert SOURCE_NAME.fullmatch(string=name), name
 
-    def test_the_wikipedia_fetcher_asks_for_each_window_once_and_names_itself(
+    def test_the_feodo_fetcher_polls_the_blocklist_no_faster_than_the_tracker_asks(
         self,
     ) -> None:
-        wiki = {b["source"]: b for b in _committed().fetchers}[
-            "wikipedia-recentchanges"
-        ]
-        config = wiki["fetcher"]["config"]
+        feodo = {b["source"]: b for b in _committed().fetchers}["feodo-c2"]
+        config = feodo["fetcher"]["config"]
         profile = config["profile"]
-        query = profile["endpoints"][0]["query"]
+        units = {endpoint["unit"]: endpoint for endpoint in profile["endpoints"]}
 
-        assert config["interval_secs"] == 5
-        assert profile["window"]["format"] == "epoch_secs"
-        # Whole seconds, both ends inclusive, so the next window must start one second past this one's end
-        assert "int(window.start) - 1" in query["rcstart"]
-        assert "int(window.end) - 2" in query["rcend"]
-        assert query["rcdir"] == "newer"
+        # The tracker rebuilds the list every five minutes and asks clients to fetch no faster
+        assert config["interval_secs"] >= 300
+        assert profile["shape"] == "dump"
+        # make demo has no demo-replay service, so the source carries no replay unit
+        assert sorted(units) == ["blocklist"]
+        assert units["blocklist"]["path"] == "/downloads/ipblocklist.json"
+        # A streaming decoder is bounded per read, so the fetcher refuses a request timeout on it
+        assert "timeout_secs" not in units["blocklist"]
+        assert feodo["schema"]["meta_schema"] == "meta/abusech/feodo_c2"
         agent = profile["headers"]["User-Agent"]
-        assert agent.startswith("DFE-demo/")
+        assert agent.startswith("DFE-demo")
         assert "https://github.com/hyperi-io/dfe-docker" in agent
 
     def test_the_committed_sources_keep_their_keys_alphabetical(self) -> None:

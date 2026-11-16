@@ -1,0 +1,14 @@
+# Project:   dfe-docker
+# File:      resources/demo-cyber/rules/demo-cyber-ransomware.yaml
+# Purpose:   The cyber demo's rule: a high-severity CrowdStrike Falcon detection of ransomware behaviour
+# Language:  YAML
+#
+# License:   BUSL-1.1
+# Copyright: (c) 2026 HYPERI PTY LIMITED
+
+name: demo-cyber-ransomware
+display_name: Ransomware behaviour on an endpoint
+severity: critical
+source: crowdstrike
+source_type: raw
+user_sql: "SELECT * FROM dfe.`crowdstrike` WHERE rule_name = 'Ransomware Behaviour' AND event_severity >= 70"

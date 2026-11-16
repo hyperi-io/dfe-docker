@@ -1,0 +1,38 @@
+{
+  "hunts": {
+    "demo-telco-hss-too-busy": {
+      "max_alerts": 126
+    },
+    "demo-telco-peer-withdrawals": {
+      "max_alerts": 126
+    },
+    "demo-telco-weak-signal": {
+      "max_alerts": 126
+    }
+  },
+  "parsed": {
+    "core-probes": {
+      "fields": [
+        "_json.protocol",
+        "_json.procedure",
+        "_json.result",
+        "_json.latency_ms",
+        "_json.source_node"
+      ],
+      "min_ratio": 0.99
+    },
+    "ran-kpis": {
+      "fields": [
+        "_json.cell",
+        "_json.site",
+        "_json.rsrp_dbm",
+        "_json.prb_util_dl_pct",
+        "_json.dl_throughput_mbps"
+      ],
+      "min_ratio": 0.99
+    }
+  },
+  "zero_ok": [
+    "demo-telco-bgp-peers/bursts"
+  ]
+}

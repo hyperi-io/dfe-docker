@@ -20,7 +20,9 @@
     ]
   },
   "hunts": [
-    "demo-telco-peer-withdrawals"
+    "demo-telco-hss-too-busy",
+    "demo-telco-peer-withdrawals",
+    "demo-telco-weak-signal"
   ],
   "sources": [
     "bgp-updates",

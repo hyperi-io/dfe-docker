@@ -51,12 +51,12 @@
       "config": {
         "configType": "sql",
         "displayType": "table",
-        "name": "Peers over 20 withdrawals a minute, from hunt demo-telco-peer-withdrawals",
+        "name": "Peers over 20 withdrawals a minute",
         "source": "bgp-updates",
-        "sqlTemplate": "SELECT formatDateTime(toStartOfMinute(_timestamp), '%H:%i') AS \"RIS minute (UTC)\",\n       concat(splitByChar('-', toString(_json.attrs.source_id))[2], ' (rrc', splitByChar('-', toString(_json.attrs.source_id))[1], ')') AS \"Peer\",\n       count() AS \"Withdrawals\"\nFROM dfe.detection\nWHERE hunt_name = 'demo-telco-peer-withdrawals' AND $__timeFilter(_timestamp + INTERVAL 12 HOUR)\nGROUP BY toStartOfMinute(_timestamp), 1, 2\nHAVING \"Withdrawals\" > 20\nORDER BY toStartOfMinute(_timestamp) DESC, 3 DESC\nLIMIT 20"
+        "sqlTemplate": "SELECT formatDateTime(toStartOfMinute(_timestamp), '%H:%i') AS \"RIS minute (UTC)\",\n       concat(splitByChar('-', toString(_json.attrs.source_id))[2], ' (rrc', splitByChar('-', toString(_json.attrs.source_id))[1], ')') AS \"Peer\",\n       count() AS \"Withdrawals\"\nFROM dfe.`bgp-updates`\nWHERE toString(_json.type) = 'W' AND $__timeFilter(_timestamp + INTERVAL 12 HOUR)\nGROUP BY toStartOfMinute(_timestamp), 1, 2\nHAVING \"Withdrawals\" > 20\nORDER BY toStartOfMinute(_timestamp) DESC, 3 DESC\nLIMIT 20"
       },
       "h": 6,
-      "id": "hunt",
+      "id": "bursts",
       "w": 12,
       "x": 0,
       "y": 15

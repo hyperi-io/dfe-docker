@@ -11,6 +11,6 @@ display_name: Vessel silent for five minutes
 severity: medium
 source: ais-tracks
 source_type: raw
-# Each poll lands every vessel's latest report, so a report between 300 and 310 seconds old matches on one poll per silence.
+# Each poll lands every vessel's latest report, so a report between 300 and 330 seconds old matches on up to three polls per silence, enough that one lands within minutes of the feed's first poll.
 # A rule reads only its own row, so the track coming back is the demo-theatre-churn dashboard's returning tracks.
-user_sql: "SELECT * FROM dfe.`ais-tracks` WHERE dateDiff('second', fromUnixTimestamp64Milli(toInt64OrZero(toString(`ais-tracks`._json.properties.timestampExternal))), `ais-tracks`._timestamp) BETWEEN 300 AND 309"
+user_sql: "SELECT * FROM dfe.`ais-tracks` WHERE dateDiff('second', fromUnixTimestamp64Milli(toInt64OrZero(toString(`ais-tracks`._json.properties.timestampExternal))), `ais-tracks`._timestamp) BETWEEN 300 AND 329"

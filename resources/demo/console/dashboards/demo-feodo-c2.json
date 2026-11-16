@@ -1,0 +1,64 @@
+{
+ "name": "demo-feodo-c2",
+ "tags": [
+  "demo"
+ ],
+ "tiles": [
+  {
+   "config": {
+    "configType": "sql",
+    "displayType": "number",
+    "name": "Command-and-control servers on the blocklist",
+    "source": "feodo-c2",
+    "sqlTemplate": "SELECT count() AS \"servers\"\nFROM (SELECT * FROM dfe.`feodo-c2` WHERE ip_address IS NOT NULL ORDER BY _timestamp_load DESC LIMIT 1 BY ip_address, port)"
+   },
+   "h": 5,
+   "id": "total",
+   "w": 8,
+   "x": 0,
+   "y": 0
+  },
+  {
+   "config": {
+    "configType": "sql",
+    "displayType": "table",
+    "name": "Servers by malware family",
+    "source": "feodo-c2",
+    "sqlTemplate": "SELECT malware AS \"Malware\",\n       count() AS \"Servers\",\n       countIf(status = 'online') AS \"Online\",\n       max(last_online) AS \"Last online\"\nFROM (SELECT * FROM dfe.`feodo-c2` WHERE ip_address IS NOT NULL ORDER BY _timestamp_load DESC LIMIT 1 BY ip_address, port)\nGROUP BY 1\nORDER BY 2 DESC"
+   },
+   "h": 5,
+   "id": "families",
+   "w": 16,
+   "x": 8,
+   "y": 0
+  },
+  {
+   "config": {
+    "configType": "sql",
+    "displayType": "table",
+    "name": "Servers and where they are hosted",
+    "source": "feodo-c2",
+    "sqlTemplate": "SELECT replaceOne(IPv6NumToString(assumeNotNull(ip_address)), '::ffff:', '') AS \"Address\",\n       port AS \"Port\",\n       malware AS \"Malware\",\n       status AS \"Status\",\n       country AS \"Country\",\n       as_name AS \"Network\",\n       first_seen AS \"First seen\",\n       last_online AS \"Last online\"\nFROM (SELECT * FROM dfe.`feodo-c2` WHERE ip_address IS NOT NULL ORDER BY _timestamp_load DESC LIMIT 1 BY ip_address, port)\nORDER BY last_online DESC"
+   },
+   "h": 8,
+   "id": "servers",
+   "w": 24,
+   "x": 0,
+   "y": 5
+  },
+  {
+   "config": {
+    "configType": "sql",
+    "displayType": "line",
+    "name": "Blocklist rows landed per poll",
+    "source": "feodo-c2",
+    "sqlTemplate": "SELECT $__timeInterval(_timestamp_load) AS ts,\n       count() AS \"rows landed\"\nFROM dfe.`feodo-c2`\nWHERE $__timeFilter(_timestamp_load)\nGROUP BY ts\nORDER BY ts"
+   },
+   "h": 5,
+   "id": "polls",
+   "w": 24,
+   "x": 0,
+   "y": 13
+  }
+ ]
+}

@@ -662,6 +662,7 @@ def _stack(services: list[str]) -> dict:
 
 DEMO_STACK = [
     "dfe-engine",
+    "dfe-hunt-runner",
     "dfe-receiver",
     "dfe-hyperdx",
     "dlq-init",
@@ -725,6 +726,32 @@ class TestDemoOverlay:
             "docker compose -f oci://ghcr.io/hyperi-io/dfe-docker:demo up -d "
             "--force-recreate {service}"
         )
+
+    def test_caps_the_detections_a_rule_writes_each_run(self) -> None:
+        model = publish_compose.demo_overlay(
+            archive=ARCHIVE,
+            image="ghcr.io/hyperi-io/dfe-docker@sha256:" + "b" * 64,
+            model=_stack(DEMO_STACK),
+            roles=ROLES,
+            stream=["scripts/replay_syslog.py", "tcp", "20"],
+        )
+
+        runner = model["services"]["dfe-hunt-runner"]["environment"]
+        assert runner[publish_compose.MAX_DETECTIONS_KEY] == str(
+            publish_compose.DEMO_MAX_DETECTIONS
+        )
+
+    def test_refuses_a_stack_with_no_hunt_runner(self) -> None:
+        with pytest.raises(publish_compose.PublishError, match="dfe-hunt-runner"):
+            publish_compose.demo_overlay(
+                archive=ARCHIVE,
+                image="ghcr.io/hyperi-io/dfe-docker@sha256:" + "b" * 64,
+                model=_stack(
+                    [name for name in DEMO_STACK if name != "dfe-hunt-runner"]
+                ),
+                roles=ROLES,
+                stream=["scripts/replay_syslog.py", "tcp", "20"],
+            )
 
     def test_a_pack_with_no_sources_seeds_itself_and_replays_nothing(self) -> None:
         stack = _stack(

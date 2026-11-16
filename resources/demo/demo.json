@@ -11,29 +11,31 @@
     "dashboards": [
       "demo-cisco-asa",
       "demo-component-releases",
+      "demo-feodo-c2",
       "demo-fortinet",
       "demo-stack-health",
-      "demo-syslog",
-      "demo-wikipedia-recentchanges"
+      "demo-syslog"
     ],
     "searches": [
       "demo-cisco-asa-denied",
       "demo-cisco-asa-live",
       "demo-component-releases-all",
+      "demo-feodo-c2-all",
+      "demo-feodo-c2-online",
       "demo-fortinet-denied",
       "demo-fortinet-live",
-      "demo-syslog-live",
-      "demo-syslog-unclaimed",
-      "demo-wikipedia-bots",
-      "demo-wikipedia-large-edits",
-      "demo-wikipedia-live"
+      "demo-syslog-unclaimed"
     ]
   },
   "sources": [
     "cisco-asa",
     "component-releases",
     "demo-syslog",
-    "fortinet",
-    "wikipedia-recentchanges"
+    "feodo-c2",
+    "fortinet"
+  ],
+  "hunts": [
+    "demo-asa-logon-failed",
+    "demo-fortinet-ssh-denied"
   ]
 }
