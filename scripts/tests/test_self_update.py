@@ -10,6 +10,7 @@
 
 import subprocess
 import sys
+from collections.abc import Sequence
 from pathlib import Path
 from typing import TypedDict
 
@@ -68,6 +69,17 @@ class MainCase(TypedDict):
     expected_refreshed: bool
     expected_state: str
     latest: str
+
+
+class PruneCase(TypedDict):
+    """The previous and new stacks' images, the images containers use, and what is removed."""
+
+    expected_log: str
+    expected_removed: list[str]
+    failing: set[str]
+    in_use: set[str]
+    new_stack: set[str]
+    previous: set[str]
 
 
 class RefreshPlanCase(TypedDict):
@@ -217,6 +229,64 @@ MAIN_CASES = [
         latest="2.2.0-rc.14",
     ),
 ]
+PRUNE_CASES = [
+    PruneCase(
+        expected_log="removed 2 image(s)",
+        expected_removed=["a:1@sha256:a", "b:1@sha256:b"],
+        failing=set(),
+        in_use=set(),
+        new_stack={"a:2@sha256:c"},
+        previous={"a:1@sha256:a", "b:1@sha256:b"},
+    ),
+    PruneCase(
+        expected_log="removed 1 image(s)",
+        expected_removed=["a:1@sha256:a"],
+        failing=set(),
+        in_use=set(),
+        new_stack={"b:1@sha256:b"},
+        previous={"a:1@sha256:a", "b:1@sha256:b"},
+    ),
+    PruneCase(
+        expected_log="removed 1 image(s)",
+        expected_removed=["b:1@sha256:b"],
+        failing=set(),
+        in_use={"a:1@sha256:a"},
+        new_stack=set(),
+        previous={"a:1@sha256:a", "b:1@sha256:b"},
+    ),
+    PruneCase(
+        expected_log="warning: could not remove 'a:1@sha256:a': 'boom'",
+        expected_removed=["a:1@sha256:a", "b:1@sha256:b"],
+        failing={"a:1@sha256:a"},
+        in_use=set(),
+        new_stack=set(),
+        previous={"a:1@sha256:a", "b:1@sha256:b"},
+    ),
+    PruneCase(
+        expected_log="removed 0 image(s)",
+        expected_removed=[],
+        failing=set(),
+        in_use=set(),
+        new_stack={"x:1@sha256:abc"},
+        previous={"x:1"},
+    ),
+    PruneCase(
+        expected_log="removed 0 image(s)",
+        expected_removed=[],
+        failing=set(),
+        in_use=set(),
+        new_stack={"x:2@sha256:abc"},
+        previous={"x:1@sha256:abc"},
+    ),
+    PruneCase(
+        expected_log="removed 0 image(s)",
+        expected_removed=[],
+        failing=set(),
+        in_use=set(),
+        new_stack=set(),
+        previous=set(),
+    ),
+]
 REFRESH_PLAN_CASES = [
     RefreshPlanCase(dirty=False, expected="run git pull --ff-only"),
     RefreshPlanCase(dirty=True, expected="refuse"),
@@ -245,12 +315,45 @@ def _discover(*, latest: str, monkeypatch: pytest.MonkeyPatch) -> list[str]:
         return "ghcr.io/test/manifest"
 
     applied = []
+    _fake_docker(monkeypatch=monkeypatch)
     monkeypatch.delenv(name=stack.REPIN_ENV, raising=False)
     monkeypatch.delenv(name="DFE_UPDATE_ALLOW_PRERELEASE", raising=False)
     monkeypatch.setattr(name="_apply", target=self_update, value=apply)
     monkeypatch.setattr(name="latest_tag", target=self_update, value=latest_tag)
     monkeypatch.setattr(name="manifest_repo", target=self_update, value=manifest_repo)
     return applied
+
+
+def _fake_docker(
+    *,
+    configured: list[set[str]] | None = None,
+    failing: set[str] | None = None,
+    in_use: set[str] | None = None,
+    monkeypatch: pytest.MonkeyPatch,
+) -> list[str]:
+    """Stand in for the docker CLI, returning the images it was asked to remove.
+
+    `configured` is what `docker compose config --images` prints on each call, the last entry repeating. `failing` names the images whose removal exits non-zero.
+    """
+
+    def docker(*, args: Sequence[str], repo_dir: Path) -> subprocess.CompletedProcess:
+        code = 0
+        out = ""
+        if args[0] == "compose":
+            sets = configured or [set()]
+            out = "\n".join(sorted(sets.pop(0) if len(sets) > 1 else sets[0]))
+        elif args[0] == "ps":
+            out = "\n".join(sorted(in_use or set()))
+        elif args[:2] == ("image", "rm"):
+            removed.append(args[2])
+            code = 1 if args[2] in (failing or set()) else 0
+        return subprocess.CompletedProcess(
+            args=args, returncode=code, stdout=out, stderr="boom" if code else ""
+        )
+
+    removed = []
+    monkeypatch.setattr(name="_docker", target=self_update, value=docker)
+    return removed
 
 
 def _git(*args: str, cwd: Path) -> None:
@@ -390,6 +493,99 @@ class TestImageReleases:
 
         assert applied == []
         assert _state(repo=repo) == _OLD_IMAGE_TARGET
+
+
+class TestPruneImages:
+    @pytest.mark.parametrize("case", PRUNE_CASES)
+    def test_matches_expected(
+        self,
+        capsys: pytest.CaptureFixture[str],
+        monkeypatch: pytest.MonkeyPatch,
+        tmp_path: Path,
+        case: PruneCase,
+    ) -> None:
+        removed = _fake_docker(
+            configured=[case["new_stack"]],
+            failing=case["failing"],
+            in_use=case["in_use"],
+            monkeypatch=monkeypatch,
+        )
+
+        self_update._prune_images(previous=case["previous"], repo_dir=tmp_path)
+
+        assert removed == case["expected_removed"]
+        assert case["expected_log"] in capsys.readouterr().out
+
+    def test_an_unreadable_container_list_removes_nothing(
+        self,
+        capsys: pytest.CaptureFixture[str],
+        monkeypatch: pytest.MonkeyPatch,
+        tmp_path: Path,
+    ) -> None:
+        def broken(*, args: Sequence[str], repo_dir: Path) -> None:
+            raise FileNotFoundError("docker")
+
+        monkeypatch.setattr(name="_docker", target=self_update, value=broken)
+
+        self_update._prune_images(previous={"a:1@sha256:a"}, repo_dir=tmp_path)
+
+        assert "image prune skipped" in capsys.readouterr().out
+
+    def test_a_successful_update_removes_the_previous_stacks_images(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        repo = _checkout(applied="2.2.0-rc.13", tmp_path=tmp_path)
+        _discover(latest="2.2.0-rc.14", monkeypatch=monkeypatch)
+        old, new = {"a:1@sha256:a", "b:1@sha256:b"}, {"b:1@sha256:b", "a:2@sha256:c"}
+        removed = _fake_docker(configured=[old, new], monkeypatch=monkeypatch)
+
+        assert _main(dry_run=False, monkeypatch=monkeypatch, repo=repo) == 0
+
+        assert removed == ["a:1@sha256:a"]
+
+    def test_a_removal_error_does_not_fail_the_update(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        repo = _checkout(applied="2.2.0-rc.13", tmp_path=tmp_path)
+        _discover(latest="2.2.0-rc.14", monkeypatch=monkeypatch)
+        removed = _fake_docker(
+            configured=[{"a:1@sha256:a"}, {"a:2@sha256:c"}],
+            failing={"a:1@sha256:a"},
+            monkeypatch=monkeypatch,
+        )
+
+        assert _main(dry_run=False, monkeypatch=monkeypatch, repo=repo) == 0
+
+        assert removed == ["a:1@sha256:a"]
+        assert _state(repo=repo) == "2.2.0-rc.14"
+
+    def test_a_failed_update_removes_nothing(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        def fail(*, repo_dir: Path, version: str) -> None:
+            raise self_update.UpdateError("'make ci' failed (exit 2)")
+
+        repo = _checkout(applied="2.2.0-rc.13", tmp_path=tmp_path)
+        _discover(latest="2.2.0-rc.14", monkeypatch=monkeypatch)
+        removed = _fake_docker(
+            configured=[{"a:1@sha256:a"}, {"a:2@sha256:c"}], monkeypatch=monkeypatch
+        )
+        monkeypatch.setattr(name="_apply", target=self_update, value=fail)
+
+        assert _main(dry_run=False, monkeypatch=monkeypatch, repo=repo) == 1
+
+        assert removed == []
+
+    def test_a_dry_run_removes_nothing(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        repo = _checkout(applied="2.2.0-rc.13", tmp_path=tmp_path)
+        _discover(latest="2.2.0-rc.14", monkeypatch=monkeypatch)
+        removed = _fake_docker(configured=[{"a:1@sha256:a"}], monkeypatch=monkeypatch)
+
+        assert _main(dry_run=True, monkeypatch=monkeypatch, repo=repo) == 0
+
+        assert removed == []
 
 
 class TestIsDowngrade:
