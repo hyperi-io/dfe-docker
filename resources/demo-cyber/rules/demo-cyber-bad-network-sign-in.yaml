@@ -1,0 +1,17 @@
+# Project:   dfe-docker
+# File:      resources/demo-cyber/rules/demo-cyber-bad-network-sign-in.yaml
+# Purpose:   The cyber demo's rule: a failed Okta sign-in from a known-bad network
+# Language:  YAML
+#
+# License:   BUSL-1.1
+# Copyright: (c) 2026 HYPERI PTY LIMITED
+
+name: demo-cyber-bad-network-sign-in
+display_name: Failed sign-in from a known-bad network
+severity: high
+source: okta
+source_type: raw
+# The networks are the eight bad-network ranges in events/generate.py, which the firewalls also see.
+# A rule reads only its own source table, so the firewall side is the demo-cyber-denied-bad-network search.
+user_sql: "SELECT * FROM dfe.`okta` WHERE arrayExists(n -> isIPAddressInRange(replaceOne(IPv6NumToString(assumeNotNull(`okta`.client_ip)), '::ffff:', ''), n), ['192.0.2.32/28', '192.0.2.48/28', '192.0.2.64/28', '192.0.2.80/28', '192.0.2.96/28', '192.0.2.112/28', '192.0.2.128/28', '192.0.2.144/28'])"
+cel_filter: 'event_action == "user.session.start" && event_outcome == "failure"'

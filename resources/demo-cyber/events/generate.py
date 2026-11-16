@@ -12,7 +12,7 @@
   generate.py --fixtures <dfe-transform-elastic>/tests/fixtures/unencumbered
   generate.py replay --target http://dfe-receiver:8080/ingest --sources okta,crowdstrike,o365 --rate 10 --loop
 
-The firewall lines come from resources/demo/events/generate.py with a share of the outside addresses moved onto networks on the Spamhaus DROP list. okta, crowdstrike and o365 are records from the upstream samples named in PROVENANCE.md, varied per line and each wrapped in the envelope an Elastic Agent ships, routed on `data_stream.dataset`. Seeded, so a rerun with the same fixtures writes the same bytes.
+The firewall lines come from resources/demo/events/generate.py with a share of the outside addresses moved onto a list of known-bad networks. okta, crowdstrike and o365 are records from the upstream samples named in PROVENANCE.md, varied per line and each wrapped in the envelope an Elastic Agent ships, routed on `data_stream.dataset`. Seeded, so a rerun with the same fixtures writes the same bytes.
 
 The replay sets every record's own time and `@timestamp` to now as it sends, so the console's time filters find it. Standard library only, because it runs in the stack's bare Python image.
 """
@@ -21,6 +21,7 @@ import argparse
 import copy
 import hashlib
 import importlib.util
+import ipaddress
 import itertools
 import json
 import random
@@ -41,22 +42,11 @@ SEED = 20261114
 # Where the sample times start, stepped forward per record. The replay moves every one to now
 EPOCH = datetime(2026, 11, 14, tzinfo=UTC)
 
-# Eight of the widest networks on the Spamhaus DROP list of 2026-11-13. The cyber dashboards read the same list
-DROP_NETWORKS = (
-    "42.128.0.0/12",
-    "42.160.0.0/12",
-    "42.208.0.0/12",
-    "147.16.0.0/14",
-    "196.16.0.0/14",
-    "101.134.0.0/15",
-    "112.142.0.0/15",
-    "168.80.0.0/15",
-)
-# Two hosts on each DROP network, which the firewalls see and which then try to sign in
+# Eight /28 networks of RFC 5737 space that no firewall, NAT or staff pool uses. The cyber dashboards read the same list
+BAD_NETWORKS = tuple(f"192.0.2.{start}/28" for start in range(32, 160, 16))
+# Two hosts on each bad network, which the firewalls see and which then try to sign in
 SUSPECTS = tuple(
-    f"{net.split('.')[0]}.{int(net.split('.')[1]) + 1}.{host}.{host * 3 % 250 + 2}"
-    for net in DROP_NETWORKS
-    for host in (17, 113)
+    str(ipaddress.ip_network(net)[offset]) for net in BAD_NETWORKS for offset in (4, 9)
 )
 # Each suspect's share of the firewalls' outside addresses is SUSPECT_WEIGHT in roughly 500
 SUSPECT_WEIGHT = 3
