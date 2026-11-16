@@ -1,0 +1,14 @@
+# Project:   dfe-docker
+# File:      resources/demo-telco/rules/demo-telco-weak-signal.yaml
+# Purpose:   The telco demo's rule: a cell reporting an average RSRP below -102 dBm
+# Language:  YAML
+#
+# License:   BUSL-1.1
+# Copyright: (c) 2026 HYPERI PTY LIMITED
+
+name: demo-telco-weak-signal
+display_name: Cell reporting a very weak signal
+severity: medium
+source: ran-kpis
+source_type: raw
+user_sql: "SELECT * FROM dfe.`ran-kpis` WHERE toFloat64OrZero(toString(_json.rsrp_dbm)) < -102"

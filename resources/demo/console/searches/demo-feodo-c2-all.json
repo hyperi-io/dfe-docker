@@ -1,0 +1,11 @@
+{
+  "name": "demo-feodo-c2-all",
+  "orderBy": "_timestamp_load DESC",
+  "select": "_timestamp_load, replaceOne(IPv6NumToString(assumeNotNull(ip_address)), '::ffff:', '') AS address, port, malware, status, country, as_name, first_seen, last_online",
+  "source": "feodo-c2",
+  "tags": [
+    "demo"
+  ],
+  "where": "ip_address IS NOT NULL",
+  "whereLanguage": "sql"
+}

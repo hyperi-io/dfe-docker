@@ -26,7 +26,9 @@
     ]
   },
   "hunts": [
-    "demo-cyber-drop-sign-in"
+    "demo-cyber-anonymous-link",
+    "demo-cyber-drop-sign-in",
+    "demo-cyber-ransomware"
   ],
   "sources": [
     "cisco-asa",

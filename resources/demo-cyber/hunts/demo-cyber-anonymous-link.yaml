@@ -1,0 +1,19 @@
+# Project:   dfe-docker
+# File:      resources/demo-cyber/hunts/demo-cyber-anonymous-link.yaml
+# Purpose:   The cyber demo's hunt, running its anonymous-link rule every five minutes
+# Language:  YAML
+#
+# License:   BUSL-1.1
+# Copyright: (c) 2026 HYPERI PTY LIMITED
+
+name: demo-cyber-anonymous-link
+display_name: Anonymous links used on Microsoft 365 files
+cron: "*/5 * * * *"
+# A required label: the runner takes each detection's org from the matched row.
+customers:
+  - default
+rules:
+  - demo-cyber-anonymous-link
+global_source_table_name: dfe.o365
+global_target_table_name: dfe.detection
+checkpoint_timestamp_field: _timestamp_load

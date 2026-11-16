@@ -23,6 +23,7 @@
     ]
   },
   "hunts": [
+    "demo-theatre-aircraft-low",
     "demo-theatre-vessel-silent"
   ],
   "sources": [

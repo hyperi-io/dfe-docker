@@ -1,0 +1,19 @@
+# Project:   dfe-docker
+# File:      resources/demo-telco/hunts/demo-telco-hss-too-busy.yaml
+# Purpose:   The telco demo's hunt, running its HSS overload rule every five minutes
+# Language:  YAML
+#
+# License:   BUSL-1.1
+# Copyright: (c) 2026 HYPERI PTY LIMITED
+
+name: demo-telco-hss-too-busy
+display_name: HSS overload on S6a
+cron: "*/5 * * * *"
+# A required label: the runner takes each detection's org from the matched row.
+customers:
+  - default
+rules:
+  - demo-telco-hss-too-busy
+global_source_table_name: dfe.core-probes
+global_target_table_name: dfe.detection
+checkpoint_timestamp_field: _timestamp_load

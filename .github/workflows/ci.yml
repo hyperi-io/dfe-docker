@@ -300,7 +300,7 @@ jobs:
     name: Published compose (${{ matrix.pack }})
     needs: demo-packs
     runs-on: ubuntu-26.04
-    timeout-minutes: 50
+    timeout-minutes: 65
     strategy:
       fail-fast: false
       matrix:
@@ -348,35 +348,6 @@ jobs:
           docker compose -f "$FILE" up -d --wait --wait-timeout 1200
           curl -fsSL --retry 5 --retry-all-errors -o /dev/null -w 'console answered %{http_code} at %{url_effective}\n' http://localhost:3000/
 
-      # Every source with events the pack replays, which need no egress, so a pack whose demo.json lists no sources checks none. Fetcher tables wait on their upstream and are not checked
-      - name: Land the pack's data
-        timeout-minutes: 10
-        working-directory: ${{ env.COMPOSE_DIR }}
-        run: |
-          tables=()
-          for source in $(jq -r '.sources[]' "$GITHUB_WORKSPACE/$PACK_DIR/demo.json"); do
-            if [ -d "$GITHUB_WORKSPACE/$PACK_DIR/events/$source" ]; then
-              tables+=("$source")
-            fi
-          done
-          if [ "${#tables[@]}" -eq 0 ]; then
-            echo "$PACK_DIR replays no source, so no table is checked"
-          fi
-          for table in "${tables[@]}"; do
-            for attempt in $(seq 60); do
-              rows="$(docker compose -f "$FILE" exec -T clickhouse sh -c ". /run/dfe-secrets/env && clickhouse-client --password \"\$CLICKHOUSE_PASSWORD\" --query 'SELECT count() FROM dfe.\`$table\`'" || echo 0)"
-              if [ "${rows:-0}" -gt 0 ]; then
-                echo "dfe.$table holds $rows rows"
-                break
-              fi
-              if [ "$attempt" -eq 60 ]; then
-                echo "::error::no rows reached dfe.$table"
-                exit 1
-              fi
-              sleep 5
-            done
-          done
-
       # Secrets minted here: none in an env, no defaults accepted
       - name: Run on secrets minted here
         working-directory: ${{ env.COMPOSE_DIR }}
@@ -410,6 +381,14 @@ jobs:
           request = urllib.request.Request("http://localhost:8000/api/v1/auth/login", data=json.dumps({"username": os.environ["DFE_LOGIN_NAME"], "password": os.environ["DFE_LOGIN_PASSWORD"]}).encode(), headers={"Content-Type": "application/json"})
           with urllib.request.urlopen(request, timeout=30) as answer:
               assert json.load(answer).get("password_change_required") is True, "the first login is not held for a change"'
+
+      # Runs after the secrets step because the console login check replaces the login's issued password, which that step expects held. One checker proves the pack worked: its replayed sources land parsed rows, the intake and default tables stay empty, every source is deployed, each hunt fires under its ceiling, each dashboard and saved search returns rows, the console login can search, replayed fetcher polls land and the dead-letter queue stays empty. What a pack expects is data in resources/<pack>/verify.json
+      - name: Verify the pack worked
+        timeout-minutes: 35
+        working-directory: ${{ env.COMPOSE_DIR }}
+        env:
+          PACK: ${{ matrix.pack }}
+        run: python3 "$GITHUB_WORKSPACE/scripts/demo_verify.py" --pack "$PACK" --file "$FILE"
 
       - name: Show what did not come up
         if: failure()

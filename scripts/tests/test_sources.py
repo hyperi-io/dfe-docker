@@ -1147,6 +1147,7 @@ class TestParse:
             "loader-outage-kafka-transform-vrl",
             "transform-vrl-kill-kafka",
             "transform-vrl-outage-kafka",
+            "transform-vrl-sigterm-kafka",
         ]
 
     def test_every_committed_vrl_source_test_owes_the_stamp(self) -> None:

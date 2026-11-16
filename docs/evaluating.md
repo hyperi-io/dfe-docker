@@ -172,23 +172,23 @@ The demo is one set of pieces, listed in [`resources/demo/demo.json`](../resourc
 | Piece | Where | What it is |
 |-------|-------|------------|
 | Sources | [`resources/demo/sources/`](../resources/demo/sources/) | One `POST /sources` body per file: the `demo-syslog` intake, the `cisco-asa` and `fortinet` tables, and two fetchers |
-| Fetchers | `wikipedia-recentchanges`, `component-releases` | Pull beside the receiver's push. `wikipedia-recentchanges` polls the MediaWiki recent changes API every 5 seconds, asking each window once, with the first poll bringing in the last hour. `component-releases` takes the latest GitHub release of each public DFE component every 15 minutes, to stay inside GitHub's 60 unauthenticated requests an hour |
+| Fetchers | `feodo-c2`, `component-releases` | Pull beside the receiver's push. `feodo-c2` takes the abuse.ch Feodo Tracker botnet command-and-control blocklist every 5 minutes, as one snapshot a poll, and until the fetcher and engine land a dump unit in its own table its rows land in `dfe.main`. `component-releases` takes the latest GitHub release of each public DFE component every 15 minutes, to stay inside GitHub's 60 unauthenticated requests an hour |
 | Archive | `demo-syslog` has `archive: true` | On a Kafka profile dfe-archiver writes the raw syslog lines to the `archiver-data` volume (`file:///var/lib/dfe-archiver/archive`). dfe-archiver has no retention of its own, so the pack runs a pruner that keeps the archive to 15 minutes and 200 MB. A gRPC profile runs no archiver, so there the Source is created without archiving |
 | Console | [`resources/demo/console/`](../resources/demo/console/) | A dashboard per source and one for the stack's health, and saved searches with a live tail for each streamed source. Every name starts `demo-` |
-| Tables | `dfe.cisco-asa`, `dfe.fortinet`, `dfe.demo-syslog`, `dfe.component-releases`, `dfe.wikipedia-recentchanges` | `make demo-stop` leaves them, with their rows, because only the engine issues ClickHouse DDL and it never drops a table. The next `make demo` goes on in them, and `make clean` removes them with the volumes |
+| Tables | `dfe.cisco-asa`, `dfe.fortinet`, `dfe.demo-syslog`, `dfe.component-releases`, `dfe.feodo-c2` | `make demo-stop` leaves them, with their rows, because only the engine issues ClickHouse DDL and it never drops a table. The next `make demo` goes on in them, and `make clean` removes them with the volumes |
 
 Each device loops over the sample lines in [`resources/demo/events/<source>/`](../resources/demo/events/), which `python3 resources/demo/events/generate.py` regenerates.
  The run turns on dfe-receiver's syslog listener (UDP and TCP on port 514) and recreates what that changes. It returns once every device table has gained rows and the archive holds a file, and leaves the stream running:
 
 ```console
 demo -   console demo-cisco-asa: http://localhost:8090/dashboards/<id>
-demo -   console demo-wikipedia-live: http://localhost:8090/search/<id>?isLive=true
+demo -   console demo-feodo-c2-all: http://localhost:8090/search/<id>
 demo -   dfe.cisco-asa: +N rows
 demo -   dfe.fortinet: +N rows
 demo -   dfe.demo-syslog: +0 rows
 demo -   dfe.main: +0 rows
 demo -   dfe.component-releases: 0 rows
-demo -   dfe.wikipedia-recentchanges: N rows
+demo -   dfe.feodo-c2: 0 rows
 demo -   dfe-archiver archive of demo-syslog: N files
 demo -     demo-syslog_land/default/2026/11/03/01-0001-<id>.jsonl.zst  77645 bytes
 demo -     first line of the newest: {"message":"%ASA-6-302014: Teardown TCP connection ...

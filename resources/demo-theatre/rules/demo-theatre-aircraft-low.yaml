@@ -1,0 +1,15 @@
+# Project:   dfe-docker
+# File:      resources/demo-theatre/rules/demo-theatre-aircraft-low.yaml
+# Purpose:   The theatre demo's rule: an aircraft reporting a barometric altitude under 1,500 feet
+# Language:  YAML
+#
+# License:   BUSL-1.1
+# Copyright: (c) 2026 HYPERI PTY LIMITED
+
+name: demo-theatre-aircraft-low
+display_name: Aircraft below 1,500 feet
+severity: low
+source: adsb-tracks
+source_type: raw
+# Aircraft in the circuit or on approach and departure round Sydney Kingsford Smith, which the air picture holds on every poll. A grounded aircraft reports "ground", which reads as 0.
+user_sql: "SELECT * FROM dfe.`adsb-tracks` WHERE toFloat64OrZero(toString(_json.alt_baro)) BETWEEN 1 AND 1499"

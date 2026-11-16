@@ -1,0 +1,17 @@
+# Project:   dfe-docker
+# File:      tests/e2e/configs/receiver-grpc-spillover.yaml
+# Purpose:   dfe-receiver pushing over gRPC with disk spillover on and acknowledgements held
+# Language:  YAML
+#
+# License:   BUSL-1.1
+# Copyright: (c) 2026 HYPERI PTY LIMITED
+#
+# With every listener holding its answer the receiver opens no spool, whatever
+# `buffer.spillover.enabled` says: the sender keeps its copy instead.
+
+transport: grpc
+
+buffer:
+  spillover:
+    enabled: true
+    path: /tmp/dfe-receiver-spillover

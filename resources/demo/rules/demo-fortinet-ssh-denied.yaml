@@ -1,0 +1,14 @@
+# Project:   dfe-docker
+# File:      resources/demo/rules/demo-fortinet-ssh-denied.yaml
+# Purpose:   The demo's rule: a FortiGate deny on the SSH port
+# Language:  YAML
+#
+# License:   BUSL-1.1
+# Copyright: (c) 2026 HYPERI PTY LIMITED
+
+name: demo-fortinet-ssh-denied
+display_name: SSH connection denied by a FortiGate
+severity: low
+source: fortinet
+source_type: raw
+user_sql: "SELECT * FROM dfe.`fortinet` WHERE event_action = 'deny' AND destination_port = 22"

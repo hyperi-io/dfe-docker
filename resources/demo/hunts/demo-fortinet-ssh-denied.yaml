@@ -1,0 +1,19 @@
+# Project:   dfe-docker
+# File:      resources/demo/hunts/demo-fortinet-ssh-denied.yaml
+# Purpose:   The demo's hunt, running its denied-SSH rule every five minutes
+# Language:  YAML
+#
+# License:   BUSL-1.1
+# Copyright: (c) 2026 HYPERI PTY LIMITED
+
+name: demo-fortinet-ssh-denied
+display_name: SSH connections denied by FortiGates
+cron: "*/5 * * * *"
+# A required label: the runner takes each detection's org from the matched row.
+customers:
+  - default
+rules:
+  - demo-fortinet-ssh-denied
+global_source_table_name: dfe.fortinet
+global_target_table_name: dfe.detection
+checkpoint_timestamp_field: _timestamp_load

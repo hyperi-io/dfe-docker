@@ -1,0 +1,42 @@
+# Project:   dfe-docker
+# File:      resources/demo/sources/feodo-c2.yaml
+# Purpose:   A demo fetcher that pulls the abuse.ch Feodo Tracker botnet command-and-control blocklist
+# Language:  YAML
+#
+# License:   BUSL-1.1
+# Copyright: (c) 2026 HYPERI PTY LIMITED
+
+description: Botnet command-and-control servers (Emotet, QakBot and similar) on the abuse.ch Feodo Tracker IP blocklist, one row per server address and port. The tracker rebuilds the list every five minutes and publishes it under CC0 with no key (https://feodotracker.abuse.ch/blocklist/)
+display_name: Feodo Tracker C2 servers
+fetcher:
+  config:
+    auth:
+      mode: none
+    # The tracker asks clients to fetch at most every five minutes
+    interval_secs: 300
+    profile:
+      auth:
+        accepts: [none]
+      base_url: "{{ vars.api_url }}"
+      endpoints:
+        - path: /downloads/ipblocklist.json
+          rows:
+            decoder: json_array
+          unit: blocklist
+      headers:
+        Accept: application/json
+        User-Agent: DFE-demo (https://github.com/hyperi-io/dfe-docker)
+      retry:
+        never_retry: [401, 403]
+      shape: dump
+    vars:
+      api_url: https://feodotracker.abuse.ch
+  source_type: rest
+  topic: own
+header:
+  type: common-header/timeseries
+  version: 1.0.1
+schema:
+  meta_schema: meta/abusech/feodo_c2
+  meta_schema_version: 1.0.0
+source: feodo-c2
