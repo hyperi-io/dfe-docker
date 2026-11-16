@@ -307,7 +307,7 @@ jobs:
     name: Published compose (${{ matrix.pack }})
     needs: demo-packs
     runs-on: ubuntu-26.04
-    timeout-minutes: 65
+    timeout-minutes: 75
     strategy:
       fail-fast: false
       matrix:
@@ -390,7 +390,8 @@ jobs:
 
       # Runs after the secrets step because the console login check replaces the login's issued password, which that step expects held. One checker proves the pack worked: its replayed sources land parsed rows, the intake and default tables stay empty, every source is deployed, each hunt fires under its ceiling, each dashboard and saved search returns rows, the console login can search, replayed fetcher polls land and the dead-letter queue stays empty. What a pack expects is data in resources/<pack>/verify.json
       - name: Verify the pack worked
-        timeout-minutes: 35
+        # Above the checker's summed waits (land, hunts, console and fetchers: 38 min), so a slow failure still prints its results
+        timeout-minutes: 40
         working-directory: ${{ env.COMPOSE_DIR }}
         env:
           PACK: ${{ matrix.pack }}
