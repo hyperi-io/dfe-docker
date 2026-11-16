@@ -197,6 +197,14 @@ class TestLoadReplays:
             assert replay.step_ms == pytest.approx(10_000, abs=1_000)
             assert len(replay.polls) >= 55
 
+    def test_reads_the_committed_base_demo_named_by_an_empty_pack(self) -> None:
+        replays = replay_fetch.load_replays(root=demo_pack_dir(pack=""))
+
+        assert sorted(replays) == ["feodo-c2"]
+        assert replays["feodo-c2"].rows_at == "/rows"
+        assert replays["feodo-c2"].live == ("feodotracker.abuse.ch", 443)
+        assert len(replays["feodo-c2"].polls) == 1
+
     def test_skips_a_fetcher_with_no_capture(self, tmp_path: Path) -> None:
         root = _pack(tmp_path, endpoints=[REPLAY_UNIT], lines=["{}"])
         (root / "events" / "air" / "demo.log").unlink()

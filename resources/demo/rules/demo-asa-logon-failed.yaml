@@ -1,0 +1,14 @@
+# Project:   dfe-docker
+# File:      resources/demo/rules/demo-asa-logon-failed.yaml
+# Purpose:   The demo's rule: a failed administrator logon on a Cisco ASA
+# Language:  YAML
+#
+# License:   BUSL-1.1
+# Copyright: (c) 2026 HYPERI PTY LIMITED
+
+name: demo-asa-logon-failed
+display_name: Failed logon on a Cisco ASA
+severity: medium
+source: cisco-asa
+source_type: raw
+user_sql: "SELECT * FROM dfe.`cisco-asa` WHERE event_action = 'logon-failed'"

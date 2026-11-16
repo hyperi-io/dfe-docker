@@ -1,0 +1,34 @@
+{
+  "hunts": {
+    "demo-theatre-aircraft-low": {
+      "max_alerts": 126
+    },
+    "demo-theatre-vessel-silent": {
+      "max_alerts": 126
+    }
+  },
+  "parsed": {
+    "adsb-tracks": {
+      "fields": [
+        "_json.hex",
+        "_json.lat",
+        "_json.lon",
+        "_json.alt_baro",
+        "_json.seen_pos"
+      ],
+      "min_ratio": 0.9
+    },
+    "ais-tracks": {
+      "fields": [
+        "_json.mmsi",
+        "_json.properties.sog",
+        "_json.properties.cog",
+        "_json.properties.timestampExternal"
+      ],
+      "min_ratio": 0.99
+    }
+  },
+  "zero_ok": [
+    "demo-theatre-aircraft-late"
+  ]
+}

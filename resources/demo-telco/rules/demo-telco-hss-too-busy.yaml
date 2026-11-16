@@ -1,0 +1,14 @@
+# Project:   dfe-docker
+# File:      resources/demo-telco/rules/demo-telco-hss-too-busy.yaml
+# Purpose:   The telco demo's rule: an S6a request the HSS refused with DIAMETER_TOO_BUSY
+# Language:  YAML
+#
+# License:   BUSL-1.1
+# Copyright: (c) 2026 HYPERI PTY LIMITED
+
+name: demo-telco-hss-too-busy
+display_name: HSS refused an S6a request as too busy
+severity: high
+source: core-probes
+source_type: raw
+user_sql: "SELECT * FROM dfe.`core-probes` WHERE toString(_json.cause) = 'DIAMETER_TOO_BUSY'"

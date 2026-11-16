@@ -1,0 +1,63 @@
+{
+  "hunts": {
+    "demo-cyber-anonymous-link": {
+      "max_alerts": 126
+    },
+    "demo-cyber-drop-sign-in": {
+      "max_alerts": 126
+    },
+    "demo-cyber-ransomware": {
+      "max_alerts": 126
+    }
+  },
+  "parsed": {
+    "cisco-asa": {
+      "fields": [
+        "event_action",
+        "source_ip",
+        "destination_ip",
+        "observer_vendor"
+      ],
+      "min_ratio": 0.9
+    },
+    "crowdstrike": {
+      "fields": [
+        "event_action",
+        "user_name",
+        "source_ip"
+      ],
+      "min_ratio": 0.99
+    },
+    "fortinet": {
+      "fields": [
+        "event_action",
+        "event_outcome",
+        "source_ip",
+        "destination_ip",
+        "source_port",
+        "network_transport",
+        "observer_vendor"
+      ],
+      "min_ratio": 0.99
+    },
+    "o365": {
+      "fields": [
+        "event_action",
+        "event_outcome",
+        "user_name",
+        "client_ip"
+      ],
+      "min_ratio": 0.99
+    },
+    "okta": {
+      "fields": [
+        "event_action",
+        "event_outcome",
+        "client_ip",
+        "user_name"
+      ],
+      "min_ratio": 0.99
+    }
+  },
+  "zero_ok": []
+}

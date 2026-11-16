@@ -213,11 +213,13 @@ def main(argv: list[str] | None = None) -> int:
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
     )
     parser.add_argument(
-        "--pack", required=True, help="the pack in resources/demo-<pack> to replay"
+        "--pack",
+        required=True,
+        help="the pack in resources/demo-<pack> to replay, empty for the base demo in resources/demo",
     )
     parser.add_argument("--port", default=PORT, type=int, help="the port to answer on")
     args = parser.parse_args(argv)
-    if args.pack not in demo_pack_names():
+    if args.pack and args.pack not in demo_pack_names():
         parser.error(f"no pack {args.pack!r}. The packs are {demo_pack_names()}")
     try:
         replays = load_replays(root=demo_pack_dir(pack=args.pack))

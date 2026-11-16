@@ -6,6 +6,6 @@
   "tags": [
     "demo"
   ],
-  "where": "toString(_json.mmsi) = '209297000'",
+  "where": "toString(_json.mmsi) = (SELECT toString(_json.mmsi) FROM dfe.`ais-tracks` GROUP BY 1 ORDER BY count() DESC, 1 LIMIT 1)",
   "whereLanguage": "sql"
 }

@@ -10,7 +10,7 @@
         "displayType": "stacked_bar",
         "name": "Rows per table per minute",
         "source": "all_sources",
-        "sqlTemplate": "SELECT $__timeInterval(_timestamp_load) AS ts,\n       toString(_source) AS \"table\",\n       count() * 60 / $__interval_s AS \"rows/min\"\nFROM dfe.all_sources\nWHERE $__timeFilter(_timestamp_load) AND _table = toString(_source) AND toString(_source) IN ('cisco-asa', 'fortinet', 'demo-syslog', 'component-releases', 'wikipedia-recentchanges')\nGROUP BY ts, \"table\"\nORDER BY ts"
+        "sqlTemplate": "SELECT $__timeInterval(_timestamp_load) AS ts,\n       toString(_source) AS \"table\",\n       count() * 60 / $__interval_s AS \"rows/min\"\nFROM dfe.all_sources\nWHERE $__timeFilter(_timestamp_load) AND _table = toString(_source) AND toString(_source) IN ('cisco-asa', 'fortinet', 'demo-syslog', 'component-releases', 'feodo-c2')\nGROUP BY ts, \"table\"\nORDER BY ts"
       },
       "h": 7,
       "id": "rows",
@@ -24,7 +24,7 @@
         "displayType": "table",
         "name": "Rows landed",
         "source": "all_sources",
-        "sqlTemplate": "SELECT toString(_source) AS \"Table\",\n       count() AS \"Rows\"\nFROM dfe.all_sources\nWHERE $__timeFilter(_timestamp_load) AND _table = toString(_source) AND toString(_source) IN ('cisco-asa', 'fortinet', 'demo-syslog', 'component-releases', 'wikipedia-recentchanges')\nGROUP BY 1\nORDER BY 2 DESC"
+        "sqlTemplate": "SELECT toString(_source) AS \"Table\",\n       count() AS \"Rows\"\nFROM dfe.all_sources\nWHERE $__timeFilter(_timestamp_load) AND _table = toString(_source) AND toString(_source) IN ('cisco-asa', 'fortinet', 'demo-syslog', 'component-releases', 'feodo-c2')\nGROUP BY 1\nORDER BY 2 DESC"
       },
       "h": 7,
       "id": "total",
