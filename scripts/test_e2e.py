@@ -358,6 +358,8 @@ class TestContext:
     failed: int = 0
     skipped: int = 0
     total_sent: int = 0
+    # Every failure label, so a known issue absorbs only the failures it names
+    failures: list[str] = field(default_factory=list)
 
 
 # ------------------------------------------------------------------------------
@@ -466,6 +468,7 @@ def mark_pass(ctx, label):
 def mark_fail(ctx, label):
     LOGGER.log(FAIL_LEVEL, label)
     ctx.failed += 1
+    ctx.failures.append(label)
 
 
 # ==============================================================================
@@ -2974,7 +2977,7 @@ def verify_archived(ctx, test, sent):
     )
     if counts is None or not (set(accepted) <= counts.keys()):
         for service in plan.archive_services:
-            lifecycle_step(ctx, test, "stop", service)
+            lifecycle_step(ctx, test, ("stop",), service)
         counts = archived_records(test)
     where = f"the archive under '{plan.archive_path}'"
     if counts is None:
@@ -4799,19 +4802,28 @@ def run_test(ctx, mode, test, persistent_services):
 
 # ------------------------------------------------------------------------------
 # Settle Known Issue
-# - A test that names a `known_issue` is expected to fail on it: its failures are
-#   reported as one skip citing the issue, and a clean run fails, so a fix is
-#   noticed and the key removed
+# - A test that names a `known_issue` is expected to fail on it, on an unanswered
+#   request or a lost record and nothing else: those failures are reported as one
+#   skip citing the issue, every other failure still fails the run, and a run with
+#   none fails, so a fix is noticed and the key removed
 # ------------------------------------------------------------------------------
-def settle_known_issue(ctx, test, failures):
+KNOWN_ISSUE_FAILURES = ("requests got no HTTP answer", "accepted records never reached")
+
+
+def settle_known_issue(ctx, test, failures_before):
     issue = test.outage.known_issue
-    if failures:
-        ctx.failed -= failures
+    new = ctx.failures[failures_before:]
+    absorbed = [label for label in new if any(m in label for m in KNOWN_ISSUE_FAILURES)]
+    if absorbed:
+        del ctx.failures[failures_before:]
+        ctx.failures.extend(label for label in new if label not in absorbed)
+        ctx.failed -= len(absorbed)
         mark_skip(
             ctx,
-            f"[{test.name}] KNOWN ISSUE {issue}: {failures} check(s) failed as expected",
+            f"[{test.name}] KNOWN ISSUE {issue}: {len(absorbed)} answer or landing "
+            "check(s) failed as expected",
         )
-    else:
+    elif not (new):
         mark_fail(
             ctx,
             f"[{test.name}] passed, so {issue} looks fixed: remove its `known_issue`",
@@ -4828,10 +4840,10 @@ def run_checks(
     ingest_service = "dfe-receiver"
     ingest_url = DFE_RECEIVER_INGEST_URL
     if test.outage:
-        failed_before = ctx.failed
+        failures_before = len(ctx.failures)
         run_outage(ctx, test, effective_services, ingest_url, ingest_service)
         if test.outage.known_issue:
-            settle_known_issue(ctx, test, ctx.failed - failed_before)
+            settle_known_issue(ctx, test, failures_before)
     elif test.detection:
         run_detection(ctx, test, ingest_url)
     else:
