@@ -22,7 +22,7 @@ repo, not here.
 ## Events arrive two ways and leave one
 
 Pushed to `dfe-receiver` or pulled by `dfe-fetcher`, and out through `dfe-loader`
-into ClickHouse. Everything between is optional and profile-selected. This diagram shows the running parts of the data path on a Kafka profile.
+into ClickHouse. Everything between is optional and profile-selected. On a Kafka profile, the receiver and fetcher produce to Kafka, and the loader reads the topics into ClickHouse.
 
 ```mermaid
 flowchart LR
@@ -97,7 +97,7 @@ A source with a transform stops sharing `main_land`: the receiver routes it to `
 
 ## Two independent selectors decide what runs
 
-Compose profiles select INFRASTRUCTURE. `service_profiles.yaml` selects DFE SERVICES. `scripts/resolve_profile.py` reads the second and derives the first, writing `.tmp/profile.mk` for the Makefile. This diagram shows where the resolver reads from and what reads its output.
+Compose profiles select INFRASTRUCTURE. `service_profiles.yaml` selects DFE SERVICES. `scripts/resolve_profile.py` reads the second and derives the first, writing `.tmp/profile.mk` for the Makefile. The resolver reads the profile and the environment, and the Makefile includes the `profile.mk` it writes.
 
 ```mermaid
 flowchart LR
@@ -137,7 +137,7 @@ flowchart LR
 
 A profile declares its whole footprint through the optional `clickhouse`, `core`, `kafbat`, `hyperdx`, `otel` and `auth` keys, each overridable by the matching `.env` flag. Each service entry names the config file it mounts, which is how one service gets a Kafka config and another a gRPC one without a second compose file.
 
-The `core` footprint is the management plane, independent of transport. `dfe-proxy` gives the console and the engine API one origin, because the console's client calls the engine with a relative `/api/v1/...` base URL. This diagram shows how dfe-proxy splits that origin.
+The `core` footprint is the management plane, independent of transport. `dfe-proxy` gives the console and the engine API one origin, because the console's client calls the engine with a relative `/api/v1/...` base URL. dfe-proxy sends `/api/v1` to dfe-engine and every other path to dfe-ui.
 
 ```mermaid
 flowchart LR
@@ -197,7 +197,7 @@ Dev builds fetch source into a managed git cache, or from your own checkouts whe
 
 dfe-transform-vector mounts `resources/enrichment/` at `/etc/dfe-transform-vector/data`, where its bundled filebeat pipeline reads `timezones.csv`. dfe-transform-elastic compiles its transforms in, and the engine uploads the enrichment tables a dfe-transform-vrl program reads, so neither mounts them. `make test-source` drives the filebeat, Vector and Elastic cases through every hop. dfe-transform-vector's one port serves everything: the wrapper scrapes Vector's `internal_metrics` off its `prometheus_exporter` on loopback and registers the samples on scalo's own recorder (dfe-transform-vector#70), so `vector_*` reads on its metrics port and rides the OTLP push. The exporter's 9598 is not published.
 
-Two gRPC listeners share port 6000, and they are not the same thing. This diagram shows both on a `*-grpc` profile.
+Two gRPC listeners share port 6000, and they are not the same thing. A `*-grpc` profile runs both.
 
 ```mermaid
 flowchart LR

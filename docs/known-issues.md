@@ -32,7 +32,7 @@ KAFKA_BACKEND=apache make -e dev  # -e flips the precedence
 
 ## A `_load` topic changes what the loader reads
 
-The receiver produces to `main_land` and a transform to `main_load`. This diagram shows which of the two the loader reads.
+The receiver produces to `main_land` and a transform to `main_load`. The loader reads `main_load` when it exists, and `main_land` when it does not.
 
 ```mermaid
 flowchart LR
