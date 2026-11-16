@@ -6,7 +6,7 @@
 #  License:      BUSL-1.1
 #  Copyright:    (c) 2026 HYPERI PTY LIMITED
 
-"""The checks on scripts/replay_fetch.py: the time shift, the silenced poll, the committed packs it loads, and a real round trip over HTTP."""
+"""The checks on scripts/replay_fetch.py: the time shift, the silenced poll, the live feed check, the committed packs it loads, and a real round trip over HTTP."""
 
 import json
 import socket
@@ -14,6 +14,8 @@ import threading
 import urllib.error
 import urllib.request
 from collections.abc import Iterator
+from contextlib import contextmanager
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
 import pytest
@@ -28,6 +30,12 @@ REPLAY_UNIT = {
     "rows": {"at": "/ac", "decoder": "json_at"},
     "unit": "replay",
 }
+LIVE_UNIT = {
+    "path": "/v2/point/{{ vars.lat }}",
+    "query": {"from": "{{ int(window.end) - 600000 }}", "radius": "{{ vars.radius }}"},
+    "rows": {"at": "/ac", "decoder": "json_at"},
+    "unit": "point",
+}
 
 
 def _source(*, endpoints: list[dict]) -> str:
@@ -35,8 +43,16 @@ def _source(*, endpoints: list[dict]) -> str:
     body = {
         "fetcher": {
             "config": {
-                "profile": {"endpoints": endpoints},
-                "vars": {"api_url": "https://api.example"},
+                "profile": {
+                    "base_url": "{{ vars.api_url }}",
+                    "endpoints": endpoints,
+                    "headers": {"Accept": "application/json"},
+                },
+                "vars": {
+                    "api_url": "https://api.example",
+                    "lat": "-33.9",
+                    "radius": "100",
+                },
             }
         },
         "source": "air",
@@ -57,12 +73,16 @@ def _pack(root: Path, *, endpoints: list[dict], lines: list[str]) -> Path:
     return root
 
 
-def _replay(*, live: tuple[str, int]) -> replay_fetch.Replay:
+def _replay(*, url: str = "http://127.0.0.1:1/air") -> replay_fetch.Replay:
+    """Two captured polls, silenced while `url` answers with rows at /ac."""
     polls = [
         (POLLED_MS, {"ac": [{"hex": "a"}], "now": POLLED_MS}),
         (POLLED_MS + 10_000, {"ac": [{"hex": "b"}], "now": POLLED_MS + 10_000}),
     ]
-    return replay_fetch.Replay(live=live, polls=polls, rows_at="/ac", step_ms=10_000)
+    probe = replay_fetch.Probe(url=url, headers={}, rows_at="/ac")
+    return replay_fetch.Replay(
+        live=("127.0.0.1", 1), probe=probe, polls=polls, rows_at="/ac", step_ms=10_000
+    )
 
 
 def _closed_port() -> int:
@@ -70,6 +90,31 @@ def _closed_port() -> int:
     with socket.socket() as probe:
         probe.bind(("127.0.0.1", 0))
         return probe.getsockname()[1]
+
+
+@contextmanager
+def _live_feed(*, status: int, payload: bytes) -> Iterator[tuple[str, dict]]:
+    """A local live feed answering every GET with `answer`, which a test may change."""
+    answer = {"status": status, "payload": payload}
+
+    class Feed(BaseHTTPRequestHandler):
+        def do_GET(self) -> None:  # noqa: N802
+            self.send_response(answer["status"])
+            self.send_header("Content-Length", str(len(answer["payload"])))
+            self.end_headers()
+            self.wfile.write(answer["payload"])
+
+        def log_message(self, format: str, *args: object) -> None:  # noqa: A002
+            return
+
+    server = ThreadingHTTPServer(("127.0.0.1", 0), Feed)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        yield f"http://127.0.0.1:{server.server_address[1]}/v2", answer
+    finally:
+        server.shutdown()
+        server.server_close()
 
 
 @pytest.fixture
@@ -172,7 +217,7 @@ class TestPollAt:
         self, elapsed_ms: int, hex_code: str
     ) -> None:
         now_ms = POLLED_MS + 3_600_000
-        replay = _replay(live=("127.0.0.1", 1))
+        replay = _replay()
 
         body = replay_fetch.poll_at(
             now_ms=now_ms, replay=replay, started_ms=now_ms - elapsed_ms
@@ -192,13 +237,35 @@ class TestLoadReplays:
         assert replays["adsb-tracks"].live == ("api.adsb.lol", 443)
         assert replays["ais-tracks"].rows_at == "/features"
         assert replays["ais-tracks"].live == ("meri.digitraffic.fi", 443)
+        assert replays["adsb-tracks"].probe.url == (
+            "https://api.adsb.lol/v2/point/-33.94/151.18/100"
+        )
+        assert replays["adsb-tracks"].probe.rows_at == "/ac"
+        # The query value that needs the poll window is left out, the rest is asked
+        assert replays["ais-tracks"].probe.url == (
+            "https://meri.digitraffic.fi/api/ais/v1/locations"
+            "?latitude=60.1&longitude=24.95&radius=60"
+        )
+        assert replays["ais-tracks"].probe.headers["Accept-Encoding"] == "gzip"
         for replay in replays.values():
             # Ten minutes of polls ten seconds apart
             assert replay.step_ms == pytest.approx(10_000, abs=1_000)
             assert len(replay.polls) >= 55
 
+    def test_asks_the_live_unit_with_what_vars_can_fill(self, tmp_path: Path) -> None:
+        line = f'{{"polled_ms": {POLLED_MS}, "body": {{}}}}'
+        root = _pack(tmp_path, endpoints=[REPLAY_UNIT, LIVE_UNIT], lines=[line])
+
+        replays = replay_fetch.load_replays(root=root)
+
+        assert replays["air"].probe == replay_fetch.Probe(
+            url="https://api.example/v2/point/-33.9?radius=100",
+            headers={"Accept": "application/json"},
+            rows_at="/ac",
+        )
+
     def test_skips_a_fetcher_with_no_capture(self, tmp_path: Path) -> None:
-        root = _pack(tmp_path, endpoints=[REPLAY_UNIT], lines=["{}"])
+        root = _pack(tmp_path, endpoints=[REPLAY_UNIT, LIVE_UNIT], lines=["{}"])
         (root / "events" / "air" / "demo.log").unlink()
 
         assert replay_fetch.load_replays(root=root) == {}
@@ -206,12 +273,33 @@ class TestLoadReplays:
     @pytest.mark.parametrize(
         ("endpoints", "lines", "message"),
         [
-            ([REPLAY_UNIT], [], "holds no captured polls"),
-            ([REPLAY_UNIT], ["{"], "line 1 is not a captured poll"),
-            ([REPLAY_UNIT], ['{"body": {}}'], "line 1 is not a captured poll"),
+            ([REPLAY_UNIT, LIVE_UNIT], [], "holds no captured polls"),
+            ([REPLAY_UNIT, LIVE_UNIT], ["{"], "line 1 is not a captured poll"),
+            (
+                [REPLAY_UNIT, LIVE_UNIT],
+                ['{"body": {}}'],
+                "line 1 is not a captured poll",
+            ),
             ([], [f'{{"polled_ms": {POLLED_MS}, "body": {{}}}}'], "no 'replay' unit"),
+            (
+                [REPLAY_UNIT],
+                [f'{{"polled_ms": {POLLED_MS}, "body": {{}}}}'],
+                "no live unit to ask",
+            ),
+            (
+                [REPLAY_UNIT, {**LIVE_UNIT, "path": "/{{ int(window.end) }}"}],
+                [f'{{"polled_ms": {POLLED_MS}, "body": {{}}}}'],
+                "need more than `vars`",
+            ),
         ],
-        ids=["empty", "malformed", "no-poll-time", "no-replay-unit"],
+        ids=[
+            "empty",
+            "malformed",
+            "no-poll-time",
+            "no-replay-unit",
+            "no-live-unit",
+            "unfillable-path",
+        ],
     )
     def test_refuses_a_replay_it_cannot_serve(
         self, endpoints: list[dict], lines: list[str], message: str, tmp_path: Path
@@ -223,32 +311,68 @@ class TestLoadReplays:
 
 
 class TestServe:
-    def test_serves_the_capture_while_the_live_feed_is_unreachable(
+    @pytest.mark.parametrize(
+        ("status", "payload", "silent"),
+        [
+            (200, b'{"ac": [{"hex": "z"}]}', True),
+            (200, b'{"ac": []}', False),
+            (200, b'{"msg": "No error"}', False),
+            (200, b"not json", False),
+            (503, b'{"ac": [{"hex": "z"}]}', False),
+            (None, b"", False),
+        ],
+        ids=[
+            "answers-with-rows",
+            "answers-empty",
+            "answers-without-the-rows-key",
+            "answers-text",
+            "answers-an-error",
+            "unreachable",
+        ],
+    )
+    def test_serves_the_capture_unless_the_live_feed_has_rows(
+        self,
+        served: tuple[replay_fetch.ThreadingHTTPServer, dict],
+        silent: bool,
+        status: int | None,
+        payload: bytes,
+    ) -> None:
+        server, replays = served
+        # None stands for a feed nothing listens for
+        with _live_feed(status=status or 200, payload=payload) as (url, _):
+            replays["air"] = _replay(
+                url=url if status else f"http://127.0.0.1:{_closed_port()}/v2"
+            )
+
+            code, body = _get(server, "/air")
+
+        assert code == 200
+        assert isinstance(body, dict)
+        assert body["ac"] == ([] if silent else [{"hex": "a"}])
+        assert body["now"] > POLLED_MS
+
+    def test_asks_the_live_feed_again_on_the_wait_its_last_answer_sets(
         self, served: tuple[replay_fetch.ThreadingHTTPServer, dict]
     ) -> None:
         server, replays = served
-        replays["air"] = _replay(live=("127.0.0.1", _closed_port()))
+        with _live_feed(status=200, payload=b'{"ac": []}') as (url, answer):
+            replays["air"] = _replay(url=url)
+            assert _get(server, "/air")[1]["ac"] == [{"hex": "a"}]
 
-        status, body = _get(server, "/air")
+            # Rows appear, but the empty answer holds until its wait has run out
+            answer["payload"] = b'{"ac": [{"hex": "z"}]}'
+            assert _get(server, "/air")[1]["ac"] == [{"hex": "a"}]
 
-        assert status == 200
-        assert isinstance(body, dict)
-        assert body["ac"] == [{"hex": "a"}]
-        assert body["now"] > POLLED_MS
+            replays["air"].checked -= replay_fetch.NO_ROWS_CHECK_SECONDS
+            assert _get(server, "/air")[1]["ac"] == []
 
-    def test_answers_with_no_rows_while_the_live_feed_answers(
-        self, served: tuple[replay_fetch.ThreadingHTTPServer, dict]
-    ) -> None:
-        server, replays = served
-        # The server itself stands in for a reachable live feed
-        replays["air"] = _replay(live=("127.0.0.1", server.server_address[1]))
+            # The rows go again, and the longer wait for a feed with rows holds the silence
+            answer["payload"] = b'{"ac": []}'
+            replays["air"].checked -= replay_fetch.NO_ROWS_CHECK_SECONDS
+            assert _get(server, "/air")[1]["ac"] == []
 
-        status, body = _get(server, "/air")
-
-        assert status == 200
-        assert isinstance(body, dict)
-        assert body["ac"] == []
-        assert body["now"] > POLLED_MS
+            replays["air"].checked -= replay_fetch.LIVE_ROWS_CHECK_SECONDS
+            assert _get(server, "/air")[1]["ac"] == [{"hex": "a"}]
 
     def test_refuses_a_source_it_holds_no_capture_for(
         self, served: tuple[replay_fetch.ThreadingHTTPServer, dict]

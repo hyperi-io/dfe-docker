@@ -6,7 +6,7 @@
 # Copyright: (c) 2026 HYPERI PTY LIMITED
 #
 # Hand-written: hyperi-ci has no reusable workflow for a compose-packaging repo.
-# ubuntu-26.04 is named, not ubuntu-latest, so a label move cannot swap the tools.
+# ubuntu-26.04 is named, not ubuntu-latest, so a label move cannot swap the tools and the arm64 image build, which has no -latest label, runs on the same OS.
 # Renovate automerges patch and digest updates once this workflow passes.
 
 name: CI
@@ -417,7 +417,7 @@ jobs:
             docker compose -f "$COMPOSE_DIR/$FILE" down --volumes --remove-orphans
           fi
 
-  # Compose on Windows splits COMPOSE_FILE on `;` unless COMPOSE_PATH_SEPARATOR in .env says otherwise
+  # Compose on Windows splits COMPOSE_FILE on `;` unless COMPOSE_PATH_SEPARATOR in .env says otherwise. The one runner exception: only a Windows runner runs that path.
   image-windows:
     name: Image (Windows compose)
     needs: image
