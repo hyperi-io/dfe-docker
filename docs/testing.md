@@ -41,7 +41,7 @@ The data file goes to the ingest edge 16 requests at a time. The receiver answer
 
 ## The suite puts back the stack it found
 
-The suite stops whatever stack the project is running, since both publish the same host ports, so it reads the project first, along with the config hash compose gives each service from its files and environment at that moment. On every way out, a failure or a SIGTERM included, it starts each service that was running or had run to completion again, from the compose files it was started from. A last verdict fails if one comes back on a config hash other than the one compose gave at the start.
+The suite stops whatever stack the project is running, since both publish the same host ports, so it reads the project first, along with the config hash compose gives each service from its files and environment at that moment. When it ends, on a pass, a failure or a SIGTERM, it starts each service that was running or had run to completion again, from the compose files it was started from. A SIGKILL or a host failure skips the restart, so start the stack again the way you started it. A last verdict fails if one comes back on a config hash other than the one compose gave at the start.
 
 A container keeps the hash it was created with, so one with a `.env` or compose file changed since is listed in a warning and comes back on the current config. `make ci` leaves the engine that way whenever `make post` rotates the admin password into `env/engine.env`. Run the suite as the user that started the stack: `make` writes that user's GID into the engine's config, and under console TLS its UID and GID into both proxies', so another user shows up in that warning.
 
