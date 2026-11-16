@@ -1,0 +1,11 @@
+{
+  "name": "demo-telco-failures-by-cause",
+  "orderBy": "_timestamp DESC",
+  "select": "_timestamp, toString(_json.cause) AS cause, toString(_json.cause_code) AS code, toString(_json.procedure) AS procedure, toString(_json.interface) AS interface, toFloat64(_json.latency_ms) AS latency_ms, toString(_json.source_node) AS from_node, toString(_json.target_node) AS to_node",
+  "source": "core-probes",
+  "tags": [
+    "demo"
+  ],
+  "where": "toString(_json.result) = 'failure'",
+  "whereLanguage": "sql"
+}

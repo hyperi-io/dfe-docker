@@ -1,0 +1,50 @@
+{
+  "name": "demo-theatre-vessel-moves",
+  "tags": [
+    "demo"
+  ],
+  "tiles": [
+    {
+      "config": {
+        "configType": "sql",
+        "displayType": "stacked_bar",
+        "name": "Vessel course and speed changes per minute",
+        "source": "ais-tracks",
+        "sqlTemplate": "SELECT toStartOfMinute(ts) AS minute,\n       countIf(course_change >= 10) AS \"course changed 10 deg+\",\n       countIf(abs(speed_change) >= 1) AS \"speed changed 1 kn+\"\nFROM (SELECT ts, track, speed, heading,\n       speed - lagInFrame(speed) OVER w AS speed_change,\n       abs(((toInt32(round(heading)) - toInt32(round(lagInFrame(heading) OVER w))) % 360 + 540) % 360 - 180) AS course_change,\n       row_number() OVER w AS n\nFROM (SELECT _timestamp AS ts,\n       toString(_json.mmsi) AS track,\n       toFloat64OrNull(toString(_json.geometry.coordinates[2])) AS lat,\n       toFloat64OrNull(toString(_json.geometry.coordinates[1])) AS lon,\n       toFloat64OrNull(toString(_json.properties.cog)) AS heading,\n       toFloat64OrNull(toString(_json.properties.sog)) AS speed,\n       toInt32OrNull(toString(_json.properties.navStat)) AS status\nFROM dfe.`ais-tracks`\nWHERE $__timeFilter(_timestamp))\nWHERE heading < 360 AND speed >= 1\nWINDOW w AS (PARTITION BY track ORDER BY ts ROWS BETWEEN 1 PRECEDING AND CURRENT ROW))\nWHERE n > 1\nGROUP BY minute\nORDER BY minute"
+      },
+      "h": 7,
+      "id": "moves",
+      "w": 12,
+      "x": 0,
+      "y": 0
+    },
+    {
+      "config": {
+        "configType": "sql",
+        "displayType": "line",
+        "name": "Vessels under way and stopped",
+        "source": "ais-tracks",
+        "sqlTemplate": "SELECT toStartOfMinute(ts) AS minute,\n       uniqExactIf(track, speed >= 0.5) AS \"under way\",\n       uniqExactIf(track, speed < 0.5) AS \"stopped\"\nFROM (SELECT _timestamp AS ts,\n       toString(_json.mmsi) AS track,\n       toFloat64OrNull(toString(_json.geometry.coordinates[2])) AS lat,\n       toFloat64OrNull(toString(_json.geometry.coordinates[1])) AS lon,\n       toFloat64OrNull(toString(_json.properties.cog)) AS heading,\n       toFloat64OrNull(toString(_json.properties.sog)) AS speed,\n       toInt32OrNull(toString(_json.properties.navStat)) AS status\nFROM dfe.`ais-tracks`\nWHERE $__timeFilter(_timestamp))\nGROUP BY minute\nORDER BY minute"
+      },
+      "h": 7,
+      "id": "underway",
+      "w": 12,
+      "x": 12,
+      "y": 0
+    },
+    {
+      "config": {
+        "configType": "sql",
+        "displayType": "table",
+        "name": "Vessels changing course or speed most",
+        "source": "ais-tracks",
+        "sqlTemplate": "SELECT track AS \"MMSI\",\n       round(max(speed), 1) AS \"Top speed (kn)\",\n       countIf(course_change >= 10) AS \"Course changes\",\n       countIf(abs(speed_change) >= 1) AS \"Speed changes\",\n       round(argMax(speed, ts), 1) AS \"Speed now (kn)\",\n       round(argMax(heading, ts)) AS \"Course now\"\nFROM (SELECT ts, track, speed, heading,\n       speed - lagInFrame(speed) OVER w AS speed_change,\n       abs(((toInt32(round(heading)) - toInt32(round(lagInFrame(heading) OVER w))) % 360 + 540) % 360 - 180) AS course_change,\n       row_number() OVER w AS n\nFROM (SELECT _timestamp AS ts,\n       toString(_json.mmsi) AS track,\n       toFloat64OrNull(toString(_json.geometry.coordinates[2])) AS lat,\n       toFloat64OrNull(toString(_json.geometry.coordinates[1])) AS lon,\n       toFloat64OrNull(toString(_json.properties.cog)) AS heading,\n       toFloat64OrNull(toString(_json.properties.sog)) AS speed,\n       toInt32OrNull(toString(_json.properties.navStat)) AS status\nFROM dfe.`ais-tracks`\nWHERE $__timeFilter(_timestamp))\nWHERE heading < 360 AND speed >= 1\nWINDOW w AS (PARTITION BY track ORDER BY ts ROWS BETWEEN 1 PRECEDING AND CURRENT ROW))\nWHERE n > 1\nGROUP BY track\nHAVING \"Course changes\" + \"Speed changes\" > 0\nORDER BY \"Course changes\" + \"Speed changes\" DESC, \"Top speed (kn)\" DESC\nLIMIT 15"
+      },
+      "h": 8,
+      "id": "movers",
+      "w": 24,
+      "x": 0,
+      "y": 7
+    }
+  ]
+}

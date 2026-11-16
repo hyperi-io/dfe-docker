@@ -1,0 +1,67 @@
+# Project:   dfe-docker
+# File:      resources/demo-telco/sources/bgp-updates.yaml
+# Purpose:   A telco demo fetcher that pulls the BGP announcements and withdrawals RIPE RIS saw for four prefixes of large networks
+# Language:  YAML
+#
+# License:   BUSL-1.1
+# Copyright: (c) 2026 HYPERI PTY LIMITED
+
+description: >-
+  BGP announcements and withdrawals RIPE RIS route collectors saw for 23.0.0.0/24 (Akamai, AS20940),
+  172.69.12.0/24 (Cloudflare, AS13335), 173.82.227.0/24 (AS16509) and 8.8.8.0/24 (Google, AS15169),
+  one row per update with its peer, AS path and target prefix. RIPEstat publishes updates hours behind
+  the wire, so each poll reads the minute that ended twelve hours ago. Data from the RIPE NCC's RIPEstat
+  Data API (https://stat.ripe.net), used under the RIPEstat terms and conditions
+  (https://www.ripe.net/about-us/legal/ripestat-service-terms-and-conditions/).
+display_name: BGP updates (RIPEstat)
+fetcher:
+  config:
+    auth:
+      mode: none
+    interval_secs: 60
+    profile:
+      auth:
+        accepts: [none]
+      base_url: "{{ vars.api_url }}"
+      endpoints:
+        - path: /data/bgp-updates/data.json
+          query:
+            endtime: "{{ int(window.end) - int(vars.lag_secs) - 1 }}"
+            resource: "{{ vars.prefixes }}"
+            sourceapp: "{{ vars.sourceapp }}"
+            starttime: "{{ int(window.start) - int(vars.lag_secs) }}"
+            unix_timestamps: "TRUE"
+          rows:
+            at: /data/updates
+            decoder: json_at
+          unit: updates
+      headers:
+        Accept: application/json
+        User-Agent: dfe-fetcher (https://github.com/hyperi-io/dfe-fetcher)
+      probe:
+        path: /data/whats-my-ip/data.json
+        query:
+          sourceapp: "{{ vars.sourceapp }}"
+      retry:
+        never_retry: [401, 403]
+      shape: incremental
+      window:
+        format: epoch_secs
+        # The first poll reads half an hour, so the console has a history the moment the source lands
+        lookback: 30m
+        step: 5m
+    vars:
+      api_url: https://stat.ripe.net
+      # RIPEstat ingests RIS updates in batches up to twelve hours behind real time, so a window any nearer would read past the newest update it holds and never be read again
+      lag_secs: 43200
+      prefixes: 23.0.0.0/24,172.69.12.0/24,173.82.227.0/24,8.8.8.0/24
+      sourceapp: dfe-demo
+  source_type: rest
+  topic: own
+header:
+  type: common-header/timeseries
+  version: 1.0.1
+schema:
+  meta_schema: meta/syslog
+  meta_schema_version: 1.0.0
+source: bgp-updates

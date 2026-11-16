@@ -18,23 +18,30 @@ come out the other. Everything else can wait.
 
 ## What you need
 
-- Docker Engine 26.0 and Docker Compose 2.34 or newer for the one-line installs, Compose 2.26 or newer for the rest
+- Docker Engine and Docker Compose at the `min_engine` and `min_compose` a release's `quickstart.json` names for the one-line installs. The rest need only the oldest Compose that reads every feature in `COMPOSE_FEATURES` (`scripts/quickstart_json.py`)
 - make, git and Python 3 (standard library only), for a clone. Nothing under "With only Docker" needs them
 - Network access to `ghcr.io/hyperi-io`, where the images are public and pull with no login
+- About 2.5 GB of RAM free: that is the default stack at idle. Its memory limits are sized for a 16 GB box, see [configuration](configuration.md)
 
 ## With only Docker
 
 ```bash
 docker compose -f oci://ghcr.io/hyperi-io/dfe-docker:compose up -d
+docker compose -f oci://ghcr.io/hyperi-io/dfe-docker:compose run --rm secrets-init login
 ```
 
-That is the `single-kafka` stack, as Compose project `dfe`, from a compose file each release publishes beside the dfe-docker image (`:compose-<version>` keeps to one release). Point your browser to http://localhost:3000 and log in as `admin` with password `dfe-first-login`, which the console makes you change at first login. The file names no secret but that first-login password: the stack mints the rest at first start into a volume of its own, which `down -v` deletes. Every port it publishes listens on 127.0.0.1 only. `docker compose -f oci://ghcr.io/hyperi-io/dfe-docker:compose down` stops it and keeps the data.
+That is the `single-kafka` stack, as Compose project `dfe`, from a compose file each release publishes beside the dfe-docker image (`:compose-<version>` keeps to one release). The file names no secret: the stack mints them at first start into a volume of its own, which `down -v` deletes. Point your browser to http://localhost:3000 and log in with the name and password the second command prints. The console makes you change the password at first login. Every port it publishes listens on 127.0.0.1 only. `docker compose -f oci://ghcr.io/hyperi-io/dfe-docker:compose down` stops it and keeps the data.
+
+To choose your own, see [Choosing the admin login](#choosing-the-admin-login).
 
 ```bash
 docker compose -f oci://ghcr.io/hyperi-io/dfe-docker:demo up -d
+docker compose -f oci://ghcr.io/hyperi-io/dfe-docker:demo run --rm secrets-init login
 ```
 
 The demo is the same stack as its own project (`dfe-demo`) and nothing to set up. At first start it seeds the demo's sources, dashboards and saved searches, then streams the Cisco ASA and FortiGate syslog below without stopping, beside two fetchers. It takes the same ports, so stop the stack above first. `docker compose -f oci://ghcr.io/hyperi-io/dfe-docker:demo down -v` removes all of it.
+
+Three more demos take the same two commands with the tag swapped, each as its own project on the same ports, so run one at a time: `:demo-cyber` (identity, EDR and firewall events, with the rules and hunts a SOC runs over them), `:demo-theatre` (live air and sea tracks, the picture as it is now and as it was) and `:demo-telco` (BGP updates, RAN KPIs and core probes, what a NOC watches).
 
 For a folder you can edit, the dfe-docker image sets one up holding the compose files, config and `.env`, which takes any profile and setting. In an empty folder. On Windows, use PowerShell: `${PWD}` works there and in bash and zsh, but not in cmd.exe.
 
@@ -49,12 +56,12 @@ The same image runs the rest, in the same folder:
 
 | Command | What it does |
 |---|---|
-| `login` | Prints the access summary. With `docker run -t` it prints the admin password too |
-| `init --upgrade` | Copies the tree again and re-pins the stack, keeping every secret and setting. `--stack X.Y.Z` names the stack. Plain `init` refuses a folder that holds an install |
+| `login` | Prints the access summary. With `docker run -t` it prints the admin password as well |
+| `init --upgrade` | Copies the tree again and re-pins the stack, keeping every secret and setting. `--stack X.Y.Z` names the stack. Plain `init` rejects a folder that holds an install |
 | `apply` | Rewrites the compose settings after an edit to `.env` or after the console adds or deletes a source. Run `docker compose up -d --remove-orphans` after it |
 | `certs` | Mints the console certificate `DFE_PROXY_TLS=true` needs |
 
-Edit settings above the `## BEGIN dfe-docker` block in `.env`. `apply` rewrites the block and `--upgrade` replaces `config/`. `docker compose --profile '*' down` stops everything and `-v` deletes the data too.
+Edit settings above the `## BEGIN dfe-docker` block in `.env`. `apply` rewrites the block and `--upgrade` replaces `config/`. `docker compose --profile '*' down` stops everything and `-v` deletes the data.
 
 The demo needs the stack up, the Docker socket and the folder at its own path, because compose in the container hands the Docker host the paths it sees. That is Linux, macOS or a WSL shell on Windows:
 
@@ -64,21 +71,41 @@ docker run --rm -v "${PWD}:${PWD}" -w "${PWD}" -v /var/run/docker.sock:/var/run/
 
 The same command with `demo-stop` takes it out, which `docker compose down` needs first.
 
+## Choosing the admin login
+
+The published files take the admin's name and password from the shell, set `DFE_ADMIN_NAME` and `DFE_ADMIN_PASSWORD` in the shell that runs `up`. Both are optional.
+
+```bash
+DFE_ADMIN_NAME=ada DFE_ADMIN_PASSWORD='a long passphrase' docker compose -f oci://ghcr.io/hyperi-io/dfe-docker:compose up -d
+```
+
+In PowerShell, set `$env:DFE_ADMIN_NAME` and `$env:DFE_ADMIN_PASSWORD` first. The login command then prints what you chose, and the console still makes you change the password at first login. A password is 12 to 72 bytes of printable characters and is not `changeme`. A name starts with a letter or digit and holds letters, digits, `.`, `_` and `-`. A value the engine would refuse fails the secrets-init step, and `docker compose -f oci://ghcr.io/hyperi-io/dfe-docker:compose logs secrets-init` names the variable. Typed on a command line, the password stays in your shell history, and it stays in the stopped secrets-init container's environment, where `docker inspect` shows it, until `down` removes the container.
+
+The volume keeps the login, so a later `up` with neither variable set leaves it alone. A new password replaces the stored one, and the engine reads it when it next starts, so add `up -d --force-recreate dfe-engine` to the command that sets it. A new name adds that account, and the old one stays.
+
 ## Getting it running
 
 ```bash
 make up                          # single-kafka, newest published stable stack
 make up PROFILE=slim-grpc        # another profile
-make up VERSION=2.2.1            # an older stack
+make up VERSION=<stack version>  # an older stack
 ```
 
 `make up` creates `.env` and `env/`, generates the secrets, pins every image from the DFE stack manifest, starts the stack and prints the console login. Its first line says the profile and stack in use. `PROFILE=` and `VERSION=` are written to `.env`, so the next `make up` keeps them.
 
-The stack refuses to start on unpinned images rather than quietly pulling `latest`, which is why `make up` pins first. On something you might later deploy, "which image am I running?" should never have a vague answer. `make init` and `make stack VERSION=X.Y.Z` do the two steps by hand.
+The stack will not start on unpinned images, so it never quietly pulls `latest`, which is why `make up` pins first. On something you might later deploy, "which image am I running?" should never have a vague answer. `make init` and `make stack VERSION=X.Y.Z` do the two steps by hand.
 
-`make ci` finishes by running the power-on self test, which injects a few marked
+`make up` finishes by running the power-on self test, which injects a few marked
 events and proves they reached ClickHouse. If it prints `PASS`, the pipeline
-works - you have already seen the thing you came to see.
+works - you have seen the thing you came to see.
+
+```bash
+make down    # stop the containers, keep the data
+make clean   # stop everything and DELETE the volumes, including ClickHouse
+```
+
+`make clean` really does delete the warehouse. On a laptop that is usually what
+you want. Anywhere else, read it twice.
 
 ## Seeing your own data go through
 
@@ -127,11 +154,11 @@ PY
 
 It will not appear instantly. The pipeline is asynchronous, Kafka most of all. A couple of seconds is normal.
 
-## Raw syslog, parsed per vendor
+## Raw syslog, parsed per device
 
-`make demo` streams Cisco ASA and FortiGate firewall logs into the running stack as raw syslog. dfe-transform-elastic works out which device sent each line, parses it and lands it in that vendor's own table. Palo Alto and Cisco IOS come back once [dfe-receiver#212](https://github.com/hyperi-io/dfe-receiver/issues/212) and [dfe-transform-elastic#133](https://github.com/hyperi-io/dfe-transform-elastic/issues/133) land.
+`make demo` streams Cisco ASA and FortiGate firewall logs into the running stack as raw syslog. dfe-transform-elastic works out which device sent each line, parses it and lands it in that device's own table. Palo Alto and Cisco IOS wait on [dfe-transform-elastic#133](https://github.com/hyperi-io/dfe-transform-elastic/issues/133).
 
-It needs a profile that runs dfe-transform-elastic per source, which is `single-kafka` (the default). On a clone with no stack running, `make demo` does the `make up` steps first. It refuses a profile without dfe-transform-elastic before it starts anything and never moves a running stack to another profile.
+It needs a profile that runs dfe-transform-elastic per source, which is `single-kafka` (the default). On a clone with no stack running, `make demo` does the `make up` steps first. It rejects a profile without dfe-transform-elastic before it starts anything and never moves a running stack to another profile.
 
 ```bash
 git clone https://github.com/hyperi-io/dfe-docker && cd dfe-docker
@@ -140,21 +167,20 @@ make demo DEMO_RATE=100        # replaces a running stream with a faster one
 make demo-stop                 # removes the whole demo, as does `make down`
 ```
 
-### One pack
-
 The demo is one set of pieces, listed in [`resources/demo/demo.json`](../resources/demo/demo.json). `make demo` installs all of it and `make demo-stop` removes all of it. A re-run replaces the pieces and never duplicates them, and a piece that fails to install takes the rest out again. `make up` installs none of it.
 
 | Piece | Where | What it is |
 |-------|-------|------------|
 | Sources | [`resources/demo/sources/`](../resources/demo/sources/) | One `POST /sources` body per file: the `demo-syslog` intake, the `cisco-asa` and `fortinet` tables, and two fetchers |
-| Fetchers | `wikipedia-recentchanges`, `component-releases` | Pull beside the receiver's push. `wikipedia-recentchanges` polls the MediaWiki recent changes API every 5 seconds, asking each window once (about 3 changes a second, with the first poll bringing in the last hour). `component-releases` takes the latest GitHub release of each public DFE component every 15 minutes, to stay inside GitHub's 60 unauthenticated requests an hour |
-| Archive | `demo-syslog` has `archive: true` | On a Kafka profile dfe-archiver writes the raw syslog lines to the `archiver-data` volume (`file:///var/lib/dfe-archiver/archive`). dfe-archiver has no retention of its own, so the pack runs a pruner that keeps the archive to 15 minutes and 200 MB. A gRPC profile runs no archiver, so there the Source is created without archiving. The archiver has to read the `DFE_ARCHIVER_` env names, which the archiver stack 2.2.1 pins (v1.7.39) does not, so on that stack the archive check fails and the demo removes itself |
-| Console | [`resources/demo/console/`](../resources/demo/console/) | A dashboard per source and one for the stack's health, and a saved search per source with a live tail. All are named `demo-` |
-| Tables | `dfe.cisco-asa`, `dfe.fortinet`, `dfe.demo-syslog`, `dfe.component-releases`, `dfe.wikipedia-recentchanges` | `make demo-stop` leaves them, with their rows, because only the engine issues ClickHouse DDL and it never drops a table. The next `make demo` carries on in them, and `make clean` removes them with the volumes |
+| Fetchers | `wikipedia-recentchanges`, `component-releases` | Pull beside the receiver's push. `wikipedia-recentchanges` polls the MediaWiki recent changes API every 5 seconds, asking each window once, with the first poll bringing in the last hour. `component-releases` takes the latest GitHub release of each public DFE component every 15 minutes, to stay inside GitHub's 60 unauthenticated requests an hour |
+| Archive | `demo-syslog` has `archive: true` | On a Kafka profile dfe-archiver writes the raw syslog lines to the `archiver-data` volume (`file:///var/lib/dfe-archiver/archive`). dfe-archiver has no retention of its own, so the pack runs a pruner that keeps the archive to 15 minutes and 200 MB. A gRPC profile runs no archiver, so there the Source is created without archiving |
+| Console | [`resources/demo/console/`](../resources/demo/console/) | A dashboard per source and one for the stack's health, and saved searches with a live tail for each streamed source. Every name starts `demo-` |
+| Tables | `dfe.cisco-asa`, `dfe.fortinet`, `dfe.demo-syslog`, `dfe.component-releases`, `dfe.wikipedia-recentchanges` | `make demo-stop` leaves them, with their rows, because only the engine issues ClickHouse DDL and it never drops a table. The next `make demo` goes on in them, and `make clean` removes them with the volumes |
 
-Each vendor replays about 6,000 sample lines from [`resources/demo/events/<source>/`](../resources/demo/events/), ten minutes at the default rate before a line repeats, which `python3 resources/demo/events/generate.py` regenerates. The run turns on dfe-receiver's syslog listener (UDP and TCP on port 514) and recreates what that changes. It returns once every vendor table has gained rows and the archive holds a file, and leaves the stream running:
+Each device loops over the sample lines in [`resources/demo/events/<source>/`](../resources/demo/events/), which `python3 resources/demo/events/generate.py` regenerates.
+ The run turns on dfe-receiver's syslog listener (UDP and TCP on port 514) and recreates what that changes. It returns once every device table has gained rows and the archive holds a file, and leaves the stream running:
 
-```text
+```console
 demo -   console demo-cisco-asa: http://localhost:8090/dashboards/<id>
 demo -   console demo-wikipedia-live: http://localhost:8090/search/<id>?isLive=true
 demo -   dfe.cisco-asa: +N rows
@@ -170,7 +196,7 @@ demo - WARNING no rows in 'dfe.component-releases' yet. A fetcher's first poll w
 demo - PASS every vendor table gained rows and the archiver wrote files, ready to query in the console's Search. The stream runs until `make demo-stop` or a receiver restart
 ```
 
-`dfe.component-releases` fills about 15 minutes in, and the demo does not wait for it: an empty fetcher table only warns. A fetcher the profile cannot run or the engine cannot set up is skipped with a WARNING while the vendor demo runs on. A profile with no dfe-hyperdx gets no console pieces.
+`dfe.component-releases` fills about 15 minutes in, and the demo does not wait for it: an empty fetcher table only warns. A fetcher the profile cannot run or the engine cannot set up is skipped with a WARNING while the firewall stream runs on. A stack with the console's Search switched off gets no console pieces.
 
 `dfe.demo-syslog` holds the lines no detector claimed. The replay script comes from the dfe-transform-elastic release the stack pins, so the demo needs a release with agentless detection and stops before changing anything on one without it. A `make dev` stack takes `make demo DEV=1`, which reads the script from `DFE_SRC_ROOT` when that is set.
 
@@ -178,13 +204,14 @@ demo - PASS every vendor table gained rows and the archiver wrote files, ready t
 
 | Where | What |
 |-------|------|
-| http://localhost:3000 | DFE UI |
+| http://localhost:3000 | The DFE console |
 | http://localhost:8081 | Kafka UI (topics, consumer groups, lag) |
 | http://localhost:8123 | ClickHouse HTTP |
 | http://localhost:8003 | dfe-engine API |
 
-The console asks for a login; Kafbat, dfe-hyperdx and the ClickHouse port do not
-authenticate you as a person. `make creds` prints the console login again.
+The console asks for a login, and its Search views take the same one. Kafbat asks
+for none, and ClickHouse takes the password `make init` generated. `make creds`
+prints the console login again.
 
 The ingest ports bind all interfaces so anything can push to them. Everything
 else -- every web UI included -- binds loopback by default, so the four links
@@ -193,18 +220,6 @@ on every interface, and needs `DFE_EXTERNAL_ORIGIN` set to the address browsers
 use -- `make` stops and says so otherwise. Read the auth section of
 [operating.md](operating.md) before you widen anything.
 
-## Stopping
-
-```bash
-make down    # stop the containers, keep the data
-make clean   # stop everything and DELETE the volumes, including ClickHouse
-```
-
-`make clean` really does delete the warehouse. On a laptop that is usually what
-you want; anywhere else, read it twice.
-
-## What this is and is not
-
 It **is** the same image, from the same registry, that a Kubernetes deployment
 would run. There is no separate "demo build" - what you are evaluating is the
 real thing, packaged differently.
@@ -212,11 +227,11 @@ real thing, packaged differently.
 It is **not** secured, though it is not open either. `make init` mints two
 logins -- `admin` for the console and the engine API, and `breakglass` for
 recovery -- and generates ClickHouse's password with them. `make creds` prints
-the admin one on a terminal and names the `.env` key holding the other;
-`access-summary.md`, written beside `.env` and readable only by you, carries
-both. Kafbat and dfe-hyperdx answer to anyone who can reach them on these profiles,
-the opt-in `auth` profile puts an OIDC sign-in in front of both, and nothing here
-serves TLS until you turn [console TLS](configuration.md#console-tls-opt-in) on.
+the admin one on a terminal and names the `env/engine.env` key holding the other.
+`access-summary.md`, written beside `.env` and readable only by you, holds
+both. Kafbat answers anyone who can reach it. The `auth` profile adds an OIDC
+sign-in to Kafbat and the console's Search origins. Nothing here serves TLS until
+you turn [console TLS](configuration.md#console-tls-opt-in) on.
 That is fine on your machine and on a throwaway demo box. It is not
 fine on anything reachable by people you have not met.
 
@@ -230,7 +245,7 @@ still production, and the defaults here are tuned for a laptop.
 |-------------|------|
 | Understand how the pieces fit | [architecture.md](architecture.md) |
 | Run this where others depend on it | [operating.md](operating.md) |
-| Stand up a real deployment, or upgrade one | [deploying.md](deploying.md) |
+| Stand up a deployment, or upgrade one | [deploying.md](deploying.md) |
 | Know what the stack reports about itself | [observability.md](observability.md) |
 | Look up a variable or a port | [configuration.md](configuration.md) |
 | Work on a DFE component | [developing.md](developing.md) |

@@ -1,0 +1,64 @@
+{
+  "name": "demo-cyber-drop",
+  "tags": [
+    "demo"
+  ],
+  "tiles": [
+    {
+      "config": {
+        "configType": "sql",
+        "displayType": "stacked_bar",
+        "name": "Connections to or from DROP-listed networks per minute, allowed and denied",
+        "source": "cisco-asa",
+        "sqlTemplate": "WITH ['42.128.0.0/12', '42.160.0.0/12', '42.208.0.0/12', '147.16.0.0/14', '196.16.0.0/14', '101.134.0.0/15', '112.142.0.0/15', '168.80.0.0/15'] AS drop_list\nSELECT $__timeInterval(t) AS ts,\n       verdict,\n       count() * 60 / $__interval_s AS \"connections/min\"\nFROM (SELECT t, firewall, verdict, if(arrayExists(n -> isIPAddressInRange(src, n), drop_list), src, dst) AS address\n      FROM (\n        SELECT _timestamp_load AS t, 'Cisco ASA' AS firewall, if(event_outcome = 'failure' AND event_action != 'logon-failed', 'denied', 'allowed') AS verdict, replaceOne(IPv6NumToString(assumeNotNull(source_ip)), '::ffff:', '') AS src, replaceOne(IPv6NumToString(assumeNotNull(destination_ip)), '::ffff:', '') AS dst\n        FROM dfe.`cisco-asa`\n        WHERE $__timeFilter(_timestamp_load)\n        UNION ALL\n        SELECT _timestamp_load AS t, 'FortiGate' AS firewall, if(event_action = 'deny', 'denied', 'allowed') AS verdict, replaceOne(IPv6NumToString(assumeNotNull(source_ip)), '::ffff:', '') AS src, replaceOne(IPv6NumToString(assumeNotNull(destination_ip)), '::ffff:', '') AS dst\n        FROM dfe.fortinet\n        WHERE $__timeFilter(_timestamp_load)\n      )\n      WHERE arrayExists(n -> isIPAddressInRange(src, n) OR isIPAddressInRange(dst, n), drop_list))\nGROUP BY ts, verdict\nORDER BY ts"
+      },
+      "h": 6,
+      "id": "rate",
+      "w": 16,
+      "x": 0,
+      "y": 0
+    },
+    {
+      "config": {
+        "configType": "sql",
+        "displayType": "number",
+        "name": "DROP-listed connections the firewalls allowed",
+        "source": "cisco-asa",
+        "sqlTemplate": "WITH ['42.128.0.0/12', '42.160.0.0/12', '42.208.0.0/12', '147.16.0.0/14', '196.16.0.0/14', '101.134.0.0/15', '112.142.0.0/15', '168.80.0.0/15'] AS drop_list\nSELECT countIf(verdict = 'allowed') AS \"allowed\"\nFROM (SELECT t, firewall, verdict, if(arrayExists(n -> isIPAddressInRange(src, n), drop_list), src, dst) AS address\n      FROM (\n        SELECT _timestamp_load AS t, 'Cisco ASA' AS firewall, if(event_outcome = 'failure' AND event_action != 'logon-failed', 'denied', 'allowed') AS verdict, replaceOne(IPv6NumToString(assumeNotNull(source_ip)), '::ffff:', '') AS src, replaceOne(IPv6NumToString(assumeNotNull(destination_ip)), '::ffff:', '') AS dst\n        FROM dfe.`cisco-asa`\n        WHERE $__timeFilter(_timestamp_load)\n        UNION ALL\n        SELECT _timestamp_load AS t, 'FortiGate' AS firewall, if(event_action = 'deny', 'denied', 'allowed') AS verdict, replaceOne(IPv6NumToString(assumeNotNull(source_ip)), '::ffff:', '') AS src, replaceOne(IPv6NumToString(assumeNotNull(destination_ip)), '::ffff:', '') AS dst\n        FROM dfe.fortinet\n        WHERE $__timeFilter(_timestamp_load)\n      )\n      WHERE arrayExists(n -> isIPAddressInRange(src, n) OR isIPAddressInRange(dst, n), drop_list))"
+      },
+      "h": 6,
+      "id": "allowed",
+      "w": 8,
+      "x": 16,
+      "y": 0
+    },
+    {
+      "config": {
+        "configType": "sql",
+        "displayType": "table",
+        "name": "Top DROP-listed networks",
+        "source": "cisco-asa",
+        "sqlTemplate": "WITH ['42.128.0.0/12', '42.160.0.0/12', '42.208.0.0/12', '147.16.0.0/14', '196.16.0.0/14', '101.134.0.0/15', '112.142.0.0/15', '168.80.0.0/15'] AS drop_list\nSELECT arrayFirst(n -> isIPAddressInRange(address, n), drop_list) AS \"Network\",\n       countIf(verdict = 'allowed') AS \"Allowed\",\n       countIf(verdict = 'denied') AS \"Denied\",\n       uniqExact(address) AS \"Addresses\"\nFROM (SELECT t, firewall, verdict, if(arrayExists(n -> isIPAddressInRange(src, n), drop_list), src, dst) AS address\n      FROM (\n        SELECT _timestamp_load AS t, 'Cisco ASA' AS firewall, if(event_outcome = 'failure' AND event_action != 'logon-failed', 'denied', 'allowed') AS verdict, replaceOne(IPv6NumToString(assumeNotNull(source_ip)), '::ffff:', '') AS src, replaceOne(IPv6NumToString(assumeNotNull(destination_ip)), '::ffff:', '') AS dst\n        FROM dfe.`cisco-asa`\n        WHERE $__timeFilter(_timestamp_load)\n        UNION ALL\n        SELECT _timestamp_load AS t, 'FortiGate' AS firewall, if(event_action = 'deny', 'denied', 'allowed') AS verdict, replaceOne(IPv6NumToString(assumeNotNull(source_ip)), '::ffff:', '') AS src, replaceOne(IPv6NumToString(assumeNotNull(destination_ip)), '::ffff:', '') AS dst\n        FROM dfe.fortinet\n        WHERE $__timeFilter(_timestamp_load)\n      )\n      WHERE arrayExists(n -> isIPAddressInRange(src, n) OR isIPAddressInRange(dst, n), drop_list))\nGROUP BY 1\nORDER BY 2 DESC, 3 DESC\nLIMIT 10"
+      },
+      "h": 9,
+      "id": "networks",
+      "w": 12,
+      "x": 0,
+      "y": 6
+    },
+    {
+      "config": {
+        "configType": "sql",
+        "displayType": "table",
+        "name": "DROP-listed addresses seen",
+        "source": "cisco-asa",
+        "sqlTemplate": "WITH ['42.128.0.0/12', '42.160.0.0/12', '42.208.0.0/12', '147.16.0.0/14', '196.16.0.0/14', '101.134.0.0/15', '112.142.0.0/15', '168.80.0.0/15'] AS drop_list\nSELECT address AS \"Address\",\n       firewall AS \"Firewall\",\n       countIf(verdict = 'allowed') AS \"Allowed\",\n       countIf(verdict = 'denied') AS \"Denied\"\nFROM (SELECT t, firewall, verdict, if(arrayExists(n -> isIPAddressInRange(src, n), drop_list), src, dst) AS address\n      FROM (\n        SELECT _timestamp_load AS t, 'Cisco ASA' AS firewall, if(event_outcome = 'failure' AND event_action != 'logon-failed', 'denied', 'allowed') AS verdict, replaceOne(IPv6NumToString(assumeNotNull(source_ip)), '::ffff:', '') AS src, replaceOne(IPv6NumToString(assumeNotNull(destination_ip)), '::ffff:', '') AS dst\n        FROM dfe.`cisco-asa`\n        WHERE $__timeFilter(_timestamp_load)\n        UNION ALL\n        SELECT _timestamp_load AS t, 'FortiGate' AS firewall, if(event_action = 'deny', 'denied', 'allowed') AS verdict, replaceOne(IPv6NumToString(assumeNotNull(source_ip)), '::ffff:', '') AS src, replaceOne(IPv6NumToString(assumeNotNull(destination_ip)), '::ffff:', '') AS dst\n        FROM dfe.fortinet\n        WHERE $__timeFilter(_timestamp_load)\n      )\n      WHERE arrayExists(n -> isIPAddressInRange(src, n) OR isIPAddressInRange(dst, n), drop_list))\nGROUP BY 1, 2\nORDER BY 3 DESC, 4 DESC\nLIMIT 16"
+      },
+      "h": 9,
+      "id": "addresses",
+      "w": 12,
+      "x": 12,
+      "y": 6
+    }
+  ]
+}

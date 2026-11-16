@@ -20,8 +20,9 @@ deployment.yaml
 # Held by make proof and the daemon updater while either has the stack down.
 .dfe-stack.lock
 *.log
-# The demo replays these sample events as syslog
+# The demo and its packs replay these sample events
 !resources/demo/events/**/*.log
+!resources/demo-*/events/**/*.log
 dist/
 dist-bin/
 bin/
@@ -71,8 +72,6 @@ env/
 # Local stash of the per-service env files.
 .env-dir-stashed/
 
-# Predecessor CI clone and an inert submodule declaration, both untracked and
-# left in the tree. Ignored so `git add -A` cannot pull a dead CI system (100+
-# files) or a broken submodule pointer into this repo. Safe to delete outright.
+# A predecessor CI clone and an inert submodule declaration, both untracked. Safe to delete.
 ci/
 .gitmodules

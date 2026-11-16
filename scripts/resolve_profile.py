@@ -191,15 +191,6 @@ ADMIN_UIS = {
         probe_url="http://kafka-ui:8080",
         origin_var="",
     ),
-    "hyperdx": _AdminUi(
-        name="Search",
-        purpose="Logs, metrics and traces",
-        port_var="DFE_HYPERDX_APP_PORT",
-        default_port="8090",
-        # The proxy carrying dfe-hyperdx's host port, so one probe answers for both.
-        probe_url="http://dfe-hyperdx-proxy:8090",
-        origin_var="DFE_HYPERDX_APP_URL",
-    ),
 }
 
 # Footprint components a profile may declare: yaml key -> (env override, default

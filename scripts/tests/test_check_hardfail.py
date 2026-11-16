@@ -89,3 +89,25 @@ def test_the_finding_names_the_file_and_line(tmp_path: Path, monkeypatch) -> Non
     _compose(tmp_path, monkeypatch, "  kafka:\n    image: apache/kafka:4.1.0\n")
 
     assert check_hardfail._undigested_images()[0].startswith("docker-compose.yml:3:")
+
+
+def test_a_prerelease_pin_fails_before_the_compose_checks(monkeypatch, capsys) -> None:
+    def refuse() -> str:
+        raise check_hardfail.StackError(
+            "'deployment.example.yaml' pins 2.2.2-rc.5, a prerelease."
+        )
+
+    monkeypatch.setattr(check_hardfail, "release_pin", refuse)
+    assert check_hardfail.main() == 1
+    captured = capsys.readouterr()
+    assert "prerelease" in captured.out + captured.err
+
+
+def test_a_release_pin_is_reported_before_the_compose_checks(
+    monkeypatch, capsys
+) -> None:
+    monkeypatch.setattr(check_hardfail, "release_pin", lambda: "2.2.2")
+    monkeypatch.setattr(check_hardfail, "_required_compose_vars", lambda: [])
+    assert check_hardfail.main() == 1
+    captured = capsys.readouterr()
+    assert "the stack pin is 2.2.2" in captured.out + captured.err

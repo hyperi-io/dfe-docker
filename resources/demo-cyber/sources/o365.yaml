@@ -1,0 +1,25 @@
+# Project:   dfe-docker
+# File:      resources/demo-cyber/sources/o365.yaml
+# Purpose:   The cyber demo's Microsoft 365 audit log, from its engine catalogue entry on the Beats intake
+# Language:  YAML
+#
+# License:   BUSL-1.1
+# Copyright: (c) 2026 HYPERI PTY LIMITED
+
+description: The audit data stream of the Elastic o365 integration.
+display_name: o365.audit
+from_catalogue_intake: beats
+from_catalogue_item: o365
+# The data stream an Elastic Agent stamps on every event it ships
+match:
+  field: data_stream.dataset
+  operator: equals
+  value: o365.audit
+schema:
+  additional_fields: additional/o365/audit
+  derived_schema: derived/o365/audit
+  meta_schema: meta/elastic/ecs
+source: o365
+transform:
+  engine: elastic
+  variant: filebeat.o365.default

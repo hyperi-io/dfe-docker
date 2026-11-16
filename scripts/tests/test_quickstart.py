@@ -12,9 +12,8 @@ import argparse
 import re
 from typing import TypedDict
 
-import pytest
-
 import init
+import pytest
 import quickstart
 import resolve_profile
 from _common import REPO_ROOT, SERVICE_PROFILES_FILE
@@ -45,6 +44,13 @@ class RefusalCase(TypedDict):
     message: str
     name: str
     running: str
+
+
+class DemoRefusalCase(TypedDict):
+    """Whether the demo pack streams and the pattern its refusal matches, empty when `make ci` can start."""
+
+    message: str
+    running: bool
 
 
 CHOOSE_PROFILE_CASES = [
@@ -116,6 +122,14 @@ REFUSAL_CASES = [
         message="stack running here is profile 'slim-kafka'.*make down",
         name="slim-kafka",
         running="slim-kafka",
+    ),
+]
+DEMO_CONTAINER = "dfe-demo-syslog-stream"
+DEMO_REFUSAL_CASES = [
+    DemoRefusalCase(message="", running=False),
+    DemoRefusalCase(
+        message=rf"pack is streaming here \({DEMO_CONTAINER}\).*make demo-stop.*make up.*make demo",
+        running=True,
     ),
 ]
 
@@ -229,6 +243,36 @@ class TestRefusal:
             assert re.search(pattern=case["message"], string=reason), reason
         else:
             assert reason == ""
+
+
+class TestDemoRefusal:
+    @pytest.mark.parametrize("case", DEMO_REFUSAL_CASES)
+    def test_matches_expected(self, case: DemoRefusalCase) -> None:
+        reason = quickstart._demo_refusal(
+            container=DEMO_CONTAINER, running=case["running"]
+        )
+
+        if case["message"]:
+            assert re.search(pattern=case["message"], string=reason), reason
+        else:
+            assert reason == ""
+
+    def test_ci_refuses_before_its_down(self) -> None:
+        """The guard runs before the `down` that removes the pack's sources under the start."""
+        makefile = (REPO_ROOT / "Makefile").read_text(encoding="utf-8")
+        recipe = re.search(
+            pattern=r"^ci:.*\n((?:\t.*\n)+)", string=makefile, flags=re.MULTILINE
+        )
+        assert recipe, "no ci recipe"
+        lines = recipe.group(1).splitlines()
+        guard = next(
+            index
+            for index, line in enumerate(lines)
+            if "quickstart.py over-demo" in line
+        )
+        down = next(index for index, line in enumerate(lines) if " down" in line)
+
+        assert guard < down
 
 
 class TestCommittedProfiles:

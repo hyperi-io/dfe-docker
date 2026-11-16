@@ -59,6 +59,7 @@ from pathlib import Path
 sys.pycache_prefix = str(Path(__file__).resolve().parent.parent / ".tmp" / "pycache")
 
 from _common import COMPOSE_FILE, REPO_ROOT, _print, _required_compose_vars  # noqa: E402
+from stack import StackError, release_pin  # noqa: E402
 
 # What compose says when a `${VAR:?}` is unset. Matching on this rather than the
 # exit code alone distinguishes "hard-failed as designed" from "broken YAML".
@@ -105,6 +106,14 @@ def _scrubbed_env() -> dict[str, str]:
 
 
 def main() -> int:
+    try:
+        pin = release_pin()
+    except StackError as error:
+        _print(msg=f"FAIL {error}")
+        return 1
+    allowed = " (prerelease allowed for this branch)" if "-" in pin else ""
+    _print(msg=f"OK   the stack pin is {pin}{allowed}")
+
     required = _required_compose_vars()
     if not (required):
         _print(

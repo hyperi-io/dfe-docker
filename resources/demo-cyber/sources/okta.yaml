@@ -1,0 +1,25 @@
+# Project:   dfe-docker
+# File:      resources/demo-cyber/sources/okta.yaml
+# Purpose:   The cyber demo's Okta system log, from its engine catalogue entry on the Beats intake
+# Language:  YAML
+#
+# License:   BUSL-1.1
+# Copyright: (c) 2026 HYPERI PTY LIMITED
+
+description: The system data stream of the Elastic okta integration.
+display_name: okta.system
+from_catalogue_intake: beats
+from_catalogue_item: okta
+# The data stream an Elastic Agent stamps on every event it ships
+match:
+  field: data_stream.dataset
+  operator: equals
+  value: okta.system
+schema:
+  additional_fields: additional/okta/system
+  derived_schema: derived/okta/system
+  meta_schema: meta/elastic/ecs
+source: okta
+transform:
+  engine: elastic
+  variant: filebeat.okta.default

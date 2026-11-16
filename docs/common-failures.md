@@ -11,14 +11,14 @@ Copyright: (c) 2026 HYPERI PTY LIMITED
 # Common failures
 
 Each section is one symptom and what causes it. If none matches, read the stack's
-state first: [troubleshooting](troubleshooting.md). The open problems whose symptoms
+state first: [troubleshooting](troubleshooting.md). The open problems with symptoms that
 mislead are in [known issues](known-issues.md).
 
 ## A service is unhealthy but the data is landing
 
 Symptom: `docker compose ps` shows a DFE service unhealthy or perpetually starting, `docker inspect` reports `Health check exceeded timeout` and yet events are flowing through that very service. Curl its port from inside the container and the connection is *accepted* instantly and then never answered: not refused, not reset, just silent. `/livez` and `/metrics` behave the same way, which rules out the readiness logic.
 
-That is Tokio worker-thread starvation, caused by the CPU ceiling. `available_parallelism()` reads the cgroup quota and floors it, so a ceiling under 2.0 gives the service one worker thread. scalo's Kafka `recv` polls synchronously and owns it, so the HTTP server task never runs.
+That is Tokio worker-thread starvation, caused by the CPU ceiling. `available_parallelism()` reads the cgroup quota and floors it, so a ceiling under 2.0 gives the service one worker thread, and a Kafka loop holding that thread leaves the HTTP server task unscheduled.
 
 ```bash
 docker inspect --format '{{.HostConfig.NanoCpus}}' dfe-archiver   # 1500000000 = 1.5
@@ -39,13 +39,13 @@ DFE_ENGINE_AUTH_LOCAL_ADMIN_PASSWORD='the rotated password' make post
 
 ## The self test fails on self-telemetry
 
-`make post` makes two claims on a profile running the collector, the second being that the `dfe.otel_*` tables have rows newer than five minutes. Two distinct failures:
+On a profile running the collector, `make post` claims the `dfe.otel_*` tables have rows newer than five minutes. Two distinct failures:
 
-**"no table readable"** means the collector never wrote its schema, so it cannot reach ClickHouse. Its exporter creates the database and tables on startup, so an absent schema is a connection or credential fault, not a quiet one:
+**"no dfe table could be read"** means nothing could read the otel tables. dfe-engine creates them from dfe-schemas at startup, and the collector runs with `create_schema: false`, so read the engine's health first, then whether the collector reaches ClickHouse:
 
 ```bash
 docker compose logs otel-collector
-docker compose exec clickhouse clickhouse-client --query "SHOW TABLES FROM default"
+docker compose exec clickhouse sh -c 'clickhouse-client --password "$CLICKHOUSE_PASSWORD" --query "SHOW TABLES FROM dfe LIKE '"'"'otel%'"'"'"'
 ```
 
 **"no rows newer than"** means the tables exist and nothing is arriving, so nothing is exporting. Check that the endpoint reached the containers and that the engine is on the OTel backend:
@@ -57,7 +57,7 @@ docker compose logs dfe-engine | grep "Metrics initialized"
 
 `backend=prometheus` on that last line means it is not pushing. Drop the `DFE_ENGINE_API_METRICS_BACKEND` line from `env/engine.env`, then `make up`.
 
-Every DFE app the profile runs should appear, dfe-ui aside. A service that is running but missing from the results IS a fault. The Rust services push whenever their `OTEL_EXPORTER_OTLP_ENDPOINT` is set, so check that env on the absent container the same way. Which components push and since when is in [observability.md](observability.md).
+Every DFE app the profile runs should appear. A service that is running but missing from the results IS a fault. The Rust services push whenever their `OTEL_EXPORTER_OTLP_ENDPOINT` is set, so check that env on the absent container the same way. Which components push and since when is in [observability.md](observability.md).
 
 ## `port is already allocated`
 
@@ -78,10 +78,10 @@ The gRPC-only tests need no broker at all:
 make test-e2e E2E_TESTS="simple-receiver-to-loader-grpc rules-and-hunts"
 ```
 
-Also check for a stray container from a previous profile before assuming the
+Check for a stray container from a previous profile before assuming the
 port belongs to something else.
 
-## Compose refuses to start: `is missing a value`
+## Compose will not start: `is missing a value`
 
 The stack is unpinned. Image versions come from the DFE stack SSoT, not from defaults, so there is no silent `latest` fallback:
 
@@ -89,7 +89,7 @@ The stack is unpinned. Image versions come from the DFE stack SSoT, not from def
 make stack VERSION=X.Y.Z
 ```
 
-`make check-hardfail` asserts this property holds, by running compose with nothing set and requiring that it fails for the right reason. A green run proves the stack refuses to resolve with nothing set. It does not prove every single image is pinned, because compose aborts on the first missing variable.
+`make check-hardfail` asserts this property holds. It runs compose with nothing set and needs it to fail for the right reason, then reads every `image:` directly and needs it to resolve to a digest, because compose aborts on the first missing variable and that run alone would miss a second.
 
 ## `PyYAML is not installed in this interpreter`
 

@@ -1,0 +1,64 @@
+{
+  "name": "demo-cyber-sign-ins",
+  "tags": [
+    "demo"
+  ],
+  "tiles": [
+    {
+      "config": {
+        "configType": "sql",
+        "displayType": "stacked_bar",
+        "name": "Okta sign-ins per minute, by outcome",
+        "source": "okta",
+        "sqlTemplate": "SELECT $__timeInterval(_timestamp) AS ts,\n       toString(event_outcome) AS outcome,\n       count() * 60 / $__interval_s AS \"sign-ins/min\"\nFROM dfe.okta\nWHERE $__timeFilter(_timestamp) AND event_action = 'user.session.start'\nGROUP BY ts, outcome\nORDER BY ts"
+      },
+      "h": 6,
+      "id": "rate",
+      "w": 16,
+      "x": 0,
+      "y": 0
+    },
+    {
+      "config": {
+        "configType": "sql",
+        "displayType": "number",
+        "name": "Failed sign-ins in the time range",
+        "source": "okta",
+        "sqlTemplate": "SELECT count() AS \"failed\"\nFROM dfe.okta\nWHERE $__timeFilter(_timestamp) AND event_action = 'user.session.start' AND event_outcome = 'failure'"
+      },
+      "h": 6,
+      "id": "failed",
+      "w": 8,
+      "x": 16,
+      "y": 0
+    },
+    {
+      "config": {
+        "configType": "sql",
+        "displayType": "table",
+        "name": "Sign-ins by country, failures first",
+        "source": "okta",
+        "sqlTemplate": "SELECT coalesce(client_geo_country_name, 'unknown') AS \"Country\",\n       countIf(event_outcome = 'failure') AS \"Failed\",\n       countIf(event_outcome = 'success') AS \"Succeeded\",\n       round(100 * countIf(event_outcome = 'failure') / count(), 1) AS \"Failed %\"\nFROM dfe.okta\nWHERE $__timeFilter(_timestamp) AND event_action = 'user.session.start'\nGROUP BY 1\nORDER BY 2 DESC, 3 DESC"
+      },
+      "h": 9,
+      "id": "countries",
+      "w": 10,
+      "x": 0,
+      "y": 6
+    },
+    {
+      "config": {
+        "configType": "sql",
+        "displayType": "table",
+        "name": "Failed sign-ins by user and address",
+        "source": "okta",
+        "sqlTemplate": "SELECT user_name AS \"User\",\n       replaceOne(IPv6NumToString(assumeNotNull(client_ip)), '::ffff:', '') AS \"Address\",\n       client_geo_country_name AS \"Country\",\n       count() AS \"Failures\"\nFROM dfe.okta\nWHERE $__timeFilter(_timestamp) AND event_action = 'user.session.start' AND event_outcome = 'failure'\nGROUP BY 1, 2, 3\nORDER BY 4 DESC\nLIMIT 14"
+      },
+      "h": 9,
+      "id": "who",
+      "w": 14,
+      "x": 10,
+      "y": 6
+    }
+  ]
+}

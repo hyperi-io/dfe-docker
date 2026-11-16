@@ -1,0 +1,64 @@
+{
+  "name": "demo-cyber-o365-admin",
+  "tags": [
+    "demo"
+  ],
+  "tiles": [
+    {
+      "config": {
+        "configType": "sql",
+        "displayType": "stacked_bar",
+        "name": "Microsoft 365 admin actions per minute, by actor",
+        "source": "o365",
+        "sqlTemplate": "SELECT $__timeInterval(_timestamp) AS ts,\n       user_id AS actor,\n       count() * 60 / $__interval_s AS \"actions/min\"\nFROM dfe.o365\nWHERE $__timeFilter(_timestamp) AND (event_code = 'ExchangeAdmin' OR event_action IN ('SiteCollectionAdminAdded', 'SiteCollectionAdminRemoved'))\nGROUP BY ts, actor\nORDER BY ts"
+      },
+      "h": 6,
+      "id": "rate",
+      "w": 16,
+      "x": 0,
+      "y": 0
+    },
+    {
+      "config": {
+        "configType": "sql",
+        "displayType": "number",
+        "name": "Admin actions in the time range",
+        "source": "o365",
+        "sqlTemplate": "SELECT count() AS \"admin actions\"\nFROM dfe.o365\nWHERE $__timeFilter(_timestamp) AND (event_code = 'ExchangeAdmin' OR event_action IN ('SiteCollectionAdminAdded', 'SiteCollectionAdminRemoved'))"
+      },
+      "h": 6,
+      "id": "total",
+      "w": 8,
+      "x": 16,
+      "y": 0
+    },
+    {
+      "config": {
+        "configType": "sql",
+        "displayType": "table",
+        "name": "Admin actions by actor",
+        "source": "o365",
+        "sqlTemplate": "SELECT user_id AS \"Actor\",\n       count() AS \"Actions\",\n       uniqExact(event_action) AS \"Operations\"\nFROM dfe.o365\nWHERE $__timeFilter(_timestamp) AND (event_code = 'ExchangeAdmin' OR event_action IN ('SiteCollectionAdminAdded', 'SiteCollectionAdminRemoved'))\nGROUP BY 1\nORDER BY 2 DESC"
+      },
+      "h": 9,
+      "id": "actors",
+      "w": 10,
+      "x": 0,
+      "y": 6
+    },
+    {
+      "config": {
+        "configType": "sql",
+        "displayType": "table",
+        "name": "Admin operations by actor",
+        "source": "o365",
+        "sqlTemplate": "SELECT user_id AS \"Actor\",\n       event_action AS \"Operation\",\n       count() AS \"Actions\"\nFROM dfe.o365\nWHERE $__timeFilter(_timestamp) AND (event_code = 'ExchangeAdmin' OR event_action IN ('SiteCollectionAdminAdded', 'SiteCollectionAdminRemoved'))\nGROUP BY 1, 2\nORDER BY 3 DESC\nLIMIT 16"
+      },
+      "h": 9,
+      "id": "operations",
+      "w": 14,
+      "x": 10,
+      "y": 6
+    }
+  ]
+}

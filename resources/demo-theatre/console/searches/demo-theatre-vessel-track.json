@@ -1,0 +1,11 @@
+{
+  "name": "demo-theatre-vessel-track",
+  "orderBy": "_timestamp DESC",
+  "select": "_timestamp, toString(_json.mmsi) AS mmsi, toFloat64OrNull(toString(_json.geometry.coordinates[2])) AS lat, toFloat64OrNull(toString(_json.geometry.coordinates[1])) AS lon, toFloat64OrNull(toString(_json.properties.sog)) AS speed, toFloat64OrNull(toString(_json.properties.cog)) AS course, toInt32OrNull(toString(_json.properties.heading)) AS heading, toInt32OrNull(toString(_json.properties.navStat)) AS status",
+  "source": "ais-tracks",
+  "tags": [
+    "demo"
+  ],
+  "where": "toString(_json.mmsi) = '209297000'",
+  "whereLanguage": "sql"
+}

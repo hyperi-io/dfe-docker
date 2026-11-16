@@ -44,11 +44,6 @@ _KAFBAT = {
     "purpose": "Topics, consumer groups and lag",
     "probe_url": "http://kafka-ui:8080",
 }
-_HYPERDX = {
-    "name": "Search",
-    "purpose": "Logs, metrics and traces",
-    "probe_url": "http://dfe-hyperdx-proxy:8090",
-}
 
 # A profile per transport. The matrix sets each footprint env var it varies and the env var wins over the profile's key
 _TRANSPORT_PROFILES = {"kafka": "slim-kafka", "grpc": "slim-grpc"}
@@ -87,10 +82,6 @@ _ENGINE_FIELDS = {"name", "purpose", "url", "probe_url"}
 
 def _kafbat(url: str) -> dict[str, str]:
     return {**_KAFBAT, "url": url}
-
-
-def _hyperdx(url: str) -> dict[str, str]:
-    return {**_HYPERDX, "url": url}
 
 
 def _exports(*, path: Path) -> dict[str, str]:
@@ -165,8 +156,8 @@ def _links(
 @pytest.mark.parametrize("auth", [False, True], ids=["open", "auth"])
 @pytest.mark.parametrize(
     "unpublished",
-    [(), ("kafbat",), ("hyperdx",), ("hyperdx", "kafbat")],
-    ids=["all-published", "kafbat-gated", "hyperdx-gated", "infra-killed"],
+    [(), ("kafbat",)],
+    ids=["all-published", "kafbat-gated"],
 )
 @pytest.mark.parametrize("hyperdx", [False, True], ids=["no-hyperdx", "hyperdx"])
 @pytest.mark.parametrize("kafbat", [False, True], ids=["no-kafbat", "kafbat"])
@@ -201,11 +192,10 @@ def test_a_ui_is_listed_exactly_where_it_runs_and_is_published(
 
     browser = origin or "http://localhost"
     want = []
-    # No broker, no Kafka UI: the grpc transport never starts Kafbat.
+    # No broker, no Kafka UI: the grpc transport never starts Kafbat. dfe-hyperdx is
+    # never listed, because dfe-ui frames it.
     if transport == "kafka" and kafbat and "kafbat" not in unpublished:
         want.append(_kafbat(f"{browser}:8081"))
-    if hyperdx and "hyperdx" not in unpublished:
-        want.append(_hyperdx(f"{browser}:8090"))
     assert links == want
     assert [_engine_refusals(entry) for entry in links] == [[] for _ in links]
 
@@ -213,16 +203,10 @@ def test_a_ui_is_listed_exactly_where_it_runs_and_is_published(
 @pytest.mark.parametrize(
     ("profile", "want"),
     [
-        ("slim-grpc", [_hyperdx("http://localhost:8090")]),
-        (
-            "slim-kafka",
-            [_kafbat("http://localhost:8081"), _hyperdx("http://localhost:8090")],
-        ),
-        ("single-grpc", [_hyperdx("http://localhost:8090")]),
-        (
-            "single-kafka",
-            [_kafbat("http://localhost:8081"), _hyperdx("http://localhost:8090")],
-        ),
+        ("slim-grpc", []),
+        ("slim-kafka", [_kafbat("http://localhost:8081")]),
+        ("single-grpc", []),
+        ("single-kafka", [_kafbat("http://localhost:8081")]),
     ],
 )
 def test_every_profile_lists_what_its_footprint_runs(
@@ -235,7 +219,7 @@ def test_every_profile_lists_what_its_footprint_runs(
     assert _links(monkeypatch=monkeypatch, tmp_path=tmp_path, profile=profile) == want
 
 
-def test_behind_the_auth_profile_both_links_take_the_proxy_origin(
+def test_behind_the_auth_profile_the_link_takes_the_proxy_origin(
     dotenv: Path, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     """The browser comes back on the proxy's callback, so that is where it is sent."""
@@ -250,30 +234,7 @@ def test_behind_the_auth_profile_both_links_take_the_proxy_origin(
         **_AUTH_SETTINGS,
     )
 
-    assert links == [
-        _kafbat(f"{_PROXY_ORIGIN}:8081"),
-        _hyperdx(f"{_PROXY_ORIGIN}:8090"),
-    ]
-
-
-def test_without_auth_hyperdx_takes_its_own_app_url(
-    dotenv: Path, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-) -> None:
-    """With no proxy running, the proxy origin names nothing and the app URL wins."""
-    links = _links(
-        monkeypatch=monkeypatch,
-        tmp_path=tmp_path,
-        profile="slim-kafka",
-        DFE_HYPERDX_ENABLED="true",
-        DFE_EXTERNAL_ORIGIN=_ORIGIN,
-        DFE_OAUTH2_PROXY_EXTERNAL_ORIGIN=_PROXY_ORIGIN,
-        DFE_HYPERDX_APP_URL=_HYPERDX_APP_URL,
-    )
-
-    assert links == [
-        _kafbat(f"{_ORIGIN}:8081"),
-        _hyperdx(f"{_HYPERDX_APP_URL}:8090"),
-    ]
+    assert links == [_kafbat(f"{_PROXY_ORIGIN}:8081")]
 
 
 def test_a_moved_host_port_moves_the_link_and_not_the_probe(
@@ -284,13 +245,9 @@ def test_a_moved_host_port_moves_the_link_and_not_the_probe(
         tmp_path=tmp_path,
         profile="single-kafka",
         KAFBAT_PORT="18081",
-        DFE_HYPERDX_APP_PORT="18090",
     )
 
-    assert links == [
-        _kafbat("http://localhost:18081"),
-        _hyperdx("http://localhost:18090"),
-    ]
+    assert links == [_kafbat("http://localhost:18081")]
 
 
 def test_a_trailing_slash_on_the_origin_is_not_carried_into_the_url(
@@ -299,11 +256,11 @@ def test_a_trailing_slash_on_the_origin_is_not_carried_into_the_url(
     links = _links(
         monkeypatch=monkeypatch,
         tmp_path=tmp_path,
-        profile="slim-grpc",
+        profile="slim-kafka",
         DFE_EXTERNAL_ORIGIN=f"{_ORIGIN}/",
     )
 
-    assert links == [_hyperdx(f"{_ORIGIN}:8090")]
+    assert links == [_kafbat(f"{_ORIGIN}:8081")]
 
 
 def test_the_origin_is_read_from_dotenv_where_an_operator_sets_it(
@@ -311,14 +268,14 @@ def test_the_origin_is_read_from_dotenv_where_an_operator_sets_it(
 ) -> None:
     """Compose reads .env for the port bindings, so the links read the same file."""
     dotenv.write_text(
-        f"DFE_EXTERNAL_ORIGIN={_ORIGIN}\nDFE_HYPERDX_APP_PORT=18090\n",
+        f"DFE_EXTERNAL_ORIGIN={_ORIGIN}\nKAFBAT_PORT=18081\n",
         encoding="utf-8",
         newline="\n",
     )
 
-    links = _links(monkeypatch=monkeypatch, tmp_path=tmp_path, profile="slim-grpc")
+    links = _links(monkeypatch=monkeypatch, tmp_path=tmp_path, profile="slim-kafka")
 
-    assert links == [_hyperdx(f"{_ORIGIN}:18090")]
+    assert links == [_kafbat(f"{_ORIGIN}:18081")]
 
 
 def test_an_unpublished_name_the_resolver_does_not_know_is_refused(
@@ -339,10 +296,10 @@ def test_an_unpublished_name_the_resolver_does_not_know_is_refused(
 @pytest.mark.parametrize(
     ("entry", "refusal"),
     [
-        ({**_hyperdx("http://localhost:8090"), "icon": "x"}, "unknown field 'icon'"),
-        (_hyperdx("http://someone@localhost:8090"), "url carries credentials"),
-        (_hyperdx("localhost:8090"), "url is not an absolute http(s) URL"),
-        ({**_hyperdx("http://localhost:8090"), "purpose": " "}, "purpose is missing"),
+        ({**_kafbat("http://localhost:8081"), "icon": "x"}, "unknown field 'icon'"),
+        (_kafbat("http://someone@localhost:8081"), "url carries credentials"),
+        (_kafbat("localhost:8081"), "url is not an absolute http(s) URL"),
+        ({**_kafbat("http://localhost:8081"), "purpose": " "}, "purpose is missing"),
     ],
 )
 def test_the_shape_check_refuses_what_the_engine_refuses(
@@ -449,31 +406,25 @@ _SINGLE_ALL = {
     "DFE_BIND_SCOPE": "all",
     "DFE_EXTERNAL_ORIGIN": _ORIGIN,
 }
-_BOTH_ON_ORIGIN = [_kafbat(f"{_ORIGIN}:8081"), _hyperdx(f"{_ORIGIN}:8090")]
+_KAFBAT_ON_ORIGIN = [_kafbat(f"{_ORIGIN}:8081")]
 
 
 @_needs_compose
 @pytest.mark.parametrize(
     ("settings", "want"),
     [
-        ({}, [_kafbat("http://localhost:8081"), _hyperdx("http://localhost:8090")]),
-        (_SINGLE_ALL, _BOTH_ON_ORIGIN),
+        ({}, [_kafbat("http://localhost:8081")]),
+        (_SINGLE_ALL, _KAFBAT_ON_ORIGIN),
         ({**_SINGLE_ALL, "DFE_INFRA_UIS_EXTERNAL": "false"}, []),
-        (
-            {**_SINGLE_ALL, "DFE_KAFBAT_UI_EXTERNAL": "false"},
-            [_hyperdx(f"{_ORIGIN}:8090")],
-        ),
-        (
-            {**_SINGLE_ALL, "DFE_HYPERDX_UI_EXTERNAL": "false"},
-            [_kafbat(f"{_ORIGIN}:8081")],
-        ),
+        ({**_SINGLE_ALL, "DFE_KAFBAT_UI_EXTERNAL": "false"}, []),
+        ({**_SINGLE_ALL, "DFE_HYPERDX_UI_EXTERNAL": "false"}, _KAFBAT_ON_ORIGIN),
         (
             {
                 **_SINGLE_ALL,
                 **_AUTH_SETTINGS,
                 "DFE_OAUTH2_PROXY_EXTERNAL_ORIGIN": _PROXY_ORIGIN,
             },
-            [_kafbat(f"{_PROXY_ORIGIN}:8081"), _hyperdx(f"{_PROXY_ORIGIN}:8090")],
+            [_kafbat(f"{_PROXY_ORIGIN}:8081")],
         ),
         ({**_SINGLE_ALL, **_AUTH_SETTINGS, "DFE_INFRA_UIS_EXTERNAL": "false"}, []),
     ],

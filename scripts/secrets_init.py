@@ -15,9 +15,13 @@ The compose files scripts/publish_compose.py writes carry no secret. Their secre
 
 Each @@KEY@@ is a GENERATED_SECRETS key. Its value is minted by init.py's own rule the first time and kept in <root>/.minted/KEY, so a restart reuses it and only `down -v` mints afresh. Each service then gets <root>/<service>/, readable by root and the group the plan names: `env` holds the KEY=value lines its shell wrapper sources. Each `files` name is a file holding the value alone. Every run rewrites those from the minted values.
 
+The admin login is the one pair a person may choose. DFE_ADMIN_NAME and DFE_ADMIN_PASSWORD, when set and not empty, replace the stored name and password on that run, after the password is checked against what the engine accepts. Unset, the stored values stay, and a first run mints the password and names the admin `admin`.
+
+`login` as the last argument prints the stored name and password. It mints them first when none are stored and writes no service's files.
+
 Exit codes:
-  0  every service's files written
-  1  a write failed or the plan names a key init.py does not mint
+  0  every service's files written or the login printed
+  1  the plan names a key init.py does not mint, a value set for the admin login is refused or a write failed
   2  usage error
 """
 
@@ -34,8 +38,26 @@ from pathlib import Path
 sys.pycache_prefix = str(Path(__file__).resolve().parent.parent / ".tmp" / "pycache")
 
 import init  # noqa: E402
-from _common import _print  # noqa: E402
+from _common import LOGIN_COMMAND, _print  # noqa: E402
 
+ADMIN_NAME_KEY = "DFE_ENGINE_AUTH_LOCAL_ADMIN_NAME"
+ADMIN_PASSWORD_KEY = "DFE_ENGINE_AUTH_LOCAL_ADMIN_PASSWORD"
+DEFAULT_ADMIN_NAME = "admin"
+# Each key a person may choose, by the variable that carries it into secrets-init
+ADMIN_NAME_VAR = "DFE_ADMIN_NAME"
+ADMIN_PASSWORD_VAR = "DFE_ADMIN_PASSWORD"
+SUPPLIED = {
+    ADMIN_NAME_KEY: ADMIN_NAME_VAR,
+    ADMIN_PASSWORD_KEY: ADMIN_PASSWORD_VAR,
+}
+# dfe_engine.names.VALID_NAME
+ADMIN_NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,127}")
+# dfe_engine.auth.bootstrap.MIN_ADMIN_PASSWORD_LENGTH, the floor on any password the engine API stores
+MIN_PASSWORD_LENGTH = 12
+# bcrypt hashes no more, and the engine refuses to start on a longer admin password
+MAX_PASSWORD_BYTES = 72
+# The engine's shipped placeholder, which it refuses outside a dev posture
+SHIPPED_PASSWORD = "changeme"  # noqa: S105
 MINTED_DIR = ".minted"
 ENV_FILE = "env"
 PLACEHOLDER = re.compile(r"@@(?P<key>[A-Z][A-Z0-9_]*)@@")
@@ -57,17 +79,23 @@ def _env_text(*, env: Mapping[str, str], values: Mapping[str, str]) -> str:
     )
 
 
-def _minted(*, key: str, root: Path) -> str:
-    """The key's value, minted and kept the first time it is asked for."""
-    if key not in init._SECRET_LENGTHS:
+def _minted(*, environ: Mapping[str, str], key: str, root: Path) -> str:
+    """The key's value: the one chosen for it in environ, else the one kept, else a fresh one, which is kept."""
+    variable = SUPPLIED.get(key)
+    if key not in init._SECRET_LENGTHS and variable is None:
         raise SecretsError(f"the plan names {key!r}, which init.py does not mint")
     store = root / MINTED_DIR
     store.mkdir(exist_ok=True, mode=0o700)
     path = store / key
-    if path.is_file() and path.read_text(encoding="utf-8"):
-        return path.read_text(encoding="utf-8")
-    value = init._mint(key=key)
-    _write(gid=store.stat().st_gid, mode=MINTED_MODE, path=path, text=value)
+    kept = path.read_text(encoding="utf-8") if path.is_file() else ""
+    chosen = environ.get(variable, "") if variable else ""
+    if chosen and (reason := _refused(key=key, value=chosen, variable=variable)):
+        raise SecretsError(reason)
+    value = (chosen) or (kept)
+    if not (value):
+        value = DEFAULT_ADMIN_NAME if key == ADMIN_NAME_KEY else init._mint(key=key)
+    if value != kept:
+        _write(gid=store.stat().st_gid, mode=MINTED_MODE, path=path, text=value)
     return value
 
 
@@ -79,6 +107,25 @@ def _referenced(*, plan: Mapping) -> list[str]:
             for template in spec.get(kind, {}).values():
                 keys.update(match["key"] for match in PLACEHOLDER.finditer(template))
     return sorted(keys)
+
+
+def _refused(*, key: str, value: str, variable: str) -> str | None:
+    """Why the engine would not take a value chosen for the admin login, naming the variable and never the value."""
+    if key == ADMIN_NAME_KEY:
+        if not (ADMIN_NAME.fullmatch(value)):
+            return f"{variable} must be letters, digits, `.`, `_` and `-`, starting with a letter or digit, at most 128 characters"
+        return None
+    if not (value.strip()):
+        return f"{variable} is blank, which the engine refuses"
+    if not (value.isprintable()):
+        return f"{variable} holds a newline, tab or other control character"
+    if len(value) < MIN_PASSWORD_LENGTH:
+        return f"{variable} must be at least {MIN_PASSWORD_LENGTH} characters"
+    if len(value.encode("utf-8")) > MAX_PASSWORD_BYTES:
+        return f"{variable} must be at most {MAX_PASSWORD_BYTES} bytes, the most the engine hashes"
+    if value.strip() == SHIPPED_PASSWORD:
+        return f"{variable} is the shipped placeholder, which the engine refuses"
+    return None
 
 
 def _render(*, template: str, values: Mapping[str, str]) -> str:
@@ -101,9 +148,14 @@ def _write(*, gid: int, mode: int, path: Path, text: str) -> None:
     tmp.replace(path)
 
 
-def apply(*, plan: Mapping, root: Path) -> list[str]:
+def apply(
+    *, environ: Mapping[str, str] | None = None, plan: Mapping, root: Path
+) -> list[str]:
     """Write every consumer's directory from the minted values and return the lines that say what each holds."""
-    values = {key: _minted(key=key, root=root) for key in _referenced(plan=plan)}
+    values = {
+        key: _minted(environ=(environ) or ({}), key=key, root=root)
+        for key in _referenced(plan=plan)
+    }
     said = []
     for name, spec in sorted(plan.get("consumers", {}).items()):
         gid = int(spec["gid"])
@@ -131,6 +183,18 @@ def apply(*, plan: Mapping, root: Path) -> list[str]:
     return said
 
 
+def login(*, root: Path) -> str:
+    """The two lines `login` prints: the admin's name and password, and what the console does with them."""
+    name, password = (
+        _minted(environ={}, key=key, root=root)
+        for key in (ADMIN_NAME_KEY, ADMIN_PASSWORD_KEY)
+    )
+    return (
+        f"Console login: {name} / {password}\n"
+        "The console makes you change this password at first login.\n"
+    )
+
+
 def main(*, argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
@@ -139,10 +203,20 @@ def main(*, argv: list[str] | None = None) -> int:
     parser.add_argument(
         "--root", help="where the secrets volume is mounted", required=True, type=Path
     )
+    parser.add_argument(
+        "command",
+        choices=[LOGIN_COMMAND],
+        help="`login` prints the admin's name and password instead of writing the plan's files",
+        nargs="?",
+    )
     args = parser.parse_args(argv)
     try:
+        if args.command == LOGIN_COMMAND:
+            # Printing the password is the whole job of this command
+            sys.stdout.write(login(root=args.root))
+            return 0
         plan = json.loads(args.plan.read_text(encoding="utf-8"))
-        for line in apply(plan=plan, root=args.root):
+        for line in apply(environ=os.environ, plan=plan, root=args.root):
             _print(msg=line)
     except (OSError, KeyError, ValueError, SecretsError) as error:
         _print(msg=f"FAIL {error}")

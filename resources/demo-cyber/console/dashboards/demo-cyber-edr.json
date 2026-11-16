@@ -1,0 +1,64 @@
+{
+  "name": "demo-cyber-edr",
+  "tags": [
+    "demo"
+  ],
+  "tiles": [
+    {
+      "config": {
+        "configType": "sql",
+        "displayType": "stacked_bar",
+        "name": "CrowdStrike detections per minute, by severity",
+        "source": "crowdstrike",
+        "sqlTemplate": "SELECT $__timeInterval(_timestamp) AS ts,\n       multiIf(event_severity >= 99, 'critical', event_severity >= 73, 'high', event_severity >= 47, 'medium', 'low') AS severity,\n       count() * 60 / $__interval_s AS \"detections/min\"\nFROM dfe.crowdstrike\nWHERE $__timeFilter(_timestamp) AND event_kind = 'alert'\nGROUP BY ts, severity\nORDER BY ts"
+      },
+      "h": 6,
+      "id": "rate",
+      "w": 16,
+      "x": 0,
+      "y": 0
+    },
+    {
+      "config": {
+        "configType": "sql",
+        "displayType": "number",
+        "name": "Critical and high detections in the time range",
+        "source": "crowdstrike",
+        "sqlTemplate": "SELECT count() AS \"critical and high\"\nFROM dfe.crowdstrike\nWHERE $__timeFilter(_timestamp) AND event_kind = 'alert' AND event_severity >= 73"
+      },
+      "h": 6,
+      "id": "critical",
+      "w": 8,
+      "x": 16,
+      "y": 0
+    },
+    {
+      "config": {
+        "configType": "sql",
+        "displayType": "table",
+        "name": "Detections by host and severity",
+        "source": "crowdstrike",
+        "sqlTemplate": "SELECT host_name AS \"Host\",\n       countIf(event_severity >= 99) AS \"Critical\",\n       countIf(event_severity >= 73 AND event_severity < 99) AS \"High\",\n       countIf(event_severity >= 47 AND event_severity < 73) AS \"Medium\",\n       count() AS \"Total\"\nFROM dfe.crowdstrike\nWHERE $__timeFilter(_timestamp) AND event_kind = 'alert'\nGROUP BY 1\nORDER BY 2 DESC, 3 DESC, 5 DESC\nLIMIT 14"
+      },
+      "h": 9,
+      "id": "hosts",
+      "w": 13,
+      "x": 0,
+      "y": 6
+    },
+    {
+      "config": {
+        "configType": "sql",
+        "displayType": "table",
+        "name": "Detections by rule and tactic",
+        "source": "crowdstrike",
+        "sqlTemplate": "SELECT rule_name AS \"Detection\",\n       arrayStringConcat(threat_tactic_name, ', ') AS \"Tactic\",\n       count() AS \"Detections\"\nFROM dfe.crowdstrike\nWHERE $__timeFilter(_timestamp) AND event_kind = 'alert'\nGROUP BY 1, 2\nORDER BY 3 DESC"
+      },
+      "h": 9,
+      "id": "rules",
+      "w": 11,
+      "x": 13,
+      "y": 6
+    }
+  ]
+}

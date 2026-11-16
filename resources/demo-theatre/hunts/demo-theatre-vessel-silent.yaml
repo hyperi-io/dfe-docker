@@ -1,0 +1,19 @@
+# Project:   dfe-docker
+# File:      resources/demo-theatre/hunts/demo-theatre-vessel-silent.yaml
+# Purpose:   The theatre demo's hunt, running its silent-vessel rule every five minutes
+# Language:  YAML
+#
+# License:   BUSL-1.1
+# Copyright: (c) 2026 HYPERI PTY LIMITED
+
+name: demo-theatre-vessel-silent
+display_name: Vessels silent for five minutes
+cron: "*/5 * * * *"
+# A required label: the runner takes each detection's org from the matched row.
+customers:
+  - default
+rules:
+  - demo-theatre-vessel-silent
+global_source_table_name: dfe.ais-tracks
+global_target_table_name: dfe.detection
+checkpoint_timestamp_field: _timestamp_load

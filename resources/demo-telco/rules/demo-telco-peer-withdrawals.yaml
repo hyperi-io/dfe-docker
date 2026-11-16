@@ -1,0 +1,15 @@
+# Project:   dfe-docker
+# File:      resources/demo-telco/rules/demo-telco-peer-withdrawals.yaml
+# Purpose:   The telco demo's rule: each BGP withdrawal a RIS peer sends, which the console counts per peer and minute
+# Language:  YAML
+#
+# License:   BUSL-1.1
+# Copyright: (c) 2026 HYPERI PTY LIMITED
+
+name: demo-telco-peer-withdrawals
+display_name: BGP withdrawal from a RIS peer
+severity: medium
+source: bgp-updates
+source_type: raw
+# A rule matches single rows and may not read another table, so the burst, more than 20 withdrawals in a minute from one peer, is counted where the demo-telco-bgp-peers dashboard reads the detections.
+user_sql: "SELECT * FROM dfe.`bgp-updates` WHERE toString(_json.type) = 'W'"

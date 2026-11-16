@@ -8,13 +8,86 @@
 
 """The checks on scripts/quickstart_json.py, which need make and nothing else."""
 
+import json
 import shutil
+from pathlib import Path
 
 import pytest
 
 import quickstart_json
 import resolve_profile
-from _common import FIRST_LOGIN_PASSWORD, SERVICE_PROFILES_FILE
+from _common import SERVICE_PROFILES_FILE, demo_pack_names
+
+IMAGE = "ghcr.io/hyperi-io/dfe-docker"
+
+
+def _pack(root: Path, name: str, manifest: object) -> None:
+    (root / name).mkdir()
+    text = manifest if isinstance(manifest, str) else json.dumps(manifest)
+    (root / name / "demo.json").write_text(text, encoding="utf-8")
+
+
+def test_schema_2_lists_the_packs_in_directory_order(tmp_path: Path) -> None:
+    _pack(tmp_path, "demo", {"sources": []})
+    _pack(tmp_path, "demo-theatre", {"title": "Theatre", "use_case": "/solutions/t/"})
+    _pack(tmp_path, "demo-cyber", {"title": " Cyber ", "use_case": "/solutions/"})
+    (tmp_path / "demo-notes.json").write_text("{}", encoding="utf-8")
+
+    packs = quickstart_json.demo_packs(image=IMAGE, root=tmp_path, version="1.2.3")
+
+    assert [(pack["name"], pack["title"]) for pack in packs] == [
+        ("cyber", "Cyber"),
+        ("theatre", "Theatre"),
+    ]
+    for pack in packs:
+        tag = f"demo-{pack['name']}"
+        assert pack["latest"] == [
+            f"docker compose -f oci://{IMAGE}:{tag} up -d",
+            f"docker compose -f oci://{IMAGE}:{tag} run --rm secrets-init login",
+        ]
+        assert pack["pinned"] == [
+            f"docker compose -f oci://{IMAGE}:{tag}-1.2.3 up -d",
+            f"docker compose -f oci://{IMAGE}:{tag}-1.2.3 run --rm secrets-init login",
+        ]
+    assert (
+        quickstart_json.demo_packs(image=IMAGE, root=tmp_path / "x", version="1") == []
+    )
+
+
+@pytest.mark.parametrize(
+    ("name", "manifest", "match"),
+    [
+        pytest.param("demo-a", "[", "not readable JSON", id="malformed"),
+        pytest.param("demo-a", [], "no JSON object", id="not-an-object"),
+        pytest.param("demo-a", {"use_case": "/solutions/"}, "`title`", id="no-title"),
+        pytest.param(
+            "demo-a", {"title": " ", "use_case": "/solutions/"}, "`title`", id="blank"
+        ),
+        pytest.param("demo-a", {"title": "A"}, "`use_case`", id="no-use-case"),
+        pytest.param(
+            "demo-a",
+            {"title": "A", "use_case": "https://hyperi.io/solutions/"},
+            "`use_case`",
+            id="full-url",
+        ),
+        pytest.param(
+            "demo-a", {"title": "A", "use_case": "solutions"}, "`use_case`", id="bare"
+        ),
+        pytest.param(
+            "demo-Cyber",
+            {"title": "A", "use_case": "/solutions/"},
+            "lower-case words",
+            id="bad-name",
+        ),
+    ],
+)
+def test_a_pack_it_cannot_describe_is_refused(
+    manifest: object, match: str, name: str, tmp_path: Path
+) -> None:
+    _pack(tmp_path, name, manifest)
+
+    with pytest.raises(quickstart_json.QuickstartJsonError, match=match):
+        quickstart_json.demo_packs(image=IMAGE, root=tmp_path, version="1.2.3")
 
 
 @pytest.mark.parametrize(
@@ -65,35 +138,62 @@ def test_a_release_document_from_the_committed_files() -> None:
         version="9.9.9",
     )
 
-    assert document["schema"] == 1
+    assert document["schema"] == 2
     assert document["kind"] == "compose"
+    assert document["packs"][0] == {
+        "name": "cyber",
+        "title": "Cyber",
+        "use_case": "/solutions/security-monitoring/",
+        "latest": [
+            "docker compose -f oci://ghcr.io/hyperi-io/dfe-docker:demo-cyber up -d",
+            "docker compose -f oci://ghcr.io/hyperi-io/dfe-docker:demo-cyber run --rm secrets-init login",
+        ],
+        "pinned": [
+            "docker compose -f oci://ghcr.io/hyperi-io/dfe-docker:demo-cyber-9.9.9 up -d",
+            "docker compose -f oci://ghcr.io/hyperi-io/dfe-docker:demo-cyber-9.9.9 run --rm secrets-init login",
+        ],
+    }
+    assert [pack["name"] for pack in document["packs"]] == demo_pack_names()
+    # Every pack lists the same two lines as `up` and `demo`, with only its tag changed
+    for pack in document["packs"]:
+        for form, suffix in (("latest", ""), ("pinned", "-9.9.9")):
+            ref = f"ghcr.io/hyperi-io/dfe-docker:demo-{pack['name']}{suffix}"
+            assert pack[form] == [
+                f"docker compose -f oci://{ref} up -d",
+                f"docker compose -f oci://{ref} run --rm secrets-init login",
+            ]
     assert [entry["name"] for entry in document["profiles"]] == [default]
     assert document["profiles"][0]["default"] is True
     assert document["profiles"][0]["transport"] in {"grpc", "kafka"}
     assert {key: document[key] for key in ("up", "demo")} == {
         "up": {
             "latest": [
-                "docker compose -f oci://ghcr.io/hyperi-io/dfe-docker:compose up -d"
+                "docker compose -f oci://ghcr.io/hyperi-io/dfe-docker:compose up -d",
+                "docker compose -f oci://ghcr.io/hyperi-io/dfe-docker:compose run --rm secrets-init login",
             ],
             "pinned": [
-                "docker compose -f oci://ghcr.io/hyperi-io/dfe-docker:compose-9.9.9 up -d"
+                "docker compose -f oci://ghcr.io/hyperi-io/dfe-docker:compose-9.9.9 up -d",
+                "docker compose -f oci://ghcr.io/hyperi-io/dfe-docker:compose-9.9.9 run --rm secrets-init login",
             ],
         },
         "demo": {
             "latest": [
-                "docker compose -f oci://ghcr.io/hyperi-io/dfe-docker:demo up -d"
+                "docker compose -f oci://ghcr.io/hyperi-io/dfe-docker:demo up -d",
+                "docker compose -f oci://ghcr.io/hyperi-io/dfe-docker:demo run --rm secrets-init login",
             ],
             "pinned": [
-                "docker compose -f oci://ghcr.io/hyperi-io/dfe-docker:demo-9.9.9 up -d"
+                "docker compose -f oci://ghcr.io/hyperi-io/dfe-docker:demo-9.9.9 up -d",
+                "docker compose -f oci://ghcr.io/hyperi-io/dfe-docker:demo-9.9.9 run --rm secrets-init login",
             ],
         },
     }
     assert quickstart_json._version_key(document["min_compose"]) >= (2, 34, 0)
-    assert document["login"] == f"admin / {FIRST_LOGIN_PASSWORD}"
+    assert document["login"] == "printed by the second command in `up` and `demo`"
     assert "dfe-docker:compose down`" in document["notes"]["up"]
     assert "dfe-docker:demo down -v`" in document["notes"]["demo"]
     for note in document["notes"].values():
-        assert FIRST_LOGIN_PASSWORD in note
+        assert "second command prints" in note
+        assert "dfe-first-login" not in note
         assert ";" not in note
 
 
@@ -106,3 +206,17 @@ def test_an_unknown_default_profile_is_refused() -> None:
             stack_version="2.2.2",
             version="9.9.9",
         )
+
+
+def test_print_stack_refuses_a_prerelease_pin(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    def refuse() -> str:
+        raise quickstart_json.stack.StackError("pins 2.2.2-rc.5, a prerelease")
+
+    monkeypatch.setattr(quickstart_json.stack, "release_pin", refuse)
+    monkeypatch.setattr("sys.argv", ["quickstart_json.py", "--print-stack"])
+    assert quickstart_json.main() == 1
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert "prerelease" in captured.err

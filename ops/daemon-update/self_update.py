@@ -66,6 +66,19 @@ def _apply(*, repo_dir: Path, version: str) -> None:
         _make(repo_dir=repo_dir, target=target)
 
 
+def _docker(*, args: Sequence[str], repo_dir: Path) -> subprocess.CompletedProcess:
+    """Run docker in the checkout and capture what it prints."""
+    return subprocess.run(
+        ["docker", *args],
+        capture_output=True,
+        check=False,
+        cwd=repo_dir,
+        encoding="utf-8",
+        errors="replace",
+        text=True,
+    )
+
+
 def _flag_set(*, name: str) -> bool:
     """Return whether an environment flag is switched on."""
     return os.environ.get(name, "").strip() in _TRUE_VALUES
@@ -108,6 +121,68 @@ def _make(*, repo_dir: Path, target: Sequence[str]) -> None:
         raise UpdateError(f"{command!r} failed (exit {result.returncode})")
 
 
+def _identities(*, image: str) -> set[str]:
+    """Return the names one image reference answers to, so `x:1` and `x:1@sha256:a` match.
+
+    A reference with a digest answers to its name:tag and to its name@digest. One without answers to its name:tag.
+    """
+    named, _, digest = image.partition("@")
+    name, separator, _tag = named.rpartition(":")
+    repository = name if separator and "/" not in _tag else named
+    identities = {named}
+    if digest:
+        identities.add(f"{repository}@{digest}")
+    return identities
+
+
+def _images_in_use(*, repo_dir: Path) -> set[str]:
+    """Return the image of every container on the host, running or stopped."""
+    listed = _docker(args=("ps", "-a", "--format", "{{.Image}}"), repo_dir=repo_dir)
+    if listed.returncode != 0:
+        raise UpdateError(f"docker ps failed: {listed.stderr.strip()!r}")
+    return {line.strip() for line in listed.stdout.splitlines() if line.strip()}
+
+
+def _previous_images(*, repo_dir: Path) -> set[str]:
+    """Return the images the current pins name, empty when they cannot be read."""
+    try:
+        return _stack_images(repo_dir=repo_dir)
+    except (OSError, UpdateError) as error:
+        _log(message=f"warning: previous images unknown, none will be removed: {error}")
+        return set()
+
+
+def _prune_images(*, previous: set[str], repo_dir: Path) -> None:
+    """Remove the images the previous pin used that nothing uses now.
+
+    Only the previous stack's own references go, so an image pulled by hand stays. A failure is logged and never fails the update, which has already succeeded.
+    """
+    try:
+        keep = _stack_images(repo_dir=repo_dir) | _images_in_use(repo_dir=repo_dir)
+    except (OSError, UpdateError) as error:
+        _log(
+            message=f"warning: image prune skipped, cannot list what is in use: {error}"
+        )
+        return
+    kept = {identity for image in keep for identity in _identities(image=image)}
+    removed = 0
+    for image in sorted(previous):
+        if _identities(image=image) & kept:
+            continue
+        try:
+            result = _docker(args=("image", "rm", image), repo_dir=repo_dir)
+        except OSError as error:
+            _log(message=f"warning: could not remove {image!r}: {error}")
+            continue
+        if result.returncode != 0:
+            _log(
+                message=f"warning: could not remove {image!r}: {result.stderr.strip()!r}"
+            )
+            continue
+        removed += 1
+    _log(message=f"removed {removed} image(s) the previous pin used")
+
+
 def _refresh_checkout(*, repo_dir: Path) -> None:
     """Fast-forward the checkout, refusing uncommitted changes to tracked files."""
     if not ((repo_dir / ".git").exists()):
@@ -140,6 +215,25 @@ def _refresh_plan(*, repo_dir: Path) -> str:
     if dirty.stdout.strip():
         return "refuse, the checkout has uncommitted changes to tracked files"
     return "run git pull --ff-only"
+
+
+def _stack_images(*, repo_dir: Path) -> set[str]:
+    """Return every image the checkout's compose file resolves to under the current pins, across all profiles."""
+    resolved = _docker(
+        args=(
+            "compose",
+            "-f",
+            "docker-compose.yml",
+            "--profile",
+            "*",
+            "config",
+            "--images",
+        ),
+        repo_dir=repo_dir,
+    )
+    if resolved.returncode != 0:
+        raise UpdateError(f"docker compose config failed: {resolved.stderr.strip()!r}")
+    return {line.strip() for line in resolved.stdout.splitlines() if line.strip()}
 
 
 def _target(*, allow_prerelease: bool, repo: str) -> tuple[str, str]:
@@ -193,9 +287,11 @@ def _tick(*, dry_run: bool, repo_dir: Path) -> None:
         return
 
     _log(message=f"updating {applied!r} -> {latest!r}")
+    previous = _previous_images(repo_dir=repo_dir)
     _apply(repo_dir=repo_dir, version=pin)
     state_path.write_text(f"{latest}\n", encoding="utf-8", newline="\n")
     _log(message=f"updated to {latest!r}")
+    _prune_images(previous=previous, repo_dir=repo_dir)
 
 
 def main() -> int:

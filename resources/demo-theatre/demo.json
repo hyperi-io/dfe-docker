@@ -1,0 +1,34 @@
+{
+  "archive": {
+    "max_megabytes": 200,
+    "retention_minutes": 15,
+    "sources": [],
+    "sweep_minutes": 5
+  },
+  "console": {
+    "dashboards": [
+      "demo-theatre-altitude",
+      "demo-theatre-churn",
+      "demo-theatre-picture",
+      "demo-theatre-tracks-seen",
+      "demo-theatre-vessel-moves"
+    ],
+    "searches": [
+      "demo-theatre-aircraft-late",
+      "demo-theatre-aircraft-picture",
+      "demo-theatre-aircraft-track",
+      "demo-theatre-vessel-late",
+      "demo-theatre-vessel-picture",
+      "demo-theatre-vessel-track"
+    ]
+  },
+  "hunts": [
+    "demo-theatre-vessel-silent"
+  ],
+  "sources": [
+    "adsb-tracks",
+    "ais-tracks"
+  ],
+  "title": "Theatre and battlespace",
+  "use_case": "/solutions/theatre-and-battlespace/"
+}

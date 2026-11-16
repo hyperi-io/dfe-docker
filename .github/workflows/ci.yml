@@ -5,28 +5,7 @@
 # License:   BUSL-1.1 - HYPERI PTY LIMITED
 # Copyright: (c) 2026 HYPERI PTY LIMITED
 #
-# Why this is hand-written rather than a `uses: hyperi-io/hyperi-ci/...` call:
-# hyperi-ci's reusable workflows are per-language (python / rust / go / ts) and
-# its language detection returns nothing for a compose-packaging repo, so there
-# is no reusable workflow to call for this shape. The house conventions are
-# followed deliberately -- least-privilege permissions, SHA-pinned third-party
-# actions with a version comment, Title Case job names, a named runner image --
-# so that when hyperi-ci grows the container/compose gating it is currently
-# missing, this collapses into a `uses:` line rather than a rewrite.
-#
-# The runner image is named (ubuntu-26.04) rather than ubuntu-latest, so a move
-# of that label cannot swap the tools these jobs run on.
-#
-# Renovate automerges patch and digest updates in this repo "when CI passes", and
-# before this workflow existed there was no CI to pass -- the rule was asserting a
-# condition that could not be evaluated. This makes it mean what it says.
-#
-# Scope it honestly, though: the service image pins moved out of .env.example into
-# the private stack SSoT, so they now live in a gitignored .env where Renovate
-# cannot see them. What Renovate still manages HERE is RUST_IMAGE in the builder
-# Dockerfile and the actions pinned below. And note check_compose.py substitutes
-# placeholders for the mandatory keys, so this validates compose STRUCTURE, not
-# that any particular digest resolves.
+# Hand-written (no hyperi-ci compose workflow), runner pinned
 
 name: CI
 
@@ -63,8 +42,7 @@ concurrency:
 permissions:
   contents: read
 
-# The house Python floor, one patch the pinned setup-python can install; the
-# runner's own python3 is older and would run every helper script on it.
+# The house Python floor. The runner's own python3 is older.
 env:
   PYTHON_VERSION: "3.14.7"
   # The Release job's CLI, replaced by HYPERCI_INSTALL_OVERRIDE
@@ -90,49 +68,30 @@ jobs:
         with:
           python-version: ${{ env.PYTHON_VERSION }}
 
-      # Every step below runs a `make` target rather than the command directly,
-      # so `make check` locally and CI cannot drift apart.
-      #
-      # Resolves docker-compose.yml on both the registry and dev-override paths,
-      # against both Kafka backends. Hermetic: it reads the mandatory keys out of
-      # the compose file and supplies placeholders, so it reads neither the
-      # stack SSoT nor the registry.
+      # Each step runs the make target `make check` runs locally (docs/checks.md).
       - name: Validate compose
         run: make check-compose
 
-      # The stack must refuse to start unpinned rather than silently pull
-      # `latest`. Without that, an operator cannot answer "which image am I
-      # running?" on a production deploy target, so it gets asserted rather than
-      # assumed.
+      # The stack must refuse to start unpinned rather than pull `latest`.
       - name: Assert a fresh checkout hard-fails
         run: make check-hardfail
 
-      # Five audience-scoped documents plus a README whose whole job is to route
-      # between them. A deleted or renamed file leaves a link that still looks
-      # like a link, and the reader finds out rather than the author -- which is
-      # exactly what retiring docs/SCOPE.md did to six live links.
-      # Stdlib only, so it needs nothing installed.
+      # Every relative link in the docs resolves. Stdlib only.
       - name: Docs
         run: make check-docs
 
-      # The pin lives in the Makefile (RUFF_VERSION), so a local `make check`
-      # lints with the same version this does. Installed here rather than run
-      # through uvx to keep the runner off the network mid-job.
+      # RUFF_VERSION in the Makefile pins it. Installed here to keep the runner
+      # off the network mid-job.
       - name: Install ruff
         run: pipx install --python "${{ steps.python.outputs.python-path }}" "ruff==$(make -s print-ruff-version)"
 
-      # Every check above is driven by a Python helper script, so a bug in one of
-      # them shows up as a check that passes when it should not. They get linted
-      # like anything else. Config in ruff.toml.
+      # Lints the helper scripts every check above runs. Config in ruff.toml.
       - name: Python
         run: make check-python RUFF=ruff
 
-      # The credential helpers rewrite .env and decide whether a minted password
-      # reaches stdout, so they carry unit tests. They run on a tmp_path .env:
-      # nothing here starts a stack or touches the runner's own files.
-      # pipx builds each venv on its own interpreter unless told otherwise, and
-      # pytest runs the tests on whatever its venv holds.
-      # PyYAML is injected for the seed tests, which parse resources/seed.
+      # Unit tests over the helper scripts, on a tmp_path .env. pipx builds the
+      # venv on the interpreter it is given, and PyYAML is injected for the seed
+      # tests, which parse resources/seed.
       - name: Install pytest
         run: |
           pipx install --python "${{ steps.python.outputs.python-path }}" "pytest==$(make -s print-pytest-version)"
@@ -161,14 +120,9 @@ jobs:
           # .git/config where any later step could read it.
           persist-credentials: false
 
-      # hadolint GATES: a decade old, stable rule IDs, and it lints the shell
-      # inside RUN via ShellCheck -- a correctness check droast structurally
-      # does not have.
-      # stdin form, per the standard, with no config file, so the exact same
-      # command is runnable locally -- no mount, no config discovery. DL3008 (pin
-      # apt versions) fires on both Dockerfiles and is deliberately left as a
-      # visible warning, not suppressed: `--failure-threshold error` lets a
-      # warning inform without blocking, and the reason sits in the Dockerfile.
+      # hadolint gates on error severity and lints the shell inside RUN through
+      # ShellCheck. Warnings such as DL3008 print without failing, and the reason
+      # sits in the Dockerfile.
       - name: Hadolint
         run: make check-dockerfile
 
@@ -186,7 +140,7 @@ jobs:
       - name: Proxy configs
         run: make check-proxy
 
-  # A desktop with only Docker: no make and no python on PATH
+  # Only Docker on PATH: every profile set up, the default run
   image:
     name: Image
     runs-on: ubuntu-26.04
@@ -322,6 +276,162 @@ jobs:
             docker compose --profile '*' down --volumes --remove-orphans
           fi
 
+  # One Published leg per pack, in demo_pack_names order
+  demo-packs:
+    name: Demo Packs
+    runs-on: ubuntu-26.04
+    timeout-minutes: 5
+    outputs:
+      dirs: ${{ steps.list.outputs.dirs }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: List the packs
+        id: list
+        run: |
+          dirs="$({ echo demo; find resources -mindepth 1 -maxdepth 1 -type d -name 'demo-*' -printf '%f\n' | LC_ALL=C sort; } | jq -Rnc '[inputs]')"
+          echo "dirs=$dirs" | tee -a "$GITHUB_OUTPUT"
+
+  # Release OCI files from this commit, run from an empty folder
+  published:
+    name: Published compose (${{ matrix.pack }})
+    needs: demo-packs
+    runs-on: ubuntu-26.04
+    timeout-minutes: 50
+    strategy:
+      fail-fast: false
+      matrix:
+        pack: ${{ fromJSON(needs.demo-packs.outputs.dirs) }}
+    env:
+      IMAGE: dfe-docker:ci
+      PACK_DIR: resources/${{ matrix.pack }}
+      FILE: dfe-${{ matrix.pack }}.yaml
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up Python
+        uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      # scripts/stack.py reads the stack's image pins through oras
+      - name: Install oras
+        uses: oras-project/setup-oras@5e2f2482b30b0cb3e14e67f89a80c88c659a7c63 # v2.0.3
+
+      - name: Build the image
+        run: docker build --file docker/dfe-docker.Dockerfile --build-arg "IMAGE=$IMAGE" --tag "$IMAGE" .
+
+      # The image is local, so its digest is the one finding allowed
+      - name: Generate and check the published files
+        env:
+          PACK: ${{ matrix.pack }}
+        run: |
+          docker compose version
+          pack=()
+          if [ "$PACK" != demo ]; then
+            pack=(--pack "${PACK#demo-}")
+          fi
+          python3 scripts/publish_compose.py --image "$IMAGE" --out-dir "$RUNNER_TEMP/compose" "${pack[@]}"
+          echo "COMPOSE_DIR=$RUNNER_TEMP/compose" >> "$GITHUB_ENV"
+
+      # The demo file holds the whole stack plus the demo
+      - name: Start the demo and reach the console
+        timeout-minutes: 25
+        working-directory: ${{ env.COMPOSE_DIR }}
+        run: |
+          docker compose -f "$FILE" up -d --wait --wait-timeout 1200
+          curl -fsSL --retry 5 --retry-all-errors -o /dev/null -w 'console answered %{http_code} at %{url_effective}\n' http://localhost:3000/
+
+      # Every source with events the pack replays, which need no egress, so a pack whose demo.json lists no sources checks none. Fetcher tables wait on their upstream and are not checked
+      - name: Land the pack's data
+        timeout-minutes: 10
+        working-directory: ${{ env.COMPOSE_DIR }}
+        run: |
+          tables=()
+          for source in $(jq -r '.sources[]' "$GITHUB_WORKSPACE/$PACK_DIR/demo.json"); do
+            if [ -d "$GITHUB_WORKSPACE/$PACK_DIR/events/$source" ]; then
+              tables+=("$source")
+            fi
+          done
+          if [ "${#tables[@]}" -eq 0 ]; then
+            echo "$PACK_DIR replays no source, so no table is checked"
+          fi
+          for table in "${tables[@]}"; do
+            for attempt in $(seq 60); do
+              rows="$(docker compose -f "$FILE" exec -T clickhouse sh -c ". /run/dfe-secrets/env && clickhouse-client --password \"\$CLICKHOUSE_PASSWORD\" --query 'SELECT count() FROM dfe.\`$table\`'" || echo 0)"
+              if [ "${rows:-0}" -gt 0 ]; then
+                echo "dfe.$table holds $rows rows"
+                break
+              fi
+              if [ "$attempt" -eq 60 ]; then
+                echo "::error::no rows reached dfe.$table"
+                exit 1
+              fi
+              sleep 5
+            done
+          done
+
+      # Secrets minted here: none in an env, no defaults accepted
+      - name: Run on secrets minted here
+        working-directory: ${{ env.COMPOSE_DIR }}
+        run: |
+          for svc in clickhouse demo-console demo-sources dfe-engine dfe-hunt-runner dfe-hyperdx dfe-loader dfe-ui hyperdx-documentdb otel-collector; do
+            held="$(docker inspect "$(docker compose -f "$FILE" ps -aq "$svc")" --format '{{range .Config.Env}}{{println .}}{{end}}' | cut -d= -f1 | grep -E '(PASSWORD|SECRET|TOKEN|KEY|MONGO_URI|IDENTITY)$' || true)"
+            if [ -n "$held" ]; then
+              echo "::error::$svc holds $held in its environment"
+              exit 1
+            fi
+          done
+          # secrets-init declares the admin's chosen name and password, which are empty on a run that chose none
+          init_env="$(docker inspect "$(docker compose -f "$FILE" ps -aq secrets-init)" --format '{{range .Config.Env}}{{println .}}{{end}}')"
+          held="$(printf '%s\n' "$init_env" | cut -d= -f1 | grep -E '(PASSWORD|SECRET|TOKEN|KEY|MONGO_URI|IDENTITY)$' | grep -vx DFE_ADMIN_PASSWORD || true)"
+          if [ -n "$held" ] || printf '%s\n' "$init_env" | grep -Eq '^DFE_ADMIN_(NAME|PASSWORD)=.'; then
+            echo "::error::secrets-init holds $held or a chosen admin login in its environment"
+            exit 1
+          fi
+          if docker compose -f "$FILE" exec -T clickhouse clickhouse-client --password '' --query 'SELECT 1'; then
+            echo "::error::ClickHouse took the empty default password"
+            exit 1
+          fi
+          docker compose -f "$FILE" exec -T dfe-engine sh -c '. /run/dfe-secrets/env && test ${#DFE_ENGINE_API_JWT_SECRET} -eq 64 && test ${#DFE_ENGINE_CLICKHOUSE_PASSWORD} -eq 32'
+          login="$(docker compose -f "$FILE" run --rm secrets-init login)"
+          DFE_LOGIN_NAME="$(printf '%s\n' "$login" | sed -n 's/^Console login: \(.*\) \/ .*$/\1/p')"
+          DFE_LOGIN_PASSWORD="$(printf '%s\n' "$login" | sed -n 's/^Console login: .* \/ \(.*\)$/\1/p')"
+          echo "::add-mask::$DFE_LOGIN_PASSWORD"
+          test "${#DFE_LOGIN_PASSWORD}" -eq 32
+          export DFE_LOGIN_NAME DFE_LOGIN_PASSWORD
+          docker compose -f "$FILE" exec -T -e DFE_LOGIN_NAME -e DFE_LOGIN_PASSWORD dfe-engine python -c 'import json, os, urllib.request
+          request = urllib.request.Request("http://localhost:8000/api/v1/auth/login", data=json.dumps({"username": os.environ["DFE_LOGIN_NAME"], "password": os.environ["DFE_LOGIN_PASSWORD"]}).encode(), headers={"Content-Type": "application/json"})
+          with urllib.request.urlopen(request, timeout=30) as answer:
+              assert json.load(answer).get("password_change_required") is True, "the first login is not held for a change"'
+
+      - name: Show what did not come up
+        if: failure()
+        working-directory: ${{ env.COMPOSE_DIR }}
+        run: |
+          docker compose -f "$FILE" ps --all
+          # The helpers and data path this pack's file runs, since a pack with no syslog has no stream or transform instance
+          services=()
+          for svc in $(docker compose -f "$FILE" config --services); do
+            case "$svc" in
+              secrets-init | demo-* | dfe-receiver | dfe-transform-elastic-*) services+=("$svc") ;;
+            esac
+          done
+          docker compose -f "$FILE" logs --no-color --tail 100 "${services[@]}"
+
+      - name: Tear the demo down
+        if: always()
+        run: |
+          if [ -f "${COMPOSE_DIR:-}/$FILE" ]; then
+            docker compose -f "$COMPOSE_DIR/$FILE" down --volumes --remove-orphans
+          fi
+
   # Windows splits COMPOSE_FILE unless .env sets a separator
   image-windows:
     name: Image (Windows compose)
@@ -349,100 +459,6 @@ jobs:
             exit 1
           }
           Write-Output "Windows compose starts the same services: $got"
-
-  # Release OCI files from this commit, run from an empty folder
-  published:
-    name: Published compose
-    runs-on: ubuntu-26.04
-    timeout-minutes: 50
-    env:
-      IMAGE: dfe-docker:ci
-    steps:
-      - name: Checkout
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-
-      - name: Set up Python
-        uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
-        with:
-          python-version: ${{ env.PYTHON_VERSION }}
-
-      # scripts/stack.py reads the stack's image pins through oras
-      - name: Install oras
-        uses: oras-project/setup-oras@5e2f2482b30b0cb3e14e67f89a80c88c659a7c63 # v2.0.3
-
-      - name: Build the image
-        run: docker build --file docker/dfe-docker.Dockerfile --build-arg "IMAGE=$IMAGE" --tag "$IMAGE" .
-
-      # The image is local, so its digest is the one finding allowed
-      - name: Generate and check the published files
-        run: |
-          docker compose version
-          python3 scripts/publish_compose.py --image "$IMAGE" --out-dir "$RUNNER_TEMP/compose"
-          echo "COMPOSE_DIR=$RUNNER_TEMP/compose" >> "$GITHUB_ENV"
-
-      # The demo file holds the whole stack plus the demo
-      - name: Start the demo and reach the console
-        timeout-minutes: 25
-        working-directory: ${{ env.COMPOSE_DIR }}
-        run: |
-          docker compose -f dfe-demo.yaml up -d --wait --wait-timeout 1200
-          curl -fsSL --retry 5 --retry-all-errors -o /dev/null -w 'console answered %{http_code} at %{url_effective}\n' http://localhost:3000/
-
-      - name: Land the demo's syslog
-        timeout-minutes: 10
-        working-directory: ${{ env.COMPOSE_DIR }}
-        run: |
-          for table in cisco-asa fortinet; do
-            for attempt in $(seq 60); do
-              rows="$(docker compose -f dfe-demo.yaml exec -T clickhouse sh -c ". /run/dfe-secrets/env && clickhouse-client --password \"\$CLICKHOUSE_PASSWORD\" --query 'SELECT count() FROM dfe.\`$table\`'" || echo 0)"
-              if [ "${rows:-0}" -gt 0 ]; then
-                echo "dfe.$table holds $rows rows"
-                break
-              fi
-              if [ "$attempt" -eq 60 ]; then
-                echo "::error::no rows reached dfe.$table"
-                exit 1
-              fi
-              sleep 5
-            done
-          done
-
-      # Secrets minted here: none in an env, no defaults accepted
-      - name: Run on secrets minted here
-        working-directory: ${{ env.COMPOSE_DIR }}
-        run: |
-          for svc in clickhouse demo-console demo-sources dfe-engine dfe-hunt-runner dfe-hyperdx dfe-loader dfe-ui hyperdx-documentdb otel-collector; do
-            held="$(docker inspect "$(docker compose -f dfe-demo.yaml ps -aq "$svc")" --format '{{range .Config.Env}}{{println .}}{{end}}' | cut -d= -f1 | grep -E '(PASSWORD|SECRET|TOKEN|KEY|MONGO_URI|IDENTITY)$' | grep -vx DFE_ENGINE_AUTH_LOCAL_ADMIN_PASSWORD || true)"
-            if [ -n "$held" ]; then
-              echo "::error::$svc holds $held in its environment"
-              exit 1
-            fi
-          done
-          if docker compose -f dfe-demo.yaml exec -T clickhouse clickhouse-client --password '' --query 'SELECT 1'; then
-            echo "::error::ClickHouse took the empty default password"
-            exit 1
-          fi
-          docker compose -f dfe-demo.yaml exec -T dfe-engine sh -c '. /run/dfe-secrets/env && test ${#DFE_ENGINE_API_JWT_SECRET} -eq 48 && test ${#DFE_ENGINE_CLICKHOUSE_PASSWORD} -eq 24'
-          docker compose -f dfe-demo.yaml exec -T dfe-engine python -c 'import json, urllib.request
-          request = urllib.request.Request("http://localhost:8000/api/v1/auth/login", data=json.dumps({"username": "admin", "password": "dfe-first-login"}).encode(), headers={"Content-Type": "application/json"})
-          with urllib.request.urlopen(request, timeout=30) as answer:
-              assert json.load(answer).get("password_change_required") is True, "the first login is not held for a change"'
-
-      - name: Show what did not come up
-        if: failure()
-        working-directory: ${{ env.COMPOSE_DIR }}
-        run: |
-          docker compose -f dfe-demo.yaml ps --all
-          docker compose -f dfe-demo.yaml logs --no-color --tail 100 secrets-init demo-sources demo-feed demo-console demo-stream dfe-receiver dfe-transform-elastic-demo-syslog
-
-      - name: Tear the demo down
-        if: always()
-        run: |
-          if [ -f "${COMPOSE_DIR:-}/dfe-demo.yaml" ]; then
-            docker compose -f "$COMPOSE_DIR/dfe-demo.yaml" down --volumes --remove-orphans
-          fi
 
   # Tags and publishes on `Release: true` or a dispatch
   release:
@@ -558,25 +574,5 @@ jobs:
           RELEASE_VERSION: ${{ steps.plan.outputs.version }}
         run: ${{ env.HYPERCI_INSTALL }} release-commit --branch "$RELEASE_BRANCH" "$RELEASE_VERSION"
 
-# droast is DELIBERATELY NOT RUN HERE. That matches hyperi-ci's own posture --
-# quality/droast.py resolves it with `find_tool(recommended=False)` and info-skips
-# when absent, so hyperi-ci never installs it either -- but the reason here is
-# measured rather than inherited.
-#
-# Run against docker/dfe-rust-builder.Dockerfile on 2026-07-20 (droast 0.1.x,
-# `--no-fail`): 6 findings, 0 true positives.
-#
-#   DF036 no CMD/ENTRYPOINT   - false. The final stage is `FROM scratch AS export`,
-#                               an artefact export consumed via `--output`.
-#   DF001 unpinned image tag  - false. ARG RUST_IMAGE is `rust:1.97-trixie@sha256:...`;
-#                               droast does not resolve the ARG default. hadolint does.
-#   DF057 pipe, no pipefail   - false. `SHELL ["/bin/bash", "-o", "pipefail", "-c"]`
-#                               is set; droast ignores the SHELL directive.
-#   DF063 relative COPY dest  - false. The destination is `"/${BINARY}"`, absolute.
-#   DF005 unpinned apt        - duplicate of hadolint DL3008.
-#   DF033 no .dockerignore    - wrong context (assumes the Dockerfile's own dir).
-#
-# Two of those tell us to fix things this Dockerfile already fixes correctly, so
-# wiring it in would train people to ignore the advisory. droast.toml is kept so
-# `droast .` works locally for anyone who wants the cache-ordering rules hadolint
-# has no equivalent for. Revisit when its parser handles ARG defaults and SHELL.
+# droast is not run here: it misreads ARG defaults and the SHELL directive, so its
+# findings on these Dockerfiles are false. droast.toml keeps `droast .` working by hand.

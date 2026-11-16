@@ -1,0 +1,17 @@
+# Project:   dfe-docker
+# File:      resources/demo-cyber/rules/demo-cyber-drop-sign-in.yaml
+# Purpose:   The cyber demo's rule: a failed Okta sign-in from a network on the Spamhaus DROP list
+# Language:  YAML
+#
+# License:   BUSL-1.1
+# Copyright: (c) 2026 HYPERI PTY LIMITED
+
+name: demo-cyber-drop-sign-in
+display_name: Failed sign-in from a DROP-listed network
+severity: high
+source: okta
+source_type: raw
+# The networks are the eight DROP ranges in events/generate.py, which the firewalls also see.
+# A rule reads only its own source table, so the firewall side is the demo-cyber-denied-drop search.
+user_sql: "SELECT * FROM dfe.`okta` WHERE arrayExists(n -> isIPAddressInRange(replaceOne(IPv6NumToString(assumeNotNull(`okta`.client_ip)), '::ffff:', ''), n), ['42.128.0.0/12', '42.160.0.0/12', '42.208.0.0/12', '147.16.0.0/14', '196.16.0.0/14', '101.134.0.0/15', '112.142.0.0/15', '168.80.0.0/15'])"
+cel_filter: 'event_action == "user.session.start" && event_outcome == "failure"'

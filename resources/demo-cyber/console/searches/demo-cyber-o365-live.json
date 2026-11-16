@@ -1,0 +1,11 @@
+{
+  "name": "demo-cyber-o365-live",
+  "orderBy": "_timestamp DESC",
+  "select": "_timestamp, event_provider, event_code, event_action, event_outcome, user_id, replaceOne(IPv6NumToString(assumeNotNull(client_ip)), '::ffff:', '') AS address",
+  "source": "o365",
+  "tags": [
+    "demo"
+  ],
+  "where": "",
+  "whereLanguage": "sql"
+}

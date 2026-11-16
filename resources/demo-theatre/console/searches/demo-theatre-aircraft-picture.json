@@ -1,0 +1,11 @@
+{
+  "name": "demo-theatre-aircraft-picture",
+  "orderBy": "callsign, _timestamp DESC",
+  "select": "_timestamp, if(match(trimBoth(toString(_json.flight)), '^[A-Z0-9 ]+$'), trimBoth(toString(_json.flight)), upper(toString(_json.hex))) AS callsign, upper(toString(_json.hex)) AS hex, toString(_json.t) AS type, toFloat64OrNull(toString(_json.lat)) AS lat, toFloat64OrNull(toString(_json.lon)) AS lon, toString(_json.alt_baro) AS altitude, toFloat64OrNull(toString(_json.gs)) AS speed, toFloat64OrNull(toString(_json.track)) AS heading",
+  "source": "adsb-tracks",
+  "tags": [
+    "demo"
+  ],
+  "where": "",
+  "whereLanguage": "sql"
+}

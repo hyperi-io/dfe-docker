@@ -1,0 +1,11 @@
+{
+  "name": "demo-telco-prefix-history",
+  "orderBy": "_timestamp DESC",
+  "select": "_timestamp, if(toString(_json.type) = 'W', 'withdrawal', 'announcement') AS update, toString(_json.attrs.target_prefix) AS prefix, concat(splitByChar('-', toString(_json.attrs.source_id))[2], ' (rrc', splitByChar('-', toString(_json.attrs.source_id))[1], ')') AS peer, arrayStringConcat(dynamicElement(_json.attrs.path, 'Array(Nullable(Int64))'), ' ') AS as_path, toString(_json.attrs.community) AS communities",
+  "source": "bgp-updates",
+  "tags": [
+    "demo"
+  ],
+  "where": "toString(_json.attrs.target_prefix) = '172.69.12.0/24'",
+  "whereLanguage": "sql"
+}

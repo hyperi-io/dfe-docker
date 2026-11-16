@@ -567,7 +567,7 @@ def _proxy_text(name: str) -> str:
         ("hyperdx.yaml", 2),
         ("hyperdx.tls.yaml", 4),
         ("envoy.yaml", 2),
-        ("envoy.tls.yaml", 2),
+        ("envoy.tls.yaml", 3),
     ],
 )
 def test_no_proxy_adds_an_identity_header(hosts: int, name: str) -> None:
@@ -817,3 +817,95 @@ def test_a_dfe_app_gets_the_stop_grace_its_contract_asks_for(
     resolved_model, service, grace
 ):
     assert resolved_model["services"][service]["stop_grace_period"] == grace
+
+
+def _digest(name: str) -> str:
+    return f"sha256:{name.encode().hex().ljust(64, '0')[:64]}"
+
+
+def _stack_model(*, listed: list[str], running: list[str]) -> dict:
+    """A resolved model whose services run `running` and whose engine lists `listed`."""
+    services = {
+        f"service-{index}": {"image": image} for index, image in enumerate(running)
+    }
+    services["dfe-engine"] = {
+        "image": "ghcr.io/hyperi-io/dfe-engine:v1@" + _digest("engine"),
+        "environment": {"DFE_ENGINE_STACK_IMAGES": ",".join(listed)},
+    }
+    return {"services": services}
+
+
+_ENGINE_REF = "ghcr.io/hyperi-io/dfe-engine:v1@" + _digest("engine")
+_LOADER_REF = "ghcr.io/hyperi-io/dfe-loader:v2@" + _digest("loader")
+_BARE_LOADER_REF = "ghcr.io/hyperi-io/dfe-loader:v2"
+_CLICKHOUSE_REF = "clickhouse/clickhouse-server:26.3@" + _digest("clickhouse")
+
+
+@pytest.mark.parametrize(
+    ("listed", "running", "expected"),
+    [
+        pytest.param(
+            [_ENGINE_REF, _LOADER_REF], [_LOADER_REF, _ENGINE_REF], [], id="exact"
+        ),
+        pytest.param(
+            [_ENGINE_REF, _LOADER_REF],
+            [_LOADER_REF, _ENGINE_REF, _CLICKHOUSE_REF],
+            [],
+            id="a_third_party_image_is_not_listed",
+        ),
+        pytest.param(
+            [_ENGINE_REF],
+            [_LOADER_REF],
+            ["leaves out"],
+            id="a_running_app_left_out",
+        ),
+        pytest.param(
+            [_ENGINE_REF, _LOADER_REF, _CLICKHOUSE_REF],
+            [_LOADER_REF],
+            ["no service runs"],
+            id="a_third_party_image_listed",
+        ),
+        pytest.param(
+            [_ENGINE_REF, _BARE_LOADER_REF],
+            [_BARE_LOADER_REF],
+            ["no sha256 digest"],
+            id="an_entry_without_a_digest",
+        ),
+        pytest.param(
+            [_ENGINE_REF, _LOADER_REF, _LOADER_REF],
+            [_LOADER_REF],
+            ["2 times"],
+            id="an_entry_twice",
+        ),
+        pytest.param(
+            [], [_LOADER_REF], ["leaves out", "leaves out"], id="an_empty_list"
+        ),
+    ],
+)
+def test_the_engine_lists_the_dfe_app_images_the_stack_runs(
+    listed: list[str], running: list[str], expected: list[str]
+) -> None:
+    model = _stack_model(listed=listed, running=running)
+
+    failures = check_compose._stack_images_mismatches(config=model)
+
+    assert len(failures) == len(expected), failures
+    for fragment, failure in zip(expected, failures, strict=True):
+        assert fragment in failure
+
+
+def test_a_stack_with_no_engine_fails_rather_than_passing() -> None:
+    failures = check_compose._stack_images_mismatches(config={"services": {}})
+
+    assert failures == ["dfe-engine: not in the stack"]
+
+
+def test_the_committed_compose_lists_every_dfe_app_image_it_runs_by_digest() -> None:
+    if shutil.which("docker") is None:
+        pytest.skip("`docker compose config` renders the model this asserts on")
+    env, _ = check_compose._check_env()
+
+    failures, made = check_compose._stack_images_failures(env=env)
+
+    assert failures == []
+    assert made == 1

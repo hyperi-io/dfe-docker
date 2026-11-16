@@ -18,14 +18,28 @@ from pathlib import Path
 import pytest
 
 import demo
+import init
 import publish_compose
 import secrets_init
-from _common import FIRST_LOGIN_PASSWORD, REPO_ROOT
+from _common import REPO_ROOT, demo_pack_dir, demo_pack_names
 
 COLLECTOR_CONFIG = "config/otel-collector/config.yaml"
+CHOSEN_NAME = "${DFE_ADMIN_NAME:-}"
+CHOSEN_PASSWORD = "${DFE_ADMIN_PASSWORD:-}"
+SYSLOG_LINE = "%ASA-6-302013: x\n"
+BEATS_LINE = '{"data_stream": {"dataset": "okta.system"}, "message": "{}"}\n'
+# The committed packs with sources to seed
+SEEDED_PACKS = [
+    pack
+    for pack in ["", *demo_pack_names()]
+    if any((demo_pack_dir(pack=pack) / "sources").glob("*.yaml"))
+]
 ROLES = {
+    "beats": [],
     "fetcher": ["releases"],
     "intake": ["demo-syslog"],
+    "json": [],
+    "replay": [],
     "vendor": ["cisco-asa", "fortinet"],
 }
 
@@ -122,9 +136,9 @@ class TestPublished:
         assert engine["depends_on"] == {"clickhouse": {"condition": "service_healthy"}}
         assert engine["environment"][publish_compose.APP_ENV_DIR_KEY] == ""
         # No checkout means no `make creds` and no per-source instance
-        assert (
-            FIRST_LOGIN_PASSWORD
-            in (engine["environment"][publish_compose.CREDENTIAL_COMMAND_KEY])
+        assert engine["environment"][publish_compose.CREDENTIAL_COMMAND_KEY] == (
+            "docker compose -f oci://ghcr.io/hyperi-io/dfe-docker:compose "
+            "run --rm secrets-init login"
         )
         assert engine["environment"][publish_compose.HOSTED_INSTANCES_KEY] == ""
         assert engine["environment"][publish_compose.APPLY_COMMAND_KEY] == (
@@ -222,19 +236,32 @@ class TestConfigContent:
 
 class TestInterpolations:
     @pytest.mark.parametrize(
-        ("text", "count"),
+        ("text", "allowed", "count"),
         [
-            ("", 0),
-            ("a$", 0),
-            ("$$code", 0),
-            ("$${HOME}", 0),
-            ("${HOME}", 1),
-            ("$HOME", 1),
-            ("$$${HOME} and $X", 2),
+            ("", (), 0),
+            ("a$", (), 0),
+            ("$$code", (), 0),
+            ("$${HOME}", (), 0),
+            ("${HOME}", (), 1),
+            ("$HOME", (), 1),
+            ("$$${HOME} and $X", (), 2),
+            (CHOSEN_NAME, (), 1),
+            (CHOSEN_NAME, (CHOSEN_NAME,), 0),
+            (CHOSEN_PASSWORD, (CHOSEN_PASSWORD,), 0),
+            (CHOSEN_PASSWORD, (CHOSEN_NAME,), 1),
+            ("${DFE_ADMIN_PASSWORD}", (CHOSEN_PASSWORD,), 1),
+            ("${DFE_ADMIN_NAME:-root}", (CHOSEN_NAME,), 1),
+            (f"{CHOSEN_PASSWORD} ${{HOME}}", (CHOSEN_PASSWORD,), 1),
+            (f"{CHOSEN_PASSWORD} {CHOSEN_PASSWORD}", (CHOSEN_PASSWORD,), 1),
+            (f"${CHOSEN_PASSWORD}", (CHOSEN_PASSWORD,), 0),
         ],
     )
-    def test_counts_what_compose_would_interpolate(self, text: str, count: int) -> None:
-        assert len(publish_compose.interpolations(text=text)) == count
+    def test_counts_what_compose_would_interpolate(
+        self, text: str, allowed: tuple[str, ...], count: int
+    ) -> None:
+        found = publish_compose.interpolations(allowed=allowed, text=text)
+
+        assert len(found) == count
 
 
 class TestFindings:
@@ -286,34 +313,189 @@ class TestFindings:
             "unlooped ports": 2,
         }
 
-    def test_the_first_login_password_is_the_one_public_value(self) -> None:
+    @pytest.mark.parametrize(
+        ("service", "key", "value", "kind"),
+        [
+            ("secrets-init", "DFE_ADMIN_PASSWORD", "${DFE_ADMIN_PASSWORD:-}", None),
+            ("secrets-init", "DFE_ADMIN_NAME", "${DFE_ADMIN_NAME:-}", None),
+            (
+                "dfe-engine",
+                "DFE_ADMIN_PASSWORD",
+                "${DFE_ADMIN_PASSWORD:-}",
+                "interpolation",
+            ),
+            (
+                "dfe-engine",
+                "DFE_ADMIN_NAME",
+                "${DFE_ADMIN_NAME:-}",
+                "interpolation",
+            ),
+            (
+                "secrets-init",
+                "DFE_ADMIN_PASSWORD",
+                "${DFE_ADMIN_PASSWORD:-letmein}",
+                "literal secrets",
+            ),
+            ("secrets-init", "DFE_ADMIN_PASSWORD", "a-literal", "literal secrets"),
+            (
+                "dfe-engine",
+                "DFE_ENGINE_AUTH_LOCAL_ADMIN_PASSWORD",
+                "a-literal",
+                "literal secrets",
+            ),
+        ],
+    )
+    def test_only_secrets_init_may_read_the_chosen_login_from_the_shell(
+        self, key: str, kind: str | None, service: str, value: str
+    ) -> None:
         model = {
             "services": {
-                "dfe-engine": {
-                    "environment": {
-                        "DFE_ENGINE_AUTH_LOCAL_ADMIN_PASSWORD": FIRST_LOGIN_PASSWORD
-                    },
+                service: {
+                    "environment": {key: value},
                     "image": "x@sha256:" + "0" * 64,
                 }
             }
         }
 
-        assert publish_compose.findings(model=model, text="")["literal secrets"] == []
+        found = publish_compose.findings(model=model, text="")
+
+        assert {k: len(hits) for k, hits in found.items() if hits} == (
+            {kind: 1} if kind else {}
+        )
+
+    @pytest.mark.parametrize(
+        ("where", "refused"),
+        [
+            ("secrets-init-env", False),
+            ("secrets-init-command", True),
+            ("secrets-init-other-key", True),
+            ("secrets-init-image", True),
+            ("another-service-command", True),
+            ("another-service-env", True),
+            ("another-service-image", True),
+            ("config-body", True),
+            ("secrets-init-twice", True),
+        ],
+    )
+    def test_the_chosen_login_reference_is_read_nowhere_but_secrets_init_env(
+        self, refused: bool, where: str
+    ) -> None:
+        digest = "@sha256:" + "0" * 64
+        model = {
+            "configs": {"c": {"content": "x: 1\n"}},
+            "services": {
+                "secrets-init": {
+                    "environment": {
+                        "DFE_ADMIN_NAME": CHOSEN_NAME,
+                        "DFE_ADMIN_PASSWORD": CHOSEN_PASSWORD,
+                    },
+                    "image": f"i{digest}",
+                },
+                "dfe-engine": {"image": f"e{digest}"},
+            },
+        }
+        services = model["services"]
+        match where:
+            case "secrets-init-command":
+                services["secrets-init"]["command"] = ["echo", CHOSEN_PASSWORD]
+            case "secrets-init-other-key":
+                services["secrets-init"]["environment"]["OTHER"] = CHOSEN_NAME
+            case "secrets-init-image":
+                services["secrets-init"]["image"] = f"{CHOSEN_NAME}{digest}"
+            case "another-service-command":
+                services["dfe-engine"]["command"] = ["echo", CHOSEN_PASSWORD]
+            case "another-service-env":
+                services["dfe-engine"]["environment"] = {"X": CHOSEN_PASSWORD}
+            case "another-service-image":
+                services["dfe-engine"]["image"] = f"{CHOSEN_PASSWORD}{digest}"
+            case "config-body":
+                model["configs"]["c"]["content"] = f"x: {CHOSEN_PASSWORD}\n"
+            case "secrets-init-twice":
+                services["secrets-init"]["environment"]["DFE_ADMIN_PASSWORD"] = (
+                    f"{CHOSEN_PASSWORD}{CHOSEN_PASSWORD}"
+                )
+
+        found = publish_compose.findings(model=model, text=json.dumps(model))
+
+        blocking = [
+            kind
+            for kind, hits in found.items()
+            if hits and kind in ("interpolation", "literal secrets")
+        ]
+        assert bool(blocking) is refused
 
 
 class TestDemoRoles:
     @pytest.mark.usefixtures("engine_python_here")
-    def test_reads_the_committed_demo_as_make_demo_does(self) -> None:
+    # Every committed pack shape: syslog vendors, Beats, JSON with a fetcher, fetchers with replays
+    @pytest.mark.parametrize(
+        "pack", ["", "cyber", "telco", "theatre"], ids=lambda p: p or "demo"
+    )
+    def test_reads_each_committed_pack_as_its_seeding_does(self, pack: str) -> None:
+        root = demo_pack_dir(pack=pack)
         roles = publish_compose.demo_roles(
-            events=demo.EVENTS_DIR, sources=demo.SOURCES_DIR
+            events=root / "events", sources=root / "sources"
         )
-        loaded = demo.load_demo(events=demo.EVENTS_DIR, sources=demo.SOURCES_DIR)
+        loaded = demo.load_demo(events=root / "events", sources=root / "sources")
 
+        assert pack in SEEDED_PACKS
         assert roles == {
+            "beats": sorted(body["source"] for body in loaded.beats),
             "fetcher": sorted(body["source"] for body in loaded.fetchers),
-            "intake": [loaded.intake["source"]],
+            "intake": [] if loaded.intake is None else [loaded.intake["source"]],
+            "json": sorted(body["source"] for body in loaded.json),
+            "replay": sorted(body["source"] for body in loaded.replay),
             "vendor": sorted(body["source"] for body in loaded.vendors),
         }
+
+    @pytest.mark.parametrize(
+        ("tool", "expected"),
+        [
+            (
+                True,
+                {
+                    "beats": ["okta"],
+                    "fetcher": [],
+                    "intake": ["intake"],
+                    "json": [],
+                    "replay": [],
+                    "vendor": ["cisco-asa"],
+                },
+            ),
+            (False, None),
+        ],
+        ids=["replayed", "no-replay-tool"],
+    )
+    def test_a_source_with_beats_events_is_replayed_not_detected(
+        self, expected: dict | None, tmp_path: Path, tool: bool
+    ) -> None:
+        (tmp_path / "sources").mkdir()
+        for name in ("cisco-asa", "intake", "okta"):
+            (tmp_path / "sources" / f"{name}.yaml").write_text(
+                "x: 1\n", encoding="utf-8"
+            )
+        for name, line in (("cisco-asa", SYSLOG_LINE), ("okta", BEATS_LINE)):
+            (tmp_path / "events" / name).mkdir(parents=True)
+            (tmp_path / "events" / name / "demo.log").write_text(line, encoding="utf-8")
+        if tool:
+            (tmp_path / "events" / "generate.py").write_text("", encoding="utf-8")
+
+        if expected is None:
+            with pytest.raises(publish_compose.PublishError, match="generate.py"):
+                publish_compose.demo_roles(
+                    events=tmp_path / "events", sources=tmp_path / "sources"
+                )
+            return
+        roles = publish_compose.demo_roles(
+            events=tmp_path / "events", sources=tmp_path / "sources"
+        )
+        assert roles == expected
+        assert publish_compose.demo_instances(roles=roles) == {
+            "dfe-transform-elastic": ["intake", "okta"]
+        }
+        assert publish_compose.demo_hosted(roles=roles) == (
+            "dfe-transform-elastic=intake,cisco-asa,okta"
+        )
 
     @pytest.mark.parametrize(
         ("sources", "events"),
@@ -334,10 +516,146 @@ class TestDemoRoles:
         for name in events:
             (tmp_path / "events" / name).mkdir()
 
-        with pytest.raises(publish_compose.PublishError, match="needs one intake"):
+        with pytest.raises(
+            publish_compose.PublishError, match="one intake and at least one vendor"
+        ):
             publish_compose.demo_roles(
                 events=tmp_path / "events", sources=tmp_path / "sources"
             )
+
+    @pytest.mark.parametrize("dirs", [[], ["sources", "events"]], ids=["bare", "empty"])
+    def test_a_pack_with_no_source_files_has_no_roles(
+        self, dirs: list[str], tmp_path: Path
+    ) -> None:
+        for name in dirs:
+            (tmp_path / name).mkdir()
+
+        roles = publish_compose.demo_roles(
+            events=tmp_path / "events", sources=tmp_path / "sources"
+        )
+
+        assert roles == {
+            "beats": [],
+            "fetcher": [],
+            "intake": [],
+            "json": [],
+            "replay": [],
+            "vendor": [],
+        }
+        assert publish_compose.demo_instances(roles=roles) == {}
+        assert publish_compose.demo_hosted(roles=roles) == ""
+
+    @pytest.mark.parametrize(
+        ("text", "expected"),
+        [
+            ("match:\n  field: kind\n", {"json": ["kpis"], "vendor": []}),
+            ("match:\n  field: kind\ntransform:\n  x: 1\n", None),
+            ("x: 1\n", None),
+        ],
+        ids=["matched-no-transform", "matched-with-transform", "unmatched"],
+    )
+    def test_a_matched_source_with_no_transform_replays_its_json_and_needs_no_intake(
+        self, expected: dict | None, tmp_path: Path, text: str
+    ) -> None:
+        (tmp_path / "sources").mkdir()
+        (tmp_path / "sources" / "kpis.yaml").write_text(text, encoding="utf-8")
+        (tmp_path / "sources" / "bgp.yaml").write_text(
+            "fetcher:\n  x: 1\n", encoding="utf-8"
+        )
+        (tmp_path / "events" / "kpis").mkdir(parents=True)
+        # A fetcher's events are its replay, never a vendor's
+        (tmp_path / "events" / "bgp").mkdir()
+        (tmp_path / "events" / "generate.py").write_text("", encoding="utf-8")
+
+        if expected is None:
+            # Anything else with events is a vendor, which needs an intake to detect it
+            with pytest.raises(publish_compose.PublishError, match="needs one intake"):
+                publish_compose.demo_roles(
+                    events=tmp_path / "events", sources=tmp_path / "sources"
+                )
+            return
+        roles = publish_compose.demo_roles(
+            events=tmp_path / "events", sources=tmp_path / "sources"
+        )
+
+        assert roles == {
+            "beats": [],
+            "fetcher": ["bgp"],
+            "intake": [],
+            "replay": ["bgp"],
+            **expected,
+        }
+        assert publish_compose.demo_instances(roles=roles) == {}
+        assert publish_compose.demo_hosted(roles=roles) == ""
+
+    def test_refuses_json_sources_with_no_replay_tool(self, tmp_path: Path) -> None:
+        (tmp_path / "sources").mkdir()
+        (tmp_path / "sources" / "kpis.yaml").write_text(
+            "match:\n  field: kind\n", encoding="utf-8"
+        )
+        (tmp_path / "events" / "kpis").mkdir(parents=True)
+
+        with pytest.raises(
+            publish_compose.PublishError, match=r"\['kpis'\].*generate.py"
+        ):
+            publish_compose.demo_roles(
+                events=tmp_path / "events", sources=tmp_path / "sources"
+            )
+
+
+class TestDemoFile:
+    @pytest.mark.parametrize(
+        ("pack", "expected"),
+        [
+            ("", ("dfe-demo.yaml", "demo-", "dfe-demo", "demo")),
+            (
+                "cyber",
+                ("dfe-demo-cyber.yaml", "demo-cyber-", "dfe-demo-cyber", "demo-cyber"),
+            ),
+            (
+                "theatre",
+                (
+                    "dfe-demo-theatre.yaml",
+                    "demo-theatre-",
+                    "dfe-demo-theatre",
+                    "demo-theatre",
+                ),
+            ),
+        ],
+        ids=["demo", "cyber", "theatre"],
+    )
+    def test_a_pack_renders_its_own_project_and_prefix(
+        self, tmp_path: Path, pack: str, expected: tuple[str, str, str, str]
+    ) -> None:
+        target = publish_compose.demo_file(pack=pack)
+        tree = _tree(root=tmp_path)
+
+        model = publish_compose.published(
+            container_prefix=target.prefix,
+            model=_model(tree=tree),
+            name=target.project,
+            tree=tree,
+        )
+
+        assert (target.file, target.prefix, target.project, target.tag) == expected
+        assert model["name"] == target.project
+        assert model["services"]["dfe-engine"]["container_name"] == (
+            f"{target.prefix}dfe-engine"
+        )
+
+    @pytest.mark.parametrize(
+        "argv",
+        [["--pack", "nope"], ["--pack", "../demo"], ["--pack", "Cyber"]],
+        ids=["no-directory", "path", "upper-case"],
+    )
+    def test_an_unknown_pack_exits_2_naming_the_packs_that_exist(
+        self, capsys: pytest.CaptureFixture[str], argv: list[str]
+    ) -> None:
+        with pytest.raises(SystemExit) as exited:
+            publish_compose.main(argv=argv)
+
+        assert exited.value.code == 2
+        assert "resources/demo-cyber" in capsys.readouterr().err
 
 
 def _stack(*, services: list[str]) -> dict:
@@ -405,6 +723,7 @@ class TestDemoOverlay:
             "/opt/dfe-docker/resources/demo/archive.py"
         )
         assert model["volumes"][publish_compose.DEMO_FEED_VOLUME] == {}
+        assert "demo-beats" not in services
         # Only the demo's transformed sources, a console one is refused
         assert (
             services["dfe-engine"]["environment"][publish_compose.HOSTED_INSTANCES_KEY]
@@ -416,6 +735,228 @@ class TestDemoOverlay:
             "docker compose -f oci://ghcr.io/hyperi-io/dfe-docker:demo up -d "
             "--force-recreate {service}"
         )
+
+    def test_a_pack_with_no_sources_seeds_itself_and_replays_nothing(self) -> None:
+        stack = _stack(
+            services=[
+                name
+                for name in DEMO_STACK
+                if name != "dfe-transform-elastic-demo-syslog"
+            ]
+        )
+        roles = {
+            "beats": [],
+            "fetcher": [],
+            "intake": [],
+            "json": [],
+            "replay": [],
+            "vendor": [],
+        }
+
+        model = publish_compose.demo_overlay(
+            archive={**ARCHIVE, "sources": []},
+            image="i",
+            model=stack,
+            pack="cyber",
+            roles=roles,
+            stream=["scripts/replay_syslog.py", "tcp", "20"],
+        )
+
+        services = model["services"]
+        for helper in ("demo-sources", "demo-console"):
+            assert services[helper]["entrypoint"] == [
+                "python3",
+                "/opt/dfe-docker/scripts/demo_seed.py",
+                "--pack",
+                "cyber",
+            ]
+        for absent in (
+            "demo-feed",
+            "demo-stream",
+            "demo-prune",
+            "demo-beats",
+            "demo-replay",
+        ):
+            assert absent not in services
+        assert publish_compose.DEMO_FEED_VOLUME not in model.get("volumes", {})
+        assert "demo-sources" in services["dfe-receiver"]["depends_on"]
+        assert "demo-sources" not in services["dfe-fetcher"].get("depends_on", {})
+        engine = services["dfe-engine"]["environment"]
+        assert engine[publish_compose.HOSTED_INSTANCES_KEY] == ""
+        assert engine[publish_compose.APPLY_COMMAND_KEY] == (
+            "docker compose -f oci://ghcr.io/hyperi-io/dfe-docker:demo-cyber up -d "
+            "--force-recreate {service}"
+        )
+
+    def test_a_pack_with_beats_sources_replays_them_and_hosts_their_transforms(
+        self,
+    ) -> None:
+        beats = ["crowdstrike", "okta"]
+        instances = [f"dfe-transform-elastic-{name}" for name in beats]
+        roles = {**ROLES, "beats": beats}
+
+        model = publish_compose.demo_overlay(
+            archive=ARCHIVE,
+            image="i",
+            model=_stack(services=[*DEMO_STACK, *instances]),
+            pack="cyber",
+            roles=roles,
+            stream=["scripts/replay_syslog.py", "tcp", "20"],
+        )
+
+        services = model["services"]
+        replay = services["demo-beats"]
+        assert replay["entrypoint"] == [
+            "python3",
+            "-I",
+            "/opt/dfe-docker/resources/demo-cyber/events/generate.py",
+            "replay",
+            "--target",
+            "http://dfe-receiver:8080/ingest",
+            "--sources",
+            "crowdstrike,okta",
+            "--loop",
+            "--duration",
+            str(demo.STREAM_SECONDS),
+        ]
+        assert replay["depends_on"] == {
+            "demo-console": {"condition": "service_completed_successfully"},
+            "demo-sources": {"condition": "service_completed_successfully"},
+            "dfe-receiver": {"condition": "service_healthy"},
+        }
+        assert replay["restart"] == "unless-stopped"
+        for held in instances:
+            assert "demo-sources" in services[held]["depends_on"]
+        assert services["dfe-engine"]["environment"][
+            publish_compose.HOSTED_INSTANCES_KEY
+        ] == ("dfe-transform-elastic=demo-syslog,cisco-asa,fortinet,crowdstrike,okta")
+        assert publish_compose.demo_instances(roles=roles) == {
+            "dfe-transform-elastic": ["demo-syslog", "crowdstrike", "okta"]
+        }
+
+    def test_a_pack_of_json_sources_replays_them_with_no_transform_or_stream(
+        self,
+    ) -> None:
+        stack = _stack(
+            services=[
+                name
+                for name in DEMO_STACK
+                if name != "dfe-transform-elastic-demo-syslog"
+            ]
+        )
+        roles = {
+            "beats": [],
+            "fetcher": ["bgp-updates"],
+            "intake": [],
+            "json": ["core-probes", "ran-kpis"],
+            "replay": [],
+            "vendor": [],
+        }
+
+        model = publish_compose.demo_overlay(
+            archive={**ARCHIVE, "sources": []},
+            image="i",
+            model=stack,
+            pack="telco",
+            roles=roles,
+            stream=["scripts/replay_syslog.py", "tcp", "20"],
+        )
+
+        services = model["services"]
+        replay = services["demo-beats"]["entrypoint"]
+        assert replay[2:4] == [
+            "/opt/dfe-docker/resources/demo-telco/events/generate.py",
+            "replay",
+        ]
+        assert replay[replay.index("--sources") + 1] == "core-probes,ran-kpis"
+        assert services["demo-beats"]["depends_on"]["demo-console"] == {
+            "condition": "service_completed_successfully"
+        }
+        for absent in ("demo-feed", "demo-stream", "demo-prune"):
+            assert absent not in services
+        assert "demo-sources" in services["dfe-fetcher"]["depends_on"]
+        assert publish_compose.demo_instances(roles=roles) == {}
+        assert (
+            services["dfe-engine"]["environment"][publish_compose.HOSTED_INSTANCES_KEY]
+            == ""
+        )
+
+    def test_refuses_a_stack_missing_a_beats_transform(self) -> None:
+        with pytest.raises(publish_compose.PublishError, match="okta"):
+            publish_compose.demo_overlay(
+                archive=ARCHIVE,
+                image="i",
+                model=_stack(services=DEMO_STACK),
+                pack="cyber",
+                roles={**ROLES, "beats": ["okta"]},
+                stream=["scripts/replay_syslog.py", "tcp", "20"],
+            )
+
+    def test_a_pack_of_fetchers_alone_serves_their_replay_and_streams_nothing(
+        self,
+    ) -> None:
+        stack = _stack(
+            services=[
+                name
+                for name in DEMO_STACK
+                if name != "dfe-transform-elastic-demo-syslog"
+            ]
+        )
+        fetchers = ["adsb-tracks", "ais-tracks"]
+        roles = {
+            "beats": [],
+            "fetcher": fetchers,
+            "intake": [],
+            "json": [],
+            "replay": fetchers,
+            "vendor": [],
+        }
+
+        model = publish_compose.demo_overlay(
+            archive={**ARCHIVE, "sources": []},
+            image="i",
+            model=stack,
+            pack="theatre",
+            roles=roles,
+            stream=["scripts/replay_syslog.py", "tcp", "20"],
+        )
+
+        services = model["services"]
+        replay = services[publish_compose.REPLAY_SERVICE]
+        assert replay["entrypoint"] == [
+            "python3",
+            "/opt/dfe-docker/scripts/replay_fetch.py",
+            "--pack",
+            "theatre",
+        ]
+        assert (replay["image"], replay["restart"]) == ("i", "unless-stopped")
+        for absent in ("demo-feed", "demo-stream", "demo-prune"):
+            assert absent not in services
+        assert services["dfe-fetcher"]["depends_on"]["demo-replay"] == {
+            "condition": "service_started",
+            "required": True,
+        }
+        assert "demo-sources" in services["dfe-fetcher"]["depends_on"]
+        assert (
+            services["dfe-engine"]["environment"][publish_compose.HOSTED_INSTANCES_KEY]
+            == ""
+        )
+
+    def test_the_demo_seeds_with_no_pack_argument(self) -> None:
+        model = publish_compose.demo_overlay(
+            archive=ARCHIVE,
+            image="i",
+            model=_stack(services=DEMO_STACK),
+            roles=ROLES,
+            stream=["scripts/replay_syslog.py", "tcp", "20"],
+        )
+
+        for helper in ("demo-sources", "demo-feed", "demo-console"):
+            assert model["services"][helper]["entrypoint"] == [
+                "python3",
+                "/opt/dfe-docker/scripts/demo_seed.py",
+            ]
+        assert publish_compose.REPLAY_SERVICE not in model["services"]
 
     def test_declares_no_fetcher_instance(self) -> None:
         # Every fetcher source runs in the one committed dfe-fetcher
@@ -460,10 +1001,12 @@ class TestTags:
 CH_SECRET = "c" * 24
 OTEL_SECRET = "o" * 24
 JWT_SECRET = "j" * 48
+ADMIN_SECRET = "a" * 32
 MINTED = {
     CH_SECRET: "CLICKHOUSE_PASSWORD",
     OTEL_SECRET: "DFE_OTEL_WRITER_CLICKHOUSE_PASSWORD",
     JWT_SECRET: "DFE_ENGINE_API_JWT_SECRET",
+    ADMIN_SECRET: "DFE_ENGINE_AUTH_LOCAL_ADMIN_PASSWORD",
 }
 # What each image's registry config runs, in place of a read
 IMAGE_COMMANDS = {
@@ -497,6 +1040,15 @@ def _secret_stack() -> dict:
                     ]
                 },
                 "image": "clickhouse",
+            },
+            "dfe-engine": {
+                "command": ["serve"],
+                "entrypoint": ["dfe-engine"],
+                "environment": {
+                    "DFE_ENGINE_API_JWT_SECRET": JWT_SECRET,
+                    "DFE_ENGINE_AUTH_LOCAL_ADMIN_PASSWORD": ADMIN_SECRET,
+                },
+                "image": "engine",
             },
             "dfe-hunt-runner": {
                 "command": ["run"],
@@ -550,7 +1102,16 @@ class TestSecure:
         }
         init = model["services"]["secrets-init"]
         assert (init["user"], init["image"]) == ("0:0", "dfe-docker@sha256:" + "d" * 64)
+        assert init["environment"] == {
+            "DFE_ADMIN_NAME": "${DFE_ADMIN_NAME:-}",
+            "DFE_ADMIN_PASSWORD": "${DFE_ADMIN_PASSWORD:-}",
+        }
         assert model["volumes"]["dfe-secrets"] == {}
+        assert plan["consumers"]["dfe-engine"]["env"] == {
+            "DFE_ENGINE_API_JWT_SECRET": "@@DFE_ENGINE_API_JWT_SECRET@@",
+            "DFE_ENGINE_AUTH_LOCAL_ADMIN_NAME": "@@DFE_ENGINE_AUTH_LOCAL_ADMIN_NAME@@",
+            "DFE_ENGINE_AUTH_LOCAL_ADMIN_PASSWORD": "@@DFE_ENGINE_AUTH_LOCAL_ADMIN_PASSWORD@@",
+        }
 
     def test_a_consumer_sources_its_own_directory_and_then_runs_what_it_ran(
         self,
@@ -623,7 +1184,7 @@ class TestSecure:
 
 
 class TestMintedSecrets:
-    def test_reads_every_generated_secret_but_the_public_first_login(
+    def test_reads_every_generated_secret_the_admin_password_too(
         self, tmp_path: Path
     ) -> None:
         (tmp_path / "env").mkdir()
@@ -633,13 +1194,14 @@ class TestMintedSecrets:
         for name in ("engine.env", "hyperdx.env", "ui.env"):
             (tmp_path / "env" / name).write_text("", encoding="utf-8")
         (tmp_path / "env" / "engine.env").write_text(
-            f"DFE_ENGINE_AUTH_LOCAL_ADMIN_PASSWORD={FIRST_LOGIN_PASSWORD}\nDFE_ENGINE_AUTH_BREAKGLASS_PASSWORD=bg\n",
+            "DFE_ENGINE_AUTH_LOCAL_ADMIN_PASSWORD=adm\nDFE_ENGINE_AUTH_BREAKGLASS_PASSWORD=bg\n",
             encoding="utf-8",
         )
 
         assert publish_compose.minted_secrets(tree=tmp_path) == {
-            "ch": "CLICKHOUSE_PASSWORD",
+            "adm": "DFE_ENGINE_AUTH_LOCAL_ADMIN_PASSWORD",
             "bg": "DFE_ENGINE_AUTH_BREAKGLASS_PASSWORD",
+            "ch": "CLICKHOUSE_PASSWORD",
         }
 
 
@@ -675,10 +1237,11 @@ class TestSecretsInit:
         assert (tmp_path / "otel-collector" / "CLICKHOUSE_PASSWORD").read_text(
             encoding="utf-8"
         ) == first
-        assert re.fullmatch(r"[A-Za-z0-9]{24}", first)
+        assert re.fullmatch(rf"[A-Za-z0-9]{{{init._LEN_CREDENTIAL}}}", first)
         env = (tmp_path / "dfe-hyperdx" / "env").read_text(encoding="utf-8")
         assert re.fullmatch(
-            r"MONGO_URI='mongodb://u:[A-Za-z0-9]{24}@h/db\?a=1&b=2'\n", env
+            rf"MONGO_URI='mongodb://u:[A-Za-z0-9]{{{init._LEN_CREDENTIAL}}}@h/db\?a=1&b=2'\n",
+            env,
         )
         assert stat.S_IMODE((tmp_path / "dfe-hyperdx" / "env").stat().st_mode) == 0o440
         assert stat.S_IMODE((tmp_path / "dfe-hyperdx").stat().st_mode) == 0o750
@@ -704,7 +1267,9 @@ class TestSecretsInit:
             text=True,
         ).stdout
 
-        assert re.fullmatch(r"mongodb://u:[A-Za-z0-9]{24}@h/db\?a=1&b=2", sourced)
+        assert re.fullmatch(
+            rf"mongodb://u:[A-Za-z0-9]{{{init._LEN_CREDENTIAL}}}@h/db\?a=1&b=2", sourced
+        )
 
     @pytest.mark.parametrize(
         "template", ["@@NOT_A_SECRET@@", "x@@lower@@"], ids=["unknown-key", "not-a-key"]
@@ -722,6 +1287,144 @@ class TestSecretsInit:
         else:
             with pytest.raises(secrets_init.SecretsError, match="does not mint"):
                 secrets_init.apply(plan=plan, root=tmp_path)
+
+
+class TestAdminLogin:
+    def _plan(self) -> dict:
+        return {
+            "consumers": {
+                "dfe-engine": {
+                    "env": {
+                        "DFE_ENGINE_AUTH_LOCAL_ADMIN_NAME": "@@DFE_ENGINE_AUTH_LOCAL_ADMIN_NAME@@",
+                        "DFE_ENGINE_AUTH_LOCAL_ADMIN_PASSWORD": "@@DFE_ENGINE_AUTH_LOCAL_ADMIN_PASSWORD@@",
+                    },
+                    "gid": os.getgid(),
+                }
+            }
+        }
+
+    def _engine_env(self, root: Path) -> dict[str, str]:
+        sourced = subprocess.run(
+            [
+                "sh",
+                "-c",
+                '. "$0" && printf "%s\\n%s" "$DFE_ENGINE_AUTH_LOCAL_ADMIN_NAME" "$DFE_ENGINE_AUTH_LOCAL_ADMIN_PASSWORD"',
+                str(root / "dfe-engine" / "env"),
+            ],
+            capture_output=True,
+            check=True,
+            text=True,
+        ).stdout
+        name, password = sourced.split("\n")
+        return {"name": name, "password": password}
+
+    def test_mints_a_password_for_admin_and_login_prints_what_the_engine_reads(
+        self, tmp_path: Path
+    ) -> None:
+        printed = secrets_init.login(root=tmp_path)
+        secrets_init.apply(plan=self._plan(), root=tmp_path)
+
+        engine = self._engine_env(tmp_path)
+        assert engine["name"] == "admin"
+        assert re.fullmatch(
+            rf"[A-Za-z0-9]{{{init._LEN_CREDENTIAL}}}", engine["password"]
+        )
+        assert printed == (
+            f"Console login: admin / {engine['password']}\n"
+            "The console makes you change this password at first login.\n"
+        )
+        assert secrets_init.login(root=tmp_path) == printed
+
+    def test_a_chosen_login_is_used_kept_and_replaced_by_a_later_choice(
+        self, tmp_path: Path
+    ) -> None:
+        chosen = {"DFE_ADMIN_NAME": "kerry", "DFE_ADMIN_PASSWORD": "a chosen phrase 1"}
+        secrets_init.apply(environ=chosen, plan=self._plan(), root=tmp_path)
+        assert self._engine_env(tmp_path) == {
+            "name": "kerry",
+            "password": "a chosen phrase 1",
+        }
+
+        secrets_init.apply(environ={}, plan=self._plan(), root=tmp_path)
+        assert self._engine_env(tmp_path)["password"] == "a chosen phrase 1"
+        assert "kerry / a chosen phrase 1" in secrets_init.login(root=tmp_path)
+
+        secrets_init.apply(
+            environ={"DFE_ADMIN_PASSWORD": "another phrase 22"},
+            plan=self._plan(),
+            root=tmp_path,
+        )
+        assert self._engine_env(tmp_path) == {
+            "name": "kerry",
+            "password": "another phrase 22",
+        }
+
+    def test_login_ignores_the_shell_so_it_prints_what_the_engine_was_given(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        secrets_init.apply(plan=self._plan(), root=tmp_path)
+        before = secrets_init.login(root=tmp_path)
+        monkeypatch.setenv("DFE_ADMIN_PASSWORD", "never printed 123")
+
+        assert secrets_init.login(root=tmp_path) == before
+
+    @pytest.mark.parametrize(
+        ("variable", "value", "why"),
+        [
+            ("DFE_ADMIN_PASSWORD", "short", "at least 12 characters"),
+            ("DFE_ADMIN_PASSWORD", "x" * 11, "at least 12 characters"),
+            ("DFE_ADMIN_PASSWORD", "x" * 73, "at most 72 bytes"),
+            ("DFE_ADMIN_PASSWORD", "é" * 37, "at most 72 bytes"),
+            ("DFE_ADMIN_PASSWORD", "changeme", "at least 12 characters"),
+            ("DFE_ADMIN_PASSWORD", "  changeme  ", "shipped placeholder"),
+            ("DFE_ADMIN_PASSWORD", " " * 12, "is blank"),
+            ("DFE_ADMIN_PASSWORD", " " * 5, "is blank"),
+            ("DFE_ADMIN_PASSWORD", "twelve chars\nand more", "control character"),
+            ("DFE_ADMIN_PASSWORD", "twelve\tchars here", "control character"),
+            ("DFE_ADMIN_NAME", "-admin", "letters, digits"),
+            ("DFE_ADMIN_NAME", "two words", "letters, digits"),
+            ("DFE_ADMIN_NAME", "a/b", "letters, digits"),
+            ("DFE_ADMIN_NAME", "a" * 129, "letters, digits"),
+        ],
+    )
+    def test_refuses_a_login_the_engine_would_not_take_naming_the_variable_only(
+        self, tmp_path: Path, variable: str, value: str, why: str
+    ) -> None:
+        with pytest.raises(secrets_init.SecretsError, match=why) as refused:
+            secrets_init.apply(
+                environ={variable: value}, plan=self._plan(), root=tmp_path
+            )
+
+        assert variable in str(refused.value)
+        assert not value.strip() or value.strip() not in str(refused.value)
+        assert not (
+            tmp_path / ".minted" / "DFE_ENGINE_AUTH_LOCAL_ADMIN_PASSWORD"
+        ).exists()
+
+    def test_main_prints_the_login_and_fails_a_refused_choice_with_a_message(
+        self,
+        capsys: pytest.CaptureFixture[str],
+        monkeypatch: pytest.MonkeyPatch,
+        tmp_path: Path,
+    ) -> None:
+        plan = tmp_path / "plan.json"
+        plan.write_text(json.dumps(self._plan()), encoding="utf-8")
+        root = tmp_path / "root"
+        root.mkdir()
+        args = ["--plan", str(plan), "--root", str(root)]
+
+        assert secrets_init.main(argv=[*args, "login"]) == 0
+        out = capsys.readouterr().out
+        assert re.fullmatch(
+            r"Console login: admin / [A-Za-z0-9]{32}\nThe console makes you change this password at first login\.\n",
+            out,
+        )
+
+        monkeypatch.setenv("DFE_ADMIN_PASSWORD", "short")
+        assert secrets_init.main(argv=args) == 1
+        assert "DFE_ADMIN_PASSWORD must be at least 12 characters" in (
+            capsys.readouterr().err
+        )
 
 
 def test_the_scratch_tree_holds_what_the_image_carries() -> None:

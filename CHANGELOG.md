@@ -3,6 +3,36 @@
 Rendered by CI and committed back at the end of a release -- do not edit by
 hand. Release notes also appear on the GitHub Releases page, one per tag.
 
+## [1.0.8](https://github.com/hyperi-io/dfe-docker/compare/v1.0.7...v1.0.8) (2026-11-16)
+
+### Bug Fixes
+
+* **compose:** mint the admin login and print it with one command ([#396](https://github.com/hyperi-io/dfe-docker/issues/396)) ([e6563d8](https://github.com/hyperi-io/dfe-docker/commit/e6563d868a7e820a55f5b0792bf7706fcda46289))
+* **compose:** pass the engine the images the stack runs ([#402](https://github.com/hyperi-io/dfe-docker/issues/402)) ([2c5cc48](https://github.com/hyperi-io/dfe-docker/commit/2c5cc48b5d3dd4e022f533b30c0c0d54503ae67b))
+* **compose:** publish syslog and flow listeners through port keys ([#400](https://github.com/hyperi-io/dfe-docker/issues/400)) ([0339b29](https://github.com/hyperi-io/dfe-docker/commit/0339b294b7e57320739cefbb48f158cf757e4035))
+* **compose:** TLS ingest via dfe-proxy and fetcher input mount ([#401](https://github.com/hyperi-io/dfe-docker/issues/401)) ([cd82ccf](https://github.com/hyperi-io/dfe-docker/commit/cd82ccfc9909e87d2fbb12d2cf39d6b5411fc400))
+* **make:** block ci while a demo pack is streaming ([#394](https://github.com/hyperi-io/dfe-docker/issues/394)) ([43d1659](https://github.com/hyperi-io/dfe-docker/commit/43d165951b0d05a57f7f35dd14c58faa3e86fa30))
+* **post:** check dfe-ui's metrics and correct stale comments ([#404](https://github.com/hyperi-io/dfe-docker/issues/404)) ([e4464ea](https://github.com/hyperi-io/dfe-docker/commit/e4464eaa263e9b238e72c605ed53dde9e1e9f4d8)), closes [#1099](https://github.com/hyperi-io/dfe-docker/issues/1099)
+* **secrets:** mint 32 and 64 character alphanumeric secrets ([#395](https://github.com/hyperi-io/dfe-docker/issues/395)) ([b82f579](https://github.com/hyperi-io/dfe-docker/commit/b82f579dce19597e8be05a1ca014a904f4f313da))
+* **stack:** refuse a prerelease stack pin on a release ([#391](https://github.com/hyperi-io/dfe-docker/issues/391)) ([20f139a](https://github.com/hyperi-io/dfe-docker/commit/20f139a315ebecc1c6fd80fbb0b0556b62d578c7))
+
+## [1.0.7](https://github.com/hyperi-io/dfe-docker/compare/v1.0.6...v1.0.7) (2026-11-14)
+
+### Bug Fixes
+
+* **stack:** pin the stack dial at 2.2.2 ([#377](https://github.com/hyperi-io/dfe-docker/issues/377)) ([c7aac00](https://github.com/hyperi-io/dfe-docker/commit/c7aac00918de5c368093105ea8b4361ed063acfd))
+
+## [1.0.6](https://github.com/hyperi-io/dfe-docker/compare/v1.0.5...v1.0.6) (2026-11-13)
+
+### Bug Fixes
+
+* **demo:** add the cyber demo pack's sources, events and console ([#384](https://github.com/hyperi-io/dfe-docker/issues/384)) ([0eae396](https://github.com/hyperi-io/dfe-docker/commit/0eae396bd8955bb16891fa7cb2ef3d39c344e368))
+* **demo:** add the telco demo pack ([#389](https://github.com/hyperi-io/dfe-docker/issues/389)) ([7a45cd3](https://github.com/hyperi-io/dfe-docker/commit/7a45cd37440652cc2eed4bb499e6f1db6659c8fc))
+* **demo:** add the theatre and battlespace demo pack ([#386](https://github.com/hyperi-io/dfe-docker/issues/386)) ([863c6bc](https://github.com/hyperi-io/dfe-docker/commit/863c6bcd09c32dc6fb7cbec89f07d4486741aa08))
+* **demo:** publish one compose file per demo pack ([#383](https://github.com/hyperi-io/dfe-docker/issues/383)) ([e729085](https://github.com/hyperi-io/dfe-docker/commit/e7290857ade15242d1174d26d07fb6387ffc3bbe))
+* **demo:** replay a pack's Beats sources and host their transforms ([#385](https://github.com/hyperi-io/dfe-docker/issues/385)) ([be05917](https://github.com/hyperi-io/dfe-docker/commit/be059173adff716d18d35bef7516cdad149d359c))
+* **otel:** log HyperDX under dfe-hyperdx ([#371](https://github.com/hyperi-io/dfe-docker/issues/371)) ([b28bdc6](https://github.com/hyperi-io/dfe-docker/commit/b28bdc642f3273c00636fb3f260fd1d8c002c584))
+
 ## [1.0.5](https://github.com/hyperi-io/dfe-docker/compare/v1.0.4...v1.0.5) (2026-11-12)
 
 ### Bug Fixes

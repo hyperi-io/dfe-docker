@@ -11,18 +11,19 @@
 
 dfe-infra's docs generator pastes its strings verbatim, so every command in it is complete and every value comes from a file this repo already reads: the default profile and its transport from the Makefile and service_profiles.yaml, the stack from deployment.example.yaml's version.pin through stack.py and the console URL from the address next-auth is handed in docker-compose.yml. The commands come from the OCI artifacts scripts/publish_compose.py writes and the release publishes beside the dfe-docker image.
 
-Schema 1:
+Schema 2 is schema 1 plus `packs`:
 
-  schema       1
+  schema       2
   stack        the stack the release's versioned artifacts install
   min_compose  the oldest Docker Compose that runs a published file: the newer of the newest feature the compose files use and `-f oci://`
   min_engine   the oldest Docker Engine that mounts a volume subpath, which the published files do
   console_url  where the console answers on a default install
-  login        the console login a published file issues, which the console makes its owner change
+  login        where the console login comes from: the file mints the password at first start and the second command in `up` and `demo` prints it, which the console makes its owner change
   kind         "compose"
   profiles     [{name, default, transport, ref_latest, ref_pinned}], the one profile the stack file runs, default true
-  up, demo     {latest: [command], pinned: [command]}, the one command that starts the stack and the demo
+  up, demo     {latest: [command], pinned: [command]}, the command that starts the stack and the demo, then the one that prints its console login
   notes        {up, demo}, what to do once each command has run
+  packs        [{name, title, use_case, latest: [command], pinned: [command]}], each list its `up` pair with the pack's tag, one per resources/demo-<name>/ directory in directory order, `title` and `use_case` from its demo.json, `use_case` the hyperi.io path that describes it such as /solutions/theatre-and-battlespace/
 
 `--print-stack` prints the stack alone, which the release workflow builds the version-tagged image with.
 
@@ -47,19 +48,27 @@ import resolve_profile  # noqa: E402
 import stack  # noqa: E402
 from _common import (  # noqa: E402
     COMPOSE_FILE,
-    FIRST_LOGIN_PASSWORD,
+    DEMO_PACK_NAME,
+    DEMO_PACKS_ROOT,
+    LOGIN_VERB,
     PUBLISHED_DEMO_TAG,
     PUBLISHED_STACK_TAG,
     REPO_ROOT,
     SERVICE_PROFILES_FILE,
+    _rel_path,
+    demo_pack_dir,
+    demo_pack_names,
+    demo_pack_tag,
 )
 
-SCHEMA = 1
+SCHEMA = 2
+PACK_MANIFEST = "demo.json"
+# A hyperi.io path, such as /solutions/theatre-and-battlespace/
+_USE_CASE = re.compile(r"/([a-z0-9]+(-[a-z0-9]+)*/)*")
 # The release that reads `-f oci://` without an opt-in
 OCI_REMOTE_COMPOSE = "2.34.0"
 # VolumeOptions.Subpath, which API 1.45 added
 MIN_ENGINE = "26.0"
-ADMIN_NAME = "admin"
 # Where next-auth is told the console lives
 _CONSOLE_ORIGIN = re.compile(
     r"NEXTAUTH_URL: \$\{DFE_EXTERNAL_ORIGIN:-(?P<origin>[^}]+)\}:\$\{DFE_UI_PORT:-(?P<port>\d+)\}"
@@ -128,8 +137,8 @@ def _compose_texts() -> list[str]:
 def _notes(*, console: str, image: str) -> dict[str, str]:
     """What the quickstart tells someone once each command has run."""
     login = (
-        f"Point your browser to {console} and log in as `{ADMIN_NAME}` with password "
-        f"`{FIRST_LOGIN_PASSWORD}`. The console makes you change it at first login."
+        f"Point your browser to {console} and log in with the name and password the "
+        "second command prints. The console makes you change it at first login."
     )
     stack_down = _compose_command(
         ref=_artifact(image=image, tag=PUBLISHED_STACK_TAG), verb="down"
@@ -148,6 +157,14 @@ def _notes(*, console: str, image: str) -> dict[str, str]:
             f"Docker install's ports, so stop that first, and `{demo_down}` removes it all."
         ),
     }
+
+
+def _start_commands(*, ref: str) -> list[str]:
+    """The command that starts a published file, then the one that prints its console login."""
+    return [
+        _compose_command(ref=ref, verb="up -d"),
+        _compose_command(ref=ref, verb=LOGIN_VERB),
+    ]
 
 
 def _version_key(version: str) -> tuple[int, ...]:
@@ -182,6 +199,48 @@ def default_profile() -> str:
             f"`make print-default-profile` printed no profile: {result.stderr.strip()}"
         )
     return name
+
+
+def demo_packs(*, image: str, root: Path = DEMO_PACKS_ROOT, version: str) -> list[dict]:
+    """Each named demo pack in directory order, with its title and use case from its demo.json and the one command that starts it."""
+    found = []
+    for name in demo_pack_names(root=root):
+        path = demo_pack_dir(pack=name, root=root) / PACK_MANIFEST
+        label = _rel_path(path=path)
+        if not (DEMO_PACK_NAME.fullmatch(name)):
+            raise QuickstartJsonError(
+                f"{label}: a pack name is lower-case words joined by `-`, which {name!r} is not"
+            )
+        try:
+            manifest = json.loads(path.read_text(encoding="utf-8"))
+        except (UnicodeDecodeError, json.JSONDecodeError) as error:
+            raise QuickstartJsonError(
+                f"{label} is not readable JSON: {error}"
+            ) from error
+        if not (isinstance(manifest, dict)):
+            raise QuickstartJsonError(f"{label} holds no JSON object")
+        title = manifest.get("title")
+        use_case = manifest.get("use_case")
+        if not (isinstance(title, str)) or not (title.strip()):
+            raise QuickstartJsonError(f"{label} needs a `title`")
+        if not (isinstance(use_case, str)) or not (_USE_CASE.fullmatch(use_case)):
+            raise QuickstartJsonError(
+                f"{label} needs a `use_case`, the hyperi.io path that describes the pack, such as /solutions/"
+            )
+        tag = demo_pack_tag(pack=name)
+        refs = {
+            "latest": _artifact(image=image, tag=tag),
+            "pinned": _artifact(image=image, tag=tag, version=version),
+        }
+        found.append(
+            {
+                "name": name,
+                "title": title.strip(),
+                "use_case": use_case,
+                **{form: _start_commands(ref=ref) for form, ref in refs.items()},
+            }
+        )
+    return found
 
 
 def min_compose(*, texts: list[str]) -> str:
@@ -222,7 +281,7 @@ def quickstart(
         ),
         "min_engine": MIN_ENGINE,
         "console_url": console,
-        "login": f"{ADMIN_NAME} / {FIRST_LOGIN_PASSWORD}",
+        "login": "printed by the second command in `up` and `demo`",
         "kind": "compose",
         "profiles": [
             {
@@ -236,13 +295,11 @@ def quickstart(
             }
         ],
         **{
-            kind: {
-                form: [_compose_command(ref=ref, verb="up -d")]
-                for form, ref in forms.items()
-            }
+            kind: {form: _start_commands(ref=ref) for form, ref in forms.items()}
             for kind, forms in refs.items()
         },
         "notes": _notes(console=console, image=image),
+        "packs": demo_packs(image=image, version=version),
     }
 
 
@@ -262,7 +319,7 @@ def main() -> int:
     )
     args = parser.parse_args()
     try:
-        stack_version = stack._dial_pin()
+        stack_version = stack.release_pin()
         if args.print_stack:
             print(stack_version)
             return 0
