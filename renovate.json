@@ -30,6 +30,12 @@
       "groupName": "docker-images"
     },
     {
+      "description": "Python moves fleet-wide in one step, so the base image stays on the suite's 3.14 line",
+      "matchDatasources": ["docker"],
+      "matchDepNames": ["python"],
+      "allowedVersions": "<3.15"
+    },
+    {
       "description": "hyperi-ci's own workflows and actions stay on @main so CI fixes reach every run. Last so it overrides the pinning preset and the github-actions group.",
       "matchManagers": ["github-actions"],
       "matchDepNames": ["hyperi-io/hyperi-ci"],
