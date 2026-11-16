@@ -45,7 +45,8 @@ On dfe-ui, an unknown path returns the 200 app shell rather than a 404 -- Next.j
 routes anything it does not recognise to the page. Only the three paths above are
 real there.
 
-Compose picks liveness or readiness for you.
+## Compose gates on readiness, so the gated services report it
+
 Compose has no readiness condition. `depends_on: service_healthy` is the only
 startup gate, so anything others wait on must report READINESS.
 
@@ -66,23 +67,41 @@ Kubernetes has separate probes and ignores `HEALTHCHECK`, so it never chooses.
 ## Self-telemetry is pushed, bar four pulls
 
 The stack's own telemetry leaves by a different door from the data it ingests, so
-a broken ingest pipeline cannot take the reporting on it down too.
+a broken ingest pipeline cannot take the reporting on it down too. This diagram shows what feeds the collector and who reads what it writes.
 
 ```mermaid
 flowchart LR
-    apps["DFE services"] -->|OTLP push :4317| col["otel-collector"]
-    apps -->|stdout| drv["Docker log driver"]
-    drv -->|fluent_forward :24224| col
-    chsrv[(ClickHouse system tables)] -->|sql_query pull| col
-    host("docker host /proc") -->|host_metrics pull| col
-    col -->|self-telemetry :8888| col
-    hdxm["dfe-hyperdx :8000"] -->|prometheus scrape| col
-    col -->|clickhouse exporter| ch[(dfe.otel_* tables)]
-    ch -.->|queries it| hdx["dfe-hyperdx"]
+    accTitle: L4 Detail -- Self-telemetry
+    accDescr: DFE services push metrics and traces over OTLP to the otel-collector. Docker's log driver forwards each container's stdout to it. The collector pulls ClickHouse's system tables and the host's CPUs itself. It writes everything to the dfe.otel tables, which dfe-hyperdx queries.
 
-    classDef on fill:#009E73,color:#ffffff,stroke:#000000
-    class col,ch on
+    apps["DFE services"]
+    driver["Docker log driver"]
+    subgraph pulled["Pulled"]
+        chsys[("ClickHouse<br/>system tables")]
+        host["Host /proc"]
+    end
+    col["otel-collector"]
+    otel[("dfe.otel_* tables")]
+    hdx["dfe-hyperdx"]
+
+    apps -->|OTLP :4317| col
+    driver -->|fluent :24224| col
+    pulled -->|scraped| col
+    col -->|writes| otel
+    otel -.-> hdx
+
+    classDef default fill:#F8FAFC,stroke:#64748B,stroke-width:1px,color:#0F172A
+    classDef core fill:#DCEBF7,stroke:#0072B2,stroke-width:2px,color:#0B2A3F
+    classDef store fill:#DDF3EC,stroke:#00785A,stroke-width:1px,color:#0B3327
+    classDef ext fill:#EEF0F2,stroke:#6B7280,stroke-width:1px,stroke-dasharray:4 3,color:#1F2937
+    classDef group fill:none,stroke:#64748B,stroke-width:1px,stroke-dasharray:2 4
+    class driver,host ext
+    class col core
+    class chsys,otel store
+    class pulled group
 ```
+
+*Figure 1. L4 Detail -- Self-telemetry. The dotted arrow is a read, and the collector's own `:8888` metrics and dfe-hyperdx's `:8000` are scraped too.* Up: [dfe-docker documentation](README.md).
 
 Services PUSH. dfe-hyperdx reads ClickHouse rather than receiving anything -- the
 fork ships no OTLP receiver, so the collector's exporter writes the tables it
@@ -173,7 +192,7 @@ and no privilege.
 
 **`docker compose logs` still reads these services.** Docker's dual logging keeps a local copy of each line, so the driver adds the collector without taking the CLI away. Only DFE's own services and dfe-hyperdx move onto the driver: ClickHouse, the broker and the proxies keep `json-file`. Put every service back with:
 
-```
+```bash
 DFE_CONTAINER_LOGS_ENABLED=false
 ```
 

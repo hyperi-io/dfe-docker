@@ -54,6 +54,8 @@ make post                        # run against an already-running stack
 DFE_POST_ENABLED=false make ci   # opt out
 ```
 
+It is not a Docker `HEALTHCHECK`, which runs inside one container with no view of the others and repeats forever, so it would inject test events into a production ingest path on a timer.
+
 Once every claim has run, the three ingest rows are deleted: a lightweight `DELETE`, or a mutation (`ALTER TABLE ... DELETE`) on a table whose projections refuse one. A delete that does not finish within 60s is reported, never failed.
 
 Tunables: `DFE_POST_HOST` (default `localhost`), `DFE_POST_DATABASE` (`dfe`), `DFE_POST_TABLE` (`main`). It proves nothing about profiles you are not running, or about throughput.

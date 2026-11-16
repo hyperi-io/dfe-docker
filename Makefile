@@ -39,14 +39,8 @@ ifneq ($(strip $(DFE_DATA_ROOT)),)
     STORAGE_FLAGS := -f compose/storage.yml
 endif
 
-# Goals that work without a resolved service profile. The check-* targets belong
-# here because their whole point is running on a fresh checkout -- resolving a
-# profile first would make them fail for the reason they exist to detect.
-#
-# down/clean belong here too: neither references PROFILE_FLAGS or ACTIVE_SERVICES
-# any more (both sweep every profile), and requiring a resolvable profile to STOP
-# a stack is the same lockout the compose secret comments argue against -- set
-# DFE_PROFILE to something that does not exist and you could not tear down.
+# Goals that run without a resolved profile, so a fresh checkout can be checked
+# and a stack on a broken profile can still be stopped.
 BOOTSTRAP_GOALS := init env-files creds certs up demo dev-posture e2e-posture e2e-posture-off e2e-posture-check help stack dial modes down clean demo-stop limits check check-compose check-hardfail check-dockerfile check-docs check-locks check-proxy check-python check-tests print-default-profile print-demo-stream publish-compose
 
 # Resolve the active profile only when a goal actually needs the compose stack
@@ -106,19 +100,8 @@ ifneq (,$(filter-out $(BOOTSTRAP_GOALS),$(or $(MAKECMDGOALS),help)))
 endif
 
 # ---------------------------------------------------------------------------
-# Web UI exposure
-#
-# Two dials, because "external" means different things on the two boxes compose
-# deploys to. DFE_BIND_SCOPE=localhost (the default, a developer workstation)
-# publishes every UI on 127.0.0.1 so the host sees them and the LAN does not;
-# DFE_BIND_SCOPE=all publishes on 0.0.0.0 for a small/VM deploy. It resolves to
-# DFE_UI_BIND_HOST, the address compose interpolates into every UI port mapping.
-# Ingest (DFE_INGRESS_BIND_HOST) and the operator ports (DFE_BIND_HOST) keep
-# their own audiences and are untouched by it.
-#
-# Every UI publishes by default. An opt-out drops that service's ports mapping, which compose merging cannot do by override, so make writes a `!reset` entry per unpublished service into one fragment and chains it the way STORAGE_CHAIN chains the storage overlay. DFE_INFRA_UIS_EXTERNAL=false is the kill switch: it unpublishes every INFRA-class UI at once and beats their individual flags. dfe-ui and the engine API are PRODUCT class and answer only to their own.
-#
-# Below the profile block because DFE_AUTH_RESOLVED comes from .tmp/profile.mk, so the profile key and the env var can never disagree about whether the auth proxies are in play. The bootstrap goals skip that include and read it empty, which is the auth-off branch, the safe direction for a target that only stops a stack or checks a file.
+# Web UI exposure: docs/operating.md, "Web UIs: one scope dial, one kill switch".
+# Below the profile block, because DFE_AUTH_RESOLVED comes from .tmp/profile.mk.
 # ---------------------------------------------------------------------------
 DFE_BIND_SCOPE ?= localhost
 ifeq ($(strip $(DFE_BIND_SCOPE)),localhost)
@@ -129,15 +112,8 @@ else
     $(error DFE_BIND_SCOPE must be `localhost` or `all`, got '$(strip $(DFE_BIND_SCOPE))')
 endif
 
-# `all` publishes the UIs on addresses this box cannot infer, and two services
-# build absolute URLs from DFE_EXTERNAL_ORIGIN -- dfe-proxy's frame-ancestors
-# policy for the embedded dfe-hyperdx views, and next-auth's redirects. At loopback
-# both name the browser's own machine, so the console comes up with its
-# observability views blocked.
-#
-# Only the goals that start or self-test the stack ask for it. The bootstrap
-# goals are exempt for the reason BOOTSTRAP_GOALS gives: needing a key to stop a
-# stack, or to check a file, is a lockout.
+# DFE_BIND_SCOPE=all needs DFE_EXTERNAL_ORIGIN on the goals that start or self-test
+# the stack: docs/configuration.md, "External origin".
 ORIGIN_GOALS := dev ci up apply infra post test-source test-flows print-compose-env
 # The e2e suites start a stack per test and probe the console at DFE_EXTERNAL_ORIGIN's host under console TLS, so there they need what a start goal needs.
 E2E_GOALS := test-e2e test-resilience
@@ -300,7 +276,7 @@ ifeq ($(strip $(DFE_OTEL_RESOLVED))-$(strip $(DFE_CONTAINER_LOGS_ENABLED)),true-
     $(eval $(call chain_fragment,compose/container-logs.yml))
 endif
 
-# Live console edits: `make dev LIVE_UI=1` runs dfe-ui as `next dev` over DFE_SRC_ROOT/dfe-ui (compose/live-ui.yml). It rides the dev paths only, so the registry goals (ci, up, apply without DEV) never run a dev server. It chains after the container-logs fragment because it puts dfe-ui back on the default log driver.
+# LIVE_UI=1 runs dfe-ui as `next dev` on the dev goals only (docs/live-console.md). It chains after the container-logs fragment because it puts dfe-ui back on the default log driver.
 # The Node image comes from the checkout's own Dockerfile rather than a second pin here, read without a shell so a path with a quote in it stays a path.
 LIVE_UI_GOALS := dev dev-build apply apply-services
 ifneq ($(strip $(LIVE_UI)),)
@@ -322,11 +298,8 @@ ifneq ($(strip $(LIVE_UI)),)
 endif
 
 # ---------------------------------------------------------------------------
-# Console TLS (opt-in)
-#
-# DFE_PROXY_TLS=true chains compose/tls.yml, which serves the console, the dfe-hyperdx embed and both dfe-hyperdx origins over TLS with one certificate. Outside a dev posture the engine marks its OIDC cookies Secure, so a sign-in on any hostname but localhost needs it.
-#
-# The engine trusts X-Forwarded-Proto from dfe-proxy's address alone, so that address is fixed: the last host of DFE_NETWORK_SUBNET, with every other container allocated from the first half. Make cannot do the address arithmetic, so scripts/proxy_tls.py does.
+# Console TLS (opt-in): docs/configuration.md, "Console TLS (opt-in)".
+# scripts/proxy_tls.py does the subnet arithmetic make cannot.
 # ---------------------------------------------------------------------------
 # Exactly `true` or `false`, so a `True` or a `1` fails here rather than quietly serving plain http. Empty reads as false.
 DFE_PROXY_TLS ?= false
@@ -433,32 +406,19 @@ init: ## Create .env and per-service env/<service>.env files from templates, and
 	@python3 scripts/init.py
 	@python3 scripts/creds.py --write
 
-# Start targets require every per-service env file (dfe-engine reads its secrets
-# from env/engine.env). Compose marks them optional so `make down` never needs them.
-# The guard creates what is missing (init is non-destructive) rather than refusing,
-# so a release that adds a template does not stop an initialised deployment. The
-# .env prerequisite mints the secrets before a fresh checkout's first start.
+# Start targets need every env/<service>.env, so this creates any a release
+# added. Compose marks them optional so `make down` never needs them.
 .PHONY: env-files
 env-files: .env ## Assert every env/<service>.env exists, creating any the templates have gained
 	@python3 scripts/env_files.py
 
-# `make init` mints the admin and break-glass passwords and prints neither, so
-# this is the hand-over. `make up` and `make dev` end with it; `make ci` does not
-# call it, because its stdout is a build log. `make init` and `make up` pass
-# --write, which also leaves access-summary.md (0600, gitignored) for the operator.
+# The hand-over of the minted logins: docs/developing.md, "Logging in the first time".
 .PHONY: creds
 creds: ## Print the access summary. The admin password prints on a TTY only -- a pipe, a file, a CI log or DFE_CREDS_SHOW=0 gets the env/engine.env key instead
 	@python3 scripts/creds.py
 
-# A dev tyre-kick logs in without looking anything up, so `make dev` writes the
-# KNOWN default password and DFE_ENGINE_ENV=dev, the one posture the engine accepts it in.
-# A .env already on a dev posture keeps a non-default password, the replacement
-# `make post` recorded after the engine made the admin change the default.
-# It refuses with exit 2 on any other DFE_ENGINE_ENV and copies each file it rewrites to
-# <name>.bak-<utc> first, so a minted password in env/engine.env survives.
-#
-# `AUTH=real` is the other half: local images running the same authentication flow
-# a deployment gets, so it mints a password and writes a non-dev posture instead.
+# `make dev` writes the known default password and DFE_ENGINE_ENV=dev, and
+# AUTH=real a minted one: docs/developing.md, "Logging in the first time".
 AUTH ?=
 ifeq ($(strip $(AUTH)),real)
     DEV_POSTURE_ARG := --real
@@ -482,32 +442,21 @@ e2e-posture-off: ## Put back the .env and env/engine.env from before e2e-posture
 e2e-posture-check: ## Exit 1 naming what is missing unless the env files are in the e2e posture, which the Playwright run checks first
 	@python3 scripts/e2e_posture.py check
 
-# `make stack VERSION=X.Y.Z` pins the certified set. `make dial` writes the dial's
-# version.pin to DFE_STACK_VERSION in .env, so `make dial && make stack` pins
-# straight from the deployment dial. An explicit VERSION= on the command line wins.
-# VERSION=latest (rc to include pre-releases) instead pins the newest published
-# stack, read anonymously from the OCI registry. DFE_STACK_REPIN_IMAGES=1 also
-# repins every ghcr.io/hyperi-io image at its component's newest GitHub release,
-# through gh, or anonymously where it is not installed. Nobody certified that mix.
-# Still digest-pinned either way.
+# Pinned, latest and the GitHub-release repin: docs/deploying.md, "Staying
+# current". An explicit VERSION= on the command line wins over the dial's pin.
 VERSION ?= $(DFE_STACK_VERSION)
 
 .PHONY: stack
 stack: .env ## Pin image versions into .env from the DFE stack SSoT (VERSION=X.Y.Z[-rc.N], or latest|rc for the newest published stack)
 	@python3 scripts/stack.py $(VERSION)
 
-# The deployment dial (deployment.yaml) is the single SSoT a deployment turns.
-# This renders its docker-vm slice into .env; `make init` still mints the secrets,
-# the dial merges the deploy-controlled keys over them. Canonical superset lives
-# in dfe-infra; a lone dfe-docker clone deploys from deployment.yaml alone.
+# The deployment dial: docs/deploying.md, "The deployment dial".
 .PHONY: dial
 dial: .env ## Render deployment.yaml (the deployment dial) into .env and env/engine.env -- docker-vm slice
 	@python3 scripts/render_dial.py
 
-# The two deploy-currency modes, stated in one place: PINNED (make stack + make
-# ci) vs TRACK-LATEST (the ops/daemon-update timer). Reads local files only, so
-# it is safe on a fresh checkout; the live latest-vs-applied number comes from
-# `self_update.py --dry-run`, which this points at.
+# Pinned against track-latest: docs/deploying.md, "Staying current". Reads local
+# files only, so it is safe on a fresh checkout.
 .PHONY: modes
 modes: ## Show the deploy modes -- pinned vs track-latest -- and which one this checkout uses
 	@python3 scripts/show_modes.py
@@ -523,9 +472,7 @@ ifneq ($(strip $(DFE_DATA_ROOT)),)
 	@mkdir -p $(addprefix $(DFE_DATA_ROOT)/,clickhouse kafka-apache kafka-redpanda archiver dlq-spool fetcher-cursors transform-elastic-geoip engine-config engine-schemas hyperdx-documentdb)
 endif
 
-# `dev` and `dev-build` clone the component repos from github.com/hyperi-io,
-# over public https with no token. `make ci` runs the same stack from the
-# published images.
+# `dev` and `dev-build` clone the public component repos over https with no token.
 .PHONY: dev
 dev: env-files dev-posture down storage-dirs ## Build local DFE images from source and start the dev stack (LOCAL="svc ..." builds only those; AUTH=real for a minted login; LIVE_UI=1 runs the console as `next dev` from DFE_SRC_ROOT/dfe-ui), then print the access summary. Clones the public component repos
 	python3 scripts/port_check.py -- $(DEV_FLAGS) $(PROFILE_FLAGS)
@@ -568,11 +515,8 @@ up: ## Start the stack from the pinned registry images (PROFILE=slim-grpc and VE
 	@$(MAKE) --no-print-directory ci
 	@python3 scripts/creds.py --write
 
-# The command dfe-engine's restart and recreate hints name after a config write:
-# resolving the profile regenerates the instances fragment, so it creates a
-# per-source container the engine has just declared, recreates one that exists,
-# and removes one whose source the engine has deleted.
-# DEV=1 recreates from the local images a `make dev` stack runs.
+# The command dfe-engine's restart and recreate hints name: docs/architecture.md,
+# "The engine renders each app's config". DEV=1 recreates from the local images.
 ifneq ($(strip $(DEV)),)
     APPLY_FLAGS = $(DEV_FLAGS)
 else
@@ -616,15 +560,7 @@ infra: .env storage-dirs ## Start infrastructure services
 	docker compose $(PROFILE_FLAGS) up -d
 
 # ---------------------------------------------------------------------------
-# Validation
-# The same commands CI runs, so a green local run means a green pipeline.
-#
-# Safe on a fresh checkout: no stack SSoT and no credentials needed, and none of
-# them writes a .env. One honest caveat: check-dockerfile pulls the pinned
-# hadolint image while check-tests resolves the pinned pytest, so those two want
-# a network the first time; the rest need none.
-#
-# check-proxy reads the stack SSoT, anonymously through oras, when DFE_PROXY_VERSION is unset, then pulls that Envoy and needs openssl on the host for its throwaway certificate.
+# Validation: the static checks CI runs, docs/checks.md.
 # ---------------------------------------------------------------------------
 
 .PHONY: check
@@ -634,9 +570,7 @@ check: check-compose check-hardfail check-dockerfile check-docs check-proxy chec
 limits: ## Show the resource limits and totals, computed from the resolved config
 	@python3 scripts/show_limits.py
 
-# Pinned so a new ruff release cannot turn this red on an unrelated change, and
-# so a local run lints with the SAME version CI does. CI installs the pin itself
-# and sets RUFF=ruff; override the same way if you have no uvx.
+# Pinned so a local run lints with the ruff CI runs. CI installs the pin and sets RUFF=ruff.
 RUFF_VERSION := 0.15.22
 RUFF ?= uvx ruff@$(RUFF_VERSION)
 
@@ -649,9 +583,7 @@ check-python: ## Lint the helper scripts (config in ruff.toml)
 	$(RUFF) check scripts/ ops/ resources/demo/ resources/demo-*/
 	$(RUFF) format --check scripts/ ops/ resources/demo/ resources/demo-*/
 
-# Pinned for the same reason RUFF is, and installed the same way in CI
-# (PYTEST=pytest). Unit tests over the helper scripts: they
-# touch a tmp_path .env and start nothing, so they belong with the static checks.
+# Pinned like RUFF, and CI sets PYTEST=pytest.
 PYTEST_VERSION := 9.2.0
 # The seed tests parse resources/seed with the PyYAML scripts/seed.py pins. scripts/tests/test_script_locks.py holds the two pins equal
 PYYAML_VERSION := 6.0.3
@@ -732,15 +664,8 @@ check-hardfail: ## Assert an unpinned stack refuses to start instead of pulling 
 check-docs: ## Assert every relative link in the docs set still resolves
 	@python3 scripts/check_docs.py
 
-# `--failure-threshold error` matches the house gate (hyperi-ci's
-# quality/hadolint.py gates on error severity only). Warning/info/style still
-# print, they just do not fail -- which is the point: the estate's routine noise
-# (DL3008 apt-pin, DL4006 pipefail) is all warning-tier, so a threshold of
-# `info` turns every one of those into a blocked build and pushes people towards
-# blanket ignores. Suppressed findings tell you nothing; visible ones do.
-#
-# hadolint version tracks tools.hadolint in hyperi-ci's config/versions.yaml,
-# and the digest is pinned here as well.
+# Gates on error severity, as hyperi-ci's hadolint step does, so warnings print
+# without failing. The version tracks tools.hadolint in hyperi-ci's config/versions.yaml.
 HADOLINT_IMAGE := hadolint/hadolint:v2.15.1@sha256:32dac94127fd60b7b7e3fbfc65e1383b9b5e25c9bfd7b8536de7a539fe68a12d
 
 .PHONY: check-dockerfile
@@ -748,11 +673,8 @@ check-dockerfile: ## Lint the dev builder and dfe-docker image Dockerfiles (hado
 	docker run --rm -i $(HADOLINT_IMAGE) hadolint --failure-threshold error - < docker/dfe-rust-builder.Dockerfile
 	docker run --rm -i $(HADOLINT_IMAGE) hadolint --failure-threshold error - < docker/dfe-docker.Dockerfile
 
-# Validate mode loads every listener, cluster and TLS context, so a config that would crash-loop either proxy fails here instead.
-#
-# The Envoy is the one the stack runs: DFE_PROXY_VERSION when set, else the pin scripts/stack.py reads from the stack manifest at VERSION, which falls back to deployment.example.yaml's version.pin.
-#
-# The TLS variants read their certificate at validation, so a throwaway P-384 pair is minted into a scratch directory. Envoy runs as the make user, as both proxies do under TLS, because the image's own user cannot read a 0600 key.
+# Validates both proxy configs on the Envoy the stack runs, with a throwaway
+# P-384 pair for the TLS variants: docs/checks.md.
 ENVOY_REPO := envoyproxy/envoy
 # Run in the recipe, since $(shell) drops the exit status and a failed lookup would validate on an empty tag
 PROXY_VERSION_COMMAND = $(if $(strip $(DFE_PROXY_VERSION)),echo '$(strip $(DFE_PROXY_VERSION))',python3 scripts/stack.py --print DFE_PROXY_VERSION $(VERSION))
@@ -797,9 +719,7 @@ test-resilience: ## Outage tests: stop a service under load and prove the rest s
 test-flows: ## Flow shapes against a running stack (needs DFE_ENGINE_REPO; FLOW_ARGS passes flags)
 	@$(UV) run --locked --script ./scripts/test_flows.py $(FLOW_ARGS)
 
-# The post-deploy source test: add a source through the console and prove every
-# hop. The runner is dfe-infra's, the same one `dfe-ops acceptance --suite
-# source` calls, so both targets test one definition of the steps.
+# The post-deploy source test, on dfe-infra's runner: docs/checks.md.
 .PHONY: test-source
 test-source: ## Post-deploy source test against a running stack (needs DFE_INFRA_DIR + DFE_ENGINE_REPO; SOURCE_ARGS passes flags)
 	@python3 ./scripts/test_source.py $(SOURCE_ARGS)
@@ -811,15 +731,7 @@ proof: ## Unattended acceptance: test-e2e, restore the stack (make ci), then tes
 	@python3 ./scripts/proof.py
 
 # ---------------------------------------------------------------------------
-# Power-on self test
-# Runs automatically after `make dev` / `make ci`. Opt OUT with
-# DFE_POST_ENABLED=false -- a self test you have to remember to run is not one.
-# The ingest claim is transport-agnostic: it injects at the ingest edge and reads
-# ClickHouse, so it behaves identically on the kafka and kafka-less (grpc)
-# profiles.
-#
-# `make post` exits non-zero on failure and the auto-run after dev/ci aborts the
-# target with it, so a stack that cannot move data is never handed over as ready.
+# Power-on self test: docs/self-test.md
 # ---------------------------------------------------------------------------
 
 .PHONY: post
@@ -827,8 +739,7 @@ post: ## Prove the RUNNING stack moves data end to end (DFE_POST_ENABLED=false t
 	@env DFE_POST_SERVICES='$(strip $(SERVICES))' python3 ./scripts/post.py
 
 # ---------------------------------------------------------------------------
-# Seed
-# The starter set in resources/seed, created through the engine API on a RUNNING stack, plus fake events for its hunt to find. hunts also creates the orgs and rules in the same seed.py run, because the engine refuses a hunt naming an org or rule it does not hold. accounts creates the orgs first, because the engine refuses an account naming an org it does not hold. One run means a login asked for at the terminal is asked for once. Every target but events creates only what the engine lacks. events sends its records again on every run. A volume wipe loses every object, so run the targets again after one.
+# Seed: docs/seeding.md
 # ---------------------------------------------------------------------------
 
 .PHONY: orgs
@@ -856,8 +767,7 @@ events: ## Send the fake resources/seed events through the receiver, after `make
 	@$(UV) run --locked --script ./scripts/seed.py events
 
 # ---------------------------------------------------------------------------
-# Demo
-# Raw firewall syslog through the RUNNING stack, each line's vendor detected by dfe-transform-elastic in agentless mode and landed in that vendor's table
+# Demo: docs/evaluating.md, "Raw syslog, parsed per device"
 # ---------------------------------------------------------------------------
 
 # The replay script inside the dfe-transform-elastic checkout, fetched at the tag DFE_TRANSFORM_ELASTIC_VERSION pins or, with DEV=1, read from DFE_SRC_ROOT/dfe-transform-elastic
@@ -896,9 +806,7 @@ ps: ## Show running containers, and warn about a deleted source's container stil
 	docker compose ps
 	@python3 scripts/instances.py --stale -- $(APPLY_FLAGS) $(PROFILE_FLAGS)
 
-# Tears down across EVERY profile, so a switched profile leaves no container
-# holding host ports or answering probes. Volumes survive; `make clean` is the
-# one that deletes data.
+# Tears down every profile and keeps volumes. `make clean` deletes data.
 .PHONY: down
 down: demo-stop ## Stop and remove containers across all profiles and the `make demo` pack (keeps volumes)
 	docker compose -f docker-compose.yml --profile "*" down --remove-orphans

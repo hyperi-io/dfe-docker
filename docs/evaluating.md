@@ -178,9 +178,9 @@ The demo is one set of pieces, listed in [`resources/demo/demo.json`](../resourc
 | Console | [`resources/demo/console/`](../resources/demo/console/) | A dashboard per source and one for the stack's health, and saved searches with a live tail for each streamed source. All are named `demo-` |
 | Tables | `dfe.cisco-asa`, `dfe.fortinet`, `dfe.demo-syslog`, `dfe.component-releases`, `dfe.wikipedia-recentchanges` | `make demo-stop` leaves them, with their rows, because only the engine issues ClickHouse DDL and it never drops a table. The next `make demo` carries on in them, and `make clean` removes them with the volumes |
 
-Each device replays about 6,000 sample lines from [`resources/demo/events/<source>/`](../resources/demo/events/), ten minutes at the default rate before a line repeats, which `python3 resources/demo/events/generate.py` regenerates. The run turns on dfe-receiver's syslog listener (UDP and TCP on port 514) and recreates what that changes. It returns once every vendor table has gained rows and the archive holds a file, and leaves the stream running:
+Each device replays about 6,000 sample lines from [`resources/demo/events/<source>/`](../resources/demo/events/), ten minutes at the default rate before a line repeats, which `python3 resources/demo/events/generate.py` regenerates. The run turns on dfe-receiver's syslog listener (UDP and TCP on port 514) and recreates what that changes. It returns once every device table has gained rows and the archive holds a file, and leaves the stream running:
 
-```text
+```console
 demo -   console demo-cisco-asa: http://localhost:8090/dashboards/<id>
 demo -   console demo-wikipedia-live: http://localhost:8090/search/<id>?isLive=true
 demo -   dfe.cisco-asa: +N rows

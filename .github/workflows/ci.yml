@@ -5,22 +5,12 @@
 # License:   BUSL-1.1 - HYPERI PTY LIMITED
 # Copyright: (c) 2026 HYPERI PTY LIMITED
 #
-# Hand-written because hyperi-ci has no reusable workflow for a compose-packaging
-# repo. It follows the house conventions so it can collapse into a `uses:` line.
+# Hand-written because hyperi-ci has no reusable workflow for a compose-packaging repo.
 #
 # The runner image is named (ubuntu-26.04) rather than ubuntu-latest, so a move
 # of that label cannot swap the tools these jobs run on.
 #
-# Renovate automerges patch and digest updates in this repo "when CI passes", and
-# before this workflow existed there was no CI to pass -- the rule was asserting a
-# condition that could not be evaluated. This makes it mean what it says.
-#
-# Scope it honestly, though: the service image pins moved out of .env.example into
-# the private stack SSoT, so they now live in a gitignored .env where Renovate
-# cannot see them. What Renovate still manages HERE is RUST_IMAGE in the builder
-# Dockerfile and the actions pinned below. And note check_compose.py substitutes
-# placeholders for the mandatory keys, so this validates compose STRUCTURE, not
-# that any particular digest resolves.
+# Renovate automerges patch and digest updates once this workflow passes.
 
 name: CI
 
@@ -84,49 +74,30 @@ jobs:
         with:
           python-version: ${{ env.PYTHON_VERSION }}
 
-      # Every step below runs a `make` target rather than the command directly,
-      # so `make check` locally and CI cannot drift apart.
-      #
-      # Resolves docker-compose.yml on both the registry and dev-override paths,
-      # against both Kafka backends. Hermetic: it reads the mandatory keys out of
-      # the compose file and supplies placeholders, so it reads neither the
-      # stack SSoT nor the registry.
+      # Each step runs the make target `make check` runs locally (docs/checks.md).
       - name: Validate compose
         run: make check-compose
 
-      # The stack must refuse to start unpinned rather than silently pull
-      # `latest`. Without that, an operator cannot answer "which image am I
-      # running?" on a production deploy target, so it gets asserted rather than
-      # assumed.
+      # The stack must refuse to start unpinned rather than pull `latest`.
       - name: Assert a fresh checkout hard-fails
         run: make check-hardfail
 
-      # Five audience-scoped documents plus a README whose whole job is to route
-      # between them. A deleted or renamed file leaves a link that still looks
-      # like a link, and the reader finds out rather than the author -- which is
-      # exactly what retiring docs/SCOPE.md did to six live links.
-      # Stdlib only, so it needs nothing installed.
+      # Every relative link in the docs resolves. Stdlib only.
       - name: Docs
         run: make check-docs
 
-      # The pin lives in the Makefile (RUFF_VERSION), so a local `make check`
-      # lints with the same version this does. Installed here rather than run
-      # through uvx to keep the runner off the network mid-job.
+      # RUFF_VERSION in the Makefile pins it. Installed here to keep the runner
+      # off the network mid-job.
       - name: Install ruff
         run: pipx install --python "${{ steps.python.outputs.python-path }}" "ruff==$(make -s print-ruff-version)"
 
-      # Every check above is driven by a Python helper script, so a bug in one of
-      # them shows up as a check that passes when it should not. They get linted
-      # like anything else. Config in ruff.toml.
+      # Lints the helper scripts every check above runs. Config in ruff.toml.
       - name: Python
         run: make check-python RUFF=ruff
 
-      # The credential helpers rewrite .env and decide whether a minted password
-      # reaches stdout, so they carry unit tests. They run on a tmp_path .env:
-      # nothing here starts a stack or touches the runner's own files.
-      # pipx builds each venv on its own interpreter unless told otherwise, and
-      # pytest runs the tests on whatever its venv holds.
-      # PyYAML is injected for the seed tests, which parse resources/seed.
+      # Unit tests over the helper scripts, on a tmp_path .env. pipx builds the
+      # venv on the interpreter it is given, and PyYAML is injected for the seed
+      # tests, which parse resources/seed.
       - name: Install pytest
         run: |
           pipx install --python "${{ steps.python.outputs.python-path }}" "pytest==$(make -s print-pytest-version)"
@@ -155,14 +126,9 @@ jobs:
           # .git/config where any later step could read it.
           persist-credentials: false
 
-      # hadolint GATES: a decade old, stable rule IDs, and it lints the shell
-      # inside RUN via ShellCheck -- a correctness check droast structurally
-      # does not have.
-      # stdin form, per the standard, with no config file, so the exact same
-      # command is runnable locally -- no mount, no config discovery. DL3008 (pin
-      # apt versions) fires on both Dockerfiles and is deliberately left as a
-      # visible warning, not suppressed: `--failure-threshold error` lets a
-      # warning inform without blocking, and the reason sits in the Dockerfile.
+      # hadolint gates on error severity and lints the shell inside RUN through
+      # ShellCheck. Warnings such as DL3008 print without failing, and the reason
+      # sits in the Dockerfile.
       - name: Hadolint
         run: make check-dockerfile
 
@@ -618,25 +584,5 @@ jobs:
           RELEASE_VERSION: ${{ steps.plan.outputs.version }}
         run: ${{ env.HYPERCI_INSTALL }} release-commit --branch "$RELEASE_BRANCH" "$RELEASE_VERSION"
 
-# droast is DELIBERATELY NOT RUN HERE. That matches hyperi-ci's own posture --
-# quality/droast.py resolves it with `find_tool(recommended=False)` and info-skips
-# when absent, so hyperi-ci never installs it either -- but the reason here is
-# measured rather than inherited.
-#
-# Run against docker/dfe-rust-builder.Dockerfile on 2026-07-20 (droast 0.1.x,
-# `--no-fail`): 6 findings, 0 true positives.
-#
-#   DF036 no CMD/ENTRYPOINT   - false. The final stage is `FROM scratch AS export`,
-#                               an artefact export consumed via `--output`.
-#   DF001 unpinned image tag  - false. ARG RUST_IMAGE is `rust:1.97-trixie@sha256:...`;
-#                               droast does not resolve the ARG default. hadolint does.
-#   DF057 pipe, no pipefail   - false. `SHELL ["/bin/bash", "-o", "pipefail", "-c"]`
-#                               is set; droast ignores the SHELL directive.
-#   DF063 relative COPY dest  - false. The destination is `"/${BINARY}"`, absolute.
-#   DF005 unpinned apt        - duplicate of hadolint DL3008.
-#   DF033 no .dockerignore    - wrong context (assumes the Dockerfile's own dir).
-#
-# Two of those tell us to fix things this Dockerfile already fixes correctly, so
-# wiring it in would train people to ignore the advisory. droast.toml is kept so
-# `droast .` works locally for anyone who wants the cache-ordering rules hadolint
-# has no equivalent for. Revisit when its parser handles ARG defaults and SHELL.
+# droast is not run here: it misreads ARG defaults and the SHELL directive, so its
+# findings on these Dockerfiles are false. droast.toml keeps `droast .` working by hand.

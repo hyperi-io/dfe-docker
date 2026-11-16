@@ -6,37 +6,8 @@
 # License:   BUSL-1.1
 # Copyright: (c) 2026 HYPERI PTY LIMITED
 #
-# Each profile declares a transport mode and which DFE services to start.
-# Presence = enabled: if a service is listed, it starts. If absent, it does not.
-#
-# Active profile is overridden by DFE_PROFILE env var:
-#   DFE_PROFILE=single-kafka make dev
-#
-# config_path is relative to the config/ directory.
-#
-# FOOTPRINT KEYS (optional, per profile) say which non-data-plane components run.
-# An absent key keeps the default, so a profile that declares none behaves as it
-# always has:
-#
-#   clickhouse  (default true)   the warehouse container
-#   core        (default true)   dfe-engine, dfe-hunt-runner, dfe-ui, dfe-proxy
-#   kafbat      (default true)   the Kafka UI; kafka transport only
-#   hyperdx     (default false)  hyperdx + its DocumentDB store
-#   otel        (default false)  the collector that takes the stack's OWN telemetry
-#   auth        (default false)  oauth2-proxy in front of each infra UI (kafbat,
-#                                hyperdx); needs an OIDC issuer, so it stays off
-#                                until a deployment supplies one
-#
-# The matching env var -- DFE_CLICKHOUSE_ENABLED, DFE_CORE_ENABLED,
-# KAFBAT_ENABLED, DFE_HYPERDX_ENABLED, DFE_OTEL_ENABLED, DFE_AUTH_ENABLED --
-# overrides the key, because .env is what a deploy writes and the profile is the
-# committed shape.
-#
-# PER-SOURCE APP KEYS (optional, default false) say which apps dfe-engine may start one container per source of: fetcher_enabled, transform_elastic_enabled, transform_vector_enabled and transform_vrl_enabled. An instance of any other app fails the resolve.
-#
-# NAMING: every profile is <tier>-<transport>. dfe-engine runs as docker-<tier>,
-# and single-kafka adds the per-source apps and the archiver to slim.
-# resolve_profile.py refuses any other name.
+# Each profile names its transport and the DFE services it starts, with the config
+# file each mounts (config_path, relative to config/). Keys and defaults: docs/profiles.md.
 
 active_profile: single-kafka
 

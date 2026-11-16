@@ -199,7 +199,7 @@ dfe-docker stands the whole DFE suite up as one Docker Compose stack on a single
 | `docker/dfe-docker.Dockerfile` + `scripts/installer.py` | The `ghcr.io/hyperi-io/dfe-docker` image and its entrypoint, which copy this tree into a folder and run its scripts there. `.dockerignore` lists what the image carries. `.github/workflows/image.yml` builds it on each release and attaches `quickstart.json` from `scripts/quickstart_json.py` |
 | `scripts/test_e2e.py` + `tests/e2e/e2e-tests.yaml` | The declarative e2e suite, one stack per test |
 | `scripts/check_*.py` | The gates `make check` runs |
-| `scripts/tests/` | Unit tests over the helper scripts - the only tests CI runs |
+| `scripts/tests/` | Unit tests over the helper scripts, which CI runs beside the static checks |
 | `config/<component>/` | The config files services mount, one directory per component |
 | `.env.example` + `env.example/` | Committed templates. `make init` copies them to `.env` and `env/`, both gitignored |
 | `ops/daemon-update/` | The systemd timer that keeps a single-VM deployment on the newest certified stack |
@@ -221,8 +221,8 @@ make down        # stop and remove containers across EVERY profile
 
 Two ways a green run says less than it looks:
 
-- **`make check` does not start the stack.** It resolves compose, lints the helpers and unit-tests them, and `check-proxy` runs temporary Envoy containers to validate the proxy config. `make dev`, `make ci`, `make post` and `make test-e2e` are the only things that prove the stack moves data, and CI runs none of them.
-- **`check-compose` validates compose STRUCTURE, not digests.** It substitutes placeholders for the mandatory keys so it reads neither the stack SSoT nor the registry, which means no particular pin is proved to resolve.
+- `make check` does not start the stack. It resolves compose, lints the helpers and unit-tests them, and `check-proxy` runs temporary Envoy containers to validate the proxy config. CI's image and published-compose jobs start the stack from the dfe-docker image and check each demo source lands rows, but CI runs neither `make post` nor `make test-e2e`, so run those for a change to the data path.
+- `check-compose` validates compose STRUCTURE, not digests. It substitutes placeholders for the mandatory keys so it reads neither the stack SSoT nor the registry, which means no particular pin is proved to resolve.
 
 `check-hardfail` resolves compose with a scrubbed environment and an empty `--env-file` so a developer's pinned `.env` cannot mask it, requires the run to fail on a missing pin, then reads every `image:` line and requires each to resolve to an `@sha256:` digest.
 

@@ -10,12 +10,7 @@ Copyright: (c) 2026 HYPERI PTY LIMITED
 
 # Operating the DFE Compose stack
 
-This applies to you if people other than you depend on this stack -- a single
-box, an edge site, or a partner deployment. Small is still production.
-
-Compose is a supported deploy target for small environments, but the defaults are
-tuned for a laptop. Kubernetes remains the primary path -- if both would work,
-choose Kubernetes. This page covers access, port exposure and resource limits.
+This applies to you if other people depend on this stack: a single box, an edge site or a partner deployment. Small is still production, and the defaults are tuned for a laptop. Kubernetes remains the primary path, so if both would work, choose Kubernetes. This page covers access, port exposure and resource limits.
 Secrets and what a backup has to cover are in [secrets-and-storage.md](secrets-and-storage.md),
 and the broker in [broker.md](broker.md).
 
@@ -29,35 +24,49 @@ The engine issues `admin` with a forced change at first login, which `make post`
 
 dfe-hyperdx, the console's Search, authenticates by verifying the engine's token and holds no logins of its own. ClickHouse takes its generated password. Nothing else authenticates. The ingest edges, every metrics port and Kafka answer whoever can route to them, and so does Kafbat unless the `auth` profile is armed, where the gate is at the proxy, not inside the UI.
 
-```mermaid
-flowchart LR
-    user(["Anyone who can route to the box"])
+This diagram shows which host ports a client off the box can reach at the defaults.
 
-    subgraph ingress["DFE_INGRESS_BIND_HOST -- default 0.0.0.0"]
+```mermaid
+flowchart TB
+    accTitle: L4 Detail -- Who reaches which port
+    accDescr: A client off the box reaches dfe-receiver on any address, because its ingest ports bind 0.0.0.0. The product UIs on 3000 and 8003, the infra UIs on 8081, 8090 and 8000 and the operator ports, ClickHouse among them, bind 127.0.0.1 by default and answer only on the box.
+
+    client["Client off the box"]
+
+    subgraph ingress["DFE_INGRESS_BIND_HOST"]
+        direction LR
         recv["dfe-receiver :8080"]
     end
 
-    subgraph uis["DFE_UI_BIND_HOST -- DFE_BIND_SCOPE, default 127.0.0.1"]
-        proxy["dfe-proxy :3000 -- product"]
-        engine["dfe-engine :8003 -- product"]
-        kafbat["kafka-ui :8081 -- infra"]
-        hdx["dfe-hyperdx-proxy :8090 :8000 -- infra"]
+    subgraph uis["DFE_UI_BIND_HOST"]
+        direction LR
+        product["Product UIs<br/>:3000 :8003"]
+        infra["Infra UIs<br/>:8081 :8090 :8000"]
     end
 
-    subgraph operator["DFE_BIND_HOST -- default 127.0.0.1"]
-        ch[(ClickHouse :8123 :9000)]
+    subgraph operator["DFE_BIND_HOST"]
+        direction LR
+        ch[("ClickHouse<br/>:8123 :9000")]
     end
 
-    user --> recv
-    user --> proxy
-    proxy -->|proxies /api/v1 paths| engine
-    hdx -.->|dfe-hyperdx queries for the browser| ch
+    client -->|any address| ingress
+    client -.->|loopback only| uis
+    client -.->|loopback only| operator
 
-    classDef open fill:#D55E00,color:#ffffff,stroke:#000000
-    classDef loop fill:#0072B2,color:#ffffff,stroke:#000000
-    class recv open
-    class proxy,engine,kafbat,hdx,ch loop
+    classDef default fill:#F8FAFC,stroke:#64748B,stroke-width:1px,color:#0F172A
+    classDef store fill:#DDF3EC,stroke:#00785A,stroke-width:1px,color:#0B3327
+    classDef decision fill:#FCF1D6,stroke:#9A6700,stroke-width:1px,color:#3D2A00
+    classDef ext fill:#EEF0F2,stroke:#6B7280,stroke-width:1px,stroke-dasharray:4 3,color:#1F2937
+    classDef group fill:none,stroke:#64748B,stroke-width:1px,stroke-dasharray:2 4
+    class client ext
+    class recv decision
+    class ch store
+    class ingress,uis,operator group
 ```
+
+*Figure 1. L4 Detail -- Who reaches which port. Dotted arrows answer only on the box until `DFE_BIND_SCOPE=all` or `DFE_BIND_HOST=0.0.0.0` widens them.* Up: [dfe-docker documentation](README.md).
+
+Behind those ports, dfe-proxy sends `/api/v1/*` to the engine ([architecture.md](architecture.md#two-independent-selectors-decide-what-runs)) and dfe-hyperdx queries ClickHouse for the browser.
 
 ## Two consequences survive the loopback defaults
 
@@ -147,9 +156,7 @@ The console frames dfe-hyperdx from dfe-proxy's `:8091`, so dfe-hyperdx's two fl
 
 Both dials take effect through `make`, which resolves the scope into `DFE_UI_BIND_HOST`, writes a `!reset` ports entry per opted-out UI into `.tmp/docker-compose.unpublish.yml` and chains it. Compose merging can add a ports mapping but never remove one, so an opt-out has to arrive as a `!reset` rather than an override. The embed alone drops through a `!override` that restates the console's line. A raw `docker compose` outside `make` therefore publishes everything on loopback.
 
-Unpublishing leaves the container running and reachable on the compose network.
-It reduces the accidental surface. It is not access control, and only the console
-and dfe-hyperdx ask for a login.
+Unpublishing leaves the container running and reachable on the compose network, so it is not access control.
 
 `make check-compose` asserts all of it: that every UI follows the scope on both addresses, that no ingest or backing-service port moves with it, that each opt-out drops only its own UI and that the kill switch drops every infra UI.
 
@@ -164,14 +171,11 @@ Every service extends a tier in `compose/limits.yml` for its `deploy.resources.l
 | `DFE_SERVICE_*` | the DFE components, engine, UI, kafka-ui, dfe-hyperdx, its DocumentDB store. dfe-hyperdx's memory is `DFE_HYPERDX_MEMORY` |
 | `DFE_SIDECAR_*` | the init and contract one-shots, dfe-dashboards, hyperdx-documentdb-tls, both Envoy proxies, otel-collector and the oauth2-proxy gates |
 
-For the actual values and totals, ask the stack rather than this page:
+`make limits` prints the values and totals from the resolved config:
 
 ```bash
 make limits
 ```
-
-`make limits` reads the resolved config, so it cannot drift the way a number
-written here would.
 
 The sizing assumes a 16 GB box **that is also running an operating system and
 whatever else that box does**: 16 GB of RAM is not 16 GB of headroom. A box with
@@ -188,9 +192,7 @@ cleanly, and a smaller cap risks an OOM kill on one.
 
 ### `DFE_SERVICE_CPUS` has a floor of 2.0, and it is not about speed
 
-Trimming this one to fit a smaller box does not make the DFE services slower --
-it makes their health endpoints stop answering while the pipeline carries on
-moving data.
+Below 2.0 the DFE services do not slow down. Their health endpoints stop answering while the pipeline carries on moving data.
 
 Tokio sizes its worker pool from `available_parallelism()`, which reads the
 cgroup CPU quota and floors it, so any ceiling under 2.0 leaves a scalo service
@@ -212,7 +214,7 @@ measured whether an image built on it still needs the floor, so keep it.
 
 A deploy turns one file -- `deployment.yaml` -- and pins one stack version. `make dial && make stack && make ci` is the whole loop. Tracking a channel instead of a pin, and what an upgrade does to a running stack, are in [deploying.md](deploying.md).
 
-`make dev`, `make ci` and `make up` finish with the power-on self test, and fail when it does. What it claims, what each outcome means and the self-monitoring it checks are in [observability.md](self-test.md).
+`make dev`, `make ci` and `make up` finish with the power-on self test, and fail when it does. What it claims and what each outcome means are in [self-test.md](self-test.md).
 
 ## Related
 

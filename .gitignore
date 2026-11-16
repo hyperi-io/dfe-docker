@@ -72,8 +72,6 @@ env/
 # Local stash of the per-service env files.
 .env-dir-stashed/
 
-# Predecessor CI clone and an inert submodule declaration, both untracked and
-# left in the tree. Ignored so `git add -A` cannot pull a dead CI system (100+
-# files) or a broken submodule pointer into this repo. Safe to delete outright.
+# A predecessor CI clone and an inert submodule declaration, both untracked. Safe to delete.
 ci/
 .gitmodules

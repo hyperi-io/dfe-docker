@@ -27,6 +27,8 @@ The sections follow [.env.example](../.env.example): stack-wide settings first, 
 | Variable                                         | Use                                                                                  | Default                                                             |
 |--------------------------------------------------|--------------------------------------------------------------------------------------|---------------------------------------------------------------------|
 | `DFE_STACK_VERIFY`                               | `false` pulls the stack manifest without checking its signature                      | `true`                                                              |
+| `DFE_STACK_MANIFEST_REPO`                        | The OCI repository `make stack` reads the stack manifest from. Read from the environment only | `ghcr.io/hyperi-io/dfe-stack-manifest`                              |
+| `DFE_STACK_SIGNER_IDENTITY`, `DFE_STACK_SIGNER_ISSUER` | The certificate identity and issuer cosign checks the manifest against, for a manifest repository of your own. Read from the environment, then `.env` | dfe-infra's release workflow on `main`, through GitHub Actions OIDC |
 | `DFE_STACK_VERSION`                              | The stack `make stack` last pinned, or `latest` or `rc` to follow the newest         | none, `make stack` sets it                                          |
 | `DOCKER_DEFAULT_PLATFORM`                        | Image architecture to pull from docker (if not wanting automatic determination)      | -                                                                   |
 | `IMAGE_REGISTRY`                                 | OCI registry hosting published `dfe-*` images                                        | `ghcr.io/hyperi-io`                                                 |
@@ -442,7 +444,7 @@ The same toggle points the engine at dfe-hyperdx: with it on, the engine receive
 
 ### Infra UI authentication (opt-in)
 
-Arms an oauth2-proxy per infra-UI origin, see [operating.md](auth-profile.md). Off by default and no other profile may require an issuer.
+Arms an oauth2-proxy per infra-UI origin, see [auth-profile.md](auth-profile.md). Off by default and no other profile may require an issuer.
 
 | Variable                                         | Use                                                                                  | Default                                                             |
 |--------------------------------------------------|--------------------------------------------------------------------------------------|---------------------------------------------------------------------|

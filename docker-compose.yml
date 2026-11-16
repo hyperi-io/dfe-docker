@@ -6,17 +6,7 @@
 # License:   BUSL-1.1
 # Copyright: (c) 2026 HYPERI PTY LIMITED
 #
-# Profile        | Services
-# ---------------|----------------------------------------------
-# clickhouse     | clickhouse
-# kafka-apache   | kafka-apache, the Apache-2.0 broker
-# kafka-redpanda | kafka-redpanda, the default broker
-# kafka-ui       | kafka-ui
-# otel           | otel-collector
-# auth           | the three oauth2-proxy-* gates
-# dfe            | the data-plane apps and their init one-shots
-# core           | engine, hunt runner, UI, proxy and contracts
-# hyperdx        | dfe-hyperdx and its store, proxy and dashboards
+# Compose profiles and the services each starts: docs/architecture.md.
 
 include:
   - path: compose/one-shots.yml
