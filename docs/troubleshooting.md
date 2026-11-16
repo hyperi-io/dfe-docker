@@ -55,7 +55,7 @@ dfe-hyperdx logs there. ClickHouse, the broker and the proxies keep `json-file`.
 The ingest edge returning 2xx only means the event was accepted. Work down this
 order.
 
-This diagram shows the loader checked before the schema.
+Check the loader is ready before checking the schema.
 
 ```mermaid
 flowchart LR
@@ -91,7 +91,7 @@ If the engine has not provisioned, the loader holds every message pending-schema
 and dead-letters after a timeout. Check `dfe.main` exists and that the engine
 is healthy.
 
-On Kafka, this diagram shows the subscription checked before the dead letters.
+On Kafka, check the loader's subscription before the dead letters.
 
 
 ```mermaid

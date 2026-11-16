@@ -24,7 +24,7 @@ The engine issues `admin` with a forced change at first login, which `make post`
 
 dfe-hyperdx, the console's Search, authenticates by verifying the engine's token and holds no logins of its own. ClickHouse takes its generated password. Nothing else authenticates. The ingest edges, every metrics port and Kafka answer whoever can route to them, and so does Kafbat unless the `auth` profile is armed, where the gate is at the proxy, not inside the UI.
 
-This diagram shows which host ports a client off the box can reach at the defaults.
+By default, off-box clients reach the receiver's ingest ports, and every other port answers on the box alone.
 
 ```mermaid
 flowchart TB

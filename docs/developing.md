@@ -89,7 +89,7 @@ make ci     # pull the pinned GHCR images, then start
 `make dev` builds the `:local` images, then starts with the overlay the build writes, `.tmp/docker-compose.local.yml`, which repoints each component it built at `<service>:local` and empties the engine's `DFE_ENGINE_STACK_IMAGES`, so the console shows `DFE_STACK_VERSION`. `make ci` names no overlay. Both run `make env-files` first, which creates any `env/<service>.env` a release added and warns, never edits, when a template adds a key.
 
 `scripts/build_dev_images.py` builds the `:local` images in two stages for every
-Rust component. This diagram shows the two stages.
+Rust component. The repo's Rust builder compiles the binary, and the component's Dockerfile packages it.
 
 ```mermaid
 flowchart LR

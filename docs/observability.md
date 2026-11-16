@@ -67,7 +67,7 @@ Kubernetes has separate probes and ignores `HEALTHCHECK`, so it never chooses.
 ## Self-telemetry is pushed, bar four pulls
 
 The stack's own telemetry leaves by a different door from the data it ingests, so
-a broken ingest pipeline cannot take the reporting on it down. This diagram shows what feeds the collector and who reads what it writes.
+a broken ingest pipeline cannot take the reporting on it down. Services push to the collector, the collector pulls ClickHouse and the host, and dfe-hyperdx queries what it writes.
 
 ```mermaid
 flowchart LR
