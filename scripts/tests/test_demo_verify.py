@@ -678,7 +678,9 @@ def test_a_wait_scale_of_zero_tries_each_check_once() -> None:
     assert sleeps == []
 
 
-def test_search_skips_a_search_that_may_return_nothing() -> None:
+def test_search_runs_a_search_that_may_return_nothing_and_asks_only_that_it_ran() -> (
+    None
+):
     answer = console(dashboards=[], searches=[SEARCH, {**SEARCH, "name": "demo-t-b"}])
     stack = Answers(lambda request: answer(request, lambda sql: rows(3)))
     result = only(
@@ -687,7 +689,58 @@ def test_search_skips_a_search_that_may_return_nothing() -> None:
         stack=stack,
     )
 
+    assert not result.failures
     assert result.detail.startswith("1 saved searches returned rows")
+    assert "1 that may return none ran without an error" in result.detail
+
+
+def test_search_accepts_no_rows_from_a_search_that_may_return_none_but_not_an_error() -> (
+    None
+):
+    answer = console(dashboards=[], searches=[SEARCH])
+    empty = Answers(lambda request: answer(request, lambda sql: rows(0)))
+    broken = Answers(lambda request: answer(request, lambda sql: REFUSED))
+    waiting = pack(zero_ok={"demo-t-live"})
+
+    assert not only("search", pack=waiting, stack=empty).failures
+    failed = only("search", pack=waiting, stack=broken)
+    assert [failure.detail.split(" ")[0] for failure in failed.failures] == [
+        "demo-t-live"
+    ]
+
+
+@pytest.mark.parametrize(
+    ("expression", "wanted"),
+    [
+        ("_json.a.b", "toString(_json.a.b)"),
+        ("toString(_json.a.b)", "toString(_json.a.b)"),
+        (
+            "arrayStringConcat(dynamicElement(_json.attrs.path, 'Array(Int64)'), ' ')",
+            "arrayStringConcat(dynamicElement(toString(_json.attrs.path), 'Array(Int64)'), ' ')",
+        ),
+        ("_json_other.a", "_json_other.a"),
+        ("_timestamp", "_timestamp"),
+    ],
+)
+def test_a_search_is_written_as_the_console_sends_it(
+    expression: str, wanted: str
+) -> None:
+    assert dv.console_form(expression=expression) == wanted
+
+
+def test_a_search_that_reads_a_json_path_as_a_dynamic_fails_as_it_does_in_the_console() -> (
+    None
+):
+    typed = {**SEARCH, "select": "dynamicElement(_json.attrs.path, 'Array(Int64)')"}
+    answer = console(dashboards=[], searches=[typed])
+
+    def run(sql: str) -> dv.Reply:
+        return REFUSED if "dynamicElement(toString(" in sql else rows(3)
+
+    stack = Answers(lambda request: answer(request, run))
+    result = only("search", pack=pack(zero_ok={"demo-t-live"}), stack=stack)
+
+    assert "dynamicElement(toString(_json.attrs.path)" in result.failures[0].detail
 
 
 def test_a_waiting_source_is_named_by_fetchers_and_only_its_rows_leave_the_default_table_count() -> (
