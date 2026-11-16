@@ -8,7 +8,7 @@ The whole DFE stack on one host with Docker Compose, from pinned release images 
 ## What it does
 
 - Runs DFE on one box, an edge site, a partner deployment or a developer's test rig. Compose is a supported production target for small environments. Kubernetes stays the primary path, so where both would work, choose Kubernetes.
-- Pins every image by digest from a certified DFE stack release with `make stack`. With a pin unset the stack refuses to start rather than pull `latest`.
+- Pins every image by digest from a certified DFE stack release with `make stack`. With a pin unset the stack will not start rather than pull `latest`.
 - Starts from the registry images with `make up`, or builds chosen components from source with `make dev`.
 - Runs Kafka or Redpanda as the broker, with opt-in overlays for TLS, storage and an oauth2-proxy `auth` profile.
 - Checks that the running stack moves data from the ingest edge to a ClickHouse row with `make post`, which fails if an enabled run asserts nothing. `DFE_POST_ENABLED=false` skips it.
@@ -34,7 +34,7 @@ docker compose -f oci://ghcr.io/hyperi-io/dfe-docker:demo up -d
 docker compose -f oci://ghcr.io/hyperi-io/dfe-docker:demo run --rm secrets-init login
 ```
 
-`down` with the same `-f` stops either one, and `down -v` deletes its data too.
+`down` with the same `-f` stops either one, and `down -v` deletes its data.
 
 From a clone, on a host with Docker Compose v2, make, git and Python 3:
 
@@ -71,7 +71,7 @@ The suite's published docs are at <https://dfe.docs.hyperi.io>, and this reposit
 
 ## Help and contributing
 
-How to work in this repo, the commands that prove a change and what tends to bite are in [CONTRIBUTING.md](CONTRIBUTING.md). A question that is not a bug goes in a new issue.
+How to work in this repo, the commands that test a change and what tends to bite are in [CONTRIBUTING.md](CONTRIBUTING.md). A question that is not a bug goes in a new issue.
 
 Open bugs: [this repo](https://github.com/hyperi-io/dfe-docker/issues?q=is%3Aopen+is%3Aissue+type%3ABug+-label%3Abacklog+-label%3Anext-minor) | [whole DFE suite](https://github.com/search?type=issues&q=is%3Aopen+is%3Aissue+type%3ABug+-label%3Abacklog+-label%3Anext-minor+repo%3Ahyperi-io%2Fdfe-infra+repo%3Ahyperi-io%2Fdfe-docker+repo%3Ahyperi-io%2Fdfe-deploy+repo%3Ahyperi-io%2Fdfe-engine+repo%3Ahyperi-io%2Fdfe-loader+repo%3Ahyperi-io%2Fdfe-receiver+repo%3Ahyperi-io%2Fdfe-fetcher+repo%3Ahyperi-io%2Fdfe-archiver+repo%3Ahyperi-io%2Fdfe-transform-vrl+repo%3Ahyperi-io%2Fdfe-transform-vector+repo%3Ahyperi-io%2Fdfe-transform-elastic+repo%3Ahyperi-io%2Fdfe-ui+repo%3Ahyperi-io%2Fdfe-hyperdx+repo%3Ahyperi-io%2Fscalo-rs+repo%3Ahyperi-io%2Fscalo-py+repo%3Ahyperi-io%2Flogreducer+repo%3Ahyperi-io%2Fdfe-schemas+repo%3Ahyperi-io%2Fvector-vrl+repo%3Ahyperi-io%2Fculvert+repo%3Ahyperi-io%2Fdfe-clickhouse-rs+repo%3Ahyperi-io%2Ffactbook-rs)
 

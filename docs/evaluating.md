@@ -56,12 +56,12 @@ The same image runs the rest, in the same folder:
 
 | Command | What it does |
 |---|---|
-| `login` | Prints the access summary. With `docker run -t` it prints the admin password too |
-| `init --upgrade` | Copies the tree again and re-pins the stack, keeping every secret and setting. `--stack X.Y.Z` names the stack. Plain `init` refuses a folder that holds an install |
+| `login` | Prints the access summary. With `docker run -t` it prints the admin password as well |
+| `init --upgrade` | Copies the tree again and re-pins the stack, keeping every secret and setting. `--stack X.Y.Z` names the stack. Plain `init` rejects a folder that holds an install |
 | `apply` | Rewrites the compose settings after an edit to `.env`, or after the console adds or deletes a source. Run `docker compose up -d --remove-orphans` after it |
 | `certs` | Mints the console certificate `DFE_PROXY_TLS=true` needs |
 
-Edit settings above the `## BEGIN dfe-docker` block in `.env`. `apply` rewrites the block and `--upgrade` replaces `config/`. `docker compose --profile '*' down` stops everything, and `-v` deletes the data too.
+Edit settings above the `## BEGIN dfe-docker` block in `.env`. `apply` rewrites the block and `--upgrade` replaces `config/`. `docker compose --profile '*' down` stops everything, and `-v` deletes the data.
 
 The demo needs the stack up, the Docker socket and the folder at its own path, because compose in the container hands the Docker host the paths it sees. That is Linux, macOS or a WSL shell on Windows:
 
@@ -93,11 +93,11 @@ make up VERSION=<stack version>  # an older stack
 
 `make up` creates `.env` and `env/`, generates the secrets, pins every image from the DFE stack manifest, starts the stack and prints the console login. Its first line says the profile and stack in use. `PROFILE=` and `VERSION=` are written to `.env`, so the next `make up` keeps them.
 
-The stack refuses to start on unpinned images rather than quietly pulling `latest`, which is why `make up` pins first. On something you might later deploy, "which image am I running?" should never have a vague answer. `make init` and `make stack VERSION=X.Y.Z` do the two steps by hand.
+The stack will not start on unpinned images, so it never quietly pulls `latest`, which is why `make up` pins first. On something you might later deploy, "which image am I running?" should never have a vague answer. `make init` and `make stack VERSION=X.Y.Z` do the two steps by hand.
 
 `make up` finishes by running the power-on self test, which injects a few marked
 events and proves they reached ClickHouse. If it prints `PASS`, the pipeline
-works - you have already seen the thing you came to see.
+works - you have seen the thing you came to see.
 
 ```bash
 make down    # stop the containers, keep the data
@@ -159,7 +159,7 @@ A couple of seconds is normal.
 
 `make demo` streams Cisco ASA and FortiGate firewall logs into the running stack as raw syslog. dfe-transform-elastic works out which device sent each line, parses it and lands it in that device's own table. Palo Alto and Cisco IOS wait on [dfe-transform-elastic#133](https://github.com/hyperi-io/dfe-transform-elastic/issues/133).
 
-It needs a profile that runs dfe-transform-elastic per source, which is `single-kafka` (the default). On a clone with no stack running, `make demo` does the `make up` steps first. It refuses a profile without dfe-transform-elastic before it starts anything and never moves a running stack to another profile.
+It needs a profile that runs dfe-transform-elastic per source, which is `single-kafka` (the default). On a clone with no stack running, `make demo` does the `make up` steps first. It rejects a profile without dfe-transform-elastic before it starts anything and never moves a running stack to another profile.
 
 ```bash
 git clone https://github.com/hyperi-io/dfe-docker && cd dfe-docker
@@ -175,12 +175,13 @@ The demo is one set of pieces, listed in [`resources/demo/demo.json`](../resourc
 | Sources | [`resources/demo/sources/`](../resources/demo/sources/) | One `POST /sources` body per file: the `demo-syslog` intake, the `cisco-asa` and `fortinet` tables, and two fetchers |
 | Fetchers | `wikipedia-recentchanges`, `component-releases` | Pull beside the receiver's push. `wikipedia-recentchanges` polls the MediaWiki recent changes API every 5 seconds, asking each window once, with the first poll bringing in the last hour. `component-releases` takes the latest GitHub release of each public DFE component every 15 minutes, to stay inside GitHub's 60 unauthenticated requests an hour |
 | Archive | `demo-syslog` has `archive: true` | On a Kafka profile dfe-archiver writes the raw syslog lines to the `archiver-data` volume (`file:///var/lib/dfe-archiver/archive`). dfe-archiver has no retention of its own, so the pack runs a pruner that keeps the archive to 15 minutes and 200 MB. A gRPC profile runs no archiver, so there the Source is created without archiving |
-| Console | [`resources/demo/console/`](../resources/demo/console/) | A dashboard per source and one for the stack's health, and saved searches with a live tail for each streamed source. All are named `demo-` |
-| Tables | `dfe.cisco-asa`, `dfe.fortinet`, `dfe.demo-syslog`, `dfe.component-releases`, `dfe.wikipedia-recentchanges` | `make demo-stop` leaves them, with their rows, because only the engine issues ClickHouse DDL and it never drops a table. The next `make demo` carries on in them, and `make clean` removes them with the volumes |
+| Console | [`resources/demo/console/`](../resources/demo/console/) | A dashboard per source and one for the stack's health, and saved searches with a live tail for each streamed source. Every name starts `demo-` |
+| Tables | `dfe.cisco-asa`, `dfe.fortinet`, `dfe.demo-syslog`, `dfe.component-releases`, `dfe.wikipedia-recentchanges` | `make demo-stop` leaves them, with their rows, because only the engine issues ClickHouse DDL and it never drops a table. The next `make demo` goes on in them, and `make clean` removes them with the volumes |
 
-Each device replays about 6,000 sample lines from [`resources/demo/events/<source>/`](../resources/demo/events/), ten minutes at the default rate before a line repeats, which `python3 resources/demo/events/generate.py` regenerates. The run turns on dfe-receiver's syslog listener (UDP and TCP on port 514) and recreates what that changes. It returns once every vendor table has gained rows and the archive holds a file, and leaves the stream running:
+Each device loops over the sample lines in [`resources/demo/events/<source>/`](../resources/demo/events/), which `python3 resources/demo/events/generate.py` regenerates.
+ The run turns on dfe-receiver's syslog listener (UDP and TCP on port 514) and recreates what that changes. It returns once every device table has gained rows and the archive holds a file, and leaves the stream running:
 
-```text
+```console
 demo -   console demo-cisco-asa: http://localhost:8090/dashboards/<id>
 demo -   console demo-wikipedia-live: http://localhost:8090/search/<id>?isLive=true
 demo -   dfe.cisco-asa: +N rows
@@ -228,7 +229,7 @@ It is **not** secured, though it is not open either. `make init` mints two
 logins -- `admin` for the console and the engine API, and `breakglass` for
 recovery -- and generates ClickHouse's password with them. `make creds` prints
 the admin one on a terminal and names the `env/engine.env` key holding the other.
-`access-summary.md`, written beside `.env` and readable only by you, carries
+`access-summary.md`, written beside `.env` and readable only by you, holds
 both. Kafbat answers anyone who can reach it. The `auth` profile adds an OIDC
 sign-in to Kafbat and the console's Search origins. Nothing here serves TLS until
 you turn [console TLS](configuration.md#console-tls-opt-in) on.
@@ -245,7 +246,7 @@ still production, and the defaults here are tuned for a laptop.
 |-------------|------|
 | Understand how the pieces fit | [architecture.md](architecture.md) |
 | Run this where others depend on it | [operating.md](operating.md) |
-| Stand up a real deployment, or upgrade one | [deploying.md](deploying.md) |
+| Stand up a deployment, or upgrade one | [deploying.md](deploying.md) |
 | Know what the stack reports about itself | [observability.md](observability.md) |
 | Look up a variable or a port | [configuration.md](configuration.md) |
 | Work on a DFE component | [developing.md](developing.md) |

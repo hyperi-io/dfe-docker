@@ -43,9 +43,10 @@ not your laptop.
 
 On dfe-ui, an unknown path returns the 200 app shell rather than a 404 -- Next.js
 routes anything it does not recognise to the page. Only the three paths above are
-real there.
+served there.
 
-Compose picks liveness or readiness for you.
+## Compose gates on readiness, so the gated services report it
+
 Compose has no readiness condition. `depends_on: service_healthy` is the only
 startup gate, so anything others wait on must report READINESS.
 
@@ -66,23 +67,42 @@ Kubernetes has separate probes and ignores `HEALTHCHECK`, so it never chooses.
 ## Self-telemetry is pushed, bar four pulls
 
 The stack's own telemetry leaves by a different door from the data it ingests, so
-a broken ingest pipeline cannot take the reporting on it down too.
+a broken ingest pipeline cannot take the reporting on it down. This diagram shows what feeds the collector and who reads what it writes.
 
 ```mermaid
 flowchart LR
-    apps["DFE services"] -->|OTLP push :4317| col["otel-collector"]
-    apps -->|stdout| drv["Docker log driver"]
-    drv -->|fluent_forward :24224| col
-    chsrv[(ClickHouse system tables)] -->|sql_query pull| col
-    host("docker host /proc") -->|host_metrics pull| col
-    col -->|self-telemetry :8888| col
-    hdxm["dfe-hyperdx :8000"] -->|prometheus scrape| col
-    col -->|clickhouse exporter| ch[(dfe.otel_* tables)]
-    ch -.->|queries it| hdx["dfe-hyperdx"]
+    accTitle: L4 Detail -- Self-telemetry
+    accDescr: DFE services push metrics and traces over OTLP to the otel-collector. Docker's log driver forwards the stdout of the DFE containers to it while container log shipping is on. The collector pulls ClickHouse's system tables and the host's CPUs itself. It writes logs, metrics and traces to the dfe.otel_ tables, which dfe-hyperdx queries.
 
-    classDef on fill:#009E73,color:#ffffff,stroke:#000000
-    class col,ch on
+
+    apps["DFE services"]
+    driver["Docker log driver"]
+    subgraph pulled["Pulled"]
+        chsys[("ClickHouse<br/>system tables")]
+        host["Host /proc"]
+    end
+    col["otel-collector"]
+    otel[("dfe.otel_* tables")]
+    hdx["dfe-hyperdx"]
+
+    apps -->|OTLP :4317| col
+    driver -->|fluent :24224| col
+    pulled -->|scraped| col
+    col -->|writes| otel
+    otel -.-> hdx
+
+    classDef default fill:#F8FAFC,stroke:#64748B,stroke-width:1px,color:#0F172A
+    classDef core fill:#DCEBF7,stroke:#0072B2,stroke-width:2px,color:#0B2A3F
+    classDef store fill:#DDF3EC,stroke:#00785A,stroke-width:1px,color:#0B3327
+    classDef ext fill:#EEF0F2,stroke:#6B7280,stroke-width:1px,stroke-dasharray:4 3,color:#1F2937
+    classDef group fill:none,stroke:#64748B,stroke-width:1px,stroke-dasharray:2 4
+    class driver,host ext
+    class col core
+    class chsys,otel store
+    class pulled group
 ```
+
+*Figure 1. L4 Detail -- Self-telemetry. The dotted arrow is a read, and the collector's own `:8888` metrics and dfe-hyperdx's `:8000` are scraped.* Up: [dfe-docker documentation](README.md).
 
 Services PUSH. dfe-hyperdx reads ClickHouse rather than receiving anything -- the
 fork ships no OTLP receiver, so the collector's exporter writes the tables it
@@ -108,12 +128,12 @@ dfe-engine's Overview counts cores from the usage rollup dfe-schemas declares. T
 | Reading | Where it comes from here | Table |
 |---|---|---|
 | `k8s.container.cpu_request` | `sql_query/usage`: the CPU limit of each service the stack runs | `otel_metrics_gauge` |
-| `k8s.pod.phase`, 2 (Running) | the same query, at the same instant, which the rollup requires beside each limit | `otel_metrics_gauge` |
+| `k8s.pod.phase`, 2 (Running) | the same query, at the same instant, which the rollup needs beside each limit | `otel_metrics_gauge` |
 | `system.cpu.logical.count` | `host_metrics`, through the host's `/proc` mounted read-only at `/hostfs/proc` | `otel_metrics_sum` |
 
-All three carry `k8s.node.name`, the docker host's name, which joins a service's cores to its host's.
+All three have `k8s.node.name`, the docker host's name, which joins a service's cores to its host's.
 
-- Compose carries CPU limits where Kubernetes counts requests, so a service counts its ceiling. When limits add up to more than the host has, cores deployed reads higher than worker-node cores.
+- Compose sets CPU limits where Kubernetes counts requests, so a service counts its ceiling. When limits add up to more than the host has, cores deployed reads higher than worker-node cores.
 - A one-shot (`restart: "no"`) exits once its job is done and does not count. A service with no CPU limit (`DFE_SERVICE_CPUS=0`, say) counts every core on the host.
 - `make dev`, `ci`, `up`, `infra` and `apply` read the limits from the compose model of what `up` starts and hand them to the collector as `DFE_USAGE_CPU_LIMITS` and `DFE_USAGE_NODE_NAME`. A collector started by a plain `docker compose up` has neither, so cores deployed reads as not measured. `make apply` recreates the collector when an added or deleted source moved them.
 
@@ -144,9 +164,9 @@ What reports:
 | Component | Pushes? | Why |
 |---|---|---|
 | the seven Rust services | metrics and traces | scalo's `metrics` feature pulls `otel-metrics` and `otel-tracing`, so OTLP export is on by default (scalo-rs#30) |
-| dfe-engine | metrics and traces, on the `opentelemetry` backend `env/engine.env` ships | scalo-py's exporter, whose CLI defaults the backend to `opentelemetry` (scalo-py#11) |
+| dfe-engine | metrics and traces, on the `opentelemetry` backend `env/engine.env` ships | scalo-py's exporter, and its CLI defaults the backend to `opentelemetry` (scalo-py#11) |
 | dfe-hunt-runner | metrics, as `dfe_hunt_*` | it has no listener to scrape and its default `opentelemetry` backend pushes on `OTEL_EXPORTER_OTLP_ENDPOINT` alone |
-| dfe-ui | metrics, over OTLP/HTTP | `@opentelemetry/sdk-metrics` from its `instrumentation.ts`, on `DFE_OTEL_EXPORTER_HTTP_ENDPOINT`. It also serves `/metrics` on `:3000`. The self test requires its rows, like every pusher here (`OTEL_PUSHER_PREFIXES` in `scripts/post.py`) |
+| dfe-ui | metrics, over OTLP/HTTP | `@opentelemetry/sdk-metrics` from its `instrumentation.ts`, on `DFE_OTEL_EXPORTER_HTTP_ENDPOINT`. It serves `/metrics` on `:3000`. The self test needs its rows, like every pusher here (`OTEL_PUSHER_PREFIXES` in `scripts/post.py`) |
 | every DFE service | LOGS, via Docker's log driver | nothing in the stack exports logs over OTLP, so stdout is shipped instead -- see below |
 
 `OTEL_EXPORTER_OTLP_ENDPOINT` is set on every service regardless, so a rebuilt
@@ -173,7 +193,7 @@ and no privilege.
 
 **`docker compose logs` still reads these services.** Docker's dual logging keeps a local copy of each line, so the driver adds the collector without taking the CLI away. Only DFE's own services and dfe-hyperdx move onto the driver: ClickHouse, the broker and the proxies keep `json-file`. Put every service back with:
 
-```
+```bash
 DFE_CONTAINER_LOGS_ENABLED=false
 ```
 
@@ -184,12 +204,12 @@ DFE_CONTAINER_LOGS_ENABLED=false
 | `DFE_OTEL_FLUENT_PORT` | `24224` | the collector's receiver, on `DFE_BIND_HOST` |
 
 The driver runs with `fluentd-async`, so a container starts whether or not the
-collector is up. Without it Docker refuses to create a container it cannot reach
+collector is up. Without it Docker will not create a container it cannot reach
 a logging endpoint for, which would put the collector on the startup path of the
 whole stack. Lines written while the collector is down queue in the daemon and
 are sent when it answers.
 
-It also runs with `fluentd-request-ack`, and the queue depends on it. The
+It runs with `fluentd-request-ack`, and the queue depends on it. The
 collector's host port is Docker's port proxy, which accepts connections from the
 moment the container starts, before the collector inside is listening, and drops
 what it is sent. Without an ack the driver counts those lines as delivered, and a

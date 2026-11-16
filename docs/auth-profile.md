@@ -10,6 +10,8 @@ Copyright: (c) 2026 HYPERI PTY LIMITED
 
 # Gating the infra UIs with OIDC
 
+Status: opt-in and off by default (`DFE_AUTH_ENABLED=false`). `make check-compose` checks its wiring, and no e2e test signs in through it.
+
 `DFE_AUTH_ENABLED=true` arms the `auth` profile, which puts an oauth2-proxy in
 front of each infra UI. Reaching Kafbat, or dfe-hyperdx on `:8090` and `:8000`, then
 needs an OIDC sign-in **and** membership of one of `DFE_OIDC_ALLOWED_GROUPS`
@@ -42,13 +44,13 @@ proxies as well as the UIs.
 
 ## Three limits
 
-It gates page access only. Neither UI learns from the proxy who signed in, because dfe-hyperdx identifies callers by the engine token, and neither gains roles or an audit trail from it.
+It gates page access only. Neither UI learns from the proxy who signed in, because dfe-hyperdx identifies callers by the engine token, and neither gets roles or an audit trail from it.
 
 An expired session on the API origin fails opaquely. The browser blocks a cross-origin XHR that gets a redirect to the IdP, so the app shows failed requests rather than a login prompt. Reload the app page to sign back in.
 
 Nothing else moves behind it. Ingest, ClickHouse, Kafka, the metrics ports and the product UIs are untouched.
 
-Off by default, and it must stay possible to run every other profile without an
+It must stay possible to run every other profile without an
 issuer. Arming it with a setting missing stops `make` and names the key rather
 than starting a proxy that redirects nowhere.
 
