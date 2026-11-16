@@ -41,6 +41,7 @@ services:
       - ./config/clickhouse/listen.xml:/etc/clickhouse-server/config.d/docker_related_config.xml:ro
       - ./config/clickhouse/server-logger.xml:/etc/clickhouse-server/config.d/dfe-logger.xml:ro
       - ./config/clickhouse/system-logs.xml:/etc/clickhouse-server/config.d/dfe-system-logs.xml:ro
+      - ./config/clickhouse/merge-memory.xml:/etc/clickhouse-server/config.d/dfe-merge-memory.xml:ro
     healthcheck:
       test: ["CMD-SHELL", "clickhouse-client --password \"$$CLICKHOUSE_PASSWORD\" --query \"SELECT 1 FROM system.databases WHERE name = '\"$$CLICKHOUSE_DB\"'\""]
       interval: 5s

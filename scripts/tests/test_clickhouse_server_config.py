@@ -1,6 +1,6 @@
 #  Project:      dfe-docker
 #  File:         tests/test_clickhouse_server_config.py
-#  Purpose:      Assert the bundled ClickHouse bounds its own logs and holds Replicated DDL
+#  Purpose:      Assert the bundled ClickHouse bounds its own logs, holds Replicated DDL and keeps merge memory below its limit
 #  Language:     Python
 #
 #  License:      BUSL-1.1
@@ -40,6 +40,7 @@ _LOGGER_FILE = REPO_ROOT / "config" / "clickhouse" / "server-logger.xml"
 _SYSTEM_LOGS_FILE = REPO_ROOT / "config" / "clickhouse" / "system-logs.xml"
 _REPLICATION_FILE = REPO_ROOT / "config" / "clickhouse" / "replication.xml"
 _LISTEN_FILE = REPO_ROOT / "config" / "clickhouse" / "listen.xml"
+_MERGE_MEMORY_FILE = REPO_ROOT / "config" / "clickhouse" / "merge-memory.xml"
 # The image's file that opens every listener on every interface.
 _IMAGE_LISTEN_NAME = "docker_related_config.xml"
 _LOOPBACK = {"127.0.0.1", "::1"}
@@ -193,7 +194,13 @@ def test_the_system_logs_overlay_names_no_other_table() -> None:
 def test_the_service_mounts_every_overlay_into_config_d() -> None:
     mounts = _config_d_mounts()
 
-    for path in (_LOGGER_FILE, _SYSTEM_LOGS_FILE, _REPLICATION_FILE, _LISTEN_FILE):
+    for path in (
+        _LOGGER_FILE,
+        _SYSTEM_LOGS_FILE,
+        _REPLICATION_FILE,
+        _LISTEN_FILE,
+        _MERGE_MEMORY_FILE,
+    ):
         source = str(path.relative_to(REPO_ROOT))
         assert source in mounts, f"{_SERVICE} does not mount {source} into config.d"
         # config.d picks the parser by extension, so XML must land under .xml.
@@ -201,6 +208,23 @@ def test_the_service_mounts_every_overlay_into_config_d() -> None:
     assert len(set(mounts.values())) == len(mounts), "two overlays share a name"
     # Under any other name the image's file still merges and reopens every interface.
     assert mounts[str(_LISTEN_FILE.relative_to(REPO_ROOT))] == _IMAGE_LISTEN_NAME
+
+
+def test_merges_leave_memory_for_inserts_and_queries() -> None:
+    root = _root(path=_MERGE_MEMORY_FILE)
+
+    # The overlay sets these and nothing else, so the image keeps every other merge default.
+    assert [child.tag for child in root] == [
+        "merges_mutations_memory_usage_to_ram_ratio",
+        "merge_tree",
+    ]
+    # Below the image's 0.5, so running merges stop short of the server limit.
+    assert 0 < float(_text(root, "merges_mutations_memory_usage_to_ram_ratio")) < 0.5
+    # Below the image's 1 MiB, the write buffer every column of a wide table holds.
+    assert 0 < int(_text(root, "merge_tree/max_compress_block_size")) < 1_048_576
+    assert [child.tag for child in root.find("merge_tree")] == [
+        "max_compress_block_size"
+    ]
 
 
 def _text(root: ElementTree.Element, path: str) -> str:

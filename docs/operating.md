@@ -211,6 +211,13 @@ from a shortage of CPU.
 tokio's blocking pool (`src/transport/kafka/mod.rs` in scalo-rs), and nobody has
 tested whether an image built on it still needs the floor, so keep it.
 
+### ClickHouse memory: merges leave room for inserts
+
+ClickHouse refuses inserts and queries with code 241 (`MEMORY_LIMIT_EXCEEDED`) at 90% of its container limit. On the demo packs the cause was background merges of the wide source tables, which have hundreds of columns each and hold a write buffer per column. `config/clickhouse/merge-memory.xml` sets two things:
+
+- `merges_mutations_memory_usage_to_ram_ratio` is the share of the server limit running merges may hold. Past it no new merge starts.
+- `max_compress_block_size` is the write buffer per column. At 64 KiB every merge and insert of a wide table needs less memory.
+
 ## Deploying, upgrading and the self test
 
 A deploy turns one file -- `deployment.yaml` -- and pins one stack version. `make dial && make stack && make ci` is the whole loop. Tracking a channel instead of a pin, and what an upgrade does to a running stack, are in [deploying.md](deploying.md).
