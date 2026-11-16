@@ -80,7 +80,8 @@ CONSOLE_INTERVAL_SECONDS = 60
 LAND_TIMEOUT_SECONDS = 300.0
 FETCH_TIMEOUT_SECONDS = 600.0
 HUNT_TIMEOUT_SECONDS = 900.0
-CONSOLE_TIMEOUT_SECONDS = 300.0
+# The archived tile reads zero until dfe-archiver closes its first file, 300 s after it opens on Kafka, and its counter exports after that
+CONSOLE_TIMEOUT_SECONDS = 480.0
 POLL_INTERVAL_SECONDS = 5.0
 EXEC_TIMEOUT_SECONDS = 240
 CHECKS = (
