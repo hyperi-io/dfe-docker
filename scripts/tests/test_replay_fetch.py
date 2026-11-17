@@ -278,6 +278,31 @@ class TestLoadReplays:
             rows_at="/ac",
         )
 
+    def test_adds_the_replay_unit_a_live_only_source_lacks(
+        self, tmp_path: Path
+    ) -> None:
+        line = f'{{"polled_ms": {POLLED_MS}, "body": [1]}}'
+        root = _pack(tmp_path, endpoints=[LIVE_UNIT], lines=[line])
+
+        replays = replay_fetch.load_replays(root=root)
+
+        assert replays["air"].rows_at == "/ac"
+        assert replays["air"].probe.rows_at == "/ac"
+        derived = replay_fetch.with_replay_unit(
+            body=json.loads(_source(endpoints=[LIVE_UNIT]))
+        )
+        assert derived["fetcher"]["config"]["vars"]["replay_url"] == (
+            replay_fetch.REPLAY_URL
+        )
+        assert [
+            e["unit"] for e in derived["fetcher"]["config"]["profile"]["endpoints"]
+        ] == [
+            "replay",
+            "point",
+        ]
+        assert derived["fetcher"]["config"]["profile"]["endpoints"][0]["path"] == "/air"
+        assert replay_fetch.with_replay_unit(body=derived) == derived
+
     def test_skips_a_fetcher_with_no_capture(self, tmp_path: Path) -> None:
         root = _pack(tmp_path, endpoints=[REPLAY_UNIT, LIVE_UNIT], lines=["{}"])
         (root / "events" / "air" / "demo.log").unlink()
@@ -310,7 +335,7 @@ class TestLoadReplays:
             "empty",
             "malformed",
             "no-poll-time",
-            "no-replay-unit",
+            "no-units",
             "no-live-unit",
             "unfillable-path",
         ],

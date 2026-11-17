@@ -1237,12 +1237,11 @@ class TestLoadDemo:
         # The tracker rebuilds the list every five minutes and asks clients to fetch no faster
         assert config["interval_secs"] >= 300
         assert profile["shape"] == "dump"
-        # The published demo's demo-replay service answers the replay unit with the captured poll
-        assert sorted(units) == ["blocklist", "replay"]
+        # make demo has no demo-replay service, so the source carries no replay unit
+        assert sorted(units) == ["blocklist"]
         assert units["blocklist"]["path"] == "/downloads/ipblocklist.json"
-        assert units["replay"]["path"] == "/feodo-c2"
         # A streaming decoder is bounded per read, so the fetcher refuses a request timeout on it
-        assert all("timeout_secs" not in unit for unit in units.values())
+        assert "timeout_secs" not in units["blocklist"]
         assert feodo["schema"]["meta_schema"] == "meta/abusech/feodo_c2"
         agent = profile["headers"]["User-Agent"]
         assert agent.startswith("DFE-demo")

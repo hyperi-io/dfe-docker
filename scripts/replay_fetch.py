@@ -43,6 +43,8 @@ REPLAY_UNIT = "replay"
 LIVE_ROWS_CHECK_SECONDS = 1800.0
 NO_ROWS_CHECK_SECONDS = 300.0
 PROBE_TIMEOUT_SECONDS = 5.0
+# The demo-replay service on the stack's network, where a replay unit the file does not write itself is served from
+REPLAY_URL = f"http://demo-replay:{PORT}"
 VARS_TOKEN = re.compile(r"\{\{\s*vars\.(\w+)\s*\}\}")
 
 
@@ -161,6 +163,28 @@ def _step_ms(*, polls: list[tuple[int, object]]) -> int:
     return max(1, gaps[len(gaps) // 2]) if gaps else 1000
 
 
+def with_replay_unit(*, body: Mapping) -> dict:
+    """The fetcher source with a `replay` unit, added from its first unit where the file has none: that unit's rows read from `vars.replay_url` at /<source>. A source that polls the live feed only stays that way under `make demo`, which runs no replay service."""
+    copy = json.loads(json.dumps(body))
+    config = copy["fetcher"]["config"]
+    endpoints = config["profile"].setdefault("endpoints", [])
+    if any(endpoint.get("unit") == REPLAY_UNIT for endpoint in endpoints):
+        return copy
+    if not (endpoints):
+        return copy
+    endpoints.insert(
+        0,
+        {
+            "base_url": "{{ vars.replay_url }}",
+            "path": f"/{copy['source']}",
+            "rows": endpoints[0].get("rows", {}),
+            "unit": REPLAY_UNIT,
+        },
+    )
+    config.setdefault("vars", {}).setdefault("replay_url", REPLAY_URL)
+    return copy
+
+
 def _replay_rows_at(*, body: Mapping, name: str) -> str:
     """Where a fetcher source's `replay` unit reads its rows, the whole body when it sets no `at`, as a `json_array` unit does."""
     profile = body["fetcher"]["config"]["profile"]
@@ -244,6 +268,7 @@ def load_replays(*, root: Path) -> dict[str, Replay]:
         fetches = isinstance(body, dict) and isinstance(body.get("fetcher"), dict)
         if not (fetches) or not (log.is_file()):
             continue
+        body = with_replay_unit(body=body)
         polls = _polls(path=log)
         replays[path.stem] = Replay(
             live=_live_host(body=body, name=path.stem),

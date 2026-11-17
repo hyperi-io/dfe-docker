@@ -36,12 +36,6 @@
     "demo-syslog-unclaimed",
     "demo-component-releases/latest",
     "demo-component-releases/polls",
-    "demo-component-releases-all",
-    "demo-feodo-c2/total",
-    "demo-feodo-c2/families",
-    "demo-feodo-c2/servers",
-    "demo-feodo-c2/polls",
-    "demo-feodo-c2-all",
-    "demo-feodo-c2-online"
+    "demo-component-releases-all"
   ]
 }
