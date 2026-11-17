@@ -8,120 +8,177 @@ License:   BUSL-1.1
 Copyright: (c) 2026 HYPERI PTY LIMITED
 -->
 
-# How the Compose stack fits together
+# dfe-docker architecture
 
-This repo is **packaging, not product**. It ships a `docker-compose.yml`, the
-config files the components mount, and Python helpers that resolve a profile and
-pin image versions. It builds no DFE component image. Each release publishes the
-dfe-docker image, which sets up a folder that runs the stack, and the compose
-files `docker compose -f oci://` runs (`.github/workflows/image.yml`).
-
-When something in the data path is wrong, the fix is almost always in a component
-repo, not here.
-
-## Events arrive two ways and leave one
-
-Pushed to `dfe-receiver` or pulled by `dfe-fetcher`, and out through `dfe-loader`
-into ClickHouse. Everything between is optional and profile-selected. On a Kafka profile, the receiver and fetcher produce to Kafka, and the loader reads the topics into ClickHouse.
+dfe-docker runs a whole DFE stack on one host under Docker Compose, from the same images and pins as the Kubernetes path. It is packaging, not product: it builds no DFE component, so a fault in the data path is almost always fixed in a component repo.
 
 ```mermaid
-flowchart LR
+---
+config:
+  theme: base
+  look: neo
+  fontFamily: Inter, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif
+  flowchart:
+    curve: linear
+    nodeSpacing: 40
+    rankSpacing: 64
+    padding: 18
+    wrappingWidth: 280
+    htmlLabels: true
+  elk:
+    preset: modelOrder
+  themeVariables:
+    fontSize: 15px
+    lineColor: "#64748B"
+    primaryTextColor: "#0F172A"
+    clusterBorder: "#0072B2"
+    edgeLabelBackground: "#FFFFFF"
+  themeCSS: >-
+    p{margin:0}
+    .node[data-look] rect,.node[data-look] path,.node[data-look] polygon,.node[data-look] .outer-path{filter:drop-shadow(0 1px 2px rgba(15,23,42,.10)) drop-shadow(0 6px 14px rgba(15,23,42,.10))}
+    .node rect{rx:10px;ry:10px}
+    .cluster rect{rx:16px;ry:16px}
+    .node .label div{min-width:150px}
+    .node.decision .label div{min-width:0}
+    .cluster[data-look] rect{filter:none}
+    .nodeLabel{line-height:1.35}
+    .nodeLabel b{font-weight:600;font-size:15px;letter-spacing:-0.01em}
+    .nodeLabel span{font-size:12.5px;font-weight:400;color:#334155}
+    .cluster-label span.nodeLabel{display:inline-block;background:#FFFFFF;color:#0B2A3F;border:1.5px solid #0072B2;border-radius:999px;padding:2px 12px;font-size:11.5px;font-weight:700;letter-spacing:.09em;text-transform:uppercase}
+    .flowchart-link{stroke-width:1.75px}
+    .labelBkg{background:transparent!important}
+    span.edgeLabel{display:inline-block;background:#FFFFFF!important;color:#1E293B;border:1px solid #94A3B8;border-radius:999px;padding:2px 10px;font-size:12px;font-weight:500}
+    span.edgeLabel p{background:transparent!important}
+    .label-icon{width:20px;height:20px;vertical-align:-4px;margin-right:6px}
+    .ingest .label-icon{color:#0E8A7D}
+    .xform .label-icon{color:#7B4FB0}
+    .load .label-icon{color:#0072B2}
+    .bus .label-icon{color:#A8517F}
+    .store .label-icon{color:#00785A}
+    .ui .label-icon{color:#D9480F}
+    .ext .label-icon{color:#64748B}
+---
+flowchart TB
     accTitle: L2 Services -- DFE Compose stack
-    accDescr: Push clients send events to dfe-receiver and dfe-fetcher pulls them from APIs, databases and files. Both produce to Kafka topics. dfe-loader reads the topics and writes ClickHouse, dfe-archiver writes each source's raw events to its archive, and a transform reads a source's topic and writes the transformed topic the loader then reads.
-
-    push["Push clients"]
-    pull["APIs, databases,<br/>files"]
-
+    accDescr: Push clients send events to dfe-receiver and dfe-fetcher pulls them from APIs, databases and files. On a Kafka profile both produce to a source topic, an optional transform per source reads it and writes a transformed topic the loader reads instead, dfe-loader writes ClickHouse and dfe-archiver writes each source's raw events to its archive. On a gRPC profile the receiver sends straight to the loader. The DFE console and dfe-engine run beside the data path.
+    push("<b>Push clients</b>")
+    pull("<b>APIs, databases, files</b>")
     subgraph stack["DFE Compose stack"]
-        subgraph ingest["Ingest"]
-            receiver["dfe-receiver"]
-            fetcher["dfe-fetcher"]
+        direction TB
+        subgraph ingestgrp["Ingest"]
+            direction LR
+            receiver("<b>dfe-receiver</b><br/><span>terminates every protocol</span>")
+            fetcher("<b>dfe-fetcher</b><br/><span>pulls on a schedule</span>")
         end
-        topics[("Kafka topics")]
-        loader[["dfe-loader"]]
-        transforms["Transforms,<br/>one per source"]
-        archiver["dfe-archiver"]
-        ch[("ClickHouse")]
-        archive[("Archive")]
+        subgraph busgrp["Kafka profiles"]
+            direction LR
+            topics[("<b>Source topic</b><br/><span>*_land</span>")]
+        end
+        subgraph xfgrp["Optional transform"]
+            direction LR
+            transforms("<b>Transforms</b><br/><span>one per source</span>")
+            loadtopic[("<b>Transformed topic</b><br/><span>*_load</span>")]
+            transforms --> loadtopic
+        end
+        subgraph storegrp["Store"]
+            direction LR
+            loader("<b>dfe-loader</b><br/><span>schema-free insert</span>")
+            ch[("<b>ClickHouse</b>")]
+            archiver("<b>dfe-archiver</b><br/><span>raw events, Kafka only</span>")
+            archive[("<b>Archive</b>")]
+            loader --> ch
+            archiver --> archive
+        end
+        subgraph ctlgrp["Console and control"]
+            direction LR
+            console("<b>DFE console</b><br/><span>dfe-ui and Search</span>")
+            engine("<b>dfe-engine</b><br/><span>config, schema, topics</span>")
+            console --> engine
+        end
+        ingestgrp --> busgrp
+        busgrp --> storegrp
+        busgrp -.-> xfgrp
+        xfgrp -.-> storegrp
+        ingestgrp -.->|gRPC profiles, no Kafka| storegrp
+        storegrp --> ctlgrp
     end
-
-    push -->|events| receiver
-    pull -->|events| fetcher
-    ingest --> topics
-    topics --> loader
-    topics --> transforms
-    topics --> archiver
-    loader --> ch
-    archiver --> archive
-    transforms -.-> topics
-
-    classDef default fill:#F8FAFC,stroke:#64748B,stroke-width:1px,color:#0F172A
-    classDef store fill:#DDF3EC,stroke:#00785A,stroke-width:1px,color:#0B3327
-    classDef async fill:#F6E6EF,stroke:#A8517F,stroke-width:1px,color:#3D1529
-    classDef ext fill:#EEF0F2,stroke:#6B7280,stroke-width:1px,stroke-dasharray:4 3,color:#1F2937
-    classDef group fill:none,stroke:#64748B,stroke-width:1px,stroke-dasharray:2 4
+    push -->|events| stack
+    pull -->|events| stack
     class push,pull ext
-    class topics async
+    class receiver,fetcher ingest
+    class topics,loadtopic bus
+    class loader,archiver load
+    class transforms xform
     class ch,archive store
-    class stack,ingest group
+    class console ui
+    class engine control
+  classDef ext fill:#F4F6F8,stroke:#94A3B8,stroke-width:1.5px,stroke-dasharray:5 4,color:#0F172A
+  classDef ingest fill:#FFFFFF,stroke:#0E8A7D,stroke-width:3px,color:#0F172A
+  classDef xform fill:#FFFFFF,stroke:#7B4FB0,stroke-width:3px,color:#0F172A
+  classDef load fill:#FFFFFF,stroke:#0072B2,stroke-width:3px,color:#0F172A
+  classDef bus fill:#FFFFFF,stroke:#A8517F,stroke-width:3px,color:#0F172A
+  classDef store fill:#FFFFFF,stroke:#00785A,stroke-width:3px,color:#0F172A
+  classDef ui fill:#FFFFFF,stroke:#D9480F,stroke-width:3px,color:#0F172A
+  classDef decision fill:#FFFFFF,stroke:#9A6700,stroke-width:3px,color:#0F172A
+  classDef error fill:#FFFFFF,stroke:#C2410C,stroke-width:3px,color:#0F172A
+  classDef control fill:#FFFFFF,stroke:#334155,stroke-width:3px,color:#0F172A
+  classDef part fill:#FFFFFF,stroke:#94A3B8,stroke-width:1.5px,color:#0F172A
+  style stack fill:none,stroke:#0072B2,stroke-width:1.5px,stroke-dasharray:6 4
+  style ingestgrp fill:none,stroke:#0072B2,stroke-width:1.5px,stroke-dasharray:6 4
+  style busgrp fill:none,stroke:#0072B2,stroke-width:1.5px,stroke-dasharray:6 4
+  style xfgrp fill:none,stroke:#0072B2,stroke-width:1.5px,stroke-dasharray:6 4
+  style storegrp fill:none,stroke:#0072B2,stroke-width:1.5px,stroke-dasharray:6 4
+  style ctlgrp fill:none,stroke:#0072B2,stroke-width:1.5px,stroke-dasharray:6 4
 ```
 
-*Figure 1. L2 Services -- DFE Compose stack. The dotted arrow is a transform writing `<source>_load` back to the broker.* Up: top of dfe-docker. Down: [L4 Detail -- Two listeners on port 6000](#component-repos-and-their-grpc-listeners), [L4 Detail -- Loader topic choice](known-issues.md#a-_load-topic-changes-what-the-loader-reads), [L4 Detail -- Loader and schema checks](troubleshooting.md#events-are-accepted-but-nothing-lands), [L4 Detail -- Topic and dead-letter checks](troubleshooting.md#events-are-accepted-but-nothing-lands).
+*Figure 1. L2 Services -- DFE Compose stack. Dotted paths are optional.* Up: top of dfe-docker. Down: [L4 Detail -- Loader topic choice](known-issues.md#a-_load-topic-changes-what-the-loader-reads), [L4 Detail -- Loader and schema checks](troubleshooting.md#events-are-accepted-but-nothing-lands), [L4 Detail -- One console origin](operating.md#console-origin-and-the-port-6000-listeners), [L4 Detail -- Two listeners on port 6000](operating.md#console-origin-and-the-port-6000-listeners).
 
-Push clients are HTTP, Vector, Beats, OTLP, HEC, syslog and flow senders. dfe-engine, the console and Search run beside this path, and Figure 3 shows the console's side.
+<a id="events-arrive-two-ways-and-leave-one"></a>
 
-Transport is a per-profile choice, not a global one. On a `*-kafka` profile the
-ingest components produce to a `*_land` topic derived from the event's `_source`.
-`config/loader/kafka.yaml` names no topics, so the loader auto-discovers every
-topic ending in one of its `routing.topic_suffixes`, `_land` and `_load` by
-default. On a `*-grpc` profile there is no broker: the receiver dials
-`dfe-loader:6000` directly.
+## How data flows
 
-A transform reads `<source>_land` and writes `<source>_load`, and runs on a Kafka profile only. `dfe-archiver` archives each source from its landing topic, and no gRPC profile runs it, so archiving needs a Kafka profile. Once a transform writes `<base>_load`, the loader reads it instead of `<base>_land`: scalo drops `<base>_land` from its subscription once `<base>_load` exists.
+1. Push clients send to dfe-receiver over HTTP, Vector, Beats, OTLP, HEC, syslog or flow. dfe-fetcher pulls from REST APIs, databases and files, and idles until a fetcher source exists.
+2. On a `*-kafka` profile both produce to a `*_land` topic named after the event's `_source`. The name carries through character for character, so `filebeat-vector` gives `filebeat-vector_land` and a table that needs backticks in SQL.
+3. A source with a transform gets its own instance. It reads `<source>_land` and writes `<source>_load`, and from then on the loader reads `_load` instead. Transforms run on Kafka profiles alone.
+4. dfe-loader auto-discovers every topic ending in `_land` or `_load` and inserts into ClickHouse. dfe-archiver writes each source's landing topic to its archive, so archiving needs a Kafka profile.
+5. On a `*-grpc` profile there is no broker, and the receiver dials `dfe-loader:6000` directly.
+6. The DFE console sends every change through dfe-engine. The engine creates each table and topic, and renders each app's config.
 
-dfe-engine creates a transform's table and nothing here provisions it. Create the source before sending it data: a loader that meets rows for a table it has no schema for buffers them, then dead-letters them.
+Create a source before you send it data. A loader that meets rows for a table it has no schema for buffers them, then dead-letters them.
 
-The source NAME propagates character for character. The engine needs a Kubernetes DNS-1123 label (hyphens, never underscores, because a source-bound app deploys one instance called after its source), the receiver substitutes it into `<_source>_land`, and the loader strips `_load` back off for the table. So `filebeat-vector` gives `filebeat-vector_land`, `filebeat-vector_load` and a table name that needs backticks in SQL.
+## Components
 
-`slim-*` is the core data path alone: receiver, loader, engine, console and dfe-hyperdx. `single-kafka` adds the per-source apps its keys enable ([profiles.md](profiles.md#per-source-apps)) and one archiver. The `-kafka` profiles add the broker ([broker.md](broker.md)). dfe-fetcher runs idle until a fetcher source exists, and no transform starts until a source created through the engine binds one.
+| Part | Role | Its page |
+|---|---|---|
+| dfe-receiver | Push ingest, every protocol, HTTP on `:8080` | [dfe-receiver](https://github.com/hyperi-io/dfe-receiver/blob/main/docs/architecture.md) |
+| dfe-fetcher | Pull ingest from REST APIs, databases and files | [dfe-fetcher](https://github.com/hyperi-io/dfe-fetcher/blob/main/docs/architecture.md) |
+| Source topic | The `*_land` topic each source writes | [Broker](broker.md) |
+| Transforms | VRL, Vector or compiled Elastic pipelines, one instance per source | [vrl](https://github.com/hyperi-io/dfe-transform-vrl/blob/main/docs/architecture.md), [vector](https://github.com/hyperi-io/dfe-transform-vector/blob/main/docs/architecture.md), [elastic](https://github.com/hyperi-io/dfe-transform-elastic/blob/main/docs/architecture.md) |
+| Transformed topic | The `*_load` topic a transform writes | [Known issues](known-issues.md#a-_load-topic-changes-what-the-loader-reads) |
+| dfe-loader | Writes ClickHouse, and hosts the gRPC Push listener | [dfe-loader](https://github.com/hyperi-io/dfe-loader/blob/main/docs/architecture.md) |
+| ClickHouse | Every table, plus the stack's self-telemetry | [Secrets and storage](secrets-and-storage.md) |
+| dfe-archiver | Writes raw events to a filesystem, S3, MinIO, GCS or Azure Blob | [dfe-archiver](https://github.com/hyperi-io/dfe-archiver/blob/main/docs/architecture.md) |
+| Archive | The archiver's files | [Secrets and storage](secrets-and-storage.md) |
+| DFE console | dfe-ui and its Search, dfe-hyperdx, behind dfe-proxy | [dfe-ui](https://github.com/hyperi-io/dfe-ui/blob/main/docs/architecture.md) |
+| dfe-engine | Config and schema API, the schema and topic authority | [dfe-engine](https://github.com/hyperi-io/dfe-engine/blob/main/docs/architecture.md) |
 
-## The engine renders each app's config, one instance per source
+`dfe-transform-splack` and `dfe-transform-wasm` have repos but no service here.
 
-On Kubernetes an app's chart turns its values overlay into a ConfigMap the pod mounts. Compose runs no chart, so dfe-engine does that step: it merges each instance's overlay over the committed `config/<app>/<transport>.yaml` and writes the app's config file, its programs and its enrichment tables into the `dfe-app-config` volume, one directory per app. Every app mounts that volume read-only at `/etc/dfe/apps`.
+## External dependencies
 
-The committed file stays the DEPLOYMENT's (brokers, warehouse credentials, the spool) and the overlay wins wherever the two name the same key, so nothing deployment-specific is written into the deploy repo. `resolve_profile.py` turns this on wherever the core footprint runs. dfe-fetcher and the three transforms have no committed file: the overlay is their whole config, and their broker comes from `DFE_KAFKA_BOOTSTRAP_SERVERS` in `.env`.
+| Dependency | Needed | Choices |
+|---|---|---|
+| Docker with Compose | always | one Linux host |
+| Registry | always | the registry the stack pins, at the digests the Kubernetes path runs |
+| Broker | on `*-kafka` profiles | Redpanda, or Apache Kafka with `KAFKA_BACKEND=apache` ([broker](broker.md)) |
+| Object storage | for an archive past local disk | S3, MinIO, GCS, Azure Blob |
+| OIDC provider | with the `auth` profile | any, through oauth2-proxy ([auth profile](auth-profile.md)) |
 
-Nothing restarts a container. A change the running app cannot take in place is reported by the API as `restart required: make apply SERVICES=<app>` and one to its env file as `recreate required:` with the same command. `make apply` creates a per-source container the engine has only just declared, recreates one that exists and removes the container of a source the engine has deleted, which it finds by the `dfe.instance-of` label only generated services have. A delete names no command, so `make apply` with no `SERVICES` does that removal alone and starts nothing.
+## Deployment variants
 
-A source with a transform stops sharing `main_land`: the receiver routes it to `<source>_land`, and only a transform reading THAT topic sees it. So a transform is deployed once per source, as the Kubernetes tier deploys one per Source definition, and its input topic, program directory and output topic all have the name. dfe-engine renders the instance's config into `dfe-app-config`, and `make apply` starts a service that extends the committed `dfe-transform-vrl`, `dfe-transform-vector` or `dfe-transform-elastic`, which have the broker env and nothing of a source's own.
+A profile is `<tier>-<transport>`: `slim-grpc`, `slim-kafka`, `single-grpc` or `single-kafka` ([profiles](profiles.md)). `slim` is the core data path: receiver, loader, engine, console and Search. `single-kafka` adds the per-source apps and one archiver. There is no `scale`, because Compose can't scale out.
 
-## Two independent selectors decide what runs
-
-Compose profiles select INFRASTRUCTURE. `service_profiles.yaml` selects DFE SERVICES. `scripts/resolve_profile.py` reads the second and derives the first, writing `.tmp/profile.mk` for the Makefile. The resolver reads the profile and the environment, and the Makefile includes the `profile.mk` it writes.
-
-```mermaid
-flowchart LR
-    accTitle: L4 Detail -- Profile resolution
-    accDescr: resolve_profile.py reads the active profile from service_profiles.yaml and the DFE_PROFILE and footprint flags from the environment. It writes profile.mk, which the Makefile includes to pass the Compose profiles and DFE services to the targets that start or check a stack.
-
-
-    sp["service_profiles.yaml"]
-    env[".env flags"]
-    resolve["resolve_profile.py"]
-    mk[".tmp/profile.mk"]
-    make["make targets"]
-
-    sp -->|profile| resolve
-    env -->|overrides| resolve
-    resolve -->|writes| mk
-    mk --> make
-
-    classDef default fill:#F8FAFC,stroke:#64748B,stroke-width:1px,color:#0F172A
-    classDef core fill:#DCEBF7,stroke:#0072B2,stroke-width:2px,color:#0B2A3F
-    class resolve core
-```
-
-*Figure 2. L4 Detail -- Profile resolution. The flags are `DFE_PROFILE` and the footprint toggles such as `DFE_CORE_ENABLED`.* Up: [dfe-docker documentation](README.md).
+A profile declares its footprint through the `clickhouse`, `core`, `kafbat`, `hyperdx`, `otel` and `auth` keys, each overridable by its `.env` flag. Each footprint is a Compose profile:
 
 | Compose profile | Services |
 |---|---|
@@ -135,123 +192,48 @@ flowchart LR
 | `otel` | `otel-collector` |
 | `auth` | the three `oauth2-proxy-*` gates ([auth-profile.md](auth-profile.md)) |
 
-A profile declares its whole footprint through the optional `clickhouse`, `core`, `kafbat`, `hyperdx`, `otel` and `auth` keys, each overridable by the matching `.env` flag. Each service entry names the config file it mounts, which is how one service gets a Kafka config and another a gRPC one without a second compose file.
+ Four limit tiers set CPU and memory ceilings ([operating](operating.md#resource-limits-four-tiers-ceilings-not-reservations)).
 
-The `core` footprint is the management plane, independent of transport. `dfe-proxy` gives the console and the engine API one origin, because the console's client calls the engine with a relative `/api/v1/...` base URL. dfe-proxy sends `/api/v1` to dfe-engine and every other path to dfe-ui.
+Kubernetes is the primary DFE path, and Compose is for small environments. Three things differ on purpose:
 
-```mermaid
-flowchart LR
-    accTitle: L4 Detail -- One console origin
-    accDescr: A browser reaches dfe-proxy on host port 3000. dfe-proxy sends paths under /api/v1 to dfe-engine and every other path to dfe-ui. dfe-engine reads and writes ClickHouse.
+- A new source's apps start when you run `make apply`. Argo does that on Kubernetes.
+- Envoy's OIDC filters stay unconfigured, because Docker mode can't assume an issuer exists. The engine API still needs a login per route.
+- Container logs reach the collector through Docker's `fluentd` log driver, and the host's CPUs are the one host metric collected ([observability](observability.md)).
 
-    browser["Browser"]
-    proxy["dfe-proxy"]
-    engine["dfe-engine :8000"]
-    ui["dfe-ui :3000"]
-    ch[("ClickHouse")]
+## Design considerations
 
-    browser -->|host :3000| proxy
-    proxy -->|/api/v1| engine
-    proxy -->|other paths| ui
-    engine --> ch
+**Security.** The console and its Search authenticate. The ingest ports, Kafbat and the metrics ports ask for no login, so put the stack behind a VPN, a tunnel or a firewall, or arm the `auth` profile ([operating](operating.md)).
 
-    classDef default fill:#F8FAFC,stroke:#64748B,stroke-width:1px,color:#0F172A
-    classDef core fill:#DCEBF7,stroke:#0072B2,stroke-width:2px,color:#0B2A3F
-    classDef store fill:#DDF3EC,stroke:#00785A,stroke-width:1px,color:#0B3327
-    classDef ext fill:#EEF0F2,stroke:#6B7280,stroke-width:1px,stroke-dasharray:4 3,color:#1F2937
-    class browser ext
-    class proxy core
-    class ch store
-```
+**Reliability.** Every app waits for dfe-engine to report healthy, which means its tables and topics exist. Before an app starts, a one-shot runs its `config-check` against the exact config it will use, so a broken config stops `make up` with the app's own error and not a restart loop.
 
-*Figure 3. L4 Detail -- One console origin. The ports in the boxes are container ports.* Up: [dfe-docker documentation](README.md).
+**Operations.** Nothing restarts a container on its own. A change an app can't take in place is reported as `restart required: make apply SERVICES=<app>` ([per-source apps](per-source-apps.md)).
 
-## dfe-engine owns the schema and the topics, and starts first
+**Performance.** The Compose stack is sized for one host. `DFE_SERVICE_CPUS` has a floor of 2.0 ([operating](operating.md)).
 
-Nothing here provisions a ClickHouse table or a Kafka topic. `dfe-engine` ships `/app/schemas` inside its own image, applies every object and every bootstrap topic from that manifest at startup, and reports healthy only once that pass converged. `dfe-schemas` rides inside the engine image, so there is no separate schema pin here and a schema change is a `dfe-engine` release. The ClickHouse service mounts only server settings from `config/clickhouse/`. A DDL file or a topic-creating step appearing in this repo is wrong by construction, and `scripts/tests/test_engine_only_schema_control.py` fails the build on one.
+## Why it's built this way
 
-`compose/one-shots.yml`, which `docker-compose.yml` includes, holds every container that runs once and exits: dlq-init, bearer-tokens-init, the `contract-<app>` emitters, dfe-dashboards, hyperdx-documentdb-tls and a `config-check-<app>` for dfe-archiver, dfe-loader and dfe-receiver. Each config check runs its app's own `config-check` with the image, environment and config file the app is about to start with, once the engine has rendered that file, and the app starts only after it passes. A broken config therefore stops `make up`, `make dev`, `make ci` and `make apply` with the app's own error instead of a restart loop. A key the app does not know still passes, because the apps ignore unknown keys.
+**Same images, same registry, same pins.** Compose is safe to deploy because it runs the exact digests Kubernetes runs, pinned from the same stack definition.
 
-The apps then wait on `depends_on: dfe-engine: service_healthy`, because healthy means their tables and topics exist. A loader started first holds messages pending-schema and dead-letters them, which reads as data loss and is really start ordering.
+**dfe-engine renders each app's config.** Compose runs no chart, so the engine merges each instance's overlay over the committed `config/<app>/<transport>.yaml` and writes the result to the `dfe-app-config` volume. Deployment facts stay in the committed file, and nothing deployment-specific goes into the deploy repo.
 
-Each limit tier extends `base` in `compose/base.yml`, and its `dns_search: ["."]` clears the search domain the host passes into every container. A bare name with no alias (`kafka` on a stack without a broker) then fails to resolve instead of reaching a host on that domain.
+**dfe-engine alone owns the schema and topics.** The schemas ride inside the engine image, so a schema change is an engine release and there's no schema pin here. `scripts/tests/test_engine_only_schema_control.py` fails the build on any DDL or topic step in this repo.
 
-## Component repos and their gRPC listeners
+**One transform per source.** A source with a transform stops sharing `main_land`, so only a transform reading that source's topic sees it. That matches Kubernetes, which deploys one per source definition.
 
-Dev builds fetch source into a managed git cache, or from your own checkouts when
-`DFE_SRC_ROOT` is set -- see
-[developing.md](developing.md#some-from-source-the-rest-pinned).
+## Diagram map
 
-| Repo | Language | Role | Profile |
-|---|---|---|---|
-| `dfe-receiver` | Rust | Push ingest. HTTP `:8080` published, Vector gRPC `:6000`, OTLP, Beats, HEC, syslog and flow published once their port key is set | `dfe` |
-| `dfe-fetcher` | Rust | Pull ingest from REST APIs, databases and files | `dfe` |
-| `dfe-loader` | Rust | Writes ClickHouse and hosts `scalo.transport.v1.Transport/Push` | `dfe` |
-| `dfe-archiver` | Rust | Archive sink (filesystem, S3, MinIO, GCS, Azure Blob) | `dfe` |
-| `dfe-transform-elastic` | Rust | Beats and Elastic Agent pipelines compiled to Rust, one transform selected per instance by `source.name` or, in agentless mode, detected per event | `dfe` |
-| `dfe-transform-vector` | Rust | Vector.dev subprocess wrapper, Kafka to Kafka | `dfe` |
-| `dfe-transform-vrl` | Rust | Embedded VRL transform engine, deployed once per source that has a transform | `dfe` |
-| `dfe-engine` | Python | Config and schema API, and the schema authority | `core` |
-| `dfe-ui` | TypeScript | The DFE console | `core` |
-| `dfe-hyperdx` | TypeScript | The console's Search, a fork of HyperDX. Repo and published image are both `dfe-hyperdx` | `hyperdx` |
+- [Figure 1. L2 Services -- DFE Compose stack](#dfe-docker-architecture)
+  - [L4 Detail -- Loader topic choice](known-issues.md#a-_load-topic-changes-what-the-loader-reads)
+  - [L4 Detail -- Loader and schema checks](troubleshooting.md#events-are-accepted-but-nothing-lands)
+  - [L4 Detail -- Topic and dead-letter checks](troubleshooting.md#events-are-accepted-but-nothing-lands)
+  - [L4 Detail -- One console origin](operating.md#console-origin-and-the-port-6000-listeners)
+  - [L4 Detail -- Two listeners on port 6000](operating.md#console-origin-and-the-port-6000-listeners)
+  - [L4 Detail -- Self-telemetry](observability.md)
+  - [L4 Detail -- Profile resolution](../CONTRIBUTING.md#profile-resolution), for contributors
 
-dfe-transform-vector mounts `resources/enrichment/` at `/etc/dfe-transform-vector/data`, where its bundled filebeat pipeline reads `timezones.csv`. dfe-transform-elastic compiles its transforms in, and the engine uploads the enrichment tables a dfe-transform-vrl program reads, so neither mounts them. `make test-source` drives the filebeat, Vector and Elastic cases through every hop. dfe-transform-vector's one port serves everything: the wrapper scrapes Vector's `internal_metrics` off its `prometheus_exporter` on loopback and registers the samples on scalo's own recorder (dfe-transform-vector#70), so `vector_*` reads on its metrics port and rides the OTLP push. The exporter's 9598 is not published.
+## What's next
 
-Two gRPC listeners share port 6000, and they are not the same thing. A `*-grpc` profile runs both.
-
-```mermaid
-flowchart LR
-    accTitle: L4 Detail -- Two listeners on port 6000
-    accDescr: An external Vector client can push to dfe-receiver's Vector protocol listener on port 6000 once it is enabled. dfe-receiver pushes to dfe-loader's internal Push listener, also on port 6000, over the compose network.
-
-    client["Vector client"]
-
-    subgraph net["Compose network"]
-        receiver["dfe-receiver"]
-        loader[["dfe-loader"]]
-    end
-
-    client -.->|Vector :6000| receiver
-    receiver -->|Push :6000| loader
-
-    classDef default fill:#F8FAFC,stroke:#64748B,stroke-width:1px,color:#0F172A
-    classDef core fill:#DCEBF7,stroke:#0072B2,stroke-width:2px,color:#0B2A3F
-    classDef ext fill:#EEF0F2,stroke:#6B7280,stroke-width:1px,stroke-dasharray:4 3,color:#1F2937
-    classDef group fill:none,stroke:#64748B,stroke-width:1px,stroke-dasharray:2 4
-    class client ext
-    class loader core
-    class net group
-```
-
-*Figure 4. L4 Detail -- Two listeners on port 6000. The dotted arrow is off until `config.grpc.enabled` is set.* Up: [L2 Services -- DFE Compose stack](#events-arrive-two-ways-and-leave-one).
-
-| Container port | Host port | Owner | Protocol | Audience | Binds |
-|---|---|---|---|---|---|
-| 6000 | none, until `DFE_RECEIVER_GRPC_PORT` is set | dfe-receiver | Vector protocol, an ingest source that listens only once `config.grpc.enabled` is set through the engine | external clients | `DFE_INGRESS_BIND_HOST` (`0.0.0.0`) |
-| 6000 | none | dfe-loader | `scalo.transport.v1.Transport/Push`, internal transport | dfe-receiver, on a `*-grpc` profile | the compose network |
-
-Every Push listener in the suite answers on 6000 and dfe-engine compiles each sender's endpoint against that port. The receiver's listener is meant to be reachable from outside the stack. The loader's is not, so it publishes no host port.
-
-`dfe-transform-splack` and `dfe-transform-wasm` have repos but no service here,
-so this stack cannot run them.
-
-## Where this differs from Kubernetes
-
-Kubernetes is the primary DFE path. Compose is supported for small environments
-and is not co-equal -- if both would work, choose Kubernetes. What makes Compose
-safe to deploy is that it consumes the SAME image from the SAME registry, pinned
-from the same stack SSoT, so both run identical digests.
-
-Three deliberate asymmetries:
-
-- An operator applies a new source. Both tiers run a fetcher and a transform per source. On Kubernetes Argo creates the new Deployment. Here the engine declares the instance and reports `make apply`, which starts it. After deleting a source, run `make apply` with no `SERVICES` to stop its transform, because the delete names no command and the container runs until an apply or a restart removes it. `make ps` warns about any it finds.
-- No edge authentication. Envoy fronts both tiers, but its OIDC filters stay unconfigured here, because Docker mode can never assume an issuer exists. The engine API still needs a login per route, which the proxy neither adds nor removes. The opt-in `auth` profile gates the infra UIs alone ([auth-profile.md](auth-profile.md)).
-- Self-monitoring collects differently. Container stdout reaches the collector through Docker's `fluentd` log driver rather than a DaemonSet filelog receiver, and of the host's own metrics only its CPUs are collected. See [observability.md](observability.md).
-
-## Related
-
-- [operating.md](operating.md) -- access, exposure, limits
-- [secrets-and-storage.md](secrets-and-storage.md) -- secrets, volumes, retention
-- [deploying.md](deploying.md) -- the dial, pinning, upgrades
-- [observability.md](observability.md) -- health, self-telemetry, the self test
-- [developing.md](developing.md) -- dev mode, profiles, proving the pipeline
+- Try it: [evaluating](evaluating.md).
+- Run it: [operating](operating.md), [deploying](deploying.md) and [secrets and storage](secrets-and-storage.md).
+- Every setting: [configuration](configuration.md).
+- Change dfe-docker: [developing](developing.md) and the Context section of [CONTRIBUTING.md](../CONTRIBUTING.md#context).

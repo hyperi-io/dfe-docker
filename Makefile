@@ -515,8 +515,8 @@ up: ## Start the stack from the pinned registry images (PROFILE=slim-grpc and VE
 	@$(MAKE) --no-print-directory ci
 	@python3 scripts/creds.py --write
 
-# The command dfe-engine's restart and recreate hints name: docs/architecture.md,
-# "The engine renders each app's config". DEV=1 recreates from the local images.
+# The command dfe-engine's restart and recreate hints name: docs/per-source-apps.md.
+# DEV=1 recreates from the local images.
 ifneq ($(strip $(DEV)),)
     APPLY_FLAGS = $(DEV_FLAGS)
 else

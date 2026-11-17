@@ -11,21 +11,26 @@
 
 Each fetcher source under the pack's sources/ with an events/<source>/demo.log is served at GET /<source>. A demo.log line is one captured poll, `{"polled_ms": ..., "body": ...}`, and the poll served is the one captured as far into the capture as the time since this started, round again at the end. Every integer in the body within a day of its poll time is an epoch-millisecond time and is moved forward by the age of the capture, so the reports read as current.
 
-The source's `replay` unit polls this and its live unit polls the feed. While the host its `vars.api_url` names takes a connection, a replayed poll answers with no rows at the `replay` unit's `rows.at`, so live and replayed reports never land together.
+The source's `replay` unit polls this and its live unit polls the feed. While the live feed answers with rows at the live unit's `rows.at`, a replayed poll answers with no rows at the `replay` unit's `rows.at`, so live and replayed reports never land together. A feed that is down, answers an error, or answers with no rows leaves the captured poll to land, so a pack never depends on a third-party API having data at that moment.
+
+The feed is asked with the live unit's own request, minus any query value that needs more than `vars`, at most once every LIVE_ROWS_CHECK_SECONDS while it has rows and once every NO_ROWS_CHECK_SECONDS while it has none. While a feed has rows that spends 48 requests a day, which with the live unit's 432 stays inside the 500 adsb.lol allows an address with no key.
 
 The published pack's demo-replay service runs it from the dfe-docker image, whose PyYAML reads the source files.
 """
 
 import argparse
+import gzip
+import http.client
 import json
-import socket
+import re
 import sys
 import time
+import urllib.request
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from urllib.parse import urlsplit
+from urllib.parse import urlencode, urlsplit
 
 # Bytecode for the repo modules imported below goes to .tmp/pycache, as it does under make
 sys.pycache_prefix = str(Path(__file__).resolve().parent.parent / ".tmp" / "pycache")
@@ -35,24 +40,38 @@ from _common import _print, demo_pack_dir, demo_pack_names  # noqa: E402
 PORT = 8080
 DAY_MS = 86_400_000
 REPLAY_UNIT = "replay"
-LIVE_CHECK_SECONDS = 60.0
-CONNECT_TIMEOUT_SECONDS = 3.0
+LIVE_ROWS_CHECK_SECONDS = 1800.0
+NO_ROWS_CHECK_SECONDS = 300.0
+PROBE_TIMEOUT_SECONDS = 5.0
+# The demo-replay service on the stack's network, where a replay unit the file does not write itself is served from
+REPLAY_URL = f"http://demo-replay:{PORT}"
+VARS_TOKEN = re.compile(r"\{\{\s*vars\.(\w+)\s*\}\}")
 
 
 class ReplayError(Exception):
     """A pack whose replay cannot be served, with what to change."""
 
 
+@dataclass(frozen=True, slots=True)
+class Probe:
+    """The request that asks a live feed whether it has rows, and where they sit in its answer."""
+
+    url: str
+    headers: Mapping[str, str]
+    rows_at: str
+
+
 @dataclass(slots=True)
 class Replay:
-    """One source's captured polls, where its rows sit, and the live host that silences it."""
+    """One source's captured polls, where its rows sit, and the live feed that silences it."""
 
     live: tuple[str, int]
+    probe: Probe
     polls: list[tuple[int, object]]
     rows_at: str
     step_ms: int
     checked: float = field(default=float("-inf"))
-    reachable: bool = False
+    live_rows: bool = False
 
 
 def shifted(*, body: object, offset_ms: int, polled_ms: int) -> object:
@@ -72,13 +91,33 @@ def shifted(*, body: object, offset_ms: int, polled_ms: int) -> object:
     return body
 
 
-def emptied(*, body: object, pointer: str) -> object:
-    """`body` with the value at JSON pointer `pointer` replaced by an empty array."""
+def _pointer_parts(*, pointer: str) -> list[str]:
+    """The keys and indexes a JSON pointer walks through."""
+    if pointer == "":
+        return []
     if not (pointer.startswith("/")):
         raise ReplayError(f"rows.at {pointer!r} is not a JSON pointer to the rows")
-    parts = [
+    return [
         part.replace("~1", "/").replace("~0", "~") for part in pointer.split("/")[1:]
     ]
+
+
+def _at(*, body: object, pointer: str) -> object:
+    """The value at JSON pointer `pointer` in `body`, the whole body for the empty pointer, None where the body has no such place."""
+    node = body
+    for part in _pointer_parts(pointer=pointer):
+        try:
+            node = node[int(part)] if isinstance(node, list) else node[part]
+        except (KeyError, IndexError, TypeError, ValueError):
+            return None
+    return node
+
+
+def emptied(*, body: object, pointer: str) -> object:
+    """`body` with the value at JSON pointer `pointer` replaced by an empty array."""
+    parts = _pointer_parts(pointer=pointer)
+    if not (parts):
+        return []
     copy = json.loads(json.dumps(body))
     node = copy
     for part in parts[:-1]:
@@ -124,12 +163,46 @@ def _step_ms(*, polls: list[tuple[int, object]]) -> int:
     return max(1, gaps[len(gaps) // 2]) if gaps else 1000
 
 
+def with_replay_unit(*, body: Mapping) -> dict:
+    """The fetcher source with a `replay` unit, added from its first unit where the file has none: that unit's rows read from `vars.replay_url` at /<source>. A source that polls the live feed only stays that way under `make demo`, which runs no replay service."""
+    copy = json.loads(json.dumps(body))
+    config = copy["fetcher"]["config"]
+    endpoints = config["profile"].setdefault("endpoints", [])
+    if any(endpoint.get("unit") == REPLAY_UNIT for endpoint in endpoints):
+        return copy
+    if not (endpoints):
+        return copy
+    endpoints.insert(
+        0,
+        {
+            "base_url": "{{ vars.replay_url }}",
+            "path": f"/{copy['source']}",
+            "rows": endpoints[0].get("rows", {}),
+            "unit": REPLAY_UNIT,
+        },
+    )
+    config.setdefault("vars", {}).setdefault("replay_url", REPLAY_URL)
+    return copy
+
+
+def _rows_at(*, endpoint: Mapping) -> str:
+    """Where a unit's rows sit, the JSON pointer in `rows.at`. Only a `json_array` unit has none, because its whole body is the rows."""
+    rows = endpoint.get("rows", {})
+    at = str(rows.get("at", ""))
+    if at == "" and rows.get("decoder") != "json_array":
+        raise ReplayError(
+            f"rows.at {at!r} is not a JSON pointer to the rows of unit {endpoint.get('unit')!r}, "
+            "and only a json_array decoder reads the whole body as its rows"
+        )
+    return at
+
+
 def _replay_rows_at(*, body: Mapping, name: str) -> str:
-    """Where a fetcher source's `replay` unit reads its rows."""
+    """Where a fetcher source's `replay` unit reads its rows, the whole body when it sets no `at`, which only a `json_array` unit may do."""
     profile = body["fetcher"]["config"]["profile"]
     for endpoint in profile.get("endpoints", []):
         if endpoint.get("unit") == REPLAY_UNIT:
-            return str(endpoint.get("rows", {}).get("at", ""))
+            return _rows_at(endpoint=endpoint)
     raise ReplayError(
         f"{name}.yaml has events to replay and no {REPLAY_UNIT!r} unit to poll them. "
         "Add one whose base_url is `{{ vars.replay_url }}`"
@@ -144,6 +217,57 @@ def _live_host(*, body: Mapping, name: str) -> tuple[str, int]:
     return url.hostname, url.port or (443 if url.scheme == "https" else 80)
 
 
+def _render(*, text: str, variables: Mapping) -> str | None:
+    """`text` with each `{{ vars.name }}` filled in, None where it holds any other template or an unset name."""
+    try:
+        filled = VARS_TOKEN.sub(lambda hit: str(variables[hit.group(1)]), text)
+    except KeyError:
+        return None
+    return None if "{{" in filled else filled
+
+
+def _live_probe(*, body: Mapping, name: str) -> Probe:
+    """The request that asks a fetcher source's live unit whether the feed has rows."""
+    config = body["fetcher"]["config"]
+    profile = config["profile"]
+    variables = config.get("vars", {})
+    for endpoint in profile.get("endpoints", []):
+        if endpoint.get("unit") == REPLAY_UNIT:
+            continue
+        base = _render(
+            text=str(endpoint.get("base_url", profile.get("base_url", ""))),
+            variables=variables,
+        )
+        path = _render(text=str(endpoint.get("path", "")), variables=variables)
+        if (
+            base is None
+            or path is None
+            or urlsplit(base).scheme not in {"http", "https"}
+        ):
+            raise ReplayError(
+                f"{name}.yaml's live unit {endpoint.get('unit')!r} has a base_url and "
+                "path that need more than `vars` and an http(s) scheme"
+            )
+        values = {
+            key: _render(text=str(value), variables=variables)
+            for key, value in endpoint.get("query", {}).items()
+        }
+        query = urlencode(
+            {key: value for key, value in values.items() if value is not None}
+        )
+        rows_at = _rows_at(endpoint=endpoint)
+        _pointer_parts(pointer=rows_at)
+        return Probe(
+            url=f"{base.rstrip('/')}{path}{'?' + query if query else ''}",
+            headers={
+                str(key): str(value)
+                for key, value in profile.get("headers", {}).items()
+            },
+            rows_at=rows_at,
+        )
+    raise ReplayError(f"{name}.yaml has a {REPLAY_UNIT!r} unit and no live unit to ask")
+
+
 def load_replays(*, root: Path) -> dict[str, Replay]:
     """Each fetcher source under root/sources with captured polls under root/events, by name."""
     # Imported here because the tests and the image carry PyYAML and a bare python3 does not
@@ -156,27 +280,40 @@ def load_replays(*, root: Path) -> dict[str, Replay]:
         fetches = isinstance(body, dict) and isinstance(body.get("fetcher"), dict)
         if not (fetches) or not (log.is_file()):
             continue
+        body = with_replay_unit(body=body)
         polls = _polls(path=log)
         replays[path.stem] = Replay(
             live=_live_host(body=body, name=path.stem),
             polls=polls,
             rows_at=_replay_rows_at(body=body, name=path.stem),
+            probe=_live_probe(body=body, name=path.stem),
             step_ms=_step_ms(polls=polls),
         )
     return replays
 
 
-def _reachable(*, replay: Replay) -> bool:
-    """Whether the live feed took a connection at the last check, made at most once a minute."""
+def _has_rows(*, probe: Probe) -> bool:
+    """Whether the live feed answers now with at least one row, False for any failure to answer."""
+    request = urllib.request.Request(probe.url, headers=dict(probe.headers))  # noqa: S310
+    try:
+        with urllib.request.urlopen(request, timeout=PROBE_TIMEOUT_SECONDS) as answer:  # noqa: S310
+            raw = answer.read()
+            if answer.headers.get("Content-Encoding") == "gzip":
+                raw = gzip.decompress(raw)
+        rows = _at(body=json.loads(raw), pointer=probe.rows_at)
+    except (OSError, EOFError, ValueError, http.client.HTTPException):
+        return False
+    return isinstance(rows, list) and bool(rows)
+
+
+def _live_serves_rows(*, replay: Replay) -> bool:
+    """Whether the live feed had rows at its last check, which repeats on a longer wait while it has them."""
     now = time.monotonic()
-    if now - replay.checked >= LIVE_CHECK_SECONDS:
-        try:
-            with socket.create_connection(replay.live, timeout=CONNECT_TIMEOUT_SECONDS):
-                replay.reachable = True
-        except OSError:
-            replay.reachable = False
+    wait = NO_ROWS_CHECK_SECONDS if not (replay.live_rows) else LIVE_ROWS_CHECK_SECONDS
+    if now - replay.checked >= wait:
+        replay.live_rows = _has_rows(probe=replay.probe)
         replay.checked = now
-    return replay.reachable
+    return replay.live_rows
 
 
 def serve(*, port: int, replays: dict[str, Replay]) -> ThreadingHTTPServer:
@@ -193,7 +330,7 @@ def serve(*, port: int, replays: dict[str, Replay]) -> ThreadingHTTPServer:
             body = poll_at(
                 now_ms=int(time.time() * 1000), replay=replay, started_ms=started_ms
             )
-            if _reachable(replay=replay):
+            if _live_serves_rows(replay=replay):
                 body = emptied(body=body, pointer=replay.rows_at)
             payload = json.dumps(body, separators=(",", ":")).encode("utf-8")
             self.send_response(200)
@@ -213,11 +350,13 @@ def main(argv: list[str] | None = None) -> int:
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
     )
     parser.add_argument(
-        "--pack", required=True, help="the pack in resources/demo-<pack> to replay"
+        "--pack",
+        required=True,
+        help="the pack in resources/demo-<pack> to replay, empty for the demo",
     )
     parser.add_argument("--port", default=PORT, type=int, help="the port to answer on")
     args = parser.parse_args(argv)
-    if args.pack not in demo_pack_names():
+    if args.pack and args.pack not in demo_pack_names():
         parser.error(f"no pack {args.pack!r}. The packs are {demo_pack_names()}")
     try:
         replays = load_replays(root=demo_pack_dir(pack=args.pack))
@@ -231,7 +370,7 @@ def main(argv: list[str] | None = None) -> int:
     for name, replay in replays.items():
         _print(
             msg=f"replaying {len(replay.polls)} polls of {name!r} at /{name}, silent "
-            f"while {replay.live[0]} answers"
+            f"while {replay.live[0]} answers with rows"
         )
     server.serve_forever()
     return 0

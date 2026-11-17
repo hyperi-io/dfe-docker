@@ -9,8 +9,8 @@
   },
   "console": {
     "dashboards": [
+      "demo-cyber-bad-networks",
       "demo-cyber-denied",
-      "demo-cyber-drop",
       "demo-cyber-edr",
       "demo-cyber-o365-admin",
       "demo-cyber-sign-ins"
@@ -18,7 +18,7 @@
     "searches": [
       "demo-cyber-cisco-asa-live",
       "demo-cyber-crowdstrike-live",
-      "demo-cyber-denied-drop",
+      "demo-cyber-denied-bad-network",
       "demo-cyber-failed-sign-ins",
       "demo-cyber-fortinet-live",
       "demo-cyber-o365-live",
@@ -27,7 +27,7 @@
   },
   "hunts": [
     "demo-cyber-anonymous-link",
-    "demo-cyber-drop-sign-in",
+    "demo-cyber-bad-network-sign-in",
     "demo-cyber-ransomware"
   ],
   "sources": [

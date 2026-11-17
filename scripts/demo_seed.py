@@ -33,6 +33,7 @@ from pathlib import Path
 sys.pycache_prefix = str(Path(__file__).resolve().parent.parent / ".tmp" / "pycache")
 
 import demo  # noqa: E402
+import replay_fetch  # noqa: E402
 from _common import (  # noqa: E402
     FETCHER_SERVICE,
     IN_STACK_KEY,
@@ -113,9 +114,15 @@ def seed_sources(*, root: Path) -> None:
     intake = [] if loaded.intake is None else [loaded.intake]
     for body in [*loaded.vendors, *loaded.beats, *loaded.json, *intake]:
         demo._ensure_source(base=ENGINE_NETWORK_BASE, body=body, token=token)
+    replayed = {body["source"] for body in loaded.replay}
     demo._ensure_fetchers(
         base=ENGINE_NETWORK_BASE,
-        fetchers=loaded.fetchers,
+        fetchers=[
+            replay_fetch.with_replay_unit(body=body)
+            if body["source"] in replayed
+            else body
+            for body in loaded.fetchers
+        ],
         per_source_apps=[FETCHER_SERVICE],
         token=token,
     )

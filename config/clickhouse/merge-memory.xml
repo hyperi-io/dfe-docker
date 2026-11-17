@@ -1,0 +1,16 @@
+<!--
+  Project:   dfe-docker
+  File:      config/clickhouse/merge-memory.xml
+  Purpose:   Keeps background merges of the wide tables from taking the memory inserts and queries need
+  Language:  XML
+
+  License:   BUSL-1.1
+  Copyright: (c) 2026 HYPERI PTY LIMITED
+-->
+<clickhouse>
+  <!-- Why these two: docs/operating.md#clickhouse-memory-merges-leave-room-for-inserts -->
+  <merges_mutations_memory_usage_to_ram_ratio>0.25</merges_mutations_memory_usage_to_ram_ratio>
+  <merge_tree>
+    <max_compress_block_size>65536</max_compress_block_size>
+  </merge_tree>
+</clickhouse>

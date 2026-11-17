@@ -45,7 +45,7 @@ jobs:
             runner: ubuntu-26.04
           - arch: arm64
             runner: ubuntu-26.04-arm
-    # Each architecture on its own runner, never emulated
+    # Each architecture on its own runner, never emulated. ubuntu-26.04 is named, not ubuntu-latest, for the reason in ci.yml's header.
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 30
     permissions:

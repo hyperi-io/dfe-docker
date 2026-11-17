@@ -53,7 +53,7 @@ Every step is a report row and a screenshot under `--shots-dir` (`.tmp/source`).
 A step the console cannot do falls back to the engine API and says so, because
 that is a finding about the console rather than about the pipeline.
 
-`make proof` runs the filebeat and vector cases on every stack version. Each transform checkout is cloned at an explicit ref override when one is set, else at the tag the stack pins, else at its default branch with a WARN, and only the pinned tag proves that pin.
+`make proof` runs the filebeat and vector cases on every stack version. A failed run keeps its screenshots under `.tmp/proof-shots/<UTC time>/` in the checkout, names that path in its `RESULT` line and keeps the newest three runs. Each transform checkout is cloned at an explicit ref override when one is set, else at the tag the stack pins, else at its default branch with a WARN, and only the pinned tag proves that pin.
 
 ## Static checks run what CI runs
 
@@ -68,7 +68,7 @@ that is a finding about the console rather than about the pipeline.
 | `make check-docs` | asserts every relative link across the README and every page under `docs/` resolves |
 | `make check-proxy` | `envoy --mode validate` on both proxy configs and their console TLS variants, on the Envoy the stack pins |
 | `make check-python` | `ruff check` and `ruff format --check` on `scripts/`, `ops/` and the demo packs |
-| `make check-tests` | `pytest scripts/tests` -- unit tests over the helper scripts |
+| `make check-tests` | `pytest scripts/tests` -- unit tests over the helper scripts, including the theatre churn tiles' SQL run on the stack's ClickHouse image over seeded tracks |
 | `make check-locks` | `uv lock --check` on each script that declares packages inline, so a pin moved without `uv lock --script <script>` fails here rather than mid-suite |
 
 `check-compose` is hermetic: it reads the mandatory `${VAR:?}` keys out of the
@@ -82,7 +82,7 @@ for why a lower ceiling takes health endpoints dark.
 external URLs and does not check `#anchors`, so a live file with a stale anchor
 still passes.
 
-`check-python`, `check-tests` and `check-locks` fetch their pinned tools through `uvx`, `check-dockerfile` pulls the pinned hadolint image and `check-proxy` pulls Envoy, so those want a network the first time.
+`check-python`, `check-tests` and `check-locks` fetch their pinned tools through `uvx`, `check-dockerfile` pulls the pinned hadolint image and `check-proxy` pulls Envoy, so those want a network the first time. The churn tile test in `check-tests` needs `docker` and pulls the ClickHouse image the stack pins (`DFE_CLICKHOUSE_VERSION` overrides the tag, else `scripts/stack.py --print CLICKHOUSE_VERSION` reads it through `oras`). It skips without docker, and fails under `CI`.
 
 
 `check-proxy` validates on the Envoy in `DFE_PROXY_VERSION`. With that unset it asks `scripts/stack.py --print DFE_PROXY_VERSION` for the one the stack at `VERSION` pins, falling back to `deployment.example.yaml`'s `version.pin`. That lookup reads the stack manifest anonymously through `oras`. The check mints a throwaway P-384 certificate with the host's `openssl` for the TLS variants.

@@ -15,6 +15,7 @@ Running DFE on a single host with Docker Compose: a first look, deploying and up
 - [Console edits without a rebuild](live-console.md)
 - [How the stack reports on itself](observability.md)
 - [Operating the DFE Compose stack](operating.md)
+- [Per-source apps and make apply](per-source-apps.md)
 - [Profiles](profiles.md)
 - [Proving the pipeline with the e2e suite](testing.md)
 - [Secrets and storage](secrets-and-storage.md)
