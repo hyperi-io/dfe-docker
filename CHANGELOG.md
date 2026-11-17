@@ -3,6 +3,20 @@
 Rendered by CI and committed back at the end of a release -- do not edit by
 hand. Release notes also appear on the GitHub Releases page, one per tag.
 
+## [1.0.9](https://github.com/hyperi-io/dfe-docker/compare/v1.0.8...v1.0.9) (2026-11-17)
+
+### Bug Fixes
+
+* **admin:** drop the Search admin link ([dff6695](https://github.com/hyperi-io/dfe-docker/commit/dff6695861ca65ef177705b1647beeaecdd840bc))
+* **clickhouse:** keep merges from taking the memory inserts need ([#414](https://github.com/hyperi-io/dfe-docker/issues/414)) ([d4d517a](https://github.com/hyperi-io/dfe-docker/commit/d4d517a7e2d1e00b76dadc690ac1b1fc0928ceb9))
+* **demo:** accept empty churn tiles in demo-theatre ([#412](https://github.com/hyperi-io/dfe-docker/issues/412)) ([813bd36](https://github.com/hyperi-io/dfe-docker/commit/813bd363eada73f0b029eb60fa80adfd0e1e5f36)), closes [#411](https://github.com/hyperi-io/dfe-docker/issues/411)
+* **demo:** fix telco BGP paths and console search checks ([#413](https://github.com/hyperi-io/dfe-docker/issues/413)) ([7a5507b](https://github.com/hyperi-io/dfe-docker/commit/7a5507bc4a10d25859a9bdf39d3d8f217c6ea8e3))
+* **demo:** replay a feed that answers with no rows ([#417](https://github.com/hyperi-io/dfe-docker/issues/417)) ([c24d515](https://github.com/hyperi-io/dfe-docker/commit/c24d515f8119ee437a1ed4c9888776e804ce8631))
+* **demo:** take Spamhaus DROP out of demo-cyber ([#416](https://github.com/hyperi-io/dfe-docker/issues/416)) ([247d7db](https://github.com/hyperi-io/dfe-docker/commit/247d7db92004ec5dae7ffb9b7cf85b4dc7e669bc))
+* **demo:** verify demo pack results in CI ([#411](https://github.com/hyperi-io/dfe-docker/issues/411)) ([56aa0dc](https://github.com/hyperi-io/dfe-docker/commit/56aa0dc3fd3f266ee27868a18dba50263da1eee1))
+* **demo:** wait up to 480 s for the archived tile to read non-zero ([3b518b0](https://github.com/hyperi-io/dfe-docker/commit/3b518b08041760b435ad4d179bd0cc86491cf44c))
+* **update:** remove previous stack images after a nightly update ([#406](https://github.com/hyperi-io/dfe-docker/issues/406)) ([87a9005](https://github.com/hyperi-io/dfe-docker/commit/87a9005a7131f977aa8c3760f4b29947d953440c))
+
 ## [1.0.8](https://github.com/hyperi-io/dfe-docker/compare/v1.0.7...v1.0.8) (2026-11-16)
 
 ### Bug Fixes
