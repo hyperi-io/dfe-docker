@@ -137,21 +137,23 @@ config:
     .ui .label-icon{color:#D9480F}
     .ext .label-icon{color:#64748B}
 ---
-flowchart LR
+flowchart TB
     accTitle: L4 Detail -- Dev image build
     accDescr: The component's source is staged without target and .git. This repo's Rust builder image compiles it into a binary. The component's own Dockerfile packages that binary into the service's local image.
-
-    src("<b>Component source</b>")
-    builder("<b>dfe-rust-builder</b><br/><span>Dockerfile</span>")
-    bin("<b>Compiled binary</b>")
-    own("<b>Component</b><br/><span>Dockerfile</span>")
-    img("<b>service:local</b><br/><span>image</span>")
-
-    src --> builder
-    builder --> bin
-    bin --> own
-    own --> img
-
+    subgraph build["Compile"]
+        direction LR
+        src("<b>Component source</b>")
+        builder("<b>dfe-rust-builder</b><br/><span>Dockerfile</span>")
+        bin("<b>Compiled binary</b>")
+        src --> builder --> bin
+    end
+    subgraph pack["Package"]
+        direction LR
+        own("<b>Component</b><br/><span>Dockerfile</span>")
+        img("<b>service:local</b><br/><span>image</span>")
+        own --> img
+    end
+    build --> pack
     class src,bin,img store
     class builder,own part
   classDef ext fill:#F4F6F8,stroke:#94A3B8,stroke-width:1.5px,stroke-dasharray:5 4,color:#0F172A
@@ -165,6 +167,8 @@ flowchart LR
   classDef error fill:#FFFFFF,stroke:#C2410C,stroke-width:3px,color:#0F172A
   classDef control fill:#FFFFFF,stroke:#334155,stroke-width:3px,color:#0F172A
   classDef part fill:#FFFFFF,stroke:#94A3B8,stroke-width:1.5px,color:#0F172A
+  style build fill:none,stroke:#0072B2,stroke-width:1.5px,stroke-dasharray:6 4
+  style pack fill:none,stroke:#0072B2,stroke-width:1.5px,stroke-dasharray:6 4
 ```
 
 *Figure 1. L4 Detail -- Dev image build. Green boxes are files and images, grey boxes are build steps.* Up: [dfe-docker documentation](README.md).

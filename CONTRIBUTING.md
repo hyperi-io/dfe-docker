@@ -192,6 +192,100 @@ Two ways a green run says less than it looks:
 | Set `DFE_UPDATE_WIPE_STATE=1` on a box that also sets `DFE_DATA_ROOT` | Leave `DFE_DATA_ROOT` unset if you rely on the wipe | `make clean` does not chain the storage overlay, so it removes the volume objects while the bind directories keep their contents and the wipe silently becomes a no-op (`ops/daemon-update/README.md`) |
 | Take a local, gitignored note as current | Read the tracked file you are asking about | A local note is nobody's to maintain, and the ones seen so far named repos and directories that no longer exist |
 
+### Profile resolution
+
+Compose profiles select infrastructure. `service_profiles.yaml` selects DFE services. `scripts/resolve_profile.py` reads the second and derives the first, and writes `.tmp/profile.mk` for the Makefile to include. Each service entry names the config file it mounts, which is how one service gets a Kafka config and another a gRPC one without a second compose file.
+
+```mermaid
+---
+config:
+  theme: base
+  look: neo
+  fontFamily: Inter, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif
+  flowchart:
+    curve: linear
+    nodeSpacing: 40
+    rankSpacing: 64
+    padding: 18
+    wrappingWidth: 280
+    htmlLabels: true
+  elk:
+    preset: modelOrder
+  themeVariables:
+    fontSize: 15px
+    lineColor: "#64748B"
+    primaryTextColor: "#0F172A"
+    clusterBorder: "#0072B2"
+    edgeLabelBackground: "#FFFFFF"
+  themeCSS: >-
+    p{margin:0}
+    .node[data-look] rect,.node[data-look] path,.node[data-look] polygon,.node[data-look] .outer-path{filter:drop-shadow(0 1px 2px rgba(15,23,42,.10)) drop-shadow(0 6px 14px rgba(15,23,42,.10))}
+    .node rect{rx:10px;ry:10px}
+    .cluster rect{rx:16px;ry:16px}
+    .node .label div{min-width:150px}
+    .node.decision .label div{min-width:0}
+    .cluster[data-look] rect{filter:none}
+    .nodeLabel{line-height:1.35}
+    .nodeLabel b{font-weight:600;font-size:15px;letter-spacing:-0.01em}
+    .nodeLabel span{font-size:12.5px;font-weight:400;color:#334155}
+    .cluster-label span.nodeLabel{display:inline-block;background:#FFFFFF;color:#0B2A3F;border:1.5px solid #0072B2;border-radius:999px;padding:2px 12px;font-size:11.5px;font-weight:700;letter-spacing:.09em;text-transform:uppercase}
+    .flowchart-link{stroke-width:1.75px}
+    .labelBkg{background:transparent!important}
+    span.edgeLabel{display:inline-block;background:#FFFFFF!important;color:#1E293B;border:1px solid #94A3B8;border-radius:999px;padding:2px 10px;font-size:12px;font-weight:500}
+    span.edgeLabel p{background:transparent!important}
+    .label-icon{width:20px;height:20px;vertical-align:-4px;margin-right:6px}
+    .ingest .label-icon{color:#0E8A7D}
+    .xform .label-icon{color:#7B4FB0}
+    .load .label-icon{color:#0072B2}
+    .bus .label-icon{color:#A8517F}
+    .store .label-icon{color:#00785A}
+    .ui .label-icon{color:#D9480F}
+    .ext .label-icon{color:#64748B}
+---
+flowchart TB
+    accTitle: L4 Detail -- Profile resolution
+    accDescr: resolve_profile.py reads the active profile from service_profiles.yaml and the DFE_PROFILE and footprint flags from the environment. It writes profile.mk, which the Makefile includes to pass the Compose profiles and DFE services to the targets that start or check a stack.
+    subgraph inputs["Inputs"]
+        direction LR
+        sp("<b>service_profiles.yaml</b><br/><span>the profile</span>")
+        env("<b>.env flags</b><br/><span>overrides</span>")
+        sp ~~~ env
+    end
+    subgraph resolver["Resolve"]
+        direction LR
+        resolve("<b>resolve_profile.py</b>")
+        mk("<b>.tmp/profile.mk</b>")
+        make("<b>make targets</b>")
+        resolve -->|writes| mk --> make
+    end
+    inputs --> resolver
+    class sp,env,mk store
+    class resolve,make part
+  classDef ext fill:#F4F6F8,stroke:#94A3B8,stroke-width:1.5px,stroke-dasharray:5 4,color:#0F172A
+  classDef ingest fill:#FFFFFF,stroke:#0E8A7D,stroke-width:3px,color:#0F172A
+  classDef xform fill:#FFFFFF,stroke:#7B4FB0,stroke-width:3px,color:#0F172A
+  classDef load fill:#FFFFFF,stroke:#0072B2,stroke-width:3px,color:#0F172A
+  classDef bus fill:#FFFFFF,stroke:#A8517F,stroke-width:3px,color:#0F172A
+  classDef store fill:#FFFFFF,stroke:#00785A,stroke-width:3px,color:#0F172A
+  classDef ui fill:#FFFFFF,stroke:#D9480F,stroke-width:3px,color:#0F172A
+  classDef decision fill:#FFFFFF,stroke:#9A6700,stroke-width:3px,color:#0F172A
+  classDef error fill:#FFFFFF,stroke:#C2410C,stroke-width:3px,color:#0F172A
+  classDef control fill:#FFFFFF,stroke:#334155,stroke-width:3px,color:#0F172A
+  classDef part fill:#FFFFFF,stroke:#94A3B8,stroke-width:1.5px,color:#0F172A
+  style inputs fill:none,stroke:#0072B2,stroke-width:1.5px,stroke-dasharray:6 4
+  style resolver fill:none,stroke:#0072B2,stroke-width:1.5px,stroke-dasharray:6 4
+```
+
+*Figure 1. L4 Detail -- Profile resolution. The flags are `DFE_PROFILE` and the footprint toggles such as `DFE_CORE_ENABLED`.* Up: [L2 Services -- DFE Compose stack](docs/architecture.md).
+
+### Start order
+
+`compose/one-shots.yml`, included by `docker-compose.yml`, holds every container that runs once and exits: dlq-init, bearer-tokens-init, the `contract-<app>` emitters, dfe-dashboards, hyperdx-documentdb-tls, and a `config-check-<app>` for dfe-archiver, dfe-loader and dfe-receiver. A config check runs its app's `config-check` with the image, environment and config file the app is about to start with, once the engine has rendered that file. A key the app doesn't know still passes, because the apps ignore unknown keys.
+
+The apps wait on `depends_on: dfe-engine: service_healthy`, because healthy means their tables and topics exist. A loader started first holds messages pending-schema and dead-letters them, which reads as data loss and is start ordering.
+
+Each limit tier extends `base` in `compose/base.yml`, and its `dns_search: ["."]` clears the search domain the host passes into every container. A bare name with no alias (`kafka` on a stack without a broker) then fails to resolve, rather than reaching a host on that domain.
+
 ### Where this sits
 
 The suite graph in `dfe-infra/suite.yaml` records exactly one edge on this repo and no outbound edges at all. Read it with `dfe-stack suite --consumer dfe-docker` and `--producer dfe-docker`.

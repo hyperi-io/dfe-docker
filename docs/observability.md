@@ -115,26 +115,29 @@ config:
     .ui .label-icon{color:#D9480F}
     .ext .label-icon{color:#64748B}
 ---
-flowchart LR
+flowchart TB
     accTitle: L4 Detail -- Self-telemetry
     accDescr: DFE services push metrics and traces over OTLP to the otel-collector. Docker's log driver forwards the stdout of the DFE containers to it while container log shipping is on. The collector pulls ClickHouse's system tables and the host's CPUs itself. It writes logs, metrics and traces to the dfe.otel_ tables, which dfe-hyperdx queries.
-
-    apps("<b>DFE services</b>")
-    driver("<b>Docker log driver</b>")
+    subgraph pushed["Pushed"]
+        direction LR
+        apps("<b>DFE services</b><br/><span>OTLP :4317</span>")
+        driver("<b>Docker log driver</b><br/><span>fluent :24224</span>")
+    end
     subgraph pulled["Pulled"]
+        direction LR
         chsys[("<b>ClickHouse</b><br/><span>system tables</span>")]
         host("<b>Host /proc</b>")
     end
-    col("<b>otel-collector</b>")
-    otel[("<b>dfe.otel_* tables</b>")]
-    hdx("<b>dfe-hyperdx</b>")
-
-    apps -->|OTLP :4317| col
-    driver -->|fluent :24224| col
-    pulled -->|scraped| col
-    col -->|writes| otel
-    otel -.-> hdx
-
+    subgraph collect["Collect and query"]
+        direction LR
+        col("<b>otel-collector</b>")
+        otel[("<b>dfe.otel_* tables</b>")]
+        hdx("<b>dfe-hyperdx</b>")
+        col -->|writes| otel
+        otel -.-> hdx
+    end
+    pushed -->|pushed| collect
+    pulled -->|scraped| collect
     class apps,col part
     class driver,host ext
     class chsys,otel store
@@ -150,7 +153,9 @@ flowchart LR
   classDef error fill:#FFFFFF,stroke:#C2410C,stroke-width:3px,color:#0F172A
   classDef control fill:#FFFFFF,stroke:#334155,stroke-width:3px,color:#0F172A
   classDef part fill:#FFFFFF,stroke:#94A3B8,stroke-width:1.5px,color:#0F172A
+  style pushed fill:none,stroke:#0072B2,stroke-width:1.5px,stroke-dasharray:6 4
   style pulled fill:none,stroke:#0072B2,stroke-width:1.5px,stroke-dasharray:6 4
+  style collect fill:none,stroke:#0072B2,stroke-width:1.5px,stroke-dasharray:6 4
 ```
 
 *Figure 1. L4 Detail -- Self-telemetry. The dotted arrow is a read, and the collector's own `:8888` metrics and dfe-hyperdx's `:8000` are scraped.* Up: [dfe-docker documentation](README.md).
