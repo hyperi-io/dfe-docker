@@ -222,7 +222,7 @@ Kubernetes is the primary DFE path, and Compose is for small environments. Three
 
 ## Diagram map
 
-- [Figure 1. L2 Services -- DFE Compose stack](#dfe-docker-architecture)
+- Figure 1. L2 Services -- DFE Compose stack, at the top of this page
   - [L4 Detail -- Loader topic choice](known-issues.md#a-_load-topic-changes-what-the-loader-reads)
   - [L4 Detail -- Loader and schema checks](troubleshooting.md#events-are-accepted-but-nothing-lands)
   - [L4 Detail -- Topic and dead-letter checks](troubleshooting.md#events-are-accepted-but-nothing-lands)
