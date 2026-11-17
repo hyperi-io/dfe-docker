@@ -19,6 +19,12 @@ fetcher:
         accepts: [none]
       base_url: "{{ vars.api_url }}"
       endpoints:
+        # The captured poll scripts/replay_fetch.py serves, which answers with no servers while the tracker answers with servers
+        - base_url: "{{ vars.replay_url }}"
+          path: /feodo-c2
+          rows:
+            decoder: json_array
+          unit: replay
         - path: /downloads/ipblocklist.json
           rows:
             decoder: json_array
@@ -31,6 +37,7 @@ fetcher:
       shape: dump
     vars:
       api_url: https://feodotracker.abuse.ch
+      replay_url: http://demo-replay:8080
   source_type: rest
   topic: own
 header:

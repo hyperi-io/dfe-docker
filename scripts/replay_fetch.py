@@ -91,6 +91,8 @@ def shifted(*, body: object, offset_ms: int, polled_ms: int) -> object:
 
 def _pointer_parts(*, pointer: str) -> list[str]:
     """The keys and indexes a JSON pointer walks through."""
+    if pointer == "":
+        return []
     if not (pointer.startswith("/")):
         raise ReplayError(f"rows.at {pointer!r} is not a JSON pointer to the rows")
     return [
@@ -99,7 +101,7 @@ def _pointer_parts(*, pointer: str) -> list[str]:
 
 
 def _at(*, body: object, pointer: str) -> object:
-    """The value at JSON pointer `pointer` in `body`, None where the body has no such place."""
+    """The value at JSON pointer `pointer` in `body`, the whole body for the empty pointer, None where the body has no such place."""
     node = body
     for part in _pointer_parts(pointer=pointer):
         try:
@@ -112,6 +114,8 @@ def _at(*, body: object, pointer: str) -> object:
 def emptied(*, body: object, pointer: str) -> object:
     """`body` with the value at JSON pointer `pointer` replaced by an empty array."""
     parts = _pointer_parts(pointer=pointer)
+    if not (parts):
+        return []
     copy = json.loads(json.dumps(body))
     node = copy
     for part in parts[:-1]:
@@ -158,7 +162,7 @@ def _step_ms(*, polls: list[tuple[int, object]]) -> int:
 
 
 def _replay_rows_at(*, body: Mapping, name: str) -> str:
-    """Where a fetcher source's `replay` unit reads its rows."""
+    """Where a fetcher source's `replay` unit reads its rows, the whole body when it sets no `at`, as a `json_array` unit does."""
     profile = body["fetcher"]["config"]["profile"]
     for endpoint in profile.get("endpoints", []):
         if endpoint.get("unit") == REPLAY_UNIT:
@@ -309,11 +313,13 @@ def main(argv: list[str] | None = None) -> int:
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
     )
     parser.add_argument(
-        "--pack", required=True, help="the pack in resources/demo-<pack> to replay"
+        "--pack",
+        required=True,
+        help="the pack in resources/demo-<pack> to replay, empty for the demo",
     )
     parser.add_argument("--port", default=PORT, type=int, help="the port to answer on")
     args = parser.parse_args(argv)
-    if args.pack not in demo_pack_names():
+    if args.pack and args.pack not in demo_pack_names():
         parser.error(f"no pack {args.pack!r}. The packs are {demo_pack_names()}")
     try:
         replays = load_replays(root=demo_pack_dir(pack=args.pack))

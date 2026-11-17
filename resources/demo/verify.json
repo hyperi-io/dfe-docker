@@ -43,11 +43,5 @@
     "demo-feodo-c2/polls",
     "demo-feodo-c2-all",
     "demo-feodo-c2-online"
-  ],
-  "waiting": {
-    "reason": "a fetcher and engine that land a dump unit in its own table, where the 2.2.2 ones land it in dfe.main",
-    "sources": [
-      "feodo-c2"
-    ]
-  }
+  ]
 }
