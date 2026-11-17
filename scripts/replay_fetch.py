@@ -185,12 +185,24 @@ def with_replay_unit(*, body: Mapping) -> dict:
     return copy
 
 
+def _rows_at(*, endpoint: Mapping) -> str:
+    """Where a unit's rows sit, the JSON pointer in `rows.at`. Only a `json_array` unit has none, because its whole body is the rows."""
+    rows = endpoint.get("rows", {})
+    at = str(rows.get("at", ""))
+    if at == "" and rows.get("decoder") != "json_array":
+        raise ReplayError(
+            f"rows.at {at!r} is not a JSON pointer to the rows of unit {endpoint.get('unit')!r}, "
+            "and only a json_array decoder reads the whole body as its rows"
+        )
+    return at
+
+
 def _replay_rows_at(*, body: Mapping, name: str) -> str:
-    """Where a fetcher source's `replay` unit reads its rows, the whole body when it sets no `at`, as a `json_array` unit does."""
+    """Where a fetcher source's `replay` unit reads its rows, the whole body when it sets no `at`, which only a `json_array` unit may do."""
     profile = body["fetcher"]["config"]["profile"]
     for endpoint in profile.get("endpoints", []):
         if endpoint.get("unit") == REPLAY_UNIT:
-            return str(endpoint.get("rows", {}).get("at", ""))
+            return _rows_at(endpoint=endpoint)
     raise ReplayError(
         f"{name}.yaml has events to replay and no {REPLAY_UNIT!r} unit to poll them. "
         "Add one whose base_url is `{{ vars.replay_url }}`"
@@ -243,7 +255,7 @@ def _live_probe(*, body: Mapping, name: str) -> Probe:
         query = urlencode(
             {key: value for key, value in values.items() if value is not None}
         )
-        rows_at = str(endpoint.get("rows", {}).get("at", ""))
+        rows_at = _rows_at(endpoint=endpoint)
         _pointer_parts(pointer=rows_at)
         return Probe(
             url=f"{base.rstrip('/')}{path}{'?' + query if query else ''}",

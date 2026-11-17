@@ -278,6 +278,18 @@ class TestLoadReplays:
             rows_at="/ac",
         )
 
+    def test_a_json_array_unit_with_no_at_reads_the_whole_body(
+        self, tmp_path: Path
+    ) -> None:
+        unit = {**LIVE_UNIT, "rows": {"decoder": "json_array"}}
+        line = f'{{"polled_ms": {POLLED_MS}, "body": [{{"a": 1}}]}}'
+        root = _pack(tmp_path, endpoints=[unit], lines=[line])
+
+        replays = replay_fetch.load_replays(root=root)
+
+        assert replays["air"].rows_at == ""
+        assert replays["air"].probe.rows_at == ""
+
     def test_adds_the_replay_unit_a_live_only_source_lacks(
         self, tmp_path: Path
     ) -> None:
@@ -321,6 +333,19 @@ class TestLoadReplays:
             ),
             ([], [f'{{"polled_ms": {POLLED_MS}, "body": {{}}}}'], "no 'replay' unit"),
             (
+                [
+                    {**REPLAY_UNIT, "rows": {"decoder": "document"}},
+                    LIVE_UNIT,
+                ],
+                [f'{{"polled_ms": {POLLED_MS}, "body": {{}}}}'],
+                "not a JSON pointer",
+            ),
+            (
+                [{**LIVE_UNIT, "rows": {"decoder": "document"}}],
+                [f'{{"polled_ms": {POLLED_MS}, "body": {{}}}}'],
+                "not a JSON pointer",
+            ),
+            (
                 [REPLAY_UNIT],
                 [f'{{"polled_ms": {POLLED_MS}, "body": {{}}}}'],
                 "no live unit to ask",
@@ -336,6 +361,8 @@ class TestLoadReplays:
             "malformed",
             "no-poll-time",
             "no-units",
+            "document-replay-unit-with-no-at",
+            "document-live-unit-with-no-at",
             "no-live-unit",
             "unfillable-path",
         ],
