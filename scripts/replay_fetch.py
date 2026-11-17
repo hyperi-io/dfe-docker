@@ -43,6 +43,8 @@ REPLAY_UNIT = "replay"
 LIVE_ROWS_CHECK_SECONDS = 1800.0
 NO_ROWS_CHECK_SECONDS = 300.0
 PROBE_TIMEOUT_SECONDS = 5.0
+# The demo-replay service on the stack's network, where a replay unit the file does not write itself is served from
+REPLAY_URL = f"http://demo-replay:{PORT}"
 VARS_TOKEN = re.compile(r"\{\{\s*vars\.(\w+)\s*\}\}")
 
 
@@ -91,6 +93,8 @@ def shifted(*, body: object, offset_ms: int, polled_ms: int) -> object:
 
 def _pointer_parts(*, pointer: str) -> list[str]:
     """The keys and indexes a JSON pointer walks through."""
+    if pointer == "":
+        return []
     if not (pointer.startswith("/")):
         raise ReplayError(f"rows.at {pointer!r} is not a JSON pointer to the rows")
     return [
@@ -99,7 +103,7 @@ def _pointer_parts(*, pointer: str) -> list[str]:
 
 
 def _at(*, body: object, pointer: str) -> object:
-    """The value at JSON pointer `pointer` in `body`, None where the body has no such place."""
+    """The value at JSON pointer `pointer` in `body`, the whole body for the empty pointer, None where the body has no such place."""
     node = body
     for part in _pointer_parts(pointer=pointer):
         try:
@@ -112,6 +116,8 @@ def _at(*, body: object, pointer: str) -> object:
 def emptied(*, body: object, pointer: str) -> object:
     """`body` with the value at JSON pointer `pointer` replaced by an empty array."""
     parts = _pointer_parts(pointer=pointer)
+    if not (parts):
+        return []
     copy = json.loads(json.dumps(body))
     node = copy
     for part in parts[:-1]:
@@ -157,12 +163,46 @@ def _step_ms(*, polls: list[tuple[int, object]]) -> int:
     return max(1, gaps[len(gaps) // 2]) if gaps else 1000
 
 
+def with_replay_unit(*, body: Mapping) -> dict:
+    """The fetcher source with a `replay` unit, added from its first unit where the file has none: that unit's rows read from `vars.replay_url` at /<source>. A source that polls the live feed only stays that way under `make demo`, which runs no replay service."""
+    copy = json.loads(json.dumps(body))
+    config = copy["fetcher"]["config"]
+    endpoints = config["profile"].setdefault("endpoints", [])
+    if any(endpoint.get("unit") == REPLAY_UNIT for endpoint in endpoints):
+        return copy
+    if not (endpoints):
+        return copy
+    endpoints.insert(
+        0,
+        {
+            "base_url": "{{ vars.replay_url }}",
+            "path": f"/{copy['source']}",
+            "rows": endpoints[0].get("rows", {}),
+            "unit": REPLAY_UNIT,
+        },
+    )
+    config.setdefault("vars", {}).setdefault("replay_url", REPLAY_URL)
+    return copy
+
+
+def _rows_at(*, endpoint: Mapping) -> str:
+    """Where a unit's rows sit, the JSON pointer in `rows.at`. Only a `json_array` unit has none, because its whole body is the rows."""
+    rows = endpoint.get("rows", {})
+    at = str(rows.get("at", ""))
+    if at == "" and rows.get("decoder") != "json_array":
+        raise ReplayError(
+            f"rows.at {at!r} is not a JSON pointer to the rows of unit {endpoint.get('unit')!r}, "
+            "and only a json_array decoder reads the whole body as its rows"
+        )
+    return at
+
+
 def _replay_rows_at(*, body: Mapping, name: str) -> str:
-    """Where a fetcher source's `replay` unit reads its rows."""
+    """Where a fetcher source's `replay` unit reads its rows, the whole body when it sets no `at`, which only a `json_array` unit may do."""
     profile = body["fetcher"]["config"]["profile"]
     for endpoint in profile.get("endpoints", []):
         if endpoint.get("unit") == REPLAY_UNIT:
-            return str(endpoint.get("rows", {}).get("at", ""))
+            return _rows_at(endpoint=endpoint)
     raise ReplayError(
         f"{name}.yaml has events to replay and no {REPLAY_UNIT!r} unit to poll them. "
         "Add one whose base_url is `{{ vars.replay_url }}`"
@@ -215,7 +255,7 @@ def _live_probe(*, body: Mapping, name: str) -> Probe:
         query = urlencode(
             {key: value for key, value in values.items() if value is not None}
         )
-        rows_at = str(endpoint.get("rows", {}).get("at", ""))
+        rows_at = _rows_at(endpoint=endpoint)
         _pointer_parts(pointer=rows_at)
         return Probe(
             url=f"{base.rstrip('/')}{path}{'?' + query if query else ''}",
@@ -240,6 +280,7 @@ def load_replays(*, root: Path) -> dict[str, Replay]:
         fetches = isinstance(body, dict) and isinstance(body.get("fetcher"), dict)
         if not (fetches) or not (log.is_file()):
             continue
+        body = with_replay_unit(body=body)
         polls = _polls(path=log)
         replays[path.stem] = Replay(
             live=_live_host(body=body, name=path.stem),
@@ -309,11 +350,13 @@ def main(argv: list[str] | None = None) -> int:
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
     )
     parser.add_argument(
-        "--pack", required=True, help="the pack in resources/demo-<pack> to replay"
+        "--pack",
+        required=True,
+        help="the pack in resources/demo-<pack> to replay, empty for the demo",
     )
     parser.add_argument("--port", default=PORT, type=int, help="the port to answer on")
     args = parser.parse_args(argv)
-    if args.pack not in demo_pack_names():
+    if args.pack and args.pack not in demo_pack_names():
         parser.error(f"no pack {args.pack!r}. The packs are {demo_pack_names()}")
     try:
         replays = load_replays(root=demo_pack_dir(pack=args.pack))

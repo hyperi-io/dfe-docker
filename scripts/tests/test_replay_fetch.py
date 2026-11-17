@@ -183,8 +183,9 @@ class TestEmptied:
             ("/features", {"features": [{"a": 1}]}, {"features": []}),
             ("/a/0/b", {"a": [{"b": [1]}]}, {"a": [{"b": []}]}),
             ("/a~1b", {"a/b": [1]}, {"a/b": []}),
+            ("", [{"ip_address": "192.0.2.1"}], []),
         ],
-        ids=["top", "geojson", "nested", "escaped"],
+        ids=["top", "geojson", "nested", "escaped", "whole-body"],
     )
     def test_blanks_the_rows_and_keeps_the_rest(
         self, body: dict, expected: dict, pointer: str
@@ -196,10 +197,9 @@ class TestEmptied:
         ("pointer", "body", "message"),
         [
             ("ac", {"ac": []}, "not a JSON pointer"),
-            ("", {"ac": []}, "not a JSON pointer"),
             ("/n/x", {"n": 3}, "leads into a int"),
         ],
-        ids=["relative", "empty", "into-a-number"],
+        ids=["relative", "into-a-number"],
     )
     def test_refuses_a_pointer_it_cannot_follow(
         self, body: dict, message: str, pointer: str
@@ -229,6 +229,20 @@ class TestPollAt:
 
 
 class TestLoadReplays:
+    def test_reads_the_committed_demo_pack(self) -> None:
+        replays = replay_fetch.load_replays(root=demo_pack_dir(pack=""))
+
+        assert sorted(replays) == ["feodo-c2"]
+        assert replays["feodo-c2"].rows_at == ""
+        assert replays["feodo-c2"].live == ("feodotracker.abuse.ch", 443)
+        assert replays["feodo-c2"].probe.url == (
+            "https://feodotracker.abuse.ch/downloads/ipblocklist.json"
+        )
+        body = replays["feodo-c2"].polls[0][1]
+        assert isinstance(body, list)
+        assert body
+        assert replay_fetch.emptied(body=body, pointer="") == []
+
     def test_reads_the_committed_theatre_pack(self) -> None:
         replays = replay_fetch.load_replays(root=demo_pack_dir(pack="theatre"))
 
@@ -264,6 +278,43 @@ class TestLoadReplays:
             rows_at="/ac",
         )
 
+    def test_a_json_array_unit_with_no_at_reads_the_whole_body(
+        self, tmp_path: Path
+    ) -> None:
+        unit = {**LIVE_UNIT, "rows": {"decoder": "json_array"}}
+        line = f'{{"polled_ms": {POLLED_MS}, "body": [{{"a": 1}}]}}'
+        root = _pack(tmp_path, endpoints=[unit], lines=[line])
+
+        replays = replay_fetch.load_replays(root=root)
+
+        assert replays["air"].rows_at == ""
+        assert replays["air"].probe.rows_at == ""
+
+    def test_adds_the_replay_unit_a_live_only_source_lacks(
+        self, tmp_path: Path
+    ) -> None:
+        line = f'{{"polled_ms": {POLLED_MS}, "body": [1]}}'
+        root = _pack(tmp_path, endpoints=[LIVE_UNIT], lines=[line])
+
+        replays = replay_fetch.load_replays(root=root)
+
+        assert replays["air"].rows_at == "/ac"
+        assert replays["air"].probe.rows_at == "/ac"
+        derived = replay_fetch.with_replay_unit(
+            body=json.loads(_source(endpoints=[LIVE_UNIT]))
+        )
+        assert derived["fetcher"]["config"]["vars"]["replay_url"] == (
+            replay_fetch.REPLAY_URL
+        )
+        assert [
+            e["unit"] for e in derived["fetcher"]["config"]["profile"]["endpoints"]
+        ] == [
+            "replay",
+            "point",
+        ]
+        assert derived["fetcher"]["config"]["profile"]["endpoints"][0]["path"] == "/air"
+        assert replay_fetch.with_replay_unit(body=derived) == derived
+
     def test_skips_a_fetcher_with_no_capture(self, tmp_path: Path) -> None:
         root = _pack(tmp_path, endpoints=[REPLAY_UNIT, LIVE_UNIT], lines=["{}"])
         (root / "events" / "air" / "demo.log").unlink()
@@ -282,6 +333,19 @@ class TestLoadReplays:
             ),
             ([], [f'{{"polled_ms": {POLLED_MS}, "body": {{}}}}'], "no 'replay' unit"),
             (
+                [
+                    {**REPLAY_UNIT, "rows": {"decoder": "document"}},
+                    LIVE_UNIT,
+                ],
+                [f'{{"polled_ms": {POLLED_MS}, "body": {{}}}}'],
+                "not a JSON pointer",
+            ),
+            (
+                [{**LIVE_UNIT, "rows": {"decoder": "document"}}],
+                [f'{{"polled_ms": {POLLED_MS}, "body": {{}}}}'],
+                "not a JSON pointer",
+            ),
+            (
                 [REPLAY_UNIT],
                 [f'{{"polled_ms": {POLLED_MS}, "body": {{}}}}'],
                 "no live unit to ask",
@@ -296,7 +360,9 @@ class TestLoadReplays:
             "empty",
             "malformed",
             "no-poll-time",
-            "no-replay-unit",
+            "no-units",
+            "document-replay-unit-with-no-at",
+            "document-live-unit-with-no-at",
             "no-live-unit",
             "unfillable-path",
         ],

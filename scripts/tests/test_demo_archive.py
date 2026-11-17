@@ -137,6 +137,49 @@ class TestManifest:
         assert manifest["archive"]["retention_minutes"] <= 15
         assert manifest["archive"]["max_megabytes"] <= 200
 
+    @pytest.mark.usefixtures("engine_python_here")
+    @pytest.mark.parametrize(
+        ("pack", "units"),
+        [
+            (
+                "",
+                {
+                    "feodo-c2": ["replay", "blocklist"],
+                    "component-releases": ["latest"],
+                },
+            ),
+            (
+                "theatre",
+                {
+                    "adsb-tracks": ["replay", "point"],
+                    "ais-tracks": ["replay", "locations"],
+                },
+            ),
+            ("telco", {"bgp-updates": ["updates"]}),
+        ],
+        ids=["demo", "theatre", "telco"],
+    )
+    def test_seeding_gives_a_fetcher_with_captured_polls_its_replay_unit(
+        self, monkeypatch: pytest.MonkeyPatch, pack: str, units: dict[str, list[str]]
+    ) -> None:
+        seeded: dict[str, list[str]] = {}
+
+        def record(*, fetchers: list[dict], **_: object) -> tuple[list, list]:
+            for body in fetchers:
+                endpoints = body["fetcher"]["config"]["profile"]["endpoints"]
+                seeded[body["source"]] = [e["unit"] for e in endpoints]
+            return [], []
+
+        monkeypatch.setattr(demo, "_ensure_fetchers", record)
+        for name in ("_ensure_source", "_complete_setup", "_switch_on_syslog"):
+            monkeypatch.setattr(demo, name, lambda **_: [])
+        monkeypatch.setattr(demo, "install_hunts", lambda **_: [])
+        monkeypatch.setattr(demo_seed, "_token", lambda **_: "token")
+
+        demo_seed.seed_sources(root=demo_pack_dir(pack=pack))
+
+        assert seeded == units
+
     def test_a_pack_with_no_source_files_must_list_none(self, tmp_path: Path) -> None:
         manifest = json.loads(
             demo_pack_dir(pack="cyber")
