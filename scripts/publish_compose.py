@@ -366,7 +366,7 @@ def apply_command(*, tag: str) -> str:
 def rotation_command(*, tag: str) -> str:
     """The command that sets a new admin password in the file published under `tag`: secrets-init stores it, then the engine restarts to read it."""
     return (
-        f"{secrets_init.ADMIN_PASSWORD_VAR}=<new password> docker compose -f "
+        f"{secrets_init.ADMIN_PASSWORD_VAR}='<new password>' docker compose -f "
         f"oci://{DEFAULT_IMAGE}:{tag} up -d --force-recreate {SECRETS_SERVICE} {ENGINE_SERVICE}"
     )
 

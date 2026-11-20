@@ -139,7 +139,7 @@ class TestPublished:
         )
         # No env/engine.env either: secrets-init stores the new password and the engine rereads it
         assert engine["environment"][publish_compose.ROTATION_COMMAND_KEY] == (
-            "DFE_ADMIN_PASSWORD=<new password> docker compose -f "
+            "DFE_ADMIN_PASSWORD='<new password>' docker compose -f "
             "oci://ghcr.io/hyperi-io/dfe-docker:compose up -d --force-recreate "
             "secrets-init dfe-engine"
         )
@@ -807,7 +807,7 @@ class TestDemoOverlay:
             "--force-recreate {service}"
         )
         assert engine[publish_compose.ROTATION_COMMAND_KEY] == (
-            "DFE_ADMIN_PASSWORD=<new password> docker compose -f "
+            "DFE_ADMIN_PASSWORD='<new password>' docker compose -f "
             "oci://ghcr.io/hyperi-io/dfe-docker:demo-cyber up -d --force-recreate "
             "secrets-init dfe-engine"
         )
