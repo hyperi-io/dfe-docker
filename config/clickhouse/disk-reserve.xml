@@ -1,0 +1,19 @@
+<!--
+  Project:   dfe-docker
+  File:      config/clickhouse/disk-reserve.xml
+  Purpose:   Keeps free space on the data disk ClickHouse shares with the broker
+  Language:  XML
+
+  License:   BUSL-1.1
+  Copyright: (c) 2026 HYPERI PTY LIMITED
+-->
+<clickhouse>
+  <!-- Below this ClickHouse refuses new parts rather than fill the disk. compose sets the default (docs/configuration.md). -->
+  <storage_configuration>
+    <disks>
+      <default>
+        <keep_free_space_bytes from_env="CLICKHOUSE_KEEP_FREE_SPACE_BYTES"/>
+      </default>
+    </disks>
+  </storage_configuration>
+</clickhouse>
