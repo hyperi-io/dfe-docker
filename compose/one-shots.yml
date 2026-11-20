@@ -155,6 +155,7 @@ services:
     environment:
       REDPANDA_MIN_FREE_BYTES: ${REDPANDA_MIN_FREE_BYTES:-5368709120}
       REDPANDA_RETENTION_BYTES: ${REDPANDA_RETENTION_BYTES:-10737418240}
+      REDPANDA_LICENSE: ${REDPANDA_LICENSE:-}
     depends_on:
       kafka-redpanda:
         condition: service_healthy
