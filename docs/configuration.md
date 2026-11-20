@@ -219,7 +219,9 @@ Compose maps them onto scalo's `version_check.enabled` and `version_check.send_i
 | `APACHE_KAFKA_VERSION`                           | Version of Apache Kafka to use                                                       | none -- `make stack` pins it from the DFE stack SSoT and unset is a hard-fail                |
 | `REDPANDA_VERSION`                               | Version of Redpanda to use                                                           | none -- `make stack` pins it from the DFE stack SSoT and unset is a hard-fail                |
 | `REDPANDA_MEMORY`                                | Memory for the Redpanda broker (Seastar reserves this up front), `redpanda/start.sh` lowers it to what the container limit leaves after the host's `vm.min_free_kbytes` | `1G`                                                                |
+| `REDPANDA_MIN_FREE_BYTES`                       | Free disk the broker keeps. Below it the broker refuses writes, so ClickHouse on the same disk keeps room | `5368709120` |
 | `REDPANDA_MODE`                                  | `dev-container` relaxes fsync to fit a 4 GB CI runner. A deploy sets `production` with real `REDPANDA_SMP` and `REDPANDA_MEMORY` | `dev-container`                                                     |
+| `REDPANDA_RETENTION_BYTES`                      | Most each partition keeps before its oldest segments go, beside the time retention | `10737418240` |
 | `REDPANDA_SMP`                                   | Cores the broker uses                                                                | `1`                                                                 |
 
 ### Kafka UI (Kafbat)
