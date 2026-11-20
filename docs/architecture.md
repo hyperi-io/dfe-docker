@@ -184,7 +184,7 @@ A profile declares its footprint through the `clickhouse`, `core`, `kafbat`, `hy
 |---|---|
 | `clickhouse` | `clickhouse` |
 | `kafka-apache` | `kafka-apache` |
-| `kafka-redpanda` | `kafka-redpanda` |
+| `kafka-redpanda` | `kafka-redpanda`, `kafka-redpanda-config` |
 | `kafka-ui` | `kafka-ui` (Kafbat) |
 | `dfe` | `dlq-init`, `bearer-tokens-init`, the `config-check-<app>` one-shots, archiver, fetcher, loader, receiver, every transform instance |
 | `core` | `dfe-engine`, `dfe-hunt-runner`, `dfe-ui`, `dfe-proxy`, the `contract-<app>` one-shots |
