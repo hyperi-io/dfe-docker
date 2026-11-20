@@ -6,7 +6,7 @@
 # License:   BUSL-1.1
 # Copyright: (c) 2026 HYPERI PTY LIMITED
 #
-# Compose profiles and the services each starts: docs/architecture.md
+# Profiles and the services each starts: docs/architecture.md
 
 include:
   - path: compose/one-shots.yml

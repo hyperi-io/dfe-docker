@@ -104,6 +104,11 @@ STACK_VERSION_KEY = "DFE_STACK_VERSION"
 REPIN_ENV = "DFE_STACK_REPIN_IMAGES"
 _TRUTHY = {"1", "true", "yes", "on"}
 
+# A `-` after the three numbers marks a prerelease (2.2.2-rc.5)
+_PRERELEASE = re.compile(r"^\d+\.\d+\.\d+-")
+# A development branch that pins an rc sets this to 1
+PRERELEASE_PIN_VAR = "DFE_DOCKER_PRERELEASE_PIN"
+
 # dfe-infra's release workflow signs each stack manifest keyless through GitHub OIDC, so its certificate names that workflow on main. A manifest repo moved by DFE_STACK_MANIFEST_REPO names its own signer through the two overrides.
 DEFAULT_SIGNER_IDENTITY = "https://github.com/hyperi-io/dfe-infra/.github/workflows/release.yml@refs/heads/main"
 DEFAULT_SIGNER_ISSUER = "https://token.actions.githubusercontent.com"
@@ -407,28 +412,6 @@ def _dial_pin() -> str:
     return pin.strip()
 
 
-# A `-` after the three numbers marks a prerelease (2.2.2-rc.5), which main never ships.
-_PRERELEASE = re.compile(r"^\d+\.\d+\.\d+-")
-# A development branch that has to pin an rc sets this. main never does.
-PRERELEASE_PIN_VAR = "DFE_DOCKER_PRERELEASE_PIN"
-
-
-def release_pin() -> str:
-    """Return the pinned stack, refusing a prerelease unless the branch opts in.
-
-    A release builds its image and compose artefacts from this pin, so an rc here
-    puts a candidate stack in front of everyone who runs the hero install.
-    """
-    pin = _dial_pin()
-    if _PRERELEASE.match(pin) and os.environ.get(PRERELEASE_PIN_VAR) != "1":
-        raise StackError(
-            f"{_rel_path(path=DEPLOYMENT_DIAL_TEMPLATE)!r} pins {pin}, a prerelease. "
-            f"A release ships a GA stack only, and CI refuses this pin on any branch. "
-            f"A development branch sets {PRERELEASE_PIN_VAR}=1 to run the checks locally."
-        )
-    return pin
-
-
 def _pin_value(*, key: str, pins: dict[str, str]) -> str:
     """Return the value one pin line sets, refusing a missing or undigested pin."""
     if key not in pins:
@@ -442,6 +425,21 @@ def _stack_version(*, requested: str) -> str:
     if requested in DISCOVERY_WORDS:
         return latest_tag(prereleases=DISCOVERY_WORDS[requested], repo=manifest_repo())
     return requested
+
+
+def release_pin() -> str:
+    """Return the pinned stack, refusing a prerelease unless the branch opts in.
+
+    A release builds its image and compose artefacts from this pin, so an rc here puts a candidate stack in front of everyone who runs the hero install.
+    """
+    pin = _dial_pin()
+    if _PRERELEASE.match(pin) and os.environ.get(PRERELEASE_PIN_VAR) != "1":
+        raise StackError(
+            f"{_rel_path(path=DEPLOYMENT_DIAL_TEMPLATE)!r} pins {pin}, a prerelease. "
+            f"A release ships a GA stack only, and CI refuses this pin on any branch. "
+            f"A development branch sets {PRERELEASE_PIN_VAR}=1 to run the checks locally."
+        )
+    return pin
 
 
 def main() -> int:

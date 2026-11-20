@@ -819,7 +819,7 @@ def test_a_dfe_app_gets_the_stop_grace_its_contract_asks_for(
     assert resolved_model["services"][service]["stop_grace_period"] == grace
 
 
-def _digest(name: str) -> str:
+def _digest(*, name: str) -> str:
     return f"sha256:{name.encode().hex().ljust(64, '0')[:64]}"
 
 
@@ -829,16 +829,16 @@ def _stack_model(*, listed: list[str], running: list[str]) -> dict:
         f"service-{index}": {"image": image} for index, image in enumerate(running)
     }
     services["dfe-engine"] = {
-        "image": "ghcr.io/hyperi-io/dfe-engine:v1@" + _digest("engine"),
+        "image": "ghcr.io/hyperi-io/dfe-engine:v1@" + _digest(name="engine"),
         "environment": {"DFE_ENGINE_STACK_IMAGES": ",".join(listed)},
     }
     return {"services": services}
 
 
-_ENGINE_REF = "ghcr.io/hyperi-io/dfe-engine:v1@" + _digest("engine")
-_LOADER_REF = "ghcr.io/hyperi-io/dfe-loader:v2@" + _digest("loader")
+_ENGINE_REF = "ghcr.io/hyperi-io/dfe-engine:v1@" + _digest(name="engine")
+_LOADER_REF = "ghcr.io/hyperi-io/dfe-loader:v2@" + _digest(name="loader")
 _BARE_LOADER_REF = "ghcr.io/hyperi-io/dfe-loader:v2"
-_CLICKHOUSE_REF = "clickhouse/clickhouse-server:26.3@" + _digest("clickhouse")
+_CLICKHOUSE_REF = "clickhouse/clickhouse-server:26.3@" + _digest(name="clickhouse")
 
 
 @pytest.mark.parametrize(

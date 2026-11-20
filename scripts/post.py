@@ -199,7 +199,7 @@ CONTAINER_LOG_SERVICES = ("dfe-engine", "dfe-loader", "dfe-receiver")
 
 # The services whose OWN metrics have to reach the otel database, as name prefixes
 # so a per-source instance (dfe-transform-vrl-filebeat) is covered by its app.
-# dfe-ui pushes over OTLP/HTTP under its own ServiceName, so it is checked like the rest.
+# dfe-ui pushes over OTLP/HTTP like the rest
 OTEL_PUSHER_PREFIXES = (
     "dfe-archiver",
     "dfe-engine",
@@ -212,7 +212,7 @@ OTEL_PUSHER_PREFIXES = (
     "dfe-transform-vrl",
     "dfe-ui",
 )
-# dfe-ui pushes metrics from this release on, so an older pin is not expected to.
+# The first dfe-ui release that pushes metrics
 UI_VERSION_KEY = "DFE_UI_VERSION"
 UI_PUSHES_METRICS_FROM = (1, 7, 40)
 # Metrics only: traces are sampled at 0.05, so a service missing from them is a
@@ -899,20 +899,11 @@ def _verify_self_monitoring() -> Claim:
     return Claim(asserted=True, failed=failed)
 
 
-def _ui_pushes_metrics(*, ui_version: str) -> bool:
-    """Return False only for a dfe-ui release tag older than UI_PUSHES_METRICS_FROM, so a local or unparsed build is still checked."""
-    tag = ui_version.split("@", 1)[0].strip().removeprefix("v")
-    parts = tag.split(".")
-    if len(parts) != 3 or not all(part.isdigit() for part in parts):
-        return True
-    return tuple(int(part) for part in parts) >= UI_PUSHES_METRICS_FROM
-
-
 def _otel_expected_services(
     *, services: list[str], unapplied: set[str], ui_version: str = ""
 ) -> list[str]:
     """The services whose own metrics have to be in the otel database, less the instances `make apply` has not created."""
-    skip_ui = not _ui_pushes_metrics(ui_version=ui_version)
+    skip_ui = not (_ui_pushes_metrics(ui_version=ui_version))
     return sorted(
         service
         for service in services
@@ -920,6 +911,15 @@ def _otel_expected_services(
         and service not in unapplied
         and not (skip_ui and service == "dfe-ui")
     )
+
+
+def _ui_pushes_metrics(*, ui_version: str) -> bool:
+    """Return False only for a dfe-ui release tag older than UI_PUSHES_METRICS_FROM, so a local or unparsed build is still checked."""
+    tag = ui_version.split("@", 1)[0].strip().removeprefix("v")
+    parts = tag.split(".")
+    if (len(parts) != 3) or not (all(part.isdigit() for part in parts)):
+        return True
+    return tuple(int(part) for part in parts) >= UI_PUSHES_METRICS_FROM
 
 
 def _otel_reporting_services(*, database: str) -> set[str]:

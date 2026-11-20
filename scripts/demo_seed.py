@@ -174,7 +174,7 @@ def main(*, argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
     if args.pack and args.pack not in demo_pack_names():
         parser.error(
-            f"no pack {args.pack!r}. The packs are {demo_pack_names()}, each a resources/demo-<pack> directory"
+            message=f"no pack {args.pack!r}. The packs are {demo_pack_names()}, each a resources/demo-<pack> directory"
         )
     root = demo_pack_dir(pack=args.pack)
     if not (in_stack()):

@@ -15,7 +15,7 @@ The compose files scripts/publish_compose.py writes carry no secret. Their secre
 
 Each @@KEY@@ is a GENERATED_SECRETS key. Its value is minted by init.py's own rule the first time and kept in <root>/.minted/KEY, so a restart reuses it and only `down -v` mints afresh. Each service then gets <root>/<service>/, readable by root and the group the plan names: `env` holds the KEY=value lines its shell wrapper sources. Each `files` name is a file holding the value alone. Every run rewrites those from the minted values.
 
-The admin login is the one pair a person may choose. DFE_ADMIN_NAME and DFE_ADMIN_PASSWORD, when set and not empty, replace the stored name and password on that run, after the password is checked against what the engine accepts. Unset, the stored values stay, and a first run mints the password and names the admin `admin`.
+The admin login is the one pair a person may choose. DFE_ADMIN_NAME and DFE_ADMIN_PASSWORD, when set and not empty, replace the stored name and password on that run, after the password is checked against what the engine accepts. Unset, the stored values stay. A first run mints the password and names the admin `admin`.
 
 `login` as the last argument prints the stored name and password. It mints them first when none are stored and writes no service's files.
 
@@ -43,7 +43,7 @@ from _common import LOGIN_COMMAND, _print  # noqa: E402
 ADMIN_NAME_KEY = "DFE_ENGINE_AUTH_LOCAL_ADMIN_NAME"
 ADMIN_PASSWORD_KEY = "DFE_ENGINE_AUTH_LOCAL_ADMIN_PASSWORD"
 DEFAULT_ADMIN_NAME = "admin"
-# Each key a person may choose, by the variable that carries it into secrets-init
+# Each key a person may choose, by its variable
 ADMIN_NAME_VAR = "DFE_ADMIN_NAME"
 ADMIN_PASSWORD_VAR = "DFE_ADMIN_PASSWORD"
 SUPPLIED = {
@@ -52,11 +52,11 @@ SUPPLIED = {
 }
 # dfe_engine.names.VALID_NAME
 ADMIN_NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,127}")
-# dfe_engine.auth.bootstrap.MIN_ADMIN_PASSWORD_LENGTH, the floor on any password the engine API stores
+# dfe_engine.auth.bootstrap.MIN_ADMIN_PASSWORD_LENGTH
 MIN_PASSWORD_LENGTH = 12
-# bcrypt hashes no more, and the engine refuses to start on a longer admin password
+# bcrypt hashes no more than this
 MAX_PASSWORD_BYTES = 72
-# The engine's shipped placeholder, which it refuses outside a dev posture
+# The placeholder the engine refuses outside a dev posture
 SHIPPED_PASSWORD = "changeme"  # noqa: S105
 MINTED_DIR = ".minted"
 ENV_FILE = "env"
@@ -184,7 +184,7 @@ def apply(
 
 
 def login(*, root: Path) -> str:
-    """The two lines `login` prints: the admin's name and password, and what the console does with them."""
+    """The two lines `login` prints: the admin's name and password, then what the console does with them."""
     name, password = (
         _minted(environ={}, key=key, root=root)
         for key in (ADMIN_NAME_KEY, ADMIN_PASSWORD_KEY)

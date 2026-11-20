@@ -80,7 +80,7 @@ _RESOLUTION_KEYS = (
 _ENGINE_FIELDS = {"name", "purpose", "url", "probe_url"}
 
 
-def _kafbat(url: str) -> dict[str, str]:
+def _kafbat(*, url: str) -> dict[str, str]:
     return {**_KAFBAT, "url": url}
 
 
@@ -192,10 +192,9 @@ def test_a_ui_is_listed_exactly_where_it_runs_and_is_published(
 
     browser = origin or "http://localhost"
     want = []
-    # No broker, no Kafka UI: the grpc transport never starts Kafbat. dfe-hyperdx is
-    # never listed, because dfe-ui frames it.
+    # Kafbat needs the kafka transport, dfe-ui frames hyperdx
     if transport == "kafka" and kafbat and "kafbat" not in unpublished:
-        want.append(_kafbat(f"{browser}:8081"))
+        want.append(_kafbat(url=f"{browser}:8081"))
     assert links == want
     assert [_engine_refusals(entry) for entry in links] == [[] for _ in links]
 
@@ -204,9 +203,9 @@ def test_a_ui_is_listed_exactly_where_it_runs_and_is_published(
     ("profile", "want"),
     [
         ("slim-grpc", []),
-        ("slim-kafka", [_kafbat("http://localhost:8081")]),
+        ("slim-kafka", [_kafbat(url="http://localhost:8081")]),
         ("single-grpc", []),
-        ("single-kafka", [_kafbat("http://localhost:8081")]),
+        ("single-kafka", [_kafbat(url="http://localhost:8081")]),
     ],
 )
 def test_every_profile_lists_what_its_footprint_runs(
@@ -234,7 +233,7 @@ def test_behind_the_auth_profile_the_link_takes_the_proxy_origin(
         **_AUTH_SETTINGS,
     )
 
-    assert links == [_kafbat(f"{_PROXY_ORIGIN}:8081")]
+    assert links == [_kafbat(url=f"{_PROXY_ORIGIN}:8081")]
 
 
 def test_a_moved_host_port_moves_the_link_and_not_the_probe(
@@ -247,7 +246,7 @@ def test_a_moved_host_port_moves_the_link_and_not_the_probe(
         KAFBAT_PORT="18081",
     )
 
-    assert links == [_kafbat("http://localhost:18081")]
+    assert links == [_kafbat(url="http://localhost:18081")]
 
 
 def test_a_trailing_slash_on_the_origin_is_not_carried_into_the_url(
@@ -260,7 +259,7 @@ def test_a_trailing_slash_on_the_origin_is_not_carried_into_the_url(
         DFE_EXTERNAL_ORIGIN=f"{_ORIGIN}/",
     )
 
-    assert links == [_kafbat(f"{_ORIGIN}:8081")]
+    assert links == [_kafbat(url=f"{_ORIGIN}:8081")]
 
 
 def test_the_origin_is_read_from_dotenv_where_an_operator_sets_it(
@@ -273,9 +272,9 @@ def test_the_origin_is_read_from_dotenv_where_an_operator_sets_it(
         newline="\n",
     )
 
-    links = _links(monkeypatch=monkeypatch, tmp_path=tmp_path, profile="slim-kafka")
+    links = _links(monkeypatch=monkeypatch, profile="slim-kafka", tmp_path=tmp_path)
 
-    assert links == [_kafbat(f"{_ORIGIN}:18081")]
+    assert links == [_kafbat(url=f"{_ORIGIN}:18081")]
 
 
 def test_an_unpublished_name_the_resolver_does_not_know_is_refused(
@@ -296,10 +295,13 @@ def test_an_unpublished_name_the_resolver_does_not_know_is_refused(
 @pytest.mark.parametrize(
     ("entry", "refusal"),
     [
-        ({**_kafbat("http://localhost:8081"), "icon": "x"}, "unknown field 'icon'"),
-        (_kafbat("http://someone@localhost:8081"), "url carries credentials"),
-        (_kafbat("localhost:8081"), "url is not an absolute http(s) URL"),
-        ({**_kafbat("http://localhost:8081"), "purpose": " "}, "purpose is missing"),
+        ({**_kafbat(url="http://localhost:8081"), "icon": "x"}, "unknown field 'icon'"),
+        (_kafbat(url="http://someone@localhost:8081"), "url carries credentials"),
+        (_kafbat(url="localhost:8081"), "url is not an absolute http(s) URL"),
+        (
+            {**_kafbat(url="http://localhost:8081"), "purpose": " "},
+            "purpose is missing",
+        ),
     ],
 )
 def test_the_shape_check_refuses_what_the_engine_refuses(
@@ -406,14 +408,14 @@ _SINGLE_ALL = {
     "DFE_BIND_SCOPE": "all",
     "DFE_EXTERNAL_ORIGIN": _ORIGIN,
 }
-_KAFBAT_ON_ORIGIN = [_kafbat(f"{_ORIGIN}:8081")]
+_KAFBAT_ON_ORIGIN = [_kafbat(url=f"{_ORIGIN}:8081")]
 
 
 @_needs_compose
 @pytest.mark.parametrize(
     ("settings", "want"),
     [
-        ({}, [_kafbat("http://localhost:8081")]),
+        ({}, [_kafbat(url="http://localhost:8081")]),
         (_SINGLE_ALL, _KAFBAT_ON_ORIGIN),
         ({**_SINGLE_ALL, "DFE_INFRA_UIS_EXTERNAL": "false"}, []),
         ({**_SINGLE_ALL, "DFE_KAFBAT_UI_EXTERNAL": "false"}, []),
@@ -424,7 +426,7 @@ _KAFBAT_ON_ORIGIN = [_kafbat(f"{_ORIGIN}:8081")]
                 **_AUTH_SETTINGS,
                 "DFE_OAUTH2_PROXY_EXTERNAL_ORIGIN": _PROXY_ORIGIN,
             },
-            [_kafbat(f"{_PROXY_ORIGIN}:8081")],
+            [_kafbat(url=f"{_PROXY_ORIGIN}:8081")],
         ),
         ({**_SINGLE_ALL, **_AUTH_SETTINGS, "DFE_INFRA_UIS_EXTERNAL": "false"}, []),
     ],

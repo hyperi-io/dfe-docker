@@ -9,7 +9,7 @@ The whole DFE stack on one host with Docker Compose, from pinned release images 
 
 - Runs DFE on one box, an edge site, a partner deployment or a developer's test rig. Compose is a supported production target for small environments. Kubernetes stays the primary path, so where both would work, choose Kubernetes.
 - Pins every image by digest from a certified DFE stack release with `make stack`. With a pin unset the stack will not start rather than pull `latest`.
-- Starts from the registry images with `make up`, or builds chosen components from source with `make dev`.
+- Starts from the registry images with `make up` or builds chosen components from source with `make dev`.
 - Runs Kafka or Redpanda as the broker, with opt-in overlays for TLS, storage and an oauth2-proxy `auth` profile.
 - Checks that the running stack moves data from the ingest edge to a ClickHouse row with `make post`, which fails if an enabled run asserts nothing. `DFE_POST_ENABLED=false` skips it.
 - Loads seed sources, rules and hunts into a running engine with `make sources`, `make rules` and `make hunts`.
@@ -34,7 +34,7 @@ docker compose -f oci://ghcr.io/hyperi-io/dfe-docker:demo up -d
 docker compose -f oci://ghcr.io/hyperi-io/dfe-docker:demo run --rm secrets-init login
 ```
 
-`down` with the same `-f` stops either one, and `down -v` deletes its data.
+`down` with the same `-f` stops either one and `down -v` deletes its data.
 
 From a clone, on a host with Docker Compose v2, make, git and Python 3:
 
@@ -51,23 +51,23 @@ make down                        # stop everything, keep the data
 
 ## Configuration
 
-A profile is `<tier>-<transport>`: `slim-grpc`, `slim-kafka`, `single-grpc` or `single-kafka`. `slim` is the core data path alone. `single-kafka` adds the per-source apps and the archiver, and `single-grpc` runs the same services as `slim-grpc`, because the engine runs per-source apps on Kafka only. The engine still runs as `docker-single` there and as `docker-slim` on a `slim` profile. There is no `scale` tier, because Compose cannot scale out. `KAFKA_BACKEND=apache` swaps Redpanda, which is BSL, for Apache Kafka on the kafka profiles.
+A profile is `<tier>-<transport>`: `slim-grpc`, `slim-kafka`, `single-grpc` or `single-kafka`. `slim` is the core data path alone. `single-kafka` adds the per-source apps and the archiver and `single-grpc` runs the same services as `slim-grpc`, because the engine runs per-source apps on Kafka only. The engine still runs as `docker-single` there and as `docker-slim` on a `slim` profile. There is no `scale` tier, because Compose cannot scale out. `KAFKA_BACKEND=apache` swaps Redpanda, which is BSL, for Apache Kafka on the kafka profiles.
 
-Each service reads its own `env/<service>.env`, created from `env.example/` by `make init`, which never overwrites a file and reports the keys an old `.env` is missing. Only the console and Search authenticate. The ingest ports, Kafbat and the metrics ports ask for no login, so put the stack behind a VPN, a tunnel or a firewall before anyone you have not met can reach it, or arm the `auth` profile. Every variable, the port map and the image list are in [docs/configuration.md](docs/configuration.md).
+Each service reads its own `env/<service>.env`, created from `env.example/` by `make init`, which never overwrites a file and reports the keys an old `.env` is missing. Only the console and Search authenticate. The ingest ports, Kafbat and the metrics ports ask for no login, so put the stack behind a VPN, a tunnel or a firewall before anyone you have not met can reach it or arm the `auth` profile. Every variable, the port map and the image list are in [docs/configuration.md](docs/configuration.md).
 
 ## Documentation
 
 Pick the page for what you are doing:
 
 - [docs/evaluating.md](docs/evaluating.md): a first look, a demo, a proof of concept.
-- [docs/operating.md](docs/operating.md): running it where other people depend on it, and exactly what is exposed.
-- [docs/deploying.md](docs/deploying.md): standing a deployment up, or moving one to a newer certified stack.
+- [docs/operating.md](docs/operating.md): running it where other people depend on it and exactly what is exposed.
+- [docs/deploying.md](docs/deploying.md): standing a deployment up or moving one to a newer certified stack.
 - [docs/developing.md](docs/developing.md): using the stack as a test rig for a component you are changing.
 - [docs/troubleshooting.md](docs/troubleshooting.md), then [known issues](docs/known-issues.md) and [common failures](docs/common-failures.md).
 - [docs/observability.md](docs/observability.md): health endpoints, self-telemetry and what a passing self test proves.
 - [docs/profiles.md](docs/profiles.md) and [docs/architecture.md](docs/architecture.md): how the profiles and the pieces fit together.
 
-The suite's published docs are at <https://dfe.docs.hyperi.io>, and this repository's pages at <https://dfe.docs.hyperi.io/dfe-docker/>.
+The suite's published docs are at <https://dfe.docs.hyperi.io> and this repository's pages at <https://dfe.docs.hyperi.io/dfe-docker/>.
 
 ## Help and contributing
 

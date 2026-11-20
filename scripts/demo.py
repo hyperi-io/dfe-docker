@@ -26,6 +26,7 @@ Exit codes:
 """
 
 import argparse
+import functools
 import json
 import os
 import re
@@ -123,9 +124,9 @@ YAML_TO_JSON = "\n".join(
 # What `from-catalogue` adds to an entry on the receiver intake (dfe-engine source/catalogue.py write_request_for and _match_for)
 CATALOGUE_INTAKE = "receiver"
 RECEIVER_MATCH_FIELD = "_source"
-# The field an Elastic Agent's envelope names its source by, which a Beats source matches on and its events carry
+# The field an Elastic Agent envelope names its source by
 BEATS_MATCH_FIELD = "data_stream.dataset"
-# What replays a pack's Beats sources at the receiver: events/<REPLAY_TOOL> REPLAY_COMMAND --target --sources --loop --duration
+# Replays Beats sources: events/<REPLAY_TOOL> <REPLAY_COMMAND>
 REPLAY_TOOL = "generate.py"
 REPLAY_COMMAND = "replay"
 # What `write_request_for` sets on every entry it compiles and a source that omits them gets anyway
@@ -175,12 +176,12 @@ CONSOLE_DIR = DEMO_DIR / "console"
 # dfe-hyperdx's API as dfe-engine reaches it, which accepts the engine's own token. Everything the pack puts in the console is a plain, deletable object whose name starts with CONSOLE_PREFIX
 HYPERDX_API = "http://dfe-hyperdx:8000"
 CONSOLE_PREFIX = "demo-"
-# A pack's hunts and the rules they run, one engine create body per file as resources/seed holds them
-# The upstream licence texts beside a pack's sample events, which no source replays
+# Licence texts beside a pack's events, which nothing replays
 EVENTS_LICENSES_DIR = "LICENSES"
+# A pack's hunts and their rules, one create body per file
 HUNTS_DIR_NAME = "hunts"
 RULES_DIR_NAME = "rules"
-# How long a rule or hunt create is tried again while the engine answers 5xx or not at all
+# How long a rule or hunt create retries a 5xx or no answer
 HUNT_INSTALL_TIMEOUT_SECONDS = 60.0
 HUNT_INSTALL_INTERVAL_SECONDS = 5.0
 HYPERDX_SERVICE = "dfe-hyperdx"
@@ -199,7 +200,7 @@ class DemoError(Exception):
 
 
 class Demo(typing.NamedTuple):
-    """A pack's Sources by role with the events directory of each vendor, Beats and JSON source. A pack with no vendor has no intake, and `replay` holds the fetchers whose captured polls scripts/replay_fetch.py serves."""
+    """A pack's Sources by role with the events directory of each vendor, Beats and JSON source. A pack with no vendor has no intake. `replay` holds the fetchers whose captured polls scripts/replay_fetch.py serves."""
 
     beats: list[dict]
     events: dict[str, Path]
@@ -208,6 +209,13 @@ class Demo(typing.NamedTuple):
     json: list[dict]
     replay: list[dict]
     vendors: list[dict]
+
+
+class PackHunts(typing.NamedTuple):
+    """A pack's rules and hunts as (name, create body), each in file name order."""
+
+    hunts: list[tuple[str, dict]]
+    rules: list[tuple[str, dict]]
 
 
 def _apply(*, dev: bool, environ: dict[str, str], services: list[str]) -> None:
@@ -503,6 +511,84 @@ def _check_catalogue(*, vendors: list[dict]) -> None:
             )
 
 
+def _check_events_kind(*, body: dict, events: Path) -> None:
+    """Refuse a source whose events the receiver would not route to it: Beats envelopes for its dataset when it matches on one, JSON carrying its match value when it is a JSON source, raw lines otherwise."""
+    name = body["source"]
+    dataset = beats_dataset(events=events)
+    if _role(body=body) == "json":
+        field, wanted = body["match"].get("field"), body["match"].get("value")
+        record = _first_event(events=events)
+        held = None if record is None else _field_value(field=str(field), record=record)
+        if held != wanted:
+            raise DemoError(
+                f"{name!r} matches {field} {wanted!r} and the first event in "
+                f"{str(events)!r} carries {held!r}. Set {field} on every record"
+            )
+        return
+    if _role(body=body) == "vendor":
+        if dataset is not None:
+            raise DemoError(
+                f"{name!r} replays Beats envelopes for {dataset!r}, which the receiver "
+                f"routes on {BEATS_MATCH_FIELD}. Match the source on {BEATS_MATCH_FIELD} "
+                f"equals {dataset!r}"
+            )
+        return
+    wanted = body["match"].get("value")
+    if dataset != wanted:
+        raise DemoError(
+            f"{name!r} matches {BEATS_MATCH_FIELD} {wanted!r} and its events in "
+            f"{str(events)!r} carry {dataset!r}. Replay Beats envelopes for {wanted!r}"
+        )
+    transform = body.get("transform")
+    engine = transform.get("engine") if isinstance(transform, dict) else None
+    if engine != TRANSFORM_APP.removeprefix(TRANSFORM_APP_PREFIX):
+        raise DemoError(
+            f"Beats source {name!r} runs transform engine {engine!r}. A pack declares "
+            f"{TRANSFORM_APP} instances only, so set `transform.engine: "
+            f"{TRANSFORM_APP.removeprefix(TRANSFORM_APP_PREFIX)}`"
+        )
+
+
+def _checked_intake(*, intakes: list[dict], sources: Path, vendors: list[dict]) -> dict:
+    """The one intake, refused unless it detects exactly the vendors' variants and no two vendors replay over one fixture package."""
+    if len(intakes) != 1:
+        found = (", ".join(repr(f"{body['source']}.yaml") for body in intakes)) or (
+            "none"
+        )
+        raise DemoError(
+            f"{str(sources)!r} needs exactly one intake, a source with "
+            f"`transform.mode: agentless`. It holds {found}"
+        )
+    intake = intakes[0]
+    if not (vendors):
+        raise DemoError(
+            f"{str(sources)!r} holds no vendor source for the intake to detect into. "
+            f"Add one with a `transform.variant`"
+        )
+    variants = sorted(_variant(source=body) for body in vendors)
+    detect = intake["transform"].get("detect")
+    candidates = detect.get("candidates") if isinstance(detect, dict) else None
+    listed = (
+        sorted(str(item) for item in candidates) if isinstance(candidates, list) else []
+    )
+    if listed != variants:
+        raise DemoError(
+            f"{intake['source'] + '.yaml'!r} lists `transform.detect.candidates` "
+            f"{listed}. Set them to the vendor sources' variants, {variants}"
+        )
+    owners = {}
+    for body in vendors:
+        package = fixture_package(source=body)
+        if package in owners:
+            raise DemoError(
+                f"vendor sources {owners[package]!r} and {body['source']!r} both "
+                f"replay over fixture package {package!r}, so one set of events would "
+                f"never be sent. Give each a variant naming its own package"
+            )
+        owners[package] = body["source"]
+    return intake
+
+
 def _conflict_hint(*, answer: object, status: int) -> str:
     """What to do about a write the engine refused for a receiver match another source has, empty for any other refusal."""
     code = answer.get("code") if isinstance(answer, dict) else None
@@ -610,6 +696,26 @@ def _docker(
     )
 
 
+def _engine_call(
+    *, call: typing.Callable[[], tuple[int, typing.Any]]
+) -> tuple[int, typing.Any]:
+    """Run one engine call again while it answers 5xx or not at all, until HUNT_INSTALL_TIMEOUT_SECONDS passes.
+
+    Returns the last (status, answer), with status 0 and the fault as the answer when the engine never answered.
+    """
+    deadline = time.monotonic() + HUNT_INSTALL_TIMEOUT_SECONDS
+    while True:
+        try:
+            status, answer = call()
+        except ENGINE_FAULTS as error:
+            status, answer = 0, str(error)
+        if status != 0 and status < 500:
+            return status, answer
+        if time.monotonic() >= deadline:
+            return status, answer
+        time.sleep(HUNT_INSTALL_INTERVAL_SECONDS)
+
+
 def _engine_python(*, code: str, stdin: str) -> subprocess.CompletedProcess:
     """Run Python in the engine's container for the PyYAML it carries, or inside the stack on this interpreter, whose image carries its own."""
     if in_stack():
@@ -700,6 +806,28 @@ def _fetch_generator(*, generator: str, tag: str) -> Path:
     paths = [str(Path(generator).parent), *GENERATOR_INPUTS]
     _run_git(args=["-C", str(checkout), "sparse-checkout", "set", *paths])
     return checkout
+
+
+def _field_value(*, field: str, record: dict) -> object:
+    """The value at a dotted field of a record, walked the way the receiver walks a match field, None where the path breaks."""
+    value = record
+    for part in field.split(sep="."):
+        value = value.get(part) if isinstance(value, dict) else None
+    return value
+
+
+def _first_event(*, events: Path) -> dict | None:
+    """The first event in a source's events directory as a JSON object, None when it holds no file or that line is not one."""
+    files = sorted(path for path in events.iterdir() if path.is_file())
+    if not (files):
+        return None
+    with files[0].open(encoding="utf-8", errors="replace") as handle:
+        first = next((line for line in handle if line.strip()), "")
+    try:
+        record = json.loads(first)
+    except json.JSONDecodeError:
+        return None
+    return record if isinstance(record, dict) else None
 
 
 def _generator_output(*, container: str) -> str:
@@ -1356,6 +1484,15 @@ def archivable(
     return kept, [body["source"] for body in bodies if body.get("archive")]
 
 
+def beats_dataset(*, events: Path) -> str | None:
+    """The `data_stream.dataset` of the first event in a source's events directory, None when its events are not Beats envelopes."""
+    record = _first_event(events=events)
+    dataset = (
+        None if record is None else _field_value(field=BEATS_MATCH_FIELD, record=record)
+    )
+    return dataset if isinstance(dataset, str) and dataset else None
+
+
 def catalogue_drift(*, catalogue: dict, source: dict) -> list[str]:
     """The top-level keys where a source differs from what `from-catalogue` writes for its catalogue entry on the receiver intake, `state` aside."""
     name = catalogue.get("source")
@@ -1373,11 +1510,6 @@ def catalogue_drift(*, catalogue: dict, source: dict) -> list[str]:
         for key in created.keys() | written.keys()
         if created.get(key) != written.get(key)
     )
-
-
-def create_body(*, body: dict) -> dict:
-    """The POST or PUT body for one source file: all of it bar `state`, which only the lifecycle route sets here."""
-    return {key: value for key, value in body.items() if key != "state"}
 
 
 def check_manifest(*, demo: Demo | None, manifest: dict, root: Path = DEMO_DIR) -> None:
@@ -1421,114 +1553,9 @@ def check_manifest(*, demo: Demo | None, manifest: dict, root: Path = DEMO_DIR) 
         )
 
 
-class PackHunts(typing.NamedTuple):
-    """A pack's rules and hunts as (name, create body), each in file name order."""
-
-    rules: list[tuple[str, dict]]
-    hunts: list[tuple[str, dict]]
-
-
-def pack_hunts(*, root: Path) -> PackHunts:
-    """Read a pack's rules and hunts, refusing a hunt that runs a rule the pack does not carry.
-
-    Args:
-        root: The pack directory.
-
-    Returns:
-        The pack's rules and hunts, both empty for a pack with neither directory.
-
-    Raises:
-        DemoError: A file that is not a create body named for its object, or a hunt naming a rule with no file.
-    """
-    try:
-        rules = _objects(directory=root / RULES_DIR_NAME, key=KINDS["rules"].key)
-        hunts = _objects(directory=root / HUNTS_DIR_NAME, key=KINDS["hunts"].key)
-    except SeedError as error:
-        raise DemoError(str(error)) from error
-    carried = {name for name, _ in rules}
-    for name, body in hunts:
-        missing = sorted(set(body.get("rules") or []) - carried)
-        if missing:
-            raise DemoError(
-                f"hunt {name!r} runs rules {missing}, which {str(root / RULES_DIR_NAME)!r} "
-                f"does not hold. Add each as <rule>.yaml"
-            )
-    return PackHunts(rules=rules, hunts=hunts)
-
-
-def _engine_call(
-    *, call: typing.Callable[[], tuple[int, typing.Any]]
-) -> tuple[int, typing.Any]:
-    """Run one engine call, again while it answers 5xx or not at all, up to HUNT_INSTALL_TIMEOUT_SECONDS.
-
-    Returns:
-        The last (status, answer), status 0 with the fault as the answer when the engine never answered.
-    """
-    deadline = time.monotonic() + HUNT_INSTALL_TIMEOUT_SECONDS
-    while True:
-        try:
-            status, answer = call()
-        except ENGINE_FAULTS as error:
-            status, answer = 0, str(error)
-        if (status != 0) and (status < 500):
-            return status, answer
-        if time.monotonic() >= deadline:
-            return status, answer
-        time.sleep(HUNT_INSTALL_INTERVAL_SECONDS)
-
-
-def install_hunts(*, base: str, root: Path, token: str) -> list[str]:
-    """Create each of a pack's rules, then its hunts, that the engine lacks, and return what was done.
-
-    Rules go first because the engine runs a hunt only once every rule it names compiles. One the engine already holds is left as it is, so a re-run creates only what is missing. Run it after the sources are deployed, since a rule's preview reads its source's table.
-
-    A hunt never stops the data path: a 5xx or no answer is tried again to a short deadline, and a final failure or a 4xx becomes a WARNING line. A hunt whose rule did not install is skipped, since the runner would fail on every run of it.
-
-    Args:
-        base: The engine's API base.
-        root: The pack directory.
-        token: An admin token.
-
-    Returns:
-        One line per rule and hunt: created, already held, or a WARNING with the engine's answer.
-    """
-    loaded = pack_hunts(root=root)
-    lines = []
-    failed: set[str] = set()
-    for kind, objects in (("rules", loaded.rules), ("hunts", loaded.hunts)):
-        route = KINDS[kind].route
-        noun = KINDS[kind].noun
-        for name, body in objects:
-            missing = sorted(set(body.get("rules") or []) & failed)
-            if missing:
-                lines.append(
-                    f"WARNING {noun} {name!r} skipped: rules {missing} did not install"
-                )
-                continue
-            url = f"{base}{route}/{quote(safe='', string=name)}"
-            status, answer = _engine_call(
-                call=lambda url=url: _api_get_json(token=token, url=url)
-            )
-            if status == 200:
-                lines.append(f"{noun} {name!r} already exists")
-                continue
-            if status == 404:
-                status, answer = _engine_call(
-                    call=lambda body=body, route=route: _api_post_json(
-                        f"{base}{route}", body, token=token
-                    )
-                )
-                if status == 201:
-                    lines.append(f"created {noun} {name!r}")
-                    continue
-                step = "creating"
-            else:
-                step = "looking up"
-            failed.add(name)
-            lines.append(
-                f"WARNING {noun} {name!r} not installed: {step} it got HTTP {status}: {answer}"
-            )
-    return lines
+def create_body(*, body: dict) -> dict:
+    """The POST or PUT body for one source file: all of it bar `state`, which only the lifecycle route sets here."""
+    return {key: value for key, value in body.items() if key != "state"}
 
 
 def resolve_console(*, body: dict, sources: dict[str, dict]) -> dict:
@@ -1673,6 +1700,52 @@ def held_drift(*, body: dict, held: dict) -> list[str]:
     )
 
 
+def install_hunts(*, base: str, root: Path, token: str) -> list[str]:
+    """Create each of a pack's rules and then its hunts that the engine lacks, returning one line per object: created, already held or a WARNING with the engine's answer.
+
+    Rules go first because the engine runs a hunt only once every rule it names compiles. One the engine already holds is left as it is, so a re-run creates only what is missing. Run it after the sources are deployed, since a rule's preview reads its source's table.
+
+    A hunt never stops the data path: a 5xx or no answer is tried again to a short deadline. A final failure or a 4xx becomes a WARNING line. A hunt whose rule did not install is skipped, since the runner would fail on every run of it.
+    """
+    loaded = pack_hunts(root=root)
+    lines = []
+    failed = set()
+    for kind, objects in (("rules", loaded.rules), ("hunts", loaded.hunts)):
+        route = KINDS[kind].route
+        noun = KINDS[kind].noun
+        for name, body in objects:
+            missing = sorted(set((body.get("rules")) or ([])) & failed)
+            if missing:
+                lines.append(
+                    f"WARNING {noun} {name!r} skipped: rules {missing} did not install"
+                )
+                continue
+            url = f"{base}{route}/{quote(safe='', string=name)}"
+            status, answer = _engine_call(
+                call=functools.partial(_api_get_json, token=token, url=url)
+            )
+            if status == 200:
+                lines.append(f"{noun} {name!r} already exists")
+                continue
+            if status == 404:
+                status, answer = _engine_call(
+                    call=functools.partial(
+                        _api_post_json, payload=body, token=token, url=f"{base}{route}"
+                    )
+                )
+                if status == 201:
+                    lines.append(f"created {noun} {name!r}")
+                    continue
+                step = "creating"
+            else:
+                step = "looking up"
+            failed.add(name)
+            lines.append(
+                f"WARNING {noun} {name!r} not installed: {step} it got HTTP {status}: {answer}"
+            )
+    return lines
+
+
 def listening_protocols(*, port: int, proc_net: str) -> set[str]:
     """The protocols with a socket listening on port, read from /proc/net/{tcp,tcp6,udp,udp6} text."""
     suffix = f":{port:04X}"
@@ -1706,7 +1779,7 @@ def load_demo(*, events: Path, sources: Path) -> Demo:
     replayed = [body for body in bodies if _role(body=body) == "json"]
     intake = (
         _checked_intake(intakes=intakes, sources=sources, vendors=vendors)
-        if intakes or vendors
+        if (intakes) or (vendors)
         else None
     )
     names = [body["source"] for body in [*vendors, *beats, *replayed]]
@@ -1738,7 +1811,7 @@ def load_demo(*, events: Path, sources: Path) -> Demo:
         )
     for body in [*vendors, *beats, *replayed]:
         _check_events_kind(body=body, events=held[body["source"]])
-    if (beats or replayed) and not ((events / REPLAY_TOOL).is_file()):
+    if ((beats) or (replayed)) and not ((events / REPLAY_TOOL).is_file()):
         raise DemoError(
             f"Beats and JSON source(s) "
             f"{', '.join(repr(body['source']) for body in [*beats, *replayed])} need "
@@ -1755,113 +1828,25 @@ def load_demo(*, events: Path, sources: Path) -> Demo:
     )
 
 
-def _checked_intake(*, intakes: list[dict], sources: Path, vendors: list[dict]) -> dict:
-    """The one intake, refused unless it detects exactly the vendors' variants and no two vendors replay over one fixture package."""
-    if len(intakes) != 1:
-        found = (", ".join(repr(f"{body['source']}.yaml") for body in intakes)) or (
-            "none"
-        )
-        raise DemoError(
-            f"{str(sources)!r} needs exactly one intake, a source with "
-            f"`transform.mode: agentless`. It holds {found}"
-        )
-    intake = intakes[0]
-    if not (vendors):
-        raise DemoError(
-            f"{str(sources)!r} holds no vendor source for the intake to detect into. "
-            f"Add one with a `transform.variant`"
-        )
-    variants = sorted(_variant(source=body) for body in vendors)
-    detect = intake["transform"].get("detect")
-    candidates = detect.get("candidates") if isinstance(detect, dict) else None
-    listed = (
-        sorted(str(item) for item in candidates) if isinstance(candidates, list) else []
-    )
-    if listed != variants:
-        raise DemoError(
-            f"{intake['source'] + '.yaml'!r} lists `transform.detect.candidates` "
-            f"{listed}. Set them to the vendor sources' variants, {variants}"
-        )
-    owners = {}
-    for body in vendors:
-        package = fixture_package(source=body)
-        if package in owners:
-            raise DemoError(
-                f"vendor sources {owners[package]!r} and {body['source']!r} both "
-                f"replay over fixture package {package!r}, so one set of events would "
-                f"never be sent. Give each a variant naming its own package"
-            )
-        owners[package] = body["source"]
-    return intake
+def pack_hunts(*, root: Path) -> PackHunts:
+    """Read a pack's rules and hunts, both empty for a pack with neither directory.
 
-
-def first_event(*, events: Path) -> dict | None:
-    """The first event in a source's events directory as a JSON object, None when it holds no file or that line is not one."""
-    files = sorted(path for path in events.iterdir() if path.is_file())
-    if not (files):
-        return None
-    with files[0].open(encoding="utf-8", errors="replace") as handle:
-        first = next((line for line in handle if line.strip()), "")
+    A file that is not a create body named for its object is refused, and so is a hunt that runs a rule the pack does not carry.
+    """
     try:
-        record = json.loads(first)
-    except json.JSONDecodeError:
-        return None
-    return record if isinstance(record, dict) else None
-
-
-def field_value(*, field: str, record: dict) -> object:
-    """The value at a dotted field of a record, walked the way the receiver walks a match field, None where the path breaks."""
-    value: object = record
-    for part in field.split(sep="."):
-        value = value.get(part) if isinstance(value, dict) else None
-    return value
-
-
-def beats_dataset(*, events: Path) -> str | None:
-    """The `data_stream.dataset` of the first event in a source's events directory, None when its events are not Beats envelopes."""
-    record = first_event(events=events)
-    dataset = (
-        None if record is None else field_value(field=BEATS_MATCH_FIELD, record=record)
-    )
-    return dataset if isinstance(dataset, str) and dataset else None
-
-
-def _check_events_kind(*, body: dict, events: Path) -> None:
-    """Refuse a source whose events the receiver would not route to it: Beats envelopes for its dataset when it matches on one, JSON carrying its match value when it is a JSON source, raw lines otherwise."""
-    name = body["source"]
-    dataset = beats_dataset(events=events)
-    if _role(body=body) == "json":
-        field, wanted = body["match"].get("field"), body["match"].get("value")
-        record = first_event(events=events)
-        held = None if record is None else field_value(field=str(field), record=record)
-        if held != wanted:
+        rules = _objects(directory=root / RULES_DIR_NAME, key=KINDS["rules"].key)
+        hunts = _objects(directory=root / HUNTS_DIR_NAME, key=KINDS["hunts"].key)
+    except SeedError as error:
+        raise DemoError(str(error)) from error
+    carried = {name for name, _ in rules}
+    for name, body in hunts:
+        missing = sorted(set((body.get("rules")) or ([])) - carried)
+        if missing:
             raise DemoError(
-                f"{name!r} matches {field} {wanted!r} and the first event in "
-                f"{str(events)!r} carries {held!r}. Set {field} on every record"
+                f"hunt {name!r} runs rules {missing}, which {str(root / RULES_DIR_NAME)!r} "
+                f"does not hold. Add each as <rule>.yaml"
             )
-        return
-    if _role(body=body) == "vendor":
-        if dataset is not None:
-            raise DemoError(
-                f"{name!r} replays Beats envelopes for {dataset!r}, which the receiver "
-                f"routes on {BEATS_MATCH_FIELD}. Match the source on {BEATS_MATCH_FIELD} "
-                f"equals {dataset!r}"
-            )
-        return
-    wanted = body["match"].get("value")
-    if dataset != wanted:
-        raise DemoError(
-            f"{name!r} matches {BEATS_MATCH_FIELD} {wanted!r} and its events in "
-            f"{str(events)!r} carry {dataset!r}. Replay Beats envelopes for {wanted!r}"
-        )
-    transform = body.get("transform")
-    engine = transform.get("engine") if isinstance(transform, dict) else None
-    if engine != TRANSFORM_APP.removeprefix(TRANSFORM_APP_PREFIX):
-        raise DemoError(
-            f"Beats source {name!r} runs transform engine {engine!r}. A pack declares "
-            f"{TRANSFORM_APP} instances only, so set `transform.engine: "
-            f"{TRANSFORM_APP.removeprefix(TRANSFORM_APP_PREFIX)}`"
-        )
+    return PackHunts(hunts=hunts, rules=rules)
 
 
 def pruner_command(*, archive: dict, tool: str) -> list[str]:

@@ -25,7 +25,7 @@ PROXY_DIR = REPO_ROOT / "config" / "proxy"
 _BEGIN = "# BEGIN TLS"
 _END = "# END TLS"
 _PAIRS = [("envoy.yaml", "envoy.tls.yaml"), ("hyperdx.yaml", "hyperdx.tls.yaml")]
-# Each config's listeners by name and port, the ones only its TLS config carries, and whether they also answer plain HTTP on the same port.
+# Per config: shared listeners, TLS-only ones, dual HTTP/TLS
 _LISTENERS = [
     (
         "envoy.yaml",
@@ -42,7 +42,7 @@ _LISTENERS = [
         True,
     ),
 ]
-# Listeners that terminate TLS with the console certificate, against the listener that defines those settings.
+# Listeners sharing the console certificate's TLS settings
 _CONSOLE_TLS_LISTENER = "ingress"
 _CONSOLE_TLS_SHARERS = ["hyperdx-embed", "receiver-ingest"]
 _LISTENER_ITEM = "    - "
@@ -140,11 +140,11 @@ def test_stripping_the_tls_blocks_gives_back_the_plain_config(
 
 @pytest.mark.parametrize(("plain", "tls", "listeners", "tls_only", "dual"), _LISTENERS)
 def test_every_listener_terminates_tls_once_and_only_in_the_tls_config(
-    dual: bool,
-    listeners: dict[str, str],
     plain: str,
     tls: str,
+    listeners: dict[str, str],
     tls_only: dict[str, str],
+    dual: bool,
 ) -> None:
     encrypted = _listeners(text=(PROXY_DIR / tls).read_text(encoding="utf-8"))
     unencrypted = _listeners(text=(PROXY_DIR / plain).read_text(encoding="utf-8"))

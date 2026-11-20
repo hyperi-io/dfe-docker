@@ -10,15 +10,13 @@ Copyright: (c) 2026 HYPERI PTY LIMITED
 
 # Common failures
 
-Each section is one symptom and what causes it. If none matches, read the stack's
-state first: [troubleshooting](troubleshooting.md). The open problems with symptoms that
-mislead are in [known issues](known-issues.md).
+Each section is one symptom and what causes it. If none matches, read the stack's state first: [troubleshooting](troubleshooting.md). The open problems with symptoms that mislead are in [known issues](known-issues.md).
 
 ## A service is unhealthy but the data is landing
 
 Symptom: `docker compose ps` shows a DFE service unhealthy or perpetually starting, `docker inspect` reports `Health check exceeded timeout` and yet events are flowing through that very service. Curl its port from inside the container and the connection is *accepted* instantly and then never answered: not refused, not reset, just silent. `/livez` and `/metrics` behave the same way, which rules out the readiness logic.
 
-That is Tokio worker-thread starvation, caused by the CPU ceiling. `available_parallelism()` reads the cgroup quota and floors it, so a ceiling under 2.0 gives the service one worker thread, and a Kafka loop holding that thread leaves the HTTP server task unscheduled.
+That is Tokio worker-thread starvation, caused by the CPU ceiling. `available_parallelism()` reads the cgroup quota and floors it, so a ceiling under 2.0 gives the service one worker thread and a Kafka loop holding that thread leaves the HTTP server task unscheduled.
 
 ```bash
 docker inspect --format '{{.HostConfig.NanoCpus}}' dfe-archiver   # 1500000000 = 1.5
@@ -41,7 +39,7 @@ DFE_ENGINE_AUTH_LOCAL_ADMIN_PASSWORD='the rotated password' make post
 
 On a profile running the collector, `make post` claims the `dfe.otel_*` tables have rows newer than five minutes. Two distinct failures:
 
-**"no dfe table could be read"** means nothing could read the otel tables. dfe-engine creates them from dfe-schemas at startup, and the collector runs with `create_schema: false`, so read the engine's health first, then whether the collector reaches ClickHouse:
+**"no dfe table could be read"** means nothing could read the otel tables. dfe-engine creates them from dfe-schemas at startup and the collector runs with `create_schema: false`, so read the engine's health first, then whether the collector reaches ClickHouse:
 
 ```bash
 docker compose logs otel-collector
@@ -78,8 +76,7 @@ The gRPC-only tests need no broker at all:
 make test-e2e E2E_TESTS="simple-receiver-to-loader-grpc rules-and-hunts"
 ```
 
-Check for a stray container from a previous profile before assuming the
-port belongs to something else.
+Check for a stray container from a previous profile before assuming the port belongs to something else.
 
 ## Compose will not start: `is missing a value`
 

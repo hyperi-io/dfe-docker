@@ -346,7 +346,7 @@ class TestFindings:
         ],
     )
     def test_only_secrets_init_may_read_the_chosen_login_from_the_shell(
-        self, key: str, kind: str | None, service: str, value: str
+        self, service: str, key: str, value: str, kind: str | None
     ) -> None:
         model = {
             "services": {
@@ -378,7 +378,7 @@ class TestFindings:
         ],
     )
     def test_the_chosen_login_reference_is_read_nowhere_but_secrets_init_env(
-        self, refused: bool, where: str
+        self, where: str, refused: bool
     ) -> None:
         digest = "@sha256:" + "0" * 64
         model = {
@@ -427,9 +427,11 @@ class TestFindings:
 
 class TestDemoRoles:
     @pytest.mark.usefixtures("engine_python_here")
-    # Every committed pack shape: syslog vendors, Beats, JSON with a fetcher, fetchers with replays
+    # Every committed pack shape (vendors, Beats, JSON, fetchers)
     @pytest.mark.parametrize(
-        "pack", ["", "cyber", "telco", "theatre"], ids=lambda p: p or "demo"
+        "pack",
+        ["", "cyber", "telco", "theatre"],
+        ids=["demo", "cyber", "telco", "theatre"],
     )
     def test_reads_each_committed_pack_as_its_seeding_does(self, pack: str) -> None:
         root = demo_pack_dir(pack=pack)
@@ -467,7 +469,7 @@ class TestDemoRoles:
         ids=["replayed", "no-replay-tool"],
     )
     def test_a_source_with_beats_events_is_replayed_not_detected(
-        self, expected: dict | None, tmp_path: Path, tool: bool
+        self, tmp_path: Path, tool: bool, expected: dict | None
     ) -> None:
         (tmp_path / "sources").mkdir()
         for name in ("cisco-asa", "intake", "okta"):
@@ -525,7 +527,7 @@ class TestDemoRoles:
 
     @pytest.mark.parametrize("dirs", [[], ["sources", "events"]], ids=["bare", "empty"])
     def test_a_pack_with_no_source_files_has_no_roles(
-        self, dirs: list[str], tmp_path: Path
+        self, tmp_path: Path, dirs: list[str]
     ) -> None:
         for name in dirs:
             (tmp_path / name).mkdir()
@@ -555,7 +557,7 @@ class TestDemoRoles:
         ids=["matched-no-transform", "matched-with-transform", "unmatched"],
     )
     def test_a_matched_source_with_no_transform_replays_its_json_and_needs_no_intake(
-        self, expected: dict | None, tmp_path: Path, text: str
+        self, tmp_path: Path, text: str, expected: dict | None
     ) -> None:
         (tmp_path / "sources").mkdir()
         (tmp_path / "sources" / "kpis.yaml").write_text(text, encoding="utf-8")
@@ -568,7 +570,7 @@ class TestDemoRoles:
         (tmp_path / "events" / "generate.py").write_text("", encoding="utf-8")
 
         if expected is None:
-            # Anything else with events is a vendor, which needs an intake to detect it
+            # A vendor needs an intake to detect its events
             with pytest.raises(publish_compose.PublishError, match="needs one intake"):
                 publish_compose.demo_roles(
                     events=tmp_path / "events", sources=tmp_path / "sources"
@@ -1351,7 +1353,7 @@ class TestAdminLogin:
         printed = secrets_init.login(root=tmp_path)
         secrets_init.apply(plan=self._plan(), root=tmp_path)
 
-        engine = self._engine_env(tmp_path)
+        engine = self._engine_env(root=tmp_path)
         assert engine["name"] == "admin"
         assert re.fullmatch(
             rf"[A-Za-z0-9]{{{init._LEN_CREDENTIAL}}}", engine["password"]
@@ -1367,13 +1369,13 @@ class TestAdminLogin:
     ) -> None:
         chosen = {"DFE_ADMIN_NAME": "kerry", "DFE_ADMIN_PASSWORD": "a chosen phrase 1"}
         secrets_init.apply(environ=chosen, plan=self._plan(), root=tmp_path)
-        assert self._engine_env(tmp_path) == {
+        assert self._engine_env(root=tmp_path) == {
             "name": "kerry",
             "password": "a chosen phrase 1",
         }
 
         secrets_init.apply(environ={}, plan=self._plan(), root=tmp_path)
-        assert self._engine_env(tmp_path)["password"] == "a chosen phrase 1"
+        assert self._engine_env(root=tmp_path)["password"] == "a chosen phrase 1"
         assert "kerry / a chosen phrase 1" in secrets_init.login(root=tmp_path)
 
         secrets_init.apply(
@@ -1381,13 +1383,13 @@ class TestAdminLogin:
             plan=self._plan(),
             root=tmp_path,
         )
-        assert self._engine_env(tmp_path) == {
+        assert self._engine_env(root=tmp_path) == {
             "name": "kerry",
             "password": "another phrase 22",
         }
 
     def test_login_ignores_the_shell_so_it_prints_what_the_engine_was_given(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
     ) -> None:
         secrets_init.apply(plan=self._plan(), root=tmp_path)
         before = secrets_init.login(root=tmp_path)
@@ -1401,7 +1403,7 @@ class TestAdminLogin:
             ("DFE_ADMIN_PASSWORD", "short", "at least 12 characters"),
             ("DFE_ADMIN_PASSWORD", "x" * 11, "at least 12 characters"),
             ("DFE_ADMIN_PASSWORD", "x" * 73, "at most 72 bytes"),
-            ("DFE_ADMIN_PASSWORD", "é" * 37, "at most 72 bytes"),
+            ("DFE_ADMIN_PASSWORD", "\u00e9" * 37, "at most 72 bytes"),
             ("DFE_ADMIN_PASSWORD", "changeme", "at least 12 characters"),
             ("DFE_ADMIN_PASSWORD", "  changeme  ", "shipped placeholder"),
             ("DFE_ADMIN_PASSWORD", " " * 12, "is blank"),
@@ -1423,7 +1425,7 @@ class TestAdminLogin:
             )
 
         assert variable in str(refused.value)
-        assert not value.strip() or value.strip() not in str(refused.value)
+        assert not (value.strip()) or (value.strip() not in str(refused.value))
         assert not (
             tmp_path / ".minted" / "DFE_ENGINE_AUTH_LOCAL_ADMIN_PASSWORD"
         ).exists()

@@ -157,7 +157,7 @@ def _engine_block(*, components: list[str]) -> list[str]:
     start = lines.index("  dfe-engine:")
     block = []
     for line in lines[start + 1 :]:
-        if not line.startswith("    "):
+        if not (line.startswith("    ")):
             break
         block.append(line)
     return block

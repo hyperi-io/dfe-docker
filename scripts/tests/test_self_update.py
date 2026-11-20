@@ -72,7 +72,7 @@ class MainCase(TypedDict):
 
 
 class PruneCase(TypedDict):
-    """The previous and new stacks' images, the images containers use, and what is removed."""
+    """The previous and new stacks' images, the images containers use and what is removed."""
 
     expected_log: str
     expected_removed: list[str]
@@ -340,15 +340,15 @@ def _fake_docker(
         code = 0
         out = ""
         if args[0] == "compose":
-            sets = configured or [set()]
+            sets = (configured) or ([set()])
             out = "\n".join(sorted(sets.pop(0) if len(sets) > 1 else sets[0]))
         elif args[0] == "ps":
-            out = "\n".join(sorted(in_use or set()))
+            out = "\n".join(sorted((in_use) or (set())))
         elif args[:2] == ("image", "rm"):
             removed.append(args[2])
-            code = 1 if args[2] in (failing or set()) else 0
+            code = 1 if args[2] in ((failing) or (set())) else 0
         return subprocess.CompletedProcess(
-            args=args, returncode=code, stdout=out, stderr="boom" if code else ""
+            args=args, returncode=code, stderr="boom" if code else "", stdout=out
         )
 
     removed = []

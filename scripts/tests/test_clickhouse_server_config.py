@@ -213,15 +213,17 @@ def test_the_service_mounts_every_overlay_into_config_d() -> None:
 def test_merges_leave_memory_for_inserts_and_queries() -> None:
     root = _root(path=_MERGE_MEMORY_FILE)
 
-    # The overlay sets these and nothing else, so the image keeps every other merge default.
+    # Only these are set, so every other merge default stays
     assert [child.tag for child in root] == [
         "merges_mutations_memory_usage_to_ram_ratio",
         "merge_tree",
     ]
-    # Below the image's 0.5, so running merges stop short of the server limit.
-    assert 0 < float(_text(root, "merges_mutations_memory_usage_to_ram_ratio")) < 0.5
-    # Below the image's 1 MiB, the write buffer every column of a wide table holds.
-    assert 0 < int(_text(root, "merge_tree/max_compress_block_size")) < 1_048_576
+    # Under the image's 0.5, so merges stop short of the limit
+    ratio = _text(path="merges_mutations_memory_usage_to_ram_ratio", root=root)
+    assert 0 < float(ratio) < 0.5
+    # Under the image's 1 MiB write buffer each column holds
+    block = _text(path="merge_tree/max_compress_block_size", root=root)
+    assert 0 < int(block) < 1_048_576
     assert [child.tag for child in root.find("merge_tree")] == [
         "max_compress_block_size"
     ]

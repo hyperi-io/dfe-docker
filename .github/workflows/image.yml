@@ -70,7 +70,7 @@ jobs:
         id: release
         run: |
           version="${TAG#v}"
-          # Assigned on its own line so a prerelease pin fails this step, not the publish.
+          # Own line, so a prerelease pin fails here, not at publish
           stack="$(python3 scripts/quickstart_json.py --print-stack)"
           {
             echo "version=${version:-0.0.0-pr}"

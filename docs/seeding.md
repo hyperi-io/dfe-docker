@@ -29,7 +29,7 @@ A run of any other target creates only what the engine lacks and leaves an objec
 
 Every target but `make events` logs in as `admin` with `DFE_ENGINE_AUTH_LOCAL_ADMIN_PASSWORD` from `env/engine.env` and replaces an issued password as `make post` does. Once the setup wizard has retired `admin`, they ask at the terminal for an account that can write what the target seeds. They ask once per run and store the login nowhere. Without a terminal they stop. An account still on the password it was issued has to change it in the console first.
 
-Every fetcher source runs in the one `dfe-fetcher` container, from the file the engine merges. The deploy prints the command that applies a source the running fetcher cannot take in place, such as `restart required: make apply SERVICES=dfe-fetcher`. The fetcher reads `AWS_ACCESS_KEY_ID` and `AWS_SECRET_ACCESS_KEY` from `env/fetcher.env` and cannot fetch until both are set. Compose reads that file only when it creates a container, so set the keys before `make apply`, or run it again after setting them.
+Every fetcher source runs in the one `dfe-fetcher` container, from the file the engine merges. The deploy prints the command that applies a source the running fetcher cannot take in place, such as `restart required: make apply SERVICES=dfe-fetcher`. The fetcher reads `AWS_ACCESS_KEY_ID` and `AWS_SECRET_ACCESS_KEY` from `env/fetcher.env` and cannot fetch until both are set. Compose reads that file only when it creates a container, so set the keys before `make apply` or run it again after setting them.
 
 ## Seeding orgs and accounts
 

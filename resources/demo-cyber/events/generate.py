@@ -7,7 +7,7 @@
 #  License:      BUSL-1.1
 #  Copyright:    (c) 2026 HYPERI PTY LIMITED
 
-"""Write <source>/demo.log beside this file for the cyber demo, or replay the Beats-envelope ones.
+"""Write the cyber demo's <source>/demo.log files beside this file or replay the Beats-envelope ones.
 
   generate.py --fixtures <dfe-transform-elastic>/tests/fixtures/unencumbered
   generate.py replay --target http://dfe-receiver:8080/ingest --sources okta,crowdstrike,o365 --rate 10 --loop
@@ -30,7 +30,7 @@ import sys
 import time
 import urllib.request
 import uuid
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Sequence
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from types import ModuleType
@@ -39,20 +39,20 @@ HERE = Path(__file__).resolve().parent
 FIREWALL_GENERATOR = HERE.parent.parent / "demo" / "events" / "generate.py"
 LINES = 6000
 SEED = 20261114
-# Where the sample times start, stepped forward per record. The replay moves every one to now
+# Sample times start here and step forward per record
 EPOCH = datetime(2026, 11, 14, tzinfo=UTC)
 
-# Eight /28 networks of RFC 5737 space that no firewall, NAT or staff pool uses. The cyber dashboards read the same list
+# Eight /28 networks of RFC 5737 space no firewall, NAT or staff pool uses. The cyber dashboards read the same list
 BAD_NETWORKS = tuple(f"192.0.2.{start}/28" for start in range(32, 160, 16))
-# Two hosts on each bad network, which the firewalls see and which then try to sign in
+# Two hosts per bad network, seen by firewalls and sign-ins
 SUSPECTS = tuple(
     str(ipaddress.ip_network(net)[offset]) for net in BAD_NETWORKS for offset in (4, 9)
 )
-# Each suspect's share of the firewalls' outside addresses is SUSPECT_WEIGHT in roughly 500
+# Each suspect is SUSPECT_WEIGHT in about 500 outside addresses
 SUSPECT_WEIGHT = 3
 STAFF_ADDRESSES = [f"203.0.113.{n}" for n in range(20, 60)]
 DOMAIN = "example.com"
-# Every domain the upstream samples carry, moved onto the reserved example domains, in order
+# Upstream domains moved onto example domains, in order
 DOMAIN_MAP = tuple(
     (re.compile(pattern, flags=re.IGNORECASE), replacement)
     for pattern, replacement in (
@@ -75,7 +75,7 @@ DOMAIN_MAP = tuple(
 )
 # The upstream tenant's name wherever it is not part of a domain
 TENANT = re.compile(r"frothly", flags=re.IGNORECASE)
-# Each upstream sample persona moved onto one of our own, the same person in every source
+# Upstream personas moved onto ours, one person in every source
 PERSONAS = {
     # Display names first, so a full name maps as one person
     "Alice Green": "Alice",
@@ -102,13 +102,13 @@ PERSONAS = {
     "ubabankafrica": "payments",
     "vanessajohns": "victor",
 }
-# A persona name is a whole token: not inside another word, but next to an underscore or a dot
+# A persona matches as a whole token, even beside an underscore
 PERSONA = re.compile(
     "(?<![A-Za-z0-9])("
     + "|".join(re.escape(name) for name in sorted(PERSONAS, key=len, reverse=True))
     + ")(?![A-Za-z0-9])"
 )
-# Documentation ASNs (RFC 5398) for the network an Okta sign-in comes from
+# Documentation ASNs (RFC 5398) for an Okta sign-in's network
 STAFF_NETWORK = {
     "asNumber": 64500,
     "asOrg": "Example Networks",
@@ -179,7 +179,7 @@ SEVERITIES = (
     ("Critical", 90, 5),
 )
 OKTA_FAILURES = ("INVALID_CREDENTIALS", "VERIFICATION_ERROR", "LOCKED_OUT")
-# How the first four staff share the Microsoft 365 admin actions, so one actor stands out
+# The first four staff share the o365 admin actions unevenly
 ADMIN_WEIGHTS = (8, 4, 2, 1)
 
 # What each Beats source's envelope carries
@@ -190,167 +190,48 @@ DATASETS = {
 }
 OKTA_TIME = "%Y-%m-%dT%H:%M:%S.%f"
 O365_TIME = "%Y-%m-%dT%H:%M:%S"
-# The Falcon stream sends epoch times: milliseconds for these, seconds for the process times
+# The Falcon stream's epoch times, in milliseconds and seconds
 FALCON_MS_FIELDS = ("UTCTimestamp",)
 FALCON_SECONDS_FIELDS = ("ProcessStartTime", "ProcessEndTime")
 REPLAY_TIMEOUT_SECONDS = 30
 REPLAY_BATCH = 50
 
 
-def _firewall_module() -> ModuleType:
-    """The demo's firewall generator, whose ASA and FortiGate line builders the cyber pack reuses."""
-    spec = importlib.util.spec_from_file_location(
-        name="demo_firewall", location=FIREWALL_GENERATOR
-    )
-    if (spec is None) or (spec.loader is None):
-        sys.exit(f"cannot load {FIREWALL_GENERATOR}")
-    module = importlib.util.module_from_spec(spec)
-    # No __pycache__ beside the demo's own generator, which may be read-only
-    sys.dont_write_bytecode = True
-    spec.loader.exec_module(module)
-    return module
+def _envelope(*, record: dict, source: str) -> dict:
+    """Wrap one vendor record the way an Elastic Agent ships it, routed on `data_stream.dataset`.
 
-
-def _firewall_lines(*, rng: random.Random) -> dict[str, list[str]]:
-    """The ASA and FortiGate sets with the suspects mixed into the outside addresses."""
-    firewall = _firewall_module()
-    # The line builders pick outside addresses from this module global at call time
-    firewall.OUTSIDE = [*firewall.OUTSIDE, *(SUSPECTS * SUSPECT_WEIGHT)]
-    return {
-        "cisco-asa": firewall._asa_lines(rng=rng),
-        "fortinet": firewall._fortinet_lines(rng=rng),
+    o365's record is the object under `o365audit` and the others are a JSON object sent as `message`. The `source` is a key of DATASETS.
+    """
+    meta = DATASETS[source]
+    body = {
+        "@timestamp": EPOCH.strftime(OKTA_TIME)[:-3] + "Z",
+        "agent": {"name": "edge-agent-01", "type": "filebeat"},
+        "data_stream": {
+            "dataset": meta["dataset"],
+            "namespace": "default",
+            "type": "logs",
+        },
+        "input": {"type": meta["input"]},
     }
+    if "o365audit" in record:
+        body["o365audit"] = record["o365audit"]
+    else:
+        body["message"] = json.dumps(record, separators=(",", ":"))
+    return body
 
 
-def _read_records(*, path: Path) -> list[dict]:
-    """The JSON object on each non-blank line of one sample file."""
-    with path.open(encoding="utf-8") as handle:
-        return [json.loads(line) for line in handle if line.strip()]
-
-
-def _weighted(rng: random.Random, table: Sequence[tuple]) -> tuple:
-    """One row of a table whose last column is its weight."""
-    return rng.choices(table, weights=[row[-1] for row in table])[0]
-
-
-def _geo(place: tuple) -> dict:
-    """An Okta geographicalContext for one COUNTRIES row."""
-    city, state, country, lat, lon, _ = place
-    return {
-        "city": city,
-        "country": country,
-        "geolocation": {"lat": lat, "lon": lon},
-        "state": state,
-    }
-
-
-def _user(rng: random.Random, *, users: Sequence[str]) -> tuple[str, str]:
-    """A staff login and display name."""
-    name = rng.choice(users)
-    return f"{name}@{DOMAIN}", name.capitalize()
-
-
-def _scrubbed(value: object) -> object:
-    """A copy of one sample value with every upstream persona, domain and tenant name moved onto our own."""
-    if isinstance(value, dict):
-        return {key: _scrubbed(item) for key, item in value.items()}
-    if isinstance(value, list):
-        return [_scrubbed(item) for item in value]
-    if not (isinstance(value, str)):
-        return value
-    value = PERSONA.sub(lambda m: PERSONAS[m.group(1)], value)
-    for pattern, replacement in DOMAIN_MAP:
-        value = pattern.sub(replacement, value)
-    return TENANT.sub(
-        lambda m: "Example" if m.group(0)[0].isupper() else "example", value
-    )
-
-
-def _user_key(login: str) -> str:
-    """One staff member's stable 16-hex-digit Microsoft 365 user key."""
-    return hashlib.sha256(login.encode("utf-8")).hexdigest()[:16].upper()
-
-
-def _okta_records(
-    *, rng: random.Random, samples: Sequence[dict], users: Sequence[str]
-) -> list[dict]:
-    """Okta system log events, mostly sign-ins, the suspects failing from abroad."""
-    templates: dict[str, list[dict]] = {}
-    for record in samples:
-        if ("eventType" in record) and ("published" in record):
-            templates.setdefault(record["eventType"], []).append(record)
-    starts = templates.pop("user.session.start")
-    others = sorted(templates)
-    out = []
-    stamp = EPOCH
-    for _ in range(LINES):
-        stamp += timedelta(milliseconds=rng.randint(20, 180))
-        suspect = False
-        if rng.random() < 0.72:
-            record = copy.deepcopy(rng.choice(starts))
-            suspect = rng.random() < 0.12
-            failed = suspect or rng.random() < 0.15
-            outcome = {"result": "FAILURE" if failed else "SUCCESS"}
-            if failed:
-                outcome["reason"] = rng.choice(OKTA_FAILURES)
-            record["outcome"] = outcome
-        else:
-            record = copy.deepcopy(rng.choice(templates[rng.choice(others)]))
-        login, display = _user(rng, users=users)
-        address = rng.choice(SUSPECTS if suspect else STAFF_ADDRESSES)
-        # A suspect always signs in from the same place
-        place = (
-            SUSPECT_COUNTRIES[SUSPECTS.index(address) % len(SUSPECT_COUNTRIES)]
-            if suspect
-            else _weighted(rng, COUNTRIES)
-        )
-        record["actor"] = {
-            **record.get("actor", {}),
-            "alternateId": login,
-            "displayName": display,
-            "id": f"00u{rng.getrandbits(64):016x}",
-            "type": "User",
-        }
-        client = record.setdefault("client", {})
-        client["ipAddress"] = address
-        client["geographicalContext"] = _geo(place)
-        record["request"] = {
-            "ipChain": [
-                {"geographicalContext": _geo(place), "ip": address, "version": "V4"}
-            ]
-        }
-        if "securityContext" in record:
-            record["securityContext"] = dict(
-                SUSPECT_NETWORK if suspect else STAFF_NETWORK
-            )
-        record["uuid"] = str(uuid.UUID(int=rng.getrandbits(128), version=4))
-        record["published"] = stamp.strftime(OKTA_TIME)[:-3] + "Z"
-        out.append(record)
-    return out
-
-
-def _epoch_ms(when: datetime) -> int:
+def _epoch_ms(*, when: datetime) -> int:
     """Epoch milliseconds, as the Falcon stream writes `eventCreationTime`."""
     return int(when.timestamp() * 1000)
-
-
-def _falcon_times(*, event: dict, when: datetime) -> None:
-    """Set the Falcon event's own times that it carries to `when`, in the stream's epoch units."""
-    for key in FALCON_MS_FIELDS:
-        if key in event:
-            event[key] = _epoch_ms(when)
-    for key in FALCON_SECONDS_FIELDS:
-        if key in event:
-            event[key] = int(when.timestamp())
 
 
 def _falcon_records(
     *, rng: random.Random, samples: Sequence[dict], users: Sequence[str]
 ) -> list[dict]:
     """CrowdStrike Falcon streaming events: endpoint detections and console audit."""
-    templates: dict[str, list[dict]] = {}
+    templates = {}
     for record in samples:
-        kind = (record.get("metadata") or {}).get("eventType")
+        kind = ((record.get("metadata")) or ({})).get("eventType")
         if kind and set(record) == {"event", "metadata"}:
             templates.setdefault(kind, []).append(record)
     detections = templates["EppDetectionSummaryEvent"]
@@ -361,11 +242,11 @@ def _falcon_records(
     for _ in range(LINES):
         stamp += timedelta(milliseconds=rng.randint(20, 180))
         offset += 1
-        login, _ = _user(rng, users=users)
+        login, _ = _user(rng=rng, users=users)
         if rng.random() < 0.6:
             record = copy.deepcopy(rng.choice(detections))
             name, tactic, technique, technique_id, objective = rng.choice(DETECTIONS)
-            severity, score, _ = _weighted(rng, SEVERITIES)
+            severity, score, _ = _weighted(rng=rng, table=SEVERITIES)
             host = rng.choice(HOSTS)
             composite = f"{rng.getrandbits(64):016x}:ind:{rng.getrandbits(64):016x}"
             record["event"].update(
@@ -394,26 +275,72 @@ def _falcon_records(
                     "UserIp": rng.choice(SUSPECTS if suspect else STAFF_ADDRESSES),
                 }
             )
-            # The console's audit names its actor and target again among its key-value pairs
+            # The audit repeats its actor and target in its key-value pairs
             target = f"{rng.choice(users)}@{DOMAIN}"
-            for pair in record["event"].get("AuditKeyValues") or []:
+            for pair in (record["event"].get("AuditKeyValues")) or ([]):
                 if pair.get("Key") == "actor_user":
                     pair["ValueString"] = login
                 elif pair.get("Key") in ("target_name", "action_target_name"):
                     pair["ValueString"] = target
         _falcon_times(event=record["event"], when=stamp)
         record["metadata"].update(
-            {"eventCreationTime": _epoch_ms(stamp), "offset": offset}
+            {"eventCreationTime": _epoch_ms(when=stamp), "offset": offset}
         )
         out.append(record)
     return out
+
+
+def _falcon_times(*, event: dict, when: datetime) -> None:
+    """Set the Falcon event's own times that it carries to `when`, in the stream's epoch units."""
+    for key in FALCON_MS_FIELDS:
+        if key in event:
+            event[key] = _epoch_ms(when=when)
+    for key in FALCON_SECONDS_FIELDS:
+        if key in event:
+            event[key] = int(when.timestamp())
+
+
+def _firewall_lines(*, rng: random.Random) -> dict[str, list[str]]:
+    """The ASA and FortiGate sets with the suspects mixed into the outside addresses."""
+    firewall = _firewall_module()
+    # The builders read this module global at call time
+    firewall.OUTSIDE = [*firewall.OUTSIDE, *(SUSPECTS * SUSPECT_WEIGHT)]
+    return {
+        "cisco-asa": firewall._asa_lines(rng=rng),
+        "fortinet": firewall._fortinet_lines(rng=rng),
+    }
+
+
+def _firewall_module() -> ModuleType:
+    """The demo's firewall generator, whose ASA and FortiGate line builders the cyber pack reuses."""
+    spec = importlib.util.spec_from_file_location(
+        name="demo_firewall", location=FIREWALL_GENERATOR
+    )
+    if (spec is None) or (spec.loader is None):
+        sys.exit(f"cannot load {FIREWALL_GENERATOR!r}")
+    module = importlib.util.module_from_spec(spec)
+    # Keep __pycache__ off a read-only demo directory
+    sys.dont_write_bytecode = True
+    spec.loader.exec_module(module)
+    return module
+
+
+def _geo(*, place: tuple) -> dict:
+    """An Okta geographicalContext for one COUNTRIES row."""
+    city, state, country, lat, lon, _ = place
+    return {
+        "city": city,
+        "country": country,
+        "geolocation": {"lat": lat, "lon": lon},
+        "state": state,
+    }
 
 
 def _o365_records(
     *, rng: random.Random, samples: Sequence[dict], users: Sequence[str]
 ) -> list[dict]:
     """Microsoft 365 unified audit records, weighted towards sign-ins and admin actions."""
-    groups: dict[str, list[dict]] = {"admin": [], "login": [], "file": [], "other": []}
+    groups = {"admin": [], "login": [], "file": [], "other": []}
     for wrapper in samples:
         record = wrapper["o365audit"]
         operation = str(record.get("Operation", ""))
@@ -431,7 +358,7 @@ def _o365_records(
     stamp = EPOCH
     for _ in range(LINES):
         stamp += timedelta(milliseconds=rng.randint(20, 180))
-        group = _weighted(rng, mix)[0]
+        group = _weighted(rng=rng, table=mix)[0]
         record = copy.deepcopy(rng.choice(groups[group]))
         if group == "admin":
             name = rng.choices(admins, weights=ADMIN_WEIGHTS)[0]
@@ -449,9 +376,9 @@ def _o365_records(
         )
         if "ActorIpAddress" in record:
             record["ActorIpAddress"] = address
-        # One record, one identity: the actor and user key name the same person as UserId
-        key = _user_key(login)
-        for actor in record.get("Actor") or []:
+        # Actor and user key name the same person as UserId
+        key = _user_key(login=login)
+        for actor in (record.get("Actor")) or ([]):
             if "@" in str(actor.get("ID", "")):
                 actor["ID"] = login
             elif actor.get("Type") == 3:
@@ -462,93 +389,71 @@ def _o365_records(
             if "|membership|" in held
             else f"{key}@{DOMAIN}"
         )
-        if (group == "login") and (rng.random() < 0.1):
+        if group == "login" and rng.random() < 0.1:
             record["ResultStatus"] = "Failed"
         out.append({"o365audit": record})
     return out
 
 
-def envelope(*, record: dict, source: str) -> dict:
-    """Wrap one record the way an Elastic Agent ships it, routed on `data_stream.dataset`.
-
-    Args:
-        record: The vendor's own record. o365's is the object under `o365audit`, the others a JSON object sent as `message`.
-        source: The cyber source the record belongs to, a key of DATASETS.
-
-    Returns:
-        The body dfe-receiver is posted.
-    """
-    meta = DATASETS[source]
-    body: dict = {
-        "@timestamp": EPOCH.strftime(OKTA_TIME)[:-3] + "Z",
-        "agent": {"name": "edge-agent-01", "type": "filebeat"},
-        "data_stream": {
-            "dataset": meta["dataset"],
-            "namespace": "default",
-            "type": "logs",
-        },
-        "input": {"type": meta["input"]},
-    }
-    if "o365audit" in record:
-        body["o365audit"] = record["o365audit"]
-    else:
-        body["message"] = json.dumps(record, separators=(",", ":"))
-    return body
-
-
-def write_all(*, fixtures: Path) -> dict[str, int]:
-    """Write every cyber source's demo.log and return the lines each holds."""
-    rng = random.Random(SEED)
-    users = list(_firewall_module().USERS)
-    lines = _firewall_lines(rng=rng)
-    builders: Mapping[str, tuple[Path, Callable[..., list[dict]]]] = {
-        "okta": (fixtures / "okta" / "panther-okta-systemlog.ndjson", _okta_records),
-        "crowdstrike": (
-            fixtures / "crowdstrike" / "panther-crowdstrike.ndjson",
-            _falcon_records,
-        ),
-        "o365": (fixtures / "o365" / "botsv3-o365audit.log", _o365_records),
-    }
-    for source, (path, build) in builders.items():
-        records = [
-            _scrubbed(record)
-            for record in build(rng=rng, samples=_read_records(path=path), users=users)
-        ]
-        lines[source] = [
-            json.dumps(envelope(record=record, source=source), separators=(",", ":"))
-            for record in records
-        ]
-    written = {}
-    for source, body in lines.items():
-        target = HERE / source / "demo.log"
-        target.parent.mkdir(exist_ok=True)
-        target.write_text(data="\n".join(body) + "\n", encoding="utf-8", newline="\n")
-        written[source] = len(body)
-    return written
-
-
-def stamped(*, body: dict, now: datetime) -> dict:
-    """Copy one envelope with `@timestamp` and its record's own time set to `now`.
-
-    Args:
-        body: One line of a Beats source's demo.log, parsed.
-        now: The send time.
-
-    Returns:
-        The envelope to post.
-    """
-    out = copy.deepcopy(body)
-    out["@timestamp"] = now.strftime(OKTA_TIME)[:-3] + "Z"
-    if "o365audit" in out:
-        out["o365audit"]["CreationTime"] = now.strftime(O365_TIME)
-        return out
-    record = json.loads(out["message"])
-    if "published" in record:
-        record["published"] = out["@timestamp"]
-    else:
-        record["metadata"]["eventCreationTime"] = _epoch_ms(now)
-        _falcon_times(event=record["event"], when=now)
-    out["message"] = json.dumps(record, separators=(",", ":"))
+def _okta_records(
+    *, rng: random.Random, samples: Sequence[dict], users: Sequence[str]
+) -> list[dict]:
+    """Okta system log events, mostly sign-ins, the suspects failing from abroad."""
+    templates = {}
+    for record in samples:
+        if "eventType" in record and "published" in record:
+            templates.setdefault(record["eventType"], []).append(record)
+    starts = templates.pop("user.session.start")
+    others = sorted(templates)
+    out = []
+    stamp = EPOCH
+    for _ in range(LINES):
+        stamp += timedelta(milliseconds=rng.randint(20, 180))
+        suspect = False
+        if rng.random() < 0.72:
+            record = copy.deepcopy(rng.choice(starts))
+            suspect = rng.random() < 0.12
+            failed = suspect or rng.random() < 0.15
+            outcome = {"result": "FAILURE" if failed else "SUCCESS"}
+            if failed:
+                outcome["reason"] = rng.choice(OKTA_FAILURES)
+            record["outcome"] = outcome
+        else:
+            record = copy.deepcopy(rng.choice(templates[rng.choice(others)]))
+        login, display = _user(rng=rng, users=users)
+        address = rng.choice(SUSPECTS if suspect else STAFF_ADDRESSES)
+        # A suspect always signs in from the same place
+        place = (
+            SUSPECT_COUNTRIES[SUSPECTS.index(address) % len(SUSPECT_COUNTRIES)]
+            if suspect
+            else _weighted(rng=rng, table=COUNTRIES)
+        )
+        record["actor"] = {
+            **record.get("actor", {}),
+            "alternateId": login,
+            "displayName": display,
+            "id": f"00u{rng.getrandbits(64):016x}",
+            "type": "User",
+        }
+        client = record.setdefault("client", {})
+        client["ipAddress"] = address
+        client["geographicalContext"] = _geo(place=place)
+        record["request"] = {
+            "ipChain": [
+                {
+                    "geographicalContext": _geo(place=place),
+                    "ip": address,
+                    "version": "V4",
+                }
+            ]
+        }
+        if "securityContext" in record:
+            record["securityContext"] = dict(
+                SUSPECT_NETWORK if suspect else STAFF_NETWORK
+            )
+        record["uuid"] = str(uuid.UUID(int=rng.getrandbits(128), version=4))
+        record["published"] = stamp.strftime(OKTA_TIME)[:-3] + "Z"
+        out.append(record)
     return out
 
 
@@ -562,10 +467,16 @@ def _post(*, bodies: list[dict], target: str) -> None:
     )
     with urllib.request.urlopen(request, timeout=REPLAY_TIMEOUT_SECONDS) as reply:
         if reply.status not in (200, 202, 204):
-            sys.exit(f"{target} answered HTTP {reply.status}")
+            sys.exit(f"{target!r} answered HTTP {reply.status}")
 
 
-def replay(
+def _read_records(*, path: Path) -> list[dict]:
+    """The JSON object on each non-blank line of one sample file."""
+    with path.open(encoding="utf-8") as handle:
+        return [json.loads(line) for line in handle if line.strip()]
+
+
+def _replay(
     *, duration: float, loop: bool, rate: float, sources: Sequence[str], target: str
 ) -> int:
     """Send each source's lines at `rate` lines a second per source and return how many went."""
@@ -585,7 +496,7 @@ def replay(
         batch = []
         for stream in streams:
             batch.extend(
-                stamped(body=body, now=now)
+                _stamped(body=body, now=now)
                 for body in itertools.islice(stream, REPLAY_BATCH)
             )
         if not (batch):
@@ -593,43 +504,128 @@ def replay(
         try:
             _post(bodies=batch, target=target)
         except OSError as error:
-            # A receiver restart drops the connection, and the next batch tries again
-            print(f"replay: {target}: {error}", file=sys.stderr, flush=True)
+            # A receiver restart drops the link, the next batch retries
+            print(f"replay: {target!r}: {error}", file=sys.stderr, flush=True)
         else:
             sent += len(batch)
         time.sleep(max(0.0, interval - (time.monotonic() - started)))
     return sent
 
 
-def main(argv: Sequence[str] | None = None) -> int:
+def _scrubbed(*, value: object) -> object:
+    """A copy of one sample value with every upstream persona, domain and tenant name moved onto our own."""
+
+    def persona(match: re.Match[str]) -> str:
+        return PERSONAS[match.group(1)]
+
+    def tenant(match: re.Match[str]) -> str:
+        return "Example" if match.group(0)[0].isupper() else "example"
+
+    if isinstance(value, dict):
+        return {key: _scrubbed(value=item) for key, item in value.items()}
+    if isinstance(value, list):
+        return [_scrubbed(value=item) for item in value]
+    if not (isinstance(value, str)):
+        return value
+    value = PERSONA.sub(persona, value)
+    for pattern, replacement in DOMAIN_MAP:
+        value = pattern.sub(replacement, value)
+    return TENANT.sub(tenant, value)
+
+
+def _stamped(*, body: dict, now: datetime) -> dict:
+    """Copy one parsed line of a Beats source's demo.log with `@timestamp` and its record's own time set to `now`."""
+    out = copy.deepcopy(body)
+    out["@timestamp"] = now.strftime(OKTA_TIME)[:-3] + "Z"
+    if "o365audit" in out:
+        out["o365audit"]["CreationTime"] = now.strftime(O365_TIME)
+        return out
+    record = json.loads(out["message"])
+    if "published" in record:
+        record["published"] = out["@timestamp"]
+    else:
+        record["metadata"]["eventCreationTime"] = _epoch_ms(when=now)
+        _falcon_times(event=record["event"], when=now)
+    out["message"] = json.dumps(record, separators=(",", ":"))
+    return out
+
+
+def _user(*, rng: random.Random, users: Sequence[str]) -> tuple[str, str]:
+    """A staff login and display name."""
+    name = rng.choice(users)
+    return f"{name}@{DOMAIN}", name.capitalize()
+
+
+def _user_key(*, login: str) -> str:
+    """One staff member's stable 16-hex-digit Microsoft 365 user key."""
+    return hashlib.sha256(login.encode("utf-8")).hexdigest()[:16].upper()
+
+
+def _weighted(*, rng: random.Random, table: Sequence[tuple]) -> tuple:
+    """One row of a table whose last column is its weight."""
+    return rng.choices(table, weights=[row[-1] for row in table])[0]
+
+
+def _write_all(*, fixtures: Path) -> dict[str, int]:
+    """Write every cyber source's demo.log and return the lines each holds."""
+    rng = random.Random(SEED)
+    users = list(_firewall_module().USERS)
+    lines = _firewall_lines(rng=rng)
+    builders = {
+        "okta": (fixtures / "okta" / "panther-okta-systemlog.ndjson", _okta_records),
+        "crowdstrike": (
+            fixtures / "crowdstrike" / "panther-crowdstrike.ndjson",
+            _falcon_records,
+        ),
+        "o365": (fixtures / "o365" / "botsv3-o365audit.log", _o365_records),
+    }
+    for source, (path, build) in builders.items():
+        records = [
+            _scrubbed(value=record)
+            for record in build(rng=rng, samples=_read_records(path=path), users=users)
+        ]
+        lines[source] = [
+            json.dumps(_envelope(record=record, source=source), separators=(",", ":"))
+            for record in records
+        ]
+    written = {}
+    for source, body in lines.items():
+        target = HERE / source / "demo.log"
+        target.parent.mkdir(exist_ok=True)
+        target.write_text(data="\n".join(body) + "\n", encoding="utf-8", newline="\n")
+        written[source] = len(body)
+    return written
+
+
+def main(*, argv: Sequence[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
     )
     parser.add_argument(
         "--fixtures",
-        type=Path,
         help="dfe-transform-elastic's tests/fixtures/unencumbered, the samples the Beats sources are built from",
+        type=Path,
     )
     commands = parser.add_subparsers(dest="command")
     send = commands.add_parser(
         "replay", help="post the Beats sources' lines at dfe-receiver's HTTP ingest"
     )
-    send.add_argument("--target", required=True, help="the receiver's /ingest URL")
+    send.add_argument("--target", help="the receiver's /ingest URL", required=True)
     send.add_argument(
         "--sources", default=",".join(DATASETS), help="comma-separated Beats sources"
     )
     send.add_argument(
-        "--rate", type=float, default=10.0, help="lines a second per source"
+        "--rate", default=10.0, help="lines a second per source", type=float
     )
     send.add_argument("--loop", action="store_true", help="start again at the end")
     send.add_argument(
-        "--duration", type=float, default=600.0, help="stop after this many seconds"
+        "--duration", default=600.0, help="stop after this many seconds", type=float
     )
     args = parser.parse_args(argv)
     if args.command == "replay":
         if args.rate <= 0:
             parser.error("--rate must be above 0")
-        sent = replay(
+        sent = _replay(
             duration=args.duration,
             loop=args.loop,
             rate=args.rate,
@@ -640,7 +636,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         return 0
     if (args.fixtures is None) or not (args.fixtures.is_dir()):
         parser.error("--fixtures names no directory of upstream samples")
-    for source, count in write_all(fixtures=args.fixtures).items():
+    for source, count in _write_all(fixtures=args.fixtures).items():
         print(f"{source}/demo.log: {count} lines")
     return 0
 

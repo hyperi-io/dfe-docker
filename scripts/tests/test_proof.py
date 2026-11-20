@@ -509,20 +509,21 @@ def test_a_profile_that_does_not_resolve_is_a_problem(
     assert proof.source_profile_problem(env={}) == "the profile did not resolve"
 
 
-def kept_runs(root: Path) -> list[str]:
+def _kept_runs(*, root: Path) -> list[str]:
+    """The kept screenshot runs under root, oldest first."""
     return sorted(path.name for path in (root / ".tmp" / "proof-shots").iterdir())
 
 
 def test_a_failed_run_keeps_its_screenshots_and_names_them(
-    steps: dict, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    capsys: pytest.CaptureFixture[str], steps: dict, tmp_path: Path
 ) -> None:
     steps["outcome"]["source"] = False
     assert proof.main() == 1
-    (run,) = kept_runs(tmp_path)
+    (run,) = _kept_runs(root=tmp_path)
     assert (
         tmp_path / ".tmp" / "proof-shots" / run / "e2e-shots" / "shot.png"
     ).is_file()
-    assert not steps["work"].exists()
+    assert not (steps["work"].exists())
     result = [line for line in capsys.readouterr().out.splitlines() if "RESULT" in line]
     assert result == [
         f"proof: RESULT e2e=pass restore=pass source=FAIL, screenshots kept in {tmp_path / '.tmp' / 'proof-shots' / run}"
@@ -530,20 +531,20 @@ def test_a_failed_run_keeps_its_screenshots_and_names_them(
 
 
 def test_a_passing_run_keeps_nothing(
-    steps: dict, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    capsys: pytest.CaptureFixture[str], steps: dict, tmp_path: Path
 ) -> None:
     assert proof.main() == 0
-    assert not (tmp_path / ".tmp" / "proof-shots").exists()
+    assert not ((tmp_path / ".tmp" / "proof-shots").exists())
     assert "kept" not in capsys.readouterr().out
 
 
 def test_a_failed_run_with_no_screenshot_keeps_nothing(
-    steps: dict, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    monkeypatch: pytest.MonkeyPatch, steps: dict, tmp_path: Path
 ) -> None:
     steps["outcome"]["e2e"] = False
     monkeypatch.setattr(proof, "SHOT_DIRS", ("source-shots",))
     assert proof.main() == 1
-    assert not (tmp_path / ".tmp" / "proof-shots").exists()
+    assert not ((tmp_path / ".tmp" / "proof-shots").exists())
 
 
 def test_only_the_newest_failed_runs_are_kept(steps: dict, tmp_path: Path) -> None:
@@ -553,7 +554,7 @@ def test_only_the_newest_failed_runs_are_kept(steps: dict, tmp_path: Path) -> No
         (root / name).mkdir(parents=True)
     steps["outcome"]["source"] = False
     assert proof.main() == 1
-    runs = kept_runs(tmp_path)
+    runs = _kept_runs(root=tmp_path)
     assert len(runs) == proof.SHOTS_KEEP_RUNS
     assert old[0] not in runs
     assert old[2] in runs

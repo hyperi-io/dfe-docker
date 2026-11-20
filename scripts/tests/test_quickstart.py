@@ -258,10 +258,10 @@ class TestDemoRefusal:
             assert reason == ""
 
     def test_ci_refuses_before_its_down(self) -> None:
-        """The guard runs before the `down` that removes the pack's sources under the start."""
+        # The guard has to run before the `down` that drops the sources
         makefile = (REPO_ROOT / "Makefile").read_text(encoding="utf-8")
         recipe = re.search(
-            pattern=r"^ci:.*\n((?:\t.*\n)+)", string=makefile, flags=re.MULTILINE
+            flags=re.MULTILINE, pattern=r"^ci:.*\n((?:\t.*\n)+)", string=makefile
         )
         assert recipe, "no ci recipe"
         lines = recipe.group(1).splitlines()

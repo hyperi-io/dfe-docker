@@ -61,7 +61,7 @@ RENDERED_PROFILES = ("slim-grpc", "slim-kafka", "single-grpc", "single-kafka")
 
 # What a Kafka dfe-loader subscribes to when its config names no topics and no topic_regex (dfe-loader src/kafka/transport.rs LANDING_TOPIC_INCLUDE)
 LOADER_DEFAULT_TOPIC_REGEX = "_(land|load)$"
-# The consumer group a Kafka app commits as when its config names none, by the directory its config lives in
+# The Kafka group an app commits as, by its config directory
 DEFAULT_GROUPS = {"loader": "dfe-loader", "archiver": "dfe-archiver"}
 
 # Each app dfe-engine starts one container per source of, never as a profile's service, with the profile key that runs it and the variable resolve_profile.py writes the enabled apps to
@@ -116,7 +116,7 @@ IN_STACK_KEY = "DFE_IN_STACK"
 # The tags each published compose file moves on as an artifact
 PUBLISHED_STACK_TAG = "compose"
 PUBLISHED_DEMO_TAG = "demo"
-# The published files' secrets one-shot and its print-login arg
+# The secrets one-shot and its print-login arg
 SECRETS_SERVICE = "secrets-init"
 LOGIN_COMMAND = "login"
 # Runs it with that arg, waiting on nothing, then removes it
@@ -128,9 +128,9 @@ REPO_ROOT = __find_repo_root()
 # both minted passwords in plaintext. Gitignored, 0600, meant to be deleted.
 ACCESS_SUMMARY_FILE = REPO_ROOT / "access-summary.md"
 CONFIG_DIR = REPO_ROOT / "config"
-# The demo's own pack is resources/demo, and each named pack sits beside it as resources/demo-<pack>, the tag its file publishes under
+# Packs sit here: resources/demo and resources/demo-<pack>
 DEMO_PACKS_ROOT = REPO_ROOT / "resources"
-# A pack name lands in a compose project, container names and an OCI tag
+# A pack name becomes a project, container and OCI tag name
 DEMO_PACK_NAME = re.compile(r"[a-z][a-z0-9]*(-[a-z0-9]+)*")
 DEPLOYMENT_DIAL = REPO_ROOT / "deployment.yaml"
 DEPLOYMENT_DIAL_TEMPLATE = REPO_ROOT / "deployment.example.yaml"
@@ -381,7 +381,7 @@ def _config_topics(*, path: Path) -> tuple[set[str], set[str], str]:
         subscribed = subscribed or {f"{dfe_source}_land"}
         produced = produced or {f"{dfe_source}_load"}
     if (
-        (path.parent.name == "loader" or path.name.startswith("loader-"))
+        ((path.parent.name == "loader") or (path.name.startswith("loader-")))
         and transport != "grpc"
         and not (subscribed)
         and not (regex)

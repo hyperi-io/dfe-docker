@@ -11,7 +11,7 @@ A tick runs 10 minutes after boot, then every hour:
 3. Compares it to `.dfe-stack-applied`. The same version only fast-forwards the checkout and restarts nothing. A lower version is refused, because a box installed from a cut branch can sit ahead of the newest published stack.
 4. A higher version runs `git pull --ff-only`, `make init`, `make stack VERSION=<new>` and `make ci`, then records the version.
 
-5. After `make ci` and its self test pass, removes the images the previous pin used. Before the re-pin the tick lists every image `docker compose config --images` resolves to across all profiles. Once the update succeeds it runs `docker image rm` on each that the new stack no longer names and no container, running or stopped, still uses. Images pulled by hand are never touched, and a failed or refused update removes nothing. A removal that errors logs a `warning:` line and the update still counts as succeeded.
+5. After `make ci` and its self test pass, removes the images the previous pin used. Before the re-pin the tick lists every image `docker compose config --images` resolves to across all profiles. Once the update succeeds it runs `docker image rm` on each that the new stack no longer names and no container, running or stopped, still uses. Images pulled by hand are never touched and a failed or refused update removes nothing. A removal that errors logs a `warning:` line and the update still counts as succeeded.
 
 A failure exits non-zero, so systemd marks the unit failed and the next tick retries. `make ci` pulls the images before it stops the stack, so a failed pull leaves the running stack up. Output reaches the journal as it happens: `journalctl -u dfe-docker-update -f`.
 

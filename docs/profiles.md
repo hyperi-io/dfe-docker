@@ -15,7 +15,7 @@ Pick one with `make up PROFILE=<profile>`, which writes it to `.env` as `DFE_PRO
 
 dfe-fetcher runs one container for every fetcher source. The three transforms run one container per source once a source created through the engine binds one. dfe-engine runs a fetcher or a transform for a source on Kafka only, so `single-grpc` runs neither.
 
-Every profile runs the engine, the UI, dfe-hyperdx and the self-monitoring collector, from its `core`, `hyperdx` and `otel` footprint keys. The Kafka profiles add the broker and Kafbat. The matching `.env` flag overrides each key, and a profile that leaves a key out gets its default:
+Every profile runs the engine, the UI, dfe-hyperdx and the self-monitoring collector, from its `core`, `hyperdx` and `otel` footprint keys. The Kafka profiles add the broker and Kafbat. The matching `.env` flag overrides each key and a profile that leaves a key out gets its default:
 
 | Key | Runs | Default | `.env` flag |
 |---|---|---|---|

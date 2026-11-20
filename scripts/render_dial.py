@@ -88,7 +88,7 @@ _ENGINE_DIAL_MAP: tuple[tuple[tuple[str, ...], str], ...] = (
 _SETTING_RE = re.compile(r"^[ \t]*(?:#[ \t]?)?(?P<key>[A-Z][A-Z0-9_]*)[ \t]*=")
 
 
-def _scalar(dial: dict[str, object], path: tuple[str, ...]) -> str | None:
+def _scalar(*, dial: dict[str, object], path: tuple[str, ...]) -> str | None:
     """Return the non-empty scalar at ``path`` in the parsed dial, else None."""
     node: object = dial
     for step in path:
@@ -104,7 +104,7 @@ def _env_updates(
     """Map the dial's docker-vm fields to the keys `mapping` names for them (empty skipped)."""
     updates: dict[str, str] = {}
     for path, env_key in mapping:
-        value = _scalar(dial, path)
+        value = _scalar(dial=dial, path=path)
         if value is not None:
             updates[env_key] = value
     return updates
@@ -151,8 +151,8 @@ def main() -> int:
     dial = _parse_yaml_subset(
         text=DEPLOYMENT_DIAL.read_text(encoding="utf-8", errors="replace")
     )
-    platform = _scalar(dial, ("platform",))
-    if platform is None and _scalar(dial, ("substrate",)) is not None:
+    platform = _scalar(dial=dial, path=("platform",))
+    if platform is None and _scalar(dial=dial, path=("substrate",)) is not None:
         raise SystemExit(
             "render_dial: the dial key `substrate` was renamed to `platform` - "
             f"change `substrate:` to `platform:` in {_rel_path(path=DEPLOYMENT_DIAL)}"

@@ -6,7 +6,7 @@
 #  License:      BUSL-1.1
 #  Copyright:    (c) 2026 HYPERI PTY LIMITED
 
-"""The checks on scripts/replay_fetch.py: the time shift, the silenced poll, the live feed check, the committed packs it loads, and a real round trip over HTTP."""
+"""The checks on scripts/replay_fetch.py: the time shift, the silenced poll, the live feed check, the committed packs it loads and a real round trip over HTTP."""
 
 import json
 import socket
@@ -60,7 +60,7 @@ def _source(*, endpoints: list[dict]) -> str:
     return json.dumps(body)
 
 
-def _pack(root: Path, *, endpoints: list[dict], lines: list[str]) -> Path:
+def _pack(*, endpoints: list[dict], lines: list[str], root: Path) -> Path:
     """A pack holding one fetcher source `air` and its captured polls."""
     (root / "sources").mkdir(parents=True)
     (root / "sources" / "air.yaml").write_text(
@@ -79,9 +79,9 @@ def _replay(*, url: str = "http://127.0.0.1:1/air") -> replay_fetch.Replay:
         (POLLED_MS, {"ac": [{"hex": "a"}], "now": POLLED_MS}),
         (POLLED_MS + 10_000, {"ac": [{"hex": "b"}], "now": POLLED_MS + 10_000}),
     ]
-    probe = replay_fetch.Probe(url=url, headers={}, rows_at="/ac")
+    probe = replay_fetch.Probe(headers={}, rows_at="/ac", url=url)
     return replay_fetch.Replay(
-        live=("127.0.0.1", 1), probe=probe, polls=polls, rows_at="/ac", step_ms=10_000
+        live=("127.0.0.1", 1), polls=polls, probe=probe, rows_at="/ac", step_ms=10_000
     )
 
 
@@ -93,7 +93,7 @@ def _closed_port() -> int:
 
 
 @contextmanager
-def _live_feed(*, status: int, payload: bytes) -> Iterator[tuple[str, dict]]:
+def _live_feed(*, payload: bytes, status: int) -> Iterator[tuple[str, dict]]:
     """A local live feed answering every GET with `answer`, which a test may change."""
     answer = {"status": status, "payload": payload}
 
@@ -108,7 +108,7 @@ def _live_feed(*, status: int, payload: bytes) -> Iterator[tuple[str, dict]]:
             return
 
     server = ThreadingHTTPServer(("127.0.0.1", 0), Feed)
-    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread = threading.Thread(daemon=True, target=server.serve_forever)
     thread.start()
     try:
         yield f"http://127.0.0.1:{server.server_address[1]}/v2", answer
@@ -119,9 +119,9 @@ def _live_feed(*, status: int, payload: bytes) -> Iterator[tuple[str, dict]]:
 
 @pytest.fixture
 def served() -> Iterator[tuple[replay_fetch.ThreadingHTTPServer, dict]]:
-    replays: dict[str, replay_fetch.Replay] = {}
+    replays = {}
     server = replay_fetch.serve(port=0, replays=replays)
-    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread = threading.Thread(daemon=True, target=server.serve_forever)
     thread.start()
     try:
         yield server, replays
@@ -130,7 +130,7 @@ def served() -> Iterator[tuple[replay_fetch.ThreadingHTTPServer, dict]]:
         server.server_close()
 
 
-def _get(server: replay_fetch.ThreadingHTTPServer, path: str) -> tuple[int, object]:
+def _get(*, path: str, server: replay_fetch.ThreadingHTTPServer) -> tuple[int, object]:
     url = f"http://127.0.0.1:{server.server_address[1]}{path}"
     try:
         with urllib.request.urlopen(url, timeout=10) as answer:  # noqa: S310
@@ -166,7 +166,7 @@ class TestShifted:
         ],
     )
     def test_moves_only_epoch_milliseconds_near_the_poll(
-        self, expected: object, value: object
+        self, value: object, expected: object
     ) -> None:
         body = {"features": [{"properties": {"t": value}}]}
 
@@ -188,7 +188,7 @@ class TestEmptied:
         ids=["top", "geojson", "nested", "escaped", "whole-body"],
     )
     def test_blanks_the_rows_and_keeps_the_rest(
-        self, body: dict, expected: dict, pointer: str
+        self, pointer: str, body: dict, expected: dict
     ) -> None:
         assert replay_fetch.emptied(body=body, pointer=pointer) == expected
         assert body != expected
@@ -202,7 +202,7 @@ class TestEmptied:
         ids=["relative", "into-a-number"],
     )
     def test_refuses_a_pointer_it_cannot_follow(
-        self, body: dict, message: str, pointer: str
+        self, pointer: str, body: dict, message: str
     ) -> None:
         with pytest.raises(replay_fetch.ReplayError, match=message):
             replay_fetch.emptied(body=body, pointer=pointer)
@@ -255,7 +255,7 @@ class TestLoadReplays:
             "https://api.adsb.lol/v2/point/-33.94/151.18/100"
         )
         assert replays["adsb-tracks"].probe.rows_at == "/ac"
-        # The query value that needs the poll window is left out, the rest is asked
+        # The query value needing the poll window is left out
         assert replays["ais-tracks"].probe.url == (
             "https://meri.digitraffic.fi/api/ais/v1/locations"
             "?latitude=60.1&longitude=24.95&radius=60"
@@ -268,14 +268,14 @@ class TestLoadReplays:
 
     def test_asks_the_live_unit_with_what_vars_can_fill(self, tmp_path: Path) -> None:
         line = f'{{"polled_ms": {POLLED_MS}, "body": {{}}}}'
-        root = _pack(tmp_path, endpoints=[REPLAY_UNIT, LIVE_UNIT], lines=[line])
+        root = _pack(endpoints=[REPLAY_UNIT, LIVE_UNIT], lines=[line], root=tmp_path)
 
         replays = replay_fetch.load_replays(root=root)
 
         assert replays["air"].probe == replay_fetch.Probe(
-            url="https://api.example/v2/point/-33.9?radius=100",
             headers={"Accept": "application/json"},
             rows_at="/ac",
+            url="https://api.example/v2/point/-33.9?radius=100",
         )
 
     def test_a_json_array_unit_with_no_at_reads_the_whole_body(
@@ -283,7 +283,7 @@ class TestLoadReplays:
     ) -> None:
         unit = {**LIVE_UNIT, "rows": {"decoder": "json_array"}}
         line = f'{{"polled_ms": {POLLED_MS}, "body": [{{"a": 1}}]}}'
-        root = _pack(tmp_path, endpoints=[unit], lines=[line])
+        root = _pack(endpoints=[unit], lines=[line], root=tmp_path)
 
         replays = replay_fetch.load_replays(root=root)
 
@@ -294,7 +294,7 @@ class TestLoadReplays:
         self, tmp_path: Path
     ) -> None:
         line = f'{{"polled_ms": {POLLED_MS}, "body": [1]}}'
-        root = _pack(tmp_path, endpoints=[LIVE_UNIT], lines=[line])
+        root = _pack(endpoints=[LIVE_UNIT], lines=[line], root=tmp_path)
 
         replays = replay_fetch.load_replays(root=root)
 
@@ -316,7 +316,7 @@ class TestLoadReplays:
         assert replay_fetch.with_replay_unit(body=derived) == derived
 
     def test_skips_a_fetcher_with_no_capture(self, tmp_path: Path) -> None:
-        root = _pack(tmp_path, endpoints=[REPLAY_UNIT, LIVE_UNIT], lines=["{}"])
+        root = _pack(endpoints=[REPLAY_UNIT, LIVE_UNIT], lines=["{}"], root=tmp_path)
         (root / "events" / "air" / "demo.log").unlink()
 
         assert replay_fetch.load_replays(root=root) == {}
@@ -368,9 +368,9 @@ class TestLoadReplays:
         ],
     )
     def test_refuses_a_replay_it_cannot_serve(
-        self, endpoints: list[dict], lines: list[str], message: str, tmp_path: Path
+        self, tmp_path: Path, endpoints: list[dict], lines: list[str], message: str
     ) -> None:
-        root = _pack(tmp_path, endpoints=endpoints, lines=lines)
+        root = _pack(endpoints=endpoints, lines=lines, root=tmp_path)
 
         with pytest.raises(replay_fetch.ReplayError, match=message):
             replay_fetch.load_replays(root=root)
@@ -399,18 +399,18 @@ class TestServe:
     def test_serves_the_capture_unless_the_live_feed_has_rows(
         self,
         served: tuple[replay_fetch.ThreadingHTTPServer, dict],
-        silent: bool,
         status: int | None,
         payload: bytes,
+        silent: bool,
     ) -> None:
         server, replays = served
         # None stands for a feed nothing listens for
-        with _live_feed(status=status or 200, payload=payload) as (url, _):
+        with _live_feed(payload=payload, status=(status) or (200)) as (url, _):
             replays["air"] = _replay(
                 url=url if status else f"http://127.0.0.1:{_closed_port()}/v2"
             )
 
-            code, body = _get(server, "/air")
+            code, body = _get(path="/air", server=server)
 
         assert code == 200
         assert isinstance(body, dict)
@@ -421,28 +421,28 @@ class TestServe:
         self, served: tuple[replay_fetch.ThreadingHTTPServer, dict]
     ) -> None:
         server, replays = served
-        with _live_feed(status=200, payload=b'{"ac": []}') as (url, answer):
+        with _live_feed(payload=b'{"ac": []}', status=200) as (url, answer):
             replays["air"] = _replay(url=url)
-            assert _get(server, "/air")[1]["ac"] == [{"hex": "a"}]
+            assert _get(path="/air", server=server)[1]["ac"] == [{"hex": "a"}]
 
-            # Rows appear, but the empty answer holds until its wait has run out
+            # Rows appear, but the empty answer holds until its wait ends
             answer["payload"] = b'{"ac": [{"hex": "z"}]}'
-            assert _get(server, "/air")[1]["ac"] == [{"hex": "a"}]
+            assert _get(path="/air", server=server)[1]["ac"] == [{"hex": "a"}]
 
             replays["air"].checked -= replay_fetch.NO_ROWS_CHECK_SECONDS
-            assert _get(server, "/air")[1]["ac"] == []
+            assert _get(path="/air", server=server)[1]["ac"] == []
 
-            # The rows go again, and the longer wait for a feed with rows holds the silence
+            # Rows gone, the longer wait of a feed with rows holds silence
             answer["payload"] = b'{"ac": []}'
             replays["air"].checked -= replay_fetch.NO_ROWS_CHECK_SECONDS
-            assert _get(server, "/air")[1]["ac"] == []
+            assert _get(path="/air", server=server)[1]["ac"] == []
 
             replays["air"].checked -= replay_fetch.LIVE_ROWS_CHECK_SECONDS
-            assert _get(server, "/air")[1]["ac"] == [{"hex": "a"}]
+            assert _get(path="/air", server=server)[1]["ac"] == [{"hex": "a"}]
 
     def test_refuses_a_source_it_holds_no_capture_for(
         self, served: tuple[replay_fetch.ThreadingHTTPServer, dict]
     ) -> None:
         server, _ = served
 
-        assert _get(server, "/sea") == (404, None)
+        assert _get(path="/sea", server=server) == (404, None)
