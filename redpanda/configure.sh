@@ -49,7 +49,10 @@ apply_licence() {
         die "rpk refused REDPANDA_LICENSE (exit ${rc}), so both trial Enterprise features are off"
     fi
     json="$(rpk_admin cluster license info --format json)"
-    [[ "${json}" == *'"license_violation":false'* ]] || die "licence applied but Redpanda reports a violation: ${json}"
+    if [[ "${json}" != *'"license_violation":false'* ]]; then
+        turn_features_off
+        die "licence applied but Redpanda reports a violation, so both trial Enterprise features are off: ${json}"
+    fi
     log "Enterprise licence applied (beta)"
 }
 
