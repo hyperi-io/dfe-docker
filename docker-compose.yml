@@ -466,6 +466,9 @@ services:
       kafka-redpanda:
         condition: service_healthy
         required: false
+      kafka-redpanda-config:
+        condition: service_completed_successfully
+        required: false
     healthcheck:
       test: ["CMD", "curl", "-sf", "http://localhost:8000/readyz"]
       interval: 10s

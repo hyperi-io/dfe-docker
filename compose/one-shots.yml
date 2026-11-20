@@ -146,6 +146,19 @@ services:
       - transform-elastic-geoip:/var/lib/dfe/geoip
     restart: "no"
 
+  kafka-redpanda-config:
+    image: docker.redpanda.com/redpandadata/redpanda:${REDPANDA_VERSION:?run 'make stack VERSION=X.Y.Z' to pin REDPANDA_VERSION}
+    container_name: ${DFE_CONTAINER_PREFIX:-}dfe-kafka-redpanda-config
+    profiles: ["kafka-redpanda"]
+    extends: {file: compose/limits.yml, service: limits-sidecar}
+    entrypoint: ["/bin/bash", "/usr/local/bin/dfe-redpanda-configure.sh"]
+    depends_on:
+      kafka-redpanda:
+        condition: service_healthy
+    volumes:
+      - ./redpanda/configure.sh:/usr/local/bin/dfe-redpanda-configure.sh:ro
+    restart: "no"
+
   hyperdx-documentdb-tls:
     image: ${IMAGE_REGISTRY:-ghcr.io/hyperi-io}/dfe-engine:${DFE_ENGINE_VERSION:?run 'make stack VERSION=X.Y.Z' to pin DFE_ENGINE_VERSION}
     container_name: ${DFE_CONTAINER_PREFIX:-}dfe-hyperdx-documentdb-tls
