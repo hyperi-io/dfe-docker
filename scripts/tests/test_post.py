@@ -303,6 +303,38 @@ def test_one_failed_claim_fails_the_run() -> None:
 
 
 @pytest.mark.usefixtures("dotenv")
+@pytest.mark.parametrize(
+    ("licence", "needle"),
+    [
+        (["core_balancing_continuous"], "docker compose up kafka-redpanda-config"),
+        (post.BrokerLicenceError("rpk exited 1"), "licence unreadable"),
+    ],
+    ids=["feature-in-use", "unreadable"],
+)
+def test_a_broker_enterprise_feature_fails_post_before_any_claim(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture,
+    licence: list[str] | Exception,
+    needle: str,
+) -> None:
+    """The check runs ahead of the claims, so no data moves on a broker that fails it."""
+    _stub_main(monkeypatch)
+
+    def _licence() -> list[str]:
+        if isinstance(licence, Exception):
+            raise licence
+        return licence
+
+    monkeypatch.setattr(post, "_broker_enterprise_features", _licence)
+    monkeypatch.setattr(
+        post, "_wait_schema_converged", lambda: pytest.fail("a claim ran")
+    )
+
+    assert post.main() == 1
+    assert needle in capsys.readouterr().err
+
+
+@pytest.mark.usefixtures("dotenv")
 def test_a_profile_that_can_prove_nothing_does_not_pass(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
