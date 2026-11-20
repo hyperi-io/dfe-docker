@@ -32,6 +32,7 @@ class _Recording(BaseHTTPRequestHandler):
 
     answer = b'{"size_bytes": 6, "restart_required": []}'
     held = False
+    preconditions: list[str] = []
     received: list[tuple[str, str, str, bytes]] = []
     released = threading.Event()
     status = 200
@@ -39,6 +40,7 @@ class _Recording(BaseHTTPRequestHandler):
     def _record(self) -> None:
         """Keep the method, path, bearer token and body, then answer unless the test holds the reply."""
         length = int(self.headers.get("Content-Length", 0))
+        type(self).preconditions.append(self.headers.get("If-None-Match", ""))
         type(self).received.append(
             (
                 self.command,
@@ -73,6 +75,7 @@ def engine_url() -> Iterator[str]:
     """A loopback server standing at the engine's API route, reset for each test."""
     _Recording.answer = b'{"size_bytes": 6, "restart_required": []}'
     _Recording.held = False
+    _Recording.preconditions = []
     _Recording.received = []
     _Recording.released = threading.Event()
     _Recording.status = 200
@@ -150,6 +153,23 @@ class TestHttpPutJson:
         assert (got, json.loads(body)) == (status, json.loads(answer))
         assert _Recording.received[0][:3] == ("PUT", ROUTE, "Bearer t")
 
+    def test_inside_the_stack_a_request_carries_its_headers(
+        self, engine_url: str, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("DFE_IN_STACK", "true")
+        monkeypatch.setenv("PATH", "")
+
+        post._exec_request(
+            headers={"If-None-Match": "*"},
+            method="PUT",
+            payload={},
+            timeout=5,
+            token="t",
+            url=engine_url,
+        )
+
+        assert _Recording.preconditions == ["*"]
+
     def test_post_sends_its_own_method_through_the_same_path(
         self, engine_url: str
     ) -> None:
@@ -159,6 +179,11 @@ class TestHttpPutJson:
 
 
 class TestApiPutJson:
+    def test_a_host_address_sends_its_headers(self, engine_url: str) -> None:
+        post.api_put_json(headers={"If-None-Match": "*"}, payload={}, url=engine_url)
+
+        assert _Recording.preconditions == ["*"]
+
     def test_a_host_address_puts_without_docker(self, engine_url: str) -> None:
         status, body = post.api_put_json(
             payload={"content": ". = .\n"}, token="t", url=engine_url

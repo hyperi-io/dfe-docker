@@ -10,6 +10,8 @@ source: aws-securityhub
 display_name: AWS Security Hub
 fetcher:
   source_type: aws
+  # The org its records belong to: the fetcher stamps its first tenant id.
+  org: acme
   config:
     access_key_id: env:AWS_ACCESS_KEY_ID
     interval_secs: 30

@@ -1,0 +1,10 @@
+# Project:   dfe-docker
+# File:      resources/seed/organisation.yaml
+# Purpose:   The seed org named as the deployment's own
+# Language:  YAML
+#
+# License:   BUSL-1.1
+# Copyright: (c) 2026 HYPERI PTY LIMITED
+
+# One of resources/seed/orgs.
+name: acme

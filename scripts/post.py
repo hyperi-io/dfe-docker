@@ -279,8 +279,15 @@ UI_QUERY_INTERVAL_SECONDS = 3.0
 # "created while the runner was already up" a claim worth making.
 HUNT_SERVICES = ("dfe-engine", "dfe-hunt-runner")
 HUNT_TARGET_TABLE = "detection"
-# The org the hunt runs for: the engine's reserved default org, where a record naming no org lands
-HUNT_CUSTOMER = "default"
+# The org the hunt runs for, where a record naming no org lands
+HUNT_CUSTOMER = "acme"
+# Every script shares it: once one exists, HTTP needs a bearer
+INGEST_CREDENTIAL = "dfe-docker"
+INGEST_ORG = "acme"
+INGEST_TOKEN_KEY = "DFE_INGEST_TOKEN"
+INGEST_TOKEN_BANNER = "## Ingest token the scripts send receiver records with"
+# The receiver re-reads its bearer tokens every 60 seconds
+INGEST_TOKEN_WAIT_SECONDS = 150.0
 # Failed root logins are the detection, and each near miss breaks one half of it.
 HUNT_WHERE = (
     "toString(_json.event_type) = 'login_failure' "
@@ -429,6 +436,8 @@ import urllib.request
 spec = json.loads(os.environ["DFE_POST_API_REQUEST"])
 body = spec["body"].encode() if spec["body"] else None
 request = urllib.request.Request(spec["url"], data=body, method=spec["method"])
+for name, value in spec.get("headers", {}).items():
+    request.add_header(name, value)
 if body is not None:
     request.add_header("Content-Type", "application/json")
 if spec["token"]:
@@ -513,7 +522,13 @@ def _log_window(name: str) -> str:
 
 
 def _exec_request(
-    *, method: str, url: str, payload: dict | None, timeout: int, token: str
+    *,
+    headers: dict[str, str] | None = None,
+    method: str,
+    payload: dict | None,
+    timeout: int,
+    token: str,
+    url: str,
 ) -> tuple[int, str]:
     """Make one request from INSIDE the stack, returning (status, body text).
 
@@ -521,6 +536,7 @@ def _exec_request(
     """
     spec = {
         "body": json.dumps(payload) if payload is not None else "",
+        "headers": (headers) or ({}),
         "method": method,
         "timeout": timeout,
         "token": token,
@@ -1343,7 +1359,10 @@ def _verify_routing_applied(*, database: str) -> Claim:
 
     try:
         return Claim(
-            asserted=True, failed=_await_routed_row(database=database, name=name)
+            asserted=True,
+            failed=_await_routed_row(
+                base=base, database=database, name=name, token=token
+            ),
         )
     finally:
         _remove_routed_source(base=base, database=database, name=name, token=token)
@@ -1467,11 +1486,12 @@ def _routing_timeout_seconds(*, bus: bool) -> float:
     return window
 
 
-def _await_routed_row(*, database: str, name: str) -> int:
+def _await_routed_row(*, base: str, database: str, name: str, token: str) -> int:
     """Post to the receiver until a record lands in the new source's own table."""
     try:
         service, ingest_url = _ingest_target(table=name)
-    except (NoIngestComponent, IngestNotReady) as reason:
+        bearer = ingest_token(base=base, ingest_url=ingest_url, token=token)
+    except (NoIngestComponent, IngestNotReady, IngestCredentialError) as reason:
         _print(msg=f"FAIL  {reason}")
         return 1
     marker = _run_id()
@@ -1483,7 +1503,11 @@ def _await_routed_row(*, database: str, name: str) -> int:
         # record takes the catch-all, so the early posts are the wait rather than
         # a failure.
         try:
-            http_post(ingest_url, marked_event(marker=marker, source=name))
+            http_post(
+                body=marked_event(marker=marker, source=name),
+                token=bearer,
+                url=ingest_url,
+            )
         except Exception:  # noqa: BLE001 - a refused post is another attempt
             return 0
         return ch_marker_count(database, name, marker) or 0
@@ -2312,7 +2336,12 @@ def _await_hunt(
     )
 
     landed = _send_hunt_events(
-        database=database, hunt=hunt, ingest_url=ingest_url, table=table, tenant=tenant
+        bearer=ingest_token(base=base, ingest_url=ingest_url, token=token),
+        database=database,
+        hunt=hunt,
+        ingest_url=ingest_url,
+        table=table,
+        tenant=tenant,
     )
     if landed is None:
         return 1
@@ -2342,7 +2371,7 @@ def _await_hunt(
 
 
 def _send_hunt_events(
-    *, database: str, hunt: str, ingest_url: str, table: str, tenant: str
+    *, bearer: str, database: str, hunt: str, ingest_url: str, table: str, tenant: str
 ) -> dict[str, list[str]] | None:
     """Send the hunt's labelled events and return their landed rows by label, or None."""
     bodies = _detection.labelled_events(
@@ -2351,7 +2380,7 @@ def _send_hunt_events(
     refused = []
     for label, body in bodies:
         try:
-            status = http_post(ingest_url, body)
+            status = http_post(body=body, token=bearer, url=ingest_url)
         except OSError:
             status = 0
         if status < 200 or status >= 300:
@@ -2522,14 +2551,152 @@ def api_container() -> str:
     return ids[0]
 
 
+class IngestCredentialError(Exception):
+    """The ingest credential the scripts send through could not be minted, recorded or seen to take effect."""
+
+
+def _await_ingest_token(*, ingest_url: str, minted: str) -> None:
+    """Wait until the receiver refuses a token it does not hold and takes `minted`, so a send lands in the credential's org. A receiver taking any token is restarted once, since the first credential on its HTTP listener applies only from its next start."""
+    deadline = time.monotonic() + INGEST_TOKEN_WAIT_SECONDS
+    restarted = False
+    while True:
+        answers = _ingest_answers(ingest_url=ingest_url, minted=minted)
+        if answers == (True, True):
+            return
+        if answers is not None and not (answers[0]) and not (restarted):
+            _restart_receiver()
+            restarted = True
+        if time.monotonic() >= deadline:
+            raise IngestCredentialError(
+                f"the receiver at {ingest_url!r} did not take ingest credential "
+                f"{INGEST_CREDENTIAL!r} within {INGEST_TOKEN_WAIT_SECONDS:.0f}s"
+            )
+        time.sleep(3)
+
+
+def _ensure_ingest_org(*, base: str, token: str) -> None:
+    """Create the org the ingest credential is bound to when the engine lacks it."""
+    url = f"{base}/orgs/{quote(INGEST_ORG, safe='')}"
+    status, answer = _api_get_json(timeout=10, token=token, url=url)
+    if status == 200:
+        return
+    if status != 404:
+        raise IngestCredentialError(f"GET {url!r} returned HTTP {status}: {answer}")
+    status, answer = _api_post_json(
+        payload=_detection.org_request(name=INGEST_ORG), token=token, url=f"{base}/orgs"
+    )
+    if status != 201:
+        raise IngestCredentialError(f"POST /orgs returned HTTP {status}: {answer}")
+
+
+def _ingest_answers(*, ingest_url: str, minted: str) -> tuple[bool, bool] | None:
+    """Whether the receiver refuses a token it does not hold and takes `minted`, None while it does not answer."""
+    try:
+        refused = (
+            http_post(body=b"", timeout=10, token="not-a-token", url=ingest_url) == 401
+        )
+        taken = http_post(body=b"", timeout=10, token=minted, url=ingest_url) != 401
+    except OSError:
+        return None
+    return refused, taken
+
+
+def _ingest_bearer(*, base: str, ingest_url: str) -> str:
+    """The token to send marked events with: one minted or recorded through an engine session, else the recorded one, else none."""
+    session = login(base=base)
+    if session.token:
+        return ingest_token(base=base, ingest_url=ingest_url, token=session.token)
+    bearer = _recorded_ingest_token()
+    held = "the recorded ingest token" if bearer else "no ingest token"
+    _print(msg=f"      no engine session, sending with {held}: {session.fault}")
+    return bearer
+
+
+def _record_ingest_token(*, minted: str) -> None:
+    """Record the minted token in env/engine.env, atomically and keeping the file's mode."""
+    path = _env_file(component=ENGINE_COMPONENT)
+    text = path.read_text(encoding="utf-8")
+    _replace_file(
+        path=path,
+        text=_dotenv_with(
+            banner=INGEST_TOKEN_BANNER, key=INGEST_TOKEN_KEY, text=text, value=minted
+        ),
+    )
+
+
+def _recorded_ingest_token() -> str:
+    """The ingest token env/engine.env records, empty while it holds none."""
+    return _env_file_values(component=ENGINE_COMPONENT).get(INGEST_TOKEN_KEY, "")
+
+
+def _restart_receiver() -> None:
+    """Restart dfe-receiver, which reads whether its HTTP listener authenticates only as it starts."""
+    name = _container_name(service="dfe-receiver")
+    _print(
+        msg=f"      restarting {name!r} so its HTTP listener takes ingest credentials"
+    )
+    subprocess.run(
+        ["docker", "restart", name],
+        capture_output=True,
+        check=True,
+        encoding="utf-8",
+        errors="replace",
+        text=True,
+        timeout=60,
+    )
+
+
+def ingest_token(*, base: str, ingest_url: str, token: str) -> str:
+    """The token the scripts send receiver records with: the one env/engine.env records while the engine holds the credential, else a newly minted one the receiver has taken."""
+    url = f"{base}/orgs/{quote(INGEST_ORG, safe='')}/ingest-credentials/{INGEST_CREDENTIAL}"
+    recorded = _recorded_ingest_token()
+    status, answer = _api_get_json(timeout=10, token=token, url=url)
+    if status == 200 and recorded:
+        return recorded
+    if status == 200:
+        status, answer = _api_post_json(payload={}, token=token, url=f"{url}/rotate")
+    elif status == 404:
+        _ensure_ingest_org(base=base, token=token)
+        status, answer = api_put_json(
+            headers={"If-None-Match": "*"},
+            payload={
+                "default_org": INGEST_ORG,
+                "listeners": ["http"],
+                "orgs": [INGEST_ORG],
+            },
+            token=token,
+            url=url,
+        )
+    minted = answer.get("token") if isinstance(answer, dict) else None
+    if (status not in (200, 201)) or (not (minted)):
+        raise IngestCredentialError(
+            f"ingest credential {INGEST_CREDENTIAL!r} was not minted: HTTP {status}: {answer}"
+        )
+    _record_ingest_token(minted=minted)
+    _await_ingest_token(ingest_url=ingest_url, minted=minted)
+    return minted
+
+
 def api_put_json(
-    *, payload: dict, timeout: int = 30, token: str = "", url: str
+    *,
+    headers: dict[str, str] | None = None,
+    payload: dict,
+    timeout: int = 30,
+    token: str = "",
+    url: str,
 ) -> tuple[int, typing.Any]:
     """PUT JSON and return (status, decoded body), over whichever transport reaches it."""
     if not (_over_network(url=url)):
-        return http_put_json(payload=payload, timeout=timeout, token=token, url=url)
+        return http_put_json(
+            headers=headers, payload=payload, timeout=timeout, token=token, url=url
+        )
     status, body = _exec_request(
-        method="PUT", payload=payload, timeout=timeout, token=token, url=url
+        headers=headers,
+        method="PUT",
+        payload=payload,
+        timeout=timeout,
+        token=token,
+        url=url,
     )
     return status, _decoded(raw=body)
 
@@ -2613,6 +2780,12 @@ def main() -> int:
         _print(msg=f"FAIL  {reason}")
         return 1
 
+    try:
+        bearer = _ingest_bearer(base=_engine_base(), ingest_url=ingest_url)
+    except (ApiUnreachable, IngestCredentialError) as reason:
+        _print(msg=f"FAIL  {reason}")
+        return 1
+
     marker = _run_id()
     _print(msg=f"Injecting {EVENT_COUNT} marked event(s) via {service} at {ingest_url}")
     _print(msg=f"Marker: {marker}")
@@ -2622,9 +2795,15 @@ def main() -> int:
     for index in range(EVENT_COUNT):
         body = marked_event(marker=marker, source=table, extra={"post_sequence": index})
         try:
-            status = http_post(ingest_url, body)
+            status = http_post(body=body, token=bearer, url=ingest_url)
         except Exception as error:  # noqa: BLE001
             _print(msg=f"FAIL  ingest request raised: {error}")
+            return 1
+        if status == 401:
+            _print(
+                msg=f"FAIL  {ingest_url!r} refused the {INGEST_CREDENTIAL!r} token: "
+                f"{INGEST_TOKEN_KEY} in env/engine.env is missing or stale"
+            )
             return 1
         if status < 200 or status >= 300:
             _print(msg=f"FAIL  ingest returned HTTP {status} from {ingest_url}")

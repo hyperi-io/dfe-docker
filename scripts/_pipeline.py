@@ -94,6 +94,7 @@ def _request(
     url: str,
     content_type: str = "",
     data: bytes | None = None,
+    headers: dict[str, str] | None = None,
     timeout: int,
     token: str = "",
 ) -> tuple[int, str]:
@@ -104,6 +105,8 @@ def _request(
     all still raises, because there is nothing to report.
     """
     request = Request(url, data=data, method=method)
+    for name, value in ((headers) or ({})).items():
+        request.add_header(name, value)
     if content_type:
         request.add_header("Content-Type", content_type)
     if token:
@@ -130,12 +133,19 @@ def _decoded(raw: str) -> typing.Any:
 
 
 def _json_call(
-    *, method: str, payload: dict, timeout: int, token: str, url: str
+    *,
+    headers: dict[str, str] | None = None,
+    method: str,
+    payload: dict,
+    timeout: int,
+    token: str,
+    url: str,
 ) -> tuple[int, typing.Any]:
     """Send a JSON body by one method and return (status, decoded body)."""
     status, raw = _request(
         content_type="application/json",
         data=json.dumps(obj=payload).encode(),
+        headers=headers,
         method=method,
         timeout=timeout,
         token=token,
@@ -165,11 +175,21 @@ def http_post_json(
 
 
 def http_put_json(
-    *, payload: dict, timeout: int = 30, token: str = "", url: str
+    *,
+    headers: dict[str, str] | None = None,
+    payload: dict,
+    timeout: int = 30,
+    token: str = "",
+    url: str,
 ) -> tuple[int, typing.Any]:
     """PUT JSON and return (status, decoded body), for callers that need the body."""
     return _json_call(
-        method="PUT", payload=payload, timeout=timeout, token=token, url=url
+        headers=headers,
+        method="PUT",
+        payload=payload,
+        timeout=timeout,
+        token=token,
+        url=url,
     )
 
 
@@ -178,19 +198,26 @@ def http_post(
     body: str | bytes,
     content_type: str = "application/json",
     timeout: int = 10,
+    token: str = "",
 ) -> int:
-    """POST a body and return the HTTP status."""
+    """POST a body, as the bearer of `token` when one is given, and return the HTTP status."""
     return _request(
-        method="POST",
-        url=url,
         content_type=content_type,
         data=body.encode() if isinstance(body, str) else body,
+        method="POST",
         timeout=timeout,
+        token=token,
+        url=url,
     )[0]
 
 
 def post_all(
-    url: str, bodies: typing.Sequence[str], *, workers: int, timeout: int = 10
+    url: str,
+    bodies: typing.Sequence[str],
+    *,
+    workers: int,
+    timeout: int = 10,
+    token: str = "",
 ) -> list[int]:
     """POST every body from `workers` concurrent senders, returning each status in order.
 
@@ -201,7 +228,7 @@ def post_all(
 
     def _send(body: str) -> int:
         try:
-            return http_post(url, body, timeout=timeout)
+            return http_post(body=body, timeout=timeout, token=token, url=url)
         except (HTTPException, OSError):
             return 0
 
