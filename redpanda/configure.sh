@@ -31,13 +31,37 @@ features_in_use() {
     echo "${BASH_REMATCH[1]}"
 }
 
-main() {
-    # Redpanda turns both on by default and counts them as Enterprise features, which lapse with its trial.
+# Redpanda turns both on by default and counts them as Enterprise features, which lapse with its trial.
+turn_features_off() {
     rpk_admin cluster config set partition_autobalancing_mode node_add
     rpk_admin cluster config set core_balancing_continuous false
+}
+
+# Beta and untested against a paid licence: applies REDPANDA_LICENSE and requires no violation.
+apply_licence() {
+    local file json rc=0
+    file="$(mktemp)"
+    printf '%s' "${REDPANDA_LICENSE}" > "${file}"
+    rpk_admin cluster license set --path "${file}" || rc=$?
+    rm -f "${file}"
+    if (( rc != 0 )); then
+        turn_features_off
+        die "rpk refused REDPANDA_LICENSE (exit ${rc}), so both trial Enterprise features are off"
+    fi
+    json="$(rpk_admin cluster license info --format json)"
+    [[ "${json}" == *'"license_violation":false'* ]] || die "licence applied but Redpanda reports a violation: ${json}"
+    log "Enterprise licence applied (beta)"
+}
+
+main() {
     # Below the floor the broker refuses writes rather than fill the disk. The cap bounds one partition.
     rpk_admin cluster config set storage_min_free_bytes "${MIN_FREE_BYTES}"
     rpk_admin cluster config set retention_bytes "${RETENTION_BYTES}"
+    if [[ -n "${REDPANDA_LICENSE:-}" ]]; then
+        apply_licence
+        return
+    fi
+    turn_features_off
 
     local in_use
     in_use="$(features_in_use)"

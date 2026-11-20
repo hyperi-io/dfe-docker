@@ -334,6 +334,44 @@ def test_a_broker_enterprise_feature_fails_post_before_any_claim(
     assert needle in capsys.readouterr().err
 
 
+def test_a_licensed_broker_is_not_held_to_the_trial_features(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """REDPANDA_LICENSE opts into Enterprise features, so POST leaves them to the config one-shot."""
+    _stub_main(monkeypatch)
+    monkeypatch.setenv(post.BROKER_LICENCE_VAR, "licence")
+    monkeypatch.setattr(
+        post,
+        "_broker_enterprise_features",
+        lambda: pytest.fail("a licensed broker was checked for trial features"),
+    )
+    monkeypatch.setattr(
+        post, "_broker_licence_info", lambda: {"license_violation": False}
+    )
+    monkeypatch.setattr(post, "_wait_schema_converged", lambda: 1)
+
+    # 1 from the stubbed schema wait, which runs only once the broker check has let the run through.
+    assert post.main() == 1
+
+
+@pytest.mark.usefixtures("dotenv")
+def test_a_licensed_broker_with_a_violation_fails_post(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture
+) -> None:
+    """A licence rpk accepted can still lapse, so POST reads the violation flag itself."""
+    _stub_main(monkeypatch)
+    monkeypatch.setenv(post.BROKER_LICENCE_VAR, "licence")
+    monkeypatch.setattr(
+        post, "_broker_licence_info", lambda: {"license_violation": True}
+    )
+    monkeypatch.setattr(
+        post, "_wait_schema_converged", lambda: pytest.fail("a claim ran")
+    )
+
+    assert post.main() == 1
+    assert "licence violation" in capsys.readouterr().err
+
+
 @pytest.mark.usefixtures("dotenv")
 def test_a_profile_that_can_prove_nothing_does_not_pass(
     monkeypatch: pytest.MonkeyPatch,

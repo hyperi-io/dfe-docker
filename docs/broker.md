@@ -42,6 +42,7 @@ The broker and ClickHouse share the docker data disk, and every source and route
 | `REDPANDA_RETENTION_BYTES` | 10 GiB | The most one partition keeps, beside the seven-day time retention |
 
 Both apply at the next `make up`, to a running stack and a fresh volume alike. The 5 GiB floor fits a laptop. A host with a large data disk raises it in `.env`, for example `REDPANDA_MIN_FREE_BYTES=21474836480` for 20 GiB. With less free disk than the floor, the broker reports itself unhealthy (`rpk cluster health` lists it under high disk usage) and dfe-engine does not start.
+With a Redpanda Enterprise licence (beta, and untested against a paid licence), set `REDPANDA_LICENSE` to the licence string in `.env`. The one-shot then applies it, leaves Redpanda's default features on, and exits 1 if `rpk cluster license info` reports a violation. POST skips the trial-feature check on a licensed broker.
 
 ## Redpanda ships in developer mode
 

@@ -259,6 +259,8 @@ HYPERDX_NETWORK_BASE = "http://dfe-hyperdx-proxy:8000"
 API_EXEC_MARGIN_SECONDS = 10
 # The bundled broker, which redpanda/configure.sh keeps off Redpanda's Enterprise features.
 BROKER_SERVICE = "kafka-redpanda"
+# Set, it opts the broker into Enterprise features under that licence (docs/broker.md).
+BROKER_LICENCE_VAR = "REDPANDA_LICENSE"
 
 # The console login's name, and its password, which a forced change writes back to the same file.
 ADMIN_NAME_KEY = "DFE_ENGINE_AUTH_LOCAL_ADMIN_NAME"
@@ -505,8 +507,8 @@ def _container_started(name: str) -> int | None:
     return int(started.replace(tzinfo=datetime.UTC).timestamp())
 
 
-def _broker_enterprise_features() -> list[str] | None:
-    """Return the Enterprise features the bundled broker has in use, or None when it is not running.
+def _broker_licence_info() -> dict | None:
+    """Return the bundled broker's `rpk cluster license info` JSON, or None when it is not running.
 
     Raises:
         BrokerLicenceError: When compose or rpk cannot say.
@@ -540,11 +542,30 @@ def _broker_enterprise_features() -> list[str] | None:
             f"{' '.join(command)} exited {result.returncode}: {result.stderr.strip()}"
         )
     try:
-        features = json.loads(result.stdout)["enterprise_features_in_use"]
-    except (json.JSONDecodeError, KeyError, TypeError) as error:
+        info = json.loads(result.stdout)
+    except json.JSONDecodeError as error:
         raise BrokerLicenceError(
-            f"{' '.join(command)} gave no feature list: {error!r}"
+            f"{' '.join(command)} gave no JSON, so no feature list: {error!r}"
         ) from error
+    if not isinstance(info, dict):
+        raise BrokerLicenceError(f"{' '.join(command)} gave no feature list: {info!r}")
+    return info
+
+
+def _broker_enterprise_features() -> list[str] | None:
+    """Return the Enterprise features the bundled broker has in use, or None when it is not running.
+
+    Raises:
+        BrokerLicenceError: When compose or rpk cannot say.
+    """
+    info = _broker_licence_info()
+    if info is None:
+        return None
+    features = info.get("enterprise_features_in_use")
+    if not isinstance(features, list):
+        raise BrokerLicenceError(
+            f"rpk cluster license info gave no feature list: {info!r}"
+        )
     return [str(feature) for feature in features]
 
 
@@ -2641,10 +2662,16 @@ def main() -> int:
         return 1
 
     # An Enterprise feature in use when Redpanda's trial licence lapses blocks broker upgrades.
+    # A licensed broker (beta) may use them, and the config one-shot checks it for a violation instead.
+    licensed = bool(os.environ.get(BROKER_LICENCE_VAR))
     try:
-        features = _broker_enterprise_features()
+        features = [] if licensed else _broker_enterprise_features()
+        info = _broker_licence_info() if licensed else None
     except BrokerLicenceError as error:
         _print(msg=f"FAIL  {BROKER_SERVICE} licence unreadable: {error}")
+        return 1
+    if info is not None and info.get("license_violation") is not False:
+        _print(msg=f"FAIL  {BROKER_SERVICE} reports a licence violation: {info!r}")
         return 1
     if features:
         _print(
