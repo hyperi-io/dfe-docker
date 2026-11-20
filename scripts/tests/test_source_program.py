@@ -71,23 +71,40 @@ def test_a_checkout_with_no_pipeline_is_refused(tmp_path: Path) -> None:
 
 
 @pytest.mark.parametrize(
-    ("case", "named"),
-    [("filebeat", True), ("elastic", False), ("vector", False), ("cloudwatch", False)],
+    ("case", "pipeline", "want"),
+    [
+        ("filebeat", True, "named"),
+        ("elastic", True, None),
+        ("vector", True, None),
+        ("cloudwatch", True, None),
+        ("filebeat", False, "refused"),
+    ],
 )
 def test_only_the_filebeat_case_names_the_vrl_checkout(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, case: str, named: bool
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    case: str,
+    pipeline: bool,
+    want: str | None,
 ) -> None:
     """The corpus is dfe-engine's, so dfe-transform-vrl is read only for filebeat's pipeline."""
-    marker = tmp_path / test_source.VRL_MARKER
-    marker.parent.mkdir(parents=True)
-    marker.write_text(". = .\n", encoding="utf-8")
+    if pipeline:
+        marker = tmp_path / test_source.VRL_MARKER
+        marker.parent.mkdir(parents=True)
+        marker.write_text(". = .\n", encoding="utf-8")
     monkeypatch.setenv(test_source.VRL_REPO_ENV_VAR, str(tmp_path))
-    found = test_source._case_repo(
-        case=case,
-        cases=test_source.VRL_CASES,
-        env_var=test_source.VRL_REPO_ENV_VAR,
-        flag=None,
-        marker=test_source.VRL_MARKER,
-    )
-    assert (found == tmp_path.resolve()) is named
-    assert (found is None) is not named
+
+    def found() -> Path | None:
+        return test_source._case_repo(
+            case=case,
+            cases=test_source.VRL_CASES,
+            env_var=test_source.VRL_REPO_ENV_VAR,
+            flag=None,
+            marker=test_source.VRL_MARKER,
+        )
+
+    if want == "refused":
+        with pytest.raises(SystemExit, match="filebeat.vrl"):
+            found()
+    else:
+        assert found() == (tmp_path.resolve() if want == "named" else None)

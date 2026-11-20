@@ -54,7 +54,7 @@ Environment:
                            DFE_STACK_VERSION when that tag exists, else the
                            default branch
     DFE_PROOF_ENGINE_REPO  dfe-engine clone URL (default: the public repo), whose
-                           synthetic corpus the source walk feeds
+                           tests/e2e/filebeat_cases.yaml the source walk feeds
     DFE_PROOF_ENGINE_REF   branch or tag; default is the tag in DFE_ENGINE_VERSION
                            (the environment, else .env) when that tag exists, else
                            the default branch
