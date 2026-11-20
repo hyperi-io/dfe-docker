@@ -88,6 +88,8 @@ HOSTED_INSTANCES_KEY = "DFE_ENGINE_DEPLOYMENT_HOSTED_INSTANCES"
 CREDENTIAL_COMMAND_KEY = "DFE_ENGINE_DEPLOYMENT_CREDENTIAL_COMMAND"
 # What the engine names to apply a change a running service cannot take in place, which a published install runs from the file's own OCI reference
 APPLY_COMMAND_KEY = "DFE_ENGINE_DEPLOYMENT_APPLY_COMMAND"
+# What the engine's rotate-password answer tells an operator of a published install, which has no env/engine.env to edit
+ROTATION_COMMAND_KEY = "DFE_ENGINE_DEPLOYMENT_ROTATION_COMMAND"
 ENV_DIR_NAME = "env"
 # The one host path the stack binds, which the collector reads the host's CPUs from
 HOST_PROC = "/proc"
@@ -361,6 +363,14 @@ def apply_command(*, tag: str) -> str:
     return f"docker compose -f oci://{DEFAULT_IMAGE}:{tag} up -d --force-recreate {{service}}"
 
 
+def rotation_command(*, tag: str) -> str:
+    """The command that sets a new admin password in the file published under `tag`: secrets-init stores it, then the engine restarts to read it."""
+    return (
+        f"{secrets_init.ADMIN_PASSWORD_VAR}=<new password> docker compose -f "
+        f"oci://{DEFAULT_IMAGE}:{tag} up -d --force-recreate {SECRETS_SERVICE} {ENGINE_SERVICE}"
+    )
+
+
 def login_command(*, tag: str) -> str:
     """The command that prints the admin login of the file published under `tag`, which the engine's login page tells an operator to run."""
     return f"docker compose -f oci://{DEFAULT_IMAGE}:{tag} {LOGIN_VERB}"
@@ -529,6 +539,9 @@ def published(*, container_prefix: str, model: Mapping, name: str, tree: Path) -
             environment[CREDENTIAL_COMMAND_KEY] = login_command(tag=PUBLISHED_STACK_TAG)
             environment[HOSTED_INSTANCES_KEY] = ""
             environment[APPLY_COMMAND_KEY] = apply_command(tag=PUBLISHED_STACK_TAG)
+            environment[ROTATION_COMMAND_KEY] = rotation_command(
+                tag=PUBLISHED_STACK_TAG
+            )
         if "environment" in original or env_dir:
             service["environment"] = environment
         if "ports" in original:
@@ -643,6 +656,7 @@ def demo_overlay(
     engine_env[HOSTED_INSTANCES_KEY] = demo_hosted(roles=roles)
     engine_env[APPLY_COMMAND_KEY] = apply_command(tag=demo_pack_tag(pack=pack))
     engine_env[CREDENTIAL_COMMAND_KEY] = login_command(tag=demo_pack_tag(pack=pack))
+    engine_env[ROTATION_COMMAND_KEY] = rotation_command(tag=demo_pack_tag(pack=pack))
     if HUNT_RUNNER_SERVICE not in services:
         raise PublishError(
             f"the demo model has no {HUNT_RUNNER_SERVICE!r} to cap the pack's hunts on"
