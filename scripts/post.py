@@ -2650,8 +2650,9 @@ def main() -> int:
         _print(
             msg=f"FAIL  {BROKER_SERVICE} has Enterprise features in use: {', '.join(features)}"
         )
+        # A stack started without dfe-engine never ran the one-shot, so the hint starts it.
         _print(
-            msg="      redpanda/configure.sh turns each off: docker compose logs kafka-redpanda-config"
+            msg="      run `docker compose up kafka-redpanda-config`, which turns each off, then this check again"
         )
         return 1
 
