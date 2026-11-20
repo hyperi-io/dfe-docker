@@ -53,13 +53,13 @@ Environment:
     DFE_PROOF_INFRA_REF    branch or tag; default is the pinned
                            DFE_STACK_VERSION when that tag exists, else the
                            default branch
-    DFE_PROOF_ENGINE_REPO  dfe-engine clone URL (default: the public repo)
+    DFE_PROOF_ENGINE_REPO  dfe-engine clone URL (default: the public repo), whose
+                           synthetic corpus the source walk feeds
     DFE_PROOF_ENGINE_REF   branch or tag; default is the tag in DFE_ENGINE_VERSION
                            (the environment, else .env) when that tag exists, else
                            the default branch
     DFE_PROOF_TRANSFORM_VRL_REPO  dfe-transform-vrl clone URL (default: the
-                           public repo); the source walk reads its pipeline and
-                           corpus
+                           public repo), whose pipeline the filebeat case uploads
     DFE_PROOF_TRANSFORM_VRL_REF   branch or tag; default is the tag in
                            DFE_TRANSFORM_VRL_VERSION, resolved as for dfe-engine
     DFE_PROOF_TRANSFORM_VECTOR_REPO  dfe-transform-vector clone URL (default:
@@ -238,7 +238,7 @@ def engine_ref(repo: str) -> str:
 
 
 def transform_vrl_ref(repo: str) -> str:
-    """The dfe-transform-vrl ref matching the running stack: the source walk reads its pipeline and corpus."""
+    """The dfe-transform-vrl ref matching the running stack: the filebeat case uploads its pipeline."""
     return pinned_ref(
         repo,
         name="dfe-transform-vrl",

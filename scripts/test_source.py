@@ -68,10 +68,10 @@ ARCHIVER_SERVICE = "dfe-archiver"
 # The runner appends the hinted service as $1; $0 is the checkout make runs in.
 APPLY_SCRIPT = 'exec make -C "$0" --no-print-directory apply SERVICES="$1"'
 RUNNER_PATH = Path("scripts") / "acceptance" / "source" / "run.py"
-# The cases that push the one corpus repo, which also holds elastic's cisco_ios module, so fetched cloudwatch passes no --transform-repo
-CORPUS_CASES = ("filebeat", "elastic", "vector")
-CORPUS_REPO_ENV_VAR = "DFE_TRANSFORM_VRL_REPO"
-CORPUS_MARKER = Path("pipelines") / "filebeat" / "filebeat.vrl"
+# The case that uploads dfe-transform-vrl's bundled pipeline. The corpus every pushed case feeds is dfe-engine's, so no other case passes --transform-repo
+VRL_CASES = ("filebeat",)
+VRL_REPO_ENV_VAR = "DFE_TRANSFORM_VRL_REPO"
+VRL_MARKER = Path("pipelines") / "filebeat" / "filebeat.vrl"
 # The checkout the vector case uploads its own app's pipeline from, else the runner looks beside the engine repo
 PROGRAM_CASES = ("vector",)
 PROGRAM_REPO_ENV_VAR = "DFE_TRANSFORM_VECTOR_REPO"
@@ -97,7 +97,7 @@ def _infra_repo(flag: str | None) -> Path:
 
 
 def _engine_repo(flag: str | None) -> Path:
-    """Where the corpus wrapper lives, without hardcoding one developer's tree."""
+    """Where the corpus and its reader live, without hardcoding one developer's tree."""
     candidate = flag or os.environ.get("DFE_ENGINE_REPO")
     if not candidate:
         sibling = PROJECT_DIR.parent / "dfe-engine"
@@ -322,12 +322,12 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "--engine-repo",
         default=None,
-        help="dfe-engine checkout the corpus wrapper lives in",
+        help="dfe-engine checkout holding the synthetic corpus and its reader",
     )
     parser.add_argument(
         "--transform-repo",
         default=None,
-        help="dfe-transform-vrl checkout holding the corpus the pushed cases feed",
+        help="dfe-transform-vrl checkout whose pipeline the filebeat case uploads",
     )
     parser.add_argument(
         "--program-repo",
@@ -370,10 +370,10 @@ def main(argv: list[str] | None = None) -> int:
     engine = _engine_repo(args.engine_repo)
     transform = _case_repo(
         case=args.case,
-        cases=CORPUS_CASES,
-        env_var=CORPUS_REPO_ENV_VAR,
+        cases=VRL_CASES,
+        env_var=VRL_REPO_ENV_VAR,
         flag=args.transform_repo,
-        marker=CORPUS_MARKER,
+        marker=VRL_MARKER,
     )
     program = _case_repo(
         case=args.case,
