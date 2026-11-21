@@ -442,10 +442,13 @@ tested whether an image built on it still needs the floor, so keep it.
 
 ### ClickHouse memory: merges leave room for inserts
 
-ClickHouse refuses inserts and queries with code 241 (`MEMORY_LIMIT_EXCEEDED`) at 90% of its container limit. On the demo packs the cause was background merges of the wide source tables, which have hundreds of columns each and hold a write buffer per column. `config/clickhouse/merge-memory.xml` sets two things:
+ClickHouse refuses inserts and queries with code 241 (`MEMORY_LIMIT_EXCEEDED`) at its server limit. On the demo packs the cause was background merges of wide tables, which hold a write buffer per column. `config/clickhouse/merge-memory.xml` sets these:
 
-- `merges_mutations_memory_usage_to_ram_ratio` is the share of the server limit running merges may hold. Past it no new merge starts.
+- `max_server_memory_usage_to_ram_ratio` 0.75 sets the server limit. Memory ClickHouse does not track then stays inside the container, so a merge gets a 241 rather than the kernel's OOM kill and a restart loop.
+- `merges_mutations_memory_usage_soft_limit` caps the memory running merges may hold at 512 MiB. Past it no new merge starts. The ratio setting is gone, because the soft limit overrides it: with the ratio at 0.25 the server still logged 512 MiB, not 768 MiB.
 - `max_compress_block_size` is the write buffer per column. At 64 KiB every merge and insert of a wide table needs less memory.
+
+`config/clickhouse/system-logs.xml` keeps `metric_log` and `asynchronous_metric_log` for one day, because the shipped dashboards read them, and removes four system logs nothing reads. Changing a TTL renames the existing table to `<table>_0` and keeps its old TTL. A stack that already has a removed table keeps it on its volume. Once on such a stack, run `DROP TABLE` for `system.metric_log_0`, `system.asynchronous_metric_log_0`, `system.trace_log`, `system.query_metric_log`, `system.background_schedule_pool_log` and `system.aggregated_zookeeper_log`. Do not drop the live `metric_log` or `asynchronous_metric_log`.
 
 ## Deploying, upgrading and the self test
 
