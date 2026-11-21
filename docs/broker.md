@@ -1,7 +1,7 @@
 <!--
 Project:   dfe-docker
 File:      docs/broker.md
-Purpose:   The Kafka broker: the two backends, Redpanda's developer mode and its licence
+Purpose:   The Kafka broker: the two backends, Redpanda's developer mode, its licence and Enterprise features
 Language:  Markdown
 
 License:   BUSL-1.1
@@ -19,6 +19,20 @@ Compose interpolates every service before profiles filter anything, so `REDPANDA
 Redpanda's core is source-available under the BSL. It is not OSS. Local development and CI sit inside its Additional Use Grant. A partner or edge deployment needs a licence check of its own and that check is a question for a human, not an assumption.
 
 If it does not come back clean, `KAFKA_BACKEND=apache` selects Apache Kafka (Apache-2.0) and the Apache path pulls and runs no BSL-licensed artefact.
+
+## No Enterprise features
+
+A new Redpanda cluster starts on a 30-day trial licence with two Enterprise features on by default, continuous partition balancing and continuous core balancing. If either is still on when the trial lapses, the broker keeps its data but refuses upgrades to new feature releases.
+
+The `kafka-redpanda-config` one-shot runs on every start, after the broker is healthy. It runs `redpanda/configure.sh`, which sets `partition_autobalancing_mode` to `node_add` and `core_balancing_continuous` to `false`, then exits 1 if `rpk cluster license info` still lists any Enterprise feature. POST runs the same licence check, so `make up`, `make dev` and `make ci` fail on a broker that has one on.
+
+A running stack picks the fix up at its next `make up`, because the one-shot applies it to the existing cluster. To apply it now, without a restart:
+
+```bash
+docker compose exec kafka-redpanda rpk cluster config set partition_autobalancing_mode node_add
+docker compose exec kafka-redpanda rpk cluster config set core_balancing_continuous false
+docker compose exec kafka-redpanda rpk cluster license info
+```
 
 ## Redpanda ships in developer mode
 

@@ -257,6 +257,8 @@ HYPERDX_NETWORK_BASE = "http://dfe-hyperdx-proxy:8000"
 # Long enough for docker to start the exec on a loaded host, on top of whatever
 # the request itself is given.
 API_EXEC_MARGIN_SECONDS = 10
+# The bundled broker, kept off Redpanda's Enterprise features
+BROKER_SERVICE = "kafka-redpanda"
 
 # The console login's name, and its password, which a forced change writes back to the same file.
 ADMIN_NAME_KEY = "DFE_ENGINE_AUTH_LOCAL_ADMIN_NAME"
@@ -422,6 +424,10 @@ class ApiUnreachable(Exception):
     """An API on the compose network could not be reached at all."""
 
 
+class BrokerLicenceError(Exception):
+    """The running broker could not report which Enterprise features it uses."""
+
+
 # Run inside API_EXEC_SERVICE by `_exec_request`, which is why the request arrives
 # in an environment variable rather than on the command line. It prints the status
 # on the first line and the body after it, and exits non-zero when there was no
@@ -506,6 +512,45 @@ def _container_started(name: str) -> int | None:
     if started.year == 1:
         return None
     return int(started.replace(tzinfo=datetime.UTC).timestamp())
+
+
+def _broker_enterprise_features() -> list[str] | None:
+    """Return the Enterprise features the bundled broker has in use, or None when it is not running. Raises BrokerLicenceError when compose or rpk cannot say."""
+    listed = subprocess.run(
+        ["docker", "compose", "ps", "--quiet", BROKER_SERVICE],
+        capture_output=True,
+        check=False,
+        encoding="utf-8",
+        errors="replace",
+        text=True,
+        timeout=API_EXEC_MARGIN_SECONDS,
+    )
+    if listed.returncode != 0:
+        raise BrokerLicenceError(f"docker compose ps failed: {listed.stderr.strip()!r}")
+    ids = listed.stdout.split()
+    if not (ids):
+        return None
+    command = ["rpk", "cluster", "license", "info", "--format", "json"]
+    result = subprocess.run(
+        ["docker", "exec", ids[0], *command],
+        capture_output=True,
+        check=False,
+        encoding="utf-8",
+        errors="replace",
+        text=True,
+        timeout=API_EXEC_MARGIN_SECONDS,
+    )
+    if result.returncode != 0:
+        raise BrokerLicenceError(
+            f"{' '.join(command)} exited {result.returncode}: {result.stderr.strip()!r}"
+        )
+    try:
+        features = json.loads(result.stdout)["enterprise_features_in_use"]
+    except (json.JSONDecodeError, KeyError, TypeError) as error:
+        raise BrokerLicenceError(
+            f"{' '.join(command)} gave no feature list: {error!r}"
+        ) from error
+    return [str(feature) for feature in features]
 
 
 def _log_window(name: str) -> str:
@@ -2756,6 +2801,22 @@ def main() -> int:
         for name, value in weak:
             _print(msg=f"FAIL  {name} is still the built-in default ({value!r})")
         _print(msg="      run `make init` to generate real values")
+        return 1
+
+    # A feature on when the trial lapses blocks broker upgrades
+    try:
+        features = _broker_enterprise_features()
+    except BrokerLicenceError as error:
+        _print(msg=f"FAIL  {BROKER_SERVICE!r} licence unreadable: {error}")
+        return 1
+    if features:
+        _print(
+            msg=f"FAIL  {BROKER_SERVICE!r} has Enterprise features in use: {', '.join(features)}"
+        )
+        # A stack without dfe-engine never ran the one-shot
+        _print(
+            msg="      run `docker compose up kafka-redpanda-config`, which turns each off, then this check again"
+        )
         return 1
 
     # Ahead of every claim below, which all read objects this pass makes.

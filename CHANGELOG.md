@@ -3,6 +3,14 @@
 Rendered by CI and committed back at the end of a release -- do not edit by
 hand. Release notes also appear on the GitHub Releases page, one per tag.
 
+## [1.0.10](https://github.com/hyperi-io/dfe-docker/compare/v1.0.9...v1.0.10) (2026-11-20)
+
+### Bug Fixes
+
+* **broker:** turn off Redpanda's trial Enterprise features ([a3ae247](https://github.com/hyperi-io/dfe-docker/commit/a3ae2476bbb19bb806cbee6219028197a279a70b))
+* **demo:** replay a captured Feodo Tracker poll ([3d1956c](https://github.com/hyperi-io/dfe-docker/commit/3d1956c2d2f1ecbb4a55b38f33cbdadc38b8920d))
+* **post:** show how to turn off a broker Enterprise feature ([31d6c4c](https://github.com/hyperi-io/dfe-docker/commit/31d6c4c8146298e0d4b83356392c0d23d700a00d))
+
 ## [1.0.9](https://github.com/hyperi-io/dfe-docker/compare/v1.0.8...v1.0.9) (2026-11-17)
 
 ### Bug Fixes

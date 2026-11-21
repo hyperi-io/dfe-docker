@@ -324,6 +324,37 @@ def test_one_failed_claim_fails_the_run() -> None:
 
 
 @pytest.mark.usefixtures("dotenv")
+@pytest.mark.parametrize(
+    ("licence", "needle"),
+    [
+        (["core_balancing_continuous"], "docker compose up kafka-redpanda-config"),
+        (post.BrokerLicenceError("rpk exited 1"), "licence unreadable"),
+    ],
+    ids=["feature-in-use", "unreadable"],
+)
+def test_a_broker_enterprise_feature_fails_post_before_any_claim(
+    capsys: pytest.CaptureFixture,
+    monkeypatch: pytest.MonkeyPatch,
+    licence: list[str] | Exception,
+    needle: str,
+) -> None:
+    def licence_info() -> list[str]:
+        if isinstance(licence, Exception):
+            raise licence
+        return licence
+
+    def no_claim() -> None:
+        pytest.fail("a claim ran")
+
+    _stub_main(monkeypatch=monkeypatch)
+    monkeypatch.setattr(post, "_broker_enterprise_features", licence_info)
+    monkeypatch.setattr(post, "_wait_schema_converged", no_claim)
+
+    assert post.main() == 1
+    assert needle in capsys.readouterr().err
+
+
+@pytest.mark.usefixtures("dotenv")
 def test_a_profile_that_can_prove_nothing_does_not_pass(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -656,10 +687,73 @@ def _completed(*, code: int = 0, stdout: str = "", stderr: str = "") -> _Complet
     return _Completed(code=code, stdout=stdout, stderr=stderr)
 
 
+_LICENCE = '{"type":"free_trial","enterprise_features_in_use":%s}'
+
+
+@pytest.mark.parametrize(
+    ("ps", "rpk", "expected"),
+    [
+        (_completed(stdout=""), None, None),
+        (_completed(stdout="b0b\n"), _completed(stdout=_LICENCE % "[]"), []),
+        (
+            _completed(stdout="b0b\n"),
+            _completed(stdout=_LICENCE % '["core_balancing_continuous"]'),
+            ["core_balancing_continuous"],
+        ),
+        (_completed(code=1, stderr="no project"), None, "docker compose ps failed"),
+        (_completed(stdout="b0b\n"), _completed(code=1, stderr="refused"), "exited 1"),
+        (
+            _completed(stdout="b0b\n"),
+            _completed(stdout="LICENSE INFORMATION"),
+            "no feature list",
+        ),
+        (
+            _completed(stdout="b0b\n"),
+            _completed(stdout='{"type":"free_trial"}'),
+            "no feature list",
+        ),
+    ],
+    ids=[
+        "no-broker",
+        "none-in-use",
+        "in-use",
+        "ps-fails",
+        "rpk-fails",
+        "not-json",
+        "no-field",
+    ],
+)
+def test_the_broker_licence_check_reads_rpk_json_from_this_projects_broker(
+    monkeypatch: pytest.MonkeyPatch,
+    ps: _Completed,
+    rpk: _Completed | None,
+    expected: list[str] | str | None,
+) -> None:
+    def run(args: list[str], **kwargs: object) -> _Completed | None:
+        if args[:3] == ["docker", "compose", "ps"]:
+            assert post.BROKER_SERVICE in args
+            return ps
+        assert args[:3] == ["docker", "exec", "b0b"]
+        return rpk
+
+    monkeypatch.setattr(post.subprocess, "run", run)
+
+    if isinstance(expected, str):
+        with pytest.raises(post.BrokerLicenceError, match=expected):
+            post._broker_enterprise_features()
+    else:
+        assert post._broker_enterprise_features() == expected
+
+
 def _stub_main(monkeypatch: pytest.MonkeyPatch) -> None:
     """Let main() run without a stack or the developer's own environment, its caller holding the `dotenv` fixture so their .env is never read."""
+
+    def no_broker() -> None:
+        return None
+
     monkeypatch.delenv("DFE_POST_ENABLED", raising=False)
     monkeypatch.setattr(post, "_weak_secrets", list)
+    monkeypatch.setattr(post, "_broker_enterprise_features", no_broker)
     monkeypatch.setattr(post, "_cleanup", lambda *args: None)
     # Unstubbed, this polls the engine's /readyz for 300s against whatever the
     # developer happens to have on the host, and passes on a live stack.
