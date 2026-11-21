@@ -13,7 +13,7 @@ Reads service_profiles.yaml, resolves the active profile (overridable via DFE_PR
 For kafka transport, KAFKA_BACKEND selects the backend (defaults to redpanda).
 
 A profile declares its whole FOOTPRINT, not just the data plane. The optional
-``core`` / ``kafbat`` / ``hyperdx`` / ``clickhouse`` / ``otel`` / ``auth`` keys
+``core`` / ``kafbat`` / ``hyperdx`` / ``clickhouse`` / ``otel`` / ``gnmic`` / ``auth`` keys
 say which of those components run; an absent key keeps the historical default, so
 a profile that declares none behaves exactly as it did before the keys existed.
 
@@ -132,6 +132,11 @@ HYPERDX_SERVICES = [
 
 OTEL_ENABLED_ENV_VAR = "DFE_OTEL_ENABLED"
 OTEL_SERVICES = ["otel-collector"]
+
+# gnmic pushes the gNMI telemetry it subscribes to over OTLP to the bundled collector, so it runs only beside it
+GNMIC_ENABLED_ENV_VAR = "DFE_GNMIC_ENABLED"
+GNMIC_SERVICES = ["gnmic"]
+
 # Where the services push when the bundled collector runs and .env names no
 # endpoint of its own. Empty exports nothing, which is the stack default.
 OTEL_ENDPOINT_ENV_VAR = "DFE_OTEL_EXPORTER_ENDPOINT"
@@ -200,6 +205,7 @@ FOOTPRINT_KEYS = {
     "auth": (AUTH_ENABLED_ENV_VAR, False),
     "clickhouse": ("DFE_CLICKHOUSE_ENABLED", True),
     "core": (CORE_ENABLED_ENV_VAR, True),
+    "gnmic": (GNMIC_ENABLED_ENV_VAR, False),
     "hyperdx": (HYPERDX_ENABLED_ENV_VAR, False),
     "kafbat": ("KAFBAT_ENABLED", True),
     "otel": (OTEL_ENABLED_ENV_VAR, False),
@@ -393,6 +399,11 @@ def _footprint(*, profile: dict[str, object], profile_name: str) -> dict[str, bo
         resolved[key] = _env_truthy(default=fallback, name=env_var)
     # dfe-hyperdx signs callers in with dfe-engine's token, so without core nobody could sign in
     resolved["hyperdx"] = resolved["hyperdx"] and resolved["core"]
+    if resolved["gnmic"] and not resolved["otel"]:
+        raise ProfileError(
+            header=profile_name,
+            msg=f"gnmic pushes to the bundled collector, so {GNMIC_ENABLED_ENV_VAR} needs the otel footprint on",
+        )
     return resolved
 
 
@@ -713,6 +724,8 @@ def main(argv: Sequence[str] = ()) -> int:
             profiles.append("clickhouse")
         if footprint["otel"]:
             profiles.append("otel")
+        if footprint["gnmic"]:
+            profiles.append("gnmic")
         kafka_ui_enabled = False
         if transport == "kafka":
             backend = (
@@ -769,6 +782,8 @@ def main(argv: Sequence[str] = ()) -> int:
             service_list.extend(HYPERDX_SERVICES)
         if footprint["otel"]:
             service_list.extend(OTEL_SERVICES)
+        if footprint["gnmic"]:
+            service_list.extend(GNMIC_SERVICES)
         if footprint["auth"]:
             if kafka_ui_enabled:
                 service_list.extend(AUTH_KAFBAT_SERVICES)

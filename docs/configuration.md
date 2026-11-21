@@ -48,6 +48,7 @@ The sections follow [.env.example](../.env.example): stack-wide settings first, 
 | `DFE_CORE_ENABLED`                               | Toggle to turn on core components                                                    | `true`                                                              |
 | `DFE_HYPERDX_ENABLED`                            | Toggle to start dfe-hyperdx + its proxy + DocumentDB. Ignored with `DFE_CORE_ENABLED=false`, since dfe-hyperdx signs callers in with the engine's token | unset, the profile decides                                          |
 | `DFE_OTEL_ENABLED`                               | Toggle to start the collector                                                        | unset, the profile decides                                          |
+| `DFE_GNMIC_ENABLED`                              | Toggle to start gnmic, which streams gNMI telemetry to the collector. Needs the collector. [gnmi.md](gnmi.md) | `false`                                                             |
 | `KAFBAT_ENABLED`                                 | Toggle to turn on Kafbat                                                             | `true`                                                              |
 
 ### Host exposure

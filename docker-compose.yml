@@ -612,6 +612,33 @@ services:
         required: false
 
   # ============================================================
+  # gnmic
+  # ============================================================
+
+  gnmic:
+    image: ghcr.io/openconfig/gnmic:${DFE_GNMIC_VERSION:-0.49.1@sha256:d148508c7ab3e5fd446759648d529409c1e37c2cc99c8b681078d120ca1a302b}
+    container_name: ${DFE_CONTAINER_PREFIX:-}dfe-gnmic
+    profiles: ["gnmic"]
+    restart: unless-stopped
+    extends: {file: compose/limits.yml, service: limits-sidecar}
+    command: ["subscribe", "--config", "/etc/gnmic/gnmic.yaml"]
+    environment:
+      GNMIC_PASSWORD: ${DFE_GNMIC_PASSWORD:-}
+      GNMIC_USERNAME: ${DFE_GNMIC_USERNAME:-}
+    volumes:
+      - ./config/${DFE_GNMIC_CONFIG:-gnmic/gnmic.yaml}:/etc/gnmic/gnmic.yaml:ro
+    depends_on:
+      otel-collector:
+        condition: service_started
+        required: false
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:7890/api/v1/healthz"]
+      interval: 10s
+      timeout: 3s
+      start_period: 10s
+      retries: 5
+
+  # ============================================================
   # HyperDX
   # ============================================================
 
