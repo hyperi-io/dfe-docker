@@ -12,18 +12,18 @@
   generate.py
   generate.py replay --target http://dfe-receiver:8080/ingest --sources ran-kpis,core-probes --loop
 
-Seeded, so a rerun writes the same bytes. Each file covers one generated day of 1,440 minutes, 21:00 to 21:00 UTC on the clock its load curve follows, so it ends on the evening busy hour. The replay shifts the day to end at the moment it starts, so minute 1440 is "now" and the last hour on the console holds every fault below.
+Seeded, so a rerun writes the same bytes. Each file covers one generated day of 1,440 minutes, 21:00 to 21:00 UTC on the clock its load curve follows, so it ends on the evening busy hour. The replay shifts the day to end at the moment it starts, so minute 1440 is "now" and the last hour on the console holds two cycles of every fault below.
 
-ran-kpis is one record per cell per five-minute reporting period: 20 cells on 7 sites, each with downlink and uplink throughput, average RSRP, downlink PRB utilisation and active users, all following a daily load curve (quiet at 04:00, a morning ramp, a busy hour near 20:00 on the residential and airport sites, midday in the CBD). core-probes is about 6,000 probe records over the same day on the same curve: NGAP (N2), GTPv2-C (S11) and Diameter (S6a, Gx) procedures, each with its result, cause code and latency.
+ran-kpis is one record per cell per five-minute reporting period: 20 cells on 7 sites, each with downlink and uplink throughput, average RSRP, downlink PRB utilisation and active users, all following a daily load curve (quiet at 04:00, a morning ramp, a busy hour near 20:00 on the residential and airport sites, midday in the CBD). core-probes is about 6,000 probe records over the same day on the same curve, plus the two S6a attempts that open each burst: NGAP (N2), GTPv2-C (S11) and Diameter (S6a, Gx) procedures, each with its result, cause code and latency.
 
 The replay moves every `timestamp` so the newest record lands now and sends the whole day behind it at once, so the console is full from its first screen. With --loop it then goes round again a period later, the day's span rounded up to whole hours, sending each record as its time comes. Standard library only, because it runs in the stack's bare Python image.
 
-The faults, each a dashboard's story, by minute of the generated day:
+The faults, each a dashboard's story. Each one repeats in every 30-minute cycle of the day, from minute 0 (21:00 UTC on the clock), so every 15-minute window holds one. The minutes below are offsets into each cycle:
 
-  minute 1380 (20:00) to 1415  RSRP drop on NTH03-B: 13 dB down, as a failed antenna feeder does. Its users move to NTH03-A and NTH03-C and its throughput falls with the signal.
-  minute 1395 (20:15) to 1425  Throughput collapse on AIR07-A: the radio is healthy and the users stay, but the backhaul carries a tenth of the traffic, so PRB utilisation falls with it.
-  minute 1405 (20:25) to 1415  CBD01-C goes silent: no counters for two reporting periods. Its users land on CBD01-A and CBD01-B.
-  minute 1406 (20:26) to 1418  S6a Update-Location failure burst: the users CBD01-C dropped register again at once. The HSS answers DIAMETER_TOO_BUSY (3004) or nothing, DIAMETER_UNABLE_TO_DELIVER (3002), with latency up twentyfold.
+  minutes 0 to 10   RSRP drop on NTH03-B: 13 dB down, as a failed antenna feeder does. Its users move to NTH03-A and NTH03-C and its throughput falls with the signal.
+  minutes 6 to 20   Throughput collapse on AIR07-A: the radio is healthy and the users stay, but the backhaul carries a tenth of the traffic, so PRB utilisation falls with it.
+  minutes 8 to 18   CBD01-C goes silent: no counters for two reporting periods. Its users land on CBD01-A and CBD01-B.
+  minutes 9 to 19   S6a Update-Location burst: the users CBD01-C dropped register again at once, so the first attempt is refused with DIAMETER_TOO_BUSY (3004) and the rest of the burst runs with latency up twentyfold.
 """
 
 import argparse
@@ -77,10 +77,15 @@ CELLS = [
     ("AIR07-C", "AIR07", "NR", "n78", 145, 1150.0, -89.5, "airport"),
 ]
 
-RSRP_DROP = ("NTH03-B", 1380, 1415)
-BACKHAUL = ("AIR07-A", 1395, 1425)
-SILENT = ("CBD01-C", 1405, 1415)
-HSS_BURST = (1406, 1418)
+# Two five-minute periods a cycle keep each cell's median normal
+FAULT_CYCLE_MINUTES = 30
+# [start, end) minutes in each cycle, the gap after 20 under 15
+RSRP_DROP = ("NTH03-B", 0, 10)
+BACKHAUL = ("AIR07-A", 6, 20)
+SILENT = ("CBD01-C", 8, 18)
+HSS_BURST = (9, 19)
+# Update-Location attempts opening each burst, the first refused
+STORM_UPDATE_LOCATIONS = 2
 
 # (protocol, interface, procedure, share, ms, fail rate, causes)
 PROCEDURES = [
@@ -218,8 +223,8 @@ def _bump(*, centre: float, hour: float, width: float) -> float:
 
 
 def _in(*, minute: int, window: tuple[int, int]) -> bool:
-    """Whether a minute of the day falls inside a fault's [start, end) window."""
-    return window[0] <= minute < window[1]
+    """Whether a minute falls inside a fault's [start, end) window in its cycle."""
+    return window[0] <= minute % FAULT_CYCLE_MINUTES < window[1]
 
 
 def _kpi(
@@ -325,27 +330,28 @@ def _post(*, batch: Sequence[dict], target: str) -> None:
         time.sleep(RETRY_SECONDS)
 
 
-def _probe(*, level: float, minute: int, procedure: tuple, rng: random.Random) -> dict:
-    """One probe record of `procedure` in the minute starting at `minute`."""
+def _probe(
+    *,
+    level: float,
+    minute: int,
+    procedure: tuple,
+    refused: bool = False,
+    rng: random.Random,
+) -> dict:
+    """One probe record of `procedure` in the minute starting at `minute`, failed with DIAMETER_TOO_BUSY when `refused`."""
     protocol, interface, name, _, median, failure_rate, causes = procedure
     burst = name == "Update-Location" and _in(minute=minute, window=HSS_BURST)
     latency = median * (1.0 + 0.35 * level) * math.exp(rng.gauss(0.0, 0.32))
-    failed = rng.random() < (0.55 if burst else failure_rate)
+    failed = (refused) or (rng.random() < failure_rate)
     if burst:
         latency *= 20.0
     code, cause = SUCCESS[protocol]
-    if failed:
-        if burst:
-            code, cause = rng.choices(
-                [("3004", "DIAMETER_TOO_BUSY"), ("3002", "DIAMETER_UNABLE_TO_DELIVER")],
-                weights=[3, 2],
-            )[0]
-            if code == "3002":
-                latency = TIMEOUT_MS
-        else:
-            code, cause, _ = rng.choices(
-                causes, weights=[weight for *_, weight in causes]
-            )[0]
+    if refused:
+        code, cause = "3004", "DIAMETER_TOO_BUSY"
+    elif failed:
+        code, cause, _ = rng.choices(causes, weights=[weight for *_, weight in causes])[
+            0
+        ]
     source, target = PEERS[interface]
     cell = rng.choice(CELLS)[0]
     while cell == SILENT[0] and _in(minute=minute, window=SILENT[1:]):
@@ -413,16 +419,22 @@ def core_probes(*, rng: random.Random) -> list[dict]:
         picks = []
         for _ in range(_poisson(mean=scale * level, rng=rng)):
             picks.append(rng.choices(PROCEDURES, weights=shares)[0])
-        # The silent cell's users re-register, so these two climb
-        if _in(minute=minute, window=HSS_BURST):
-            storm = _poisson(mean=4.0, rng=rng)
-            picks += [by_name["Update-Location"]] * storm + [
-                by_name["InitialUEMessage"]
-            ] * (storm // 2)
         minute_records = [
             _probe(level=level, minute=minute, procedure=procedure, rng=rng)
             for procedure in picks
         ]
+        # Each burst opens with the silent cell's users re-registering
+        if minute % FAULT_CYCLE_MINUTES == HSS_BURST[0]:
+            storm = by_name["Update-Location"]
+            minute_records.append(
+                _probe(
+                    level=level, minute=minute, procedure=storm, refused=True, rng=rng
+                )
+            )
+            minute_records += [
+                _probe(level=level, minute=minute, procedure=storm, rng=rng)
+                for _ in range(STORM_UPDATE_LOCATIONS - 1)
+            ]
         records += sorted(minute_records, key=timestamp)
     return records
 
@@ -433,9 +445,11 @@ def ran_kpis(*, rng: random.Random) -> list[dict]:
     for minute in range(0, DAY_MINUTES, PERIOD_MINUTES):
         shares = _shares(minute=minute)
         for cell in CELLS:
+            # Drawn before the skip, keeping the seeded stream aligned
+            row = _kpi(cell=cell, minute=minute, rng=rng, shares=shares)
             if cell[0] == SILENT[0] and _in(minute=minute, window=SILENT[1:]):
                 continue
-            records.append(_kpi(cell=cell, minute=minute, rng=rng, shares=shares))
+            records.append(row)
     return records
 
 

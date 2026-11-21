@@ -64,7 +64,7 @@ from _common import (  # noqa: E402
     _resolved_services,
     seed_password_key,
 )
-from _pipeline import ch_int, escape_literal, http_post  # noqa: E402
+from _pipeline import ch_int, escape_literal, http_post, ingest_token  # noqa: E402
 from init import _LEN_CREDENTIAL, _generate_secret  # noqa: E402
 from post import (  # noqa: E402
     ADMIN_NAME_KEY,
@@ -83,10 +83,8 @@ from post import (  # noqa: E402
     _refresh_access_summary,
     _replace_file,
     _request_token,
-    IngestCredentialError,
     _without_passwords,
     api_put_json,
-    ingest_token,
     login,
 )
 
@@ -481,7 +479,7 @@ def _seed_kind(
     return failed
 
 
-def _send(*, base: str, records: list[dict], source: str, token: str) -> None:
+def _send(*, records: list[dict], source: str) -> None:
     """Post each record to the receiver labelled for its source, and wait until all of them land in its table."""
     if not (_profile_mk_value(key=APP_CONFIG_DIR_KEY)):
         raise SeedError(
@@ -489,10 +487,6 @@ def _send(*, base: str, records: list[dict], source: str, token: str) -> None:
             f"route for source {source!r}"
         )
     service, url = _ingest_target(table=source)
-    try:
-        bearer = ingest_token(base=base, ingest_url=url, token=token)
-    except IngestCredentialError as error:
-        raise SeedError(str(error)) from error
     if service != "dfe-receiver":
         raise SeedError(
             f"events go through dfe-receiver, which routes them by _source, and this "
@@ -505,7 +499,7 @@ def _send(*, base: str, records: list[dict], source: str, token: str) -> None:
         )
     for record in records:
         status = http_post(
-            body=_tagged(record=record, source=source), token=bearer, url=url
+            body=_tagged(record=record, source=source), token=ingest_token(), url=url
         )
         if (status < 200) or (status >= 300):
             raise SeedError(f"{url!r} answered HTTP {status} for source {source!r}")
@@ -515,11 +509,9 @@ def _send(*, base: str, records: list[dict], source: str, token: str) -> None:
 
 def _send_events(
     *,
-    base: str,
     events: list[tuple[str, list[dict]]],
     per_source_apps: list[str],
     sources: dict[str, dict],
-    token: str,
 ) -> int:
     """Send every events file's records whose source this stack can run, and return 1 at the first that cannot be sent or seen to land."""
     try:
@@ -532,7 +524,7 @@ def _send_events(
             if reason:
                 _print(msg=f"SKIP events for source {source!r}: {reason}")
                 continue
-            _send(base=base, records=records, source=source, token=token)
+            _send(records=records, source=source)
     except (
         http.client.HTTPException,
         IngestNotReady,
@@ -647,18 +639,8 @@ def main() -> int:
         except SeedError as error:
             _print(msg=f"FAIL {error}")
             return 1
-        base = _engine_base()
-        try:
-            token = _token(base=base)
-        except (*ENGINE_FAULTS, SeedError) as error:
-            _print(msg=f"FAIL {error}")
-            return 1
         return _send_events(
-            base=base,
-            events=events,
-            per_source_apps=per_source_apps,
-            sources=dict(sources),
-            token=token,
+            events=events, per_source_apps=per_source_apps, sources=dict(sources)
         )
 
     try:

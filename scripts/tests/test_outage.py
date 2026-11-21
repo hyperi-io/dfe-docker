@@ -1109,6 +1109,14 @@ class _Refusing(BaseHTTPRequestHandler):
         return
 
 
+def _sent_in(*, count: int, load: _outage.SteadyLoad, phase: str) -> None:
+    """Wait until `count` requests went out in `phase`, so a loaded host waits longer rather than sends fewer."""
+    deadline = time.monotonic() + 30
+    while sum(record.phase == phase for record in load.sent()) < count:
+        assert time.monotonic() < deadline, f"fewer than {count} requests in {phase!r}"
+        time.sleep(0.01)
+
+
 def test_the_load_records_every_answer_in_the_phase_it_was_sent() -> None:
     server = ThreadingHTTPServer(("127.0.0.1", 0), _Refusing)
     threading.Thread(target=server.serve_forever, daemon=True).start()
@@ -1122,9 +1130,9 @@ def test_the_load_records_every_answer_in_the_phase_it_was_sent() -> None:
     )
     try:
         load.start()
-        time.sleep(0.2)
+        _sent_in(count=2, load=load, phase="before")
         load.phase = "during"
-        time.sleep(0.2)
+        _sent_in(count=2, load=load, phase="during")
     finally:
         load.stop()
         server.shutdown()
@@ -1157,7 +1165,7 @@ class _Taking(BaseHTTPRequestHandler):
 
 
 def _poisoned_load(**poison: object) -> tuple[list[_outage.Sent], list[dict]]:
-    """Run a two-worker load through `before` and `during`, returning what went out."""
+    """Run a two-worker load through `before` and `during`, returning what went out. Nine `during` requests cover at least seven sequence numbers claimed after the switch, so one is a poison slot at every 4."""
     _Taking.bodies.clear()
     server = ThreadingHTTPServer(("127.0.0.1", 0), _Taking)
     threading.Thread(daemon=True, target=server.serve_forever).start()
@@ -1175,9 +1183,9 @@ def _poisoned_load(**poison: object) -> tuple[list[_outage.Sent], list[dict]]:
     )
     try:
         load.start()
-        time.sleep(0.2)
+        _sent_in(count=4, load=load, phase="before")
         load.phase = "during"
-        time.sleep(0.2)
+        _sent_in(count=9, load=load, phase="during")
     finally:
         load.stop()
         server.shutdown()

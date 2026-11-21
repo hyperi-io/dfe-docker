@@ -64,15 +64,22 @@ _READ_ONLY_WORDS = {
 
 _LOGGER = {"level": "information", "size": "50M", "count": "3"}
 _SYSTEM_LOG_TTL = {
-    "asynchronous_metric_log": "event_date + INTERVAL 7 DAY DELETE",
-    "metric_log": "event_date + INTERVAL 7 DAY DELETE",
+    # Shipped dashboards read these, a one-day TTL bounds the scan
+    "asynchronous_metric_log": "event_date + INTERVAL 1 DAY DELETE",
+    "metric_log": "event_date + INTERVAL 1 DAY DELETE",
     "part_log": "event_date + INTERVAL 7 DAY DELETE",
     "query_log": "event_date + INTERVAL 30 DAY DELETE",
     "query_views_log": "event_date + INTERVAL 7 DAY DELETE",
     # dfe-hyperdx reads it for its clickhouse_system source
     "text_log": "event_date + INTERVAL 7 DAY DELETE",
 }
-_SWITCHED_OFF = ("trace_log",)
+# Nothing reads them
+_SWITCHED_OFF = (
+    "trace_log",
+    "query_metric_log",
+    "background_schedule_pool_log",
+    "aggregated_zookeeper_log",
+)
 
 
 def _root(*, path: Path) -> ElementTree.Element:
@@ -217,12 +224,16 @@ def test_merges_leave_memory_for_inserts_and_queries() -> None:
 
     # Only these are set, so every other merge default stays
     assert [child.tag for child in root] == [
-        "merges_mutations_memory_usage_to_ram_ratio",
+        "max_server_memory_usage_to_ram_ratio",
+        "merges_mutations_memory_usage_soft_limit",
         "merge_tree",
     ]
-    # Under the image's 0.5, so merges stop short of the limit
-    ratio = _text(path="merges_mutations_memory_usage_to_ram_ratio", root=root)
-    assert 0 < float(ratio) < 0.5
+    # Under the image's 0.9, so untracked memory fits the container
+    server = _text(path="max_server_memory_usage_to_ram_ratio", root=root)
+    assert 0 < float(server) <= 0.8
+    # At most a quarter of the 3 GiB default container
+    merges = _text(path="merges_mutations_memory_usage_soft_limit", root=root)
+    assert 0 < int(merges) <= 768 << 20
     # Under the image's 1 MiB write buffer each column holds
     block = _text(path="merge_tree/max_compress_block_size", root=root)
     assert 0 < int(block) < 1_048_576

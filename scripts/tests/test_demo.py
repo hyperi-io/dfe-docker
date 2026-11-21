@@ -8,6 +8,7 @@
 
 """The checks on `make demo` that need no stack: its committed Sources and events and the pure steps between the engine, the pins and docker."""
 
+import functools
 import importlib.util
 import json
 import re
@@ -1477,6 +1478,47 @@ telco = importlib.util.module_from_spec(_TELCO_SPEC)
 _TELCO_SPEC.loader.exec_module(telco)
 
 
+@functools.cache
+def _fault_row_minutes() -> frozenset[int]:
+    """The minutes holding a fault row: an RSRP-drop or backhaul row, or an S6a burst probe."""
+    kpis, probes = _telco_day()
+    kpi_faults = {
+        telco.RSRP_DROP[0]: telco.RSRP_DROP[1:],
+        telco.BACKHAUL[0]: telco.BACKHAUL[1:],
+    }
+    minutes = {
+        _minute(record=record)
+        for record in kpis
+        if record["cell"] in kpi_faults
+        and telco._in(minute=_minute(record=record), window=kpi_faults[record["cell"]])
+    }
+    minutes |= {
+        _minute(record=record)
+        for record in probes
+        if record["procedure"] == "Update-Location"
+        and telco._in(minute=_minute(record=record), window=telco.HSS_BURST)
+    }
+    return frozenset(minutes)
+
+
+def _minute(*, record: dict) -> int:
+    """The minute of the generated day a record's timestamp falls in."""
+    when = telco.datetime.fromisoformat(record["timestamp"]).timestamp()
+    return int((when - telco.START.timestamp()) // 60)
+
+
+@functools.cache
+def _telco_day() -> tuple[list[dict], list[dict]]:
+    """The generated ran-kpis and core-probes records, built once for the telco tests."""
+    rng = telco.random.Random(telco.SEED)
+    return telco.ran_kpis(rng=rng), telco.core_probes(rng=rng)
+
+
+def _window_id(start: int) -> str:
+    """The test id of the 15-minute window starting at `start`."""
+    return f"minute-{start}"
+
+
 class TestTelcoGenerator:
     @staticmethod
     def _kpis(*, lines: list[str], root: Path) -> Path:
@@ -1501,7 +1543,9 @@ class TestTelcoGenerator:
     def test_counters_stay_inside_what_a_cell_can_report(self) -> None:
         records = telco.ran_kpis(rng=telco.random.Random(telco.SEED))
 
-        assert len(records) == 288 * 20 - 2
+        assert len(records) == 288 * 20 - 2 * (
+            telco.DAY_MINUTES // telco.FAULT_CYCLE_MINUTES
+        )
         for record in records:
             assert 0 < record["prb_util_dl_pct"] <= 100
             assert -140 <= record["rsrp_dbm"] <= -44
@@ -1509,45 +1553,62 @@ class TestTelcoGenerator:
             assert record["ul_throughput_mbps"] >= 0
             assert record["active_users"] >= 0
 
-    def test_each_fault_lands_in_its_window(self) -> None:
+    def test_each_fault_lands_in_its_window_in_every_cycle(self) -> None:
+        def inside(*, record: dict, window: tuple[int, int]) -> bool:
+            return telco._in(minute=_minute(record=record), window=window)
 
-        def cell(*, first: int, last: int, name: str) -> list[dict]:
-            return [
-                r
-                for r in kpis
-                if r["cell"] == name and first <= minute(record=r) < last
-            ]
+        kpis, probes = _telco_day()
+        cycles = telco.DAY_MINUTES // telco.FAULT_CYCLE_MINUTES
 
-        def minute(*, record: dict) -> int:
-            when = telco.datetime.fromisoformat(record["timestamp"]).timestamp()
-            return int((when - start) // 60)
-
-        rng = telco.random.Random(telco.SEED)
-        kpis = telco.ran_kpis(rng=rng)
-        probes = telco.core_probes(rng=rng)
-        start = telco.START.timestamp()
-
-        dropped = cell(first=1380, last=1415, name="NTH03-B")
-        before = cell(first=1350, last=1380, name="NTH03-B")
+        nth = [r for r in kpis if r["cell"] == "NTH03-B"]
+        dropped = [r for r in nth if inside(record=r, window=telco.RSRP_DROP[1:])]
+        healthy = [r for r in nth if not (inside(record=r, window=telco.RSRP_DROP[1:]))]
         assert (
-            max(r["rsrp_dbm"] for r in dropped) < min(r["rsrp_dbm"] for r in before) - 8
+            max(r["rsrp_dbm"] for r in dropped)
+            < min(r["rsrp_dbm"] for r in healthy) - 8
         )
-        collapsed = cell(first=1395, last=1425, name="AIR07-A")
-        healthy = cell(first=1365, last=1395, name="AIR07-A")
-        assert max(r["dl_throughput_mbps"] for r in collapsed) < 0.2 * min(
-            r["dl_throughput_mbps"] for r in healthy
-        )
-        assert cell(first=1405, last=1415, name="CBD01-C") == []
-        assert len(cell(first=1395, last=1425, name="CBD01-C")) == 4
 
-        burst = [
+        air = [r for r in kpis if r["cell"] == "AIR07-A"]
+        for cycle in range(cycles):
+            # Load moves throughput over the day, so compare within a cycle
+            in_cycle = [
+                r
+                for r in air
+                if _minute(record=r) // telco.FAULT_CYCLE_MINUTES == cycle
+            ]
+            collapsed = [
+                r["dl_throughput_mbps"]
+                for r in in_cycle
+                if inside(record=r, window=telco.BACKHAUL[1:])
+            ]
+            healthy = [
+                r["dl_throughput_mbps"]
+                for r in in_cycle
+                if not (inside(record=r, window=telco.BACKHAUL[1:]))
+            ]
+            assert max(collapsed) < 0.2 * min(healthy), cycle
+
+        silent = [r for r in kpis if r["cell"] == "CBD01-C"]
+        assert not ([r for r in silent if inside(record=r, window=telco.SILENT[1:])])
+        assert len(silent) == 288 - 2 * cycles
+
+        refused = [
             r
             for r in probes
-            if r["procedure"] == "Update-Location" and 1406 <= minute(record=r) < 1418
+            if r["procedure"] == "Update-Location" and r["cause"] == "DIAMETER_TOO_BUSY"
         ]
-        assert sum(r["result"] == "failure" for r in burst) > 0.3 * len(burst)
+        assert len(refused) == cycles
+        assert all(inside(record=r, window=telco.HSS_BURST) for r in refused)
         for record in probes:
             assert 0 < record["latency_ms"] <= telco.TIMEOUT_MS
+
+    @pytest.mark.parametrize("start", range(0, telco.DAY_MINUTES, 15), ids=_window_id)
+    def test_every_fifteen_minute_window_holds_a_fault_row(self, start: int) -> None:
+        held = _fault_row_minutes()
+
+        assert any(minute in held for minute in range(start, start + 15)), (
+            f"minutes {start} to {start + 15} hold no fault row"
+        )
 
     def test_reads_records_oldest_first(self, tmp_path: Path) -> None:
         root = self._kpis(

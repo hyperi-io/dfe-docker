@@ -16,7 +16,7 @@ Copyright: (c) 2026 HYPERI PTY LIMITED
 
 `make post` makes up to seven claims. Each one it asserts must hold and it ends by printing how many it asserted and which it skipped. A run passes with at least one claim asserted and none failed, so read that line: once the bootstrap admin is retired, the observability, console, hunts and routing claims have no login to run with and skip.
 
-- Ingest: Three marked events posted at the profile's ingest edge come back as those exact rows in `dfe.main` inside 60s. Without a login it sends the [ingest token](seeding.md#what-each-target-creates) `env/engine.env` records.
+- Ingest: Three marked events posted at the profile's ingest edge come back as those exact rows in `dfe.main` inside 60s.
 - Self-monitoring, when a collector is running. Rows in the `dfe.otel_*` tables NEWER than five minutes and a row in `dfe.otel_logs` under each of `dfe-engine`, `dfe-loader` and `dfe-receiver` written since that container started. On the gRPC tier the loader logs at startup and is quiet after it, so a five-minute window can age its only lines out while the earlier claims run. Every service that pushes has fresh metric rows under its own name and the hunt runner reports `dfe_hunt_backlog` and `dfe_hunt_tick_duration_seconds`.
 - Observability, when dfe-hyperdx is running. Its API returns the six seeded sources and at least one provisioned dashboard, read through the proxy that gives it an identity.
 - Console: Those same marked rows read back through the engine query API.

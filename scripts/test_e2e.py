@@ -94,6 +94,7 @@ from _pipeline import (  # noqa: E402
     escape_literal,
     expand_env,
     http_post,
+    ingest_token,
     otel_fresh_counts,
     poll_until,
     post_all,
@@ -1567,14 +1568,6 @@ def verify_config_mounts(ctx, test):
 # - Reads events from a file and sends to the receiver
 # ---------------------------------------------------------------------------
 def send_events(ctx, test_name, marker, data_file_name, database, table, ingest_url):
-    base = post._engine_base()
-    session = post.login(base=base)
-    if not (session.token):
-        error(
-            f"No engine session to mint the ingest credential with: {session.fault}",
-            test_name,
-        )
-    bearer = post.ingest_token(base=base, ingest_url=ingest_url, token=session.token)
     data_file_path = PROJECT_DIR / data_file_name
     if not (data_file_path.exists()):
         error(f"Data file '{data_file_path}' could not be found", test_name)
@@ -1597,7 +1590,7 @@ def send_events(ctx, test_name, marker, data_file_name, database, table, ingest_
     send_errors = 0
     for body, status in zip(
         bodies,
-        post_all(bodies=bodies, token=bearer, url=ingest_url, workers=SEND_WORKERS),
+        post_all(bodies=bodies, url=ingest_url, workers=SEND_WORKERS),
         strict=True,
     ):
         if status < 200 or status >= 300:
@@ -3502,10 +3495,7 @@ def await_hunt_pickup(ctx, test, token, hunt):
 # - Both sets, each event labelled and carrying the hunt's tenant id, until every
 #   one has landed in the table
 # ------------------------------------------------------------------------------
-def send_detection_events(ctx, test, ingest_url, events, tenant, token):
-    bearer = post.ingest_token(
-        base=post._engine_base(), ingest_url=ingest_url, token=token
-    )
+def send_detection_events(ctx, test, ingest_url, events, tenant):
     bodies = _detection.labelled_events(
         marker=test.marker,
         test_name=test.name,
@@ -3516,7 +3506,7 @@ def send_detection_events(ctx, test, ingest_url, events, tenant, token):
     refused = []
     for label, body in bodies:
         try:
-            status = http_post(body=body, token=bearer, url=ingest_url)
+            status = http_post(body=body, token=ingest_token(), url=ingest_url)
         except OSError:
             status = 0
         if status < 200 or status >= 300:
@@ -3750,9 +3740,7 @@ def run_detection(ctx, test, ingest_url):
         created.insert(0, ("hunt", hunt))
 
         print()
-        landed = send_detection_events(
-            ctx, test, ingest_url, events, org.tenant, login.token
-        )
+        landed = send_detection_events(ctx, test, ingest_url, events, org.tenant)
         if landed is None:
             return
         last_load_ms = detection_last_load(test)
@@ -3989,10 +3977,7 @@ def run_search_detection(ctx, test, ingest_url, token):
         if org is None or not (hyperdx_ready(ctx, test, token)):
             return
         print()
-        if (
-            send_detection_events(ctx, test, ingest_url, seeds, org.tenant, token)
-            is None
-        ):
+        if send_detection_events(ctx, test, ingest_url, seeds, org.tenant) is None:
             return
         console = open_console(ctx, test)
         if console is None:
@@ -4048,7 +4033,7 @@ def run_search_detection(ctx, test, ingest_url, token):
             return
 
         print()
-        landed = send_detection_events(ctx, test, ingest_url, events, org.tenant, token)
+        landed = send_detection_events(ctx, test, ingest_url, events, org.tenant)
         if landed is None:
             return
         last_load_ms = detection_last_load(test)

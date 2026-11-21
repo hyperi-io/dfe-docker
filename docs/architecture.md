@@ -202,7 +202,7 @@ Kubernetes is the primary DFE path and Compose is for small environments. Three 
 
 ## Design considerations
 
-**Security.** The console and its Search authenticate. The receiver's HTTP listener takes only bearer tokens once `make post` has made the ingest credential. The other ingest ports, Kafbat and the metrics ports ask for no login, so arm the `auth` profile or put the stack behind a VPN, a tunnel or a firewall ([operating](operating.md)).
+**Security.** The console and its Search authenticate. The receiver's HTTP listener takes only bearer tokens once an ingest credential names it. The other ingest ports, Kafbat and the metrics ports ask for no login, so arm the `auth` profile or put the stack behind a VPN, a tunnel or a firewall ([operating](operating.md)).
 
 **Reliability.** Every app waits for dfe-engine to report healthy, which means its tables and topics exist. Before an app starts, a one-shot runs its `config-check` against the exact config it will use, so a broken config stops `make up` with the app's own error and not a restart loop.
 
