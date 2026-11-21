@@ -425,15 +425,20 @@ def test_events_that_never_land_ask_the_subscription_why(
     )
     monkeypatch.setattr(post, "ch_marker_count", lambda *args, **kwargs: 0)
     monkeypatch.setattr(post, "LAND_TIMEOUT_SECONDS", 0.0)
+    monkeypatch.setattr(post, "ingest_token", lambda: "tok-1")
+    tokens: list[str] = []
 
     def _posted(*args, **kwargs) -> int:
         calls.append("http_post")
+        tokens.append(kwargs.get("token", ""))
         return 200
 
     monkeypatch.setattr(post, "http_post", _posted)
 
     assert post.main() == 1
     assert calls == ["http_post"] * post.EVENT_COUNT + ["_verify_loader_subscription"]
+    # A receiver an ingest credential put in bearer mode refuses a post with no token.
+    assert tokens == ["tok-1"] * post.EVENT_COUNT
 
 
 class _Clock:
@@ -746,6 +751,7 @@ def _stub_main(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv("DFE_POST_ENABLED", raising=False)
     monkeypatch.setattr(post, "_weak_secrets", list)
     monkeypatch.setattr(post, "_broker_enterprise_features", lambda: None)
+    monkeypatch.setattr(post, "ingest_token", lambda: "")
     monkeypatch.setattr(post, "_cleanup", lambda *args: None)
     # Unstubbed, this polls the engine's /readyz for 300s against whatever the
     # developer happens to have on the host, and passes on a live stack.

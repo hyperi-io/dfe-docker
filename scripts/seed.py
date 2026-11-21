@@ -64,7 +64,7 @@ from _common import (  # noqa: E402
     _resolved_services,
     seed_password_key,
 )
-from _pipeline import ch_int, escape_literal, http_post  # noqa: E402
+from _pipeline import ch_int, escape_literal, http_post, ingest_token  # noqa: E402
 from init import _LEN_CREDENTIAL, _generate_secret  # noqa: E402
 from post import (  # noqa: E402
     ADMIN_NAME_KEY,
@@ -467,7 +467,9 @@ def _send(*, records: list[dict], source: str) -> None:
             f"{TARGET_DB}.{source} cannot be read; run `make sources` first"
         )
     for record in records:
-        status = http_post(body=_tagged(record=record, source=source), url=url)
+        status = http_post(
+            body=_tagged(record=record, source=source), url=url, token=ingest_token()
+        )
         if (status < 200) or (status >= 300):
             raise SeedError(f"{url!r} answered HTTP {status} for source {source!r}")
     _await_landing(expected=before + len(records), source=source)

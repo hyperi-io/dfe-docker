@@ -109,6 +109,7 @@ from _pipeline import (  # noqa: E402
     http_post,
     http_post_json,
     http_put_json,
+    ingest_token,
     marked_event,
     otel_fresh_counts,
     poll_until,
@@ -1553,7 +1554,11 @@ def _await_routed_row(*, database: str, name: str) -> int:
         # record takes the catch-all, so the early posts are the wait rather than
         # a failure.
         try:
-            http_post(ingest_url, marked_event(marker=marker, source=name))
+            http_post(
+                ingest_url,
+                marked_event(marker=marker, source=name),
+                token=ingest_token(),
+            )
         except Exception:  # noqa: BLE001 - a refused post is another attempt
             return 0
         return ch_marker_count(database, name, marker) or 0
@@ -2421,7 +2426,7 @@ def _send_hunt_events(
     refused = []
     for label, body in bodies:
         try:
-            status = http_post(ingest_url, body)
+            status = http_post(ingest_url, body, token=ingest_token())
         except OSError:
             status = 0
         if status < 200 or status >= 300:
@@ -2714,7 +2719,7 @@ def main() -> int:
     for index in range(EVENT_COUNT):
         body = marked_event(marker=marker, source=table, extra={"post_sequence": index})
         try:
-            status = http_post(ingest_url, body)
+            status = http_post(ingest_url, body, token=ingest_token())
         except Exception as error:  # noqa: BLE001
             _print(msg=f"FAIL  ingest request raised: {error}")
             return 1

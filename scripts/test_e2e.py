@@ -93,6 +93,8 @@ from _pipeline import (  # noqa: E402
     env_or,
     escape_literal,
     expand_env,
+    http_post,
+    ingest_token,
     otel_fresh_counts,
     poll_until,
     post_all,
@@ -485,23 +487,6 @@ def http_get(url, timeout=5):
     request = Request(url, method="GET")
     with urlopen(request, timeout=timeout) as response:
         return response.read().decode()
-
-
-# ------------------------------------------------------------------------------
-# HTTP Post
-# - Helper to perform a HTTP POST request with set body and content type
-# ------------------------------------------------------------------------------
-def http_post(url, body, content_type="application/json", timeout=10):
-    data = body.encode() if (isinstance(body, str)) else body
-    request = Request(url, data=data, method="POST")
-    request.add_header("Content-Type", content_type)
-    try:
-        with urlopen(request, timeout=timeout) as response:
-            return response.status
-    except URLError as e:
-        if hasattr(e, "code"):
-            return e.code
-        raise
 
 
 # ------------------------------------------------------------------------------
@@ -3514,7 +3499,7 @@ def send_detection_events(ctx, test, ingest_url, events, tenant):
     refused = []
     for label, body in bodies:
         try:
-            status = http_post(ingest_url, body)
+            status = http_post(ingest_url, body, token=ingest_token())
         except OSError:
             status = 0
         if status < 200 or status >= 300:
