@@ -1,5 +1,5 @@
 #  Project:      dfe-docker
-#  File:         scripts/tests/test_demo_theatre_churn.py
+#  File:         scripts/tests/test_demo_theatre_zero_ok_tiles.py
 #  Purpose:      Run the theatre tiles verify.json lists in zero_ok on the stack's ClickHouse over seeded tracks
 #  Language:     Python
 #
@@ -17,6 +17,7 @@ The seeded tracks, per feed:
   steady   reports every minute to now, and at sea turns 30 degrees between reports
   short    a four minute gap, under the five that counts as silent
   recent   reports every minute, then stops six minutes ago, under the seven that counts as dropped
+  speeding reports every minute to now, and at sea changes speed by 2.5 knots between reports
 
 `DFE_CLICKHOUSE_VERSION` names the image tag (tag@digest), else scripts/stack.py reads the pin the stack carries, which needs `oras` on PATH. Without docker the test skips, except under CI, where it fails.
 """
@@ -57,6 +58,7 @@ TRACKS = {
     "steady": list(range(40, -1, -1)),
     "short": [*range(40, 36, -1), *range(33, -1, -1)],
     "recent": list(range(40, 5, -1)),
+    "speeding": list(range(40, -1, -1)),
 }
 
 # What each tile must list, by the feed and the name the tile shows. An air track shows its callsign, and a sea track its MMSI.
@@ -66,6 +68,7 @@ AIR_NAME = {
     "steady": "STDY1",
     "short": "SHRT1",
     "recent": "RCNT1",
+    "speeding": "SPED1",
 }
 SEA_NAME = {
     "back": "230000001",
@@ -73,21 +76,30 @@ SEA_NAME = {
     "steady": "230000003",
     "short": "230000004",
     "recent": "230000005",
+    "speeding": "230000006",
 }
 EXPECTED = {
     "dropped": {("air", AIR_NAME["dropped"]), ("sea", SEA_NAME["dropped"])},
     "back": {("air", AIR_NAME["back"]), ("sea", SEA_NAME["back"])},
-    "movers": {("sea", SEA_NAME["steady"])},
+    "movers": {("sea", SEA_NAME["steady"]), ("sea", SEA_NAME["speeding"])},
 }
-# The sea tracks whose course swings 30 degrees between reports
+# The sea tracks whose course swings 30 degrees, and whose speed swings 2.5 knots, between reports
 TURNING = {"steady"}
+SPEEDING = {"speeding"}
 
 # A tile edited the way a regression would: a threshold moved out of reach of the seeded tracks
-BROKEN = {
-    "dropped": ("INTERVAL 7 MINUTE", "INTERVAL 70 MINUTE"),
-    "back": (">= 300", ">= 3000"),
-    "movers": ("course_change >= 10", "course_change >= 100"),
-}
+# (tile, text, its broken replacement, the track that must then drop out of the tile)
+BROKEN = [
+    ("dropped", "INTERVAL 7 MINUTE", "INTERVAL 70 MINUTE", SEA_NAME["dropped"]),
+    ("back", ">= 300", ">= 3000", SEA_NAME["back"]),
+    ("movers", "course_change >= 10", "course_change >= 100", SEA_NAME["steady"]),
+    (
+        "movers",
+        "abs(speed_change) >= 1)",
+        "abs(speed_change) >= 10)",
+        SEA_NAME["speeding"],
+    ),
+]
 
 
 def listed(*, tile: str, rows: list[dict]) -> set[tuple[str, str]]:
@@ -129,7 +141,7 @@ def seed_sql() -> str:
                         "geometry": {"coordinates": [24.9, 60.1]},
                         "properties": {
                             "cog": 120.0 if kind in TURNING and ago % 2 else 90.0,
-                            "sog": 5.5,
+                            "sog": 8.0 if kind in SPEEDING and ago % 2 else 5.5,
                             "navStat": 0,
                         },
                     },
@@ -173,7 +185,7 @@ def clickhouse_image() -> str:
 def image() -> str:
     if shutil.which("docker") is None:
         if os.environ.get("CI"):
-            pytest.fail("docker is not on PATH, so the churn tiles ran on nothing")
+            pytest.fail("docker is not on PATH, so the zero_ok tiles ran on nothing")
         pytest.skip("docker is not on PATH")
     return clickhouse_image()
 
@@ -216,10 +228,11 @@ def test_tile_lists_exactly_the_seeded_tracks(image: str, tile: str) -> None:
         assert {row["Silent (min)"] for row in rows} == {10}
 
 
-@pytest.mark.parametrize("tile", ["dropped", "back", "movers"])
-def test_a_broken_tile_is_caught(image: str, tile: str) -> None:
-    old, new = BROKEN[tile]
+@pytest.mark.parametrize(("tile", "old", "new", "gone"), BROKEN)
+def test_a_broken_tile_is_caught(
+    image: str, tile: str, old: str, new: str, gone: str
+) -> None:
     sql = tile_sql(tile=tile)
     assert old in sql
     rows = run_tile(image=image, sql=sql.replace(old, new))
-    assert listed(tile=tile, rows=rows) != EXPECTED[tile]
+    assert ("sea", gone) not in listed(tile=tile, rows=rows)
