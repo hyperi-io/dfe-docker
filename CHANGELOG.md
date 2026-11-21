@@ -3,6 +3,12 @@
 Rendered by CI and committed back at the end of a release -- do not edit by
 hand. Release notes also appear on the GitHub Releases page, one per tag.
 
+## [1.0.12](https://github.com/hyperi-io/dfe-docker/compare/v1.0.11...v1.0.12) (2026-11-21)
+
+### Bug Fixes
+
+* **post:** use dfe-docker for ingest ([fda5b21](https://github.com/hyperi-io/dfe-docker/commit/fda5b2106fc86b2ae8343224d3cf438499c4708f))
+
 ## [1.0.11](https://github.com/hyperi-io/dfe-docker/compare/v1.0.10...v1.0.11) (2026-11-21)
 
 ### Bug Fixes
