@@ -175,23 +175,26 @@ services:
         set -eu
         umask 077
         cd /tls
-        # Running containers mount ca and server by subpath, so the directories stay and only their files are replaced
+        # Running containers mount ca and server by subpath, so the directories stay and each file is renamed into place whole
         mkdir -p ca server
         if ! { [ -s ca/ca.crt ] && [ -s server/tls.key ] && [ -s server/tls.crt ] \
             && openssl x509 -checkend 2592000 -noout -in server/tls.crt >/dev/null; }; then
-          rm -f ca/ca.crt server/tls.key server/tls.crt ca.key ca.srl server.csr server.ext
+          rm -f ca/ca.crt.new server/tls.key.new server/tls.crt.new ca.key ca.srl server.csr server.ext
           openssl req -x509 -newkey ec -pkeyopt ec_paramgen_curve:P-384 -nodes -sha384 -days 3650 \
             -subj /CN=dfe-hyperdx-documentdb-ca \
             -addext basicConstraints=critical,CA:TRUE -addext keyUsage=critical,keyCertSign,cRLSign \
-            -keyout ca.key -out ca/ca.crt
+            -keyout ca.key -out ca/ca.crt.new
           openssl req -new -newkey ec -pkeyopt ec_paramgen_curve:P-384 -nodes -sha384 \
-            -subj /CN=hyperdx-documentdb -keyout server/tls.key -out server.csr
+            -subj /CN=hyperdx-documentdb -keyout server/tls.key.new -out server.csr
           printf '%s\n' basicConstraints=critical,CA:FALSE keyUsage=critical,digitalSignature \
             extendedKeyUsage=serverAuth subjectAltName=DNS:hyperdx-documentdb > server.ext
-          openssl x509 -req -in server.csr -CA ca/ca.crt -CAkey ca.key -CAcreateserial -CAserial ca.srl \
-            -days 3650 -sha384 -extfile server.ext -out server/tls.crt
+          openssl x509 -req -in server.csr -CA ca/ca.crt.new -CAkey ca.key -CAcreateserial -CAserial ca.srl \
+            -days 3650 -sha384 -extfile server.ext -out server/tls.crt.new
+          mv server/tls.key.new server/tls.key
+          mv server/tls.crt.new server/tls.crt
+          mv ca/ca.crt.new ca/ca.crt
           rm -f ca.key ca.srl server.csr server.ext
-          echo "hyperdx-documentdb-tls: wrote a new CA and gateway certificate. A running stack serves the old one until 'docker compose restart hyperdx-documentdb', then 'docker compose restart dfe-hyperdx'"
+          echo "hyperdx-documentdb-tls: wrote a new CA and gateway certificate. If the stack is running, run 'docker compose restart hyperdx-documentdb', then 'docker compose restart dfe-hyperdx'"
         fi
         chmod 0755 ca
         chmod 0644 ca/ca.crt
