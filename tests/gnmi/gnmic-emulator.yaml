@@ -1,0 +1,36 @@
+# Project:   dfe-docker
+# File:      tests/gnmi/gnmic-emulator.yaml
+# Purpose:   gnmic config that subscribes to the device emulator scripts/test_gnmi.py starts
+# Language:  YAML
+#
+# License:   BUSL-1.1
+# Copyright: (c) 2026 HYPERI PTY LIMITED
+
+api-server:
+  address: 127.0.0.1:7890
+
+targets:
+  gnmi-emulator:
+    address: gnmi-emulator:9339
+    insecure: true
+    password: lab
+    username: lab
+
+subscriptions:
+  system-processes:
+    mode: stream
+    paths:
+      - openconfig:/system/processes/process
+    sample-interval: 5s
+    stream-mode: sample
+
+outputs:
+  otel-collector:
+    type: otlp
+    endpoint: otel-collector:4317
+    interval: 2s
+    metric-prefix: gnmic
+    protocol: grpc
+    resource-attributes:
+      service.name: gnmic
+    strip-leading-underscore: true

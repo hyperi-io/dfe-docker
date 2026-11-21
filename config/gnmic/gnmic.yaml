@@ -1,0 +1,32 @@
+# Project:   dfe-docker
+# File:      config/gnmic/gnmic.yaml
+# Purpose:   Subscribes to network devices over gNMI and pushes the telemetry to the otel collector
+# Language:  YAML
+#
+# License:   BUSL-1.1
+# Copyright: (c) 2026 HYPERI PTY LIMITED
+
+# gnmic exits until a `targets:` map names a device. docs/gnmi.md has the keys.
+
+api-server:
+  address: 127.0.0.1:7890
+
+subscriptions:
+  interface-counters:
+    mode: stream
+    paths:
+      - /interfaces/interface/state/counters
+    sample-interval: 30s
+    stream-mode: sample
+
+outputs:
+  otel-collector:
+    type: otlp
+    counter-patterns:
+      - "counters"
+    endpoint: otel-collector:4317
+    metric-prefix: gnmic
+    protocol: grpc
+    resource-attributes:
+      service.name: gnmic
+    strip-leading-underscore: true
