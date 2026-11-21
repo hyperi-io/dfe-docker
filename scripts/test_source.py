@@ -57,6 +57,7 @@ from _common import (  # noqa: E402
     _print,
     _published_url,
 )
+import post  # noqa: E402
 from _pipeline import env_or  # noqa: E402
 
 PROJECT_DIR = Path(__file__).resolve().parent.parent
@@ -268,7 +269,11 @@ def _ui_urls(*, bound: str, host: str) -> tuple[str, str]:
 
 
 def _suite_env(
-    *, engine_url: str, found: Mapping[str, str], host: str
+    *,
+    engine_url: str,
+    found: Mapping[str, str],
+    host: str,
+    receiver_token: str = "",
 ) -> dict[str, str]:
     """The DFE_E2E_* block, the same one dfe-ops exports for the Kubernetes lanes.
 
@@ -280,6 +285,11 @@ def _suite_env(
     with, never over .env: make re-reads .env and exports a key it finds in the
     environment with the spaces before that line's comment, which turns any
     value written with an inline comment into one Docker refuses.
+
+    ``receiver_token`` is the ingest credential's token, which the runner sends as
+    a bearer on every receiver post. The receiver's HTTP listener refuses a post
+    without one once that credential exists, and the runner sets no header when
+    DFE_E2E_RECEIVER_TOKEN is absent.
     """
     password = os.environ.get(_ADMIN_PASSWORD_KEY, "")
     if not (password):
@@ -290,10 +300,7 @@ def _suite_env(
     env = dict(found)
     env.update(
         {
-            "DFE_E2E_RECEIVER_URL": env_or(
-                "DFE_RECEIVER_INGEST_URL",
-                f"http://{host}:{env_or('DFE_RECEIVER_HTTP_PORT', '8080')}/ingest",
-            ),
+            "DFE_E2E_RECEIVER_URL": _receiver_url(host=host),
             "DFE_E2E_CH_HOST": host,
             "DFE_E2E_CH_PORT": env_or("CLICKHOUSE_HTTP_PORT", "8123"),
             "DFE_E2E_CH_USER": env_or("CLICKHOUSE_USERNAME", "default"),
@@ -307,7 +314,17 @@ def _suite_env(
             "DFE_E2E_ADMIN_PASSWORD": password,
         }
     )
+    if receiver_token:
+        env["DFE_E2E_RECEIVER_TOKEN"] = receiver_token
     return env
+
+
+def _receiver_url(*, host: str) -> str:
+    """The receiver's ingest URL the runner posts to."""
+    return env_or(
+        "DFE_RECEIVER_INGEST_URL",
+        f"http://{host}:{env_or('DFE_RECEIVER_HTTP_PORT', '8080')}/ingest",
+    )
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -427,7 +444,18 @@ def main(argv: list[str] | None = None) -> int:
     runner += [arg for arg in runner_args if arg != "--"]
 
     _print(msg=f"case {args.case}, console {ui_url}, runner from {infra}")
-    return walk(runner, _suite_env(engine_url=engine_url, found=found, host=host))
+    receiver_token = post._ingest_bearer(
+        base=post._engine_base(), ingest_url=_receiver_url(host=host)
+    )
+    return walk(
+        runner,
+        _suite_env(
+            engine_url=engine_url,
+            found=found,
+            host=host,
+            receiver_token=receiver_token,
+        ),
+    )
 
 
 if __name__ == "__main__":

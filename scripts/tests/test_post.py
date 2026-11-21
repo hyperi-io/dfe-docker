@@ -20,6 +20,8 @@ from __future__ import annotations
 
 import datetime
 import json
+import stat
+from pathlib import Path
 from typing import TypedDict
 
 import pytest
@@ -1874,10 +1876,7 @@ class _CredentialEngine:
 def _credential_engine(
     *, engine: _CredentialEngine, monkeypatch: pytest.MonkeyPatch, recorded: str
 ) -> list[str]:
-    """Route ingest_token's engine calls to `engine`, with `recorded` in env/engine.env, and return the tokens it records."""
-
-    def env_values(*, component: str) -> dict[str, str]:
-        return {post.INGEST_TOKEN_KEY: recorded} if recorded else {}
+    """Route ingest_token's engine calls to `engine`, with `recorded` in the token file, and return the tokens it records."""
 
     def held_org(*, base: str, token: str) -> None:
         """Hold the seed org already."""
@@ -1892,7 +1891,7 @@ def _credential_engine(
     monkeypatch.setattr(post, "_api_get_json", engine.get_json)
     monkeypatch.setattr(post, "_api_post_json", engine.post_json)
     monkeypatch.setattr(post, "api_put_json", engine.put_json)
-    monkeypatch.setattr(post, "_env_file_values", env_values)
+    monkeypatch.setattr(post, "_recorded_ingest_token", lambda: recorded)
     monkeypatch.setattr(post, "_record_ingest_token", record)
     monkeypatch.setattr(post, "_await_ingest_token", taken)
     monkeypatch.setattr(post, "_ensure_ingest_org", held_org)
@@ -1968,6 +1967,22 @@ class TestIngestToken:
             )
 
 
+class TestIngestTokenFile:
+    def test_round_trips_and_is_owner_only(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        token_file = tmp_path / ".tmp" / "ingest-token"
+        monkeypatch.setattr(post, "INGEST_TOKEN_FILE", token_file)
+
+        absent = post._recorded_ingest_token()
+        post._record_ingest_token(minted="first")
+        post._record_ingest_token(minted="second")
+
+        assert (absent, post._recorded_ingest_token()) == ("", "second")
+        assert stat.S_IMODE(token_file.stat().st_mode) == 0o600
+        assert [path.name for path in token_file.parent.iterdir()] == ["ingest-token"]
+
+
 class TestAwaitIngestToken:
     def test_returns_once_the_receiver_takes_the_token(
         self, monkeypatch: pytest.MonkeyPatch
@@ -2022,7 +2037,7 @@ class TestAwaitIngestToken:
 
 
 class IngestBearerCase(TypedDict):
-    """The engine session, the token env/engine.env records and the bearer the marked events go with."""
+    """The engine session, the token file's token and the bearer the marked events go with."""
 
     expected: str
     recorded: str
@@ -2058,13 +2073,10 @@ class TestIngestBearer:
     def test_matches_expected(
         self, monkeypatch: pytest.MonkeyPatch, case: IngestBearerCase
     ) -> None:
-        def env_values(*, component: str) -> dict[str, str]:
-            return {post.INGEST_TOKEN_KEY: case["recorded"]} if case["recorded"] else {}
-
         def logged(*, base: str) -> post.Login:
             return case["session"]
 
-        monkeypatch.setattr(post, "_env_file_values", env_values)
+        monkeypatch.setattr(post, "_recorded_ingest_token", lambda: case["recorded"])
         monkeypatch.setattr(post, "login", logged)
 
         bearer = post._ingest_bearer(

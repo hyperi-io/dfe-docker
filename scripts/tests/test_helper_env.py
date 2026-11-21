@@ -71,6 +71,26 @@ def test_the_runner_starts_make_without_the_keys_dotenv_merged(
     assert env["DFE_E2E_ENGINE_PASSWORD"] == "issued"
 
 
+@pytest.mark.parametrize(
+    ("receiver_token", "expected"),
+    [("ingest-token", "ingest-token"), ("", None)],
+    ids=["token-goes-to-the-runner", "no-token-sets-nothing"],
+)
+def test_the_runner_gets_the_receiver_token_only_when_there_is_one(
+    monkeypatch: pytest.MonkeyPatch, receiver_token: str, expected: str | None
+) -> None:
+    monkeypatch.setenv("DFE_ENGINE_AUTH_LOCAL_ADMIN_PASSWORD", "issued")
+
+    env = test_source._suite_env(
+        engine_url="http://localhost:8003",
+        found={},
+        host="localhost",
+        receiver_token=receiver_token,
+    )
+
+    assert env.get("DFE_E2E_RECEIVER_TOKEN") == expected
+
+
 def test_clickhouse_is_read_on_the_address_the_stack_publishes(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

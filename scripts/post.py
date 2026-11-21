@@ -84,6 +84,7 @@ from _common import (  # noqa: E402
     DOTENV_FILE,
     ENGINE_COMPONENT,
     FALSY,
+    INGEST_TOKEN_FILE,
     _env_file,
     _env_file_values,
     _load_dotenv,
@@ -288,8 +289,6 @@ HUNT_CUSTOMER = "acme"
 # Every script shares it: once one exists, HTTP needs a bearer
 INGEST_CREDENTIAL = "dfe-docker"
 INGEST_ORG = "acme"
-INGEST_TOKEN_KEY = "DFE_INGEST_TOKEN"
-INGEST_TOKEN_BANNER = "## Ingest token the scripts send receiver records with"
 # The receiver re-reads its bearer tokens every 60 seconds
 INGEST_TOKEN_WAIT_SECONDS = 150.0
 # Failed root logins are the detection, and each near miss breaks one half of it.
@@ -2675,20 +2674,26 @@ def _ingest_bearer(*, base: str, ingest_url: str) -> str:
 
 
 def _record_ingest_token(*, minted: str) -> None:
-    """Record the minted token in env/engine.env, atomically and keeping the file's mode."""
-    path = _env_file(component=ENGINE_COMPONENT)
-    text = path.read_text(encoding="utf-8")
-    _replace_file(
-        path=path,
-        text=_dotenv_with(
-            banner=INGEST_TOKEN_BANNER, key=INGEST_TOKEN_KEY, text=text, value=minted
-        ),
-    )
+    """Record the minted token in `INGEST_TOKEN_FILE`, owner-only, through a renamed sibling."""
+    path = INGEST_TOKEN_FILE
+    path.parent.mkdir(exist_ok=True, parents=True)
+    handle, temp = tempfile.mkstemp(dir=path.parent, prefix=f".{path.name}.")
+    try:
+        with os.fdopen(handle, "w", encoding="utf-8", newline="\n") as stream:
+            stream.write(f"{minted}\n")
+        os.chmod(temp, 0o600)
+        os.replace(temp, path)
+    except BaseException:
+        Path(temp).unlink(missing_ok=True)
+        raise
 
 
 def _recorded_ingest_token() -> str:
-    """The ingest token env/engine.env records, empty while it holds none."""
-    return _env_file_values(component=ENGINE_COMPONENT).get(INGEST_TOKEN_KEY, "")
+    """The ingest token `INGEST_TOKEN_FILE` records, empty while it holds none."""
+    try:
+        return INGEST_TOKEN_FILE.read_text(encoding="utf-8").strip()
+    except FileNotFoundError:
+        return ""
 
 
 def _restart_receiver() -> None:
@@ -2709,7 +2714,7 @@ def _restart_receiver() -> None:
 
 
 def ingest_token(*, base: str, ingest_url: str, token: str) -> str:
-    """The token the scripts send receiver records with: the one env/engine.env records while the engine holds the credential, else a newly minted one the receiver has taken."""
+    """The token the scripts send receiver records with: the one `INGEST_TOKEN_FILE` records while the engine holds the credential, else a newly minted one the receiver has taken."""
     url = f"{base}/orgs/{quote(INGEST_ORG, safe='')}/ingest-credentials/{INGEST_CREDENTIAL}"
     recorded = _recorded_ingest_token()
     status, answer = _api_get_json(timeout=10, token=token, url=url)
@@ -2886,7 +2891,7 @@ def main() -> int:
         if status == 401:
             _print(
                 msg=f"FAIL  {ingest_url!r} refused the {INGEST_CREDENTIAL!r} token: "
-                f"{INGEST_TOKEN_KEY} in env/engine.env is missing or stale"
+                f"{_rel_path(path=INGEST_TOKEN_FILE)} is missing or stale"
             )
             return 1
         if status < 200 or status >= 300:
