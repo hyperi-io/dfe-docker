@@ -689,9 +689,11 @@ class TestSendEvents:
         self, capsys: pytest.CaptureFixture[str]
     ) -> None:
         failed = seed._send_events(
+            base="http://engine.invalid",
             events=[("aws-guardduty", [{"Id": "a"}])],
             per_source_apps=[],
             sources={"aws-guardduty": _FETCHER_BODY},
+            token="token",
         )
 
         assert failed == 0
