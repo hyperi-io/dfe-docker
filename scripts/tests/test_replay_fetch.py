@@ -73,15 +73,22 @@ def _pack(*, endpoints: list[dict], lines: list[str], root: Path) -> Path:
     return root
 
 
-def _replay(*, url: str = "http://127.0.0.1:1/air") -> replay_fetch.Replay:
-    """Two captured polls, silenced while `url` answers with rows at /ac."""
+def _replay(
+    *, min_live_rows: int = 1, url: str = "http://127.0.0.1:1/air"
+) -> replay_fetch.Replay:
+    """Two captured polls, silenced while `url` answers with `min_live_rows` rows or more at /ac."""
     polls = [
         (POLLED_MS, {"ac": [{"hex": "a"}], "now": POLLED_MS}),
         (POLLED_MS + 10_000, {"ac": [{"hex": "b"}], "now": POLLED_MS + 10_000}),
     ]
     probe = replay_fetch.Probe(headers={}, rows_at="/ac", url=url)
     return replay_fetch.Replay(
-        live=("127.0.0.1", 1), polls=polls, probe=probe, rows_at="/ac", step_ms=10_000
+        live=("127.0.0.1", 1),
+        min_live_rows=min_live_rows,
+        polls=polls,
+        probe=probe,
+        rows_at="/ac",
+        step_ms=10_000,
     )
 
 
@@ -266,6 +273,20 @@ class TestLoadReplays:
             assert replay.step_ms == pytest.approx(10_000, abs=1_000)
             assert len(replay.polls) >= 55
 
+    def test_the_live_feed_must_carry_half_the_captured_median_to_silence_it(
+        self, tmp_path: Path
+    ) -> None:
+        lines = [
+            json.dumps({"polled_ms": POLLED_MS + n, "body": {"ac": [{}] * rows}})
+            for n, rows in enumerate([4, 10, 12, 2, 40])
+        ]
+        root = _pack(endpoints=[REPLAY_UNIT, LIVE_UNIT], lines=lines, root=tmp_path)
+
+        replays = replay_fetch.load_replays(root=root)
+
+        # The median of 2, 4, 10, 12, 40 is 10
+        assert replays["air"].min_live_rows == 5
+
     def test_asks_the_live_unit_with_what_vars_can_fill(self, tmp_path: Path) -> None:
         line = f'{{"polled_ms": {POLLED_MS}, "body": {{}}}}'
         root = _pack(endpoints=[REPLAY_UNIT, LIVE_UNIT], lines=[line], root=tmp_path)
@@ -416,6 +437,26 @@ class TestServe:
         assert isinstance(body, dict)
         assert body["ac"] == ([] if silent else [{"hex": "a"}])
         assert body["now"] > POLLED_MS
+
+    @pytest.mark.parametrize(
+        ("rows", "silent"),
+        [(2, False), (3, True), (9, True)],
+        ids=["thin", "enough", "busy"],
+    )
+    def test_a_feed_thinner_than_the_capture_does_not_silence_it(
+        self,
+        served: tuple[replay_fetch.ThreadingHTTPServer, dict],
+        rows: int,
+        silent: bool,
+    ) -> None:
+        server, replays = served
+        payload = json.dumps({"ac": [{"hex": str(n)} for n in range(rows)]}).encode()
+        with _live_feed(payload=payload, status=200) as (url, _):
+            replays["air"] = _replay(min_live_rows=3, url=url)
+
+            _, body = _get(path="/air", server=server)
+
+        assert body["ac"] == ([] if silent else [{"hex": "a"}])
 
     def test_asks_the_live_feed_again_on_the_wait_its_last_answer_sets(
         self, served: tuple[replay_fetch.ThreadingHTTPServer, dict]

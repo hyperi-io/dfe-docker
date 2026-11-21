@@ -11,7 +11,7 @@
 
 Each fetcher source under the pack's sources/ with an events/<source>/demo.log is served at GET /<source>. A demo.log line is one captured poll, `{"polled_ms": ..., "body": ...}`, and the poll served is the one captured as far into the capture as the time since this started, round again at the end. Every integer in the body within a day of its poll time is an epoch-millisecond time and is moved forward by the age of the capture, so the reports read as current.
 
-The source's `replay` unit polls this and its live unit polls the feed. While the live feed answers with rows at the live unit's `rows.at`, a replayed poll answers with no rows at the `replay` unit's `rows.at`, so live and replayed reports never land together. A feed that is down, answers an error or answers with no rows leaves the captured poll to land, so a pack never depends on a third-party API having data at that moment.
+The source's `replay` unit polls this and its live unit polls the feed. While the live feed answers with rows at the live unit's `rows.at`, a replayed poll answers with no rows at the `replay` unit's `rows.at`, so live and replayed reports never land together. A feed that is down, answers an error or answers with fewer rows than half the captured polls' median leaves the captured poll to land, so a pack never depends on a third-party API having the traffic its hunts, dashboards and searches read. Sydney's night curfew leaves a quiet feed with a handful of aircraft and none of the flights they select.
 
 The feed is asked with the live unit's own request, minus any query value that needs more than `vars`, at most once every LIVE_ROWS_CHECK_SECONDS while it has rows and once every NO_ROWS_CHECK_SECONDS while it has none. While a feed has rows that spends 48 requests a day, which with the live unit's 432 stays inside the 500 adsb.lol allows an address with no key.
 
@@ -70,6 +70,7 @@ class Replay:
     polls: list[tuple[int, object]]
     rows_at: str
     step_ms: int
+    min_live_rows: int = 1
     checked: float = field(default=float("-inf"))
     live_rows: bool = False
 
@@ -85,8 +86,8 @@ def _at(*, body: object, pointer: str) -> object:
     return node
 
 
-def _has_rows(*, probe: Probe) -> bool:
-    """Whether the live feed answers now with at least one row, False for any failure to answer."""
+def _has_rows(*, minimum: int = 1, probe: Probe) -> bool:
+    """Whether the live feed answers now with at least `minimum` rows, False for any failure to answer."""
     request = urllib.request.Request(probe.url, headers=dict(probe.headers))  # noqa: S310
     try:
         with urllib.request.urlopen(request, timeout=PROBE_TIMEOUT_SECONDS) as answer:  # noqa: S310
@@ -96,7 +97,7 @@ def _has_rows(*, probe: Probe) -> bool:
         rows = _at(body=json.loads(raw), pointer=probe.rows_at)
     except (OSError, EOFError, ValueError, http.client.HTTPException):
         return False
-    return isinstance(rows, list) and bool(rows)
+    return isinstance(rows, list) and len(rows) >= max(1, minimum)
 
 
 def _live_host(*, body: Mapping, name: str) -> tuple[str, int]:
@@ -154,7 +155,7 @@ def _live_serves_rows(*, replay: Replay) -> bool:
     now = time.monotonic()
     wait = NO_ROWS_CHECK_SECONDS if not (replay.live_rows) else LIVE_ROWS_CHECK_SECONDS
     if now - replay.checked >= wait:
-        replay.live_rows = _has_rows(probe=replay.probe)
+        replay.live_rows = _has_rows(minimum=replay.min_live_rows, probe=replay.probe)
         replay.checked = now
     return replay.live_rows
 
@@ -224,6 +225,15 @@ def _rows_at(*, endpoint: Mapping) -> str:
     return at
 
 
+def _median_rows(*, polls: list[tuple[int, object]], pointer: str) -> int:
+    """The median number of rows a captured poll holds at JSON pointer `pointer`."""
+    counts = sorted(
+        len(rows) if isinstance(rows := _at(body=body, pointer=pointer), list) else 0
+        for _, body in polls
+    )
+    return counts[len(counts) // 2]
+
+
 def _step_ms(*, polls: list[tuple[int, object]]) -> int:
     """The median gap between captured polls, one second for a single poll."""
     gaps = sorted(
@@ -273,6 +283,7 @@ def load_replays(*, root: Path) -> dict[str, Replay]:
             probe=probe,
             rows_at=rows_at,
             step_ms=_step_ms(polls=polls),
+            min_live_rows=_median_rows(polls=polls, pointer=rows_at) // 2,
         )
     return replays
 
