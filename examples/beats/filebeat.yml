@@ -1,0 +1,31 @@
+# Project:   dfe-docker
+# File:      examples/beats/filebeat.yml
+# Purpose:   Filebeat shipping an nginx access log to dfe-receiver's Lumberjack listener
+# Language:  YAML
+#
+# License:   BUSL-1.1
+# Copyright: (c) 2026 HYPERI PTY LIMITED
+
+filebeat.inputs:
+  - type: filestream
+    id: nginx-access
+    paths:
+      - /samples/nginx-access.txt
+    # filestream identifies a file by a fingerprint of its first bytes, 1024 by default, and skips a shorter file.
+    prospector.scanner.fingerprint.length: 64
+    processors:
+      # The stamp an Elastic Agent integration puts on every event, and the field the DFE source matches on.
+      - add_fields:
+          target: data_stream
+          fields:
+            dataset: nginx.access
+            namespace: default
+            type: logs
+
+# Lumberjack is the protocol Filebeat's logstash output speaks, so this output reaches dfe-receiver unchanged.
+output.logstash:
+  hosts: ["dfe-receiver:5044"]
+  ssl:
+    certificate_authorities: ["/certs/ca.crt"]
+    certificate: /certs/filebeat.crt
+    key: /certs/filebeat.key

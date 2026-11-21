@@ -1,0 +1,6 @@
+{"time":"2026-10-28T09:00:01Z","level":"info","msg":"cart loaded","user":"u-1042","items":3}
+{"time":"2026-10-28T09:00:02Z","level":"info","msg":"payment authorised","user":"u-1042","amount":84.5}
+{"time":"2026-10-28T09:00:02Z","level":"info","msg":"order placed","user":"u-1042","order":"o-77311"}
+{"time":"2026-10-28T09:00:05Z","level":"warn","msg":"stock low","sku":"sku-551","remaining":2}
+{"time":"2026-10-28T09:00:07Z","level":"info","msg":"cart loaded","user":"u-2210","items":1}
+{"time":"2026-10-28T09:00:09Z","level":"error","msg":"payment declined","user":"u-2210","reason":"insufficient funds"}
