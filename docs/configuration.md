@@ -505,7 +505,7 @@ The engine runs as its image's user, not yours, so the two meet on a group. `mak
 
 The receiver's other listeners publish once their port key is set: 4317 (OTLP gRPC), 4318 (OTLP HTTP), 5044 (Beats), 6000 (Vector gRPC), 8088 (HEC), 514 UDP and TCP and 6514 (syslog), and 2055, 4739 and 6343 UDP (flow).
 
-dfe-fetcher and the transforms run one instance per source. An instance publishes no host port.
+One dfe-fetcher container polls every fetcher source, and each transform runs one instance per source. Neither publishes a host port.
 
 ## ClickHouse Schema
 
