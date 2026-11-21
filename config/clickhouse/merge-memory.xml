@@ -8,8 +8,10 @@
   Copyright: (c) 2026 HYPERI PTY LIMITED
 -->
 <clickhouse>
-  <!-- Why these two: docs/operating.md#clickhouse-memory-merges-leave-room-for-inserts -->
+  <!-- Why these: docs/operating.md#clickhouse-memory-merges-leave-room-for-inserts -->
+  <max_server_memory_usage_to_ram_ratio>0.75</max_server_memory_usage_to_ram_ratio>
   <merges_mutations_memory_usage_to_ram_ratio>0.25</merges_mutations_memory_usage_to_ram_ratio>
+  <merges_mutations_memory_usage_soft_limit>536870912</merges_mutations_memory_usage_soft_limit>
   <merge_tree>
     <max_compress_block_size>65536</max_compress_block_size>
   </merge_tree>

@@ -1,7 +1,7 @@
 <!--
   Project:   dfe-docker
   File:      config/clickhouse/system-logs.xml
-  Purpose:   Ages out ClickHouse's own log tables, which the image keeps forever
+  Purpose:   Ages out ClickHouse's own log tables, which the image keeps forever, and drops the ones nothing reads
   Language:  XML
 
   License:   BUSL-1.1
@@ -9,12 +9,6 @@
 -->
 <clickhouse>
   <!-- Changing a TTL renames the old table to <table>_0 with its rows -->
-  <asynchronous_metric_log>
-    <ttl>event_date + INTERVAL 7 DAY DELETE</ttl>
-  </asynchronous_metric_log>
-  <metric_log>
-    <ttl>event_date + INTERVAL 7 DAY DELETE</ttl>
-  </metric_log>
   <part_log>
     <ttl>event_date + INTERVAL 7 DAY DELETE</ttl>
   </part_log>
@@ -28,6 +22,11 @@
     <ttl>event_date + INTERVAL 7 DAY DELETE</ttl>
   </text_log>
 
-  <!-- Nothing reads it -->
+  <!-- Nothing reads these. metric_log alone is 1,701 columns, and merging its parts at boot drove a 3 GiB server into the kernel's OOM kill -->
   <trace_log remove="remove"/>
+  <metric_log remove="remove"/>
+  <asynchronous_metric_log remove="remove"/>
+  <query_metric_log remove="remove"/>
+  <background_schedule_pool_log remove="remove"/>
+  <aggregated_zookeeper_log remove="remove"/>
 </clickhouse>

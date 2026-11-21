@@ -64,15 +64,21 @@ _READ_ONLY_WORDS = {
 
 _LOGGER = {"level": "information", "size": "50M", "count": "3"}
 _SYSTEM_LOG_TTL = {
-    "asynchronous_metric_log": "event_date + INTERVAL 7 DAY DELETE",
-    "metric_log": "event_date + INTERVAL 7 DAY DELETE",
     "part_log": "event_date + INTERVAL 7 DAY DELETE",
     "query_log": "event_date + INTERVAL 30 DAY DELETE",
     "query_views_log": "event_date + INTERVAL 7 DAY DELETE",
     # dfe-hyperdx's clickhouse_system source reads it, so it stays on.
     "text_log": "event_date + INTERVAL 7 DAY DELETE",
 }
-_SWITCHED_OFF = ("trace_log",)
+# Nothing reads them, and metric_log's 1,701 columns made boot-time merges OOM a 3 GiB server.
+_SWITCHED_OFF = (
+    "trace_log",
+    "metric_log",
+    "asynchronous_metric_log",
+    "query_metric_log",
+    "background_schedule_pool_log",
+    "aggregated_zookeeper_log",
+)
 
 
 def _root(*, path: Path) -> ElementTree.Element:
@@ -217,11 +223,17 @@ def test_merges_leave_memory_for_inserts_and_queries() -> None:
 
     # The overlay sets these and nothing else, so the image keeps every other merge default.
     assert [child.tag for child in root] == [
+        "max_server_memory_usage_to_ram_ratio",
         "merges_mutations_memory_usage_to_ram_ratio",
+        "merges_mutations_memory_usage_soft_limit",
         "merge_tree",
     ]
+    # Below the image's 0.9, so memory ClickHouse does not track stays inside the container's limit.
+    assert 0 < float(_text(root, "max_server_memory_usage_to_ram_ratio")) <= 0.8
     # Below the image's 0.5, so running merges stop short of the server limit.
     assert 0 < float(_text(root, "merges_mutations_memory_usage_to_ram_ratio")) < 0.5
+    # An absolute cap under the ratio's share of the 3 GiB default container.
+    assert 0 < int(_text(root, "merges_mutations_memory_usage_soft_limit")) <= 768 << 20
     # Below the image's 1 MiB, the write buffer every column of a wide table holds.
     assert 0 < int(_text(root, "merge_tree/max_compress_block_size")) < 1_048_576
     assert [child.tag for child in root.find("merge_tree")] == [

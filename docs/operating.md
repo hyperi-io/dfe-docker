@@ -442,10 +442,13 @@ tested whether an image built on it still needs the floor, so keep it.
 
 ### ClickHouse memory: merges leave room for inserts
 
-ClickHouse refuses inserts and queries with code 241 (`MEMORY_LIMIT_EXCEEDED`) at 90% of its container limit. On the demo packs the cause was background merges of the wide source tables, which have hundreds of columns each and hold a write buffer per column. `config/clickhouse/merge-memory.xml` sets two things:
+ClickHouse refuses inserts and queries with code 241 (`MEMORY_LIMIT_EXCEEDED`) at its server limit. On the demo packs the cause was background merges of wide tables, which hold a write buffer per column. `config/clickhouse/merge-memory.xml` sets these:
 
-- `merges_mutations_memory_usage_to_ram_ratio` is the share of the server limit running merges may hold. Past it no new merge starts.
+- `max_server_memory_usage_to_ram_ratio` 0.75 sets the server limit. Memory ClickHouse does not track then stays inside the container, so a merge gets a 241 rather than the kernel's OOM kill and a restart loop.
+- `merges_mutations_memory_usage_to_ram_ratio` and `merges_mutations_memory_usage_soft_limit` cap the memory running merges may hold. Past either no new merge starts.
 - `max_compress_block_size` is the write buffer per column. At 64 KiB every merge and insert of a wide table needs less memory.
+
+`config/clickhouse/system-logs.xml` drops `metric_log` (1,701 columns) and four other system logs nothing reads. A stack that already has them keeps the tables on its volume, so drop them once with `DROP TABLE system.metric_log` and the same for the rest.
 
 ## Deploying, upgrading and the self test
 
