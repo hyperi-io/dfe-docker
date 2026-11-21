@@ -24,6 +24,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import subprocess
 import time
 import typing
 from concurrent.futures import ThreadPoolExecutor
@@ -44,6 +45,12 @@ MARKER_EXPRESSIONS = (
     "toString(`_tags`.marker)",
     "JSONExtractString(toString(`_tags`), 'marker')",
 )
+
+# The HTTP listener's bearer tokens as the engine writes them, `<id>:<token>` a line, mounted into the receiver
+INGEST_TOKEN_FILE = "/var/run/secrets/dfe/ingest-bearer-tokens/http"
+_INGEST_EXEC_SECONDS = 10
+# Holds a token once found. An empty answer is asked again, so one failed exec does not drop the token for the run.
+_ingest_token_found: list[str] = []
 
 
 def env_or(name: str, fallback: str) -> str:
@@ -173,6 +180,49 @@ def http_put_json(
     )
 
 
+def bearer_token(text: str) -> str:
+    """The first token in a bearer secret's `<id>:<token>` lines, empty when it lists none."""
+    for line in text.splitlines():
+        _, sep, token = line.strip().partition(":")
+        if sep and token:
+            return token
+    return ""
+
+
+def _docker_output(*args: str) -> str:
+    """Stdout of one docker command, empty when it fails or does not answer in time."""
+    try:
+        result = subprocess.run(
+            ["docker", *args],
+            capture_output=True,
+            check=False,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=_INGEST_EXEC_SECONDS,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return ""
+    return result.stdout if result.returncode == 0 else ""
+
+
+def ingest_token() -> str:
+    """A bearer token the receiver's HTTP listener accepts, empty when it holds none.
+
+    An ingest credential puts the listener in bearer mode, and an ingest post then
+    needs a token. The token is never printed.
+    """
+    if _ingest_token_found:
+        return _ingest_token_found[0]
+    ids = _docker_output("compose", "ps", "--quiet", "dfe-receiver").split()
+    if not ids:
+        return ""
+    token = bearer_token(_docker_output("exec", ids[0], "cat", INGEST_TOKEN_FILE))
+    if token:
+        _ingest_token_found.append(token)
+    return token
+
+
 def http_post(
     url: str,
     body: str | bytes,
@@ -198,12 +248,13 @@ def post_all(
 
     The receiver answers once the next hop holds the record, so one request at a
     time waits out the loader's flush on every event. A request that got no HTTP
-    answer at all reports status 0.
+    answer at all reports status 0. Each post carries the receiver's ingest token.
     """
+    token = ingest_token()
 
     def _send(body: str) -> int:
         try:
-            return http_post(url, body, timeout=timeout)
+            return http_post(url, body, timeout=timeout, token=token)
         except (HTTPException, OSError):
             return 0
 
