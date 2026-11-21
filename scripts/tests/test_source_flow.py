@@ -31,9 +31,9 @@ def test_the_flow_case_gets_the_host_and_both_ports(
 ) -> None:
     for key, value in PORTS.items():
         monkeypatch.setenv(key, value)
-    assert test_source._flow_flags(case="flow", host="10.1.2.3") == [
+    assert test_source._flow_flags(case="flow", host="192.0.2.7") == [
         "--flow-host",
-        "10.1.2.3",
+        "192.0.2.7",
         "--flow-netflow-port",
         "2055",
         "--flow-sflow-port",
