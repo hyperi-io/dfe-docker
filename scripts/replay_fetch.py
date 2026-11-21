@@ -11,9 +11,9 @@
 
 Each fetcher source under the pack's sources/ with an events/<source>/demo.log is served at GET /<source>. A demo.log line is one captured poll, `{"polled_ms": ..., "body": ...}`, and the poll served is the one captured as far into the capture as the time since this started, round again at the end. Every integer in the body within a day of its poll time is an epoch-millisecond time and is moved forward by the age of the capture, so the reports read as current.
 
-The source's `replay` unit polls this and its live unit polls the feed. While the live feed answers with rows at the live unit's `rows.at`, a replayed poll answers with no rows at the `replay` unit's `rows.at`, so live and replayed reports never land together. A feed that is down, answers an error or answers with no rows leaves the captured poll to land, so a pack never depends on a third-party API having data at that moment.
+The source's `replay` unit polls this and its live unit polls the feed. While the live feed answers with rows at the live unit's `rows.at`, a replayed poll answers with no rows at the `replay` unit's `rows.at`, so live and replayed reports never land together. A feed that is down, answers an error or answers with fewer rows than half the captured polls' median, rounded down and at least one, leaves the captured poll to land, so a pack never depends on a third-party API having the traffic its hunts, dashboards and searches read. Sydney's night curfew leaves a quiet feed with a handful of aircraft and none of the flights they select.
 
-The feed is asked with the live unit's own request, minus any query value that needs more than `vars`, at most once every LIVE_ROWS_CHECK_SECONDS while it has rows and once every NO_ROWS_CHECK_SECONDS while it has none. While a feed has rows that spends 48 requests a day, which with the live unit's 432 stays inside the 500 adsb.lol allows an address with no key.
+The feed is asked with the live unit's own request, minus any query value that needs more than `vars`, at most once every LIVE_ROWS_CHECK_SECONDS while it answers with any rows, thin or not, and once every NO_ROWS_CHECK_SECONDS while it answers with none. A query value of the form `{{ int(window.end) - N }}` is filled with the time of the probe less N milliseconds, so the probe counts the window the live unit reads. While a feed answers with rows that spends 48 requests a day, which with the live unit's 432 stays inside the 500 adsb.lol allows an address with no key.
 
 The published pack's demo-replay service runs it from the dfe-docker image, whose PyYAML reads the source files.
 """
@@ -46,6 +46,8 @@ PROBE_TIMEOUT_SECONDS = 5.0
 # Where a replay unit the file leaves out is served from
 REPLAY_URL = f"http://demo-replay:{PORT}"
 VARS_TOKEN = re.compile(r"\{\{\s*vars\.(\w+)\s*\}\}")
+# A query value of the form `{{ int(window.end) - N }}`, the poll window's end less N milliseconds
+WINDOW_BEHIND = re.compile(r"\{\{\s*int\(window\.end\)\s*-\s*(\d+)\s*\}\}")
 
 
 class ReplayError(Exception):
@@ -59,6 +61,8 @@ class Probe:
     url: str
     headers: Mapping[str, str]
     rows_at: str
+    # Query keys the live unit sets to the poll window's end less a number of milliseconds, filled in at each probe
+    behind_ms: tuple[tuple[str, int], ...] = ()
 
 
 @dataclass(slots=True)
@@ -70,8 +74,10 @@ class Replay:
     polls: list[tuple[int, object]]
     rows_at: str
     step_ms: int
+    min_live_rows: int = 1
     checked: float = field(default=float("-inf"))
     live_rows: bool = False
+    live_answered: bool = False
 
 
 def _at(*, body: object, pointer: str) -> object:
@@ -85,9 +91,13 @@ def _at(*, body: object, pointer: str) -> object:
     return node
 
 
-def _has_rows(*, probe: Probe) -> bool:
-    """Whether the live feed answers now with at least one row, False for any failure to answer."""
-    request = urllib.request.Request(probe.url, headers=dict(probe.headers))  # noqa: S310
+def _live_rows(*, now_ms: int, probe: Probe) -> int:
+    """How many rows the live feed answers with now, 0 for any failure to answer."""
+    url = probe.url
+    if probe.behind_ms:
+        window = urlencode({key: now_ms - behind for key, behind in probe.behind_ms})
+        url = f"{url}{'&' if '?' in url else '?'}{window}"
+    request = urllib.request.Request(url, headers=dict(probe.headers))  # noqa: S310
     try:
         with urllib.request.urlopen(request, timeout=PROBE_TIMEOUT_SECONDS) as answer:  # noqa: S310
             raw = answer.read()
@@ -95,8 +105,8 @@ def _has_rows(*, probe: Probe) -> bool:
                 raw = gzip.decompress(raw)
         rows = _at(body=json.loads(raw), pointer=probe.rows_at)
     except (OSError, EOFError, ValueError, http.client.HTTPException):
-        return False
-    return isinstance(rows, list) and bool(rows)
+        return 0
+    return len(rows) if isinstance(rows, list) else 0
 
 
 def _live_host(*, body: Mapping, name: str) -> tuple[str, int]:
@@ -129,9 +139,15 @@ def _live_probe(*, body: Mapping, name: str) -> Probe:
                 f"{name}.yaml's live unit {endpoint.get('unit')!r} has a base_url and "
                 "path that need more than `vars` and an http(s) scheme"
             )
+        raw_query = endpoint.get("query", {})
+        behind = tuple(
+            (key, int(hit.group(1)))
+            for key, value in raw_query.items()
+            if (hit := WINDOW_BEHIND.fullmatch(str(value)))
+        )
         values = {
             key: _render(text=str(value), variables=variables)
-            for key, value in endpoint.get("query", {}).items()
+            for key, value in raw_query.items()
         }
         query = urlencode(
             {key: value for key, value in values.items() if value is not None}
@@ -139,6 +155,7 @@ def _live_probe(*, body: Mapping, name: str) -> Probe:
         rows_at = _rows_at(endpoint=endpoint)
         _pointer_parts(pointer=rows_at)
         return Probe(
+            behind_ms=behind,
             headers={
                 str(key): str(value)
                 for key, value in profile.get("headers", {}).items()
@@ -152,9 +169,11 @@ def _live_probe(*, body: Mapping, name: str) -> Probe:
 def _live_serves_rows(*, replay: Replay) -> bool:
     """Whether the live feed had rows at its last check, which repeats on a longer wait while it has them."""
     now = time.monotonic()
-    wait = NO_ROWS_CHECK_SECONDS if not (replay.live_rows) else LIVE_ROWS_CHECK_SECONDS
+    wait = LIVE_ROWS_CHECK_SECONDS if replay.live_answered else NO_ROWS_CHECK_SECONDS
     if now - replay.checked >= wait:
-        replay.live_rows = _has_rows(probe=replay.probe)
+        count = _live_rows(now_ms=int(time.time() * 1000), probe=replay.probe)
+        replay.live_rows = count >= max(1, replay.min_live_rows)
+        replay.live_answered = count > 0
         replay.checked = now
     return replay.live_rows
 
@@ -224,6 +243,15 @@ def _rows_at(*, endpoint: Mapping) -> str:
     return at
 
 
+def _median_rows(*, polls: list[tuple[int, object]], pointer: str) -> int:
+    """The median number of rows a captured poll holds at JSON pointer `pointer`."""
+    counts = sorted(
+        len(rows) if isinstance(rows := _at(body=body, pointer=pointer), list) else 0
+        for _, body in polls
+    )
+    return counts[len(counts) // 2]
+
+
 def _step_ms(*, polls: list[tuple[int, object]]) -> int:
     """The median gap between captured polls, one second for a single poll."""
     gaps = sorted(
@@ -273,6 +301,7 @@ def load_replays(*, root: Path) -> dict[str, Replay]:
             probe=probe,
             rows_at=rows_at,
             step_ms=_step_ms(polls=polls),
+            min_live_rows=_median_rows(polls=polls, pointer=rows_at) // 2,
         )
     return replays
 
