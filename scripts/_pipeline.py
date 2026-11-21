@@ -178,14 +178,16 @@ def http_post(
     body: str | bytes,
     content_type: str = "application/json",
     timeout: int = 10,
+    token: str = "",
 ) -> int:
-    """POST a body and return the HTTP status."""
+    """POST a body and return the HTTP status, with `token` as its bearer when set."""
     return _request(
         method="POST",
         url=url,
         content_type=content_type,
         data=body.encode() if isinstance(body, str) else body,
         timeout=timeout,
+        token=token,
     )[0]
 
 

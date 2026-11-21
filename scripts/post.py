@@ -261,6 +261,8 @@ API_EXEC_MARGIN_SECONDS = 10
 BROKER_SERVICE = "kafka-redpanda"
 # Set, it opts the broker into Enterprise features under that licence (docs/broker.md).
 BROKER_LICENCE_VAR = "REDPANDA_LICENSE"
+# The HTTP listener's bearer tokens as the engine writes them, `<id>:<token>` a line, mounted into the receiver
+INGEST_TOKEN_FILE = "/var/run/secrets/dfe/ingest-bearer-tokens/http"
 
 # The console login's name, and its password, which a forced change writes back to the same file.
 ADMIN_NAME_KEY = "DFE_ENGINE_AUTH_LOCAL_ADMIN_NAME"
@@ -505,6 +507,52 @@ def _container_started(name: str) -> int | None:
     if started.year == 1:
         return None
     return int(started.replace(tzinfo=datetime.UTC).timestamp())
+
+
+def bearer_token(text: str) -> str:
+    """The first token in a bearer secret's `<id>:<token>` lines, empty when it lists none."""
+    for line in text.splitlines():
+        _, sep, token = line.strip().partition(":")
+        if sep and token:
+            return token
+    return ""
+
+
+@functools.cache
+def _ingest_token() -> str:
+    """A bearer token the receiver's HTTP listener accepts, empty when it holds none.
+
+    An ingest credential puts the listener in bearer mode, and the probe then needs a
+    token. The token is never printed.
+    """
+    try:
+        listed = subprocess.run(
+            ["docker", "compose", "ps", "--quiet", "dfe-receiver"],
+            capture_output=True,
+            check=False,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=API_EXEC_MARGIN_SECONDS,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return ""
+    ids = listed.stdout.split()
+    if listed.returncode != 0 or not ids:
+        return ""
+    try:
+        found = subprocess.run(
+            ["docker", "exec", ids[0], "cat", INGEST_TOKEN_FILE],
+            capture_output=True,
+            check=False,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=API_EXEC_MARGIN_SECONDS,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return ""
+    return bearer_token(found.stdout) if found.returncode == 0 else ""
 
 
 def _broker_licence_info() -> dict | None:
@@ -1553,7 +1601,11 @@ def _await_routed_row(*, database: str, name: str) -> int:
         # record takes the catch-all, so the early posts are the wait rather than
         # a failure.
         try:
-            http_post(ingest_url, marked_event(marker=marker, source=name))
+            http_post(
+                ingest_url,
+                marked_event(marker=marker, source=name),
+                token=_ingest_token(),
+            )
         except Exception:  # noqa: BLE001 - a refused post is another attempt
             return 0
         return ch_marker_count(database, name, marker) or 0
@@ -2421,7 +2473,7 @@ def _send_hunt_events(
     refused = []
     for label, body in bodies:
         try:
-            status = http_post(ingest_url, body)
+            status = http_post(ingest_url, body, token=_ingest_token())
         except OSError:
             status = 0
         if status < 200 or status >= 300:
@@ -2714,7 +2766,7 @@ def main() -> int:
     for index in range(EVENT_COUNT):
         body = marked_event(marker=marker, source=table, extra={"post_sequence": index})
         try:
-            status = http_post(ingest_url, body)
+            status = http_post(ingest_url, body, token=_ingest_token())
         except Exception as error:  # noqa: BLE001
             _print(msg=f"FAIL  ingest request raised: {error}")
             return 1
