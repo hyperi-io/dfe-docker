@@ -913,6 +913,60 @@ class TestHeldDrift:
         assert drift == case["expected"]
 
 
+class TestPipelineState:
+    """A stream that landed nothing prints the transform's and broker's own account before cleanup removes the transform."""
+
+    @pytest.mark.parametrize(
+        ("running", "expected"),
+        [
+            (
+                {"demo-syslog": "t1", "kafka-redpanda": "b1"},
+                [
+                    ["logs", "--tail", "50", "t1"],
+                    ["exec", "b1", "rpk", "cluster", "health"],
+                    ["exec", "b1", "df", "-h", "/var/lib/redpanda/data"],
+                    ["logs", "--tail", "50", "b1"],
+                ],
+            ),
+            (
+                {"kafka-redpanda": "b1"},
+                [
+                    ["exec", "b1", "rpk", "cluster", "health"],
+                    ["exec", "b1", "df", "-h", "/var/lib/redpanda/data"],
+                    ["logs", "--tail", "50", "b1"],
+                ],
+            ),
+            ({}, []),
+        ],
+        ids=["all-running", "transform-gone", "nothing-running"],
+    )
+    def test_reads_each_running_service(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        running: dict[str, str],
+        expected: list[list[str]],
+    ) -> None:
+        calls: list[list[str]] = []
+
+        def _docker(*, args: list[str], **_: object):
+            calls.append(args)
+            return demo.subprocess.CompletedProcess(
+                args, 0, stdout=f"out {args[0]}", stderr=""
+            )
+
+        monkeypatch.setattr(
+            demo, "_container", lambda *, service: running.get(service, "")
+        )
+        monkeypatch.setattr(demo, "_docker", _docker)
+
+        state = demo._pipeline_state(instance="demo-syslog")
+
+        assert calls == expected
+        assert state.count("--- ") == 4
+        for service in ("demo-syslog", "kafka-redpanda"):
+            assert (f"no {service} container" in state) == (service not in running)
+
+
 class TestListeningProtocols:
     @pytest.mark.parametrize("case", LISTENING_PROTOCOLS_CASES)
     def test_matches_expected(self, case: ListeningProtocolsCase) -> None:

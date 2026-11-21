@@ -65,6 +65,7 @@ from post import (  # noqa: E402
     ADMIN_NAME_KEY,
     ADMIN_PASSWORD_KEY,
     APP_CONFIG_DIR_KEY,
+    BROKER_SERVICE,
     ENGINE_SERVICE,
     TARGET_DB,
     TARGET_TABLE,
@@ -97,6 +98,8 @@ TRANSFORM_VERSION_KEY = "DFE_TRANSFORM_ELASTIC_VERSION"
 DEMO_ORG = "demo"
 DEMO_ANALYST = "demo-analyst"
 RECEIVER_SERVICE = "dfe-receiver"
+# The broker volume's mount in docker-compose.yml, on the Docker data disk the whole stack shares
+BROKER_DATA_DIR = "/var/lib/redpanda/data"
 # dfe-engine main reads the catalogue from its dfe-schemas wheel and older images from the seeded /app/schemas, so this tries both in that order, at any depth because newer wheels file each entry under its tag folder
 CATALOGUE_READ = "\n".join(
     (
@@ -708,6 +711,34 @@ def _generator_output(*, container: str) -> str:
     return (sent.stdout + sent.stderr).strip()
 
 
+def _pipeline_state(*, instance: str) -> str:
+    """The transform's and broker's own account of a stream that landed nothing, read before cleanup removes the transform."""
+    sections = []
+    for title, service, verb, inside in (
+        (f"{instance} log", instance, ["logs", "--tail", "50"], []),
+        (
+            f"{BROKER_SERVICE} health",
+            BROKER_SERVICE,
+            ["exec"],
+            ["rpk", "cluster", "health"],
+        ),
+        (
+            f"{BROKER_SERVICE} disk",
+            BROKER_SERVICE,
+            ["exec"],
+            ["df", "-h", BROKER_DATA_DIR],
+        ),
+        (f"{BROKER_SERVICE} log", BROKER_SERVICE, ["logs", "--tail", "50"], []),
+    ):
+        container = _container(service=service)
+        if not (container):
+            sections.append(f"--- {title}: no {service} container")
+            continue
+        result = _docker(args=[*verb, container, *inside])
+        sections.append(f"--- {title}\n{(result.stdout + result.stderr).strip()}")
+    return "\n".join(sections)
+
+
 def _healthy(*, service: str) -> bool:
     """Whether the service's container is running and its healthcheck passes."""
     container = _container(service=service)
@@ -810,7 +841,8 @@ def _outcome(
         _print(
             msg=f"FAIL no rows landed in {empty}. `docker compose logs {instance}` says "
             f"what the transform did with them. The generator's last output:\n"
-            f"{_generator_output(container=container)}"
+            f"{_generator_output(container=container)}\n"
+            f"{_pipeline_state(instance=instance)}"
         )
     elif unarchived:
         _print(
