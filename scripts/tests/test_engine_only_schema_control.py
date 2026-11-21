@@ -87,7 +87,7 @@ BOOTSTRAPPER_NAME = re.compile(r"dfe-schema-init|kafka-init")
 # Each makes only throwaway objects, or quotes what it forbids
 ALLOWED = {
     "scripts/test_e2e.py",
-    "scripts/tests/test_demo_theatre_churn.py",
+    "scripts/tests/test_demo_theatre_zero_ok_tiles.py",
     "scripts/tests/test_engine_only_schema_control.py",
 }
 

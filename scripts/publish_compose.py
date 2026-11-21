@@ -88,6 +88,8 @@ HOSTED_INSTANCES_KEY = "DFE_ENGINE_DEPLOYMENT_HOSTED_INSTANCES"
 CREDENTIAL_COMMAND_KEY = "DFE_ENGINE_DEPLOYMENT_CREDENTIAL_COMMAND"
 # The engine's apply command, recreating from the OCI file
 APPLY_COMMAND_KEY = "DFE_ENGINE_DEPLOYMENT_APPLY_COMMAND"
+# The engine's rotate-password answer, with no env/engine.env
+ROTATION_COMMAND_KEY = "DFE_ENGINE_DEPLOYMENT_ROTATION_COMMAND"
 ENV_DIR_NAME = "env"
 # The one host path the stack binds, for the collector's CPUs
 HOST_PROC = "/proc"
@@ -556,6 +558,14 @@ def _replay_services(
     return {"demo-feed": feed, "demo-stream": replayer}
 
 
+def _rotation_command(*, tag: str) -> str:
+    """The command that sets a new admin password in the file published under `tag`: secrets-init stores it, then the engine restarts to read it."""
+    return (
+        f"{secrets_init.ADMIN_PASSWORD_VAR}='<new password>' docker compose -f "
+        f"oci://{DEFAULT_IMAGE}:{tag} up -d --force-recreate {SECRETS_SERVICE} {ENGINE_SERVICE}"
+    )
+
+
 def _secret_templates(
     *, environment: Mapping, minted: Mapping[str, str]
 ) -> dict[str, str]:
@@ -707,6 +717,7 @@ def demo_overlay(
     engine_env[HOSTED_INSTANCES_KEY] = demo_hosted(roles=roles)
     engine_env[APPLY_COMMAND_KEY] = _apply_command(tag=demo_pack_tag(pack=pack))
     engine_env[CREDENTIAL_COMMAND_KEY] = _login_command(tag=demo_pack_tag(pack=pack))
+    engine_env[ROTATION_COMMAND_KEY] = _rotation_command(tag=demo_pack_tag(pack=pack))
     if HUNT_RUNNER_SERVICE not in services:
         raise PublishError(
             f"the demo model has no {HUNT_RUNNER_SERVICE!r} to cap the pack's hunts on"
@@ -1008,6 +1019,9 @@ def published(*, container_prefix: str, model: Mapping, name: str, tree: Path) -
             )
             environment[HOSTED_INSTANCES_KEY] = ""
             environment[APPLY_COMMAND_KEY] = _apply_command(tag=PUBLISHED_STACK_TAG)
+            environment[ROTATION_COMMAND_KEY] = _rotation_command(
+                tag=PUBLISHED_STACK_TAG
+            )
         if ("environment" in original) or (env_dir):
             service["environment"] = environment
         if "ports" in original:

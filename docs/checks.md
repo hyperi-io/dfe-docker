@@ -40,7 +40,7 @@ Above, sources come through the API. This one creates one in the console, attach
 
 `scripts/test_source.py` supplies what this repo owns: the published ports, the archiver container, the admin login from `env/engine.env` and `make apply` for each service the engine says must restart, which is what creates the source's own transform container. Run `make test-source DEV=1` against a `make dev` stack so that apply keeps the local images. `SOURCE_ARGS` reaches the runner untouched (`--keep`, `--per-module`, `--headed`).
 
-Beyond a running stack it needs `DFE_INFRA_DIR` (the runner), `DFE_ENGINE_REPO` and `DFE_TRANSFORM_VRL_REPO` (the corpus wrapper, the bundled pipeline), a dfe-transform-vector checkout for the vector case (`DFE_TRANSFORM_VECTOR_REPO`, else the one beside the engine repo) and an interpreter carrying Playwright (`DFE_ACCEPTANCE_PYTHON` where the system one is externally managed). The cloudwatch case polls a real AWS upstream and writes nothing to it: put the two `AWS_*` credentials in `env/fetcher.env` and `DFE_AWS_REGION` in `.env`.
+Beyond a running stack it needs `DFE_INFRA_DIR` (the runner), `DFE_ENGINE_REPO` (the synthetic corpus and its reader), `DFE_TRANSFORM_VRL_REPO` for the filebeat case (the bundled pipeline), a dfe-transform-vector checkout for the vector case (`DFE_TRANSFORM_VECTOR_REPO`, else the one beside the engine repo) and an interpreter carrying Playwright (`DFE_ACCEPTANCE_PYTHON` where the system one is externally managed). The cloudwatch case polls a real AWS upstream and writes nothing to it: put the two `AWS_*` credentials in `env/fetcher.env` and `DFE_AWS_REGION` in `.env`.
 
 Every step is a report row and a screenshot under `--shots-dir` (`.tmp/source`). A step the console cannot do falls back to the engine API and says so, because that is a finding about the console rather than about the pipeline.
 
@@ -59,14 +59,14 @@ Every step is a report row and a screenshot under `--shots-dir` (`.tmp/source`).
 | `make check-docs` | asserts every relative link across the README and every page under `docs/` resolves |
 | `make check-proxy` | `envoy --mode validate` on both proxy configs and their console TLS variants, on the Envoy the stack pins |
 | `make check-python` | `ruff check` and `ruff format --check` on `scripts/`, `ops/` and the demo packs |
-| `make check-tests` | `pytest scripts/tests` - unit tests over the helper scripts, including the theatre churn tiles' SQL run on the stack's ClickHouse image over seeded tracks |
+| `make check-tests` | `pytest scripts/tests` - unit tests over the helper scripts, including the SQL of the theatre tiles `verify.json` lists in `zero_ok`, run on the stack's ClickHouse image over seeded tracks |
 | `make check-locks` | `uv lock --check` on each script that declares packages inline, so a pin moved without `uv lock --script <script>` fails here rather than mid-suite |
 
 `check-compose` is hermetic: it reads the mandatory `${VAR:?}` keys out of the compose file and substitutes placeholders, so it reads neither the stack SSoT nor the registry. It validates compose *structure*, not that any digest resolves. It rejects a `DFE_SERVICE_CPUS` under 2.0 on any service that gates on `/readyz` - see [operating.md](operating.md#dfe_service_cpus-has-a-floor-of-20-and-it-is-not-about-speed) for why a lower ceiling takes health endpoints dark.
 
 `check-docs` resolves the file half of every relative link. It does not fetch external URLs and does not check `#anchors`, so a live file with a stale anchor still passes.
 
-`check-python`, `check-tests` and `check-locks` fetch their pinned tools through `uvx`, `check-dockerfile` pulls the pinned hadolint image and `check-proxy` pulls Envoy, so those want a network the first time. The churn tile test in `check-tests` needs `docker` and pulls the ClickHouse image the stack pins (`DFE_CLICKHOUSE_VERSION` overrides the tag, else `scripts/stack.py --print CLICKHOUSE_VERSION` reads it through `oras`). It skips without docker, and fails under `CI`.
+`check-python`, `check-tests` and `check-locks` fetch their pinned tools through `uvx`, `check-dockerfile` pulls the pinned hadolint image and `check-proxy` pulls Envoy, so those want a network the first time. The zero_ok tile test in `check-tests` needs `docker` and pulls the ClickHouse image the stack pins (`DFE_CLICKHOUSE_VERSION` overrides the tag, else `scripts/stack.py --print CLICKHOUSE_VERSION` reads it through `oras`). It skips without docker and fails under `CI`.
 
 
 `check-proxy` validates on the Envoy in `DFE_PROXY_VERSION`. With that unset it asks `scripts/stack.py --print DFE_PROXY_VERSION` for the one the stack at `VERSION` pins, falling back to `deployment.example.yaml`'s `version.pin`. That lookup reads the stack manifest anonymously through `oras`. The check mints a throwaway P-384 certificate with the host's `openssl` for the TLS variants.

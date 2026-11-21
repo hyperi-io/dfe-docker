@@ -145,6 +145,12 @@ class TestPublished:
             "docker compose -f oci://ghcr.io/hyperi-io/dfe-docker:compose up -d "
             "--force-recreate {service}"
         )
+        # No env/engine.env here: secrets-init stores the new password
+        assert engine["environment"][publish_compose.ROTATION_COMMAND_KEY] == (
+            "DFE_ADMIN_PASSWORD='<new password>' docker compose -f "
+            "oci://ghcr.io/hyperi-io/dfe-docker:compose up -d --force-recreate "
+            "secrets-init dfe-engine"
+        )
         assert engine["deploy"] == {"resources": {"limits": {"cpus": 2}}}
         for gone in ("profiles", "group_add", "entrypoint"):
             assert gone not in engine
@@ -815,6 +821,11 @@ class TestDemoOverlay:
         assert engine[publish_compose.APPLY_COMMAND_KEY] == (
             "docker compose -f oci://ghcr.io/hyperi-io/dfe-docker:demo-cyber up -d "
             "--force-recreate {service}"
+        )
+        assert engine[publish_compose.ROTATION_COMMAND_KEY] == (
+            "DFE_ADMIN_PASSWORD='<new password>' docker compose -f "
+            "oci://ghcr.io/hyperi-io/dfe-docker:demo-cyber up -d --force-recreate "
+            "secrets-init dfe-engine"
         )
 
     def test_a_pack_with_beats_sources_replays_them_and_hosts_their_transforms(

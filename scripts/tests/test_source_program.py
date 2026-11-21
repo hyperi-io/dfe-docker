@@ -1,12 +1,12 @@
 #  Project:      dfe-docker
 #  File:         tests/test_source_program.py
-#  Purpose:      Assert test_source.py hands the vector case the checkout its pipeline comes from
+#  Purpose:      Assert test_source.py hands each pushed case the checkout its pipeline comes from
 #  Language:     Python
 #
 #  License:      BUSL-1.1
 #  Copyright:    (c) 2026 HYPERI PTY LIMITED
 
-"""Only the vector case names a program checkout, the dfe-transform-vector one its pipeline is uploaded from."""
+"""Each pushed case names only the checkout its pipeline is uploaded from: dfe-transform-vrl for filebeat, dfe-transform-vector for vector."""
 
 from pathlib import Path
 
@@ -68,3 +68,42 @@ def test_an_unnamed_checkout_leaves_the_runner_to_find_it(
 def test_a_checkout_with_no_pipeline_is_refused(tmp_path: Path) -> None:
     with pytest.raises(SystemExit, match="filebeat.yaml"):
         _program_checkout(case="vector", flag=str(tmp_path))
+
+
+@pytest.mark.parametrize(
+    ("case", "pipeline", "want"),
+    [
+        ("filebeat", True, "named"),
+        ("elastic", True, None),
+        ("vector", True, None),
+        ("cloudwatch", True, None),
+        ("filebeat", False, "refused"),
+    ],
+)
+def test_only_the_filebeat_case_names_the_vrl_checkout(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    case: str,
+    pipeline: bool,
+    want: str | None,
+) -> None:
+    def found() -> Path | None:
+        return test_source._case_repo(
+            case=case,
+            cases=test_source.VRL_CASES,
+            env_var=test_source.VRL_REPO_ENV_VAR,
+            flag=None,
+            marker=test_source.VRL_MARKER,
+        )
+
+    if pipeline:
+        marker = tmp_path / test_source.VRL_MARKER
+        marker.parent.mkdir(parents=True)
+        marker.write_text(". = .\n", encoding="utf-8")
+    monkeypatch.setenv(test_source.VRL_REPO_ENV_VAR, str(tmp_path))
+
+    if want == "refused":
+        with pytest.raises(SystemExit, match="filebeat.vrl"):
+            found()
+    else:
+        assert found() == (tmp_path.resolve() if want == "named" else None)

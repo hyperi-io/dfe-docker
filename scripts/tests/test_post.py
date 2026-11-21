@@ -355,6 +355,48 @@ def test_a_broker_enterprise_feature_fails_post_before_any_claim(
 
 
 @pytest.mark.usefixtures("dotenv")
+def test_a_licensed_broker_is_not_held_to_the_trial_features(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def licence_info() -> dict:
+        return {"license_violation": False}
+
+    def schema_wait() -> int:
+        return 1
+
+    def trial_features() -> None:
+        pytest.fail("a licensed broker was checked for trial features")
+
+    _stub_main(monkeypatch=monkeypatch)
+    monkeypatch.setenv(post.BROKER_LICENCE_VAR, "licence")
+    monkeypatch.setattr(post, "_broker_enterprise_features", trial_features)
+    monkeypatch.setattr(post, "_broker_licence_info", licence_info)
+    monkeypatch.setattr(post, "_wait_schema_converged", schema_wait)
+
+    # 1 is the stubbed schema wait, past the broker check
+    assert post.main() == 1
+
+
+@pytest.mark.usefixtures("dotenv")
+def test_a_licensed_broker_with_a_violation_fails_post(
+    capsys: pytest.CaptureFixture, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def licence_info() -> dict:
+        return {"license_violation": True}
+
+    def no_claim() -> None:
+        pytest.fail("a claim ran")
+
+    _stub_main(monkeypatch=monkeypatch)
+    monkeypatch.setenv(post.BROKER_LICENCE_VAR, "licence")
+    monkeypatch.setattr(post, "_broker_licence_info", licence_info)
+    monkeypatch.setattr(post, "_wait_schema_converged", no_claim)
+
+    assert post.main() == 1
+    assert "licence violation" in capsys.readouterr().err
+
+
+@pytest.mark.usefixtures("dotenv")
 def test_a_profile_that_can_prove_nothing_does_not_pass(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

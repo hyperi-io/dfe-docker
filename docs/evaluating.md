@@ -81,7 +81,7 @@ DFE_ADMIN_NAME=ada DFE_ADMIN_PASSWORD='a long passphrase' docker compose -f oci:
 
 In PowerShell, set `$env:DFE_ADMIN_NAME` and `$env:DFE_ADMIN_PASSWORD` first. The login command then prints what you chose and the console still makes you change the password at first login. A password is 12 to 72 bytes of printable characters and is not `changeme`. A name starts with a letter or digit and holds letters, digits, `.`, `_` and `-`. A value the engine would refuse fails the secrets-init step and `docker compose -f oci://ghcr.io/hyperi-io/dfe-docker:compose logs secrets-init` names the variable. Typed on a command line, the password stays in your shell history and it stays in the stopped secrets-init container's environment, where `docker inspect` shows it, until `down` removes the container.
 
-The volume keeps the login, so a later `up` with neither variable set leaves it alone. A new password replaces the stored one and the engine reads it when it next starts, so add `up -d --force-recreate dfe-engine` to the command that sets it. A new name adds that account and the old one stays.
+The volume keeps the login, so a later `up` with neither variable set leaves it alone. A new password replaces the stored one and the engine reads it when it next starts, so add `up -d --force-recreate secrets-init dfe-engine` to the command that sets it. A new name adds that account and the old one stays.
 
 ## Getting it running
 

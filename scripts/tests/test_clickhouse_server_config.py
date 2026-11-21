@@ -41,6 +41,7 @@ _SYSTEM_LOGS_FILE = REPO_ROOT / "config" / "clickhouse" / "system-logs.xml"
 _REPLICATION_FILE = REPO_ROOT / "config" / "clickhouse" / "replication.xml"
 _LISTEN_FILE = REPO_ROOT / "config" / "clickhouse" / "listen.xml"
 _MERGE_MEMORY_FILE = REPO_ROOT / "config" / "clickhouse" / "merge-memory.xml"
+_DISK_RESERVE_FILE = REPO_ROOT / "config" / "clickhouse" / "disk-reserve.xml"
 # The image's file that opens every listener on every interface.
 _IMAGE_LISTEN_NAME = "docker_related_config.xml"
 _LOOPBACK = {"127.0.0.1", "::1"}
@@ -200,6 +201,7 @@ def test_the_service_mounts_every_overlay_into_config_d() -> None:
         _REPLICATION_FILE,
         _LISTEN_FILE,
         _MERGE_MEMORY_FILE,
+        _DISK_RESERVE_FILE,
     ):
         source = str(path.relative_to(REPO_ROOT))
         assert source in mounts, f"{_SERVICE} does not mount {source} into config.d"
@@ -227,6 +229,26 @@ def test_merges_leave_memory_for_inserts_and_queries() -> None:
     assert [child.tag for child in root.find("merge_tree")] == [
         "max_compress_block_size"
     ]
+
+
+def test_the_disk_keeps_a_reserve_the_broker_cannot_take() -> None:
+    root = _root(path=_DISK_RESERVE_FILE)
+    reserve = root.find("storage_configuration/disks/default/keep_free_space_bytes")
+    assert reserve is not None, "no keep_free_space_bytes on the default disk"
+    # The overlay sets only this, so the image keeps its disk layout
+    assert [element.tag for element in root.iter()] == [
+        "clickhouse",
+        "storage_configuration",
+        "disks",
+        "default",
+        "keep_free_space_bytes",
+    ]
+    env_name = reserve.attrib.get("from_env", "")
+    value = _service_environment(service=_SERVICE).get(env_name, "")
+    match = re.fullmatch(rf"\$\{{{env_name}:-(\d+)\}}", value)
+    # A default, so a stack with no .env still keeps the floor
+    assert match, value
+    assert int(match.group(1)) >= 1 << 30, value
 
 
 def _text(root: ElementTree.Element, path: str) -> str:

@@ -31,6 +31,7 @@ services:
     environment:
       CLICKHOUSE_DB: ${CLICKHOUSE_DB:-default}
       CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT: 1
+      CLICKHOUSE_KEEP_FREE_SPACE_BYTES: ${CLICKHOUSE_KEEP_FREE_SPACE_BYTES:-5368709120}
       CLICKHOUSE_PASSWORD: ${CLICKHOUSE_PASSWORD:-}
       CLICKHOUSE_USER: ${CLICKHOUSE_USERNAME:-default}
       DFE_KEEPER_IDENTITY: dfe:${CLICKHOUSE_KEEPER_PASSWORD:?run 'make init' to mint CLICKHOUSE_KEEPER_PASSWORD}
@@ -42,6 +43,7 @@ services:
       - ./config/clickhouse/server-logger.xml:/etc/clickhouse-server/config.d/dfe-logger.xml:ro
       - ./config/clickhouse/system-logs.xml:/etc/clickhouse-server/config.d/dfe-system-logs.xml:ro
       - ./config/clickhouse/merge-memory.xml:/etc/clickhouse-server/config.d/dfe-merge-memory.xml:ro
+      - ./config/clickhouse/disk-reserve.xml:/etc/clickhouse-server/config.d/dfe-disk-reserve.xml:ro
     healthcheck:
       test: ["CMD-SHELL", "clickhouse-client --password \"$$CLICKHOUSE_PASSWORD\" --query \"SELECT 1 FROM system.databases WHERE name = '\"$$CLICKHOUSE_DB\"'\""]
       interval: 5s

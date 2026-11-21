@@ -152,6 +152,10 @@ services:
     profiles: ["kafka-redpanda"]
     extends: {file: compose/limits.yml, service: limits-sidecar}
     entrypoint: ["/bin/bash", "/usr/local/bin/dfe-redpanda-configure.sh"]
+    environment:
+      REDPANDA_LICENSE: ${REDPANDA_LICENSE:-}
+      REDPANDA_MIN_FREE_BYTES: ${REDPANDA_MIN_FREE_BYTES:-5368709120}
+      REDPANDA_RETENTION_BYTES: ${REDPANDA_RETENTION_BYTES:-10737418240}
     depends_on:
       kafka-redpanda:
         condition: service_healthy
