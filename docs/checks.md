@@ -41,9 +41,13 @@ DFE_INFRA_DIR=../dfe-infra make test-source
 DFE_INFRA_DIR=../dfe-infra make test-source SOURCE_ARGS="--case cloudwatch --aws-service cloudtrail"
 DFE_INFRA_DIR=../dfe-infra make test-source SOURCE_ARGS="--case elastic"
 DFE_INFRA_DIR=../dfe-infra make test-source SOURCE_ARGS="--case vector"
+DFE_INFRA_DIR=../dfe-infra make test-source SOURCE_ARGS="--case edgestream-hub"
+DFE_INFRA_DIR=../dfe-infra make test-source SOURCE_ARGS="--case flow"
 ```
 
 Above, sources come through the API. This one creates one in the console, attaches a transform, deploys it, feeds it data and reads the rows back, driving a browser to do it. The runner is dfe-infra's (`scripts/acceptance/source/run.py`), the same one `dfe-ops acceptance --suite source` calls for Kubernetes.
+
+The `edgestream-hub` and `flow` cases drive the engine API and the receiver's listeners, with no browser steps. `flow` sends UDP from this machine, so `DFE_RECEIVER_NETFLOW_PORT` and `DFE_RECEIVER_SFLOW_PORT` must be set in `.env` (each publishes a receiver port, see [configuration.md](configuration.md)), and it reads its captures from a dfe-receiver checkout beside the dfe-engine one.
 
 `scripts/test_source.py` supplies what this repo owns: the published ports, the archiver container, the admin login from `env/engine.env` and `make apply` for each service the engine says must restart, which is what creates the source's own transform container. Run `make test-source DEV=1` against a `make dev` stack so that apply keeps the local images. `SOURCE_ARGS` reaches the runner untouched (`--keep`, `--per-module`, `--headed`).
 

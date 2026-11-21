@@ -76,6 +76,11 @@ VRL_MARKER = Path("pipelines") / "filebeat" / "filebeat.vrl"
 PROGRAM_CASES = ("vector",)
 PROGRAM_REPO_ENV_VAR = "DFE_TRANSFORM_VECTOR_REPO"
 PROGRAM_MARKER = Path("pipelines") / "filebeat" / "filebeat.yaml"
+# The flow case sends UDP from this machine, so the receiver's ports must be published: each runner flag takes the host port the .env key names
+FLOW_PORT_KEYS = (
+    ("--flow-netflow-port", "DFE_RECEIVER_NETFLOW_PORT"),
+    ("--flow-sflow-port", "DFE_RECEIVER_SFLOW_PORT"),
+)
 
 
 def _infra_repo(flag: str | None) -> Path:
@@ -126,6 +131,22 @@ def _case_repo(
     if not ((repo / marker).is_file()):
         sys.exit(f"test_source: {repo} carries no {marker}")
     return repo
+
+
+def _flow_flags(*, case: str, host: str) -> list[str]:
+    """The runner flags that point the flow case at the receiver's published UDP ports, empty for every other case."""
+    if case != "flow":
+        return []
+    flags = ["--flow-host", host]
+    for flag, key in FLOW_PORT_KEYS:
+        port = os.environ.get(key, "").strip()
+        if not port:
+            sys.exit(
+                f"test_source: the flow case sends UDP at the receiver, so set {key} "
+                "in .env to publish its port, then run make apply"
+            )
+        flags += [flag, port]
+    return flags
 
 
 def _runner_python(flag: str | None) -> str:
@@ -340,10 +361,19 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "--case",
         default="filebeat",
-        choices=("filebeat", "cloudwatch", "elastic", "vector"),
+        choices=(
+            "filebeat",
+            "cloudwatch",
+            "elastic",
+            "vector",
+            "edgestream-hub",
+            "flow",
+        ),
         help="filebeat, elastic and vector push real lines at the receiver, through "
         "dfe-transform-vrl, dfe-transform-elastic and dfe-transform-vector; "
-        "cloudwatch lets a fetcher pull an AWS upstream",
+        "cloudwatch lets a fetcher pull an AWS upstream; edgestream-hub posts an "
+        "EdgeStream Hub's syslog events; flow sends NetFlow, IPFIX and sFlow "
+        "captures over UDP (needs DFE_RECEIVER_NETFLOW_PORT and DFE_RECEIVER_SFLOW_PORT)",
     )
     parser.add_argument(
         "--aws-service",
@@ -420,6 +450,7 @@ def main(argv: list[str] | None = None) -> int:
     ):
         if os.environ.get(key):
             runner += [flag, os.environ[key]]
+    runner += _flow_flags(case=args.case, host=host)
     runner += _archive_exec()
     # No controller here restarts an app after a config write, which is why the
     # flag is passed at all.
