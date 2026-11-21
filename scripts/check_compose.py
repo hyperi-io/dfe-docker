@@ -458,6 +458,7 @@ _IMAGE_VOLUMES: dict[str, tuple[str, ...]] = {
     "hyperdx-documentdb": ("/data",),
     "kafka-apache": ("/etc/kafka/secrets", "/mnt/shared/config", "/var/lib/kafka/data"),
     "kafka-redpanda": ("/var/lib/redpanda/data",),
+    "kafka-redpanda-config": ("/var/lib/redpanda/data",),
 }
 # The VOLUME paths one image ref declares, or None when the daemon does not hold it.
 type _Inspect = Callable[[str], frozenset[str] | None]

@@ -161,6 +161,8 @@ services:
         condition: service_healthy
     volumes:
       - ./redpanda/configure.sh:/usr/local/bin/dfe-redpanda-configure.sh:ro
+      # Stays empty: covers the image's VOLUME for make clean
+      - kafka-redpanda-config-data:/var/lib/redpanda/data
     restart: "no"
 
   hyperdx-documentdb-tls:

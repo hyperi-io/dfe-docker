@@ -766,5 +766,6 @@ volumes:
   kafka-apache-config:
   kafka-apache-data:
   kafka-apache-secrets:
+  kafka-redpanda-config-data:
   kafka-redpanda-data:
   transform-elastic-geoip:
