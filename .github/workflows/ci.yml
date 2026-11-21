@@ -5,9 +5,7 @@
 # License:   BUSL-1.1 - HYPERI PTY LIMITED
 # Copyright: (c) 2026 HYPERI PTY LIMITED
 #
-# Hand-written: hyperi-ci has no reusable workflow for a compose-packaging repo.
-# ubuntu-26.04 is named, not ubuntu-latest, so a label move cannot swap the tools and the arm64 image build, which has no -latest label, runs on the same OS.
-# Renovate automerges patch and digest updates once this workflow passes.
+# Hand-written (no hyperi-ci compose workflow), runner pinned
 
 name: CI
 
@@ -16,26 +14,26 @@ on:
   push:
     branches:
       - main
-  # The inputs `hyperi-ci release` dispatches with. A bare dispatch only validates.
+  # `hyperi-ci release` sets these, a bare dispatch only validates
   workflow_dispatch:
     inputs:
-      tag:
-        type: string
-        required: false
-        default: ""
-        description: "Existing tag to publish a GitHub release for when it has none."
-      from-head:
-        type: string
-        required: false
-        default: ""
-        description: "'true' to release the current HEAD. The CI creates the tag."
       bump:
-        type: string
-        required: false
         default: "auto"
         description: "Version for from-head: auto | patch | minor (forced) | X.Y.Z (exact)."
+        required: false
+        type: string
+      from-head:
+        default: ""
+        description: "'true' to release the current HEAD. The CI creates the tag."
+        required: false
+        type: string
+      tag:
+        default: ""
+        description: "Existing tag to publish a GitHub release for when it has none."
+        required: false
+        type: string
 
-# A release run has its own group and is never cancelled, because a cancel after the tag push leaves a tag with no GitHub release.
+# Release runs are never cancelled, so no tag loses its release
 concurrency:
   group: "${{ github.workflow }}-${{ (inputs.tag != '' || inputs.from-head == 'true' || github.event_name == 'push' && (contains(github.event.head_commit.message, 'Release: true') || contains(github.event.head_commit.message, 'Release:true') || contains(github.event.head_commit.message, 'Publish: true') || contains(github.event.head_commit.message, 'Publish:true'))) && 'release-' || '' }}${{ github.ref }}"
   cancel-in-progress: "${{ !(inputs.tag != '' || inputs.from-head == 'true' || github.event_name == 'push' && (contains(github.event.head_commit.message, 'Release: true') || contains(github.event.head_commit.message, 'Release:true') || contains(github.event.head_commit.message, 'Publish: true') || contains(github.event.head_commit.message, 'Publish:true'))) }}"
@@ -47,7 +45,7 @@ permissions:
 # The house Python floor. The runner's own python3 is older.
 env:
   PYTHON_VERSION: "3.14.7"
-  # The hyperi-ci CLI the Release job runs. The HYPERCI_INSTALL_OVERRIDE variable replaces it, as in hyperi-ci's own workflows.
+  # The Release job's CLI, replaced by HYPERCI_INSTALL_OVERRIDE
   HYPERCI_INSTALL: ${{ vars.HYPERCI_INSTALL_OVERRIDE || 'uvx --python 3.14 --no-cache --refresh hyperi-ci' }}
 
 jobs:
@@ -99,7 +97,7 @@ jobs:
           pipx install --python "${{ steps.python.outputs.python-path }}" "pytest==$(make -s print-pytest-version)"
           pipx inject pytest "pyyaml==$(make -s print-pyyaml-version)"
 
-      # The churn tile test reads the stack's ClickHouse pin through scripts/stack.py, which needs oras, and runs the tiles on that image
+      # The zero_ok tile test reads the ClickHouse pin through oras
       - name: Install oras
         uses: oras-project/setup-oras@5e2f2482b30b0cb3e14e67f89a80c88c659a7c63 # v2.0.3
 
@@ -146,8 +144,7 @@ jobs:
       - name: Proxy configs
         run: make check-proxy
 
-# Only Docker on PATH: each profile is set up, and the default one starts, serves
-# the console and runs the demo. The Windows job runs the default install.
+  # Only Docker on PATH: every profile set up, the default run
   image:
     name: Image
     runs-on: ubuntu-26.04
@@ -165,11 +162,11 @@ jobs:
         with:
           python-version: ${{ env.PYTHON_VERSION }}
 
-      # The stack deployment.example.yaml pins, as image.yml bakes into the :<version> image
+      # The stack deployment.example.yaml pins, as image.yml bakes in
       - name: Build the image
         run: docker build --file docker/dfe-docker.Dockerfile --build-arg "IMAGE=$IMAGE" --build-arg "STACK=$(python3 scripts/quickstart_json.py --print-stack)" --tag "$IMAGE" .
 
-      # docker, curl for the console check and the few tools the checks below use. No make, no python
+      # docker, curl and a few check tools. No make, no python
       - name: Put only Docker on PATH
         run: |
           bin="$RUNNER_TEMP/docker-only"
@@ -208,7 +205,7 @@ jobs:
           docker compose config -q
           docker compose config --services > "$WORK/default.services"
 
-      # A second init, a bad profile and an upgrade, each against what it must leave alone
+      # Re-init, a bad profile and an upgrade must leave state alone
       - name: Refuse and upgrade
         run: |
           export PATH="$DOCKER_ONLY"
@@ -238,17 +235,17 @@ jobs:
             exit 1
           fi
 
-      # A throwaway install whose stack is torn down below, so its minted secrets protect nothing
+      # A throwaway install, so its minted secrets protect nothing
       - name: Hand the default install to the Windows job
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
+          if-no-files-found: error
+          include-hidden-files: true
           name: default-install
           path: |
             ${{ env.WORK }}/default
             ${{ env.WORK }}/default.services
             !${{ env.WORK }}/default/access-summary.md
-          include-hidden-files: true
-          if-no-files-found: error
           retention-days: 1
 
       - name: Start the default profile and reach the console
@@ -274,7 +271,7 @@ jobs:
         run: |
           docker compose ps --all
           docker compose logs --no-color --tail 100
-          # Low runner disk stops Redpanda and ClickHouse taking writes, so a demo that lands nothing shows it here
+          # A full runner disk stops writes, so a rowless demo shows it
           df -h "$(docker info --format '{{.DockerRootDir}}')" || true
           docker compose exec -T kafka-redpanda rpk cluster health || true
 
@@ -286,7 +283,7 @@ jobs:
             docker compose --profile '*' down --volumes --remove-orphans
           fi
 
-  # One Published compose leg per demo pack: resources/demo, then each resources/demo-<pack> directory in byte order, as scripts/_common.py demo_pack_names lists them
+  # One Published leg per pack, in demo_pack_names order
   demo-packs:
     name: Demo Packs
     runs-on: ubuntu-26.04
@@ -305,7 +302,7 @@ jobs:
           dirs="$({ echo demo; find resources -mindepth 1 -maxdepth 1 -type d -name 'demo-*' -printf '%f\n' | LC_ALL=C sort; } | jq -Rnc '[inputs]')"
           echo "dirs=$dirs" | tee -a "$GITHUB_OUTPUT"
 
-  # The files a release publishes as OCI artifacts, generated from this commit and run from a folder holding nothing else, as `-f oci://` runs them. Each demo file holds the whole stack plus its pack, so it starts and has to land the data its pack replays. The demo leg also writes the stack file, which is read and checked
+  # Release OCI files from this commit, run from an empty folder
   published:
     name: Published compose (${{ matrix.pack }})
     needs: demo-packs
@@ -337,7 +334,7 @@ jobs:
       - name: Build the image
         run: docker build --file docker/dfe-docker.Dockerfile --build-arg "IMAGE=$IMAGE" --tag "$IMAGE" .
 
-      # The image is local here, so its digest is the one finding allowed
+      # The image is local, so its digest is the one finding allowed
       - name: Generate and check the published files
         env:
           PACK: ${{ matrix.pack }}
@@ -350,6 +347,7 @@ jobs:
           python3 scripts/publish_compose.py --image "$IMAGE" --out-dir "$RUNNER_TEMP/compose" "${pack[@]}"
           echo "COMPOSE_DIR=$RUNNER_TEMP/compose" >> "$GITHUB_ENV"
 
+      # The demo file holds the whole stack plus the demo
       - name: Start the demo and reach the console
         timeout-minutes: 25
         working-directory: ${{ env.COMPOSE_DIR }}
@@ -357,7 +355,7 @@ jobs:
           docker compose -f "$FILE" up -d --wait --wait-timeout 1200
           curl -fsSL --retry 5 --retry-all-errors -o /dev/null -w 'console answered %{http_code} at %{url_effective}\n' http://localhost:3000/
 
-      # The secrets are this runner's own: no service holds one in its environment, ClickHouse refuses its empty default password, and the login the file prints is held for a change
+      # Secrets minted here: none in an env, no defaults accepted
       - name: Run on secrets minted here
         working-directory: ${{ env.COMPOSE_DIR }}
         run: |
@@ -393,7 +391,7 @@ jobs:
 
       # Runs after the secrets step because the console login check replaces the login's issued password, which that step expects held. One checker proves the pack worked: its replayed sources land parsed rows, the intake and default tables stay empty, every source is deployed, each hunt fires under its ceiling, each dashboard and saved search returns rows, the console login can search, replayed fetcher polls land and the dead-letter queue stays empty. What a pack expects is data in resources/<pack>/verify.json
       - name: Verify the pack worked
-        # Above the checker's summed waits (land, hunts, console and fetchers: 38 min), so a slow failure still prints its results
+        # Over the checker's 38 min of summed waits, so failures print
         timeout-minutes: 40
         working-directory: ${{ env.COMPOSE_DIR }}
         env:
@@ -413,7 +411,7 @@ jobs:
             esac
           done
           docker compose -f "$FILE" logs --no-color --tail 100 "${services[@]}"
-          # A broker under its free-space floor takes no writes, so a pack that lands nothing shows it here
+          # A broker under its disk floor takes no writes, shown here
           docker compose -f "$FILE" exec -T kafka-redpanda rpk cluster health || true
           docker compose -f "$FILE" exec -T kafka-redpanda df -h /var/lib/redpanda/data || true
           df -h "$(docker info --format '{{.DockerRootDir}}')" || true
@@ -425,7 +423,7 @@ jobs:
             docker compose -f "$COMPOSE_DIR/$FILE" down --volumes --remove-orphans
           fi
 
-  # Compose on Windows splits COMPOSE_FILE on `;` unless COMPOSE_PATH_SEPARATOR in .env says otherwise. The one runner exception: only a Windows runner runs that path.
+  # Windows splits COMPOSE_FILE unless .env sets a separator
   image-windows:
     name: Image (Windows compose)
     needs: image
@@ -453,35 +451,36 @@ jobs:
           }
           Write-Output "Windows compose starts the same services: $got"
 
-# Tags and publishes a release on `Release: true` or a `hyperi-ci release` dispatch,
-# after the image jobs. The App's token publishes it so image.yml starts on it.
+  # Tags and publishes on `Release: true` or a dispatch
   release:
     name: Release
+    # An image that fails CI never gets a tag
     needs: [compose, dockerfile, image, image-windows, published]
     if: github.event_name != 'pull_request'
     runs-on: ubuntu-26.04
     timeout-minutes: 20
-    # semantic-release's dry run checks push access, which needs write
+    # A dry run checks push access, which needs write
     permissions:
       contents: write
+    # Shared actions: hyperi-ci's release takes four languages
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: ${{ inputs.tag || github.sha }}
           # semantic-release reads every commit since the last tag
           fetch-depth: 0
           persist-credentials: false
+          ref: ${{ inputs.tag || github.sha }}
 
-      # The trailer gate, the classification check and the version, as every hyperi-ci pipeline decides them
+      # Trailer gate, classification and version, as hyperi-ci does
       - name: Plan the release
         id: plan
         uses: hyperi-io/hyperi-ci/.github/actions/predict-version@main
         with:
+          bump: ${{ inputs.bump || 'auto' }}
+          from-head: ${{ inputs.from-head }}
           github-token: ${{ secrets.GITHUB_TOKEN }}
           tag: ${{ inputs.tag }}
-          from-head: ${{ inputs.from-head }}
-          bump: ${{ inputs.bump || 'auto' }}
 
       - name: Install uv
         if: steps.plan.outputs.will-release == 'true'
@@ -489,18 +488,19 @@ jobs:
         with:
           enable-cache: false
 
+      # A GITHUB_TOKEN release starts no image.yml run
       - name: Mint the release token
         id: bot
         if: steps.plan.outputs.will-release == 'true'
         uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
         with:
           client-id: ${{ vars.GH_APP_CLIENT_ID }}
-          private-key: ${{ secrets.GH_APP_PRIVATE_KEY }}
           owner: ${{ github.repository_owner }}
-          repositories: ${{ github.event.repository.name }}
           permission-contents: write
+          private-key: ${{ secrets.GH_APP_PRIVATE_KEY }}
+          repositories: ${{ github.event.repository.name }}
 
-      # Plan installed semantic-release and the central config in this job
+      # Plan installed semantic-release and its config in this job
       - name: Tag (semantic-release)
         if: steps.plan.outputs.will-release == 'true' && (github.event_name == 'push' || inputs.from-head == 'true' && inputs.bump == 'auto')
         env:
@@ -514,7 +514,7 @@ jobs:
           RELEASE_VERSION: ${{ steps.plan.outputs.version }}
         run: ${{ env.HYPERCI_INSTALL }} tag-head --bump "$RELEASE_VERSION"
 
-      # semantic-release tags nothing when this checkout is behind main, and gh release create would then tag main's tip
+      # Behind main nothing is tagged, so gh would tag main's tip
       - name: Check the tag is on this commit
         if: steps.plan.outputs.will-release == 'true'
         env:
@@ -554,7 +554,7 @@ jobs:
           fi
           gh release create "$tag" --repo "$GITHUB_REPOSITORY" --verify-tag --title "$tag" --generate-notes "${kind[@]}"
 
-      # Non-fatal: the release is already published. A tag dispatch checks out an old tag, so it commits nothing back
+      # Non-fatal: the release is out, and an old tag commits nothing
       - name: Commit VERSION and CHANGELOG.md back
         if: steps.plan.outputs.will-release == 'true' && inputs.tag == ''
         continue-on-error: true

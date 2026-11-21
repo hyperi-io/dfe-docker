@@ -6,7 +6,7 @@
 # License:   BUSL-1.1
 # Copyright: (c) 2026 HYPERI PTY LIMITED
 #
-# Compose profiles and the services each starts: docs/architecture.md.
+# Profiles and the services each starts: docs/architecture.md
 
 include:
   - path: compose/one-shots.yml
@@ -505,7 +505,7 @@ services:
       OTEL_EXPORTER_OTLP_ENDPOINT: ${DFE_OTEL_EXPORTER_ENDPOINT:-}
       OTEL_SERVICE_NAME: dfe-hunt-runner
     volumes:
-      # Only the alert destinations from the engine's file secrets backend, never the whole root.
+      # Alert destinations only, never the whole secrets root
       - type: volume
         source: dfe-engine-config
         target: /app/config/.secrets/alert-destinations
@@ -798,5 +798,6 @@ volumes:
   kafka-apache-config:
   kafka-apache-data:
   kafka-apache-secrets:
+  kafka-redpanda-config-data:
   kafka-redpanda-data:
   transform-elastic-geoip:

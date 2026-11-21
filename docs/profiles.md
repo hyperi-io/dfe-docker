@@ -15,7 +15,7 @@ Pick one with `make up PROFILE=<profile>`, which writes it to `.env` as `DFE_PRO
 
 dfe-fetcher runs one container for every fetcher source. The three transforms run one container per source once a source created through the engine binds one. dfe-engine runs a fetcher or a transform for a source on Kafka only, so `single-grpc` runs neither.
 
-Every profile runs the engine, the UI, dfe-hyperdx and the self-monitoring collector, from its `core`, `hyperdx` and `otel` footprint keys. The Kafka profiles add the broker and Kafbat. The matching `.env` flag overrides each key, and a profile that leaves a key out gets its default:
+Every profile runs the engine, the UI, dfe-hyperdx and the self-monitoring collector, from its `core`, `hyperdx` and `otel` footprint keys. The Kafka profiles add the broker and Kafbat. The matching `.env` flag overrides each key and a profile that leaves a key out gets its default:
 
 | Key | Runs | Default | `.env` flag |
 |---|---|---|---|
@@ -33,11 +33,11 @@ Every profile runs the engine, the UI, dfe-hyperdx and the self-monitoring colle
 
 ## Per-source apps
 
-**One fetcher for every source.** dfe-engine merges every fetcher source into one file, `dfe-fetcher/fetcher.yaml` in `dfe-app-config`, and the committed `dfe-fetcher` service reads it. A source with fetcher settings that clash with another's is saved and reported as not run.
+**One fetcher for every source.** dfe-engine merges every fetcher source into one file, `dfe-fetcher/fetcher.yaml` in `dfe-app-config`, which the committed `dfe-fetcher` service reads. A source with fetcher settings that clash with another's is saved and reported as not run.
 
 **One transform per source, as on Kubernetes.** dfe-engine writes each transformed source's config into its own directory and its name into `env/<app>.instances`. `scripts/instances.py` turns each name into a service in `.tmp/docker-compose.instances.yml`, which `make apply` starts. A file published for `docker compose -f oci://` runs only the transform instances it declares, so dfe-engine rejects any other transformed source there.
 
-**A key runs each per-source app.** No profile names a per-source app as a service. `fetcher_enabled` runs the fetcher, and `transform_elastic_enabled`, `transform_vector_enabled` and `transform_vrl_enabled` each let dfe-engine start that transform once per source. A key left out is false. Each instance reads the config dfe-engine renders for its source, so the keys do nothing while `DFE_CORE_ENABLED=false`. For the filebeat, Vector and Elastic transform scenarios, run [`make test-source`](checks.md#the-post-deploy-source-test-is-what-an-operator-does-first).
+**A key runs each per-source app.** No profile names a per-source app as a service. `fetcher_enabled` runs the fetcher, while `transform_elastic_enabled`, `transform_vector_enabled` and `transform_vrl_enabled` each let dfe-engine start that transform once per source. A key left out is false. Each instance reads the config dfe-engine renders for its source, so the keys do nothing while `DFE_CORE_ENABLED=false`. For the filebeat, Vector and Elastic transform scenarios, run [`make test-source`](checks.md#the-post-deploy-source-test-is-what-an-operator-does-first).
 
 **An instance of an app the profile does not run is left out.** Every make target that resolves the profile warns on an `env/<app>.instances` naming one, with the app, its sources and the key to set. It starts none of them. dfe-engine still starts, so those sources can be deleted through it. `make clean` deletes every index with the engine's volume. `make sources` skips a seed source when the profile does not run its fetcher or transform.
 

@@ -9,6 +9,7 @@
 """The gnmic footprint key, its compose service and its shipped config."""
 
 import re
+from pathlib import Path
 
 import pytest
 
@@ -21,7 +22,9 @@ _FOOTPRINT_VARS = (
 )
 
 
-def _resolve(*, tmp_path, monkeypatch, environ: dict[str, str]) -> tuple[int, dict]:
+def _resolve(
+    *, environ: dict[str, str], monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> tuple[int, dict]:
     """Run the resolver and read back what it wrote."""
     written = tmp_path / ".tmp" / "profile.mk"
     monkeypatch.setattr(resolve_profile, "PROFILE_MK", written)
@@ -30,7 +33,7 @@ def _resolve(*, tmp_path, monkeypatch, environ: dict[str, str]) -> tuple[int, di
     for key, value in environ.items():
         monkeypatch.setenv(key, value)
     code = resolve_profile.main()
-    values: dict[str, str] = {}
+    values = {}
     if written.is_file():
         for line in written.read_text(encoding="utf-8").splitlines():
             name, _, value = line.partition(":=")
@@ -55,20 +58,26 @@ def _resolve(*, tmp_path, monkeypatch, environ: dict[str, str]) -> tuple[int, di
     ],
 )
 def test_gnmic_runs_only_when_asked_for(
-    tmp_path, monkeypatch, dotenv, environ: dict[str, str], runs: bool
+    dotenv: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    environ: dict[str, str],
+    runs: bool,
 ) -> None:
-    code, values = _resolve(tmp_path=tmp_path, monkeypatch=monkeypatch, environ=environ)
+    code, values = _resolve(environ=environ, monkeypatch=monkeypatch, tmp_path=tmp_path)
 
     assert code == 0
     assert ("--profile gnmic" in values["PROFILE_FLAGS"]) is runs
     assert ("gnmic" in values["DFE_SERVICES"].split()) is runs
 
 
-def test_gnmic_without_the_collector_is_refused(tmp_path, monkeypatch, dotenv) -> None:
+def test_gnmic_without_the_collector_is_refused(
+    dotenv: Path, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
     code, _ = _resolve(
-        tmp_path=tmp_path,
-        monkeypatch=monkeypatch,
         environ={"DFE_GNMIC_ENABLED": "true", "DFE_OTEL_ENABLED": "false"},
+        monkeypatch=monkeypatch,
+        tmp_path=tmp_path,
     )
 
     assert code != 0
@@ -92,7 +101,7 @@ def test_the_gnmic_service_is_pinned_by_digest_and_opt_in() -> None:
     ],
     ids=["shipped", "emulator"],
 )
-def test_each_gnmic_config_pushes_otlp_to_the_bundled_collector(path) -> None:
+def test_each_gnmic_config_pushes_otlp_to_the_bundled_collector(path: Path) -> None:
     text = path.read_text(encoding="utf-8")
 
     assert "type: otlp" in text

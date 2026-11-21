@@ -84,6 +84,7 @@ from post import (  # noqa: E402
     _replace_file,
     _request_token,
     _without_passwords,
+    api_put_json,
     login,
 )
 
@@ -129,6 +130,9 @@ TARGETS = {
     "rules": ("rules",),
     "sources": ("sources",),
 }
+# The deployment's own org, where records naming no org land
+YOUR_ORG_FILE = SEED_DIR / "organisation.yaml"
+YOUR_ORG_ROUTE = "/system/organisation"
 
 
 def _account_password(*, username: str) -> str:
@@ -280,6 +284,33 @@ def _missing_table(*, body: dict) -> str:
         f"{f'{database}.{table}'!r} does not exist, so the hunt runner would fail on "
         f"every run of it; `make sources` creates it on a profile that runs its source"
     )
+
+
+def _name_your_org(*, base: str, token: str) -> None:
+    """Name the org resources/seed/organisation.yaml names as the deployment's own, unless the engine names one already."""
+    wanted = _read(path=YOUR_ORG_FILE)
+    name = wanted.get("name") if isinstance(wanted, dict) else None
+    if (not (isinstance(name, str))) or (not (name)):
+        raise SeedError(f"{YOUR_ORG_FILE.name!r} names no org")
+    url = f"{base}{YOUR_ORG_ROUTE}"
+    status, answer = _api_get_json(token=token, url=url)
+    if status == 404:
+        _print(
+            msg=f"SKIP your organisation: this engine has no {YOUR_ORG_ROUTE!r} route"
+        )
+        return
+    if status != 200:
+        raise SeedError(f"GET {YOUR_ORG_ROUTE!r} returned HTTP {status}: {answer}")
+    held = answer.get("name") if isinstance(answer, dict) else None
+    if held:
+        _print(msg=f"your organisation is {held!r} already")
+        return
+    status, answer = api_put_json(
+        headers={"If-None-Match": "*"}, payload={"name": name}, token=token, url=url
+    )
+    if status != 200:
+        raise SeedError(f"PUT {YOUR_ORG_ROUTE!r} returned HTTP {status}: {answer}")
+    _print(msg=f"named org {name!r} as your organisation")
 
 
 def _objects(*, directory: Path, key: str) -> list[tuple[str, dict]]:
@@ -468,7 +499,7 @@ def _send(*, records: list[dict], source: str) -> None:
         )
     for record in records:
         status = http_post(
-            body=_tagged(record=record, source=source), url=url, token=ingest_token()
+            body=_tagged(record=record, source=source), token=ingest_token(), url=url
         )
         if (status < 200) or (status >= 300):
             raise SeedError(f"{url!r} answered HTTP {status} for source {source!r}")
@@ -637,6 +668,13 @@ def main() -> int:
             per_source_apps=per_source_apps,
             token=token,
         ):
+            return 1
+        if kind != "orgs":
+            continue
+        try:
+            _name_your_org(base=base, token=token)
+        except (*ENGINE_FAULTS, SeedError) as error:
+            _print(msg=f"FAIL {error}")
             return 1
     return 0
 

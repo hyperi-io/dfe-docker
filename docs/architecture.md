@@ -131,18 +131,18 @@ flowchart TB
   style ctlgrp fill:none,stroke:#0072B2,stroke-width:1.5px,stroke-dasharray:6 4
 ```
 
-*Figure 1. L2 Services -- DFE Compose stack. Dotted paths are optional.* Up: top of dfe-docker. Down: [L4 Detail -- Loader topic choice](known-issues.md#a-_load-topic-changes-what-the-loader-reads), [L4 Detail -- Loader and schema checks](troubleshooting.md#events-are-accepted-but-nothing-lands), [L4 Detail -- One console origin](operating.md#console-origin-and-the-port-6000-listeners), [L4 Detail -- Two listeners on port 6000](operating.md#console-origin-and-the-port-6000-listeners).
+*Figure 1. L2 Services - DFE Compose stack. Dotted paths are optional.* Up: top of dfe-docker. Down: [L4 Detail - Loader topic choice](known-issues.md#a-_load-topic-changes-what-the-loader-reads), [L4 Detail - Loader and schema checks](troubleshooting.md#events-are-accepted-but-nothing-lands), [L4 Detail - One console origin](operating.md#console-origin-and-the-port-6000-listeners), [L4 Detail - Two listeners on port 6000](operating.md#console-origin-and-the-port-6000-listeners).
 
 <a id="events-arrive-two-ways-and-leave-one"></a>
 
 ## How data flows
 
-1. Push clients send to dfe-receiver over HTTP, Vector, Beats, OTLP, HEC, syslog or flow. dfe-fetcher pulls from REST APIs, databases and files, and idles until a fetcher source exists.
+1. Push clients send to dfe-receiver over HTTP, Vector, Beats, OTLP, HEC, syslog or flow. dfe-fetcher pulls from REST APIs, databases and files. It idles until a fetcher source exists.
 2. On a `*-kafka` profile both produce to a `*_land` topic named after the event's `_source`. The name carries through character for character, so `filebeat-vector` gives `filebeat-vector_land` and a table that needs backticks in SQL.
-3. A source with a transform gets its own instance. It reads `<source>_land` and writes `<source>_load`, and from then on the loader reads `_load` instead. Transforms run on Kafka profiles alone.
+3. A source with a transform gets its own instance. It reads `<source>_land` and writes `<source>_load`. From then on the loader reads `_load` instead. Transforms run on Kafka profiles alone.
 4. dfe-loader auto-discovers every topic ending in `_land` or `_load` and inserts into ClickHouse. dfe-archiver writes each source's landing topic to its archive, so archiving needs a Kafka profile.
-5. On a `*-grpc` profile there is no broker, and the receiver dials `dfe-loader:6000` directly.
-6. The DFE console sends every change through dfe-engine. The engine creates each table and topic, and renders each app's config.
+5. On a `*-grpc` profile there is no broker and the receiver dials `dfe-loader:6000` directly.
+6. The DFE console sends every change through dfe-engine. The engine creates each table and topic and renders each app's config.
 
 Create a source before you send it data. A loader that meets rows for a table it has no schema for buffers them, then dead-letters them.
 
@@ -155,7 +155,7 @@ Create a source before you send it data. A loader that meets rows for a table it
 | Source topic | The `*_land` topic each source writes | [Broker](broker.md) |
 | Transforms | VRL, Vector or compiled Elastic pipelines, one instance per source | [vrl](https://github.com/hyperi-io/dfe-transform-vrl/blob/main/docs/architecture.md), [vector](https://github.com/hyperi-io/dfe-transform-vector/blob/main/docs/architecture.md), [elastic](https://github.com/hyperi-io/dfe-transform-elastic/blob/main/docs/architecture.md) |
 | Transformed topic | The `*_load` topic a transform writes | [Known issues](known-issues.md#a-_load-topic-changes-what-the-loader-reads) |
-| dfe-loader | Writes ClickHouse, and hosts the gRPC Push listener | [dfe-loader](https://github.com/hyperi-io/dfe-loader/blob/main/docs/architecture.md) |
+| dfe-loader | Writes ClickHouse and hosts the gRPC Push listener | [dfe-loader](https://github.com/hyperi-io/dfe-loader/blob/main/docs/architecture.md) |
 | ClickHouse | Every table, plus the stack's self-telemetry | [Secrets and storage](secrets-and-storage.md) |
 | dfe-archiver | Writes raw events to a filesystem, S3, MinIO, GCS or Azure Blob | [dfe-archiver](https://github.com/hyperi-io/dfe-archiver/blob/main/docs/architecture.md) |
 | Archive | The archiver's files | [Secrets and storage](secrets-and-storage.md) |
@@ -170,7 +170,7 @@ Create a source before you send it data. A loader that meets rows for a table it
 |---|---|---|
 | Docker with Compose | always | one Linux host |
 | Registry | always | the registry the stack pins, at the digests the Kubernetes path runs |
-| Broker | on `*-kafka` profiles | Redpanda, or Apache Kafka with `KAFKA_BACKEND=apache` ([broker](broker.md)) |
+| Broker | on `*-kafka` profiles | Redpanda or Apache Kafka with `KAFKA_BACKEND=apache` ([broker](broker.md)) |
 | Object storage | for an archive past local disk | S3, MinIO, GCS, Azure Blob |
 | OIDC provider | with the `auth` profile | any, through oauth2-proxy ([auth profile](auth-profile.md)) |
 
@@ -194,15 +194,15 @@ A profile declares its footprint through the `clickhouse`, `core`, `kafbat`, `hy
 
  Four limit tiers set CPU and memory ceilings ([operating](operating.md#resource-limits-four-tiers-ceilings-not-reservations)).
 
-Kubernetes is the primary DFE path, and Compose is for small environments. Three things differ on purpose:
+Kubernetes is the primary DFE path and Compose is for small environments. Three things differ on purpose:
 
 - A new source's apps start when you run `make apply`. Argo does that on Kubernetes.
 - Envoy's OIDC filters stay unconfigured, because Docker mode can't assume an issuer exists. The engine API still needs a login per route.
-- Container logs reach the collector through Docker's `fluentd` log driver, and the host's CPUs are the one host metric collected ([observability](observability.md)).
+- Container logs reach the collector through Docker's `fluentd` log driver and the host's CPUs are the one host metric collected ([observability](observability.md)).
 
 ## Design considerations
 
-**Security.** The console and its Search authenticate. The ingest ports, Kafbat and the metrics ports ask for no login, so put the stack behind a VPN, a tunnel or a firewall, or arm the `auth` profile ([operating](operating.md)).
+**Security.** The console and its Search authenticate. The receiver's HTTP listener takes only bearer tokens once an ingest credential names it. The other ingest ports, Kafbat and the metrics ports ask for no login, so arm the `auth` profile or put the stack behind a VPN, a tunnel or a firewall ([operating](operating.md)).
 
 **Reliability.** Every app waits for dfe-engine to report healthy, which means its tables and topics exist. Before an app starts, a one-shot runs its `config-check` against the exact config it will use, so a broken config stops `make up` with the app's own error and not a restart loop.
 
@@ -214,7 +214,7 @@ Kubernetes is the primary DFE path, and Compose is for small environments. Three
 
 **Same images, same registry, same pins.** Compose is safe to deploy because it runs the exact digests Kubernetes runs, pinned from the same stack definition.
 
-**dfe-engine renders each app's config.** Compose runs no chart, so the engine merges each instance's overlay over the committed `config/<app>/<transport>.yaml` and writes the result to the `dfe-app-config` volume. Deployment facts stay in the committed file, and nothing deployment-specific goes into the deploy repo.
+**dfe-engine renders each app's config.** Compose runs no chart, so the engine merges each instance's overlay over the committed `config/<app>/<transport>.yaml` and writes the result to the `dfe-app-config` volume. Deployment facts stay in the committed file and nothing deployment-specific goes into the deploy repo.
 
 **dfe-engine alone owns the schema and topics.** The schemas ride inside the engine image, so a schema change is an engine release and there's no schema pin here. `scripts/tests/test_engine_only_schema_control.py` fails the build on any DDL or topic step in this repo.
 
@@ -222,14 +222,14 @@ Kubernetes is the primary DFE path, and Compose is for small environments. Three
 
 ## Diagram map
 
-- Figure 1. L2 Services -- DFE Compose stack, at the top of this page
-  - [L4 Detail -- Loader topic choice](known-issues.md#a-_load-topic-changes-what-the-loader-reads)
-  - [L4 Detail -- Loader and schema checks](troubleshooting.md#events-are-accepted-but-nothing-lands)
-  - [L4 Detail -- Topic and dead-letter checks](troubleshooting.md#events-are-accepted-but-nothing-lands)
-  - [L4 Detail -- One console origin](operating.md#console-origin-and-the-port-6000-listeners)
-  - [L4 Detail -- Two listeners on port 6000](operating.md#console-origin-and-the-port-6000-listeners)
-  - [L4 Detail -- Self-telemetry](observability.md)
-  - [L4 Detail -- Profile resolution](../CONTRIBUTING.md#profile-resolution), for contributors
+- Figure 1. L2 Services - DFE Compose stack, at the top of this page
+  - [L4 Detail - Loader topic choice](known-issues.md#a-_load-topic-changes-what-the-loader-reads)
+  - [L4 Detail - Loader and schema checks](troubleshooting.md#events-are-accepted-but-nothing-lands)
+  - [L4 Detail - Topic and dead-letter checks](troubleshooting.md#events-are-accepted-but-nothing-lands)
+  - [L4 Detail - One console origin](operating.md#console-origin-and-the-port-6000-listeners)
+  - [L4 Detail - Two listeners on port 6000](operating.md#console-origin-and-the-port-6000-listeners)
+  - [L4 Detail - Self-telemetry](observability.md)
+  - [L4 Detail - Profile resolution](../CONTRIBUTING.md#profile-resolution), for contributors
 
 ## What's next
 

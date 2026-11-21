@@ -71,25 +71,18 @@ from _common import (  # noqa: E402
 # one. docs/operating.md documents the migration + recovery. `make init` only
 # tops up an existing .env that predates the key, so an operator who already set a
 # password keeps it.
-# HyperI password standard (hyperi-ai standards/universal/security.md): generated
-# secrets are letters and digits only, because `-`, `_` and other symbols get
-# rewritten or truncated by shells, .env files and URL-form DSNs. Over 62 symbols,
-# a 32-character credential is about 190 bits and a 64-character key about 381,
-# above the 128-bit and 256-bit floors of 22 and 43 characters.
+# Letters and digits only, since shells and DSNs mangle symbols
 _SECRET_ALPHABET = string.ascii_letters + string.digits
 _LEN_CREDENTIAL = 32  # DB / service credentials
 _LEN_KEY = 64  # signing keys and other long-lived key material
-# oauth2-proxy base64-decodes its cookie secret and needs 16, 24 or 32 bytes, so 32
-# characters, which decode to a 24-byte AES key, rather than the key length.
+# oauth2-proxy base64-decodes a 16, 24 or 32 byte cookie secret
 _LEN_COOKIE = _LEN_CREDENTIAL
 # dfe-hyperdx takes TOKEN_ENCRYPTION_KEY as 64 hex chars or base64 of exactly 32 bytes
 # and refuses to start on anything else; hex keeps it alphanumeric.
 _LEN_HEX_AES256 = 64
 _HEX_SECRETS = frozenset({"TOKEN_ENCRYPTION_KEY"})
 
-# File -> name -> length. DB and service passwords take the credential length, and
-# the dfe-ui NextAuth, engine JWT and dfe-hyperdx session values are session-signing
-# keys, so they take the key length.
+# File -> name -> length, with session-signing keys on _LEN_KEY
 GENERATED_SECRETS = {
     DOTENV_FILE.name: {
         # Keeper's digest identity: a changed value locks the server out of its own znodes.

@@ -84,10 +84,7 @@ TOPIC_CREATE = re.compile(
 # the `dfe-schemas` manifest are not matched -- neither creates anything here.
 BOOTSTRAPPER_NAME = re.compile(r"dfe-schema-init|kafka-init")
 
-# The e2e executor, which makes and drops its own throwaway topic and database
-# per run against a live stack to prove the pipeline, the zero_ok tile test, which
-# makes two throwaway tables in a clickhouse-local process of its own, and this
-# file, which quotes what it forbids.
+# Each makes only throwaway objects, or quotes what it forbids
 ALLOWED = {
     "scripts/test_e2e.py",
     "scripts/tests/test_demo_theatre_zero_ok_tiles.py",

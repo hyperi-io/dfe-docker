@@ -6,7 +6,7 @@
 # License:   BUSL-1.1
 # Copyright: (c) 2026 HYPERI PTY LIMITED
 
-# gnmic exits until a `targets:` map names a device. docs/gnmi.md has the keys.
+# gnmic exits until `targets:` names a device (docs/gnmi.md)
 
 api-server:
   address: 127.0.0.1:7890

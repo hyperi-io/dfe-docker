@@ -458,11 +458,11 @@ def test_the_committed_dial_pins_a_release(monkeypatch: pytest.MonkeyPatch) -> N
     ids=["release", "rc-refused", "rc-opted-in", "beta-refused"],
 )
 def test_a_release_reads_only_a_ga_pin(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
     pin: str,
     opt_in: str,
     outcome: str | None,
-    monkeypatch: pytest.MonkeyPatch,
-    tmp_path: Path,
 ) -> None:
     dial = tmp_path / "deployment.example.yaml"
     dial.write_text(data=f"version:\n  pin: {pin}\n", encoding="utf-8")

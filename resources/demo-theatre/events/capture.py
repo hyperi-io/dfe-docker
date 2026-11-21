@@ -23,7 +23,7 @@ HERE = Path(__file__).resolve().parent
 USER = "DFE-demo (https://github.com/hyperi-io/dfe-docker)"
 # Sydney, 100 nautical miles round Kingsford Smith
 ADSB_URL = "https://api.adsb.lol/v2/point/-33.94/151.18/100"
-# The Gulf of Finland, 60 km round Helsinki, reports from the last ten minutes
+# Gulf of Finland, 60 km round Helsinki, the last ten minutes
 AIS_URL = "https://meri.digitraffic.fi/api/ais/v1/locations?radius=60&latitude=60.1&longitude=24.95&from={since}"
 AIS_WINDOW_MS = 600_000
 HEADERS = {
@@ -48,15 +48,15 @@ def _poll(*, headers: dict[str, str], url: str) -> object:
     return json.loads(raw)
 
 
-def main() -> int:
+def main(*, argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
-        "--minutes", default=10.0, type=float, help="how long to capture"
+        "--minutes", default=10.0, help="how long to capture", type=float
     )
     parser.add_argument(
-        "--interval", default=10.0, type=float, help="seconds between polls"
+        "--interval", default=10.0, help="seconds between polls", type=float
     )
-    args = parser.parse_args()
+    args = parser.parse_args(argv)
     for name in HEADERS:
         (HERE / name).mkdir(exist_ok=True)
     files = {

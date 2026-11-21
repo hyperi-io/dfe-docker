@@ -14,11 +14,11 @@ Three surfaces, three different questions.
 
 | Surface | Answers | Where |
 |---|---|---|
-| Health endpoints | is this process alive, and is it ready to work | `/livez`, `/readyz` |
+| Health endpoints | is this process alive and is it ready to work | `/livez`, `/readyz` |
 | Self-telemetry | what has the stack been doing | the `dfe.otel_*` tables |
 | The self test | did an event actually get through | `make post`, in [self-test.md](self-test.md) |
 
-Ingested data is a different question -- [troubleshooting.md](troubleshooting.md). What `make post` claims is in [self-test.md](self-test.md), and the components and transports in [architecture.md](architecture.md).
+Ingested data is a different question - [troubleshooting.md](troubleshooting.md). What `make post` claims is in [self-test.md](self-test.md) and the components and transports in [architecture.md](architecture.md).
 
 ## The health surface is three paths, with no aliases
 
@@ -35,15 +35,11 @@ aimed at one.
 | dfe-ui | none | all three on `:3000`, alongside the app |
 | dfe-proxy | 3000 | `/livez`, answered by Envoy itself |
 | otel-collector | 13133 | the `health_check` extension |
-| dfe-hyperdx | 8000 | `/health` -- upstream HyperDX's own convention |
+| dfe-hyperdx | 8000 | `/health`, upstream HyperDX's own convention |
 
-The metrics ports bind `DFE_BIND_HOST` and the engine, proxy and dfe-hyperdx
-ports `DFE_UI_BIND_HOST`, both `127.0.0.1` by default, so curl them from the box,
-not your laptop.
+The metrics ports bind `DFE_BIND_HOST` and the engine, proxy and dfe-hyperdx ports `DFE_UI_BIND_HOST`, both `127.0.0.1` by default, so curl them from the box, not your laptop.
 
-On dfe-ui, an unknown path returns the 200 app shell rather than a 404 -- Next.js
-routes anything it does not recognise to the page. Only the three paths above are
-served there.
+On dfe-ui, an unknown path returns the 200 app shell rather than a 404 - Next.js routes anything it does not recognise to the page. Only the three paths above are served there.
 
 ## Compose gates on readiness, so the gated services report it
 
@@ -66,8 +62,7 @@ Kubernetes has separate probes and ignores `HEALTHCHECK`, so it never chooses.
 
 ## Self-telemetry is pushed, bar four pulls
 
-The stack's own telemetry leaves by a different door from the data it ingests, so
-a broken ingest pipeline cannot take the reporting on it down. Services push to the collector, the collector pulls ClickHouse and the host, and dfe-hyperdx queries what it writes.
+The stack's own telemetry leaves by a different door from the data it ingests, so a broken ingest pipeline cannot take the reporting on it down. Services push to the collector, the collector pulls ClickHouse and the host and dfe-hyperdx queries what it writes.
 
 ```mermaid
 ---
@@ -158,26 +153,17 @@ flowchart TB
   style collect fill:none,stroke:#0072B2,stroke-width:1.5px,stroke-dasharray:6 4
 ```
 
-*Figure 1. L4 Detail -- Self-telemetry. The dotted arrow is a read, and the collector's own `:8888` metrics and dfe-hyperdx's `:8000` are scraped.* Up: [dfe-docker documentation](README.md).
+*Figure 1. L4 Detail - Self-telemetry. The dotted arrow is a read and the collector's own `:8888` metrics and dfe-hyperdx's `:8000` are scraped.* Up: [dfe-docker documentation](README.md).
 
 Services PUSH. dfe-hyperdx reads ClickHouse rather than receiving anything -- the
 fork ships no OTLP receiver, so the collector's exporter writes the tables it
 queries. This is the same chain Kubernetes runs.
 
-Four of the collector's inputs are PULLS, because their sources cannot push. `host_metrics` reads the docker host's CPUs for the usage readings below.
-`sql_query` reads ClickHouse's own `system.metrics`, `system.events` and
-`system.parts` on a 30s interval -- the `:9363` Prometheus endpoint is not exposed
-by the stack's image, and these system tables are readable on any provider,
-managed ClickHouse included. The `prometheus` receiver scrapes the collector's own
-`service.telemetry` endpoint on 127.0.0.1:8888, which puts queue depth and
-refused/failed counts (`otelcol_*`) into the same pipeline, and dfe-hyperdx's API
-at `dfe-hyperdx:8000`. `sql_query/usage` is the fourth, below.
+Four of the collector's inputs are PULLS, because their sources cannot push. `host_metrics` reads the docker host's CPUs for the usage readings below. `sql_query` reads ClickHouse's own `system.metrics`, `system.events` and `system.parts` on a 30s interval - the `:9363` Prometheus endpoint is not exposed by the stack's image and these system tables are readable on any provider, managed ClickHouse included. The `prometheus` receiver scrapes the collector's own `service.telemetry` endpoint on 127.0.0.1:8888, which puts queue depth and refused/failed counts (`otelcol_*`) into the same pipeline and dfe-hyperdx's API at `dfe-hyperdx:8000`. `sql_query/usage` is the fourth, below.
 
 `sql_query` and `prometheus` are what the pre-canned DFE ClickHouse Health and DFE Pipeline Health dashboards read. Without them those dashboards render empty here while working on Kubernetes.
 
-`/metrics` is a SEPARATE pathway, for anything that scrapes. Nothing in this
-repo scrapes a DFE app's `/metrics`, and enabling push does not disable it, so a
-Prometheus estate and an OTLP one are both served.
+`/metrics` is a SEPARATE pathway, for anything that scrapes. Nothing in this repo scrapes a DFE app's `/metrics` and enabling push does not disable it, so a Prometheus estate and an OTLP one are both served.
 
 dfe-engine's Overview counts cores from the usage rollup dfe-schemas declares. That rollup reads the Kubernetes metric names, so the collector reports Compose in it:
 
@@ -195,9 +181,7 @@ All three have `k8s.node.name`, the docker host's name, which joins a service's 
 
 ## What reports, and turning it off
 
-Every profile declares `otel: true`. `DFE_OTEL_ENABLED=false` turns it off.
-Container stdout reaches `dfe.otel_logs` through Docker's fluentd log driver
-unless `DFE_CONTAINER_LOGS_ENABLED=false`, below.
+Every profile declares `otel: true`. `DFE_OTEL_ENABLED=false` turns it off. Container stdout reaches `dfe.otel_logs` through Docker's fluentd log driver unless `DFE_CONTAINER_LOGS_ENABLED=false`, below.
 
 | Variable | Default | Effect |
 |---|---|---|
@@ -207,9 +191,7 @@ unless `DFE_CONTAINER_LOGS_ENABLED=false`, below.
 | `DFE_OTEL_HEALTH_PORT` | `13133` | the `health_check` extension |
 | `DFE_ENGINE_API_METRICS_BACKEND` in `env/engine.env` | `opentelemetry` | makes dfe-engine push. `prometheus` serves `/metrics` only |
 
-The endpoint decides where services push. Enabling the profile points services at the bundled
-collector. Name your own endpoint and they push there instead, which is how you
-feed an external OTLP backend with no bundled collector at all.
+The endpoint decides where services push. Enabling the profile points services at the bundled collector. Name your own endpoint and they push there instead, which is how you feed an external OTLP backend with no bundled collector at all.
 
 The collector's OTLP ports are NOT published. Self-monitoring stays on the
 Compose network. Note `4317`/`4318` on the host are dfe-receiver's OTLP INGEST
@@ -220,7 +202,7 @@ What reports:
 | Component | Pushes? | Why |
 |---|---|---|
 | the seven Rust services | metrics and traces | scalo's `metrics` feature pulls `otel-metrics` and `otel-tracing`, so OTLP export is on by default (scalo-rs#30) |
-| dfe-engine | metrics and traces, on the `opentelemetry` backend `env/engine.env` ships | scalo-py's exporter, and its CLI defaults the backend to `opentelemetry` (scalo-py#11) |
+| dfe-engine | metrics and traces, on the `opentelemetry` backend `env/engine.env` ships | scalo-py's exporter and its CLI defaults the backend to `opentelemetry` (scalo-py#11) |
 | dfe-hunt-runner | metrics, as `dfe_hunt_*` | it has no listener to scrape and its default `opentelemetry` backend pushes on `OTEL_EXPORTER_OTLP_ENDPOINT` alone |
 | dfe-ui | metrics, over OTLP/HTTP | `@opentelemetry/sdk-metrics` from its `instrumentation.ts`, on `DFE_OTEL_EXPORTER_HTTP_ENDPOINT`. It serves `/metrics` on `:3000`. The self test needs its rows, like every pusher here (`OTEL_PUSHER_PREFIXES` in `scripts/post.py`) |
 | every DFE service | LOGS, via Docker's log driver | nothing in the stack exports logs over OTLP, so stdout is shipped instead -- see below |
@@ -228,10 +210,7 @@ What reports:
 `OTEL_EXPORTER_OTLP_ENDPOINT` is set on every service regardless, so a rebuilt
 component starts reporting with no config change here.
 
-Each Rust service pushes the scalo chassis set -- the `worker_pool_*` family,
-`process_*` and `container_*` -- plus whatever it defines itself, and the loader adds
-`rdkafka_*`. What decides whether a service reports is the scalo version its image
-links, not this repo's configuration.
+Each Rust service pushes the scalo chassis set - the `worker_pool_*` family, `process_*` and `container_*` - plus whatever it defines itself and the loader adds `rdkafka_*`. What decides whether a service reports is the scalo version its image links, not this repo's configuration.
 
 The `opentelemetry` backend is DUAL -- it pushes and keeps serving `/metrics`
 (`readers=[otlp(grpc)->..., prometheus(/metrics)]`), so the switch costs a
@@ -259,16 +238,8 @@ DFE_CONTAINER_LOGS_ENABLED=false
 | `DFE_CONTAINER_LOG_ADDRESS` | `tcp://<DFE_BIND_HOST>:<DFE_OTEL_FLUENT_PORT>` | where the DAEMON sends it |
 | `DFE_OTEL_FLUENT_PORT` | `24224` | the collector's receiver, on `DFE_BIND_HOST` |
 
-The driver runs with `fluentd-async`, so a container starts whether or not the
-collector is up. Without it Docker will not create a container it cannot reach
-a logging endpoint for, which would put the collector on the startup path of the
-whole stack. Lines written while the collector is down queue in the daemon and
-are sent when it answers.
+The driver runs with `fluentd-async`, so a container starts whether or not the collector is up. Without it Docker will not create a container it cannot reach a logging endpoint for, which would put the collector on the startup path of the whole stack. Lines written while the collector is down queue in the daemon and are sent when it answers.
 
-It runs with `fluentd-request-ack`, and the queue depends on it. The
-collector's host port is Docker's port proxy, which accepts connections from the
-moment the container starts, before the collector inside is listening, and drops
-what it is sent. Without an ack the driver counts those lines as delivered, and a
-service starting beside the collector loses its startup lines.
+It runs with `fluentd-request-ack` and the queue depends on it. The collector's host port is Docker's port proxy, which accepts connections from the moment the container starts, before the collector inside is listening and drops what it is sent. Without an ack the driver counts those lines as delivered and a service starting beside the collector loses its startup lines.
 
 Of the host's own metrics only its CPUs are collected, for the usage readings.

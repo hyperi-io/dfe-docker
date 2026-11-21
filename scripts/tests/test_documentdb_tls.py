@@ -8,10 +8,7 @@
 
 """hyperdx-documentdb and dfe-hyperdx mount the one-shot's ca and server directories by subpath.
 
-Removing a directory leaves a running container holding the deleted one, so dfe-hyperdx then
-fails to open its CA file. The one-shot keeps the directories, leaves a valid pair alone and
-renames each new file into place whole. These run the one-shot's own script against a temp
-directory, with chown stubbed because the test user is not root.
+Removing a directory leaves a running container holding the deleted one, so dfe-hyperdx then fails to open its CA file. The one-shot keeps the directories, leaves a valid pair alone and renames each new file into place whole. These run the one-shot's own script against a temp directory, with chown stubbed because the test user is not root.
 """
 
 import hashlib
@@ -21,6 +18,12 @@ from pathlib import Path
 
 import pytest
 import yaml
+
+
+def __plain_tag(loader: yaml.SafeLoader, suffix: str, node: yaml.Node) -> None:
+    """Read a compose tag such as !override or !reset as no value."""
+    return None
+
 
 ONE_SHOTS = Path(__file__).resolve().parents[2] / "compose" / "one-shots.yml"
 FILES = ("ca/ca.crt", "server/tls.key", "server/tls.crt")
@@ -33,10 +36,18 @@ class _Tags(yaml.SafeLoader):
     """Reads compose's !override and !reset tags as plain values."""
 
 
-_Tags.add_multi_constructor("!", lambda loader, suffix, node: None)
+_Tags.add_multi_constructor("!", __plain_tag)
 
 
-def _run(tls: Path, shims: Path) -> str:
+def _digests(*, tls: Path) -> dict[str, str]:
+    """Each certificate file's SHA-256, by its path under `tls`."""
+    return {
+        name: hashlib.sha256((tls / name).read_bytes()).hexdigest() for name in FILES
+    }
+
+
+def _run(*, shims: Path, tls: Path) -> str:
+    """Run the one-shot's script against `tls`, with `shims` first on PATH, and return what it printed."""
     services = yaml.load(ONE_SHOTS.read_text(encoding="utf-8"), Loader=_Tags)[
         "services"
     ]
@@ -55,14 +66,9 @@ def _run(tls: Path, shims: Path) -> str:
     return result.stdout
 
 
-def _digests(tls: Path) -> dict[str, str]:
-    return {
-        name: hashlib.sha256((tls / name).read_bytes()).hexdigest() for name in FILES
-    }
-
-
 @pytest.fixture
 def tls(tmp_path: Path) -> tuple[Path, Path]:
+    """An empty TLS volume and a shim directory whose chown does nothing."""
     shims = tmp_path / "shims"
     shims.mkdir()
     chown = shims / "chown"
@@ -75,11 +81,11 @@ def tls(tmp_path: Path) -> tuple[Path, Path]:
 
 def test_a_valid_pair_is_left_alone(tls: tuple[Path, Path]) -> None:
     volume, shims = tls
-    assert REWRITE in _run(volume, shims)
-    before = _digests(volume)
+    assert REWRITE in _run(shims=shims, tls=volume)
+    before = _digests(tls=volume)
 
-    assert REWRITE not in _run(volume, shims)
-    assert _digests(volume) == before
+    assert REWRITE not in _run(shims=shims, tls=volume)
+    assert _digests(tls=volume) == before
 
 
 @pytest.mark.parametrize("broken", FILES, ids=["no-ca", "no-key", "no-leaf"])
@@ -87,16 +93,16 @@ def test_a_missing_file_renews_the_pair_in_the_same_directories(
     tls: tuple[Path, Path], broken: str
 ) -> None:
     volume, shims = tls
-    _run(volume, shims)
+    _run(shims=shims, tls=volume)
     inodes = {name: (volume / name).stat().st_ino for name in ("ca", "server")}
-    before = _digests(volume)
+    before = _digests(tls=volume)
     (volume / broken).write_bytes(b"")
 
-    said = _run(volume, shims)
+    said = _run(shims=shims, tls=volume)
     assert {name: (volume / name).stat().st_ino for name in ("ca", "server")} == inodes
-    assert all(_digests(volume)[name] != before[name] for name in FILES)
+    assert all(_digests(tls=volume)[name] != before[name] for name in FILES)
     assert REWRITE in said
-    assert not list(volume.rglob("*.new"))
+    assert not (list(volume.rglob("*.new")))
     verify = subprocess.run(
         [
             "openssl",

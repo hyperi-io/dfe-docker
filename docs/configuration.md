@@ -61,7 +61,7 @@ table and the UI classes.
 |--------------------------------------------------|--------------------------------------------------------------------------------------|---------------------------------------------------------------------|
 | `DFE_INGRESS_BIND_HOST`                          | Interface the receiver ingest ports bind                                             | `0.0.0.0`                                                           |
 | `DFE_BIND_HOST`                                  | Interface the datastore, broker, metrics and internal gRPC ports bind                | `127.0.0.1`                                                         |
-| `DFE_BIND_SCOPE`                                 | Where every web UI publishes (`localhost`\|`all`), `make` resolves it to `DFE_UI_BIND_HOST`, and `all` needs `DFE_EXTERNAL_ORIGIN` | `localhost`                            |
+| `DFE_BIND_SCOPE`                                 | Where every web UI publishes (`localhost`\|`all`), `make` resolves it to `DFE_UI_BIND_HOST` and `all` needs `DFE_EXTERNAL_ORIGIN` | `localhost`                            |
 | `DFE_INFRA_UIS_EXTERNAL`                         | Kill switch -- `false` unpublishes every infra-class UI and beats their own flags    | `true`                                                              |
 | `DFE_UI_EXTERNAL`                                | Publish the DFE UI (dfe-proxy `:3000`), product class, kill switch never covers it   | `true`                                                              |
 | `DFE_ENGINE_API_EXTERNAL`                        | Publish the engine API (`:8003`), product class                                      | `true`                                                              |
@@ -70,18 +70,9 @@ table and the UI classes.
 
 ### External origin
 
-The scheme and host a browser reaches this box on: scheme and host only, no port and no trailing slash. Compose appends the port itself (`DFE_UI_PORT` for the console), so `make` rejects a value with a port, a path, a query, no scheme or a character no host holds, such as `;`. The same holds for `DFE_HYPERDX_APP_URL` and `DFE_OAUTH2_PROXY_EXTERNAL_ORIGIN`. Four surfaces build absolute URLs
-from the origin, and each is wrong when it says `localhost` and the browser did not: the
-DFE UI's post-logout redirect, the oauth2-proxy callbacks registered with the
-IdP, dfe-hyperdx's link-backs into the DFE UI, and the `frame-ancestors` policy the
-proxy serves dfe-hyperdx under. The first three send the browser somewhere it cannot
-follow. The fourth blocks the console's embedded views outright.
+The scheme and host a browser reaches this box on: scheme and host only, no port and no trailing slash. Compose appends the port itself (`DFE_UI_PORT` for the console), so `make` rejects a value with a port, a path, a query, no scheme or a character no host holds, such as `;`. The same holds for `DFE_HYPERDX_APP_URL` and `DFE_OAUTH2_PROXY_EXTERNAL_ORIGIN`. Four surfaces build absolute URLs from the origin and each is wrong when it says `localhost` and the browser did not: the DFE UI's post-logout redirect, the oauth2-proxy callbacks registered with the IdP, dfe-hyperdx's link-backs into the DFE UI and the `frame-ancestors` policy the proxy serves dfe-hyperdx under. The first three send the browser somewhere it cannot follow. The fourth blocks the console's embedded views outright.
 
-It defaults to `http://localhost`, and nothing infers the browser's -- so
-reaching the stack on a hostname without setting this is what sends every
-logout to `http://localhost:3000`. Set it on any deployment a browser reaches
-by anything other than `localhost`. `DFE_BIND_SCOPE=all` needs it, and `make`
-stops the start goals until it is set.
+It defaults to `http://localhost` and nothing infers the browser's - so reaching the stack on a hostname without setting this is what sends every logout to `http://localhost:3000`. Set it on any deployment a browser reaches by anything other than `localhost`. `DFE_BIND_SCOPE=all` needs it and `make` stops the start goals until it is set.
 
 With [console TLS](#console-tls-opt-in) on it must start with `https://`.
 
@@ -109,7 +100,7 @@ Each machine that opens the console in a browser trusts `ca.crt` once, as a cert
 
 A CA-issued certificate goes in the same two files instead, with the full chain in `console.crt`. Copy real files rather than linking them: a symlink, certbot's `live/` layout included, dangles inside the container, so `cp -L` the pair into place.
 
-Set `DFE_EXTERNAL_ORIGIN=https://dfe.example.com` , and an `https://` origin in `DFE_HYPERDX_APP_URL` if you set it. Register the engine's callback with the IdP as `https://<hostname>:<DFE_UI_PORT>/api/v1/auth/oidc/<provider>/callback`, without the port when `DFE_UI_PORT` is 443.
+Set `DFE_EXTERNAL_ORIGIN=https://dfe.example.com`  and an `https://` origin in `DFE_HYPERDX_APP_URL` if you set it. Register the engine's callback with the IdP as `https://<hostname>:<DFE_UI_PORT>/api/v1/auth/oidc/<provider>/callback`, without the port when `DFE_UI_PORT` is 443.
 
 `make` will not start the stack until both files are real files the make user can read, `openssl` accepts them as a matching certificate and unencrypted key, both origins start with `https://`, `DFE_NETWORK_SUBNET` overlaps no other Docker network and the `auth` profile is off. oauth2-proxy serves no TLS here, so its callbacks could not answer an `https://` origin. Both Envoy proxies run as the make user, because the image's own uid 101 cannot read the `0600` key.
 
@@ -117,7 +108,7 @@ dfe-proxy's two ports serve TLS only. The dfe-hyperdx ports answer TLS and plain
 
 The engine builds the callback URL from `X-Forwarded-Proto`, which it believes from dfe-proxy alone. TLS therefore pins the compose network to `DFE_NETWORK_SUBNET`, gives dfe-proxy its last host address and allocates every other container from the first half, so no other container and not the bridge gateway can hold the address the engine trusts. The default `10.207.0.0/24` sits outside Docker's stock address pools and the fleet's `172.16.0.0/12` pool. Move it when a second stack on the same host runs TLS. Move it when `make` reports an overlap or the range clashes with a LAN or VPN route. It must be a private (RFC 1918) network from `/16` to `/24`.
 
-Turning `DFE_PROXY_TLS` on or off on a running stack needs `make down` first, because Docker cannot re-address a live network. `make up`, `make ci` and `make dev` stop the stack themselves, and `make apply` and `make infra` refuse until you do.
+Turning `DFE_PROXY_TLS` on or off on a running stack needs `make down` first, because Docker cannot re-address a live network. `make up`, `make ci` and `make dev` stop the stack themselves and `make apply` and `make infra` refuse until you do.
 
 `make test-e2e` and `make test-resilience` run under the dial, with the same prechecks as a start. Each test's stack chains the fragments `make ci` does, so the exposure opt-outs and container logs apply to it as well. The suite probes the console at `https://<DFE_EXTERNAL_ORIGIN host>:<DFE_UI_PORT>` and verifies its certificate by chain and by name, never with verification off.
 
@@ -141,7 +132,7 @@ Ceilings, not reservations, sized for the default profile on a 16 GB box. `make 
 | `DFE_CLICKHOUSE_CPUS`                            | CPU ceiling of ClickHouse                                                            | `2.0`                                                               |
 | `DFE_CLICKHOUSE_MEMORY`                          | Memory ceiling of ClickHouse                                                         | `3G`                                                                |
 | `DFE_HYPERDX_MEMORY`                             | Memory ceiling of dfe-hyperdx, which needs more than the service tier's | `2G`                                                                |
-| `DFE_SERVICE_CPUS`                               | CPU ceiling of the DFE components, the UI, Kafbat and dfe-hyperdx. Below 2.0 a scalo service gets one worker thread, and `make check-compose` rejects it ([operating.md](operating.md#dfe_service_cpus-has-a-floor-of-20-and-it-is-not-about-speed)) | `2.0`                                                               |
+| `DFE_SERVICE_CPUS`                               | CPU ceiling of the DFE components, the UI, Kafbat and dfe-hyperdx. Below 2.0 a scalo service gets one worker thread and `make check-compose` rejects it ([operating.md](operating.md#dfe_service_cpus-has-a-floor-of-20-and-it-is-not-about-speed)) | `2.0`                                                               |
 | `DFE_SERVICE_MEMORY`                             | Memory ceiling of the same service tier. kafka-ui's JVM sizes its heap from it        | `768M`                                                              |
 | `DFE_SIDECAR_CPUS`                               | CPU ceiling of the one-shots, both Envoy proxies, otel-collector and the oauth2-proxy gates | `0.5`                                                               |
 | `DFE_SIDECAR_MEMORY`                             | Memory ceiling of the same sidecars                                                  | `512M`                                                              |
@@ -197,14 +188,14 @@ Compose maps them onto scalo's `version_check.enabled` and `version_check.send_i
 
 | Variable                                         | Use                                                                                  | Default                                                             |
 |--------------------------------------------------|--------------------------------------------------------------------------------------|---------------------------------------------------------------------|
-| `CLICKHOUSE_VERSION`                             | Version of ClickHouse to use                                                         | none -- `make stack` pins it from the DFE stack SSoT and unset is a hard-fail                |
+| `CLICKHOUSE_VERSION`                             | Version of ClickHouse to use                                                         | none - `make stack` pins it from the DFE stack SSoT and unset is a hard-fail                |
 | `CLICKHOUSE_HOST`                                | External ClickHouse host (skips Docker container)                                    | `clickhouse`                                                        |
 | `CLICKHOUSE_HTTP_PORT`                           | Host publish of the bundled ClickHouse's HTTP port, services in the stack dial 8123 whatever it says, so it is safe to move | `8123`                                                              |
 | `CLICKHOUSE_NATIVE_PORT`                         | Host publish of the bundled ClickHouse's native port, services in the stack dial 9000 whatever it says, so it is safe to move | `9000`                                                              |
 | `CLICKHOUSE_EXTERNAL_HTTP_PORT`                  | HTTP port dfe-engine, dfe-hunt-runner, dfe-loader and the connection the engine hands dfe-hyperdx dial on an external `CLICKHOUSE_HOST`. Leave unset for the bundled container | `8123`                                                              |
 | `CLICKHOUSE_EXTERNAL_NATIVE_PORT`                | Native port the collector dials on an external `CLICKHOUSE_HOST`. Leave unset for the bundled container | `9000`                                                              |
 | `CLICKHOUSE_SECURE`                              | TLS to an external `CLICKHOUSE_HOST` for dfe-engine, dfe-hunt-runner and the connection the engine hands dfe-hyperdx (`https://`), on `true`, `1` or `yes`. The collector and the loader do not read it | `false`                                                             |
-| `CLICKHOUSE_KEEP_FREE_SPACE_BYTES`              | Free disk the bundled ClickHouse keeps. Below it an insert fails with `NOT_ENOUGH_SPACE` rather than fill the disk it shares with the broker, and the server stays up. 5 GiB fits a laptop. A host with a large data disk raises it, for example to 21474836480 (20 GiB) | `5368709120` |
+| `CLICKHOUSE_KEEP_FREE_SPACE_BYTES`               | Free disk the bundled ClickHouse keeps. Below it an insert fails with `NOT_ENOUGH_SPACE` rather than fill the disk it shares with the broker. The server stays up. 5 GiB fits a laptop. A host with a large data disk raises it, for example to 21474836480 (20 GiB) | `5368709120` |
 | `CLICKHOUSE_DB`                                  | ClickHouse initialisation database                                                   | `default`                                                           |
 | `CLICKHOUSE_USERNAME`                            | ClickHouse admin username, which only dfe-engine connects as                         | `default`                                                           |
 | `CLICKHOUSE_PASSWORD`                            | ClickHouse admin password, which only dfe-engine connects with                       | -                                                                   |
@@ -218,20 +209,20 @@ Compose maps them onto scalo's `version_check.enabled` and `version_check.send_i
 | `KAFKA_ADVERTISED_HOST`                          | Name the host listener advertises to clients off this box. Set it with `DFE_BIND_HOST=0.0.0.0` | `localhost`                                                         |
 | `KAFKA_BACKEND`                                  | Kafka backend for `kafka` transport profiles                                         | `redpanda`                                                          |
 | `KAFKA_PLAINTEXT_HOST_PORT`                      | Kafka plaintext host port (host-facing)                                              | `19092`                                                             |
-| `APACHE_KAFKA_VERSION`                           | Version of Apache Kafka to use                                                       | none -- `make stack` pins it from the DFE stack SSoT and unset is a hard-fail                |
-| `REDPANDA_VERSION`                               | Version of Redpanda to use                                                           | none -- `make stack` pins it from the DFE stack SSoT and unset is a hard-fail                |
-| `REDPANDA_LICENSE`                              | Beta, untested against a paid licence. A Redpanda Enterprise licence string: set, the broker keeps Redpanda's default Enterprise features under it ([broker](broker.md)) | - |
+| `APACHE_KAFKA_VERSION`                           | Version of Apache Kafka to use                                                       | none - `make stack` pins it from the DFE stack SSoT and unset is a hard-fail                |
+| `REDPANDA_VERSION`                               | Version of Redpanda to use                                                           | none - `make stack` pins it from the DFE stack SSoT and unset is a hard-fail                |
+| `REDPANDA_LICENSE`                               | Beta, untested against a paid licence. A Redpanda Enterprise licence string: set, the broker keeps Redpanda's default Enterprise features under it ([broker](broker.md)) | -                                                                   |
 | `REDPANDA_MEMORY`                                | Memory for the Redpanda broker (Seastar reserves this up front), `redpanda/start.sh` lowers it to what the container limit leaves after the host's `vm.min_free_kbytes` | `1G`                                                                |
-| `REDPANDA_MIN_FREE_BYTES`                       | Free disk the broker keeps. Below it the broker refuses writes, so ClickHouse on the same disk keeps room | `5368709120` |
+| `REDPANDA_MIN_FREE_BYTES`                        | Free disk the broker keeps. Below it the broker refuses writes, so ClickHouse on the same disk keeps room | `5368709120` |
 | `REDPANDA_MODE`                                  | `dev-container` relaxes fsync to fit a 4 GB CI runner. A deploy sets `production` with real `REDPANDA_SMP` and `REDPANDA_MEMORY` | `dev-container`                                                     |
-| `REDPANDA_RETENTION_BYTES`                      | Most each partition keeps before its oldest segments go, beside the time retention | `10737418240` |
+| `REDPANDA_RETENTION_BYTES`                       | Most each partition keeps before its oldest segments go, beside the time retention | `10737418240` |
 | `REDPANDA_SMP`                                   | Cores the broker uses                                                                | `1`                                                                 |
 
 ### Kafka UI (Kafbat)
 
 | Variable                                         | Use                                                                                  | Default                                                             |
 |--------------------------------------------------|--------------------------------------------------------------------------------------|---------------------------------------------------------------------|
-| `KAFBAT_VERSION`                                 | Version of Kafbat to use                                                             | none -- `make stack` pins it from the DFE stack SSoT and unset is a hard-fail                |
+| `KAFBAT_VERSION`                                 | Version of Kafbat to use                                                             | none - `make stack` pins it from the DFE stack SSoT and unset is a hard-fail                |
 | `KAFBAT_PORT`                                    | Kafbat port                                                                          | `8081`                                                              |
 
 ### DFE Archiver
@@ -240,14 +231,14 @@ Only `single-kafka` runs dfe-archiver, so archiving needs a Kafka profile ([prof
 
 | Variable                                         | Use                                                                                  | Default                                                             |
 |--------------------------------------------------|--------------------------------------------------------------------------------------|---------------------------------------------------------------------|
-| `DFE_ARCHIVER_VERSION`                           | Version of dfe-archiver to use                                                       | none -- `make stack` pins it and unset is a hard-fail                                                            |
+| `DFE_ARCHIVER_VERSION`                           | Version of dfe-archiver to use                                                       | none - `make stack` pins it and unset is a hard-fail                                                            |
 | `DFE_ARCHIVER_PROMETHEUS_PORT`                   | Archiver Prometheus port                                                             | `9093`                                                              |
 
 ### DFE Fetcher
 
 | Variable                                         | Use                                                                                  | Default                                                             |
 |--------------------------------------------------|--------------------------------------------------------------------------------------|---------------------------------------------------------------------|
-| `DFE_FETCHER_VERSION`                            | Version of dfe-fetcher to use                                                        | none -- `make stack` pins it and unset is a hard-fail                                                            |
+| `DFE_FETCHER_VERSION`                            | Version of dfe-fetcher to use                                                        | none - `make stack` pins it and unset is a hard-fail                                                            |
 | `DFE_FETCHER_INPUT_DIR`                          | Absolute host directory mounted read only into dfe-fetcher at `/mnt/input`           | unset, nothing mounted                                                |
 | `AWS_ACCESS_KEY_ID`                              | AWS access key. Goes in `env/fetcher.env`, NOT `.env` -- the fetcher config reads it via `env:`  | -                                    |
 | `AWS_SECRET_ACCESS_KEY`                          | AWS secret key. Same file as above                                                   | -                                                                   |
@@ -256,7 +247,7 @@ Only `single-kafka` runs dfe-archiver, so archiving needs a Kafka profile ([prof
 | `AZURE_SUBSCRIPTION_ID`                          | In `env/fetcher.env`. Subscription an Azure source reads                             | -                                                                   |
 | `AZURE_TENANT_ID`                                | In `env/fetcher.env`. Tenant the client belongs to                                   | -                                                                   |
 
-A `sources.file` source reads files from the fetcher's container, so its globs name the container path, such as `/mnt/input/*.log`. A dump source lists them under `paths` and a tail source under `include`. Set `DFE_FETCHER_INPUT_DIR` to the host directory holding them. `make` mounts it only when the key is set, and a path that does not exist stops the start. The fetcher image runs as uid 1000, so that user must be able to read the directory. A `0700` directory owned by root passes the start and fails when the source runs.
+A `sources.file` source reads files from the fetcher's container, so its globs name the container path, such as `/mnt/input/*.log`. A dump source lists them under `paths` and a tail source under `include`. Set `DFE_FETCHER_INPUT_DIR` to the host directory holding them. `make` mounts it only when the key is set and a path that does not exist stops the start. The fetcher image runs as uid 1000, so that user must be able to read the directory. A `0700` directory owned by root passes the start and fails when the source runs.
 
 The AWS **region** and poll interval are not environment variables: they are literals in each source's fetcher config (`region: us-west-2` and `interval_secs` in `resources/seed/sources/aws-*.yaml`, 30 seconds and 300 for GuardDuty, as its every poll stores all its findings again), because only the two credential fields are `env:`-interpolated.
 
@@ -264,7 +255,7 @@ The AWS **region** and poll interval are not environment variables: they are lit
 
 | Variable                                         | Use                                                                                  | Default                                                             |
 |--------------------------------------------------|--------------------------------------------------------------------------------------|---------------------------------------------------------------------|
-| `DFE_LOADER_VERSION`                             | Version of dfe-loader to use                                                         | none -- `make stack` pins it and unset is a hard-fail                                                            |
+| `DFE_LOADER_VERSION`                             | Version of dfe-loader to use                                                         | none - `make stack` pins it and unset is a hard-fail                                                            |
 | `DFE_LOADER_PROMETHEUS_PORT`                     | Loader Prometheus port                                                               | `9091`                                                              |
 | `DFE_LOADER_CLICKHOUSE_PASSWORD`                 | Password of `dfe_loader`, the loader's own ClickHouse user, which the engine creates on it | generated                                                           |
 
@@ -272,7 +263,7 @@ The AWS **region** and poll interval are not environment variables: they are lit
 
 | Variable                                         | Use                                                                                  | Default                                                             |
 |--------------------------------------------------|--------------------------------------------------------------------------------------|---------------------------------------------------------------------|
-| `DFE_RECEIVER_VERSION`                           | Version of dfe-receiver to use                                                       | none -- `make stack` pins it and unset is a hard-fail                                                            |
+| `DFE_RECEIVER_VERSION`                           | Version of dfe-receiver to use                                                       | none - `make stack` pins it and unset is a hard-fail                                                            |
 | `DFE_RECEIVER_BEATS_PORT`                        | Host port for the receiver's Beats listener (container port 5044)                   | unset, unpublished                                                  |
 | `DFE_RECEIVER_GRPC_PORT`                         | Host port for the receiver's Vector gRPC listener (container port 6000)             | unset, unpublished                                                  |
 | `DFE_RECEIVER_HEC_PORT`                          | Host port for the receiver's HEC listener (container port 8088)                     | unset, unpublished                                                  |
@@ -305,19 +296,19 @@ A host port under 1024, such as 514, needs a Docker daemon allowed to bind it. R
 
 | Variable                                         | Use                                                                                  | Default                                                             |
 |--------------------------------------------------|--------------------------------------------------------------------------------------|---------------------------------------------------------------------|
-| `DFE_TRANSFORM_ELASTIC_VERSION`                  | Version of dfe-transform-elastic to use                                              | none -- `make stack` pins it and unset is a hard-fail                                                            |
+| `DFE_TRANSFORM_ELASTIC_VERSION`                  | Version of dfe-transform-elastic to use                                              | none - `make stack` pins it and unset is a hard-fail                                                            |
 
 ### DFE Transform Vector
 
 | Variable                                         | Use                                                                                  | Default                                                             |
 |--------------------------------------------------|--------------------------------------------------------------------------------------|---------------------------------------------------------------------|
-| `DFE_TRANSFORM_VECTOR_VERSION`                   | Version of dfe-transform-vector to use                                               | none -- `make stack` pins it and unset is a hard-fail                                                            |
+| `DFE_TRANSFORM_VECTOR_VERSION`                   | Version of dfe-transform-vector to use                                               | none - `make stack` pins it and unset is a hard-fail                                                            |
 
 ### DFE Transform VRL
 
 | Variable                                         | Use                                                                                  | Default                                                             |
 |--------------------------------------------------|--------------------------------------------------------------------------------------|---------------------------------------------------------------------|
-| `DFE_TRANSFORM_VRL_VERSION`                      | Version of dfe-transform-vrl to use                                                  | none -- `make stack` pins it and unset is a hard-fail                                                            |
+| `DFE_TRANSFORM_VRL_VERSION`                      | Version of dfe-transform-vrl to use                                                  | none - `make stack` pins it and unset is a hard-fail                                                            |
 
 ### DFE Engine
 
@@ -383,7 +374,7 @@ The runner is a console script in the engine's image. It runs SQL built from rul
 
 | Variable                                         | Use                                                                                  | Default                                                             |
 |--------------------------------------------------|--------------------------------------------------------------------------------------|---------------------------------------------------------------------|
-| `DFE_UI_VERSION`                                 | Version of dfe-ui to use                                                             | none -- `make stack` pins it and unset is a hard-fail                                                            |
+| `DFE_UI_VERSION`                                 | Version of dfe-ui to use                                                             | none - `make stack` pins it and unset is a hard-fail                                                            |
 | `DFE_UI_PORT`                                    | Port used by dfe-ui                                                                  | `3000`                                                              |
 | `NEXTAUTH_SECRET`                                | In `env/ui.env`. Signs the console's session                                         | generated by `make init`                                            |
 
@@ -399,11 +390,11 @@ dfe-proxy re-serves dfe-hyperdx on `:8091` with a `frame-ancestors` header so th
 
 ### OTel collector
 
-Every profile declares `otel: true`, which starts a collector that takes the stack's own telemetry over OTLP and writes the `dfe.otel_*` tables dfe-hyperdx reads. `DFE_OTEL_ENABLED=false` turns it off. Its two scrapes are its own metrics on 127.0.0.1:8888 and dfe-hyperdx's at `dfe-hyperdx:8000`, and its OTLP ports stay on the Compose network. Full picture, including which services report today: [observability.md](observability.md).
+Every profile declares `otel: true`, which starts a collector that takes the stack's own telemetry over OTLP and writes the `dfe.otel_*` tables dfe-hyperdx reads. `DFE_OTEL_ENABLED=false` turns it off. Its two scrapes are its own metrics on 127.0.0.1:8888 and dfe-hyperdx's at `dfe-hyperdx:8000` and its OTLP ports stay on the Compose network. Full picture, including which services report today: [observability.md](observability.md).
 
 | Variable                                         | Use                                                                                  | Default                                                             |
 |--------------------------------------------------|--------------------------------------------------------------------------------------|---------------------------------------------------------------------|
-| `DFE_OTEL_COLLECTOR_VERSION`                     | Version of otel/opentelemetry-collector-contrib                                      | none -- `make stack` pins it and unset is a hard-fail                  |
+| `DFE_OTEL_COLLECTOR_VERSION`                     | Version of otel/opentelemetry-collector-contrib                                      | none - `make stack` pins it and unset is a hard-fail                  |
 | `DFE_OTEL_DATABASE`                              | ClickHouse database the collector writes                                             | `dfe`                                                              |
 | `DFE_OTEL_HEALTH_PORT`                           | Collector `health_check` host port                                                   | `13133`                                                             |
 | `DFE_OTEL_COLLECTOR_LOG_LEVEL`                   | Collector's own log level                                                            | `warn`                                                              |
@@ -420,7 +411,7 @@ Every profile declares `hyperdx: true` and `DFE_HYPERDX_ENABLED=false` turns it 
 
 `hyperdx-documentdb` is PostgreSQL with the DocumentDB extensions and the Mongo-wire gateway dfe-hyperdx talks to, in one container, with its usage telemetry to a third party switched off. The gateway serves TLS only, on a certificate the one-shot `hyperdx-documentdb-tls` mints into a volume on first start and renews once it has 30 days left. It runs as root, since a fresh volume lands root-owned, and leaves the pair to uid 1000, which both documentdb-local and dfe-hyperdx run as. dfe-hyperdx gets only the CA that signed it, verifies the gateway against it and logs in with SCRAM-SHA-256.
 
-Both containers read the pair when they start. `make up` and `make dev` stop the stack first, so they pick up a renewal. A plain `docker compose up -d` on a running stack doesn't, and the one-shot's log says so. Run `docker compose restart hyperdx-documentdb`, then `docker compose restart dfe-hyperdx`.
+Both containers read the pair when they start. `make up` and `make dev` stop the stack first, so they pick up a renewal. A plain `docker compose up -d` on a running stack doesn't, as the one-shot's log says. Run `docker compose restart hyperdx-documentdb`, then `docker compose restart dfe-hyperdx`.
 
 dfe-hyperdx runs in `oidc-proxy` mode, as it does on Kubernetes: it verifies the engine's ES384 token against the engine's JWKS. A caller carrying none is unauthenticated. Signing in to the console is what signs a browser in here: dfe-ui mirrors the session into a `dfe_token` cookie and cookies ignore ports. The engine identifies with a service token of its own, which is how a source added through the console reaches every dfe-hyperdx team. That token's team, `DFE_HYPERDX_TEAM`, holds no connection and no sources, because dfe-hyperdx seeds a team only from a person's login, never from the service token. Every other team gets its connection and sources on its members' first login, from the engine's answer for that member: `main` and `hunts` everywhere, plus the otel and `clickhouse_system` sources on a platform team. Each team gets the shipped dashboards those sources can render. From hyperi-io/dfe-hyperdx#106 on, a login the engine gives no connection is retried on a later request.
 
@@ -503,16 +494,13 @@ The engine runs as its image's user, not yours, so the two meet on a group. `mak
 | 24224 | otel-collector       | fluent_forward, from the Docker daemon |
 | 19092 | Kafka (any backend)  | Plaintext host     |
 
-The receiver's other listeners publish once their port key is set: 4317 (OTLP gRPC), 4318 (OTLP HTTP), 5044 (Beats), 6000 (Vector gRPC), 8088 (HEC), 514 UDP and TCP and 6514 (syslog), and 2055, 4739 and 6343 UDP (flow).
+The receiver's other listeners publish once their port key is set: 4317 (OTLP gRPC), 4318 (OTLP HTTP), 5044 (Beats), 6000 (Vector gRPC), 8088 (HEC), 514 UDP and TCP and 6514 (syslog) and 2055, 4739 and 6343 UDP (flow).
 
 One dfe-fetcher container polls every fetcher source, and each transform runs one instance per source. Neither publishes a host port.
 
 ## ClickHouse Schema
 
-**dfe-engine is the schema authority.** It ships `/app/schemas` inside its own
-image (pinned by `DFE_ENGINE_VERSION`) and creates the ClickHouse objects at
-startup. The loader pre-warms those schemas into its cache. Nothing in this repo
-provisions tables.
+**dfe-engine is the schema authority.** It ships `/app/schemas` inside its own image (pinned by `DFE_ENGINE_VERSION`) and creates the ClickHouse objects at startup. The loader pre-warms those schemas into its cache. Nothing in this repo provisions tables.
 
 - `dfe` - master database for all DFE related tables
 - `dfe.main` - catch-all for unrouted events, carrying `_tags` (JSON) among
@@ -525,7 +513,7 @@ claim they verified anything.
 
 ## Container Images
 
-The DFE images are published from the component repos, and `make stack` pins each from the stack SSoT:
+The DFE images are published from the component repos and `make stack` pins each from the stack SSoT:
 
 - `ghcr.io/hyperi-io/dfe-archiver`
 - `ghcr.io/hyperi-io/dfe-engine`
@@ -538,7 +526,7 @@ The DFE images are published from the component repos, and `make stack` pins eac
 - `ghcr.io/hyperi-io/dfe-transform-vrl`
 - `ghcr.io/hyperi-io/dfe-ui`
 
-This repo publishes `ghcr.io/hyperi-io/dfe-docker`, the image that sets up a folder, and the compose files under its `compose`, `demo` and `demo-<pack>` tags. The third-party images are `clickhouse/clickhouse-server`, `apache/kafka`, `docker.redpanda.com/redpandadata/redpanda`, `ghcr.io/kafbat/kafka-ui`, `envoyproxy/envoy`, `otel/opentelemetry-collector-contrib`, `ghcr.io/documentdb/documentdb/documentdb-local` and `quay.io/oauth2-proxy/oauth2-proxy`. `docker-compose.yml` names each with the variable that pins it.
+This repo publishes `ghcr.io/hyperi-io/dfe-docker`, the image that sets up a folder and the compose files under its `compose`, `demo` and `demo-<pack>` tags. The third-party images are `clickhouse/clickhouse-server`, `apache/kafka`, `docker.redpanda.com/redpandadata/redpanda`, `ghcr.io/kafbat/kafka-ui`, `envoyproxy/envoy`, `otel/opentelemetry-collector-contrib`, `ghcr.io/documentdb/documentdb/documentdb-local` and `quay.io/oauth2-proxy/oauth2-proxy`. `docker-compose.yml` names each with the variable that pins it.
 
 
 ## Related

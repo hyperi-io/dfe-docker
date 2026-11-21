@@ -10,7 +10,7 @@ Copyright: (c) 2026 HYPERI PTY LIMITED
 
 # Known issues
 
-These are open, and each has a symptom that misleads.
+These are open and each has a symptom that misleads.
 
 Several of these look like something else entirely, so read them before you go deep
 into [troubleshooting](troubleshooting.md).
@@ -28,11 +28,11 @@ KAFKA_BACKEND=apache make -e dev  # -e flips the precedence
 
 ...or edit `.env`, which is the durable answer.
 
-`make up` and `make demo` go further: they read `PROFILE=` and `VERSION=` from the make line alone, so `PROFILE=slim-grpc make up` starts whatever profile `.env` names, and a `PROFILE` exported in your shell never moves the stack. Write `make up PROFILE=slim-grpc` instead.
+`make up` and `make demo` go further: they read `PROFILE=` and `VERSION=` from the make line alone, so `PROFILE=slim-grpc make up` starts whatever profile `.env` names and a `PROFILE` exported in your shell never moves the stack. Write `make up PROFILE=slim-grpc` instead.
 
 ## A `_load` topic changes what the loader reads
 
-The receiver produces to `main_land` and a transform to `main_load`. The loader reads `main_load` when it exists, and `main_land` when it does not.
+The receiver produces to `main_land` and a transform to `main_load`. The loader reads `main_load` when it exists and `main_land` when it does not.
 
 ```mermaid
 ---
@@ -109,7 +109,7 @@ flowchart LR
   classDef part fill:#FFFFFF,stroke:#94A3B8,stroke-width:1.5px,color:#0F172A
 ```
 
-*Figure 1. L4 Detail -- Loader topic choice. The orange end is the trap when no transform reads `main_land`.* Up: [L2 Services -- DFE Compose stack](architecture.md#events-arrive-two-ways-and-leave-one).
+*Figure 1. L4 Detail - Loader topic choice. The orange end is the trap when no transform reads `main_land`.* Up: [L2 Services - DFE Compose stack](architecture.md#events-arrive-two-ways-and-leave-one).
 
 `config/loader/kafka.yaml` names no topics, so the loader auto-discovers every topic ending in `_land` or `_load` (its `routing.topic_suffixes` default). scalo drops `<base>_land` from the subscription whenever `<base>_load` exists. `dfe-engine` creates the bootstrap topic set `dfe-schemas` declares, which is `main_land` and the five DLQ topics, so `main_load` exists only once a transform first produces to it.
 
@@ -117,17 +117,13 @@ Once a transform runs, the loader therefore reads `main_land` until that first w
 
 **Do not close this gap by adding `main_load` to the bootstrap topic set.** The loader auto-discovers topics and scalo suppresses `<base>_land` whenever `<base>_load` exists, on the reasoning that a `_load` topic means a transform has produced the loadable form. Creating `main_load` on every Kafka profile therefore drops `main_land` from the subscription of every loader not running a transform, which is most of them. The symptom is maximally misleading: ingest returns 200, the receiver produces to `main_land`, the topic shows a rising high watermark and no rows reach ClickHouse.
 
-Reverting the change does not restore a broker that has the topic.
-`kafka-apache-data` and `kafka-redpanda-data` outlive the containers, so the topic
-persists and keeps suppressing `main_land` on every later run. `rpk topic list` in the broker container shows whether it is there. Delete it:
+Reverting the change does not restore a broker that has the topic. `kafka-apache-data` and `kafka-redpanda-data` outlive the containers, so the topic persists and keeps suppressing `main_land` on every later run. `rpk topic list` in the broker container shows whether it is there. Delete it:
 
 ```bash
 docker compose exec kafka-redpanda rpk topic delete main_load -X brokers=kafka:9092
 ```
 
-The e2e harness does this itself: `clean_topics` deletes the `_load`
-sibling of every expected `_land` topic, so a run depends on the test definition
-rather than on the broker's history.
+The e2e harness does this itself: `clean_topics` deletes the `_load` sibling of every expected `_land` topic, so a run depends on the test definition rather than on the broker's history.
 
 When the injected events do not land, `make post` asks the loader which topics it
 is fetching, so an empty subscription is reported as one. It cannot ask first: the

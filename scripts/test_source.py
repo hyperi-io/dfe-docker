@@ -68,7 +68,7 @@ ARCHIVER_SERVICE = "dfe-archiver"
 # The runner appends the hinted service as $1; $0 is the checkout make runs in.
 APPLY_SCRIPT = 'exec make -C "$0" --no-print-directory apply SERVICES="$1"'
 RUNNER_PATH = Path("scripts") / "acceptance" / "source" / "run.py"
-# The case that uploads dfe-transform-vrl's bundled pipeline. The corpus every pushed case feeds is dfe-engine's, so no other case passes --transform-repo
+# Only filebeat uploads a pipeline from dfe-transform-vrl
 VRL_CASES = ("filebeat",)
 VRL_REPO_ENV_VAR = "DFE_TRANSFORM_VRL_REPO"
 VRL_MARKER = Path("pipelines") / "filebeat" / "filebeat.vrl"

@@ -277,12 +277,60 @@ class _AccountsEngine:
         return self.status, {"detail": [{"input": payload, "type": "value_error"}]}
 
 
+class _HomeEngine:
+    """The engine's your-organisation route, naming `held` (None for none) or answering every read with `read_status`, and every write with `write_status`."""
+
+    def __init__(
+        self,
+        *,
+        held: str | None = None,
+        read_status: int = 200,
+        write_status: int = 200,
+    ) -> None:
+        self.held = held
+        self.read_status = read_status
+        self.writes = []
+        self.write_status = write_status
+
+    def get_json(
+        self, *, token: str, url: str, timeout: int = 30
+    ) -> tuple[int, object]:
+        """Answer the read with the org held, or the configured status."""
+        if self.read_status != 200:
+            return self.read_status, {"detail": "unavailable"}
+        return 200, {"display_name": None, "name": self.held}
+
+    def put_json(
+        self,
+        *,
+        headers: dict[str, str] | None = None,
+        payload: dict,
+        timeout: int = 30,
+        token: str = "",
+        url: str,
+    ) -> tuple[int, object]:
+        """Record the write with its headers and answer it with `write_status`."""
+        self.writes.append((headers, payload))
+        if self.write_status == 200:
+            return 200, {"display_name": "Default", "name": payload["name"]}
+        return self.write_status, {"code": "unknown_org"}
+
+
 @pytest.fixture
 def accounts_engine(monkeypatch: pytest.MonkeyPatch) -> _AccountsEngine:
     """Answer the seeder's engine calls from a stand-in that holds no account."""
     engine = _AccountsEngine()
     monkeypatch.setattr(seed, "_api_get_json", engine.get_json)
     monkeypatch.setattr(seed, "_api_post_json", engine.post_json)
+    return engine
+
+
+@pytest.fixture
+def home_engine(monkeypatch: pytest.MonkeyPatch) -> _HomeEngine:
+    """Answer the seeder's your-organisation calls from a stand-in that names none."""
+    engine = _HomeEngine()
+    monkeypatch.setattr(seed, "_api_get_json", engine.get_json)
+    monkeypatch.setattr(seed, "api_put_json", engine.put_json)
     return engine
 
 
@@ -518,6 +566,54 @@ class TestHuntTable:
             seed._hunt_table(body={})
 
 
+class TestNameYourOrg:
+    def test_names_the_seed_org_when_none_is_named(
+        self, capsys: pytest.CaptureFixture[str], home_engine: _HomeEngine
+    ) -> None:
+        seed._name_your_org(base="http://engine.invalid", token="token")
+
+        assert home_engine.writes == [({"If-None-Match": "*"}, {"name": "acme"})]
+        assert "named org 'acme' as your organisation" in capsys.readouterr().err
+
+    def test_leaves_an_org_already_named(self, home_engine: _HomeEngine) -> None:
+        home_engine.held = "acme"
+
+        seed._name_your_org(base="http://engine.invalid", token="token")
+
+        assert home_engine.writes == []
+
+    def test_an_engine_without_the_route_is_skipped(
+        self, capsys: pytest.CaptureFixture[str], home_engine: _HomeEngine
+    ) -> None:
+        home_engine.read_status = 404
+
+        seed._name_your_org(base="http://engine.invalid", token="token")
+
+        assert home_engine.writes == []
+        assert "SKIP your organisation" in capsys.readouterr().err
+
+    @pytest.mark.parametrize(
+        ("read_status", "write_status", "message"),
+        [
+            (503, 200, "GET '/system/organisation' returned HTTP 503"),
+            (200, 422, "PUT '/system/organisation' returned HTTP 422"),
+        ],
+        ids=["read", "write"],
+    )
+    def test_rejects(
+        self,
+        home_engine: _HomeEngine,
+        read_status: int,
+        write_status: int,
+        message: str,
+    ) -> None:
+        home_engine.read_status = read_status
+        home_engine.write_status = write_status
+
+        with pytest.raises(seed.SeedError, match=re.escape(message)):
+            seed._name_your_org(base="http://engine.invalid", token="token")
+
+
 class TestObjects:
     def test_ignores_files_that_are_not_yaml(self, tmp_path: Path) -> None:
         _write(directory=tmp_path, name="a.json", text='{"name": "a"}')
@@ -643,6 +739,11 @@ class TestSeedSet:
             assert body.get("org", "") in orgs | {""}, name
         for name, body in _seeded(kind="hunts"):
             assert set(body["customers"]) <= orgs, name
+
+    def test_your_org_is_a_seeded_org(self) -> None:
+        orgs = {name for name, _ in _seeded(kind="orgs")}
+        assert seed._read(path=seed.YOUR_ORG_FILE) == {"name": "acme"}
+        assert "acme" in orgs
 
     @pytest.mark.parametrize(
         ("target", "expected"),

@@ -214,7 +214,7 @@ class TestChoiceLine:
         ],
     )
     def test_names_the_command_that_ran_it(
-        self, absent: str, caller: str, said: str, stack_from: str, version_from: str
+        self, caller: str, version_from: str, stack_from: str, said: str, absent: str
     ) -> None:
         args = argparse.Namespace(
             caller=caller, command="up", version_from=version_from
@@ -258,10 +258,10 @@ class TestDemoRefusal:
             assert reason == ""
 
     def test_ci_refuses_before_its_down(self) -> None:
-        """The guard runs before the `down` that removes the pack's sources under the start."""
+        # The guard has to run before the `down` that drops the sources
         makefile = (REPO_ROOT / "Makefile").read_text(encoding="utf-8")
         recipe = re.search(
-            pattern=r"^ci:.*\n((?:\t.*\n)+)", string=makefile, flags=re.MULTILINE
+            flags=re.MULTILINE, pattern=r"^ci:.*\n((?:\t.*\n)+)", string=makefile
         )
         assert recipe, "no ci recipe"
         lines = recipe.group(1).splitlines()

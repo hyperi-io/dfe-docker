@@ -12,13 +12,13 @@ Copyright: (c) 2026 HYPERI PTY LIMITED
 
 The `*-kafka` profiles run one broker, Redpanda by default or Apache Kafka with `KAFKA_BACKEND=apache`. The `*-grpc` profiles run none. Every broker variable is in [configuration.md](configuration.md#kafka).
 
-The two backends are mutually exclusive and share the `kafka` network alias and the same host port, so nothing downstream knows which one runs. Every config addresses `kafka:9092`, and dfe-engine creates the bootstrap topic set over the Kafka protocol on both. The host listener is `19092` (`KAFKA_PLAINTEXT_HOST_PORT`) on `DFE_BIND_HOST`.
+The two backends are mutually exclusive and share the `kafka` network alias and the same host port, so nothing downstream knows which one runs. Every config addresses `kafka:9092` and dfe-engine creates the bootstrap topic set over the Kafka protocol on both. The host listener is `19092` (`KAFKA_PLAINTEXT_HOST_PORT`) on `DFE_BIND_HOST`.
 
 Compose interpolates every service before profiles filter anything, so `REDPANDA_VERSION` must still be pinned for the file to resolve on the Apache path. No Redpanda image is pulled or run. A Redpanda pin in `.env` is not a Redpanda deployment, but if your licence position needs zero reference to the artefact, that pin is what is left.
 
-Redpanda's core is source-available under the BSL. It is not OSS. Local development and CI sit inside its Additional Use Grant. A partner or edge deployment needs a licence check of its own, and that check is a question for a human, not an assumption.
+Redpanda's core is source-available under the BSL. It is not OSS. Local development and CI sit inside its Additional Use Grant. A partner or edge deployment needs a licence check of its own and that check is a question for a human, not an assumption.
 
-If it does not come back clean, `KAFKA_BACKEND=apache` selects Apache Kafka (Apache-2.0), and the Apache path pulls and runs no BSL-licensed artefact.
+If it does not come back clean, `KAFKA_BACKEND=apache` selects Apache Kafka (Apache-2.0) and the Apache path pulls and runs no BSL-licensed artefact.
 
 ## What the config one-shot sets
 
@@ -34,20 +34,21 @@ docker compose exec kafka-redpanda rpk cluster config set core_balancing_continu
 docker compose exec kafka-redpanda rpk cluster license info
 ```
 
-The broker and ClickHouse share the docker data disk, and every source and route adds a topic, so a cap on each partition cannot bound the total. The same one-shot sets two floors instead:
+The broker and ClickHouse share the docker data disk and every source and route adds a topic, so a cap on each partition cannot bound the total. The same one-shot sets two floors instead:
 
 | Setting | Default | What it does |
 |---|---|---|
-| `REDPANDA_MIN_FREE_BYTES` | 5 GiB | The broker refuses writes once free disk falls below it, so the disk never fills. Producers back off, and the receiver spools |
+| `REDPANDA_MIN_FREE_BYTES` | 5 GiB | The broker refuses writes once free disk falls below it, so the disk never fills. Producers back off and the receiver spools |
 | `REDPANDA_RETENTION_BYTES` | 10 GiB | The most one partition keeps, beside the seven-day time retention |
 
 Both apply at the next `make up`, to a running stack and a fresh volume alike. The 5 GiB floor fits a laptop. A host with a large data disk raises it in `.env`, for example `REDPANDA_MIN_FREE_BYTES=21474836480` for 20 GiB. With less free disk than the floor, the broker reports itself unhealthy (`rpk cluster health` lists it under high disk usage) and dfe-engine does not start.
-With a Redpanda Enterprise licence (beta, and untested against a paid licence), set `REDPANDA_LICENSE` to the licence string in `.env`. The one-shot then applies it, leaves Redpanda's default features on, and exits 1 if `rpk cluster license info` reports a violation. POST skips the trial-feature check on a licensed broker.
+
+With a Redpanda Enterprise licence (beta and untested against a paid licence), set `REDPANDA_LICENSE` to the licence string in `.env`. The one-shot then applies it, leaves Redpanda's default features on and exits 1 if `rpk cluster license info` reports a violation. POST skips the trial-feature check on a licensed broker.
 
 ## Redpanda ships in developer mode
 
 The default broker runs `--mode=dev-container --smp=1` with `REDPANDA_MEMORY=1G`: Redpanda's own developer mode, with relaxed fsync on one core. It is not a production configuration.
 
-For a small-environment deploy, set `REDPANDA_MODE=production` with real `REDPANDA_SMP` and `REDPANDA_MEMORY` values, and raise `DFE_BROKER_MEMORY` **above** `REDPANDA_MEMORY`. Seastar reserves its `--memory` up front, so a container limit that does not exceed it gets the broker OOM-killed rather than backpressured.
+For a small-environment deploy, set `REDPANDA_MODE=production` with real `REDPANDA_SMP` and `REDPANDA_MEMORY` values and raise `DFE_BROKER_MEMORY` **above** `REDPANDA_MEMORY`. Seastar reserves its `--memory` up front, so a container limit that does not exceed it gets the broker OOM-killed rather than backpressured.
 
 Redpanda subtracts the host's `vm.min_free_kbytes` from the container limit before it checks `--memory`, so the usable figure is lower than the limit you set and varies by host. A 92 GiB host reserving 1.84 GiB left the 2560M default 675M against a 1G request. `redpanda/start.sh` reads both at start and passes the smaller of `REDPANDA_MEMORY` and what the limit leaves, with a WARN naming the `DFE_BROKER_MEMORY` that restores the full amount. Under 512M it will not start and names the value that would fit. Check a host with `sysctl vm.min_free_kbytes`.

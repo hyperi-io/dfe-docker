@@ -22,12 +22,7 @@ Three steps, in order:
    dfe-transform-vrl and dfe-transform-vector per source (single-*) and
    fails at once on one that does not.
 
-Everything it creates lives in one temporary directory that is deleted at the
-end: the checkouts, the virtualenv and, after a pass, every screenshot. A failed
-run first moves its screenshots to .tmp/proof-shots/<UTC time>/ in the checkout
-and names that path in the RESULT line, and only the newest SHOTS_KEEP_RUNS runs
-are kept. Nothing else accumulates between runs, so a host can run this on a
-timer indefinitely.
+Everything it creates lives in one temporary directory that is deleted at the end: the checkouts, the virtualenv and, after a pass, every screenshot. A failed run first moves its screenshots to .tmp/proof-shots/<UTC time>/ in the checkout and names that path in the RESULT line. Only the newest SHOTS_KEEP_RUNS runs are kept. Nothing else accumulates between runs, so a host can run this on a timer indefinitely.
 
 Each stack version is proven once. A full pass writes the version .env pins
 (DFE_STACK_VERSION, what `make stack` last wrote) to .dfe-proof-passed, and a
@@ -104,7 +99,7 @@ DEFAULT_TRANSFORM_VECTOR_REPO = "https://github.com/hyperi-io/dfe-transform-vect
 SOURCE_CASE_APPS = {"filebeat": "dfe-transform-vrl", "vector": "dfe-transform-vector"}
 # Each pushed case proves one transform's data path, so a pin of either app is proven on its stack version
 SOURCE_CASES = tuple(SOURCE_CASE_APPS)
-# A failed run's screenshots, under the checkout's .tmp, newest SHOTS_KEEP_RUNS runs kept
+# A failed run's screenshots, newest SHOTS_KEEP_RUNS runs kept
 SHOTS_KEEP_DIR = Path(".tmp") / "proof-shots"
 SHOTS_KEEP_RUNS = 3
 SHOT_DIRS = ("e2e-shots", "source-shots")
@@ -134,17 +129,14 @@ def log(message: str) -> None:
     print(f"proof: {message}", flush=True)
 
 
-def keep_shots(*, work: Path, keep: int = SHOTS_KEEP_RUNS) -> Path | None:
-    """Move the run's screenshots out of `work` into a dated directory and prune the older ones.
-
-    Returns the directory, or None when the run took no screenshot or they could not be moved.
-    """
+def _keep_shots(*, keep: int = SHOTS_KEEP_RUNS, work: Path) -> Path | None:
+    """Move the run's screenshots out of `work` into a dated directory and prune the older ones. Returns the directory, None when the run took no screenshot or they could not be moved."""
     taken = [
         work / name
         for name in SHOT_DIRS
         if any(path.is_file() for path in (work / name).rglob("*"))
     ]
-    if not taken:
+    if not (taken):
         return None
     root = PROJECT_DIR / SHOTS_KEEP_DIR
     kept = root / time.strftime("%Y%m%dT%H%M%SZ", time.gmtime())
@@ -156,7 +148,7 @@ def keep_shots(*, work: Path, keep: int = SHOTS_KEEP_RUNS) -> Path | None:
         for old in sorted(path for path in root.iterdir() if path.is_dir())[:-keep]:
             shutil.rmtree(old, ignore_errors=True)
     except OSError as exc:
-        log(f"WARN could not keep the screenshots under {root}: {exc}")
+        log(message=f"WARN could not keep the screenshots under {str(root)!r}: {exc}")
         return None
     return kept
 
@@ -425,13 +417,13 @@ def run_proof() -> int:
                 results["source"] = False
     finally:
         passed = bool(results) and all(results.values())
-        kept = None if passed else keep_shots(work=work)
+        kept = None if passed else _keep_shots(work=work)
         shutil.rmtree(work, ignore_errors=True)
     summary = " ".join(
         f"{name}={'pass' if ok else 'FAIL'}" for name, ok in results.items()
     )
     where = f", screenshots kept in {kept}" if kept else ""
-    log(f"RESULT {summary or 'nothing ran'}{where}")
+    log(message=f"RESULT {(summary) or ('nothing ran')}{where}")
     if passed and version and not skip:
         PROVEN_MARKER.write_text(f"{proven}\n", encoding="utf-8", newline="\n")
     return 0 if passed else 1

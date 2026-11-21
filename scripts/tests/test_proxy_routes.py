@@ -22,8 +22,9 @@ _CONSOLE_CONFIGS = ["envoy.yaml", "envoy.tls.yaml"]
 _ALL_CONFIGS = [*_CONSOLE_CONFIGS, "hyperdx.yaml", "hyperdx.tls.yaml"]
 _CONSOLE_LISTENER = "ingress"
 _NORMALISING = ("normalize_path", "merge_slashes")
-# The receiver ingest listener, which only the TLS configs carry, and the one route it has: match, cluster, status, timeout
+# The ingest listener only the TLS configs carry
 _INGEST_LISTENER = "receiver-ingest"
+# Its one route, in the console routes' field order
 _INGEST_ROUTES = [({"prefix": "/"}, "dfe-receiver", "", "120s")]
 # Console routes in match order: match, cluster, status, timeout
 _CONSOLE_ROUTES = [
@@ -34,7 +35,7 @@ _CONSOLE_ROUTES = [
 ]
 
 
-def _managers(name: str) -> list[_envoy.ConnectionManager]:
+def _managers(*, name: str) -> list[_envoy.ConnectionManager]:
     return _envoy.connection_managers(
         text=(PROXY_DIR / name).read_text(encoding="utf-8")
     )
@@ -44,7 +45,7 @@ def _managers(name: str) -> list[_envoy.ConnectionManager]:
 def test_the_console_hides_metrics_and_routes_everything_else_unchanged(
     name: str,
 ) -> None:
-    console = [m for m in _managers(name) if m.listener == _CONSOLE_LISTENER]
+    console = [m for m in _managers(name=name) if m.listener == _CONSOLE_LISTENER]
 
     assert len(console) == 1
     assert len(console[0].virtual_hosts) == 1
@@ -56,7 +57,7 @@ def test_the_console_hides_metrics_and_routes_everything_else_unchanged(
 
 @pytest.mark.parametrize("name", _CONSOLE_CONFIGS)
 def test_the_console_matches_and_forwards_the_canonical_path(name: str) -> None:
-    console = [m for m in _managers(name) if m.listener == _CONSOLE_LISTENER]
+    console = [m for m in _managers(name=name) if m.listener == _CONSOLE_LISTENER]
 
     assert console
     for manager in console:
@@ -78,10 +79,10 @@ def test_the_console_matches_and_forwards_the_canonical_path(name: str) -> None:
 def test_only_the_console_tls_config_forwards_to_the_receiver(
     name: str, routes: list[tuple[dict[str, str], str, str, str]]
 ) -> None:
-    ingest = [m for m in _managers(name) if m.listener == _INGEST_LISTENER]
+    ingest = [m for m in _managers(name=name) if m.listener == _INGEST_LISTENER]
     forwarded = {
         route.cluster
-        for manager in _managers(name)
+        for manager in _managers(name=name)
         for host in manager.virtual_hosts
         for route in host.routes
     }
@@ -96,7 +97,7 @@ def test_only_the_console_tls_config_forwards_to_the_receiver(
 
 @pytest.mark.parametrize("name", _ALL_CONFIGS)
 def test_no_hyperdx_origin_rewrites_the_path_it_forwards(name: str) -> None:
-    others = [m for m in _managers(name) if m.listener != _CONSOLE_LISTENER]
+    others = [m for m in _managers(name=name) if m.listener != _CONSOLE_LISTENER]
 
     assert others
     for manager in others:

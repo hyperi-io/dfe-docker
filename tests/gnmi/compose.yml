@@ -6,7 +6,7 @@
 # License:   BUSL-1.1
 # Copyright: (c) 2026 HYPERI PTY LIMITED
 
-# openconfig/lemming publishes one floating tag, so the image is pinned by digest.
+# lemming publishes one floating tag, so pin it by digest
 services:
   gnmi-emulator:
     image: ${DFE_GNMI_EMULATOR_IMAGE:-us-west1-docker.pkg.dev/openconfig-lemming/release/lemming@sha256:a4f1261bf9bf1d234bbec14070247cf1127f44d57de9fdd25ddf4997e733c1d8}

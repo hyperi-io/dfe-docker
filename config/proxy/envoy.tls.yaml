@@ -1,6 +1,6 @@
 # Project:   dfe-docker
 # File:      config/proxy/envoy.tls.yaml
-# Purpose:   envoy.yaml with TLS on both listeners
+# Purpose:   envoy.yaml with TLS on every listener
 # Language:  Envoy static config
 #
 # License:   BUSL-1.1
@@ -8,7 +8,7 @@
 #
 # Mounted instead of envoy.yaml when DFE_PROXY_TLS=true
 # Must equal envoy.yaml plus the marked TLS blocks (test_proxy_tls_config.py)
-# The receiver-ingest listener exists only here: TLS is its whole purpose
+# The receiver-ingest listener is TLS only, so lives here only
 
 admin:
   address:
@@ -163,7 +163,7 @@ static_resources:
           transport_socket: *console_tls
           # END TLS
     # BEGIN TLS
-    # External pushers send to the receiver here, over the console's certificate
+    # External pushers reach the receiver here, on the console cert
     - name: receiver-ingest
       address:
         socket_address: { address: 0.0.0.0, port_value: 8443 }
@@ -182,7 +182,7 @@ static_resources:
                     - name: receiver
                       domains: ["*"]
                       routes:
-                        # The timeout bounds the wait for the receiver's reply. The receiver enforces its own body size and request timeout
+                        # Waits on the receiver's reply, which sets its own limits
                         - match: { prefix: / }
                           route: { cluster: dfe-receiver, timeout: 120s }
                 stat_prefix: receiver_ingest

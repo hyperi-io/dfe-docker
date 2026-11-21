@@ -1,0 +1,12 @@
+# Project:   dfe-docker
+# File:      resources/demo/orgs/demo.yaml
+# Purpose:   The org besides default that the engine's first-run setup asks for
+# Language:  YAML
+#
+# License:   BUSL-1.1
+# Copyright: (c) 2026 HYPERI PTY LIMITED
+
+display_name: Demo
+name: demo
+org_ids:
+  - demo

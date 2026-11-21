@@ -1,0 +1,12 @@
+# Project:   dfe-docker
+# File:      resources/seed/orgs/acme.yaml
+# Purpose:   Starter org, named as the deployment's own, that the seeded fetchers and hunt belong to
+# Language:  YAML
+#
+# License:   BUSL-1.1
+# Copyright: (c) 2026 HYPERI PTY LIMITED
+
+name: acme
+display_name: Acme Corp
+org_ids:
+  - acme

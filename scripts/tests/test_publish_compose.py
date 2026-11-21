@@ -44,7 +44,7 @@ ROLES = {
 }
 
 
-def _tree(root: Path) -> Path:
+def _tree(*, root: Path) -> Path:
     """A scratch tree holding one config file, one config directory, the collector config and env/."""
     (root / "config" / "proxy").mkdir(parents=True)
     (root / "config" / "proxy" / "envoy.yaml").write_text(
@@ -62,11 +62,11 @@ def _tree(root: Path) -> Path:
     return root
 
 
-def _bind(source: Path | str, target: str) -> dict:
+def _bind(*, source: Path | str, target: str) -> dict:
     return {"type": "bind", "source": str(source), "target": target, "read_only": True}
 
 
-def _model(tree: Path) -> dict:
+def _model(*, tree: Path) -> dict:
     return {
         "name": "scratch",
         "networks": {"default": {"name": "scratch_default", "ipam": {}}},
@@ -88,18 +88,26 @@ def _model(tree: Path) -> dict:
                 "profiles": ["core"],
                 "volumes": [
                     {"type": "volume", "source": "dfe-engine-config", "target": "/c"},
-                    _bind(tree / "env", "/app/app-env"),
-                    _bind(tree / "config" / "proxy" / "envoy.yaml", "/etc/envoy.yaml"),
+                    _bind(source=tree / "env", target="/app/app-env"),
+                    _bind(
+                        source=tree / "config" / "proxy" / "envoy.yaml",
+                        target="/etc/envoy.yaml",
+                    ),
                 ],
             },
             "clickhouse": {
                 "container_name": "dfe-clickhouse",
-                "volumes": [_bind(tree / "config" / "clickhouse", "/etc/ch/")],
+                "volumes": [
+                    _bind(source=tree / "config" / "clickhouse", target="/etc/ch/")
+                ],
             },
             "otel-collector": {
                 "volumes": [
-                    _bind(tree / COLLECTOR_CONFIG, "/etc/otelcol/config.yaml"),
-                    _bind("/proc", "/hostfs/proc"),
+                    _bind(
+                        source=tree / COLLECTOR_CONFIG,
+                        target="/etc/otelcol/config.yaml",
+                    ),
+                    _bind(source="/proc", target="/hostfs/proc"),
                 ]
             },
         },
@@ -111,10 +119,10 @@ class TestPublished:
     def test_rewrites_the_model_into_a_file_a_host_with_only_docker_runs(
         self, tmp_path: Path
     ) -> None:
-        tree = _tree(tmp_path)
+        tree = _tree(root=tmp_path)
 
         model = publish_compose.published(
-            container_prefix="demo-", model=_model(tree), name="dfe", tree=tree
+            container_prefix="demo-", model=_model(tree=tree), name="dfe", tree=tree
         )
 
         engine = model["services"]["dfe-engine"]
@@ -127,7 +135,7 @@ class TestPublished:
         ]
         assert engine["depends_on"] == {"clickhouse": {"condition": "service_healthy"}}
         assert engine["environment"][publish_compose.APP_ENV_DIR_KEY] == ""
-        # No checkout means no `make creds`, and the stack file runs no per-source instance
+        # No checkout means no `make creds` and no per-source instance
         assert engine["environment"][publish_compose.CREDENTIAL_COMMAND_KEY] == (
             "docker compose -f oci://ghcr.io/hyperi-io/dfe-docker:compose "
             "run --rm secrets-init login"
@@ -137,7 +145,7 @@ class TestPublished:
             "docker compose -f oci://ghcr.io/hyperi-io/dfe-docker:compose up -d "
             "--force-recreate {service}"
         )
-        # No env/engine.env either: secrets-init stores the new password and the engine rereads it
+        # No env/engine.env here: secrets-init stores the new password
         assert engine["environment"][publish_compose.ROTATION_COMMAND_KEY] == (
             "DFE_ADMIN_PASSWORD='<new password>' docker compose -f "
             "oci://ghcr.io/hyperi-io/dfe-docker:compose up -d --force-recreate "
@@ -159,10 +167,10 @@ class TestPublished:
     def test_a_bound_directory_becomes_one_config_per_file(
         self, tmp_path: Path
     ) -> None:
-        tree = _tree(tmp_path)
+        tree = _tree(root=tmp_path)
 
         model = publish_compose.published(
-            container_prefix="", model=_model(tree), name="dfe", tree=tree
+            container_prefix="", model=_model(tree=tree), name="dfe", tree=tree
         )
 
         assert model["services"]["clickhouse"]["configs"] == [
@@ -174,10 +182,10 @@ class TestPublished:
     def test_the_collector_loses_the_host_proc_and_reads_its_own(
         self, tmp_path: Path
     ) -> None:
-        tree = _tree(tmp_path)
+        tree = _tree(root=tmp_path)
 
         model = publish_compose.published(
-            container_prefix="", model=_model(tree), name="dfe", tree=tree
+            container_prefix="", model=_model(tree=tree), name="dfe", tree=tree
         )
 
         collector = model["services"]["otel-collector"]
@@ -196,11 +204,13 @@ class TestPublished:
         ids=["docker-socket", "host-file"],
     )
     def test_refuses_a_bind_mount_it_cannot_publish(
-        self, match: str, source: str, tmp_path: Path
+        self, tmp_path: Path, source: str, match: str
     ) -> None:
-        tree = _tree(tmp_path)
-        model = _model(tree)
-        model["services"]["clickhouse"]["volumes"].append(_bind(source, "/x"))
+        tree = _tree(root=tmp_path)
+        model = _model(tree=tree)
+        model["services"]["clickhouse"]["volumes"].append(
+            _bind(source=source, target="/x")
+        )
 
         with pytest.raises(publish_compose.PublishError, match=match):
             publish_compose.published(
@@ -222,7 +232,7 @@ class TestConfigContent:
         ],
         ids=["untouched", "every-dollar-escaped", "collector-edit"],
     )
-    def test_matches_expected(self, expected: str, relative: str, text: str) -> None:
+    def test_matches_expected(self, relative: str, text: str, expected: str) -> None:
         assert publish_compose.config_content(relative=relative, text=text) == expected
 
     def test_refuses_a_collector_config_the_edit_no_longer_fits(self) -> None:
@@ -253,7 +263,7 @@ class TestInterpolations:
         ],
     )
     def test_counts_what_compose_would_interpolate(
-        self, allowed: tuple[str, ...], count: int, text: str
+        self, text: str, allowed: tuple[str, ...], count: int
     ) -> None:
         found = publish_compose.interpolations(allowed=allowed, text=text)
 
@@ -342,7 +352,7 @@ class TestFindings:
         ],
     )
     def test_only_secrets_init_may_read_the_chosen_login_from_the_shell(
-        self, key: str, kind: str | None, service: str, value: str
+        self, service: str, key: str, value: str, kind: str | None
     ) -> None:
         model = {
             "services": {
@@ -374,7 +384,7 @@ class TestFindings:
         ],
     )
     def test_the_chosen_login_reference_is_read_nowhere_but_secrets_init_env(
-        self, refused: bool, where: str
+        self, where: str, refused: bool
     ) -> None:
         digest = "@sha256:" + "0" * 64
         model = {
@@ -423,9 +433,11 @@ class TestFindings:
 
 class TestDemoRoles:
     @pytest.mark.usefixtures("engine_python_here")
-    # Every committed pack shape: syslog vendors, Beats, JSON with a fetcher, fetchers with replays
+    # Every committed pack shape (vendors, Beats, JSON, fetchers)
     @pytest.mark.parametrize(
-        "pack", ["", "cyber", "telco", "theatre"], ids=lambda p: p or "demo"
+        "pack",
+        ["", "cyber", "telco", "theatre"],
+        ids=["demo", "cyber", "telco", "theatre"],
     )
     def test_reads_each_committed_pack_as_its_seeding_does(self, pack: str) -> None:
         root = demo_pack_dir(pack=pack)
@@ -463,7 +475,7 @@ class TestDemoRoles:
         ids=["replayed", "no-replay-tool"],
     )
     def test_a_source_with_beats_events_is_replayed_not_detected(
-        self, expected: dict | None, tmp_path: Path, tool: bool
+        self, tmp_path: Path, tool: bool, expected: dict | None
     ) -> None:
         (tmp_path / "sources").mkdir()
         for name in ("cisco-asa", "intake", "okta"):
@@ -503,7 +515,7 @@ class TestDemoRoles:
         ids=["no-intake", "no-vendor", "two-intakes"],
     )
     def test_refuses_a_demo_make_demo_would_refuse(
-        self, events: list[str], sources: dict[str, str], tmp_path: Path
+        self, tmp_path: Path, sources: dict[str, str], events: list[str]
     ) -> None:
         (tmp_path / "sources").mkdir()
         (tmp_path / "events").mkdir()
@@ -521,7 +533,7 @@ class TestDemoRoles:
 
     @pytest.mark.parametrize("dirs", [[], ["sources", "events"]], ids=["bare", "empty"])
     def test_a_pack_with_no_source_files_has_no_roles(
-        self, dirs: list[str], tmp_path: Path
+        self, tmp_path: Path, dirs: list[str]
     ) -> None:
         for name in dirs:
             (tmp_path / name).mkdir()
@@ -551,7 +563,7 @@ class TestDemoRoles:
         ids=["matched-no-transform", "matched-with-transform", "unmatched"],
     )
     def test_a_matched_source_with_no_transform_replays_its_json_and_needs_no_intake(
-        self, expected: dict | None, tmp_path: Path, text: str
+        self, tmp_path: Path, text: str, expected: dict | None
     ) -> None:
         (tmp_path / "sources").mkdir()
         (tmp_path / "sources" / "kpis.yaml").write_text(text, encoding="utf-8")
@@ -564,7 +576,7 @@ class TestDemoRoles:
         (tmp_path / "events" / "generate.py").write_text("", encoding="utf-8")
 
         if expected is None:
-            # Anything else with events is a vendor, which needs an intake to detect it
+            # A vendor needs an intake to detect its events
             with pytest.raises(publish_compose.PublishError, match="needs one intake"):
                 publish_compose.demo_roles(
                     events=tmp_path / "events", sources=tmp_path / "sources"
@@ -621,14 +633,14 @@ class TestDemoFile:
         ids=["demo", "cyber", "theatre"],
     )
     def test_a_pack_renders_its_own_project_and_prefix(
-        self, expected: tuple[str, str, str, str], pack: str, tmp_path: Path
+        self, tmp_path: Path, pack: str, expected: tuple[str, str, str, str]
     ) -> None:
         target = publish_compose.demo_file(pack=pack)
-        tree = _tree(tmp_path)
+        tree = _tree(root=tmp_path)
 
         model = publish_compose.published(
             container_prefix=target.prefix,
-            model=_model(tree),
+            model=_model(tree=tree),
             name=target.project,
             tree=tree,
         )
@@ -645,16 +657,16 @@ class TestDemoFile:
         ids=["no-directory", "path", "upper-case"],
     )
     def test_an_unknown_pack_exits_2_naming_the_packs_that_exist(
-        self, argv: list[str], capsys: pytest.CaptureFixture[str]
+        self, capsys: pytest.CaptureFixture[str], argv: list[str]
     ) -> None:
         with pytest.raises(SystemExit) as exited:
-            publish_compose.main(argv)
+            publish_compose.main(argv=argv)
 
         assert exited.value.code == 2
         assert "resources/demo-cyber" in capsys.readouterr().err
 
 
-def _stack(services: list[str]) -> dict:
+def _stack(*, services: list[str]) -> dict:
     service = {"deploy": {"resources": {}}, "dns_search": ["."], "image": "i"}
     model = {"services": {name: dict(service) for name in services}}
     model["services"]["dfe-engine"]["environment"] = {
@@ -689,7 +701,7 @@ class TestDemoOverlay:
         model = publish_compose.demo_overlay(
             archive=ARCHIVE,
             image="ghcr.io/hyperi-io/dfe-docker@sha256:" + "b" * 64,
-            model=_stack(DEMO_STACK),
+            model=_stack(services=DEMO_STACK),
             roles=ROLES,
             stream=["scripts/replay_syslog.py", "tcp", "20"],
         )
@@ -721,7 +733,7 @@ class TestDemoOverlay:
         )
         assert model["volumes"][publish_compose.DEMO_FEED_VOLUME] == {}
         assert "demo-beats" not in services
-        # The engine accepts exactly the demo's transformed sources, so a console-added one is refused
+        # Only the demo's transformed sources, a console one is refused
         assert (
             services["dfe-engine"]["environment"][publish_compose.HOSTED_INSTANCES_KEY]
             == "dfe-transform-elastic=demo-syslog,cisco-asa,fortinet"
@@ -737,7 +749,7 @@ class TestDemoOverlay:
         model = publish_compose.demo_overlay(
             archive=ARCHIVE,
             image="ghcr.io/hyperi-io/dfe-docker@sha256:" + "b" * 64,
-            model=_stack(DEMO_STACK),
+            model=_stack(services=DEMO_STACK),
             roles=ROLES,
             stream=["scripts/replay_syslog.py", "tcp", "20"],
         )
@@ -753,7 +765,7 @@ class TestDemoOverlay:
                 archive=ARCHIVE,
                 image="ghcr.io/hyperi-io/dfe-docker@sha256:" + "b" * 64,
                 model=_stack(
-                    [name for name in DEMO_STACK if name != "dfe-hunt-runner"]
+                    services=[name for name in DEMO_STACK if name != "dfe-hunt-runner"]
                 ),
                 roles=ROLES,
                 stream=["scripts/replay_syslog.py", "tcp", "20"],
@@ -761,7 +773,11 @@ class TestDemoOverlay:
 
     def test_a_pack_with_no_sources_seeds_itself_and_replays_nothing(self) -> None:
         stack = _stack(
-            [name for name in DEMO_STACK if name != "dfe-transform-elastic-demo-syslog"]
+            services=[
+                name
+                for name in DEMO_STACK
+                if name != "dfe-transform-elastic-demo-syslog"
+            ]
         )
         roles = {
             "beats": [],
@@ -822,7 +838,7 @@ class TestDemoOverlay:
         model = publish_compose.demo_overlay(
             archive=ARCHIVE,
             image="i",
-            model=_stack([*DEMO_STACK, *instances]),
+            model=_stack(services=[*DEMO_STACK, *instances]),
             pack="cyber",
             roles=roles,
             stream=["scripts/replay_syslog.py", "tcp", "20"],
@@ -862,7 +878,11 @@ class TestDemoOverlay:
         self,
     ) -> None:
         stack = _stack(
-            [name for name in DEMO_STACK if name != "dfe-transform-elastic-demo-syslog"]
+            services=[
+                name
+                for name in DEMO_STACK
+                if name != "dfe-transform-elastic-demo-syslog"
+            ]
         )
         roles = {
             "beats": [],
@@ -906,7 +926,7 @@ class TestDemoOverlay:
             publish_compose.demo_overlay(
                 archive=ARCHIVE,
                 image="i",
-                model=_stack(DEMO_STACK),
+                model=_stack(services=DEMO_STACK),
                 pack="cyber",
                 roles={**ROLES, "beats": ["okta"]},
                 stream=["scripts/replay_syslog.py", "tcp", "20"],
@@ -916,7 +936,11 @@ class TestDemoOverlay:
         self,
     ) -> None:
         stack = _stack(
-            [name for name in DEMO_STACK if name != "dfe-transform-elastic-demo-syslog"]
+            services=[
+                name
+                for name in DEMO_STACK
+                if name != "dfe-transform-elastic-demo-syslog"
+            ]
         )
         fetchers = ["adsb-tracks", "ais-tracks"]
         roles = {
@@ -962,7 +986,7 @@ class TestDemoOverlay:
         model = publish_compose.demo_overlay(
             archive=ARCHIVE,
             image="i",
-            model=_stack(DEMO_STACK),
+            model=_stack(services=DEMO_STACK),
             roles=ROLES,
             stream=["scripts/replay_syslog.py", "tcp", "20"],
         )
@@ -982,7 +1006,11 @@ class TestDemoOverlay:
 
     def test_refuses_a_stack_that_declares_no_demo_instance(self) -> None:
         stack = _stack(
-            [name for name in DEMO_STACK if name != "dfe-transform-elastic-demo-syslog"]
+            services=[
+                name
+                for name in DEMO_STACK
+                if name != "dfe-transform-elastic-demo-syslog"
+            ]
         )
 
         with pytest.raises(publish_compose.PublishError, match="demo-syslog"):
@@ -1001,7 +1029,7 @@ class TestTags:
         [(False, ["compose-1.0.5"]), (True, ["compose-1.0.5", "compose"])],
         ids=["pre-release", "release"],
     )
-    def test_matches_expected(self, expected: list[str], moving: bool) -> None:
+    def test_matches_expected(self, moving: bool, expected: list[str]) -> None:
         assert (
             publish_compose.published_tags(
                 moving=moving, release="1.0.5", tag="compose"
@@ -1020,7 +1048,7 @@ MINTED = {
     JWT_SECRET: "DFE_ENGINE_API_JWT_SECRET",
     ADMIN_SECRET: "DFE_ENGINE_AUTH_LOCAL_ADMIN_PASSWORD",
 }
-# What each pinned image's registry config runs, standing in for the registry read
+# What each image's registry config runs, in place of a read
 IMAGE_COMMANDS = {
     "clickhouse": (["/entrypoint.sh"], []),
     "documentdb": (["/bin/bash", "-c", 'run.sh "$@"', "--"], []),
@@ -1287,7 +1315,7 @@ class TestSecretsInit:
         "template", ["@@NOT_A_SECRET@@", "x@@lower@@"], ids=["unknown-key", "not-a-key"]
     )
     def test_refuses_a_plan_naming_a_key_init_does_not_mint(
-        self, template: str, tmp_path: Path
+        self, tmp_path: Path, template: str
     ) -> None:
         plan = {"consumers": {"a": {"env": {"X": template}, "gid": os.getgid()}}}
 
@@ -1336,7 +1364,7 @@ class TestAdminLogin:
         printed = secrets_init.login(root=tmp_path)
         secrets_init.apply(plan=self._plan(), root=tmp_path)
 
-        engine = self._engine_env(tmp_path)
+        engine = self._engine_env(root=tmp_path)
         assert engine["name"] == "admin"
         assert re.fullmatch(
             rf"[A-Za-z0-9]{{{init._LEN_CREDENTIAL}}}", engine["password"]
@@ -1352,13 +1380,13 @@ class TestAdminLogin:
     ) -> None:
         chosen = {"DFE_ADMIN_NAME": "kerry", "DFE_ADMIN_PASSWORD": "a chosen phrase 1"}
         secrets_init.apply(environ=chosen, plan=self._plan(), root=tmp_path)
-        assert self._engine_env(tmp_path) == {
+        assert self._engine_env(root=tmp_path) == {
             "name": "kerry",
             "password": "a chosen phrase 1",
         }
 
         secrets_init.apply(environ={}, plan=self._plan(), root=tmp_path)
-        assert self._engine_env(tmp_path)["password"] == "a chosen phrase 1"
+        assert self._engine_env(root=tmp_path)["password"] == "a chosen phrase 1"
         assert "kerry / a chosen phrase 1" in secrets_init.login(root=tmp_path)
 
         secrets_init.apply(
@@ -1366,13 +1394,13 @@ class TestAdminLogin:
             plan=self._plan(),
             root=tmp_path,
         )
-        assert self._engine_env(tmp_path) == {
+        assert self._engine_env(root=tmp_path) == {
             "name": "kerry",
             "password": "another phrase 22",
         }
 
     def test_login_ignores_the_shell_so_it_prints_what_the_engine_was_given(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
     ) -> None:
         secrets_init.apply(plan=self._plan(), root=tmp_path)
         before = secrets_init.login(root=tmp_path)
@@ -1386,7 +1414,7 @@ class TestAdminLogin:
             ("DFE_ADMIN_PASSWORD", "short", "at least 12 characters"),
             ("DFE_ADMIN_PASSWORD", "x" * 11, "at least 12 characters"),
             ("DFE_ADMIN_PASSWORD", "x" * 73, "at most 72 bytes"),
-            ("DFE_ADMIN_PASSWORD", "é" * 37, "at most 72 bytes"),
+            ("DFE_ADMIN_PASSWORD", "\u00e9" * 37, "at most 72 bytes"),
             ("DFE_ADMIN_PASSWORD", "changeme", "at least 12 characters"),
             ("DFE_ADMIN_PASSWORD", "  changeme  ", "shipped placeholder"),
             ("DFE_ADMIN_PASSWORD", " " * 12, "is blank"),
@@ -1408,7 +1436,7 @@ class TestAdminLogin:
             )
 
         assert variable in str(refused.value)
-        assert not value.strip() or value.strip() not in str(refused.value)
+        assert not (value.strip()) or (value.strip() not in str(refused.value))
         assert not (
             tmp_path / ".minted" / "DFE_ENGINE_AUTH_LOCAL_ADMIN_PASSWORD"
         ).exists()
@@ -1425,7 +1453,7 @@ class TestAdminLogin:
         root.mkdir()
         args = ["--plan", str(plan), "--root", str(root)]
 
-        assert secrets_init.main([*args, "login"]) == 0
+        assert secrets_init.main(argv=[*args, "login"]) == 0
         out = capsys.readouterr().out
         assert re.fullmatch(
             r"Console login: admin / [A-Za-z0-9]{32}\nThe console makes you change this password at first login\.\n",
@@ -1433,7 +1461,7 @@ class TestAdminLogin:
         )
 
         monkeypatch.setenv("DFE_ADMIN_PASSWORD", "short")
-        assert secrets_init.main(args) == 1
+        assert secrets_init.main(argv=args) == 1
         assert "DFE_ADMIN_PASSWORD must be at least 12 characters" in (
             capsys.readouterr().err
         )

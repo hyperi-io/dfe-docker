@@ -8,9 +8,7 @@
 
 """An `-acks-off` outage test runs acks-off configs and owns its loss, and no other does.
 
-A kill test that proves no answered record is lost only means something with
-acknowledgements held, and its twin only documents the opt-out when every hop it
-overrides has them off. A text read, because these tests run with no PyYAML.
+A kill test that proves no answered record is lost only means something with acknowledgements held, and its twin only documents the opt-out when every hop it overrides has them off. A text read, because these tests run with no PyYAML.
 """
 
 import re
@@ -25,8 +23,8 @@ _OVERRIDE = re.compile(r"^\s+(dfe-[\w-]+): (\S+\.yaml)$")
 
 def _test_blocks() -> dict[str, list[str]]:
     """Return each e2e test's definition lines, by name."""
-    blocks: dict[str, list[str]] = {}
-    current: list[str] | None = None
+    blocks = {}
+    current = None
     for raw in _E2E_TESTS.read_text(encoding="utf-8").splitlines():
         if raw.startswith("  - name: "):
             current = blocks.setdefault(raw.split(": ", 1)[1].strip(), [])
@@ -35,7 +33,7 @@ def _test_blocks() -> dict[str, list[str]]:
     return blocks
 
 
-def _overrides(lines: list[str]) -> dict[str, str]:
+def _overrides(*, lines: list[str]) -> dict[str, str]:
     """Return {service: config path} from one test's `config_overrides`."""
     return {
         match.group(1): match.group(2)
@@ -44,7 +42,7 @@ def _overrides(lines: list[str]) -> dict[str, str]:
     }
 
 
-def _acknowledgements(path: Path) -> list[str]:
+def _acknowledgements(*, path: Path) -> list[str]:
     """Return the `enabled` value under each `acknowledgements:` block of a config."""
     values = []
     lines = [
@@ -66,14 +64,14 @@ def test_the_config_reader_finds_each_acknowledgements_block(tmp_path: Path) -> 
         encoding="utf-8",
     )
 
-    assert _acknowledgements(config) == ["false", "true"]
+    assert _acknowledgements(path=config) == ["false", "true"]
 
 
 def test_every_config_override_exists() -> None:
     missing = {
         name: path
         for name, lines in _test_blocks().items()
-        for path in _overrides(lines).values()
+        for path in _overrides(lines=lines).values()
         if not ((REPO_ROOT / path).is_file())
     }
 
@@ -83,7 +81,7 @@ def test_every_config_override_exists() -> None:
 def test_every_acks_off_config_turns_every_acknowledgement_off() -> None:
     configs = sorted(_E2E_CONFIGS.glob("*acks-off*.yaml"))
 
-    held = {path.name: _acknowledgements(path) for path in configs}
+    held = {path.name: _acknowledgements(path=path) for path in configs}
 
     assert configs
     assert {name: values for name, values in held.items() if values != ["false"]} == {}
@@ -94,12 +92,12 @@ def test_no_other_e2e_config_turns_an_acknowledgement_off() -> None:
         path for path in _E2E_CONFIGS.glob("*.yaml") if "acks-off" not in path.name
     ]
 
-    off = {path.name for path in others if "false" in _acknowledgements(path)}
+    off = {path.name for path in others if "false" in _acknowledgements(path=path)}
 
     assert off == set()
 
 
-def _loss(lines: list[str]) -> str:
+def _loss(*, lines: list[str]) -> str:
     """Return a test's `loss:` mode, `forbidden` when it declares none."""
     for line in lines:
         if line.startswith("      loss: "):
@@ -115,11 +113,11 @@ def test_every_acks_off_test_owns_its_loss_and_overrides_only_with_acks_off() ->
     }
 
     wrong = {
-        name: sorted(_overrides(lines).values())
+        name: sorted(_overrides(lines=lines).values())
         for name, lines in twins.items()
-        if _loss(lines) == "forbidden"
-        or not (_overrides(lines))
-        or any("acks-off" not in path for path in _overrides(lines).values())
+        if (_loss(lines=lines) == "forbidden")
+        or not (_overrides(lines=lines))
+        or (any("acks-off" not in path for path in _overrides(lines=lines).values()))
     }
 
     assert twins
@@ -129,15 +127,17 @@ def test_every_acks_off_test_owns_its_loss_and_overrides_only_with_acks_off() ->
 def test_an_acks_off_control_can_fail() -> None:
     blocks = _test_blocks()
 
-    # Tolerated loss leaves nothing to fail on unless a spool replay is judged.
+    # Tolerated loss fails only on a judged spool replay
     unfailing = {
         name
         for name, lines in blocks.items()
         if name.endswith("-acks-off")
-        and _loss(lines) == "tolerated"
+        and _loss(lines=lines) == "tolerated"
         and "        must_replay: true" not in lines
     }
-    required = {name for name, lines in blocks.items() if _loss(lines) == "required"}
+    required = {
+        name for name, lines in blocks.items() if _loss(lines=lines) == "required"
+    }
 
     assert required
     assert unfailing == set()
@@ -145,7 +145,9 @@ def test_an_acks_off_control_can_fail() -> None:
 
 def test_only_an_acks_off_test_declares_loss() -> None:
     declaring = {
-        name for name, lines in _test_blocks().items() if _loss(lines) != "forbidden"
+        name
+        for name, lines in _test_blocks().items()
+        if _loss(lines=lines) != "forbidden"
     }
 
     assert declaring

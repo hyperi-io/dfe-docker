@@ -5,17 +5,11 @@
 #
 # License:   BUSL-1.1
 # Copyright: (c) 2026 HYPERI PTY LIMITED
-#
-# The dfe-docker image copies its whole context into the folder `init` sets up,
-# so this names what that folder holds and nothing more. An allowlist, because
-# a file nobody listed then stays out: .env, env/, certs/ and access-summary.md
-# hold secrets and can never reach an image layer.
-#
-# scripts/build_dev_images.py stages each component's source into its own temp
-# context, so this file does not reach those builds.
 
+# An allowlist, as init's folder holds only what it names
 *
 
+# Secrets stay out: .env, env/, certs/, access-summary.md
 !.env.example
 !Makefile
 !VERSION
@@ -31,7 +25,9 @@
 !scripts/
 !service_profiles.yaml
 
-# Inside the kept directories: tests and bytecode never run in a deployment
+# Inside kept directories, tests and bytecode never run
 scripts/tests/
 **/__pycache__/
 **/*.pyc
+
+# build_dev_images.py stages its own contexts, so this skips it

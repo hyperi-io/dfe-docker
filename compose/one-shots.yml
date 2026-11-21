@@ -153,14 +153,16 @@ services:
     extends: {file: compose/limits.yml, service: limits-sidecar}
     entrypoint: ["/bin/bash", "/usr/local/bin/dfe-redpanda-configure.sh"]
     environment:
+      REDPANDA_LICENSE: ${REDPANDA_LICENSE:-}
       REDPANDA_MIN_FREE_BYTES: ${REDPANDA_MIN_FREE_BYTES:-5368709120}
       REDPANDA_RETENTION_BYTES: ${REDPANDA_RETENTION_BYTES:-10737418240}
-      REDPANDA_LICENSE: ${REDPANDA_LICENSE:-}
     depends_on:
       kafka-redpanda:
         condition: service_healthy
     volumes:
       - ./redpanda/configure.sh:/usr/local/bin/dfe-redpanda-configure.sh:ro
+      # Stays empty: covers the image's VOLUME for make clean
+      - kafka-redpanda-config-data:/var/lib/redpanda/data
     restart: "no"
 
   hyperdx-documentdb-tls:
@@ -175,7 +177,7 @@ services:
         set -eu
         umask 077
         cd /tls
-        # Running containers mount ca and server by subpath, so the directories stay and each file is renamed into place whole
+        # Mounted by subpath, so files are renamed in and the dirs stay
         mkdir -p ca server
         if ! { [ -s ca/ca.crt ] && [ -s server/tls.key ] && [ -s server/tls.crt ] \
             && openssl x509 -checkend 2592000 -noout -in server/tls.crt >/dev/null; }; then

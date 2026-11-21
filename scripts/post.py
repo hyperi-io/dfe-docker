@@ -200,7 +200,7 @@ CONTAINER_LOG_SERVICES = ("dfe-engine", "dfe-loader", "dfe-receiver")
 
 # The services whose OWN metrics have to reach the otel database, as name prefixes
 # so a per-source instance (dfe-transform-vrl-filebeat) is covered by its app.
-# dfe-ui pushes over OTLP/HTTP under its own ServiceName, so it is checked like the rest.
+# dfe-ui pushes over OTLP/HTTP like the rest
 OTEL_PUSHER_PREFIXES = (
     "dfe-archiver",
     "dfe-engine",
@@ -213,7 +213,7 @@ OTEL_PUSHER_PREFIXES = (
     "dfe-transform-vrl",
     "dfe-ui",
 )
-# dfe-ui pushes metrics from this release on, so an older pin is not expected to.
+# The first dfe-ui release that pushes metrics
 UI_VERSION_KEY = "DFE_UI_VERSION"
 UI_PUSHES_METRICS_FROM = (1, 7, 40)
 # Metrics only: traces are sampled at 0.05, so a service missing from them is a
@@ -258,9 +258,9 @@ HYPERDX_NETWORK_BASE = "http://dfe-hyperdx-proxy:8000"
 # Long enough for docker to start the exec on a loaded host, on top of whatever
 # the request itself is given.
 API_EXEC_MARGIN_SECONDS = 10
-# The bundled broker, which redpanda/configure.sh keeps off Redpanda's Enterprise features.
+# The bundled broker, kept off Redpanda's Enterprise features
 BROKER_SERVICE = "kafka-redpanda"
-# Set, it opts the broker into Enterprise features under that licence (docs/broker.md).
+# Set, the broker runs Enterprise features under that licence
 BROKER_LICENCE_VAR = "REDPANDA_LICENSE"
 
 # The console login's name, and its password, which a forced change writes back to the same file.
@@ -284,8 +284,8 @@ UI_QUERY_INTERVAL_SECONDS = 3.0
 # "created while the runner was already up" a claim worth making.
 HUNT_SERVICES = ("dfe-engine", "dfe-hunt-runner")
 HUNT_TARGET_TABLE = "detection"
-# The org the hunt runs for: the engine's reserved default org, where a record naming no org lands
-HUNT_CUSTOMER = "default"
+# The org the hunt runs for, where a record naming no org lands
+HUNT_CUSTOMER = "acme"
 # Failed root logins are the detection, and each near miss breaks one half of it.
 HUNT_WHERE = (
     "toString(_json.event_type) = 'login_failure' "
@@ -438,6 +438,8 @@ import urllib.request
 spec = json.loads(os.environ["DFE_POST_API_REQUEST"])
 body = spec["body"].encode() if spec["body"] else None
 request = urllib.request.Request(spec["url"], data=body, method=spec["method"])
+for name, value in spec.get("headers", {}).items():
+    request.add_header(name, value)
 if body is not None:
     request.add_header("Content-Type", "application/json")
 if spec["token"]:
@@ -509,38 +511,34 @@ def _container_started(name: str) -> int | None:
 
 
 def _broker_licence_info() -> dict | None:
-    """Return the bundled broker's `rpk cluster license info` JSON, or None when it is not running.
-
-    Raises:
-        BrokerLicenceError: When compose or rpk cannot say.
-    """
+    """Return the bundled broker's `rpk cluster license info` JSON, or None when it is not running. Raises BrokerLicenceError when compose or rpk cannot say."""
     listed = subprocess.run(
         ["docker", "compose", "ps", "--quiet", BROKER_SERVICE],
         capture_output=True,
         check=False,
-        text=True,
         encoding="utf-8",
         errors="replace",
+        text=True,
         timeout=API_EXEC_MARGIN_SECONDS,
     )
     if listed.returncode != 0:
-        raise BrokerLicenceError(f"docker compose ps failed: {listed.stderr.strip()}")
+        raise BrokerLicenceError(f"docker compose ps failed: {listed.stderr.strip()!r}")
     ids = listed.stdout.split()
-    if not ids:
+    if not (ids):
         return None
     command = ["rpk", "cluster", "license", "info", "--format", "json"]
     result = subprocess.run(
         ["docker", "exec", ids[0], *command],
         capture_output=True,
         check=False,
-        text=True,
         encoding="utf-8",
         errors="replace",
+        text=True,
         timeout=API_EXEC_MARGIN_SECONDS,
     )
     if result.returncode != 0:
         raise BrokerLicenceError(
-            f"{' '.join(command)} exited {result.returncode}: {result.stderr.strip()}"
+            f"{' '.join(command)} exited {result.returncode}: {result.stderr.strip()!r}"
         )
     try:
         info = json.loads(result.stdout)
@@ -548,22 +546,18 @@ def _broker_licence_info() -> dict | None:
         raise BrokerLicenceError(
             f"{' '.join(command)} gave no JSON, so no feature list: {error!r}"
         ) from error
-    if not isinstance(info, dict):
+    if not (isinstance(info, dict)):
         raise BrokerLicenceError(f"{' '.join(command)} gave no feature list: {info!r}")
     return info
 
 
 def _broker_enterprise_features() -> list[str] | None:
-    """Return the Enterprise features the bundled broker has in use, or None when it is not running.
-
-    Raises:
-        BrokerLicenceError: When compose or rpk cannot say.
-    """
+    """Return the Enterprise features the bundled broker has in use, or None when it is not running. Raises BrokerLicenceError when compose or rpk cannot say."""
     info = _broker_licence_info()
     if info is None:
         return None
     features = info.get("enterprise_features_in_use")
-    if not isinstance(features, list):
+    if not (isinstance(features, list)):
         raise BrokerLicenceError(
             f"rpk cluster license info gave no feature list: {info!r}"
         )
@@ -584,7 +578,13 @@ def _log_window(name: str) -> str:
 
 
 def _exec_request(
-    *, method: str, url: str, payload: dict | None, timeout: int, token: str
+    *,
+    headers: dict[str, str] | None = None,
+    method: str,
+    payload: dict | None,
+    timeout: int,
+    token: str,
+    url: str,
 ) -> tuple[int, str]:
     """Make one request from INSIDE the stack, returning (status, body text).
 
@@ -592,6 +592,7 @@ def _exec_request(
     """
     spec = {
         "body": json.dumps(payload) if payload is not None else "",
+        "headers": (headers) or ({}),
         "method": method,
         "timeout": timeout,
         "token": token,
@@ -970,20 +971,11 @@ def _verify_self_monitoring() -> Claim:
     return Claim(asserted=True, failed=failed)
 
 
-def _ui_pushes_metrics(*, ui_version: str) -> bool:
-    """Return False only for a dfe-ui release tag older than UI_PUSHES_METRICS_FROM, so a local or unparsed build is still checked."""
-    tag = ui_version.split("@", 1)[0].strip().removeprefix("v")
-    parts = tag.split(".")
-    if len(parts) != 3 or not all(part.isdigit() for part in parts):
-        return True
-    return tuple(int(part) for part in parts) >= UI_PUSHES_METRICS_FROM
-
-
 def _otel_expected_services(
     *, services: list[str], unapplied: set[str], ui_version: str = ""
 ) -> list[str]:
     """The services whose own metrics have to be in the otel database, less the instances `make apply` has not created."""
-    skip_ui = not _ui_pushes_metrics(ui_version=ui_version)
+    skip_ui = not (_ui_pushes_metrics(ui_version=ui_version))
     return sorted(
         service
         for service in services
@@ -991,6 +983,15 @@ def _otel_expected_services(
         and service not in unapplied
         and not (skip_ui and service == "dfe-ui")
     )
+
+
+def _ui_pushes_metrics(*, ui_version: str) -> bool:
+    """Return False only for a dfe-ui release tag older than UI_PUSHES_METRICS_FROM, so a local or unparsed build is still checked."""
+    tag = ui_version.split("@", 1)[0].strip().removeprefix("v")
+    parts = tag.split(".")
+    if (len(parts) != 3) or not (all(part.isdigit() for part in parts)):
+        return True
+    return tuple(int(part) for part in parts) >= UI_PUSHES_METRICS_FROM
 
 
 def _otel_reporting_services(*, database: str) -> set[str]:
@@ -1555,9 +1556,9 @@ def _await_routed_row(*, database: str, name: str) -> int:
         # a failure.
         try:
             http_post(
-                ingest_url,
-                marked_event(marker=marker, source=name),
+                body=marked_event(marker=marker, source=name),
                 token=ingest_token(),
+                url=ingest_url,
             )
         except Exception:  # noqa: BLE001 - a refused post is another attempt
             return 0
@@ -2426,7 +2427,7 @@ def _send_hunt_events(
     refused = []
     for label, body in bodies:
         try:
-            status = http_post(ingest_url, body, token=ingest_token())
+            status = http_post(body=body, token=ingest_token(), url=ingest_url)
         except OSError:
             status = 0
         if status < 200 or status >= 300:
@@ -2598,13 +2599,25 @@ def api_container() -> str:
 
 
 def api_put_json(
-    *, payload: dict, timeout: int = 30, token: str = "", url: str
+    *,
+    headers: dict[str, str] | None = None,
+    payload: dict,
+    timeout: int = 30,
+    token: str = "",
+    url: str,
 ) -> tuple[int, typing.Any]:
     """PUT JSON and return (status, decoded body), over whichever transport reaches it."""
     if not (_over_network(url=url)):
-        return http_put_json(payload=payload, timeout=timeout, token=token, url=url)
+        return http_put_json(
+            headers=headers, payload=payload, timeout=timeout, token=token, url=url
+        )
     status, body = _exec_request(
-        method="PUT", payload=payload, timeout=timeout, token=token, url=url
+        headers=headers,
+        method="PUT",
+        payload=payload,
+        timeout=timeout,
+        token=token,
+        url=url,
     )
     return status, _decoded(raw=body)
 
@@ -2666,23 +2679,23 @@ def main() -> int:
         _print(msg="      run `make init` to generate real values")
         return 1
 
-    # An Enterprise feature in use when Redpanda's trial licence lapses blocks broker upgrades.
-    # A licensed broker (beta) may use them, and the config one-shot checks it for a violation instead.
+    # A licensed broker (beta) is checked for a violation instead
     licensed = bool(os.environ.get(BROKER_LICENCE_VAR))
+    # A feature on when the trial lapses blocks broker upgrades
     try:
         features = [] if licensed else _broker_enterprise_features()
         info = _broker_licence_info() if licensed else None
     except BrokerLicenceError as error:
-        _print(msg=f"FAIL  {BROKER_SERVICE} licence unreadable: {error}")
+        _print(msg=f"FAIL  {BROKER_SERVICE!r} licence unreadable: {error}")
         return 1
     if info is not None and info.get("license_violation") is not False:
-        _print(msg=f"FAIL  {BROKER_SERVICE} reports a licence violation: {info!r}")
+        _print(msg=f"FAIL  {BROKER_SERVICE!r} reports a licence violation: {info!r}")
         return 1
     if features:
         _print(
-            msg=f"FAIL  {BROKER_SERVICE} has Enterprise features in use: {', '.join(features)}"
+            msg=f"FAIL  {BROKER_SERVICE!r} has Enterprise features in use: {', '.join(features)}"
         )
-        # A stack started without dfe-engine never ran the one-shot, so the hint starts it.
+        # A stack without dfe-engine never ran the one-shot
         _print(
             msg="      run `docker compose up kafka-redpanda-config`, which turns each off, then this check again"
         )
@@ -2719,7 +2732,7 @@ def main() -> int:
     for index in range(EVENT_COUNT):
         body = marked_event(marker=marker, source=table, extra={"post_sequence": index})
         try:
-            status = http_post(ingest_url, body, token=ingest_token())
+            status = http_post(body=body, token=ingest_token(), url=ingest_url)
         except Exception as error:  # noqa: BLE001
             _print(msg=f"FAIL  ingest request raised: {error}")
             return 1

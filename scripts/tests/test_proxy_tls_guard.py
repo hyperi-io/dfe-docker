@@ -62,7 +62,7 @@ _GUARDS = (
     _UNREADABLE_KEY,
 )
 
-# ORIGIN_GOALS in the Makefile: every goal that starts or self-tests the stack, and the one that hands a plain `docker compose` its settings.
+# ORIGIN_GOALS in the Makefile: start, self-test, print env
 _GUARDED_GOALS = [
     "dev",
     "ci",
@@ -554,7 +554,7 @@ def test_an_empty_dial_reads_as_false(makefile: Path) -> None:
     ],
 )
 def test_the_https_ingest_key_needs_the_tls_dial_to_start(
-    goal: str, makefile: Path, refused: bool, tls: str
+    makefile: Path, goal: str, tls: str, refused: bool
 ) -> None:
     result = _make(
         cwd=makefile,
@@ -568,7 +568,7 @@ def test_the_https_ingest_key_needs_the_tls_dial_to_start(
 
 @pytest.mark.parametrize(("key", "chained"), [("8443", True), ("", False)])
 def test_the_https_ingest_key_chains_its_fragment_only_under_the_dial(
-    chained: bool, key: str, makefile: Path
+    makefile: Path, key: str, chained: bool
 ) -> None:
     result = _make(
         cwd=makefile,

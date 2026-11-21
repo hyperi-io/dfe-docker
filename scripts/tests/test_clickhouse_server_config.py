@@ -64,16 +64,16 @@ _READ_ONLY_WORDS = {
 
 _LOGGER = {"level": "information", "size": "50M", "count": "3"}
 _SYSTEM_LOG_TTL = {
-    # The shipped dashboards read these, so they stay. The one-day TTL bounds the rows they scan.
+    # Shipped dashboards read these, a one-day TTL bounds the scan
     "asynchronous_metric_log": "event_date + INTERVAL 1 DAY DELETE",
     "metric_log": "event_date + INTERVAL 1 DAY DELETE",
     "part_log": "event_date + INTERVAL 7 DAY DELETE",
     "query_log": "event_date + INTERVAL 30 DAY DELETE",
     "query_views_log": "event_date + INTERVAL 7 DAY DELETE",
-    # dfe-hyperdx's clickhouse_system source reads it, so it stays on.
+    # dfe-hyperdx reads it for its clickhouse_system source
     "text_log": "event_date + INTERVAL 7 DAY DELETE",
 }
-# Nothing reads them.
+# Nothing reads them
 _SWITCHED_OFF = (
     "trace_log",
     "query_metric_log",
@@ -222,29 +222,31 @@ def test_the_service_mounts_every_overlay_into_config_d() -> None:
 def test_merges_leave_memory_for_inserts_and_queries() -> None:
     root = _root(path=_MERGE_MEMORY_FILE)
 
-    # The overlay sets these and nothing else, so the image keeps every other merge default.
+    # Only these are set, so every other merge default stays
     assert [child.tag for child in root] == [
         "max_server_memory_usage_to_ram_ratio",
         "merges_mutations_memory_usage_soft_limit",
         "merge_tree",
     ]
-    # Below the image's 0.9, so memory ClickHouse does not track stays inside the container's limit.
-    assert 0 < float(_text(root, "max_server_memory_usage_to_ram_ratio")) <= 0.8
-    # An absolute cap of at most a quarter of the 3 GiB default container.
-    assert 0 < int(_text(root, "merges_mutations_memory_usage_soft_limit")) <= 768 << 20
-    # Below the image's 1 MiB, the write buffer every column of a wide table holds.
-    assert 0 < int(_text(root, "merge_tree/max_compress_block_size")) < 1_048_576
+    # Under the image's 0.9, so untracked memory fits the container
+    server = _text(path="max_server_memory_usage_to_ram_ratio", root=root)
+    assert 0 < float(server) <= 0.8
+    # At most a quarter of the 3 GiB default container
+    merges = _text(path="merges_mutations_memory_usage_soft_limit", root=root)
+    assert 0 < int(merges) <= 768 << 20
+    # Under the image's 1 MiB write buffer each column holds
+    block = _text(path="merge_tree/max_compress_block_size", root=root)
+    assert 0 < int(block) < 1_048_576
     assert [child.tag for child in root.find("merge_tree")] == [
         "max_compress_block_size"
     ]
 
 
 def test_the_disk_keeps_a_reserve_the_broker_cannot_take() -> None:
-    """ClickHouse shares the docker data disk with the broker, so it keeps a floor of free space."""
     root = _root(path=_DISK_RESERVE_FILE)
     reserve = root.find("storage_configuration/disks/default/keep_free_space_bytes")
     assert reserve is not None, "no keep_free_space_bytes on the default disk"
-    # The overlay sets this and nothing else, so the image keeps its own disk layout.
+    # The overlay sets only this, so the image keeps its disk layout
     assert [element.tag for element in root.iter()] == [
         "clickhouse",
         "storage_configuration",
@@ -255,7 +257,7 @@ def test_the_disk_keeps_a_reserve_the_broker_cannot_take() -> None:
     env_name = reserve.attrib.get("from_env", "")
     value = _service_environment(service=_SERVICE).get(env_name, "")
     match = re.fullmatch(rf"\$\{{{env_name}:-(\d+)\}}", value)
-    # A default, so a stack with no .env still starts with the floor.
+    # A default, so a stack with no .env still keeps the floor
     assert match, value
     assert int(match.group(1)) >= 1 << 30, value
 

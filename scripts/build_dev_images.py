@@ -67,7 +67,7 @@ IMPLICIT_CONSUMERS: dict[str, tuple[str, ...]] = {
     ),
     "hyperdx-documentdb-tls": ("hyperdx-documentdb",),
 }
-# The engine names its stack from the registry digests this lists, which no local build carries
+# Registry digests the engine names its stack from
 ENGINE_SERVICE = "dfe-engine"
 STACK_IMAGES_KEY = "DFE_ENGINE_STACK_IMAGES"
 RUST_COMPONENTS = [
@@ -79,7 +79,7 @@ RUST_COMPONENTS = [
     "dfe-transform-vector",
     "dfe-transform-vrl",
 ]
-# Each component's compose service, source repo, checkout directory and image share its name
+# A component's service, repo, checkout and image share a name
 SELF_CONTAINED_COMPONENTS = ["dfe-engine", "dfe-hyperdx", "dfe-ui"]
 # Source acquisition defaults; override via DFE_SRC_REMOTE / DFE_SRC_REF (or
 # DFE_SRC_ROOT to build local checkouts instead of the git cache).
@@ -384,7 +384,7 @@ def overlay_text(components: list[str]) -> str:
         if service in local:
             lines.append(f"    image: {local[service]}")
         if service == ENGINE_SERVICE:
-            # A local build is no published stack, so the engine reports DFE_ENGINE_STACK_VERSION instead
+            # No digests in a local build, so the engine reports a version
             lines += ["    environment:", f'      {STACK_IMAGES_KEY}: ""']
         lines.append("")
     return "\n".join(lines).rstrip("\n") + "\n"

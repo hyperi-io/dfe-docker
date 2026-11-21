@@ -31,9 +31,10 @@ _EMBED = "8091"
 # Container ports dfe-receiver publishes whatever its port keys say.
 _RECEIVER_BASE = {"8080", "9090"}
 _RECEIVER_FRAGMENT = ".tmp/docker-compose.receiver-ports.yml"
-# The TLS ingest listener dfe-proxy publishes for the receiver, and where dfe-fetcher mounts a host directory.
+# The TLS ingest listener dfe-proxy publishes for the receiver
 _INGEST_FRAGMENT = ".tmp/docker-compose.receiver-https.yml"
 _INGEST_TARGET = "8443"
+# Where dfe-fetcher mounts a host directory
 _FETCHER_FRAGMENT = ".tmp/docker-compose.fetcher-input.yml"
 _FETCHER_MOUNT = "/mnt/input"
 _TLS = {"DFE_PROXY_TLS": "true", "DFE_EXTERNAL_ORIGIN": "https://dfe.example.test"}
@@ -264,9 +265,9 @@ def test_a_receiver_port_key_publishes_its_listener(
 )
 def test_the_https_ingest_key_publishes_the_proxy_listener_under_tls(
     checkout: Path,
+    tmp_path: Path,
     settings: dict[str, str],
     published: tuple[str, str] | None,
-    tmp_path: Path,
 ) -> None:
     if shutil.which("docker") is None:
         pytest.skip("`docker compose config` renders the model this asserts on")
@@ -290,7 +291,7 @@ def test_the_https_ingest_key_publishes_the_proxy_listener_under_tls(
     )
 
     assert model is not None
-    ports = model["services"]["dfe-proxy"].get("ports") or []
+    ports = (model["services"]["dfe-proxy"].get("ports")) or ([])
     assert {
         (str(port.get("published")), str(port.get("host_ip")))
         for port in ports
@@ -327,7 +328,7 @@ def test_the_fetcher_input_key_mounts_a_host_directory_read_only(
     )
 
     assert model is not None
-    volumes = model["services"]["dfe-fetcher"].get("volumes") or []
+    volumes = (model["services"]["dfe-fetcher"].get("volumes")) or ([])
     inputs = [volume for volume in volumes if volume.get("target") == _FETCHER_MOUNT]
     assert [
         (

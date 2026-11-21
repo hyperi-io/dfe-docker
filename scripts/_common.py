@@ -61,7 +61,7 @@ RENDERED_PROFILES = ("slim-grpc", "slim-kafka", "single-grpc", "single-kafka")
 
 # What a Kafka dfe-loader subscribes to when its config names no topics and no topic_regex (dfe-loader src/kafka/transport.rs LANDING_TOPIC_INCLUDE)
 LOADER_DEFAULT_TOPIC_REGEX = "_(land|load)$"
-# The consumer group a Kafka app commits as when its config names none, by the directory its config lives in
+# The Kafka group an app commits as, by its config directory
 DEFAULT_GROUPS = {"loader": "dfe-loader", "archiver": "dfe-archiver"}
 
 # Each app dfe-engine starts one container per source of, never as a profile's service, with the profile key that runs it and the variable resolve_profile.py writes the enabled apps to
@@ -73,9 +73,9 @@ PER_SOURCE_APP_KEYS = {
     "dfe-transform-vrl": "transform_vrl_enabled",
 }
 PER_SOURCE_APPS_VAR = "DFE_PER_SOURCE_APPS"
-# The per-source apps whose committed service runs every source from one config dfe-engine merges (apps.yaml shared_instance), so no instance is generated for them
+# Shared-instance apps: one config, no generated instances
 SHARED_SOURCE_APPS = frozenset({FETCHER_SERVICE})
-# What dfe-engine's refusal says when the one shared container cannot take a source beside the ones it runs (appmgmt/appconfig.py _shared_merge)
+# The engine's refusal for a source the shared app cannot take
 SHARED_REFUSAL = "cannot share the one"
 # A source's `transform.engine` runs the app this prefix names (dfe-engine appmgmt/catalogue.py TRANSFORM_SERVICE_PREFIX)
 TRANSFORM_APP_PREFIX = "dfe-transform-"
@@ -110,16 +110,16 @@ SERVICE_TO_RENDERED_CONFIG_VAR = {
 CUSTOM_ENV_SUFFIX = ".custom.env"
 # The env/<component>.env compose hands dfe-engine
 ENGINE_COMPONENT = "engine"
-# Set on a container that runs these scripts on the stack's own network, where every service answers by name and no docker CLI is needed
+# Set in a container on the stack's own network, no docker CLI
 IN_STACK_KEY = "DFE_IN_STACK"
 
-# The compose files a release publishes as OCI artifacts beside the dfe-docker image, by the tag each moves on and the stem of its versioned tag
+# The tags each published compose file moves on as an artifact
 PUBLISHED_STACK_TAG = "compose"
 PUBLISHED_DEMO_TAG = "demo"
-# The one-shot the published files mint their secrets with, and the argument that makes it print the admin login
+# The secrets one-shot and its print-login arg
 SECRETS_SERVICE = "secrets-init"
 LOGIN_COMMAND = "login"
-# The docker compose verb that starts it with that argument, which waits on nothing and removes the container after
+# Runs it with that arg, waiting on nothing, then removes it
 LOGIN_VERB = f"run --rm {SECRETS_SERVICE} {LOGIN_COMMAND}"
 
 # Repo constants
@@ -128,9 +128,9 @@ REPO_ROOT = __find_repo_root()
 # both minted passwords in plaintext. Gitignored, 0600, meant to be deleted.
 ACCESS_SUMMARY_FILE = REPO_ROOT / "access-summary.md"
 CONFIG_DIR = REPO_ROOT / "config"
-# The demo's own pack is resources/demo, and each named pack sits beside it as resources/demo-<pack>, the tag its file publishes under
+# Packs sit here: resources/demo and resources/demo-<pack>
 DEMO_PACKS_ROOT = REPO_ROOT / "resources"
-# A pack name lands in a compose project, container names and an OCI tag
+# A pack name becomes a project, container and OCI tag name
 DEMO_PACK_NAME = re.compile(r"[a-z][a-z0-9]*(-[a-z0-9]+)*")
 DEPLOYMENT_DIAL = REPO_ROOT / "deployment.yaml"
 DEPLOYMENT_DIAL_TEMPLATE = REPO_ROOT / "deployment.example.yaml"
@@ -185,6 +185,31 @@ class ComposeConfigError(Exception):
 _LEADING_LEVEL_RE = re.compile(r"(PASS|FAIL|SKIP|WARNING)\b|(error):")
 _LEVEL_WIDTH = 8
 _RESET = "\033[0m"
+
+
+def demo_pack_dir(*, pack: str, root: Path = DEMO_PACKS_ROOT) -> Path:
+    """Where a demo pack's files live: resources/demo for the demo, resources/demo-<pack> for a named pack."""
+    return root / demo_pack_tag(pack=pack)
+
+
+def demo_pack_names(*, root: Path = DEMO_PACKS_ROOT) -> list[str]:
+    """The named demo packs, one per resources/demo-<pack>/ directory, in directory order."""
+    prefix = f"{PUBLISHED_DEMO_TAG}-"
+    return [
+        path.name.removeprefix(prefix)
+        for path in sorted(root.glob(f"{prefix}*"))
+        if path.is_dir()
+    ]
+
+
+def demo_pack_tag(*, pack: str) -> str:
+    """The tag a demo pack's compose file moves on, which also names its directory, project and containers."""
+    return f"{PUBLISHED_DEMO_TAG}-{pack}" if pack else PUBLISHED_DEMO_TAG
+
+
+def in_stack() -> bool:
+    """Whether this process runs in a container on the stack's own network, as the published demo's one-shots do."""
+    return os.environ.get(IN_STACK_KEY, "").strip().lower() not in FALSY
 
 
 def log_line(
@@ -356,7 +381,7 @@ def _config_topics(*, path: Path) -> tuple[set[str], set[str], str]:
         subscribed = subscribed or {f"{dfe_source}_land"}
         produced = produced or {f"{dfe_source}_load"}
     if (
-        (path.parent.name == "loader" or path.name.startswith("loader-"))
+        ((path.parent.name == "loader") or (path.name.startswith("loader-")))
         and transport != "grpc"
         and not (subscribed)
         and not (regex)
@@ -450,31 +475,6 @@ def _published_url(
         return f"{'https' if proxied else 'http'}://{(named) or (host)}:{port}"
     origin = _external_origin(values=values)
     return f"{(origin) or (f'http://{host}')}:{port}"
-
-
-def demo_pack_dir(*, pack: str, root: Path = DEMO_PACKS_ROOT) -> Path:
-    """Where a demo pack's files live: resources/demo for the demo, resources/demo-<pack> for a named pack."""
-    return root / demo_pack_tag(pack=pack)
-
-
-def demo_pack_names(*, root: Path = DEMO_PACKS_ROOT) -> list[str]:
-    """The named demo packs, one per resources/demo-<pack>/ directory, in directory order."""
-    prefix = f"{PUBLISHED_DEMO_TAG}-"
-    return [
-        path.name.removeprefix(prefix)
-        for path in sorted(root.glob(f"{prefix}*"))
-        if path.is_dir()
-    ]
-
-
-def demo_pack_tag(*, pack: str) -> str:
-    """The tag a demo pack's compose file moves on, which also names its directory, project and containers."""
-    return f"{PUBLISHED_DEMO_TAG}-{pack}" if pack else PUBLISHED_DEMO_TAG
-
-
-def in_stack() -> bool:
-    """Whether this process runs in a container on the stack's own network, as the published demo's one-shots do."""
-    return os.environ.get(IN_STACK_KEY, "").strip().lower() not in FALSY
 
 
 def _load_dotenv() -> None:

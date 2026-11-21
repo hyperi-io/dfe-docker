@@ -133,7 +133,7 @@ HYPERDX_SERVICES = [
 OTEL_ENABLED_ENV_VAR = "DFE_OTEL_ENABLED"
 OTEL_SERVICES = ["otel-collector"]
 
-# gnmic pushes the gNMI telemetry it subscribes to over OTLP to the bundled collector, so it runs only beside it
+# gnmic pushes OTLP to the bundled collector, so needs otel
 GNMIC_ENABLED_ENV_VAR = "DFE_GNMIC_ENABLED"
 GNMIC_SERVICES = ["gnmic"]
 
@@ -399,10 +399,10 @@ def _footprint(*, profile: dict[str, object], profile_name: str) -> dict[str, bo
         resolved[key] = _env_truthy(default=fallback, name=env_var)
     # dfe-hyperdx signs callers in with dfe-engine's token, so without core nobody could sign in
     resolved["hyperdx"] = resolved["hyperdx"] and resolved["core"]
-    if resolved["gnmic"] and not resolved["otel"]:
+    if resolved["gnmic"] and not (resolved["otel"]):
         raise ProfileError(
             header=profile_name,
-            msg=f"gnmic pushes to the bundled collector, so {GNMIC_ENABLED_ENV_VAR} needs the otel footprint on",
+            msg=f"gnmic pushes to the bundled collector, so {GNMIC_ENABLED_ENV_VAR!r} needs the otel footprint on",
         )
     return resolved
 

@@ -21,16 +21,24 @@ from _common import SERVICE_PROFILES_FILE, demo_pack_names
 IMAGE = "ghcr.io/hyperi-io/dfe-docker"
 
 
-def _pack(root: Path, name: str, manifest: object) -> None:
+def _pack(*, manifest: object, name: str, root: Path) -> None:
     (root / name).mkdir()
     text = manifest if isinstance(manifest, str) else json.dumps(manifest)
     (root / name / "demo.json").write_text(text, encoding="utf-8")
 
 
 def test_schema_2_lists_the_packs_in_directory_order(tmp_path: Path) -> None:
-    _pack(tmp_path, "demo", {"sources": []})
-    _pack(tmp_path, "demo-theatre", {"title": "Theatre", "use_case": "/solutions/t/"})
-    _pack(tmp_path, "demo-cyber", {"title": " Cyber ", "use_case": "/solutions/"})
+    _pack(manifest={"sources": []}, name="demo", root=tmp_path)
+    _pack(
+        manifest={"title": "Theatre", "use_case": "/solutions/t/"},
+        name="demo-theatre",
+        root=tmp_path,
+    )
+    _pack(
+        manifest={"title": " Cyber ", "use_case": "/solutions/"},
+        name="demo-cyber",
+        root=tmp_path,
+    )
     (tmp_path / "demo-notes.json").write_text("{}", encoding="utf-8")
 
     packs = quickstart_json.demo_packs(image=IMAGE, root=tmp_path, version="1.2.3")
@@ -82,9 +90,9 @@ def test_schema_2_lists_the_packs_in_directory_order(tmp_path: Path) -> None:
     ],
 )
 def test_a_pack_it_cannot_describe_is_refused(
-    manifest: object, match: str, name: str, tmp_path: Path
+    tmp_path: Path, name: str, manifest: object, match: str
 ) -> None:
-    _pack(tmp_path, name, manifest)
+    _pack(manifest=manifest, name=name, root=tmp_path)
 
     with pytest.raises(quickstart_json.QuickstartJsonError, match=match):
         quickstart_json.demo_packs(image=IMAGE, root=tmp_path, version="1.2.3")
@@ -106,7 +114,7 @@ def test_a_pack_it_cannot_describe_is_refused(
     ],
 )
 def test_min_compose_is_the_newest_feature_used(
-    expected: str, texts: list[str]
+    texts: list[str], expected: str
 ) -> None:
     assert quickstart_json.min_compose(texts=texts) == expected
 
@@ -154,7 +162,7 @@ def test_a_release_document_from_the_committed_files() -> None:
         ],
     }
     assert [pack["name"] for pack in document["packs"]] == demo_pack_names()
-    # Every pack lists the same two lines as `up` and `demo`, with only its tag changed
+    # Each pack lists the same two lines, with only its tag changed
     for pack in document["packs"]:
         for form, suffix in (("latest", ""), ("pinned", "-9.9.9")):
             ref = f"ghcr.io/hyperi-io/dfe-docker:demo-{pack['name']}{suffix}"
@@ -209,7 +217,7 @@ def test_an_unknown_default_profile_is_refused() -> None:
 
 
 def test_print_stack_refuses_a_prerelease_pin(
-    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+    capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
 ) -> None:
     def refuse() -> str:
         raise quickstart_json.stack.StackError("pins 2.2.2-rc.5, a prerelease")

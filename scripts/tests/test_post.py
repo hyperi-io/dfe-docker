@@ -31,6 +31,11 @@ import post
 _HOST_URL = "http://localhost:8003/api/v1/auth/login"
 
 
+def _logged_in(*, base: str) -> post.Login:
+    """Answer every login with a session token."""
+    return post.Login(fault="", status=200, token="t", username="u")
+
+
 def test_the_ui_class_apis_are_read_over_the_compose_network(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -312,61 +317,64 @@ def test_one_failed_claim_fails_the_run() -> None:
     ids=["feature-in-use", "unreadable"],
 )
 def test_a_broker_enterprise_feature_fails_post_before_any_claim(
-    monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture,
+    monkeypatch: pytest.MonkeyPatch,
     licence: list[str] | Exception,
     needle: str,
 ) -> None:
-    """The check runs ahead of the claims, so no data moves on a broker that fails it."""
-    _stub_main(monkeypatch)
-
-    def _licence() -> list[str]:
+    def licence_info() -> list[str]:
         if isinstance(licence, Exception):
             raise licence
         return licence
 
-    monkeypatch.setattr(post, "_broker_enterprise_features", _licence)
-    monkeypatch.setattr(
-        post, "_wait_schema_converged", lambda: pytest.fail("a claim ran")
-    )
+    def no_claim() -> None:
+        pytest.fail("a claim ran")
+
+    _stub_main(monkeypatch=monkeypatch)
+    monkeypatch.setattr(post, "_broker_enterprise_features", licence_info)
+    monkeypatch.setattr(post, "_wait_schema_converged", no_claim)
 
     assert post.main() == 1
     assert needle in capsys.readouterr().err
 
 
+@pytest.mark.usefixtures("dotenv")
 def test_a_licensed_broker_is_not_held_to_the_trial_features(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """REDPANDA_LICENSE opts into Enterprise features, so POST leaves them to the config one-shot."""
-    _stub_main(monkeypatch)
-    monkeypatch.setenv(post.BROKER_LICENCE_VAR, "licence")
-    monkeypatch.setattr(
-        post,
-        "_broker_enterprise_features",
-        lambda: pytest.fail("a licensed broker was checked for trial features"),
-    )
-    monkeypatch.setattr(
-        post, "_broker_licence_info", lambda: {"license_violation": False}
-    )
-    monkeypatch.setattr(post, "_wait_schema_converged", lambda: 1)
+    def licence_info() -> dict:
+        return {"license_violation": False}
 
-    # 1 from the stubbed schema wait, which runs only once the broker check has let the run through.
+    def schema_wait() -> int:
+        return 1
+
+    def trial_features() -> None:
+        pytest.fail("a licensed broker was checked for trial features")
+
+    _stub_main(monkeypatch=monkeypatch)
+    monkeypatch.setenv(post.BROKER_LICENCE_VAR, "licence")
+    monkeypatch.setattr(post, "_broker_enterprise_features", trial_features)
+    monkeypatch.setattr(post, "_broker_licence_info", licence_info)
+    monkeypatch.setattr(post, "_wait_schema_converged", schema_wait)
+
+    # 1 is the stubbed schema wait, past the broker check
     assert post.main() == 1
 
 
 @pytest.mark.usefixtures("dotenv")
 def test_a_licensed_broker_with_a_violation_fails_post(
-    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture
+    capsys: pytest.CaptureFixture, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """A licence rpk accepted can still lapse, so POST reads the violation flag itself."""
-    _stub_main(monkeypatch)
+    def licence_info() -> dict:
+        return {"license_violation": True}
+
+    def no_claim() -> None:
+        pytest.fail("a claim ran")
+
+    _stub_main(monkeypatch=monkeypatch)
     monkeypatch.setenv(post.BROKER_LICENCE_VAR, "licence")
-    monkeypatch.setattr(
-        post, "_broker_licence_info", lambda: {"license_violation": True}
-    )
-    monkeypatch.setattr(
-        post, "_wait_schema_converged", lambda: pytest.fail("a claim ran")
-    )
+    monkeypatch.setattr(post, "_broker_licence_info", licence_info)
+    monkeypatch.setattr(post, "_wait_schema_converged", no_claim)
 
     assert post.main() == 1
     assert "licence violation" in capsys.readouterr().err
@@ -728,16 +736,14 @@ def test_the_broker_licence_check_reads_rpk_json_from_this_projects_broker(
     rpk: _Completed | None,
     expected: list[str] | str | None,
 ) -> None:
-    """Redpanda's text form drops an empty feature list, so only the JSON is read."""
-
-    def _run(args, **kwargs):
+    def run(args: list[str], **kwargs: object) -> _Completed | None:
         if args[:3] == ["docker", "compose", "ps"]:
             assert post.BROKER_SERVICE in args
             return ps
         assert args[:3] == ["docker", "exec", "b0b"]
         return rpk
 
-    monkeypatch.setattr(post.subprocess, "run", _run)
+    monkeypatch.setattr(post.subprocess, "run", run)
 
     if isinstance(expected, str):
         with pytest.raises(post.BrokerLicenceError, match=expected):
@@ -748,10 +754,17 @@ def test_the_broker_licence_check_reads_rpk_json_from_this_projects_broker(
 
 def _stub_main(monkeypatch: pytest.MonkeyPatch) -> None:
     """Let main() run without a stack or the developer's own environment, its caller holding the `dotenv` fixture so their .env is never read."""
+
+    def no_broker() -> None:
+        return None
+
+    def no_token() -> str:
+        return ""
+
     monkeypatch.delenv("DFE_POST_ENABLED", raising=False)
     monkeypatch.setattr(post, "_weak_secrets", list)
-    monkeypatch.setattr(post, "_broker_enterprise_features", lambda: None)
-    monkeypatch.setattr(post, "ingest_token", lambda: "")
+    monkeypatch.setattr(post, "_broker_enterprise_features", no_broker)
+    monkeypatch.setattr(post, "ingest_token", no_token)
     monkeypatch.setattr(post, "_cleanup", lambda *args: None)
     # Unstubbed, this polls the engine's /readyz for 300s against whatever the
     # developer happens to have on the host, and passes on a live stack.
@@ -1557,16 +1570,25 @@ class _RoutingEngine:
 def _routing_engine(
     monkeypatch: pytest.MonkeyPatch, *, create_status: int = 201, **state
 ) -> _RoutingEngine:
+    def app_config_dir(*, key: str) -> str:
+        return "/etc/dfe/apps"
+
+    def landed(*, database: str, name: str) -> int:
+        return 0
+
+    def routing_services() -> list[str]:
+        return list(post.ROUTING_SERVICES)
+
     engine = _RoutingEngine(create_status=create_status, **state)
     monkeypatch.setattr(post, "_api_get_json", engine.get_json)
     monkeypatch.setattr(post, "ch_query", engine.query)
-    monkeypatch.setattr(post, "_profile_mk_value", lambda *, key: "/etc/dfe/apps")
-    monkeypatch.setattr(post, "_resolved_services", lambda: list(post.ROUTING_SERVICES))
-    monkeypatch.setattr(post, "login", lambda *, base: post.Login("t", 200, "u", ""))
+    monkeypatch.setattr(post, "_profile_mk_value", app_config_dir)
+    monkeypatch.setattr(post, "_resolved_services", routing_services)
+    monkeypatch.setattr(post, "login", _logged_in)
     monkeypatch.setattr(post, "_api_post_json", engine.post_json)
     monkeypatch.setattr(post, "_api_delete", engine.delete)
     monkeypatch.setattr(post, "ch_execute", engine.execute)
-    monkeypatch.setattr(post, "_await_routed_row", lambda *, database, name: 0)
+    monkeypatch.setattr(post, "_await_routed_row", landed)
     return engine
 
 

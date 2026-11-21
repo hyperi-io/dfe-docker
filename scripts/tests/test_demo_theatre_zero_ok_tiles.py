@@ -8,7 +8,7 @@
 
 """The theatre tiles that verify.json lists in zero_ok, run against rows that must fill them.
 
-demo_verify cannot require rows from `demo-theatre-churn/dropped`, `demo-theatre-churn/back` or `demo-theatre-vessel-moves/movers`, because a live feed may give a CI run no track that goes silent, comes back, or turns. So a tile whose SQL is wrong would pass there. This test seeds tracks into `dfe.adsb-tracks` and `dfe.ais-tracks` and reads the tile's real SQL, with the console's macros expanded by demo_verify, on the ClickHouse image the stack pins.
+demo_verify cannot require rows from `demo-theatre-churn/dropped`, `demo-theatre-churn/back` or `demo-theatre-vessel-moves/movers`, because a live feed may give a CI run no track that goes silent, comes back or turns. So a tile whose SQL is wrong would pass there. This test seeds tracks into `dfe.adsb-tracks` and `dfe.ais-tracks` and reads the tile's real SQL, with the console's macros expanded by demo_verify, on the ClickHouse image the stack pins.
 
 The seeded tracks, per feed:
 
@@ -44,14 +44,14 @@ TILE_DASHBOARD = {
 }
 IMAGE_REPO = "clickhouse/clickhouse-server"
 
-# Tables as the loader makes them, as far as the tiles read: the event time and the raw payload
+# Loader tables as the tiles read them: event time, raw payload
 CREATE = """
 CREATE DATABASE dfe;
 CREATE TABLE dfe.`adsb-tracks` (`_timestamp` DateTime64(3, 'UTC'), `_json` JSON) ENGINE = Memory;
 CREATE TABLE dfe.`ais-tracks` (`_timestamp` DateTime64(3, 'UTC'), `_json` JSON) ENGINE = Memory;
 """
 
-# Minutes ago of each report, per seeded track, one report a minute except across the gaps
+# Report times per track in minutes ago, one a minute but gaps
 TRACKS = {
     "back": [*range(40, 37, -1), *range(28, -1, -1)],
     "dropped": list(range(40, 28, -1)),
@@ -61,7 +61,7 @@ TRACKS = {
     "speeding": list(range(40, -1, -1)),
 }
 
-# What each tile must list, by the feed and the name the tile shows. An air track shows its callsign, and a sea track its MMSI.
+# The name each tile shows: air callsign, sea MMSI
 AIR_NAME = {
     "back": "BACK1",
     "dropped": "DROP1",
@@ -83,12 +83,12 @@ EXPECTED = {
     "back": {("air", AIR_NAME["back"]), ("sea", SEA_NAME["back"])},
     "movers": {("sea", SEA_NAME["steady"]), ("sea", SEA_NAME["speeding"])},
 }
-# The sea tracks whose course swings 30 degrees, and whose speed swings 2.5 knots, between reports
+# Sea tracks that turn 30 degrees between reports
 TURNING = {"steady"}
+# Sea tracks that change speed by 2.5 knots between reports
 SPEEDING = {"speeding"}
 
-# A tile edited the way a regression would: a threshold moved out of reach of the seeded tracks
-# (tile, text, its broken replacement, the track that must then drop out of the tile)
+# Regressions: (tile, text, broken text, track that drops out)
 BROKEN = [
     ("dropped", "INTERVAL 7 MINUTE", "INTERVAL 70 MINUTE", SEA_NAME["dropped"]),
     ("back", ">= 300", ">= 3000", SEA_NAME["back"]),
@@ -102,65 +102,10 @@ BROKEN = [
 ]
 
 
-def listed(*, tile: str, rows: list[dict]) -> set[tuple[str, str]]:
-    """The (feed, name) pairs a tile's rows list. The movers tile is sea-only and names its track by MMSI."""
-    if tile == "movers":
-        return {("sea", row["MMSI"]) for row in rows}
-    return {(row["Feed"], row["Track"]) for row in rows}
-
-
-def row_sql(*, table: str, minutes_ago: int, payload: dict) -> str:
-    """One INSERT row, `minutes_ago` before now, whose payload is the JSON the loader stores in `_json`."""
-    text = json.dumps(payload).replace("\\", "\\\\").replace("'", "\\'")
-    return (
-        f"INSERT INTO dfe.`{table}` VALUES "
-        f"(now64(3, 'UTC') - INTERVAL {minutes_ago * 60} SECOND, '{text}'::JSON);"
-    )
-
-
-def seed_sql() -> str:
-    statements = []
-    for kind, minutes in TRACKS.items():
-        for ago in minutes:
-            statements.append(
-                row_sql(
-                    table="adsb-tracks",
-                    minutes_ago=ago,
-                    payload={
-                        "hex": f"a{list(TRACKS).index(kind)}0000",
-                        "flight": AIR_NAME[kind],
-                    },
-                )
-            )
-            statements.append(
-                row_sql(
-                    table="ais-tracks",
-                    minutes_ago=ago,
-                    payload={
-                        "mmsi": int(SEA_NAME[kind]),
-                        "geometry": {"coordinates": [24.9, 60.1]},
-                        "properties": {
-                            "cog": 120.0 if kind in TURNING and ago % 2 else 90.0,
-                            "sog": 8.0 if kind in SPEEDING and ago % 2 else 5.5,
-                            "navStat": 0,
-                        },
-                    },
-                )
-            )
-    return "\n".join(statements)
-
-
-def tile_sql(*, tile: str) -> str:
-    """A tile's SQL as its dashboard stores it."""
-    path = DASHBOARDS / f"{TILE_DASHBOARD[tile]}.json"
-    dashboard = json.loads(path.read_text(encoding="utf-8"))
-    (found,) = [item for item in dashboard["tiles"] if item["id"] == tile]
-    return found["config"]["sqlTemplate"]
-
-
-def clickhouse_image() -> str:
+def _clickhouse_image() -> str:
+    """The stack's ClickHouse image, from DFE_CLICKHOUSE_VERSION or the stack's pin."""
     pin = os.environ.get("DFE_CLICKHOUSE_VERSION", "").strip()
-    if not pin:
+    if not (pin):
         done = subprocess.run(
             [
                 sys.executable,
@@ -175,24 +120,31 @@ def clickhouse_image() -> str:
             timeout=300,
         )
         assert done.returncode == 0, (
-            f"stack.py could not read the ClickHouse pin: {done.stderr or done.stdout}"
+            f"stack.py could not read the ClickHouse pin: {(done.stderr) or (done.stdout)}"
         )
         pin = done.stdout.strip().splitlines()[-1]
     return f"{IMAGE_REPO}:{pin}"
 
 
-@pytest.fixture(scope="module")
-def image() -> str:
-    if shutil.which("docker") is None:
-        if os.environ.get("CI"):
-            pytest.fail("docker is not on PATH, so the zero_ok tiles ran on nothing")
-        pytest.skip("docker is not on PATH")
-    return clickhouse_image()
+def _listed(*, rows: list[dict], tile: str) -> set[tuple[str, str]]:
+    """The (feed, name) pairs a tile's rows list. The movers tile is sea-only and names its track by MMSI."""
+    if tile == "movers":
+        return {("sea", row["MMSI"]) for row in rows}
+    return {(row["Feed"], row["Track"]) for row in rows}
 
 
-def run_tile(*, image: str, sql: str) -> list[dict]:
+def _row_sql(*, minutes_ago: int, payload: dict, table: str) -> str:
+    """One INSERT row, `minutes_ago` before now, whose payload is the JSON the loader stores in `_json`."""
+    text = json.dumps(payload).replace("\\", "\\\\").replace("'", "\\'")
+    return (
+        f"INSERT INTO dfe.`{table}` VALUES "
+        f"(now64(3, 'UTC') - INTERVAL {minutes_ago * 60} SECOND, '{text}'::JSON);"
+    )
+
+
+def _run_tile(*, image: str, sql: str) -> list[dict]:
     """The rows `sql` returns over the seeded tables, run on clickhouse-local from the stack's ClickHouse image."""
-    script = "\n".join([CREATE, seed_sql(), demo_verify.expand_macros(sql=sql) + ";"])
+    script = "\n".join([CREATE, _seed_sql(), demo_verify.expand_macros(sql=sql) + ";"])
     done = subprocess.run(
         [
             "docker",
@@ -209,21 +161,71 @@ def run_tile(*, image: str, sql: str) -> list[dict]:
             "--output-format",
             "JSONEachRow",
         ],
-        input=script,
         capture_output=True,
         check=False,
         encoding="utf-8",
         errors="replace",
+        input=script,
         timeout=300,
     )
     assert done.returncode == 0, f"clickhouse local failed: {done.stderr}"
     return [json.loads(line) for line in done.stdout.splitlines() if line.strip()]
 
 
+def _seed_sql() -> str:
+    """The INSERTs for every seeded track, one row a report on each feed."""
+    statements = []
+    for kind, minutes in TRACKS.items():
+        for ago in minutes:
+            statements.append(
+                _row_sql(
+                    minutes_ago=ago,
+                    payload={
+                        "hex": f"a{list(TRACKS).index(kind)}0000",
+                        "flight": AIR_NAME[kind],
+                    },
+                    table="adsb-tracks",
+                )
+            )
+            statements.append(
+                _row_sql(
+                    minutes_ago=ago,
+                    payload={
+                        "mmsi": int(SEA_NAME[kind]),
+                        "geometry": {"coordinates": [24.9, 60.1]},
+                        "properties": {
+                            "cog": 120.0 if kind in TURNING and ago % 2 else 90.0,
+                            "sog": 8.0 if kind in SPEEDING and ago % 2 else 5.5,
+                            "navStat": 0,
+                        },
+                    },
+                    table="ais-tracks",
+                )
+            )
+    return "\n".join(statements)
+
+
+def _tile_sql(*, tile: str) -> str:
+    """A tile's SQL as its dashboard stores it."""
+    path = DASHBOARDS / f"{TILE_DASHBOARD[tile]}.json"
+    dashboard = json.loads(path.read_text(encoding="utf-8"))
+    (found,) = [item for item in dashboard["tiles"] if item["id"] == tile]
+    return found["config"]["sqlTemplate"]
+
+
+@pytest.fixture(scope="module")
+def image() -> str:
+    if shutil.which("docker") is None:
+        if os.environ.get("CI"):
+            pytest.fail("docker is not on PATH, so the zero_ok tiles ran on nothing")
+        pytest.skip("docker is not on PATH")
+    return _clickhouse_image()
+
+
 @pytest.mark.parametrize("tile", ["dropped", "back", "movers"])
 def test_tile_lists_exactly_the_seeded_tracks(image: str, tile: str) -> None:
-    rows = run_tile(image=image, sql=tile_sql(tile=tile))
-    assert listed(tile=tile, rows=rows) == EXPECTED[tile]
+    rows = _run_tile(image=image, sql=_tile_sql(tile=tile))
+    assert _listed(rows=rows, tile=tile) == EXPECTED[tile]
     if tile == "back":
         assert {row["Silent (min)"] for row in rows} == {10}
 
@@ -232,7 +234,7 @@ def test_tile_lists_exactly_the_seeded_tracks(image: str, tile: str) -> None:
 def test_a_broken_tile_is_caught(
     image: str, tile: str, old: str, new: str, gone: str
 ) -> None:
-    sql = tile_sql(tile=tile)
+    sql = _tile_sql(tile=tile)
     assert old in sql
-    rows = run_tile(image=image, sql=sql.replace(old, new))
-    assert ("sea", gone) not in listed(tile=tile, rows=rows)
+    rows = _run_tile(image=image, sql=sql.replace(old, new))
+    assert ("sea", gone) not in _listed(rows=rows, tile=tile)

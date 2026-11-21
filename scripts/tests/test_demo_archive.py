@@ -6,7 +6,7 @@
 #  License:      BUSL-1.1
 #  Copyright:    (c) 2026 HYPERI PTY LIMITED
 
-"""The checks on the demo packs that need no stack: resources/demo/archive.py over a temporary archive, and each pack's demo.json against its files."""
+"""The checks on the demo packs that need no stack: resources/demo/archive.py over a temporary archive, plus each pack's demo.json against its files."""
 
 import importlib.util
 import json
@@ -124,16 +124,16 @@ def test_show_names_the_newest_objects_and_a_sample_line(tmp_path: Path) -> None
 
 class TestManifest:
     @pytest.mark.parametrize(
-        "pack", ["", *demo_pack_names()], ids=lambda p: p or "demo"
+        "pack", ["", *demo_pack_names()], ids=["demo", *demo_pack_names()]
     )
     def test_each_committed_manifest_matches_its_pack(self, pack: str) -> None:
         root = demo_pack_dir(pack=pack)
         manifest = demo._read_manifest(path=root / "demo.json")
 
-        # What the published file's seeding one-shots load, and refuse on
+        # What the published file's seeding one-shots load and refuse on
         demo_seed._loaded(root=root)
 
-        assert not (pack) or DEMO_PACK_NAME.fullmatch(pack)
+        assert not (pack) or (DEMO_PACK_NAME.fullmatch(string=pack))
         assert manifest["archive"]["retention_minutes"] <= 15
         assert manifest["archive"]["max_megabytes"] <= 200
 
@@ -162,7 +162,8 @@ class TestManifest:
     def test_seeding_gives_a_fetcher_with_captured_polls_its_replay_unit(
         self, monkeypatch: pytest.MonkeyPatch, pack: str, units: dict[str, list[str]]
     ) -> None:
-        seeded: dict[str, list[str]] = {}
+        def nothing(**_: object) -> list:
+            return []
 
         def record(*, fetchers: list[dict], **_: object) -> tuple[list, list]:
             for body in fetchers:
@@ -170,11 +171,15 @@ class TestManifest:
                 seeded[body["source"]] = [e["unit"] for e in endpoints]
             return [], []
 
+        def token(**_: object) -> str:
+            return "token"
+
+        seeded = {}
         monkeypatch.setattr(demo, "_ensure_fetchers", record)
         for name in ("_ensure_source", "_complete_setup", "_switch_on_syslog"):
-            monkeypatch.setattr(demo, name, lambda **_: [])
-        monkeypatch.setattr(demo, "install_hunts", lambda **_: [])
-        monkeypatch.setattr(demo_seed, "_token", lambda **_: "token")
+            monkeypatch.setattr(demo, name, nothing)
+        monkeypatch.setattr(demo, "install_hunts", nothing)
+        monkeypatch.setattr(demo_seed, "_token", token)
 
         demo_seed.seed_sources(root=demo_pack_dir(pack=pack))
 
@@ -287,13 +292,27 @@ class TestManifest:
     )
     def test_installs_hunts_and_warns_rather_than_failing(
         self,
-        monkeypatch,
+        monkeypatch: pytest.MonkeyPatch,
         tmp_path: Path,
         gets: list,
         posts: list,
         expected: list,
-        post_calls,
+        post_calls: int | None,
     ) -> None:
+        def answer(*, kind: str) -> tuple[int, dict]:
+            calls[kind] += 1
+            queue = answers[kind]
+            status = queue.pop(0) if len(queue) > 1 else queue[0]
+            if status == "down":
+                raise demo.ENGINE_FAULTS[0]("dfe-engine: timed out")
+            return status, {"detail": f"HTTP {status}"}
+
+        def get_json(**_: object) -> tuple[int, dict]:
+            return answer(kind="get")
+
+        def post_json(**_: object) -> tuple[int, dict]:
+            return answer(kind="post")
+
         for kind, body in (
             ("rules", {"name": "r", "user_sql": "SELECT 1"}),
             ("hunts", {"name": "h", "rules": ["r"]}),
@@ -305,16 +324,8 @@ class TestManifest:
         answers = {"get": list(gets), "post": list(posts)}
         calls = {"get": 0, "post": 0}
 
-        def answer(kind: str) -> tuple[int, dict]:
-            calls[kind] += 1
-            queue = answers[kind]
-            status = queue.pop(0) if len(queue) > 1 else queue[0]
-            if status == "down":
-                raise demo.ENGINE_FAULTS[0]("dfe-engine: timed out")
-            return status, {"detail": f"HTTP {status}"}
-
-        monkeypatch.setattr(demo, "_api_get_json", lambda **_: answer("get"))
-        monkeypatch.setattr(demo, "_api_post_json", lambda *_, **__: answer("post"))
+        monkeypatch.setattr(demo, "_api_get_json", get_json)
+        monkeypatch.setattr(demo, "_api_post_json", post_json)
         monkeypatch.setattr(demo, "HUNT_INSTALL_TIMEOUT_SECONDS", 0.2)
         monkeypatch.setattr(demo, "HUNT_INSTALL_INTERVAL_SECONDS", 0.01)
 
@@ -445,8 +456,10 @@ class TestConsole:
             for tile in body["tiles"]:
                 assert tile["config"]["configType"] == "sql", tile["id"]
                 sql = tile["config"]["sqlTemplate"]
-                assert "$__timeFilter" in sql or (
-                    "component-releases" in sql or "feodo-c2" in sql
+                assert (
+                    ("$__timeFilter" in sql)
+                    or ("component-releases" in sql)
+                    or ("feodo-c2" in sql)
                 ), tile["id"]
 
 

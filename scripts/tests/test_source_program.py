@@ -87,13 +87,6 @@ def test_only_the_filebeat_case_names_the_vrl_checkout(
     pipeline: bool,
     want: str | None,
 ) -> None:
-    """The corpus is dfe-engine's, so dfe-transform-vrl is read only for filebeat's pipeline."""
-    if pipeline:
-        marker = tmp_path / test_source.VRL_MARKER
-        marker.parent.mkdir(parents=True)
-        marker.write_text(". = .\n", encoding="utf-8")
-    monkeypatch.setenv(test_source.VRL_REPO_ENV_VAR, str(tmp_path))
-
     def found() -> Path | None:
         return test_source._case_repo(
             case=case,
@@ -102,6 +95,12 @@ def test_only_the_filebeat_case_names_the_vrl_checkout(
             flag=None,
             marker=test_source.VRL_MARKER,
         )
+
+    if pipeline:
+        marker = tmp_path / test_source.VRL_MARKER
+        marker.parent.mkdir(parents=True)
+        marker.write_text(". = .\n", encoding="utf-8")
+    monkeypatch.setenv(test_source.VRL_REPO_ENV_VAR, str(tmp_path))
 
     if want == "refused":
         with pytest.raises(SystemExit, match="filebeat.vrl"):

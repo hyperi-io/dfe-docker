@@ -8,7 +8,7 @@
   Copyright: (c) 2026 HYPERI PTY LIMITED
 -->
 <clickhouse>
-  <!-- Below this ClickHouse refuses new parts rather than fill the disk. compose sets the default (docs/configuration.md). -->
+  <!-- Below this ClickHouse refuses new parts rather than fill the disk -->
   <storage_configuration>
     <disks>
       <default>

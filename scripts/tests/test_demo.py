@@ -21,7 +21,6 @@ import yaml
 import demo
 import demo_seed
 from _common import SOURCE_NAME
-from post import HuntOrg
 
 pytestmark = pytest.mark.usefixtures("engine_python_here")
 
@@ -100,7 +99,7 @@ BEATS = {
     "transform": {"engine": "elastic", "variant": "filebeat.okta.default"},
 }
 BEATS_LINE = '{"data_stream": {"dataset": "okta.system"}, "message": "{}"}\n'
-# A receiver source with no transform, which lands the JSON its pack replays as sent
+# A receiver source with no transform, so its JSON lands as sent
 JSON_SOURCE = {
     "match": {"field": "demo.kind", "operator": "equals", "value": "kpis"},
     "source": "kpis",
@@ -671,7 +670,7 @@ def _write_demo(
 
 
 def _write_beats(*, line: str = BEATS_LINE, root: Path, tool: bool = True) -> None:
-    """Write the Beats source okta's events under root/events, and the pack's replay tool unless `tool` is false."""
+    """Write the Beats source okta's events under root/events and the pack's replay tool unless `tool` is false."""
     (root / "events" / "okta").mkdir(parents=True)
     (root / "events" / "okta" / "demo.log").write_text(data=line, encoding="utf-8")
     if tool:
@@ -702,9 +701,9 @@ class TestEnginePython:
     def test_reads_yaml_on_its_own_interpreter_inside_the_stack(
         self,
         monkeypatch: pytest.MonkeyPatch,
+        text: str,
         parsed: dict | None,
         refused: bool,
-        text: str,
     ) -> None:
         def no_container(*, service: str) -> str:
             return ""
@@ -742,8 +741,8 @@ class TestCompleteSetup:
         [
             ("", 201, None),
             ("", 409, None),
-            ("", 500, "returned HTTP 500"),
-            ("POST /orgs returned HTTP 403: no", 201, "the demo organisation"),
+            ("", 500, (demo.DemoError, "returned HTTP 500")),
+            ("POST '/orgs' returned HTTP 403: no", 201, (demo.SeedError, "HTTP 403")),
         ],
         ids=["created", "already-there", "account-refused", "org-refused"],
     )
@@ -752,26 +751,35 @@ class TestCompleteSetup:
         monkeypatch: pytest.MonkeyPatch,
         org_fault: str,
         status: int,
-        refused: str | None,
+        refused: tuple[type[Exception], str] | None,
     ) -> None:
-        posted: list[dict] = []
-
-        def ensure_org(*, base: str, token: str, name: str) -> HuntOrg:
-            return HuntOrg(name, name, name, True, org_fault)
+        def ensure(*, base: str, body: dict, kind: str, name: str, token: str) -> None:
+            if org_fault:
+                raise demo.SeedError(org_fault)
+            ensured.append((kind, body))
 
         def post(url: str, payload: dict, token: str = "") -> tuple[int, dict]:
             posted.append(payload)
             return status, {}
 
-        monkeypatch.setattr(demo, "_ensure_org", ensure_org)
+        ensured = []
+        posted = []
+        monkeypatch.setattr(demo, "_ensure", ensure)
         monkeypatch.setattr(demo, "_api_post_json", post)
 
         if refused is not None:
-            with pytest.raises(demo.DemoError, match=refused):
+            error, match = refused
+            with pytest.raises(error, match=match):
                 demo._complete_setup(base="http://engine", token="t")
             return
         demo._complete_setup(base="http://engine", token="t")
 
+        org = {
+            "display_name": "Demo",
+            "name": demo.DEMO_ORG,
+            "org_ids": [demo.DEMO_ORG],
+        }
+        assert ensured == [("orgs", org)]
         assert [p["username"] for p in posted] == [demo.DEMO_ANALYST]
         assert posted[0]["org"] == demo.DEMO_ORG
         assert len(posted[0]["password"]) >= 32
@@ -947,18 +955,18 @@ class TestPipelineState:
         running: dict[str, str],
         expected: list[list[str]],
     ) -> None:
-        calls: list[list[str]] = []
+        def container(*, service: str) -> str:
+            return running.get(service, "")
 
-        def _docker(*, args: list[str], **_: object):
+        def docker(*, args: list[str], **_: object) -> demo.subprocess.CompletedProcess:
             calls.append(args)
             return demo.subprocess.CompletedProcess(
-                args, 0, stdout=f"out {args[0]}", stderr=""
+                args=args, returncode=0, stderr="", stdout=f"out {args[0]}"
             )
 
-        monkeypatch.setattr(
-            demo, "_container", lambda *, service: running.get(service, "")
-        )
-        monkeypatch.setattr(demo, "_docker", _docker)
+        calls = []
+        monkeypatch.setattr(demo, "_container", container)
+        monkeypatch.setattr(demo, "_docker", docker)
 
         state = demo._pipeline_state(instance="demo-syslog")
 
@@ -1005,7 +1013,7 @@ class TestLoadDemo:
         "events", [{}, {"registry": ["demo.log"]}], ids=["live", "replayed"]
     )
     def test_a_pack_of_fetchers_alone_needs_no_intake(
-        self, events: dict[str, list[str]], tmp_path: Path
+        self, tmp_path: Path, events: dict[str, list[str]]
     ) -> None:
         _write_demo(events=events, root=tmp_path, sources={"registry.yaml": FETCHER})
 
@@ -1105,7 +1113,7 @@ class TestLoadDemo:
         ids=["other-value", "field-missing", "not-json", "no-replay-tool"],
     )
     def test_refuses_a_json_source_the_receiver_would_not_route_its_events_to(
-        self, line: str, message: str, tmp_path: Path, tool: bool
+        self, tmp_path: Path, line: str, tool: bool, message: str
     ) -> None:
         _write_demo(events={}, root=tmp_path, sources={"kpis.yaml": JSON_SOURCE})
         (tmp_path / "events" / "kpis").mkdir(parents=True)
@@ -1171,7 +1179,7 @@ class TestLoadDemo:
         ],
     )
     def test_refuses_a_beats_source_the_receiver_would_not_route_its_events_to(
-        self, body: dict, line: str, message: str, tmp_path: Path, tool: bool
+        self, tmp_path: Path, body: dict, line: str, tool: bool, message: str
     ) -> None:
         intake = INTAKE
         if body.get("match") is None:
@@ -1209,7 +1217,7 @@ class TestLoadDemo:
         ids=["beats", "syslog", "no-stream", "blank-dataset", "not-an-object", "empty"],
     )
     def test_beats_dataset_reads_the_first_event(
-        self, expected: str | None, lines: list[str], tmp_path: Path
+        self, tmp_path: Path, lines: list[str], expected: str | None
     ) -> None:
         if lines:
             (tmp_path / "demo.log").write_text(data="".join(lines), encoding="utf-8")
@@ -1289,13 +1297,13 @@ class TestLoadDemo:
         profile = config["profile"]
         units = {endpoint["unit"]: endpoint for endpoint in profile["endpoints"]}
 
-        # The tracker rebuilds the list every five minutes and asks clients to fetch no faster
+        # The tracker rebuilds its list every five minutes
         assert config["interval_secs"] >= 300
         assert profile["shape"] == "dump"
-        # make demo has no demo-replay service, so the source carries no replay unit
+        # make demo has no demo-replay service, so no replay unit
         assert sorted(units) == ["blocklist"]
         assert units["blocklist"]["path"] == "/downloads/ipblocklist.json"
-        # A streaming decoder is bounded per read, so the fetcher refuses a request timeout on it
+        # The fetcher refuses a request timeout on a streaming decoder
         assert "timeout_secs" not in units["blocklist"]
         assert feodo["schema"]["meta_schema"] == "meta/abusech/feodo_c2"
         agent = profile["headers"]["User-Agent"]
@@ -1464,7 +1472,7 @@ class TestReceiverInstances:
         ],
     )
     def test_reads_the_receiver_from_the_apps_page(
-        self, names: list[str], page: object
+        self, page: object, names: list[str]
     ) -> None:
         assert demo.receiver_instances(page=page) == names
 
@@ -1486,8 +1494,8 @@ class TestRowGains:
     def test_an_unreadable_count_is_not_a_zero(
         self,
         before: dict[str, int | None],
-        gained: dict[str, int | None],
         now: dict[str, int | None],
+        gained: dict[str, int | None],
     ) -> None:
         assert demo.row_gains(before=before, now=now) == gained
 
@@ -1499,11 +1507,11 @@ class TestDemoSeed:
         ids=["sources", "console", "feed"],
     )
     def test_refuses_to_run_outside_the_published_demo(
-        self, argv: list[str], monkeypatch: pytest.MonkeyPatch
+        self, monkeypatch: pytest.MonkeyPatch, argv: list[str]
     ) -> None:
         monkeypatch.delenv("DFE_IN_STACK", raising=False)
 
-        assert demo_seed.main(argv) == 1
+        assert demo_seed.main(argv=argv) == 1
 
     @pytest.mark.parametrize("password", ["", "  "], ids=["unset", "blank"])
     def test_needs_the_break_glass_password_to_log_in(
@@ -1515,7 +1523,7 @@ class TestDemoSeed:
             demo_seed._token(base="http://dfe-engine:8000/api/v1")
 
 
-# The telco pack's generator, a script beside its events, loaded the way demo-beats runs it
+# The telco pack generator, loaded from beside its events
 _TELCO_SPEC = importlib.util.spec_from_file_location(
     "telco_generate", demo.DEMO_DIR.parent / "demo-telco" / "events" / demo.REPLAY_TOOL
 )
@@ -1524,7 +1532,30 @@ telco = importlib.util.module_from_spec(_TELCO_SPEC)
 _TELCO_SPEC.loader.exec_module(telco)
 
 
-def _minute(record: dict) -> int:
+@functools.cache
+def _fault_row_minutes() -> frozenset[int]:
+    """The minutes holding a fault row: an RSRP-drop or backhaul row, or an S6a burst probe."""
+    kpis, probes = _telco_day()
+    kpi_faults = {
+        telco.RSRP_DROP[0]: telco.RSRP_DROP[1:],
+        telco.BACKHAUL[0]: telco.BACKHAUL[1:],
+    }
+    minutes = {
+        _minute(record=record)
+        for record in kpis
+        if record["cell"] in kpi_faults
+        and telco._in(minute=_minute(record=record), window=kpi_faults[record["cell"]])
+    }
+    minutes |= {
+        _minute(record=record)
+        for record in probes
+        if record["procedure"] == "Update-Location"
+        and telco._in(minute=_minute(record=record), window=telco.HSS_BURST)
+    }
+    return frozenset(minutes)
+
+
+def _minute(*, record: dict) -> int:
     """The minute of the generated day a record's timestamp falls in."""
     when = telco.datetime.fromisoformat(record["timestamp"]).timestamp()
     return int((when - telco.START.timestamp()) // 60)
@@ -1537,32 +1568,14 @@ def _telco_day() -> tuple[list[dict], list[dict]]:
     return telco.ran_kpis(rng=rng), telco.core_probes(rng=rng)
 
 
-@functools.cache
-def _fault_row_minutes() -> frozenset[int]:
-    """The minutes holding a fault row: an RSRP-drop or backhaul row, or an S6a burst probe."""
-    kpis, probes = _telco_day()
-    kpi_faults = {
-        telco.RSRP_DROP[0]: telco.RSRP_DROP[1:],
-        telco.BACKHAUL[0]: telco.BACKHAUL[1:],
-    }
-    minutes = {
-        _minute(record)
-        for record in kpis
-        if record["cell"] in kpi_faults
-        and telco._in(window=kpi_faults[record["cell"]], minute=_minute(record))
-    }
-    minutes |= {
-        _minute(record)
-        for record in probes
-        if record["procedure"] == "Update-Location"
-        and telco._in(window=telco.HSS_BURST, minute=_minute(record))
-    }
-    return frozenset(minutes)
+def _window_id(start: int) -> str:
+    """The test id of the 15-minute window starting at `start`."""
+    return f"minute-{start}"
 
 
 class TestTelcoGenerator:
     @staticmethod
-    def _kpis(root: Path, lines: list[str]) -> Path:
+    def _kpis(*, lines: list[str], root: Path) -> Path:
         """Write lines as ran-kpis/demo.log under root and return root."""
         (root / "ran-kpis").mkdir(parents=True)
         (root / "ran-kpis" / "demo.log").write_text(
@@ -1595,15 +1608,15 @@ class TestTelcoGenerator:
             assert record["active_users"] >= 0
 
     def test_each_fault_lands_in_its_window_in_every_cycle(self) -> None:
+        def inside(*, record: dict, window: tuple[int, int]) -> bool:
+            return telco._in(minute=_minute(record=record), window=window)
+
         kpis, probes = _telco_day()
         cycles = telco.DAY_MINUTES // telco.FAULT_CYCLE_MINUTES
 
-        def inside(record: dict, window: tuple[int, int]) -> bool:
-            return telco._in(window=window, minute=_minute(record))
-
         nth = [r for r in kpis if r["cell"] == "NTH03-B"]
-        dropped = [r for r in nth if inside(r, telco.RSRP_DROP[1:])]
-        healthy = [r for r in nth if not inside(r, telco.RSRP_DROP[1:])]
+        dropped = [r for r in nth if inside(record=r, window=telco.RSRP_DROP[1:])]
+        healthy = [r for r in nth if not (inside(record=r, window=telco.RSRP_DROP[1:]))]
         assert (
             max(r["rsrp_dbm"] for r in dropped)
             < min(r["rsrp_dbm"] for r in healthy) - 8
@@ -1611,24 +1624,26 @@ class TestTelcoGenerator:
 
         air = [r for r in kpis if r["cell"] == "AIR07-A"]
         for cycle in range(cycles):
-            # Load moves throughput over the day, so each cycle is compared with itself
+            # Load moves throughput over the day, so compare within a cycle
             in_cycle = [
-                r for r in air if _minute(r) // telco.FAULT_CYCLE_MINUTES == cycle
+                r
+                for r in air
+                if _minute(record=r) // telco.FAULT_CYCLE_MINUTES == cycle
             ]
             collapsed = [
                 r["dl_throughput_mbps"]
                 for r in in_cycle
-                if inside(r, telco.BACKHAUL[1:])
+                if inside(record=r, window=telco.BACKHAUL[1:])
             ]
             healthy = [
                 r["dl_throughput_mbps"]
                 for r in in_cycle
-                if not inside(r, telco.BACKHAUL[1:])
+                if not (inside(record=r, window=telco.BACKHAUL[1:]))
             ]
             assert max(collapsed) < 0.2 * min(healthy), cycle
 
         silent = [r for r in kpis if r["cell"] == "CBD01-C"]
-        assert not [r for r in silent if inside(r, telco.SILENT[1:])]
+        assert not ([r for r in silent if inside(record=r, window=telco.SILENT[1:])])
         assert len(silent) == 288 - 2 * cycles
 
         refused = [
@@ -1637,13 +1652,11 @@ class TestTelcoGenerator:
             if r["procedure"] == "Update-Location" and r["cause"] == "DIAMETER_TOO_BUSY"
         ]
         assert len(refused) == cycles
-        assert all(inside(r, telco.HSS_BURST) for r in refused)
+        assert all(inside(record=r, window=telco.HSS_BURST) for r in refused)
         for record in probes:
             assert 0 < record["latency_ms"] <= telco.TIMEOUT_MS
 
-    @pytest.mark.parametrize(
-        "start", range(0, telco.DAY_MINUTES, 15), ids=lambda start: f"minute-{start}"
-    )
+    @pytest.mark.parametrize("start", range(0, telco.DAY_MINUTES, 15), ids=_window_id)
     def test_every_fifteen_minute_window_holds_a_fault_row(self, start: int) -> None:
         held = _fault_row_minutes()
 
@@ -1653,12 +1666,12 @@ class TestTelcoGenerator:
 
     def test_reads_records_oldest_first(self, tmp_path: Path) -> None:
         root = self._kpis(
-            tmp_path,
-            [
+            lines=[
                 '{"timestamp":"2026-11-16T00:10:00.000Z","n":2}',
                 "",
                 '{"timestamp":"2026-11-16T00:00:00+00:00","n":1}',
             ],
+            root=tmp_path,
         )
 
         records = telco.read_records(root=root, sources=["ran-kpis"])
@@ -1679,9 +1692,9 @@ class TestTelcoGenerator:
         ids=["not-json", "no-timestamp", "not-rfc3339", "naive", "empty", "unknown"],
     )
     def test_refuses_records_it_cannot_place_in_time(
-        self, lines: list[str], message: str, sources: list[str], tmp_path: Path
+        self, tmp_path: Path, lines: list[str], sources: list[str], message: str
     ) -> None:
-        root = self._kpis(tmp_path, lines)
+        root = self._kpis(lines=lines, root=tmp_path)
 
         with pytest.raises(ValueError, match=message):
             telco.read_records(root=root, sources=sources)
@@ -1692,31 +1705,34 @@ class TestTelcoGenerator:
         ids=["one-record", "exact-hour", "just-over", "a-day"],
     )
     def test_a_round_is_the_span_rounded_up_to_whole_hours(
-        self, period: float, span: float
+        self, span: float, period: float
     ) -> None:
         assert telco.round_seconds(times=[100.0, 100.0 + span]) == period
 
     def test_backfills_the_first_round_then_sends_each_record_as_its_time_comes(
         self,
     ) -> None:
-        now = [10_000.0]
-        sleeps: list[float] = []
-        batches: list[list[dict]] = []
+
+        def clock() -> float:
+            return now[0]
+
+        def post(*, batch: list[dict], target: str) -> None:
+            batches.append(list(batch))
 
         def sleep(seconds: float) -> None:
             sleeps.append(seconds)
             now[0] += seconds
 
-        def post(*, batch: list[dict], target: str) -> None:
-            batches.append(list(batch))
-
-        # 2,000 records a minute apart: a span of 1,999 minutes, so a 34 hour round
+        now = [10_000.0]
+        sleeps = []
+        batches = []
+        # 2,000 records a minute apart: 1,999 minutes, a 34 hour round
         records = [
             (60.0 * index, {"timestamp": "", "n": index}) for index in range(2000)
         ]
 
         sent = telco.replay(
-            clock=lambda: now[0],
+            clock=clock,
             duration=34 * 3600.0 + 60.0,
             loop=True,
             post=post,
@@ -1728,31 +1744,34 @@ class TestTelcoGenerator:
         sent_records = [record for batch in batches for record in batch]
         assert sent == len(sent_records) == 4000
         assert all(len(batch) <= telco.REPLAY_BATCH for batch in batches)
-        # The newest record lands at the start, the oldest 1,999 minutes before it
+        # The newest lands at the start, the oldest 1,999 minutes before
         assert sent_records[1999] == telco.stamped(
             record=records[1999][1], when=10_000.0
         )
         assert sent_records[0] == telco.stamped(
             record=records[0][1], when=10_000.0 - 60.0 * 1999
         )
-        # The first round goes at once in full batches, and the second starts 41 minutes after it
+        # The first round goes at once, the second 41 minutes on
         assert sleeps[:4] == [0.0, 0.0, 0.0, 41 * 60.0]
         assert set(sleeps[4:]) == {60.0}
 
     def test_stops_at_the_duration_and_sends_one_round_without_loop(self) -> None:
-        now = [0.0]
-        sent_batches: list[int] = []
 
-        def sleep(seconds: float) -> None:
-            now[0] += seconds
+        def clock() -> float:
+            return now[0]
 
         def post(*, batch: list[dict], target: str) -> None:
             sent_batches.append(len(batch))
 
+        def sleep(seconds: float) -> None:
+            now[0] += seconds
+
+        now = [0.0]
+        sent_batches = []
         records = [(60.0 * index, {"timestamp": "", "n": index}) for index in range(10)]
 
         once = telco.replay(
-            clock=lambda: now[0],
+            clock=clock,
             duration=10_000.0,
             loop=False,
             post=post,
@@ -1762,7 +1781,7 @@ class TestTelcoGenerator:
         )
         now[0] = 0.0
         bounded = telco.replay(
-            clock=lambda: now[0],
+            clock=clock,
             duration=3600.0 - 540.0 + 120.0,
             loop=True,
             post=post,
@@ -1772,5 +1791,5 @@ class TestTelcoGenerator:
         )
 
         assert once == 10
-        # One backfilled round, then the second round's first three records before the deadline
+        # One backfilled round, then three records of the second
         assert bounded == 10 + 3

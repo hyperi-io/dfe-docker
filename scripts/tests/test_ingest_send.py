@@ -52,9 +52,13 @@ class _HoldingReceiver(BaseHTTPRequestHandler):
 
 
 @pytest.fixture(autouse=True)
-def _token(monkeypatch: pytest.MonkeyPatch) -> None:
+def fixed_ingest_token(monkeypatch: pytest.MonkeyPatch) -> None:
     """The receiver's ingest token, so no test execs into a running stack."""
-    monkeypatch.setattr(_pipeline, "ingest_token", lambda: "tok-1")
+
+    def token() -> str:
+        return "tok-1"
+
+    monkeypatch.setattr(_pipeline, "ingest_token", token)
 
 
 @pytest.fixture
@@ -98,7 +102,7 @@ def test_each_answer_stays_with_its_own_request(receiver_url: str) -> None:
     bodies = ['{"n": 0}', '{"refuse": 1}', '{"n": 2}']
 
     assert _pipeline.post_all(receiver_url, bodies, workers=3) == [200, 503, 200]
-    # A receiver an ingest credential put in bearer mode refuses a post with no token.
+    # A listener in bearer mode refuses a post with no token
     assert _HoldingReceiver.authorizations == ["Bearer tok-1"] * 3
 
 
@@ -124,7 +128,7 @@ def test_a_request_nothing_answers_reports_status_zero() -> None:
 def test_the_sender_takes_the_first_token_the_listener_lists(
     text: str, token: str
 ) -> None:
-    assert _pipeline.bearer_token(text) == token
+    assert _pipeline.bearer_token(text=text) == token
 
 
 @pytest.mark.parametrize(
@@ -139,16 +143,15 @@ def test_the_sender_takes_the_first_token_the_listener_lists(
 def test_an_ingest_token_is_kept_once_found_and_asked_again_when_empty(
     monkeypatch: pytest.MonkeyPatch, answers: list[str], tokens: list[str], execs: int
 ) -> None:
-    monkeypatch.undo()
-    monkeypatch.setattr(_pipeline, "_ingest_token_found", [])
-    replies = iter(answers)
-    calls: list[tuple[str, ...]] = []
-
-    def _docker(*args: str) -> str:
+    def docker(*args: str) -> str:
         calls.append(args)
         return next(replies)
 
-    monkeypatch.setattr(_pipeline, "_docker_output", _docker)
+    monkeypatch.undo()
+    monkeypatch.setattr(_pipeline, "_ingest_token_found", [])
+    replies = iter(answers)
+    calls = []
+    monkeypatch.setattr(_pipeline, "_docker_output", docker)
 
     assert [_pipeline.ingest_token(), _pipeline.ingest_token()] == tokens
     assert len(calls) == execs

@@ -96,6 +96,28 @@ def _git(*, args: Sequence[str], repo_dir: Path) -> subprocess.CompletedProcess:
     )
 
 
+def _identities(*, image: str) -> set[str]:
+    """Return the names one image reference answers to, so `x:1` and `x:1@sha256:a` match.
+
+    A reference with a digest answers to its name:tag and to its name@digest. One without answers to its name:tag.
+    """
+    named, _, digest = image.partition("@")
+    name, separator, _tag = named.rpartition(":")
+    repository = name if separator and "/" not in _tag else named
+    identities = {named}
+    if digest:
+        identities.add(f"{repository}@{digest}")
+    return identities
+
+
+def _images_in_use(*, repo_dir: Path) -> set[str]:
+    """Return the image of every container on the host, running or stopped."""
+    listed = _docker(args=("ps", "-a", "--format", "{{.Image}}"), repo_dir=repo_dir)
+    if listed.returncode != 0:
+        raise UpdateError(f"docker ps failed: {listed.stderr.strip()!r}")
+    return {line.strip() for line in listed.stdout.splitlines() if line.strip()}
+
+
 def _is_downgrade(*, applied: str, target: str) -> bool:
     """Return whether the target ranks below the applied version.
 
@@ -119,28 +141,6 @@ def _make(*, repo_dir: Path, target: Sequence[str]) -> None:
     result = subprocess.run(["make", *target], check=False, cwd=repo_dir)
     if result.returncode != 0:
         raise UpdateError(f"{command!r} failed (exit {result.returncode})")
-
-
-def _identities(*, image: str) -> set[str]:
-    """Return the names one image reference answers to, so `x:1` and `x:1@sha256:a` match.
-
-    A reference with a digest answers to its name:tag and to its name@digest. One without answers to its name:tag.
-    """
-    named, _, digest = image.partition("@")
-    name, separator, _tag = named.rpartition(":")
-    repository = name if separator and "/" not in _tag else named
-    identities = {named}
-    if digest:
-        identities.add(f"{repository}@{digest}")
-    return identities
-
-
-def _images_in_use(*, repo_dir: Path) -> set[str]:
-    """Return the image of every container on the host, running or stopped."""
-    listed = _docker(args=("ps", "-a", "--format", "{{.Image}}"), repo_dir=repo_dir)
-    if listed.returncode != 0:
-        raise UpdateError(f"docker ps failed: {listed.stderr.strip()!r}")
-    return {line.strip() for line in listed.stdout.splitlines() if line.strip()}
 
 
 def _previous_images(*, repo_dir: Path) -> set[str]:

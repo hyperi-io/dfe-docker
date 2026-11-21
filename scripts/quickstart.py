@@ -22,8 +22,8 @@ The stack is VERSION= on the make line. With none given, a .env that holds no im
 `over-demo` exits 1 when the `make demo` stream container is running, so `make ci` refuses before its `down` removes the pack's sources under a start that already named their services.
 
 Exit codes:
-  0  prepared, the stack is running, or no demo pack is streaming
-  1  a choice cannot be made, `running` found no stack, or `over-demo` found the pack streaming
+  0  prepared, the stack is running or no demo pack is streaming
+  1  a choice cannot be made, `running` found no stack or `over-demo` found the pack streaming
   2  usage error
 """
 
@@ -98,7 +98,7 @@ def _choice_line(
     """The first line `prepare` prints: the two choices, where each came from and how to override them, in the words of the command that ran it."""
     if args.caller:
         given = {"make line": "given"}
-        stack_given = {"make line": args.version_from or "given"}
+        stack_given = {"make line": (args.version_from) or ("given")}
         caller = args.caller
         override = f"{caller} --profile <profile> --stack <stack version>"
     else:
@@ -146,6 +146,39 @@ def _choose_stack(*, dotenv: dict[str, str], explicit: str) -> tuple[str, str]:
     if recorded:
         return recorded, ".env"
     return NEWEST, "default"
+
+
+def _demo_refusal(*, container: str, running: bool) -> str:
+    """Why `make ci` cannot start over the demo pack, empty when it can."""
+    if not (running):
+        return ""
+    return (
+        f"the `make demo` pack is streaming here ({container}). Its removal "
+        "mid-start drops the per-source services the start already named. Run "
+        "`make demo-stop` first, then `make up`, and `make demo` again after it"
+    )
+
+
+def _demo_running(*, container: str) -> bool:
+    """Whether the `make demo` stream container is running."""
+    result = subprocess.run(
+        [
+            "docker",
+            "ps",
+            "--quiet",
+            "--filter",
+            "status=running",
+            "--filter",
+            f"name=^{container}$",
+        ],
+        capture_output=True,
+        check=False,
+        encoding="utf-8",
+        errors="replace",
+        text=True,
+        timeout=DOCKER_TIMEOUT_SECONDS,
+    )
+    return result.returncode == 0 and bool(result.stdout.split())
 
 
 def _prepare(*, args: argparse.Namespace) -> None:
@@ -246,39 +279,6 @@ def _running() -> bool:
     return result.returncode == 0 and bool(result.stdout.split())
 
 
-def _demo_running(*, container: str) -> bool:
-    """Whether the `make demo` stream container is running."""
-    result = subprocess.run(
-        [
-            "docker",
-            "ps",
-            "--quiet",
-            "--filter",
-            "status=running",
-            "--filter",
-            f"name=^{container}$",
-        ],
-        capture_output=True,
-        check=False,
-        encoding="utf-8",
-        errors="replace",
-        text=True,
-        timeout=DOCKER_TIMEOUT_SECONDS,
-    )
-    return result.returncode == 0 and bool(result.stdout.split())
-
-
-def _demo_refusal(*, container: str, running: bool) -> str:
-    """Why `make ci` cannot start over the demo pack, empty when it can."""
-    if not running:
-        return ""
-    return (
-        f"the `make demo` pack is streaming here ({container}). Its removal "
-        "mid-start drops the per-source services the start already named. Run "
-        "`make demo-stop` first, then `make up`, and `make demo` again after it"
-    )
-
-
 def main() -> int:
     parser = argparse.ArgumentParser(
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
@@ -309,7 +309,7 @@ def main() -> int:
         "over-demo", help="exit 1 when the `make demo` pack is streaming"
     )
     over.add_argument(
-        "--container", required=True, help="the demo stream container's name"
+        "--container", help="the demo stream container's name", required=True
     )
     args = parser.parse_args()
     if args.action == "running":

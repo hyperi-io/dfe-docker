@@ -14,7 +14,7 @@ Network devices stream telemetry over gNMI. The opt-in `gnmic` service subscribe
 
 ## Turn it on
 
-1. Name the devices. `config/gnmic/gnmic.yaml` takes a `targets` map, and gnmic exits until it holds one. A target dials TLS unless it sets `insecure: true`, and takes `skip-verify`, `tls-ca`, `tls-cert` and `tls-key` as well.
+1. Name the devices. `config/gnmic/gnmic.yaml` takes a `targets` map and gnmic exits until it holds one. A target dials TLS unless it sets `insecure: true` and takes `skip-verify`, `tls-ca`, `tls-cert` and `tls-key` as well.
 
    ```yaml
    targets:
@@ -26,7 +26,7 @@ Network devices stream telemetry over gNMI. The opt-in `gnmic` service subscribe
 2. Put the login in `.env` as `DFE_GNMIC_USERNAME` and `DFE_GNMIC_PASSWORD`. A target without its own `username` and `password` uses them.
 3. Set `DFE_GNMIC_ENABLED=true` in `.env` and run `make up`. gnmic pushes to the bundled collector, so a stack with the `otel` key off refuses the setting.
 
-`DFE_GNMIC_CONFIG` names another file under `config/`. `DFE_GNMIC_VERSION` moves the image pin, which is a digest. The shipped config subscribes to `/interfaces/interface/state/counters` every 30s, and more paths go under `subscriptions`. A device decides what a sample returns, so a subscription can send one snapshot and then only changes.
+`DFE_GNMIC_CONFIG` names another file under `config/`. `DFE_GNMIC_VERSION` moves the image pin, which is a digest. The shipped config subscribes to `/interfaces/interface/state/counters` every 30s and more paths go under `subscriptions`. A device decides what a sample returns, so a subscription can send one snapshot and then only changes.
 
 The rows land in the otel database, `dfe` unless `DFE_OTEL_DATABASE` says otherwise.
 
@@ -56,4 +56,4 @@ make up PROFILE=slim-grpc DFE_GNMIC_ENABLED=true DFE_GNMIC_CONFIG=../tests/gnmi/
 make test-gnmi
 ```
 
-It starts the emulator from `tests/gnmi/compose.yml` on the stack's network and restarts gnmic so it subscribes. It passes when `otel_metrics_gauge` holds `gnmic` rows stamped after the run began, and fails after 120s with none. The emulator image is amd64 only. `GNMI_ARGS=--keep` leaves it running, and `make test-e2e` never runs this test.
+It starts the emulator from `tests/gnmi/compose.yml` on the stack's network and restarts gnmic so it subscribes. It passes when `otel_metrics_gauge` holds `gnmic` rows stamped after the run began and fails after 120s with none. The emulator image is amd64 only. `GNMI_ARGS=--keep` leaves it running. `make test-e2e` never runs this test.

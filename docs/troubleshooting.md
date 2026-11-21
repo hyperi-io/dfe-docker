@@ -17,10 +17,7 @@ Start with the state of the stack, then the [known issues](known-issues.md), the
 
 ## Reading the stack's state
 
-`docker compose ps` (or `make ps`) is the first call. It shows which containers
-exist and their health. `make down` tears down every profile, so a switch of
-profile leaves no stray holding the old ports. `make ps` warns about a
-per-source container left by a deleted source, which `make apply` removes.
+`docker compose ps` (or `make ps`) is the first call. It shows which containers exist and their health. `make down` tears down every profile, so a switch of profile leaves no stray holding the old ports. `make ps` warns about a per-source container left by a deleted source, which `make apply` removes.
 
 Health endpoints, straight from the host. Every DFE service serves `/livez`,
 `/readyz` and `/metrics` and nothing else -- the retired `/health*` paths 404, so
@@ -32,9 +29,7 @@ curl -sf http://localhost:8003/readyz     # engine ready?
 curl -sf http://localhost:13133/          # collector healthy? (otel profile only)
 ```
 
-These bind `127.0.0.1` by default, so curl them from the box. The full
-port table, which path each HEALTHCHECK uses and why, and dfe-ui's 200-on-unknown
--paths trap are in [observability.md](observability.md).
+These bind `127.0.0.1` by default, so curl them from the box. The full port table, which path each HEALTHCHECK uses and why and dfe-ui's 200-on-unknown -paths trap are in [observability.md](observability.md).
 
 If the stack sets `DFE_CONTAINER_PREFIX` (a second stack on the same host), every
 raw `docker exec` / `docker inspect` / `docker logs` below needs that prefix on
@@ -133,7 +128,7 @@ flowchart LR
   classDef part fill:#FFFFFF,stroke:#94A3B8,stroke-width:1.5px,color:#0F172A
 ```
 
-*Figure 1. L4 Detail -- Loader and schema checks. Dotted arrows are where to look next.* Up: [L2 Services -- DFE Compose stack](architecture.md#events-arrive-two-ways-and-leave-one).
+*Figure 1. L4 Detail - Loader and schema checks. Dotted arrows are where to look next.* Up: [L2 Services - DFE Compose stack](architecture.md#events-arrive-two-ways-and-leave-one).
 
 **Loader health first.** `curl -sf http://localhost:9091/readyz`. A loader that
 cannot reach ClickHouse is the single most common cause, and readiness is what
@@ -226,22 +221,16 @@ flowchart LR
   classDef part fill:#FFFFFF,stroke:#94A3B8,stroke-width:1.5px,color:#0F172A
 ```
 
-*Figure 2. L4 Detail -- Topic and dead-letter checks. The orange end means events were accepted and not delivered.* Up: [L2 Services -- DFE Compose stack](architecture.md#events-arrive-two-ways-and-leave-one).
+*Figure 2. L4 Detail - Topic and dead-letter checks. The orange end means events were accepted and not delivered.* Up: [L2 Services - DFE Compose stack](architecture.md#events-arrive-two-ways-and-leave-one).
 
-**Then the topic.** On a Kafka profile, do not check that the topic exists -- check
-what the loader actually SUBSCRIBED to. Those are different questions, and the gap
-between them is where this hides: the loader logs the topic set it resolved, and
-a topic can exist, be produced to, and still not be in it.
+**Then the topic.** On a Kafka profile, do not check that the topic exists - check what the loader actually SUBSCRIBED to. Those are different questions and the gap between them is where this hides: the loader logs the topic set it resolved and a topic can exist, be produced to and still not be in it.
 
 ```bash
 docker compose logs dfe-loader | grep "Resolved Kafka topics"
 docker compose exec kafka-redpanda rpk group describe dfe-loader -X brokers=kafka:9092
 ```
 
-If the topic the receiver produces to is missing from the resolved list, read the
-[`main_load` issue](known-issues.md#a-_load-topic-changes-what-the-loader-reads) -- a `_load` sibling suppresses the `_land` topic.
-Kafbat on `:8081` shows the produced-to topic and its high watermark, which is the
-other half of the picture.
+If the topic the receiver produces to is missing from the resolved list, read the [`main_load` issue](known-issues.md#a-_load-topic-changes-what-the-loader-reads) - a `_load` sibling suppresses the `_land` topic. Kafbat on `:8081` shows the produced-to topic and its high watermark, which is the other half of the picture.
 
 **Then the DLQ**, [below](#dead-letters-are-undelivered-events).
 
@@ -254,10 +243,7 @@ mountpoint owned by root and no service can write inside it. The `dlq-init`
 one-shot (`chown -R 1000:1000` over the spool, the archive, the fetcher cursors and the GeoIP store) fixes that before
 the services start.
 
-Without it, dfe-archiver crash-loops on `DLQ init failed ... Permission denied
-(os error 13)` -- it creates its DLQ writer eagerly at startup. The others create
-theirs lazily on first dead-letter, so they look healthy until something needs to
-dead-letter, which is the worst moment to find the DLQ never worked.
+Without it, dfe-archiver crash-loops on `DLQ init failed ... Permission denied (os error 13)` - it creates its DLQ writer eagerly at startup. The others create theirs lazily on first dead-letter, so they look healthy until something needs to dead-letter, which is the worst moment to find the DLQ never worked.
 
 `archiver-data`, mounted at `/var/lib/dfe-archiver/archive`, has the same problem and the same
 fix. Without it every archive write fails with `Permission denied (os error 13)`,
@@ -266,23 +252,18 @@ commits one: the lag grows and nothing is archived.
 
 `fetcher-cursors`, mounted at `/var/lib/dfe-fetcher`, gets the same fix. Without it every fetcher logs `Cursor directory is not writable` and re-fetches its lookback window on each restart.
 
-Per-service volumes do not fix it: a fresh volume is root-owned, because
-ownership is inherited from a path the image does not have, and no component
-image creates `/var/spool/dfe` as appuser. The one-shot reuses the archiver image
-because that image is pinned.
+Per-service volumes do not fix it: a fresh volume is root-owned, because ownership is inherited from a path the image does not have and no component image creates `/var/spool/dfe` as appuser. The one-shot reuses the archiver image because that image is pinned.
 
 Three ways that arrangement fails:
 
-1. `required: false` on the dependents means a **failed** dlq-init does not stop
-   them -- Compose logs one warning and goes on with a zero exit. Watch for
-   the warning.
+1. `required: false` on the dependents means a **failed** dlq-init does not stop them - Compose logs one warning and goes on with a zero exit. Watch for the warning.
 2. uid 1000 is hard-coded and nothing verifies it, so an image that renumbers
    appuser breaks the DLQ silently.
 3. In dev mode dlq-init runs `dfe-archiver:local`, so `make dev` builds the archiver from source even on profiles that run no archiver. `make dev LOCAL=...` without `dfe-archiver` in the list leaves dlq-init on the **registry** image instead, which needs GHCR access and a pinned `DFE_ARCHIVER_VERSION`.
 
 ## Dead letters are undelivered events
 
-Files under `/var/spool/dfe/dlq` mean events were accepted and then could not be delivered. They are evidence, not noise: read them to see what was rejected and why. On a gRPC profile, where there is no broker, the loader writes its own dead letters there, under `dlq/loader/`. On a Kafka profile it writes them to the `dfe_loader_dlq` topic, which Kafbat on `:8081` shows, and to that file only when the broker does not take them.
+Files under `/var/spool/dfe/dlq` mean events were accepted and then could not be delivered. They are evidence, not noise: read them to see what was rejected and why. On a gRPC profile, where there is no broker, the loader writes its own dead letters there, under `dlq/loader/`. On a Kafka profile it writes them to the `dfe_loader_dlq` topic, which Kafbat on `:8081` shows and to that file only when the broker does not take them.
 
 ```bash
 docker compose exec dfe-loader ls -la /var/spool/dfe/dlq/loader
@@ -292,8 +273,8 @@ A row ClickHouse rejects with no working DLQ to take it is lost. The loader logs
 
 ## An app stops at a one-shot
 
-`service "config-check-dfe-loader" didn't complete successfully: exit 1` means the loader's config failed its own check, and the loader was never started. `docker compose logs config-check-dfe-loader` shows the app's error. Fix the config, then run `make apply SERVICES=dfe-loader`, which runs the check again first.
+`service "config-check-dfe-loader" didn't complete successfully: exit 1` means the loader's config failed its own check and the loader was never started. `docker compose logs config-check-dfe-loader` shows the app's error. Fix the config, then run `make apply SERVICES=dfe-loader`, which runs the check again first.
 
-dfe-receiver mounts `.secrets/ingest/bearer-tokens` from the `dfe-engine-config` volume as a subpath, which Docker rejects when the path does not exist. The `bearer-tokens-init` one-shot creates it first, as uid 1000 and owner-only like the engine's other secrets. It is a directory mount so the engine's token rewrites reach the running receiver. Once an ingest credential puts the HTTP listener in bearer mode, `make post` reads a token from that mount and sends it with its events, and never prints it.
+dfe-receiver mounts `.secrets/ingest/bearer-tokens` from the `dfe-engine-config` volume as a subpath, which Docker rejects when the path does not exist. The `bearer-tokens-init` one-shot creates it first, as uid 1000 and owner-only like the engine's other secrets. It is a directory mount so the engine's token rewrites reach the running receiver. Once an ingest credential puts the HTTP listener in bearer mode, `make post` sends its events with a token read from that mount and never prints it.
 
 For the ports and settings behind all of this, see [operating.md](operating.md) and [configuration.md](configuration.md).
