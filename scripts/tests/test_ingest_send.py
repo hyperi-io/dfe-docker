@@ -33,12 +33,10 @@ class _HoldingReceiver(BaseHTTPRequestHandler):
     lock = threading.Lock()
     holding = 0
     most_held = 0
-    authorizations: list[str] = []
 
     def do_POST(self) -> None:
         body = self.rfile.read(int(self.headers["Content-Length"]))
         with self.lock:
-            type(self).authorizations.append(self.headers.get("Authorization", ""))
             type(self).holding += 1
             type(self).most_held = max(type(self).most_held, type(self).holding)
         time.sleep(HOLD_SECONDS)
@@ -51,21 +49,10 @@ class _HoldingReceiver(BaseHTTPRequestHandler):
         return
 
 
-@pytest.fixture(autouse=True)
-def fixed_ingest_token(monkeypatch: pytest.MonkeyPatch) -> None:
-    """The receiver's ingest token, so no test execs into a running stack."""
-
-    def token() -> str:
-        return "tok-1"
-
-    monkeypatch.setattr(_pipeline, "ingest_token", token)
-
-
 @pytest.fixture
 def receiver_url():
     _HoldingReceiver.holding = 0
     _HoldingReceiver.most_held = 0
-    _HoldingReceiver.authorizations = []
     server = ThreadingHTTPServer(("127.0.0.1", 0), _HoldingReceiver)
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
@@ -102,8 +89,6 @@ def test_each_answer_stays_with_its_own_request(receiver_url: str) -> None:
     bodies = ['{"n": 0}', '{"refuse": 1}', '{"n": 2}']
 
     assert _pipeline.post_all(receiver_url, bodies, workers=3) == [200, 503, 200]
-    # A listener in bearer mode refuses a post with no token
-    assert _HoldingReceiver.authorizations == ["Bearer tok-1"] * 3
 
 
 def test_a_request_nothing_answers_reports_status_zero() -> None:
@@ -111,47 +96,3 @@ def test_a_request_nothing_answers_reports_status_zero() -> None:
         port = closed.server_address[1]
 
     assert _pipeline.post_all(f"http://127.0.0.1:{port}/", ["{}"], workers=1) == [0]
-
-
-@pytest.mark.parametrize(
-    ("text", "token"),
-    [
-        ("edgestream-dev1:abc123\n", "abc123"),
-        ("a:one\nb:two\n", "one"),
-        ("\n", ""),
-        ("", ""),
-        ("broken-line\nid:t2\n", "t2"),
-        ("id:\n", ""),
-    ],
-    ids=["one", "first-of-two", "no-credential", "empty", "skips-junk", "no-token"],
-)
-def test_the_sender_takes_the_first_token_the_listener_lists(
-    text: str, token: str
-) -> None:
-    assert _pipeline.bearer_token(text=text) == token
-
-
-@pytest.mark.parametrize(
-    ("answers", "tokens", "execs"),
-    [
-        (["rx1\n", "id:t1\n", "rx1\n", "id:t2\n"], ["t1", "t1"], 2),
-        (["", "rx1\n", "id:t1\n"], ["", "t1"], 3),
-        (["rx1\n", "", "rx1\n", "id:t1\n"], ["", "t1"], 4),
-    ],
-    ids=["found-once", "no-receiver-then-found", "failed-exec-then-found"],
-)
-def test_an_ingest_token_is_kept_once_found_and_asked_again_when_empty(
-    monkeypatch: pytest.MonkeyPatch, answers: list[str], tokens: list[str], execs: int
-) -> None:
-    def docker(*args: str) -> str:
-        calls.append(args)
-        return next(replies)
-
-    monkeypatch.undo()
-    monkeypatch.setattr(_pipeline, "_ingest_token_found", [])
-    replies = iter(answers)
-    calls = []
-    monkeypatch.setattr(_pipeline, "_docker_output", docker)
-
-    assert [_pipeline.ingest_token(), _pipeline.ingest_token()] == tokens
-    assert len(calls) == execs

@@ -20,7 +20,7 @@ The engine issues `admin` with a forced change at first login, which `make post`
 
 `make init` and `make up` write `access-summary.md` (0600, gitignored) with both passwords in plaintext. Once your own admin exists, retire the bootstrap admin from the console wizard's last step or `POST /api/v1/auth/setup/retire-admin`, then delete `DFE_ENGINE_AUTH_LOCAL_ADMIN_PASSWORD` from `env/engine.env`. The account stays disabled and is never reseeded. Keep the break-glass password offline and delete both plaintexts, that file included: the engine keeps only the hash.
 
-dfe-hyperdx, the console's Search, authenticates by verifying the engine's token and holds no logins of its own. ClickHouse takes its generated password. The receiver's HTTP listener takes only bearer tokens once an [ingest credential](seeding.md#what-each-target-creates) names it. The other ingest edges, every metrics port and Kafka answer whoever can route to them and so does Kafbat unless the `auth` profile is armed, where the gate is at the proxy, not inside the UI.
+dfe-hyperdx, the console's Search, authenticates by verifying the engine's token and holds no logins of its own. ClickHouse takes its generated password. The receiver's HTTP listener takes only bearer tokens once `make post` has made the [ingest credential](seeding.md#what-each-target-creates). The other ingest edges, every metrics port and Kafka answer whoever can route to them and so does Kafbat unless the `auth` profile is armed, where the gate is at the proxy, not inside the UI.
 
 By default, off-box clients reach the receiver's ingest ports and every other port answers on the box alone.
 

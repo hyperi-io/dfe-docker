@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import datetime
 import json
+from typing import TypedDict
 
 import pytest
 
@@ -28,12 +29,27 @@ import _pipeline
 import init
 import post
 
+# Kept before the autouse fixture replaces it in every test
+_REAL_INGEST_TOKEN = post.ingest_token
+
 _HOST_URL = "http://localhost:8003/api/v1/auth/login"
+
+
+def _fixed_ingest_token(*, base: str, ingest_url: str, token: str) -> str:
+    """Answer every ingest token request with one fixed token."""
+    return "ingest-token"
 
 
 def _logged_in(*, base: str) -> post.Login:
     """Answer every login with a session token."""
     return post.Login(fault="", status=200, token="t", username="u")
+
+
+@pytest.fixture(autouse=True)
+def ingest_credential(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Give the senders a fixed ingest token and session, so no test reaches an engine for them."""
+    monkeypatch.setattr(post, "ingest_token", _fixed_ingest_token)
+    monkeypatch.setattr(post, "login", _logged_in)
 
 
 def test_the_ui_class_apis_are_read_over_the_compose_network(
@@ -433,20 +449,15 @@ def test_events_that_never_land_ask_the_subscription_why(
     )
     monkeypatch.setattr(post, "ch_marker_count", lambda *args, **kwargs: 0)
     monkeypatch.setattr(post, "LAND_TIMEOUT_SECONDS", 0.0)
-    monkeypatch.setattr(post, "ingest_token", lambda: "tok-1")
-    tokens: list[str] = []
 
     def _posted(*args, **kwargs) -> int:
         calls.append("http_post")
-        tokens.append(kwargs.get("token", ""))
         return 200
 
     monkeypatch.setattr(post, "http_post", _posted)
 
     assert post.main() == 1
     assert calls == ["http_post"] * post.EVENT_COUNT + ["_verify_loader_subscription"]
-    # A receiver an ingest credential put in bearer mode refuses a post with no token.
-    assert tokens == ["tok-1"] * post.EVENT_COUNT
 
 
 class _Clock:
@@ -502,7 +513,15 @@ def test_the_routing_wait_outlasts_the_loaders_next_topic_refresh(
 ) -> None:
     _routed_row_at(monkeypatch, bus=True, lands_at=lands_at)
 
-    assert post._await_routed_row(database="dfe", name="postroutetest") == 0
+    assert (
+        post._await_routed_row(
+            base="http://engine.invalid",
+            database="dfe",
+            name="postroutetest",
+            token="t",
+        )
+        == 0
+    )
 
 
 def test_a_loader_that_never_subscribes_fails_the_claim_and_is_named(
@@ -510,7 +529,15 @@ def test_a_loader_that_never_subscribes_fails_the_claim_and_is_named(
 ) -> None:
     clock = _routed_row_at(monkeypatch, bus=True, lands_at=None)
 
-    assert post._await_routed_row(database="dfe", name="postroutetest") == 1
+    assert (
+        post._await_routed_row(
+            base="http://engine.invalid",
+            database="dfe",
+            name="postroutetest",
+            token="t",
+        )
+        == 1
+    )
     window = post._routing_timeout_seconds(bus=True)
     assert window <= clock.now < window + post.ROUTING_INTERVAL_SECONDS
     assert "never subscribed to its landing topic" in capsys.readouterr().err
@@ -524,7 +551,15 @@ def test_only_a_tier_with_a_bus_waits_out_a_topic_refresh(
     for bus in (True, False):
         clock = _routed_row_at(monkeypatch, bus=bus, lands_at=None)
         capsys.readouterr()
-        assert post._await_routed_row(database="dfe", name="postroutetest") == 1
+        assert (
+            post._await_routed_row(
+                base="http://engine.invalid",
+                database="dfe",
+                name="postroutetest",
+                token="t",
+            )
+            == 1
+        )
         gave_up_at[bus] = clock.now
 
     assert "subscribed" not in capsys.readouterr().err
@@ -758,13 +793,9 @@ def _stub_main(monkeypatch: pytest.MonkeyPatch) -> None:
     def no_broker() -> None:
         return None
 
-    def no_token() -> str:
-        return ""
-
     monkeypatch.delenv("DFE_POST_ENABLED", raising=False)
     monkeypatch.setattr(post, "_weak_secrets", list)
     monkeypatch.setattr(post, "_broker_enterprise_features", no_broker)
-    monkeypatch.setattr(post, "ingest_token", no_token)
     monkeypatch.setattr(post, "_cleanup", lambda *args: None)
     # Unstubbed, this polls the engine's /readyz for 300s against whatever the
     # developer happens to have on the host, and passes on a live stack.
@@ -1573,7 +1604,7 @@ def _routing_engine(
     def app_config_dir(*, key: str) -> str:
         return "/etc/dfe/apps"
 
-    def landed(*, database: str, name: str) -> int:
+    def landed(*, base: str, database: str, name: str, token: str) -> int:
         return 0
 
     def routing_services() -> list[str]:
@@ -1799,3 +1830,245 @@ def test_a_subset_without_the_receiver_has_no_ingest_edge_to_wait_on(
 
     with pytest.raises(post.NoIngestComponent):
         post._ingest_target(table="main")
+
+
+class _CredentialEngine:
+    """The engine's credential routes: GET answers `held`, a rotate or mint answers `minted` with `status`."""
+
+    def __init__(self, *, held: int, minted: str = "minted", status: int = 201) -> None:
+        self.held = held
+        self.minted = minted
+        self.status = status
+        self.calls = []
+
+    def get_json(
+        self, *, timeout: int = 30, token: str = "", url: str
+    ) -> tuple[int, object]:
+        """Answer the credential read with `held`."""
+        self.calls.append(("get", url))
+        return self.held, {}
+
+    def post_json(
+        self, *, payload: dict, timeout: int = 30, token: str = "", url: str
+    ) -> tuple[int, object]:
+        """Answer a rotate with the minted token."""
+        self.calls.append(("post", url))
+        return 200, {"token": self.minted}
+
+    def put_json(
+        self,
+        *,
+        headers: dict[str, str] | None = None,
+        payload: dict,
+        timeout: int = 30,
+        token: str = "",
+        url: str,
+    ) -> tuple[int, object]:
+        """Answer a mint with `status` and the minted token."""
+        self.calls.append(("put", headers, payload))
+        return self.status, (
+            {"token": self.minted} if self.status == 201 else {"code": "conflict"}
+        )
+
+
+def _credential_engine(
+    *, engine: _CredentialEngine, monkeypatch: pytest.MonkeyPatch, recorded: str
+) -> list[str]:
+    """Route ingest_token's engine calls to `engine`, with `recorded` in env/engine.env, and return the tokens it records."""
+
+    def env_values(*, component: str) -> dict[str, str]:
+        return {post.INGEST_TOKEN_KEY: recorded} if recorded else {}
+
+    def held_org(*, base: str, token: str) -> None:
+        """Hold the seed org already."""
+
+    def record(*, minted: str) -> None:
+        recorded_tokens.append(minted)
+
+    def taken(*, ingest_url: str, minted: str) -> None:
+        """Take the token as soon as it is minted."""
+
+    recorded_tokens = []
+    monkeypatch.setattr(post, "_api_get_json", engine.get_json)
+    monkeypatch.setattr(post, "_api_post_json", engine.post_json)
+    monkeypatch.setattr(post, "api_put_json", engine.put_json)
+    monkeypatch.setattr(post, "_env_file_values", env_values)
+    monkeypatch.setattr(post, "_record_ingest_token", record)
+    monkeypatch.setattr(post, "_await_ingest_token", taken)
+    monkeypatch.setattr(post, "_ensure_ingest_org", held_org)
+    return recorded_tokens
+
+
+class TestIngestToken:
+    def test_reuses_the_recorded_token(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        engine = _CredentialEngine(held=200)
+        recorded = _credential_engine(
+            engine=engine, monkeypatch=monkeypatch, recorded="kept"
+        )
+
+        token = _REAL_INGEST_TOKEN(
+            base="http://engine.invalid", ingest_url="http://r.invalid", token="t"
+        )
+
+        assert (token, recorded, [call[0] for call in engine.calls]) == (
+            "kept",
+            [],
+            ["get"],
+        )
+
+    def test_rotates_a_credential_whose_token_was_not_kept(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        engine = _CredentialEngine(held=200)
+        recorded = _credential_engine(
+            engine=engine, monkeypatch=monkeypatch, recorded=""
+        )
+
+        token = _REAL_INGEST_TOKEN(
+            base="http://engine.invalid", ingest_url="http://r.invalid", token="t"
+        )
+
+        assert (token, recorded, engine.calls[-1][1].endswith("/rotate")) == (
+            "minted",
+            ["minted"],
+            True,
+        )
+
+    def test_mints_one_bound_to_the_seed_org(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        engine = _CredentialEngine(held=404)
+        recorded = _credential_engine(
+            engine=engine, monkeypatch=monkeypatch, recorded=""
+        )
+
+        token = _REAL_INGEST_TOKEN(
+            base="http://engine.invalid", ingest_url="http://r.invalid", token="t"
+        )
+
+        assert (token, recorded, engine.calls[-1]) == (
+            "minted",
+            ["minted"],
+            (
+                "put",
+                {"If-None-Match": "*"},
+                {"default_org": "acme", "listeners": ["http"], "orgs": ["acme"]},
+            ),
+        )
+
+    def test_rejects_a_refused_mint(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        engine = _CredentialEngine(held=404, status=409)
+        _credential_engine(engine=engine, monkeypatch=monkeypatch, recorded="")
+
+        with pytest.raises(
+            post.IngestCredentialError, match="was not minted: HTTP 409"
+        ):
+            _REAL_INGEST_TOKEN(
+                base="http://engine.invalid", ingest_url="http://r.invalid", token="t"
+            )
+
+
+class TestAwaitIngestToken:
+    def test_returns_once_the_receiver_takes_the_token(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        def authenticating(*, body: bytes, timeout: int, token: str, url: str) -> int:
+            return 401 if token == "not-a-token" else 400
+
+        monkeypatch.setattr(post, "http_post", authenticating)
+
+        post._await_ingest_token(ingest_url="http://r.invalid", minted="minted")
+
+    def test_restarts_a_receiver_that_takes_any_token_once(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        def receiver(*, body: bytes, timeout: int, token: str, url: str) -> int:
+            if restarts == [1] and not (answered):
+                answered.append(1)
+                raise ConnectionResetError("restarting")
+            if restarts and token == "not-a-token":
+                return 401
+            return 400
+
+        def restart() -> None:
+            restarts.append(1)
+
+        def no_wait(seconds: float) -> None:
+            """Skip the wait between probes."""
+
+        answered = []
+        restarts = []
+        monkeypatch.setattr(post, "http_post", receiver)
+        monkeypatch.setattr(post, "_restart_receiver", restart)
+        monkeypatch.setattr(post.time, "sleep", no_wait)
+
+        post._await_ingest_token(ingest_url="http://r.invalid", minted="minted")
+
+        assert (restarts, answered) == ([1], [1])
+
+    def test_rejects_a_receiver_that_never_takes_it(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        def refusing(*, body: bytes, timeout: int, token: str, url: str) -> int:
+            return 401
+
+        monkeypatch.setattr(post, "http_post", refusing)
+        monkeypatch.setattr(post, "INGEST_TOKEN_WAIT_SECONDS", 0.0)
+
+        with pytest.raises(
+            post.IngestCredentialError, match="did not take ingest credential"
+        ):
+            post._await_ingest_token(ingest_url="http://r.invalid", minted="minted")
+
+
+class IngestBearerCase(TypedDict):
+    """The engine session, the token env/engine.env records and the bearer the marked events go with."""
+
+    expected: str
+    recorded: str
+    session: post.Login
+
+
+_NO_SESSION = post.Login(
+    fault="no password for 'admin' is set", status=0, token="", username="admin"
+)
+
+INGEST_BEARER_CASES = [
+    pytest.param(
+        IngestBearerCase(
+            expected="ingest-token",
+            recorded="kept",
+            session=post.Login(fault="", status=200, token="t", username="admin"),
+        ),
+        id="session-goes-through-the-engine",
+    ),
+    pytest.param(
+        IngestBearerCase(expected="kept", recorded="kept", session=_NO_SESSION),
+        id="no-session-sends-the-recorded-token",
+    ),
+    pytest.param(
+        IngestBearerCase(expected="", recorded="", session=_NO_SESSION),
+        id="no-session-and-none-recorded-sends-none",
+    ),
+]
+
+
+class TestIngestBearer:
+    @pytest.mark.parametrize("case", INGEST_BEARER_CASES)
+    def test_matches_expected(
+        self, monkeypatch: pytest.MonkeyPatch, case: IngestBearerCase
+    ) -> None:
+        def env_values(*, component: str) -> dict[str, str]:
+            return {post.INGEST_TOKEN_KEY: case["recorded"]} if case["recorded"] else {}
+
+        def logged(*, base: str) -> post.Login:
+            return case["session"]
+
+        monkeypatch.setattr(post, "_env_file_values", env_values)
+        monkeypatch.setattr(post, "login", logged)
+
+        bearer = post._ingest_bearer(
+            base="http://engine.invalid", ingest_url="http://r.invalid"
+        )
+
+        assert bearer == case["expected"]
