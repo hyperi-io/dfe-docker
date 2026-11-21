@@ -1,20 +1,20 @@
 #  Project:      dfe-docker
 #  File:         scripts/tests/test_demo_theatre_churn.py
-#  Purpose:      Run the theatre churn dashboard's "dropped" and "back" tile queries on the stack's ClickHouse over seeded tracks
+#  Purpose:      Run the theatre tiles verify.json lists in zero_ok on the stack's ClickHouse over seeded tracks
 #  Language:     Python
 #
 #  License:      BUSL-1.1
 #  Copyright:    (c) 2026 HYPERI PTY LIMITED
 
-"""The two churn tiles that verify.json lists in zero_ok, run against rows that must fill them.
+"""The theatre tiles that verify.json lists in zero_ok, run against rows that must fill them.
 
-demo_verify cannot require rows from `demo-theatre-churn/dropped` and `demo-theatre-churn/back`, because a live feed gives a CI run no track that goes silent or comes back. So a tile whose SQL is wrong would pass there. This test seeds tracks into `dfe.adsb-tracks` and `dfe.ais-tracks` and reads the tile's real SQL, with the console's macros expanded by demo_verify, on the ClickHouse image the stack pins.
+demo_verify cannot require rows from `demo-theatre-churn/dropped`, `demo-theatre-churn/back` or `demo-theatre-vessel-moves/movers`, because a live feed may give a CI run no track that goes silent, comes back, or turns. So a tile whose SQL is wrong would pass there. This test seeds tracks into `dfe.adsb-tracks` and `dfe.ais-tracks` and reads the tile's real SQL, with the console's macros expanded by demo_verify, on the ClickHouse image the stack pins.
 
 The seeded tracks, per feed:
 
   back     reports every minute, goes silent for ten minutes, then reports every minute to now
   dropped  reports every minute, then stops 29 minutes ago
-  steady   reports every minute to now
+  steady   reports every minute to now, and at sea turns 30 degrees between reports
   short    a four minute gap, under the five that counts as silent
   recent   reports every minute, then stops six minutes ago, under the seven that counts as dropped
 
@@ -34,7 +34,13 @@ import demo_verify
 from _common import demo_pack_dir
 
 ROOT = Path(__file__).resolve().parent.parent.parent
-DASHBOARD = demo_pack_dir(pack="theatre") / "console/dashboards/demo-theatre-churn.json"
+DASHBOARDS = demo_pack_dir(pack="theatre") / "console/dashboards"
+# The dashboard each tested tile sits on
+TILE_DASHBOARD = {
+    "dropped": "demo-theatre-churn",
+    "back": "demo-theatre-churn",
+    "movers": "demo-theatre-vessel-moves",
+}
 IMAGE_REPO = "clickhouse/clickhouse-server"
 
 # Tables as the loader makes them, as far as the tiles read: the event time and the raw payload
@@ -71,13 +77,24 @@ SEA_NAME = {
 EXPECTED = {
     "dropped": {("air", AIR_NAME["dropped"]), ("sea", SEA_NAME["dropped"])},
     "back": {("air", AIR_NAME["back"]), ("sea", SEA_NAME["back"])},
+    "movers": {("sea", SEA_NAME["steady"])},
 }
+# The sea tracks whose course swings 30 degrees between reports
+TURNING = {"steady"}
 
-# A tile edited the way a regression would: the silent threshold or the dropped threshold moved out of reach of the seeded tracks
+# A tile edited the way a regression would: a threshold moved out of reach of the seeded tracks
 BROKEN = {
     "dropped": ("INTERVAL 7 MINUTE", "INTERVAL 70 MINUTE"),
     "back": (">= 300", ">= 3000"),
+    "movers": ("course_change >= 10", "course_change >= 100"),
 }
+
+
+def listed(*, tile: str, rows: list[dict]) -> set[tuple[str, str]]:
+    """The (feed, name) pairs a tile's rows list. The movers tile is sea-only and names its track by MMSI."""
+    if tile == "movers":
+        return {("sea", row["MMSI"]) for row in rows}
+    return {(row["Feed"], row["Track"]) for row in rows}
 
 
 def row_sql(*, table: str, minutes_ago: int, payload: dict) -> str:
@@ -110,7 +127,11 @@ def seed_sql() -> str:
                     payload={
                         "mmsi": int(SEA_NAME[kind]),
                         "geometry": {"coordinates": [24.9, 60.1]},
-                        "properties": {"cog": 90.0, "sog": 5.5, "navStat": 0},
+                        "properties": {
+                            "cog": 120.0 if kind in TURNING and ago % 2 else 90.0,
+                            "sog": 5.5,
+                            "navStat": 0,
+                        },
                     },
                 )
             )
@@ -118,8 +139,9 @@ def seed_sql() -> str:
 
 
 def tile_sql(*, tile: str) -> str:
-    """A churn tile's SQL as the dashboard stores it."""
-    dashboard = json.loads(DASHBOARD.read_text(encoding="utf-8"))
+    """A tile's SQL as its dashboard stores it."""
+    path = DASHBOARDS / f"{TILE_DASHBOARD[tile]}.json"
+    dashboard = json.loads(path.read_text(encoding="utf-8"))
     (found,) = [item for item in dashboard["tiles"] if item["id"] == tile]
     return found["config"]["sqlTemplate"]
 
@@ -186,18 +208,18 @@ def run_tile(*, image: str, sql: str) -> list[dict]:
     return [json.loads(line) for line in done.stdout.splitlines() if line.strip()]
 
 
-@pytest.mark.parametrize("tile", ["dropped", "back"])
+@pytest.mark.parametrize("tile", ["dropped", "back", "movers"])
 def test_tile_lists_exactly_the_seeded_tracks(image: str, tile: str) -> None:
     rows = run_tile(image=image, sql=tile_sql(tile=tile))
-    assert {(row["Feed"], row["Track"]) for row in rows} == EXPECTED[tile]
+    assert listed(tile=tile, rows=rows) == EXPECTED[tile]
     if tile == "back":
         assert {row["Silent (min)"] for row in rows} == {10}
 
 
-@pytest.mark.parametrize("tile", ["dropped", "back"])
+@pytest.mark.parametrize("tile", ["dropped", "back", "movers"])
 def test_a_broken_tile_is_caught(image: str, tile: str) -> None:
     old, new = BROKEN[tile]
     sql = tile_sql(tile=tile)
     assert old in sql
     rows = run_tile(image=image, sql=sql.replace(old, new))
-    assert {(row["Feed"], row["Track"]) for row in rows} != EXPECTED[tile]
+    assert listed(tile=tile, rows=rows) != EXPECTED[tile]
