@@ -48,6 +48,7 @@ The sections follow [.env.example](../.env.example): stack-wide settings first, 
 | `DFE_CORE_ENABLED`                               | Toggle to turn on core components                                                    | `true`                                                              |
 | `DFE_HYPERDX_ENABLED`                            | Toggle to start dfe-hyperdx + its proxy + DocumentDB. Ignored with `DFE_CORE_ENABLED=false`, since dfe-hyperdx signs callers in with the engine's token | unset, the profile decides                                          |
 | `DFE_OTEL_ENABLED`                               | Toggle to start the collector                                                        | unset, the profile decides                                          |
+| `DFE_GNMIC_ENABLED`                              | Toggle to start gnmic, which streams gNMI telemetry to the collector. Needs the collector. [gnmi.md](gnmi.md) | `false`                                                             |
 | `KAFBAT_ENABLED`                                 | Toggle to turn on Kafbat                                                             | `true`                                                              |
 
 ### Host exposure
@@ -410,6 +411,8 @@ Every profile declares `hyperdx: true` and `DFE_HYPERDX_ENABLED=false` turns it 
 
 `hyperdx-documentdb` is PostgreSQL with the DocumentDB extensions and the Mongo-wire gateway dfe-hyperdx talks to, in one container, with its usage telemetry to a third party switched off. The gateway serves TLS only, on a certificate the one-shot `hyperdx-documentdb-tls` mints into a volume on first start and renews once it has 30 days left. It runs as root, since a fresh volume lands root-owned, and leaves the pair to uid 1000, which both documentdb-local and dfe-hyperdx run as. dfe-hyperdx gets only the CA that signed it, verifies the gateway against it and logs in with SCRAM-SHA-256.
 
+Both containers read the pair when they start. `make up` and `make dev` stop the stack first, so they pick up a renewal. A plain `docker compose up -d` on a running stack doesn't, as the one-shot's log says. Run `docker compose restart hyperdx-documentdb`, then `docker compose restart dfe-hyperdx`.
+
 dfe-hyperdx runs in `oidc-proxy` mode, as it does on Kubernetes: it verifies the engine's ES384 token against the engine's JWKS. A caller carrying none is unauthenticated. Signing in to the console is what signs a browser in here: dfe-ui mirrors the session into a `dfe_token` cookie and cookies ignore ports. The engine identifies with a service token of its own, which is how a source added through the console reaches every dfe-hyperdx team. That token's team, `DFE_HYPERDX_TEAM`, holds no connection and no sources, because dfe-hyperdx seeds a team only from a person's login, never from the service token. Every other team gets its connection and sources on its members' first login, from the engine's answer for that member: `main` and `hunts` everywhere, plus the otel and `clickhouse_system` sources on a platform team. Each team gets the shipped dashboards those sources can render. From hyperi-io/dfe-hyperdx#106 on, a login the engine gives no connection is retried on a later request.
 
 The same toggle points the engine at dfe-hyperdx: with it on, the engine receives `DFE_ENGINE_HYPERDX_ENABLED=true` and `DFE_ENGINE_HYPERDX_BASE_URL=http://dfe-hyperdx:8000`, so its `/api/v1/hyperdx/*` surface answers instead of returning `503 hyperdx_absent`.
@@ -493,7 +496,7 @@ The engine runs as its image's user, not yours, so the two meet on a group. `mak
 
 The receiver's other listeners publish once their port key is set: 4317 (OTLP gRPC), 4318 (OTLP HTTP), 5044 (Beats), 6000 (Vector gRPC), 8088 (HEC), 514 UDP and TCP and 6514 (syslog) and 2055, 4739 and 6343 UDP (flow).
 
-dfe-fetcher and the transforms run one instance per source. An instance publishes no host port.
+One dfe-fetcher container polls every fetcher source, and each transform runs one instance per source. Neither publishes a host port.
 
 ## ClickHouse Schema
 

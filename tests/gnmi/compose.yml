@@ -1,0 +1,21 @@
+# Project:   dfe-docker
+# File:      tests/gnmi/compose.yml
+# Purpose:   A gNMI device emulator for scripts/test_gnmi.py
+# Language:  YAML
+#
+# License:   BUSL-1.1
+# Copyright: (c) 2026 HYPERI PTY LIMITED
+
+# lemming publishes one floating tag, so pin it by digest
+services:
+  gnmi-emulator:
+    image: ${DFE_GNMI_EMULATOR_IMAGE:-us-west1-docker.pkg.dev/openconfig-lemming/release/lemming@sha256:a4f1261bf9bf1d234bbec14070247cf1127f44d57de9fdd25ddf4997e733c1d8}
+    container_name: ${DFE_CONTAINER_PREFIX:-}dfe-gnmi-emulator
+    extends: {file: compose/limits.yml, service: limits-sidecar}
+    command: ["/lemming/lemming", "--logtostderr", "--zapi_addr", "unix:/tmp/zserv.api"]
+    healthcheck:
+      test: ["CMD", "bash", "-c", "exec 3<>/dev/tcp/127.0.0.1/9339"]
+      interval: 3s
+      timeout: 3s
+      start_period: 5s
+      retries: 10

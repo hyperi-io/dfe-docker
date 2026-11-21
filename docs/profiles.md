@@ -24,6 +24,7 @@ Every profile runs the engine, the UI, dfe-hyperdx and the self-monitoring colle
 | `kafbat` | Kafbat, on the Kafka transport only | true | `KAFBAT_ENABLED` |
 | `hyperdx` | dfe-hyperdx and its DocumentDB store | false | `DFE_HYPERDX_ENABLED` |
 | `otel` | the collector for the stack's own telemetry | false | `DFE_OTEL_ENABLED` |
+| `gnmic` | gnmic, streaming gNMI telemetry from network devices to the collector ([gnmi.md](gnmi.md)). Needs `otel` | false | `DFE_GNMIC_ENABLED` |
 | `auth` | the oauth2-proxy gates ([auth-profile.md](auth-profile.md)) | false | `DFE_AUTH_ENABLED` |
 
 **A name is `<tier>-<transport>`.** dfe-engine runs as `docker-slim` on a `slim-*` profile and as `docker-single` on a `single-*` one. It seeds its default apps from that tier. `slim` is the core data path alone. `single-kafka` adds the per-source apps and runs one archiver, which archives each source from its landing topic. `single-grpc` runs no archiver, so archiving needs a Kafka profile ([architecture.md](architecture.md#events-arrive-two-ways-and-leave-one)). `resolve_profile.py` rejects any other name. An old one such as `single` fails with the profile that replaces it.

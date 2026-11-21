@@ -114,7 +114,7 @@ endif
 
 # DFE_BIND_SCOPE=all needs DFE_EXTERNAL_ORIGIN on the goals that start or self-test
 # the stack: docs/configuration.md, "External origin".
-ORIGIN_GOALS := dev ci up apply infra post test-source test-flows print-compose-env
+ORIGIN_GOALS := dev ci up apply infra post test-source test-flows test-gnmi print-compose-env
 # The e2e suites start a stack per test and probe the console at DFE_EXTERNAL_ORIGIN's host under console TLS, so there they need what a start goal needs.
 E2E_GOALS := test-e2e test-resilience
 ifeq ($(strip $(DFE_PROXY_TLS)),true)
@@ -725,6 +725,11 @@ test-flows: ## Flow shapes against a running stack (needs DFE_ENGINE_REPO; FLOW_
 .PHONY: test-source
 test-source: ## Post-deploy source test against a running stack (needs DFE_INFRA_DIR + DFE_ENGINE_REPO; SOURCE_ARGS passes flags)
 	@python3 ./scripts/test_source.py $(SOURCE_ARGS)
+
+# The gNMI acceptance test: docs/gnmi.md.
+.PHONY: test-gnmi
+test-gnmi: ## gNMI telemetry reaches the otel tables, from a device emulator on a running stack (GNMI_ARGS passes flags)
+	@python3 ./scripts/test_gnmi.py $(GNMI_ARGS)
 
 # For a host that keeps a stack running and updates itself on a timer: it ends
 # with the standing stack back up and deletes everything it created.
