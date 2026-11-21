@@ -274,6 +274,9 @@ jobs:
         run: |
           docker compose ps --all
           docker compose logs --no-color --tail 100
+          # Low runner disk stops Redpanda and ClickHouse taking writes, so a demo that lands nothing shows it here
+          df -h "$(docker info --format '{{.DockerRootDir}}')" || true
+          docker compose exec -T kafka-redpanda rpk cluster health || true
 
       - name: Tear the stack down
         if: always()
@@ -413,6 +416,7 @@ jobs:
           # A broker under its free-space floor takes no writes, so a pack that lands nothing shows it here
           docker compose -f "$FILE" exec -T kafka-redpanda rpk cluster health || true
           docker compose -f "$FILE" exec -T kafka-redpanda df -h /var/lib/redpanda/data || true
+          df -h "$(docker info --format '{{.DockerRootDir}}')" || true
 
       - name: Tear the demo down
         if: always()
