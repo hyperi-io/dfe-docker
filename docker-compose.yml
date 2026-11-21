@@ -622,6 +622,11 @@ services:
     restart: unless-stopped
     extends: {file: compose/limits.yml, service: limits-sidecar}
     command: ["subscribe", "--config", "/etc/gnmic/gnmic.yaml"]
+    user: "65534:65534"
+    read_only: true
+    cap_drop: [ALL]
+    tmpfs:
+      - /tmp
     environment:
       GNMIC_PASSWORD: ${DFE_GNMIC_PASSWORD:-}
       GNMIC_USERNAME: ${DFE_GNMIC_USERNAME:-}
