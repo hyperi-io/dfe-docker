@@ -406,10 +406,13 @@ jobs:
           services=()
           for svc in $(docker compose -f "$FILE" config --services); do
             case "$svc" in
-              secrets-init | demo-* | dfe-receiver | dfe-transform-elastic-*) services+=("$svc") ;;
+              secrets-init | demo-* | dfe-receiver | dfe-transform-elastic-* | kafka-redpanda) services+=("$svc") ;;
             esac
           done
           docker compose -f "$FILE" logs --no-color --tail 100 "${services[@]}"
+          # A broker under its free-space floor takes no writes, so a pack that lands nothing shows it here
+          docker compose -f "$FILE" exec -T kafka-redpanda rpk cluster health || true
+          docker compose -f "$FILE" exec -T kafka-redpanda df -h /var/lib/redpanda/data || true
 
       - name: Tear the demo down
         if: always()
