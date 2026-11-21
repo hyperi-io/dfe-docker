@@ -175,10 +175,11 @@ services:
         set -eu
         umask 077
         cd /tls
+        # Running containers mount ca and server by subpath, so the directories stay and only their files are replaced
+        mkdir -p ca server
         if ! { [ -s ca/ca.crt ] && [ -s server/tls.key ] && [ -s server/tls.crt ] \
             && openssl x509 -checkend 2592000 -noout -in server/tls.crt >/dev/null; }; then
-          rm -rf ca server ca.key ca.srl server.csr server.ext
-          mkdir ca server
+          rm -f ca/ca.crt server/tls.key server/tls.crt ca.key ca.srl server.csr server.ext
           openssl req -x509 -newkey ec -pkeyopt ec_paramgen_curve:P-384 -nodes -sha384 -days 3650 \
             -subj /CN=dfe-hyperdx-documentdb-ca \
             -addext basicConstraints=critical,CA:TRUE -addext keyUsage=critical,keyCertSign,cRLSign \
@@ -190,6 +191,7 @@ services:
           openssl x509 -req -in server.csr -CA ca/ca.crt -CAkey ca.key -CAcreateserial -CAserial ca.srl \
             -days 3650 -sha384 -extfile server.ext -out server/tls.crt
           rm -f ca.key ca.srl server.csr server.ext
+          echo "hyperdx-documentdb-tls: wrote a new CA and gateway certificate. A running stack serves the old one until 'docker compose restart hyperdx-documentdb', then 'docker compose restart dfe-hyperdx'"
         fi
         chmod 0755 ca
         chmod 0644 ca/ca.crt
