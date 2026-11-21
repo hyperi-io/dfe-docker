@@ -31,6 +31,7 @@
   "zero_ok": [
     "demo-theatre-aircraft-late",
     "demo-theatre-churn/back",
-    "demo-theatre-churn/dropped"
+    "demo-theatre-churn/dropped",
+    "demo-theatre-vessel-moves/movers"
   ]
 }
