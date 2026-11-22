@@ -329,6 +329,8 @@ SEARCH_SOURCE = "main"
 # The console holds every page behind its setup wizard until an organisation and
 # a user of the deployment's own exist.
 SETUP_FIRST_USER = "e2e-analyst"
+# The header the engine reads an account change's re-entered-password grant from
+REAUTH_HEADER = "X-DFE-Reauth"
 SHOTS_DIR_ENV_VAR = "DFE_E2E_SHOTS_DIR"
 HEADED_ENV_VAR = "DFE_E2E_HEADED"
 
@@ -1564,17 +1566,11 @@ def verify_config_mounts(ctx, test):
 
 # ---------------------------------------------------------------------------
 # Send Events
-# - Reads events from a file and sends to the receiver
+# - Reads events from a file and sends to the receiver, with no token: the
+#   receiver here reads its mounted config, which sets no auth, so it takes
+#   a send without one and never enforces an ingest credential
 # ---------------------------------------------------------------------------
 def send_events(ctx, test_name, marker, data_file_name, database, table, ingest_url):
-    base = post._engine_base()
-    session = post.login(base=base)
-    if not (session.token):
-        error(
-            f"No engine session to mint the ingest credential with: {session.fault}",
-            test_name,
-        )
-    bearer = post.ingest_token(base=base, ingest_url=ingest_url, token=session.token)
     data_file_path = PROJECT_DIR / data_file_name
     if not (data_file_path.exists()):
         error(f"Data file '{data_file_path}' could not be found", test_name)
@@ -1597,7 +1593,7 @@ def send_events(ctx, test_name, marker, data_file_name, database, table, ingest_
     send_errors = 0
     for body, status in zip(
         bodies,
-        post_all(bodies=bodies, token=bearer, url=ingest_url, workers=SEND_WORKERS),
+        post_all(bodies=bodies, url=ingest_url, workers=SEND_WORKERS),
         strict=True,
     ):
         if status < 200 or status >= 300:
@@ -3325,6 +3321,7 @@ def run_outage(ctx, test, services, ingest_url, ingest_service):
 # ------------------------------------------------------------------------------
 def engine_call(
     *,
+    headers: dict[str, str] | None = None,
     method: str,
     path: str,
     payload: dict | None = None,
@@ -3337,6 +3334,16 @@ def engine_call(
     try:
         if method == "GET":
             return post._api_get_json(token=token, url=url, **limit)
+        if method == "POST" and headers:
+            status, text = post._exec_request(
+                headers=headers,
+                method="POST",
+                payload=(payload) or ({}),
+                timeout=timeout or 30,
+                token=token,
+                url=url,
+            )
+            return status, post._decoded(text)
         if method == "POST":
             return post._api_post_json(
                 payload=(payload) or ({}), token=token, url=url, **limit
@@ -3345,6 +3352,16 @@ def engine_call(
             return post.api_put_json(
                 payload=(payload) or ({}), token=token, url=url, **limit
             )
+        if method == "DELETE" and headers:
+            status, _ = post._exec_request(
+                headers=headers,
+                method="DELETE",
+                payload=None,
+                timeout=timeout or 10,
+                token=token,
+                url=url,
+            )
+            return status, ""
         if method == "DELETE":
             return post._api_delete(token=token, url=url, **limit), ""
     except seed.ENGINE_FAULTS as error:
@@ -3502,10 +3519,7 @@ def await_hunt_pickup(ctx, test, token, hunt):
 # - Both sets, each event labelled and carrying the hunt's tenant id, until every
 #   one has landed in the table
 # ------------------------------------------------------------------------------
-def send_detection_events(ctx, test, ingest_url, events, tenant, token):
-    bearer = post.ingest_token(
-        base=post._engine_base(), ingest_url=ingest_url, token=token
-    )
+def send_detection_events(ctx, test, ingest_url, events, tenant):
     bodies = _detection.labelled_events(
         marker=test.marker,
         test_name=test.name,
@@ -3516,7 +3530,7 @@ def send_detection_events(ctx, test, ingest_url, events, tenant, token):
     refused = []
     for label, body in bodies:
         try:
-            status = http_post(body=body, token=bearer, url=ingest_url)
+            status = http_post(body=body, url=ingest_url)
         except OSError:
             status = 0
         if status < 200 or status >= 300:
@@ -3677,7 +3691,12 @@ def remove_detection_objects(ctx, test, token, created):
     left = []
     for kind, name in created:
         path = f"{DETECTION_OBJECT_PATHS[kind]}/{quote(name)}"
-        deleted, _ = engine_call(method="DELETE", path=path, token=token)
+        headers = (
+            reauth_headers(token=token, account=name) if kind == "account" else None
+        )
+        deleted, _ = engine_call(
+            headers=headers, method="DELETE", path=path, token=token
+        )
         status, _ = engine_call(method="GET", path=path, token=token)
         if status != 404:
             left.append(f"{kind} '{name}' (DELETE {deleted}, then GET {status})")
@@ -3750,9 +3769,7 @@ def run_detection(ctx, test, ingest_url):
         created.insert(0, ("hunt", hunt))
 
         print()
-        landed = send_detection_events(
-            ctx, test, ingest_url, events, org.tenant, login.token
-        )
+        landed = send_detection_events(ctx, test, ingest_url, events, org.tenant)
         if landed is None:
             return
         last_load_ms = detection_last_load(test)
@@ -3794,11 +3811,51 @@ def run_detection(ctx, test, ingest_url):
 
 
 # ------------------------------------------------------------------------------
+# Reauth Headers
+# - The engine makes the admin re-enter their password before it creates or deletes
+#   an account: POST /auth/reauth answers with a grant for that one account name,
+#   which the change then sends in the header the engine names
+# - Empty when the grant was refused, so the change itself reports the 403
+# ------------------------------------------------------------------------------
+def reauth_headers(*, token, account):
+    _, answer = engine_call(
+        method="POST",
+        path="/auth/reauth",
+        payload={
+            "kind": "account",
+            "password": os.environ.get(post.ADMIN_PASSWORD_KEY, ""),
+            "target": account,
+        },
+        token=token,
+    )
+    grant = answer.get("grant") if isinstance(answer, dict) else None
+    return {REAUTH_HEADER: grant} if grant else None
+
+
+# ------------------------------------------------------------------------------
+# Name Your Organisation
+# - The first one only: If-None-Match: * names it, and a second PUT would need the
+#   ETag of the first
+# ------------------------------------------------------------------------------
+def _name_your_org(*, token, name):
+    try:
+        return post.api_put_json(
+            headers={"If-None-Match": "*"},
+            payload={"name": name},
+            token=token,
+            url=f"{post._engine_base()}/system/organisation",
+        )
+    except seed.ENGINE_FAULTS as error:
+        return 0, str(error)
+
+
+# ------------------------------------------------------------------------------
 # Complete Setup
 # - The organisation the hunt runs for and a user of the deployment's own, which
 #   the console's setup wizard holds every other page back for
 # - Each one this run had to make goes to the front of `created`, so the test
 #   removes it after the hunt and the rule; one that already existed stays
+# - The org named as yours is the exception, which the engine cannot un-name
 # ------------------------------------------------------------------------------
 def complete_setup(ctx, test, token, created):
     org = ensure_detection_org(ctx, test, token, created)
@@ -3807,6 +3864,18 @@ def complete_setup(ctx, test, token, created):
 
     status, setup = engine_call(method="GET", path="/auth/setup-status", token=token)
     pending = ((setup or {}).get("initial_setup") or {}).get("pending_steps") or []
+    if "organisations" in pending:
+        # The engine has no call that un-names your organisation, and it refuses to
+        # delete the org that is named. So an org named here is not removed after the
+        # test: it goes out of `created`, and the stack's volumes take it.
+        named, answer = _name_your_org(token=token, name=org.name)
+        if named == 200:
+            if ("organisation", org.name) in created:
+                created.remove(("organisation", org.name))
+        else:
+            LOGGER.error(
+                f"[{test.name}] PUT /system/organisation returned HTTP {named}: {answer}"
+            )
     if "first_user" in pending:
         # A real account nobody signs in as: the password is minted and dropped.
         account = {
@@ -3814,11 +3883,20 @@ def complete_setup(ctx, test, token, created):
             "password": secrets.token_urlsafe(24),
             "name": "E2E Analyst",
         }
-        made, _ = engine_call(
-            method="POST", path="/auth/accounts", payload=account, token=token
+        made, answer = engine_call(
+            headers=reauth_headers(token=token, account=SETUP_FIRST_USER),
+            method="POST",
+            path="/auth/accounts",
+            payload=account,
+            token=token,
         )
         if made in (200, 201):
             created.insert(0, ("account", SETUP_FIRST_USER))
+        else:
+            LOGGER.error(
+                f"[{test.name}] POST /auth/accounts returned HTTP {made}: {answer}"
+            )
+    if pending:
         status, setup = engine_call(
             method="GET", path="/auth/setup-status", token=token
         )
@@ -3989,10 +4067,7 @@ def run_search_detection(ctx, test, ingest_url, token):
         if org is None or not (hyperdx_ready(ctx, test, token)):
             return
         print()
-        if (
-            send_detection_events(ctx, test, ingest_url, seeds, org.tenant, token)
-            is None
-        ):
+        if send_detection_events(ctx, test, ingest_url, seeds, org.tenant) is None:
             return
         console = open_console(ctx, test)
         if console is None:
@@ -4048,7 +4123,7 @@ def run_search_detection(ctx, test, ingest_url, token):
             return
 
         print()
-        landed = send_detection_events(ctx, test, ingest_url, events, org.tenant, token)
+        landed = send_detection_events(ctx, test, ingest_url, events, org.tenant)
         if landed is None:
             return
         last_load_ms = detection_last_load(test)

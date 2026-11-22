@@ -159,3 +159,20 @@ def test_the_suite_defines_a_search_rule_test_with_both_filters() -> None:
     assert "path: " in block
     assert "value: " in block
     assert "where:" not in block
+
+
+@pytest.mark.parametrize(
+    ("accessible_name", "found"),
+    [
+        ("Username", True),
+        ("* Username or Email", True),
+        ("Username or Email *", True),
+        ("Username or", False),
+        ("Username or Email address", False),
+    ],
+)
+def test_a_label_takes_its_optional_wording(accessible_name: str, found: bool) -> None:
+    assert (
+        bool(_search_rule._label("Username", also=" or Email").match(accessible_name))
+        is found
+    )

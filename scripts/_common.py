@@ -162,6 +162,8 @@ COMPOSE_PART_FILES = (
 COMPOSE_LIVE_UI_FILE = REPO_ROOT / "compose" / "live-ui.yml"
 # Written by resolve_profile.py on every make run that needs the stack and included by the Makefile, so deleting .tmp/ costs nothing
 PROFILE_MK = REPO_ROOT / ".tmp" / "profile.mk"
+# The ingest credential's token, which the scripts mint and no container reads: a key in an env file compose feeds a container changes that container's config hash, and a lost file is minted again
+INGEST_TOKEN_FILE = REPO_ROOT / ".tmp" / "ingest-token"
 RUST_BUILDER = REPO_ROOT / "docker" / "dfe-rust-builder.Dockerfile"
 # The starter objects the seed targets create through the engine API, one directory per kind
 SEED_DIR = REPO_ROOT / "resources" / "seed"
