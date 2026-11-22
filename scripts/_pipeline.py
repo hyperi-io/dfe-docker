@@ -120,6 +120,16 @@ def _request(
         return error.code, error.read().decode() if hasattr(error, "read") else ""
 
 
+def problem_code(*, answer: typing.Any, status: int) -> str:
+    """An engine refusal as its status and `code`, never its body.
+
+    A validation error echoes the request, which for an account create holds the
+    new password, so a message built from the body would print it.
+    """
+    code = answer.get("code") if isinstance(answer, dict) else None
+    return f"HTTP {status} ({code or 'no code'})"
+
+
 def _decoded(raw: str) -> typing.Any:
     """Decode a JSON body, or return the raw text when it is not JSON.
 
@@ -167,10 +177,16 @@ def http_post_json(
     payload: dict,
     token: str = "",
     timeout: int = 30,
+    headers: dict[str, str] | None = None,
 ) -> tuple[int, typing.Any]:
     """POST JSON and return (status, decoded body), for callers that need the body."""
     return _json_call(
-        method="POST", payload=payload, timeout=timeout, token=token, url=url
+        headers=headers,
+        method="POST",
+        payload=payload,
+        timeout=timeout,
+        token=token,
+        url=url,
     )
 
 
@@ -236,14 +252,21 @@ def post_all(
         return list(pool.map(_send, bodies))
 
 
-def http_delete(url: str, token: str = "", timeout: int = 10) -> int:
+def http_delete(
+    url: str,
+    token: str = "",
+    timeout: int = 10,
+    headers: dict[str, str] | None = None,
+) -> int:
     """DELETE a resource and return the HTTP status.
 
     Used to put back what a self test created. It reports the status rather than
     raising, because tidy-up runs on the failure path too and a second exception
     there would bury the finding that mattered.
     """
-    return _request(method="DELETE", url=url, timeout=timeout, token=token)[0]
+    return _request(
+        headers=headers, method="DELETE", url=url, timeout=timeout, token=token
+    )[0]
 
 
 def ch_query(sql: str, *, debug: typing.Callable[[str], None] | None = None) -> str:

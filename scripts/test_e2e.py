@@ -69,6 +69,7 @@ sys.pycache_prefix = str(Path(__file__).resolve().parent.parent / ".tmp" / "pyca
 import _console_tls  # noqa: E402
 import _detection  # noqa: E402
 import _outage  # noqa: E402
+import _reauth  # noqa: E402
 import _search_rule  # noqa: E402
 import _sources  # noqa: E402
 import _stack_state  # noqa: E402
@@ -97,6 +98,7 @@ from _pipeline import (  # noqa: E402
     otel_fresh_counts,
     poll_until,
     post_all,
+    problem_code,
 )
 from build_dev_images import local_image_services, overlay_components  # noqa: E402
 
@@ -329,8 +331,6 @@ SEARCH_SOURCE = "main"
 # The console holds every page behind its setup wizard until an organisation and
 # a user of the deployment's own exist.
 SETUP_FIRST_USER = "e2e-analyst"
-# The header the engine reads an account change's re-entered-password grant from
-REAUTH_HEADER = "X-DFE-Reauth"
 SHOTS_DIR_ENV_VAR = "DFE_E2E_SHOTS_DIR"
 HEADED_ENV_VAR = "DFE_E2E_HEADED"
 
@@ -3334,36 +3334,23 @@ def engine_call(
     try:
         if method == "GET":
             return post._api_get_json(token=token, url=url, **limit)
-        if method == "POST" and headers:
-            status, text = post._exec_request(
-                headers=headers,
-                method="POST",
-                payload=(payload) or ({}),
-                timeout=timeout or 30,
-                token=token,
-                url=url,
-            )
-            return status, post._decoded(text)
         if method == "POST":
             return post._api_post_json(
-                payload=(payload) or ({}), token=token, url=url, **limit
+                headers=headers,
+                payload=(payload) or ({}),
+                token=token,
+                url=url,
+                **limit,
             )
         if method == "PUT":
             return post.api_put_json(
                 payload=(payload) or ({}), token=token, url=url, **limit
             )
-        if method == "DELETE" and headers:
-            status, _ = post._exec_request(
-                headers=headers,
-                method="DELETE",
-                payload=None,
-                timeout=timeout or 10,
-                token=token,
-                url=url,
-            )
-            return status, ""
         if method == "DELETE":
-            return post._api_delete(token=token, url=url, **limit), ""
+            return (
+                post._api_delete(headers=headers, token=token, url=url, **limit),
+                "",
+            )
     except seed.ENGINE_FAULTS as error:
         return 0, str(error)
     raise ValueError(f"engine_call has no method {method!r}")
@@ -3811,42 +3798,30 @@ def run_detection(ctx, test, ingest_url):
 
 
 # ------------------------------------------------------------------------------
+# Admin Session
+# - The token this run signed in with and the admin password it used, which the
+#   engine wants again to change an account
+# ------------------------------------------------------------------------------
+def admin_session(*, token):
+    return _reauth.Session(password=post._console_credential()[1], token=token)
+
+
+# ------------------------------------------------------------------------------
 # Reauth Headers
-# - The engine makes the admin re-enter their password before it creates or deletes
-#   an account: POST /auth/reauth answers with a grant for that one account name,
-#   which the change then sends in the header the engine names
-# - Empty when the grant was refused, so the change itself reports the 403
+# - The grant the engine wants before it creates or deletes an account, for the
+#   admin this run signed in as
+# - None when the engine cannot be reached, so the change reports that itself
+#   rather than aborting a cleanup
 # ------------------------------------------------------------------------------
 def reauth_headers(*, token, account):
-    _, answer = engine_call(
-        method="POST",
-        path="/auth/reauth",
-        payload={
-            "kind": "account",
-            "password": os.environ.get(post.ADMIN_PASSWORD_KEY, ""),
-            "target": account,
-        },
-        token=token,
-    )
-    grant = answer.get("grant") if isinstance(answer, dict) else None
-    return {REAUTH_HEADER: grant} if grant else None
-
-
-# ------------------------------------------------------------------------------
-# Name Your Organisation
-# - The first one only: If-None-Match: * names it, and a second PUT would need the
-#   ETag of the first
-# ------------------------------------------------------------------------------
-def _name_your_org(*, token, name):
     try:
-        return post.api_put_json(
-            headers={"If-None-Match": "*"},
-            payload={"name": name},
-            token=token,
-            url=f"{post._engine_base()}/system/organisation",
+        return _reauth.account_grant(
+            account=account,
+            base=post._engine_base(),
+            session=admin_session(token=token),
         )
-    except seed.ENGINE_FAULTS as error:
-        return 0, str(error)
+    except seed.ENGINE_FAULTS:
+        return None
 
 
 # ------------------------------------------------------------------------------
@@ -3855,7 +3830,7 @@ def _name_your_org(*, token, name):
 #   the console's setup wizard holds every other page back for
 # - Each one this run had to make goes to the front of `created`, so the test
 #   removes it after the hunt and the rule; one that already existed stays
-# - The org named as yours is the exception, which the engine cannot un-name
+# - On a fresh stack the seed's own org is named as yours, which the engine cannot un-name
 # ------------------------------------------------------------------------------
 def complete_setup(ctx, test, token, created):
     org = ensure_detection_org(ctx, test, token, created)
@@ -3865,17 +3840,15 @@ def complete_setup(ctx, test, token, created):
     status, setup = engine_call(method="GET", path="/auth/setup-status", token=token)
     pending = ((setup or {}).get("initial_setup") or {}).get("pending_steps") or []
     if "organisations" in pending:
-        # The engine has no call that un-names your organisation, and it refuses to
-        # delete the org that is named. So an org named here is not removed after the
-        # test: it goes out of `created`, and the stack's volumes take it.
-        named, answer = _name_your_org(token=token, name=org.name)
-        if named == 200:
-            if ("organisation", org.name) in created:
-                created.remove(("organisation", org.name))
-        else:
-            LOGGER.error(
-                f"[{test.name}] PUT /system/organisation returned HTTP {named}: {answer}"
+        # The seed's own org, created and named the way `make orgs` does it. The
+        # engine cannot un-name your organisation, so a test org named here would
+        # stay and make `make orgs` refuse to replace it.
+        try:
+            seed.seed_your_org(
+                base=post._engine_base(), session=admin_session(token=token)
             )
+        except (*seed.ENGINE_FAULTS, seed.SeedError) as error:
+            LOGGER.error(f"[{test.name}] naming your organisation failed: {error}")
     if "first_user" in pending:
         # A real account nobody signs in as: the password is minted and dropped.
         account = {
@@ -3894,7 +3867,8 @@ def complete_setup(ctx, test, token, created):
             created.insert(0, ("account", SETUP_FIRST_USER))
         else:
             LOGGER.error(
-                f"[{test.name}] POST /auth/accounts returned HTTP {made}: {answer}"
+                f"[{test.name}] POST /auth/accounts returned "
+                f"{problem_code(answer=answer, status=made)}"
             )
     if pending:
         status, setup = engine_call(

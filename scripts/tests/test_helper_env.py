@@ -23,6 +23,7 @@ import pytest
 
 import _common
 import _pipeline
+import post
 import test_source
 
 # A key the helpers read from env/engine.env, never from .env
@@ -164,3 +165,42 @@ def test_the_environment_beats_the_engine_env(
     _common._load_env_file(component=_common.ENGINE_COMPONENT, keys=(unset_key,))
 
     assert os.environ[unset_key] == "from-the-shell"
+
+
+@pytest.mark.parametrize(
+    "fault",
+    [post.ApiUnreachable("no engine container"), post.IngestCredentialError("no mint")],
+    ids=["engine-unreachable", "mint-failed"],
+)
+def test_a_token_that_cannot_be_had_is_a_fail_line_not_a_traceback(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    fault: Exception,
+) -> None:
+    def refuse(*, base: str, ingest_url: str) -> str:
+        raise fault
+
+    monkeypatch.setattr(post, "_ingest_bearer", refuse)
+
+    assert test_source._receiver_token(host="localhost") is None
+    assert f"FAIL  {fault}" in capsys.readouterr().err
+
+
+def test_a_run_without_a_receiver_token_exits_1_and_never_starts_the_runner(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    walked = []
+    monkeypatch.setattr(test_source, "_load_env_file", lambda **_: None)
+    monkeypatch.setattr(test_source, "_load_dotenv", lambda: None)
+    monkeypatch.setattr(test_source, "_infra_repo", lambda flag: tmp_path)
+    monkeypatch.setattr(test_source, "_engine_repo", lambda flag: tmp_path)
+    monkeypatch.setattr(test_source, "_runner_python", lambda flag: "python3")
+    monkeypatch.setattr(test_source, "_archive_exec", lambda: [])
+    monkeypatch.setattr(
+        test_source, "_ui_urls", lambda *, bound, host: ("http://ui", "http://api")
+    )
+    monkeypatch.setattr(test_source, "_receiver_token", lambda *, host: None)
+    monkeypatch.setattr(test_source, "walk", lambda *args, **kwargs: walked.append(1))
+
+    assert test_source.main(argv=[]) == 1
+    assert walked == []

@@ -660,23 +660,44 @@ def _api_get_json(
 
 
 def _api_post_json(
-    url: str, payload: dict, token: str = "", timeout: int = 30
+    url: str,
+    payload: dict,
+    token: str = "",
+    timeout: int = 30,
+    headers: dict[str, str] | None = None,
 ) -> tuple[int, typing.Any]:
     """POST JSON and return (status, decoded body), over whichever transport reaches it."""
     if not (_over_network(url)):
-        return http_post_json(url, payload, token=token, timeout=timeout)
+        return http_post_json(
+            url, payload, token=token, timeout=timeout, headers=headers
+        )
     status, body = _exec_request(
-        method="POST", url=url, payload=payload, timeout=timeout, token=token
+        headers=headers,
+        method="POST",
+        url=url,
+        payload=payload,
+        timeout=timeout,
+        token=token,
     )
     return status, _decoded(body)
 
 
-def _api_delete(url: str, token: str = "", timeout: int = 10) -> int:
+def _api_delete(
+    url: str,
+    token: str = "",
+    timeout: int = 10,
+    headers: dict[str, str] | None = None,
+) -> int:
     """DELETE a resource over whichever transport reaches it, returning the status."""
     if not (_over_network(url)):
-        return http_delete(url, token=token, timeout=timeout)
+        return http_delete(url, token=token, timeout=timeout, headers=headers)
     return _exec_request(
-        method="DELETE", url=url, payload=None, timeout=timeout, token=token
+        headers=headers,
+        method="DELETE",
+        url=url,
+        payload=None,
+        timeout=timeout,
+        token=token,
     )[0]
 
 

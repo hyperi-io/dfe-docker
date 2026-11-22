@@ -254,11 +254,15 @@ def _write(*, directory: Path, name: str, text: str) -> None:
     (directory / name).write_text(data=text, encoding="utf-8")
 
 
+_SESSION = seed.Session(password="pw", token="token")
+
+
 class _AccountsEngine:
     """The engine's account routes, holding no account and answering a create with `status`, echoing the request when it refuses."""
 
     def __init__(self, *, status: int = 201) -> None:
         self.created = []
+        self.headers = []
         self.status = status
 
     def get_json(
@@ -268,10 +272,17 @@ class _AccountsEngine:
         return 404, {"detail": {"code": "not_found"}}
 
     def post_json(
-        self, *, payload: dict, token: str, url: str, timeout: int = 30
+        self,
+        *,
+        headers: dict[str, str] | None = None,
+        payload: dict,
+        token: str,
+        url: str,
+        timeout: int = 30,
     ) -> tuple[int, object]:
-        """Record the create and answer it with `status`."""
+        """Record the create and its headers, and answer it with `status`."""
         self.created.append(payload)
+        self.headers.append(headers)
         if self.status == 201:
             return 201, {"username": payload["username"]}
         return self.status, {"detail": [{"input": payload, "type": "value_error"}]}
@@ -322,6 +333,13 @@ def accounts_engine(monkeypatch: pytest.MonkeyPatch) -> _AccountsEngine:
     engine = _AccountsEngine()
     monkeypatch.setattr(seed, "_api_get_json", engine.get_json)
     monkeypatch.setattr(seed, "_api_post_json", engine.post_json)
+    monkeypatch.setattr(
+        seed._reauth,
+        "account_grant",
+        lambda *, account, base, session: {
+            "X-DFE-Reauth": f"grant-for-{account}-{session.password}"
+        },
+    )
     return engine
 
 
@@ -346,7 +364,13 @@ class _SharedFetcherEngine:
         self.detail = detail
 
     def post_json(
-        self, *, payload: dict, token: str, url: str, timeout: int = 30
+        self,
+        *,
+        headers: dict[str, str] | None = None,
+        payload: dict,
+        token: str,
+        url: str,
+        timeout: int = 30,
     ) -> tuple[int, object]:
         """Refuse every create with the detail given."""
         return 422, {"detail": self.detail}
@@ -364,7 +388,7 @@ class TestASourceTheSharedFetcherCannotTake:
             body={"source": "aws-guardduty"},
             kind="sources",
             name="aws-guardduty",
-            token="token",
+            session=_SESSION,
         )
 
         err = capsys.readouterr().err
@@ -383,7 +407,7 @@ class TestASourceTheSharedFetcherCannotTake:
                 body={"source": "x"},
                 kind="sources",
                 name="x",
-                token="token",
+                session=_SESSION,
             )
 
 
@@ -460,10 +484,11 @@ class TestEnsure:
             body={"groups": ["dfe-admins"], "username": "ops"},
             kind="accounts",
             name="ops",
-            token="token",
+            session=_SESSION,
         )
 
         recorded = _common._env_file_values(component=_common.ENGINE_COMPONENT)
+        assert accounts_engine.headers == [{"X-DFE-Reauth": "grant-for-ops-pw"}]
         assert accounts_engine.created == [
             {
                 "groups": ["dfe-admins"],
@@ -489,7 +514,7 @@ class TestEnsure:
                 body={"username": "ops"},
                 kind="accounts",
                 name="ops",
-                token="token",
+                session=_SESSION,
             )
         assert "HTTP 422" in str(refused.value)
         assert "RecordedBeforeAVolumeWipe1" not in str(refused.value)
@@ -503,7 +528,7 @@ class TestEnsure:
                 body={"password": "committed", "username": "ops"},
                 kind="accounts",
                 name="ops",
-                token="token",
+                session=_SESSION,
             )
         assert accounts_engine.created == []
 
@@ -668,10 +693,10 @@ class TestObjects:
             seed._objects(directory=tmp_path, key="name")
 
 
-class TestPromptedToken:
+class TestPromptedSession:
     def test_refuses_without_a_terminal(self) -> None:
         with pytest.raises(seed.SeedError, match="no terminal"):
-            seed._prompted_token(base="http://engine.invalid", terminal=False)
+            seed._prompted_session(base="http://engine.invalid", terminal=False)
 
 
 class TestRefusal:
@@ -815,3 +840,32 @@ class TestSeedSet:
 
         assert any(severity >= floor for severity in severities)
         assert any(severity < floor for severity in severities)
+
+
+class TestSeedYourOrg:
+    def test_creates_the_seed_orgs_then_names_the_seed_s_own(
+        self, home_engine: _HomeEngine, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        ensured = []
+
+        def ensure(
+            *, base: str, body: dict, kind: str, name: str, session: seed.Session
+        ) -> None:
+            ensured.append((kind, name))
+
+        monkeypatch.setattr(seed, "_ensure", ensure)
+
+        seed.seed_your_org(base="http://engine.invalid", session=_SESSION)
+
+        assert ensured == [("orgs", "acme")]
+        assert home_engine.writes == [({"If-None-Match": "*"}, {"name": "acme"})]
+
+    def test_leaves_an_org_the_engine_already_names(
+        self, home_engine: _HomeEngine, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        home_engine.held = "something-else"
+        monkeypatch.setattr(seed, "_ensure", lambda **_: None)
+
+        seed.seed_your_org(base="http://engine.invalid", session=_SESSION)
+
+        assert home_engine.writes == []

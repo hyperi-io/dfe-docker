@@ -42,6 +42,7 @@ from urllib.parse import quote
 # Bytecode for the repo modules imported below goes to .tmp/pycache, as it does under make
 sys.pycache_prefix = str(Path(__file__).resolve().parent.parent / ".tmp" / "pycache")
 
+import _reauth  # noqa: E402
 import _stack_state  # noqa: E402
 import instances  # noqa: E402
 from _common import (  # noqa: E402
@@ -59,7 +60,8 @@ from _common import (  # noqa: E402
     _resolved_services,
     in_stack,
 )
-from _pipeline import clickhouse_url  # noqa: E402
+from _pipeline import clickhouse_url, problem_code  # noqa: E402
+from _reauth import Session  # noqa: E402
 from _sources import hinted_services  # noqa: E402
 from build_dev_images import SRC_REMOTE_DEFAULT  # noqa: E402
 from post import (  # noqa: E402
@@ -85,7 +87,7 @@ from seed import (  # noqa: E402
     _ensure,
     _objects,
     _row_count,
-    _token,
+    _session,
     deploy_fault,
 )
 
@@ -626,23 +628,29 @@ def _counts(*, tables: list[str]) -> dict[str, int | None]:
     return {table: _row_count(source=table) for table in tables}
 
 
-def _complete_setup(*, base: str, token: str) -> None:
+def _complete_setup(*, base: str, session: Session) -> None:
     """Make the organisation and the real user the engine's first-run setup asks for.
 
     Without them every console page opens on the setup wizard. Nobody logs in as the analyst, so its password is random and never shown.
     """
     org = _read_body(kind="orgs", path=ORGS_DIR / f"{DEMO_ORG}.yaml")
-    _ensure(base=base, body=org, kind="orgs", name=DEMO_ORG, token=token)
+    _ensure(base=base, body=org, kind="orgs", name=DEMO_ORG, session=session)
     account = {
         "username": DEMO_ANALYST,
         "password": secrets.token_urlsafe(32),
         "name": "Demo analyst",
         "org": DEMO_ORG,
     }
-    status, answer = _api_post_json(f"{base}/auth/accounts", account, token=token)
+    status, answer = _api_post_json(
+        f"{base}/auth/accounts",
+        account,
+        token=session.token,
+        headers=_reauth.account_grant(account=DEMO_ANALYST, base=base, session=session),
+    )
     if status not in (201, 409):
         raise DemoError(
-            f"creating account {DEMO_ANALYST!r} returned HTTP {status}: {answer}"
+            f"creating account {DEMO_ANALYST!r} returned "
+            f"{problem_code(answer=answer, status=status)}"
         )
     _print(msg=f"setup complete: organisation {DEMO_ORG!r}, account {DEMO_ANALYST!r}")
 
@@ -1125,8 +1133,9 @@ def _install(*, args: argparse.Namespace, manifest: dict) -> int:
     _check_catalogue(vendors=demo.vendors)
 
     base = _engine_base()
-    token = _token(base=base)
-    _complete_setup(base=base, token=token)
+    session = _session(base=base)
+    token = session.token
+    _complete_setup(base=base, session=session)
     replies = []
     for body in [*demo.vendors, demo.intake]:
         replies += _ensure_source(base=base, body=body, token=token)
@@ -1293,7 +1302,7 @@ def _remove_pack(*, args: argparse.Namespace, manifest: dict) -> None:
             )
             _load_dotenv()
             base = _engine_base()
-            token = _token(base=base)
+            token = _session(base=base).token
             if _container(service=HYPERDX_SERVICE):
                 _print(
                     msg=f"removed {_remove_console(token=token)} console dashboard(s) and saved search(es)"

@@ -171,15 +171,15 @@ class TestManifest:
                 seeded[body["source"]] = [e["unit"] for e in endpoints]
             return [], []
 
-        def token(**_: object) -> str:
-            return "token"
+        def session(**_: object) -> demo.Session:
+            return demo.Session(password="pw", token="token")
 
         seeded = {}
         monkeypatch.setattr(demo, "_ensure_fetchers", record)
         for name in ("_ensure_source", "_complete_setup", "_switch_on_syslog"):
             monkeypatch.setattr(demo, name, nothing)
         monkeypatch.setattr(demo, "install_hunts", nothing)
-        monkeypatch.setattr(demo_seed, "_token", token)
+        monkeypatch.setattr(demo_seed, "_session", session)
 
         demo_seed.seed_sources(root=demo_pack_dir(pack=pack))
 
