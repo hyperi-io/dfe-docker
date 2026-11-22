@@ -120,6 +120,16 @@ def _request(
         return error.code, error.read().decode() if hasattr(error, "read") else ""
 
 
+def problem_code(*, answer: typing.Any, status: int) -> str:
+    """An engine refusal as its status and `code`, never its body.
+
+    A validation error echoes the request, which for an account create holds the
+    new password, so a message built from the body would print it.
+    """
+    code = answer.get("code") if isinstance(answer, dict) else None
+    return f"HTTP {status} ({code or 'no code'})"
+
+
 def _decoded(raw: str) -> typing.Any:
     """Decode a JSON body, or return the raw text when it is not JSON.
 

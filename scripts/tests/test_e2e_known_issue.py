@@ -15,6 +15,8 @@ from types import SimpleNamespace
 
 import pytest
 
+import _pipeline
+
 import _outage
 import test_e2e
 
@@ -145,7 +147,26 @@ def test_a_short_archive_stops_every_archiver_gracefully(monkeypatch) -> None:
 def test_a_refusal_is_reported_by_status_and_code_never_its_body(
     answer: object, expected: str
 ) -> None:
-    reported = test_e2e.problem_code(answer=answer, status=422)
+    reported = _pipeline.problem_code(answer=answer, status=422)
 
     assert reported == expected
     assert "SECRET" not in reported
+
+
+def test_an_engine_outage_while_asking_for_a_grant_is_no_grant_not_a_raise(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def down(*, account: str, base: str, session: object) -> None:
+        raise test_e2e.post.ApiUnreachable("no engine container")
+
+    monkeypatch.setattr(test_e2e._reauth, "account_grant", down)
+
+    assert test_e2e.reauth_headers(token="t", account="e2e-analyst") is None
+
+
+def test_the_admin_password_is_the_stripped_one_the_login_used(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv(test_e2e.post.ADMIN_PASSWORD_KEY, "  issued\n")
+
+    assert test_e2e.admin_session(token="t").password == "issued"

@@ -184,3 +184,23 @@ def test_a_token_that_cannot_be_had_is_a_fail_line_not_a_traceback(
 
     assert test_source._receiver_token(host="localhost") is None
     assert f"FAIL  {fault}" in capsys.readouterr().err
+
+
+def test_a_run_without_a_receiver_token_exits_1_and_never_starts_the_runner(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    walked = []
+    monkeypatch.setattr(test_source, "_load_env_file", lambda **_: None)
+    monkeypatch.setattr(test_source, "_load_dotenv", lambda: None)
+    monkeypatch.setattr(test_source, "_infra_repo", lambda flag: tmp_path)
+    monkeypatch.setattr(test_source, "_engine_repo", lambda flag: tmp_path)
+    monkeypatch.setattr(test_source, "_runner_python", lambda flag: "python3")
+    monkeypatch.setattr(test_source, "_archive_exec", lambda: [])
+    monkeypatch.setattr(
+        test_source, "_ui_urls", lambda *, bound, host: ("http://ui", "http://api")
+    )
+    monkeypatch.setattr(test_source, "_receiver_token", lambda *, host: None)
+    monkeypatch.setattr(test_source, "walk", lambda *args, **kwargs: walked.append(1))
+
+    assert test_source.main(argv=[]) == 1
+    assert walked == []

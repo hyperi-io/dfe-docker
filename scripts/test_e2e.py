@@ -98,6 +98,7 @@ from _pipeline import (  # noqa: E402
     otel_fresh_counts,
     poll_until,
     post_all,
+    problem_code,
 )
 from build_dev_images import local_image_services, overlay_components  # noqa: E402
 
@@ -3802,30 +3803,25 @@ def run_detection(ctx, test, ingest_url):
 #   engine wants again to change an account
 # ------------------------------------------------------------------------------
 def admin_session(*, token):
-    return _reauth.Session(
-        password=os.environ.get(post.ADMIN_PASSWORD_KEY, ""), token=token
-    )
+    return _reauth.Session(password=post._console_credential()[1], token=token)
 
 
 # ------------------------------------------------------------------------------
 # Reauth Headers
 # - The grant the engine wants before it creates or deletes an account, for the
 #   admin this run signed in as
+# - None when the engine cannot be reached, so the change reports that itself
+#   rather than aborting a cleanup
 # ------------------------------------------------------------------------------
 def reauth_headers(*, token, account):
-    return _reauth.account_grant(
-        account=account, base=post._engine_base(), session=admin_session(token=token)
-    )
-
-
-# ------------------------------------------------------------------------------
-# Problem Code
-# - What an engine refusal is reported as: its status and `code`, never its body,
-#   which a validation error can fill with the request, a password included
-# ------------------------------------------------------------------------------
-def problem_code(*, answer, status):
-    code = answer.get("code") if isinstance(answer, dict) else None
-    return f"HTTP {status} ({code or 'no code'})"
+    try:
+        return _reauth.account_grant(
+            account=account,
+            base=post._engine_base(),
+            session=admin_session(token=token),
+        )
+    except seed.ENGINE_FAULTS:
+        return None
 
 
 # ------------------------------------------------------------------------------

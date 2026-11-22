@@ -60,7 +60,7 @@ from _common import (  # noqa: E402
     _resolved_services,
     in_stack,
 )
-from _pipeline import clickhouse_url  # noqa: E402
+from _pipeline import clickhouse_url, problem_code  # noqa: E402
 from _reauth import Session  # noqa: E402
 from _sources import hinted_services  # noqa: E402
 from build_dev_images import SRC_REMOTE_DEFAULT  # noqa: E402
@@ -649,7 +649,8 @@ def _complete_setup(*, base: str, session: Session) -> None:
     )
     if status not in (201, 409):
         raise DemoError(
-            f"creating account {DEMO_ANALYST!r} returned HTTP {status}: {answer}"
+            f"creating account {DEMO_ANALYST!r} returned "
+            f"{problem_code(answer=answer, status=status)}"
         )
     _print(msg=f"setup complete: organisation {DEMO_ORG!r}, account {DEMO_ANALYST!r}")
 

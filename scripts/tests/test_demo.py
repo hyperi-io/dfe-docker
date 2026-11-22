@@ -739,6 +739,27 @@ _SESSION = demo.Session(password="pw", token="t")
 
 
 class TestCompleteSetup:
+    def test_a_refused_account_create_does_not_echo_its_password(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        def refuse(
+            url: str,
+            payload: dict,
+            token: str = "",
+            headers: dict[str, str] | None = None,
+        ) -> tuple[int, dict]:
+            return 422, {"code": "value_error", "detail": [{"input": payload}]}
+
+        monkeypatch.setattr(demo, "_ensure", lambda **_: None)
+        monkeypatch.setattr(demo, "_api_post_json", refuse)
+        monkeypatch.setattr(demo._reauth, "account_grant", lambda **_: None)
+
+        with pytest.raises(demo.DemoError) as refused:
+            demo._complete_setup(base="http://engine", session=_SESSION)
+
+        assert "HTTP 422 (value_error)" in str(refused.value)
+        assert "password" not in str(refused.value)
+
     @pytest.mark.parametrize(
         ("org_fault", "status", "refused"),
         [
