@@ -128,3 +128,24 @@ def test_a_short_archive_stops_every_archiver_gracefully(monkeypatch) -> None:
     ]
     assert ctx.failed == 0
     assert ctx.passed == 1
+
+
+@pytest.mark.parametrize(
+    ("answer", "expected"),
+    [
+        (
+            {"code": "value_error", "detail": [{"input": {"password": "SECRET-pw"}}]},
+            "HTTP 422 (value_error)",
+        ),
+        ({"detail": "x"}, "HTTP 422 (no code)"),
+        ("<html>proxy error</html>", "HTTP 422 (no code)"),
+    ],
+    ids=["code", "no-code", "not-json"],
+)
+def test_a_refusal_is_reported_by_status_and_code_never_its_body(
+    answer: object, expected: str
+) -> None:
+    reported = test_e2e.problem_code(answer=answer, status=422)
+
+    assert reported == expected
+    assert "SECRET" not in reported

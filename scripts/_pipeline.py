@@ -167,10 +167,16 @@ def http_post_json(
     payload: dict,
     token: str = "",
     timeout: int = 30,
+    headers: dict[str, str] | None = None,
 ) -> tuple[int, typing.Any]:
     """POST JSON and return (status, decoded body), for callers that need the body."""
     return _json_call(
-        method="POST", payload=payload, timeout=timeout, token=token, url=url
+        headers=headers,
+        method="POST",
+        payload=payload,
+        timeout=timeout,
+        token=token,
+        url=url,
     )
 
 
@@ -236,14 +242,21 @@ def post_all(
         return list(pool.map(_send, bodies))
 
 
-def http_delete(url: str, token: str = "", timeout: int = 10) -> int:
+def http_delete(
+    url: str,
+    token: str = "",
+    timeout: int = 10,
+    headers: dict[str, str] | None = None,
+) -> int:
     """DELETE a resource and return the HTTP status.
 
     Used to put back what a self test created. It reports the status rather than
     raising, because tidy-up runs on the failure path too and a second exception
     there would bury the finding that mattered.
     """
-    return _request(method="DELETE", url=url, timeout=timeout, token=token)[0]
+    return _request(
+        headers=headers, method="DELETE", url=url, timeout=timeout, token=token
+    )[0]
 
 
 def ch_query(sql: str, *, debug: typing.Callable[[str], None] | None = None) -> str:

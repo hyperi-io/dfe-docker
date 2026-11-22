@@ -735,6 +735,9 @@ class TestPrunerCommand:
         }
 
 
+_SESSION = demo.Session(password="pw", token="t")
+
+
 class TestCompleteSetup:
     @pytest.mark.parametrize(
         ("org_fault", "status", "refused"),
@@ -753,26 +756,42 @@ class TestCompleteSetup:
         status: int,
         refused: tuple[type[Exception], str] | None,
     ) -> None:
-        def ensure(*, base: str, body: dict, kind: str, name: str, token: str) -> None:
+        def ensure(
+            *, base: str, body: dict, kind: str, name: str, session: demo.Session
+        ) -> None:
             if org_fault:
                 raise demo.SeedError(org_fault)
             ensured.append((kind, body))
 
-        def post(url: str, payload: dict, token: str = "") -> tuple[int, dict]:
+        def post(
+            url: str,
+            payload: dict,
+            token: str = "",
+            headers: dict[str, str] | None = None,
+        ) -> tuple[int, dict]:
             posted.append(payload)
+            sent.append(headers)
             return status, {}
 
         ensured = []
         posted = []
+        sent = []
         monkeypatch.setattr(demo, "_ensure", ensure)
         monkeypatch.setattr(demo, "_api_post_json", post)
+        monkeypatch.setattr(
+            demo._reauth,
+            "account_grant",
+            lambda *, account, base, session: {
+                "X-DFE-Reauth": f"grant-for-{account}-{session.password}"
+            },
+        )
 
         if refused is not None:
             error, match = refused
             with pytest.raises(error, match=match):
-                demo._complete_setup(base="http://engine", token="t")
+                demo._complete_setup(base="http://engine", session=_SESSION)
             return
-        demo._complete_setup(base="http://engine", token="t")
+        demo._complete_setup(base="http://engine", session=_SESSION)
 
         org = {
             "display_name": "Demo",
@@ -782,6 +801,7 @@ class TestCompleteSetup:
         assert ensured == [("orgs", org)]
         assert [p["username"] for p in posted] == [demo.DEMO_ANALYST]
         assert posted[0]["org"] == demo.DEMO_ORG
+        assert sent == [{"X-DFE-Reauth": f"grant-for-{demo.DEMO_ANALYST}-pw"}]
         assert len(posted[0]["password"]) >= 32
 
 
@@ -1520,7 +1540,7 @@ class TestDemoSeed:
         monkeypatch.setenv(demo_seed.BREAKGLASS_PASSWORD_KEY, password)
 
         with pytest.raises(demo.DemoError, match="is unset"):
-            demo_seed._token(base="http://dfe-engine:8000/api/v1")
+            demo_seed._session(base="http://dfe-engine:8000/api/v1")
 
 
 # The telco pack generator, loaded from beside its events

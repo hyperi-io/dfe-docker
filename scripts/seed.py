@@ -64,6 +64,8 @@ from _common import (  # noqa: E402
     _resolved_services,
     seed_password_key,
 )
+import _reauth  # noqa: E402
+from _reauth import Session  # noqa: E402
 from _pipeline import ch_int, escape_literal, http_post  # noqa: E402
 from init import _LEN_CREDENTIAL, _generate_secret  # noqa: E402
 from post import (  # noqa: E402
@@ -82,6 +84,7 @@ from post import (  # noqa: E402
     _ingest_target,
     _refresh_access_summary,
     _replace_file,
+    _console_credential,
     _request_token,
     IngestCredentialError,
     _without_passwords,
@@ -173,10 +176,17 @@ def _await_landing(*, expected: int, source: str) -> None:
         time.sleep(LANDING_INTERVAL_SECONDS)
 
 
-def _create(*, base: str, body: dict, kind: str, name: str, token: str) -> None:
+def _create(*, base: str, body: dict, kind: str, name: str, session: Session) -> None:
     """Create one object, deploying it when it is a source and handing over its password when it is an account."""
     route = KINDS[kind].route
-    status, answer = _api_post_json(payload=body, token=token, url=f"{base}{route}")
+    headers = (
+        _reauth.account_grant(account=name, base=base, session=session)
+        if kind == "accounts"
+        else None
+    )
+    status, answer = _api_post_json(
+        headers=headers, payload=body, token=session.token, url=f"{base}{route}"
+    )
     detail = answer.get("detail", answer) if isinstance(answer, dict) else answer
     if kind == "sources" and status == 422 and SHARED_REFUSAL in str(detail):
         _print(msg=f"WARNING source {name!r} is skipped: {detail}")
@@ -190,7 +200,7 @@ def _create(*, base: str, body: dict, kind: str, name: str, token: str) -> None:
     _print(msg=f"created {KINDS[kind].noun} {name!r}")
     _print_hints(answer=answer)
     if kind == "sources":
-        _deploy(base=base, name=name, token=token)
+        _deploy(base=base, name=name, token=session.token)
     if kind == "accounts":
         engine_env = _rel_path(path=_env_file(component=ENGINE_COMPONENT))
         _print(
@@ -223,7 +233,7 @@ def _deployed(*, body: object) -> bool:
     return isinstance(body, dict) and bool(body.get("deployed_version"))
 
 
-def _ensure(*, base: str, body: dict, kind: str, name: str, token: str) -> None:
+def _ensure(*, base: str, body: dict, kind: str, name: str, session: Session) -> None:
     """Create one object unless the engine holds it, and deploy a source it holds undeployed."""
     if kind == "accounts" and "password" in body:
         raise SeedError(
@@ -231,7 +241,7 @@ def _ensure(*, base: str, body: dict, kind: str, name: str, token: str) -> None:
             f"accounts` mints one into env/engine.env instead"
         )
     path = f"{KINDS[kind].route}/{quote(safe='', string=name)}"
-    status, answer = _api_get_json(token=token, url=f"{base}{path}")
+    status, answer = _api_get_json(token=session.token, url=f"{base}{path}")
     action = _action(status=status)
     if action == "fault":
         raise SeedError(f"GET {path!r} returned HTTP {status}: {answer}")
@@ -243,11 +253,11 @@ def _ensure(*, base: str, body: dict, kind: str, name: str, token: str) -> None:
     if action == "create" and kind == "accounts":
         body = {**body, "password": _account_password(username=name)}
     if action == "create":
-        _create(base=base, body=body, kind=kind, name=name, token=token)
+        _create(base=base, body=body, kind=kind, name=name, session=session)
         return
     _print(msg=f"{KINDS[kind].noun} {name!r} already exists")
     if kind == "sources" and not (_deployed(body=answer)):
-        _deploy(base=base, name=name, token=token)
+        _deploy(base=base, name=name, token=session.token)
 
 
 def _events(*, directory: Path) -> list[tuple[str, list[dict]]]:
@@ -315,6 +325,17 @@ def _name_your_org(*, base: str, token: str) -> None:
     _print(msg=f"named org {name!r} as your organisation")
 
 
+def seed_your_org(*, base: str, session: Session) -> None:
+    """Create the orgs in resources/seed and name the seed's own org as the deployment's, unless the engine names one already.
+
+    `make orgs` and the e2e suite's setup both end here, so a stack never holds a
+    test org in the place the seed names.
+    """
+    for name, body in _objects(directory=SEED_DIR / "orgs", key=KINDS["orgs"].key):
+        _ensure(base=base, body=body, kind="orgs", name=name, session=session)
+    _name_your_org(base=base, token=session.token)
+
+
 def _objects(*, directory: Path, key: str) -> list[tuple[str, dict]]:
     """Read every seed file in directory, in name order, as (name, request body)."""
     objects = []
@@ -341,7 +362,7 @@ def _print_hints(*, answer: object) -> None:
         _print(msg=f"  {hint}")
 
 
-def _prompted_token(*, base: str, terminal: bool) -> str:
+def _prompted_session(*, base: str, terminal: bool) -> Session:
     """Log in as the account the person at the terminal names, on a stack whose bootstrap admin is retired."""
     if not (terminal):
         raise SeedError(
@@ -373,7 +394,7 @@ def _prompted_token(*, base: str, terminal: bool) -> str:
             f"{username!r} is still on the password it was issued; change it in the "
             f"console, then run this again"
         )
-    return token
+    return Session(password=password, token=token)
 
 
 def _read(*, path: Path) -> object:
@@ -458,7 +479,7 @@ def _seed_kind(
     kind: str,
     objects: list[tuple[str, dict]],
     per_source_apps: list[str],
-    token: str,
+    session: Session,
 ) -> int:
     """Create every object of one kind the engine lacks and this stack can run, and return how many failed."""
     failed = 0
@@ -468,13 +489,13 @@ def _seed_kind(
             if reason:
                 _print(msg=f"SKIP {KINDS[kind].noun} {name!r}: {reason}")
                 continue
-            _ensure(base=base, body=body, kind=kind, name=name, token=token)
+            _ensure(base=base, body=body, kind=kind, name=name, session=session)
         except (*ENGINE_FAULTS, SeedError) as error:
             _print(msg=f"FAIL {KINDS[kind].noun} {name!r}: {error}")
             failed += 1
     if kind == "sources":
         try:
-            _reconcile(base=base, token=token)
+            _reconcile(base=base, token=session.token)
         except (*ENGINE_FAULTS, SeedError) as error:
             _print(msg=f"FAIL {error}")
             failed += 1
@@ -575,16 +596,16 @@ def _tagged(*, record: dict, source: str) -> str:
     return json.dumps(obj={**record, "_source": source})
 
 
-def _token(*, base: str) -> str:
-    """A token for the seed writes: the bootstrap admin's, or once it is retired, one for an account named at the terminal."""
+def _session(*, base: str) -> Session:
+    """A session for the seed writes: the bootstrap admin's, or once it is retired, one for an account named at the terminal."""
     if _admin_retired(base=base):
-        return _prompted_token(base=base, terminal=sys.stdin.isatty())
+        return _prompted_session(base=base, terminal=sys.stdin.isatty())
     signed_in = login(base=base)
     if signed_in.fault:
         raise SeedError(
             _refusal(fault=signed_in.fault, prompted=False, status=signed_in.status)
         )
-    return signed_in.token
+    return Session(password=_console_credential()[1], token=signed_in.token)
 
 
 def deploy_fault(*, answer: object, status: int) -> str:
@@ -649,7 +670,7 @@ def main() -> int:
             return 1
         base = _engine_base()
         try:
-            token = _token(base=base)
+            session = _session(base=base)
         except (*ENGINE_FAULTS, SeedError) as error:
             _print(msg=f"FAIL {error}")
             return 1
@@ -658,7 +679,7 @@ def main() -> int:
             events=events,
             per_source_apps=per_source_apps,
             sources=dict(sources),
-            token=token,
+            token=session.token,
         )
 
     try:
@@ -672,7 +693,7 @@ def main() -> int:
 
     base = _engine_base()
     try:
-        token = _token(base=base)
+        session = _session(base=base)
     except (*ENGINE_FAULTS, SeedError) as error:
         _print(msg=f"FAIL {error}")
         return 1
@@ -684,13 +705,13 @@ def main() -> int:
             kind=kind,
             objects=kind_objects,
             per_source_apps=per_source_apps,
-            token=token,
+            session=session,
         ):
             return 1
         if kind != "orgs":
             continue
         try:
-            _name_your_org(base=base, token=token)
+            _name_your_org(base=base, token=session.token)
         except (*ENGINE_FAULTS, SeedError) as error:
             _print(msg=f"FAIL {error}")
             return 1

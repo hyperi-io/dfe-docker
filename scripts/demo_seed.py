@@ -42,6 +42,7 @@ from _common import (  # noqa: E402
     demo_pack_names,
     in_stack,
 )
+from _reauth import Session  # noqa: E402
 from post import ENGINE_NETWORK_BASE, _request_token  # noqa: E402
 from seed import ENGINE_FAULTS, SeedError  # noqa: E402
 
@@ -68,8 +69,8 @@ def _loaded(*, root: Path) -> demo.Demo | None:
     return loaded
 
 
-def _token(*, base: str) -> str:
-    """A token for the break-glass account, the demo's one admin that needs no password change."""
+def _session(*, base: str) -> Session:
+    """A session for the break-glass account, the demo's one admin that needs no password change."""
     password = os.environ.get(BREAKGLASS_PASSWORD_KEY, "").strip()
     if not (password):
         raise demo.DemoError(
@@ -80,12 +81,12 @@ def _token(*, base: str) -> str:
     )
     if (status != 200) or (not (token)):
         raise demo.DemoError(f"login as {BREAKGLASS_USERNAME!r} returned HTTP {status}")
-    return token
+    return Session(password=password, token=token)
 
 
 def install_console(*, root: Path) -> None:
     """Create the pack's dashboards and saved searches once dfe-hyperdx holds every source they read."""
-    token = _token(base=ENGINE_NETWORK_BASE)
+    token = _session(base=ENGINE_NETWORK_BASE).token
     deadline = time.monotonic() + CONSOLE_TIMEOUT_SECONDS
     while True:
         try:
@@ -106,8 +107,9 @@ def install_console(*, root: Path) -> None:
 def seed_sources(*, root: Path) -> None:
     """Bring every pack source to its file and turn on the syslog listener the intake reads."""
     loaded = _loaded(root=root)
-    token = _token(base=ENGINE_NETWORK_BASE)
-    demo._complete_setup(base=ENGINE_NETWORK_BASE, token=token)
+    session = _session(base=ENGINE_NETWORK_BASE)
+    token = session.token
+    demo._complete_setup(base=ENGINE_NETWORK_BASE, session=session)
     if loaded is None:
         _print(msg=f"{str(root)!r} holds no source files, so none were created")
         return

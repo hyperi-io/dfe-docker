@@ -23,6 +23,7 @@ import pytest
 
 import _common
 import _pipeline
+import post
 import test_source
 
 # A key the helpers read from env/engine.env, never from .env
@@ -164,3 +165,22 @@ def test_the_environment_beats_the_engine_env(
     _common._load_env_file(component=_common.ENGINE_COMPONENT, keys=(unset_key,))
 
     assert os.environ[unset_key] == "from-the-shell"
+
+
+@pytest.mark.parametrize(
+    "fault",
+    [post.ApiUnreachable("no engine container"), post.IngestCredentialError("no mint")],
+    ids=["engine-unreachable", "mint-failed"],
+)
+def test_a_token_that_cannot_be_had_is_a_fail_line_not_a_traceback(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    fault: Exception,
+) -> None:
+    def refuse(*, base: str, ingest_url: str) -> str:
+        raise fault
+
+    monkeypatch.setattr(post, "_ingest_bearer", refuse)
+
+    assert test_source._receiver_token(host="localhost") is None
+    assert f"FAIL  {fault}" in capsys.readouterr().err

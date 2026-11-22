@@ -327,6 +327,17 @@ def _receiver_url(*, host: str) -> str:
     )
 
 
+def _receiver_token(*, host: str) -> str | None:
+    """The ingest token the runner sends receiver posts with, None after a FAIL line when it cannot be had."""
+    try:
+        return post._ingest_bearer(
+            base=post._engine_base(), ingest_url=_receiver_url(host=host)
+        )
+    except (post.ApiUnreachable, post.IngestCredentialError) as reason:
+        _print(msg=f"FAIL  {reason}")
+        return None
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         prog="test_source.py",
@@ -444,9 +455,9 @@ def main(argv: list[str] | None = None) -> int:
     runner += [arg for arg in runner_args if arg != "--"]
 
     _print(msg=f"case {args.case}, console {ui_url}, runner from {infra}")
-    receiver_token = post._ingest_bearer(
-        base=post._engine_base(), ingest_url=_receiver_url(host=host)
-    )
+    receiver_token = _receiver_token(host=host)
+    if receiver_token is None:
+        return 1
     return walk(
         runner,
         _suite_env(
