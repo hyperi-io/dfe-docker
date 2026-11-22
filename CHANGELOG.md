@@ -3,6 +3,13 @@
 Rendered by CI and committed back at the end of a release -- do not edit by
 hand. Release notes also appear on the GitHub Releases page, one per tag.
 
+## [1.0.13](https://github.com/hyperi-io/dfe-docker/compare/v1.0.12...v1.0.13) (2026-11-22)
+
+### Bug Fixes
+
+* **post:** keep the ingest token out of the engine's env file ([835e345](https://github.com/hyperi-io/dfe-docker/commit/835e3459db7177ba3fd9dc6321b1a68b8d19ad33))
+* **seed:** send the reauth grant when creating or deleting accounts ([ca57dd0](https://github.com/hyperi-io/dfe-docker/commit/ca57dd0b713d4cfd8182e05197d008cfdd15fe61))
+
 ## [1.0.12](https://github.com/hyperi-io/dfe-docker/compare/v1.0.11...v1.0.12) (2026-11-21)
 
 ### Bug Fixes
