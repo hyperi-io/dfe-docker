@@ -152,9 +152,10 @@ def missing_fragments(where_clause: str, fragments: list[str]) -> list[str]:
     ]
 
 
-def _label(name: str) -> re.Pattern[str]:
-    """Match a form field by label, with or without the required marker on either side of it."""
-    return re.compile(rf"^\s*\*?\s*{re.escape(name)}\s*\*?\s*$")
+def _label(name: str, *, also: str = "") -> re.Pattern[str]:
+    """Match a form field by label, with or without the required marker on either side of it and the optional wording `also` after the name."""
+    tail = rf"(?:{re.escape(also)})?" if also else ""
+    return re.compile(rf"^\s*\*?\s*{re.escape(name)}{tail}\s*\*?\s*$")
 
 
 @dataclass(frozen=True, slots=True)
@@ -246,7 +247,9 @@ class Console:
         local = page.get_by_role("tab", name=LOCAL_LOGIN_TAB, exact=True)
         if local.count():
             local.first.click()
-        page.get_by_role("textbox", name=_label("Username")).fill(username)
+        page.get_by_role("textbox", name=_label("Username", also=" or Email")).fill(
+            username
+        )
         page.get_by_role("textbox", name=_label("Password")).fill(password)
         page.get_by_role("button", name="Login", exact=True).click()
         page.wait_for_url(lambda url: "/login" not in url, timeout=QUERY_TIMEOUT_MS)
