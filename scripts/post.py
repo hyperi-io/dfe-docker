@@ -1481,13 +1481,17 @@ def _wait_for_last_insert(*, database: str, name: str) -> None:
     already holds can still land after the delete returns.
     """
     table = f"{escape_literal(database)}.{escape_literal(name)}"
+    # The loader inserts asynchronously, so the write that can fail is the later flush.
     sql = (
-        "SELECT count() FROM system.query_log WHERE query_kind = 'Insert' "
+        "SELECT count() FROM system.query_log "
+        "WHERE query_kind IN ('Insert', 'AsyncInsertFlush') "
         f"AND event_time > now() - INTERVAL {ROUTING_QUIET_SECONDS} SECOND "
         f"AND has(tables, '{table}')"
     )
     deadline = time.monotonic() + ROUTING_QUIET_TIMEOUT_SECONDS
     while time.monotonic() < deadline:
+        # query_log is written on a timer, so the newest inserts show only after a flush.
+        ch_query("SYSTEM FLUSH LOGS")
         # A failed probe answers '', and the drop goes ahead as it did before.
         if ch_query(sql).strip() in ("", "0"):
             return

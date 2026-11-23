@@ -1471,6 +1471,8 @@ def _stub_routed_removal(
 
     monkeypatch.setattr(post, "_api_delete", _delete)
     monkeypatch.setattr(post, "ch_execute", _execute)
+    # A quiet table, so no case reaches a ClickHouse on the test host.
+    monkeypatch.setattr(post, "ch_query", lambda sql: "0")
     return deletes, statements
 
 
@@ -1508,10 +1510,17 @@ def test_the_drop_waits_until_the_loader_stops_writing(
 ) -> None:
     _, statements = _stub_routed_removal(monkeypatch, lambda: 204)
     asked: list[str] = []
+    flushes: list[str] = []
     replies = iter(answers)
-    monkeypatch.setattr(
-        post, "ch_query", lambda sql: asked.append(sql) or next(replies, "2")
-    )
+
+    def answer(sql: str) -> str:
+        if sql == "SYSTEM FLUSH LOGS":
+            flushes.append(sql)
+            return ""
+        asked.append(sql)
+        return next(replies, "2")
+
+    monkeypatch.setattr(post, "ch_query", answer)
     monkeypatch.setattr(post.time, "sleep", lambda _s: None)
     monkeypatch.setattr(post, "ROUTING_QUIET_TIMEOUT_SECONDS", timeout)
 
@@ -1521,6 +1530,8 @@ def test_the_drop_waits_until_the_loader_stops_writing(
 
     assert statements == ["DROP TABLE IF EXISTS dfe.postroute1a2b3c4d SYNC"]
     assert f"has(tables, 'dfe.{_ROUTED}')" in asked[0]
+    assert "'AsyncInsertFlush'" in asked[0]
+    assert len(flushes) == len(asked)
     if probes is not None:
         assert len(asked) == probes
     assert ("still took inserts" in capsys.readouterr().err) is noted
@@ -1609,6 +1620,8 @@ class _RoutingEngine:
         return 200, {"items": items}
 
     def query(self, sql: str, **kwargs) -> str:
+        if "system.query_log" in sql:
+            return "0"
         return "\n".join(f"{name}\t{int(at)}" for name, at in self.tables.items())
 
     def post_json(self, url: str, payload: dict, token: str = "", timeout: int = 30):
