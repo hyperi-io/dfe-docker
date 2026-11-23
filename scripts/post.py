@@ -324,6 +324,9 @@ ROUTING_INTERVAL_SECONDS = 3.0
 # The engine deletes a source's two topics before it answers, each delete allowed
 # 30s after a 10s topic listing, which a broker that does not answer uses in full.
 ROUTING_DELETE_TIMEOUT_SECONDS = 90
+# Twice dfe-loader's default buffer.flush_age_secs of 5, so a batch held at delete time has landed.
+ROUTING_QUIET_SECONDS = 10
+ROUTING_QUIET_TIMEOUT_SECONDS = 60
 # `.tmp/profile.mk`'s answer to "does the engine render this tier's app config": the claim is only makeable where it does
 APP_CONFIG_DIR_KEY = "DFE_ENGINE_APP_CONFIG_DIR"
 
@@ -1467,7 +1470,31 @@ def _remove_routed_source(*, base: str, database: str, name: str, token: str) ->
     if not (removed):
         _print(msg=f"      note: {database}.{name} is kept while its source remains")
         return
+    _wait_for_last_insert(database=database, name=name)
     _drop_routing_table(database=database, name=name)
+
+
+def _wait_for_last_insert(*, database: str, name: str) -> None:
+    """Wait until the loader has written nothing to the table for a quiet window.
+
+    The loader drops a deleted source's route on its next reload, so a batch it
+    already holds can still land after the delete returns.
+    """
+    table = f"{escape_literal(database)}.{escape_literal(name)}"
+    sql = (
+        "SELECT count() FROM system.query_log WHERE query_kind = 'Insert' "
+        f"AND event_time > now() - INTERVAL {ROUTING_QUIET_SECONDS} SECOND "
+        f"AND has(tables, '{table}')"
+    )
+    deadline = time.monotonic() + ROUTING_QUIET_TIMEOUT_SECONDS
+    while time.monotonic() < deadline:
+        # A failed probe answers '', and the drop goes ahead as it did before.
+        if ch_query(sql).strip() in ("", "0"):
+            return
+        time.sleep(2)
+    _print(
+        msg=f"      note: {database}.{name} still took inserts after its source went"
+    )
 
 
 def _drop_routing_table(*, database: str, name: str) -> None:

@@ -1493,6 +1493,39 @@ def test_the_routing_table_is_dropped_once_its_source_is_gone(
     assert statements == ["DROP TABLE IF EXISTS dfe.postroute1a2b3c4d SYNC"]
 
 
+@pytest.mark.parametrize(
+    ("answers", "timeout", "probes", "noted"),
+    [(["3", "1", "0"], 60, 3, False), (["2"] * 50, 0.05, None, True)],
+    ids=["waits-for-quiet", "drops-after-timeout"],
+)
+def test_the_drop_waits_until_the_loader_stops_writing(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture,
+    answers: list[str],
+    timeout: float,
+    probes: int | None,
+    noted: bool,
+) -> None:
+    _, statements = _stub_routed_removal(monkeypatch, lambda: 204)
+    asked: list[str] = []
+    replies = iter(answers)
+    monkeypatch.setattr(
+        post, "ch_query", lambda sql: asked.append(sql) or next(replies, "2")
+    )
+    monkeypatch.setattr(post.time, "sleep", lambda _s: None)
+    monkeypatch.setattr(post, "ROUTING_QUIET_TIMEOUT_SECONDS", timeout)
+
+    post._remove_routed_source(
+        base="http://engine/api/v1", database="dfe", name=_ROUTED, token="t"
+    )
+
+    assert statements == ["DROP TABLE IF EXISTS dfe.postroute1a2b3c4d SYNC"]
+    assert f"has(tables, 'dfe.{_ROUTED}')" in asked[0]
+    if probes is not None:
+        assert len(asked) == probes
+    assert ("still took inserts" in capsys.readouterr().err) is noted
+
+
 def test_the_routing_table_stays_while_its_source_remains(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture
 ) -> None:
