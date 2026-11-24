@@ -259,9 +259,11 @@ class RunnableCase(TypedDict):
 
 
 class ApplyFailureFilesCase(TypedDict):
-    """The make exit code, whether `make apply` raised, and the files kept beside the failure."""
+    """The make exit code, whether `make apply` raised, the files kept beside the failure, whether make left the profile in place, and the report text the kept files print."""
 
     kept: list[str]
+    printed: list[str]
+    profile_present: bool
     raised: bool
     returncode: int
 
@@ -643,9 +645,25 @@ APPLY_INDEX_FILE = "dfe-transform-elastic.instances"
 APPLY_PROFILE_FILE = "profile.mk"
 APPLY_FAILURE_FILES_CASES = [
     ApplyFailureFilesCase(
-        kept=[APPLY_INDEX_FILE, APPLY_PROFILE_FILE], raised=True, returncode=2
+        kept=[APPLY_INDEX_FILE, APPLY_PROFILE_FILE],
+        printed=[f"kept {APPLY_INDEX_FILE}, {APPLY_PROFILE_FILE} in "],
+        profile_present=True,
+        raised=True,
+        returncode=2,
     ),
-    ApplyFailureFilesCase(kept=[], raised=False, returncode=0),
+    ApplyFailureFilesCase(
+        kept=[APPLY_INDEX_FILE],
+        printed=[
+            f"kept {APPLY_INDEX_FILE} in ",
+            f"already gone: {APPLY_PROFILE_FILE}",
+        ],
+        profile_present=False,
+        raised=True,
+        returncode=2,
+    ),
+    ApplyFailureFilesCase(
+        kept=[], printed=[], profile_present=True, raised=False, returncode=0
+    ),
 ]
 
 
@@ -1428,7 +1446,8 @@ class TestApplyFailureFiles:
         )
         profile = tmp_path / ".tmp" / APPLY_PROFILE_FILE
         profile.parent.mkdir()
-        profile.write_text(contents[APPLY_PROFILE_FILE], encoding="utf-8")
+        if case["profile_present"]:
+            profile.write_text(contents[APPLY_PROFILE_FILE], encoding="utf-8")
         monkeypatch.setattr(demo, "REPO_ROOT", tmp_path)
         monkeypatch.setattr(demo, "ENV_DIR", env_dir)
         monkeypatch.setattr(demo, "PROFILE_MK", profile)
@@ -1458,6 +1477,42 @@ class TestApplyFailureFiles:
         assert raised == case["raised"]
         assert kept == {name: contents[name] for name in case["kept"]}
         assert all(directory.name in printed for directory in kept_dirs)
+        assert all(text in printed for text in case["printed"])
+        assert ("kept" in printed) == bool(case["kept"])
+
+    def test_a_second_failure_in_the_same_instant_keeps_its_own_copy(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        tmp_path: Path,
+    ) -> None:
+        class FrozenClock(demo.datetime):
+            @classmethod
+            def now(cls, tz=None):
+                return cls(2026, 11, 24, 1, 2, 3, 456789, tzinfo=tz)
+
+        env_dir = tmp_path / "env"
+        env_dir.mkdir()
+        (env_dir / APPLY_INDEX_FILE).write_text("first\n", encoding="utf-8")
+        profile = tmp_path / ".tmp" / APPLY_PROFILE_FILE
+        profile.parent.mkdir()
+        profile.write_text("profile\n", encoding="utf-8")
+        monkeypatch.setattr(demo, "REPO_ROOT", tmp_path)
+        monkeypatch.setattr(demo, "ENV_DIR", env_dir)
+        monkeypatch.setattr(demo, "PROFILE_MK", profile)
+        monkeypatch.setattr(demo, "datetime", FrozenClock)
+
+        demo._keep_failure_files()
+        (env_dir / APPLY_INDEX_FILE).write_text("second\n", encoding="utf-8")
+        demo._keep_failure_files()
+
+        copies = {
+            directory.name: (directory / APPLY_INDEX_FILE).read_text(encoding="utf-8")
+            for directory in (tmp_path / ".tmp").glob("demo-failure-*")
+        }
+        assert copies == {
+            "demo-failure-20261124T010203456789Z": "first\n",
+            "demo-failure-20261124T010203456789Z-2": "second\n",
+        }
 
 
 class TestStageFeed:

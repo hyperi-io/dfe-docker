@@ -1284,20 +1284,37 @@ def _installed_sources(*, manifest: dict) -> list[str]:
 
 
 def _keep_failure_files() -> None:
-    """Copy the instance indexes and the resolved profile into a UTC-stamped directory under .tmp/ and print its path, because the cleanup after a failure rewrites both."""
-    stamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
-    kept = REPO_ROOT / ".tmp" / f"demo-failure-{stamp}"
+    """Copy the instance indexes and the resolved profile into a new UTC-stamped directory under .tmp/ and print its path and which files were kept, because the cleanup after a failure rewrites both. A repeat in the same microsecond gets a -2, -3 suffix, never an earlier copy's directory."""
+    stamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%S%fZ")
+    parent = REPO_ROOT / ".tmp"
+    kept = parent / f"demo-failure-{stamp}"
+    copied: list[str] = []
+    gone: list[str] = []
     try:
-        kept.mkdir(parents=True, exist_ok=True)
+        parent.mkdir(parents=True, exist_ok=True)
+        suffix = 1
+        while True:
+            try:
+                kept.mkdir()
+                break
+            except FileExistsError:
+                suffix += 1
+                kept = parent / f"demo-failure-{stamp}-{suffix}"
         for path in [*sorted(ENV_DIR.glob(f"*{instances.INDEX_SUFFIX}")), PROFILE_MK]:
             if path.is_file():
                 shutil.copy2(path, kept / path.name)
+                copied.append(path.name)
+            else:
+                gone.append(path.name)
     except OSError as error:
         _print(
             msg=f"WARNING could not keep the failure files in {_rel_path(path=kept)}: {error}"
         )
         return
-    _print(msg=f"kept the failure files in {_rel_path(path=kept)}")
+    _print(
+        msg=f"kept {', '.join(copied) or 'no files'} in {_rel_path(path=kept)}"
+        + (f", already gone: {', '.join(gone)}" if gone else "")
+    )
 
 
 def _remove_pack(*, args: argparse.Namespace, manifest: dict) -> None:
