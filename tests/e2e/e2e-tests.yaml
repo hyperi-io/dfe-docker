@@ -211,6 +211,9 @@ tests:
   # that the kill lands with records in flight; a kill that catches none fails.
   - name: loader-kill-kafka
     profile: single
+    # The archiver commits only when it rolls a file, every 300s by default
+    config_overrides:
+      dfe-archiver: tests/e2e/configs/archiver-short-roll.yaml
     expected_topics:
       - main_land
     outage:
@@ -222,6 +225,9 @@ tests:
 
   - name: receiver-kill-kafka
     profile: single
+    # The archiver commits only when it rolls a file, every 300s by default
+    config_overrides:
+      dfe-archiver: tests/e2e/configs/archiver-short-roll.yaml
     expected_topics:
       - main_land
     outage:
@@ -274,6 +280,9 @@ tests:
 
   - name: receiver-kill-kafka-broker-paused
     profile: single
+    # The archiver commits only when it rolls a file, every 300s by default
+    config_overrides:
+      dfe-archiver: tests/e2e/configs/archiver-short-roll.yaml
     expected_topics:
       - main_land
     outage:
@@ -328,6 +337,7 @@ tests:
     expected_topics:
       - main_land
     config_overrides:
+      dfe-archiver: tests/e2e/configs/archiver-short-roll.yaml
       dfe-loader: tests/e2e/configs/loader-kafka-acks-off.yaml
       dfe-receiver: tests/e2e/configs/receiver-kafka-acks-off.yaml
     outage:
@@ -368,6 +378,9 @@ tests:
 
   - name: receiver-sigterm-kafka-broker-paused
     profile: single
+    # The archiver commits only when it rolls a file, every 300s by default
+    config_overrides:
+      dfe-archiver: tests/e2e/configs/archiver-short-roll.yaml
     expected_topics:
       - main_land
     outage:
@@ -382,6 +395,9 @@ tests:
 
   - name: loader-sigterm-kafka
     profile: single
+    # The archiver commits only when it rolls a file, every 300s by default
+    config_overrides:
+      dfe-archiver: tests/e2e/configs/archiver-short-roll.yaml
     expected_topics:
       - main_land
     outage:
