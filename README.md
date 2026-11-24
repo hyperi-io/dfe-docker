@@ -58,10 +58,13 @@ There are two profiles. `slim` is the core data path over gRPC: receiver, loader
 | Profile | Containers | Working set | Sum of container limits |
 |---|---:|---:|---:|
 | `slim` | 11 | 2.1 GiB | 11 GiB |
-| `single` | 15 | 2.2 GiB | 15.8 GiB |
+| `single` | 15 | 2.5 GiB | 15.8 GiB |
 
 Measured on a Linux host with `docker stats`, as the peak of eight samples taken while the power-on self test ran, with no source bound. That is a light load, so ClickHouse and the broker grow under real ingest. Each source with a transform adds a container limited to 768 MiB. The limit sum is the most the containers may claim together and not what they use, so size a laptop from the working set plus the OS and your editor. Docker Desktop on Windows or Mac was not measured. Its VM memory (Settings, Resources) has to cover the working set.
 
+`single` is `slim` plus four containers: Redpanda, Kafbat, the archiver and the fetcher. They add 0.4 GiB to the working set and 4.75 GiB to the limits, because at this load Redpanda and Kafbat use about 0.3 GiB each against limits of 2.5 and 0.75 GiB. The per-container figures are in [docs/profiles.md](docs/profiles.md#memory-per-container).
+
+The targets in [#284](https://github.com/hyperi-io/dfe-docker/issues/284) are missed for both profiles. `slim` has 11 GiB of limits against a target of 7, and `single` has 15.75 GiB against 13. Both working sets are under the issue's estimates of 4-5 and 8-9 GB. The old `slim-kafka` maps to `single`, which adds the four containers above.
 
 Each service reads its own `env/<service>.env`, created from `env.example/` by `make init`, which never overwrites a file and reports the keys an old `.env` is missing. Only the console and Search authenticate people, while the receiver's HTTP listener takes only bearer tokens once `make post` has made the ingest credential. The other ingest ports, Kafbat and the metrics ports ask for no login, so put the stack behind a VPN, a tunnel or a firewall before anyone you have not met can reach it or arm the `auth` profile. Every variable, the port map and the image list are in [docs/configuration.md](docs/configuration.md).
 

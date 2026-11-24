@@ -33,6 +33,34 @@ Each profile's working set and sum of container limits are in the [README](../RE
 
 **No archiver on gRPC.** There the receiver would send every record to both the loader and the archiver, each with its own at-least-once ack. On Kafka the archiver reads the landing topic instead, so it adds no receiver work. Archiving a source on a gRPC profile makes the receiver retry the missing archiver and answer 503, so use `single`.
 
+## Memory per container
+
+Measured on 2026-11-24 with stack 2.2.3 on a 32-thread Linux host. `make up PROFILE=<profile>` started the stack, then `make post` ran while `docker stats --no-stream` sampled every container eight times, 3 seconds apart. Each figure is the container's peak across the eight samples. No source is bound and nothing else is sent, so this is a light load.
+
+| Container | `slim` peak (MiB) | `single` peak (MiB) | Limit (MiB) |
+|---|---:|---:|---:|
+| `dfe-archiver` | - | 26 | 768 |
+| `dfe-clickhouse` | 745 | 556 | 3072 |
+| `dfe-engine` | 393 | 389 | 768 |
+| `dfe-fetcher` | - | 16 | 768 |
+| `dfe-hunt-runner` | 171 | 169 | 768 |
+| `dfe-hyperdx` | 553 | 497 | 2048 |
+| `dfe-hyperdx-documentdb` | 109 | 154 | 768 |
+| `dfe-hyperdx-proxy` | 20 | 16 | 512 |
+| `dfe-kafka-redpanda` | - | 284 | 2560 |
+| `dfe-kafka-ui` | - | 268 | 768 |
+| `dfe-loader` | 21 | 30 | 768 |
+| `dfe-otel-collector` | 74 | 58 | 512 |
+| `dfe-proxy` | 15 | 16 | 512 |
+| `dfe-receiver` | 14 | 14 | 768 |
+| `dfe-ui` | 78 | 71 | 768 |
+| Working set, the highest of the eight sums | 2166 | 2536 | |
+| Sum of limits | 11264 | 16128 | |
+
+The README's working set is the highest sum, 2.1 GiB for `slim` and 2.5 GiB for `single`. The eight sums ran from 2100 to 2166 MiB on `slim` and 2447 to 2536 MiB on `single`.
+
+The gap between the profiles is small because the four containers `single` adds, Redpanda, Kafbat, the archiver and the fetcher, use 594 MiB together, and ClickHouse read 189 MiB lower in the `single` run than in the `slim` one. Redpanda's heap ceiling is `REDPANDA_MEMORY`, 1G by default, and the container reads 284 MiB, so it does not reach the ceiling at this load. Kafbat is a JVM and reads 268 MiB, the fetcher and archiver are Rust and read 26 MiB or less. Each profile was measured once, so the ClickHouse difference is a spread between two runs and not a property of either profile.
+
 ## Per-source apps
 
 **One fetcher for every source.** dfe-engine merges every fetcher source into one file, `dfe-fetcher/fetcher.yaml` in `dfe-app-config`, which the committed `dfe-fetcher` service reads. A source with fetcher settings that clash with another's is saved and reported as not run.

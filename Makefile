@@ -834,4 +834,4 @@ help: ## Show this help
     	awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[36m%-15s\033[0m %s\n", $$1, $$2}'
 	@printf '\nProfiles (PROFILE=<name>), working set and sum of container limits:\n'
 	@printf '  \033[36m%-15s\033[0m %s\n' 'slim' 'gRPC, core data path. 2.1 GiB working set, 11 GiB of limits'
-	@printf '  \033[36m%-15s\033[0m %s\n' 'single' 'Kafka, every per-source app. 2.2 GiB working set, 15.8 GiB of limits'
+	@printf '  \033[36m%-15s\033[0m %s\n' 'single' 'Kafka, every per-source app. 2.5 GiB working set, 15.8 GiB of limits'
