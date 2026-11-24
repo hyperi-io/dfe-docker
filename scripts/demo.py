@@ -36,6 +36,7 @@ import subprocess
 import sys
 import time
 import typing
+from datetime import UTC, datetime
 from pathlib import Path
 from urllib.parse import quote
 
@@ -47,9 +48,11 @@ import _stack_state  # noqa: E402
 import instances  # noqa: E402
 from _common import (  # noqa: E402
     ENGINE_COMPONENT,
+    ENV_DIR,
     FETCHER_SERVICE,
     PER_SOURCE_APP_KEYS,
     PER_SOURCE_APPS_VAR,
+    PROFILE_MK,
     REPO_ROOT,
     TRANSFORM_APP_PREFIX,
     _load_dotenv,
@@ -224,7 +227,7 @@ class PackHunts(typing.NamedTuple):
 
 
 def _apply(*, dev: bool, environ: dict[str, str], services: list[str]) -> None:
-    """Recreate the named services with `make apply`, the command the engine's hints name."""
+    """Recreate the named services with `make apply`, the command the engine's hints name, and keep the index and profile copies when it fails."""
     command = [
         "make",
         "--no-print-directory",
@@ -237,6 +240,7 @@ def _apply(*, dev: bool, environ: dict[str, str], services: list[str]) -> None:
     # environ predates the .env merge: make includes .env itself and exports a key it inherits from the environment with the value make parsed
     result = subprocess.run(command, check=False, cwd=REPO_ROOT, env=environ)
     if result.returncode != 0:
+        _keep_failure_files()
         raise DemoError(f"`{' '.join(command)}` failed")
 
 
@@ -1277,6 +1281,23 @@ def _installed_sources(*, manifest: dict) -> list[str]:
     except (OSError, UnicodeDecodeError, json.JSONDecodeError, KeyError, TypeError):
         return []
     return [name for name in manifest["sources"] if name in recorded]
+
+
+def _keep_failure_files() -> None:
+    """Copy the instance indexes and the resolved profile into a UTC-stamped directory under .tmp/ and print its path, because the cleanup after a failure rewrites both."""
+    stamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
+    kept = REPO_ROOT / ".tmp" / f"demo-failure-{stamp}"
+    try:
+        kept.mkdir(parents=True, exist_ok=True)
+        for path in [*sorted(ENV_DIR.glob(f"*{instances.INDEX_SUFFIX}")), PROFILE_MK]:
+            if path.is_file():
+                shutil.copy2(path, kept / path.name)
+    except OSError as error:
+        _print(
+            msg=f"WARNING could not keep the failure files in {_rel_path(path=kept)}: {error}"
+        )
+        return
+    _print(msg=f"kept the failure files in {_rel_path(path=kept)}")
 
 
 def _remove_pack(*, args: argparse.Namespace, manifest: dict) -> None:

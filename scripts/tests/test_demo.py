@@ -258,6 +258,14 @@ class RunnableCase(TypedDict):
     hinted: list[str]
 
 
+class ApplyFailureFilesCase(TypedDict):
+    """The make exit code, whether `make apply` raised, and the files kept beside the failure."""
+
+    kept: list[str]
+    raised: bool
+    returncode: int
+
+
 CATALOGUE_DRIFT_CASES = [
     CatalogueDriftCase(catalogue=CATALOGUE_ENTRY, expected=[], source=CATALOGUE_SOURCE),
     CatalogueDriftCase(
@@ -630,6 +638,14 @@ RUNNABLE_CASES = [
     ),
     RunnableCase(declared=set(), expected=["dfe-receiver"], hinted=["dfe-receiver"]),
     RunnableCase(declared={"dfe-fetcher-okta"}, expected=[], hinted=[]),
+]
+APPLY_INDEX_FILE = "dfe-transform-elastic.instances"
+APPLY_PROFILE_FILE = "profile.mk"
+APPLY_FAILURE_FILES_CASES = [
+    ApplyFailureFilesCase(
+        kept=[APPLY_INDEX_FILE, APPLY_PROFILE_FILE], raised=True, returncode=2
+    ),
+    ApplyFailureFilesCase(kept=[], raised=False, returncode=0),
 ]
 
 
@@ -1390,6 +1406,58 @@ class TestRunnable:
         services = demo.runnable(declared=case["declared"], hinted=case["hinted"])
 
         assert services == case["expected"]
+
+
+class TestApplyFailureFiles:
+    @pytest.mark.parametrize("case", APPLY_FAILURE_FILES_CASES)
+    def test_keeps_the_index_and_profile_only_when_make_apply_fails(
+        self,
+        case: ApplyFailureFilesCase,
+        monkeypatch: pytest.MonkeyPatch,
+        tmp_path: Path,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        contents = {
+            APPLY_INDEX_FILE: "dfe-transform-elastic-demo-syslog\n",
+            APPLY_PROFILE_FILE: "export DFE_SERVICES := dfe-transform-elastic-demo-syslog\n",
+        }
+        env_dir = tmp_path / "env"
+        env_dir.mkdir()
+        (env_dir / APPLY_INDEX_FILE).write_text(
+            contents[APPLY_INDEX_FILE], encoding="utf-8"
+        )
+        profile = tmp_path / ".tmp" / APPLY_PROFILE_FILE
+        profile.parent.mkdir()
+        profile.write_text(contents[APPLY_PROFILE_FILE], encoding="utf-8")
+        monkeypatch.setattr(demo, "REPO_ROOT", tmp_path)
+        monkeypatch.setattr(demo, "ENV_DIR", env_dir)
+        monkeypatch.setattr(demo, "PROFILE_MK", profile)
+        monkeypatch.setattr(
+            demo.subprocess,
+            "run",
+            lambda *args, **kwargs: demo.subprocess.CompletedProcess(
+                args=args, returncode=case["returncode"]
+            ),
+        )
+
+        raised = False
+        try:
+            demo._apply(
+                dev=False, environ={}, services=["dfe-transform-elastic-demo-syslog"]
+            )
+        except demo.DemoError:
+            raised = True
+        kept_dirs = sorted((tmp_path / ".tmp").glob("demo-failure-*"))
+        kept = {
+            path.name: path.read_text(encoding="utf-8")
+            for directory in kept_dirs
+            for path in directory.iterdir()
+        }
+        printed = capsys.readouterr().err
+
+        assert raised == case["raised"]
+        assert kept == {name: contents[name] for name in case["kept"]}
+        assert all(directory.name in printed for directory in kept_dirs)
 
 
 class TestStageFeed:
