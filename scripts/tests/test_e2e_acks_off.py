@@ -19,6 +19,8 @@ from _common import REPO_ROOT
 _E2E_TESTS = REPO_ROOT / "tests" / "e2e" / "e2e-tests.yaml"
 _E2E_CONFIGS = REPO_ROOT / "tests" / "e2e" / "configs"
 _OVERRIDE = re.compile(r"^\s+(dfe-[\w-]+): (\S+\.yaml)$")
+# The archiver's config sets no acknowledgement, so an acks-off twin may carry it to commit within the test
+_ACKS_NEUTRAL = "archiver-short-roll.yaml"
 
 
 def _test_blocks() -> dict[str, list[str]]:
@@ -117,7 +119,12 @@ def test_every_acks_off_test_owns_its_loss_and_overrides_only_with_acks_off() ->
         for name, lines in twins.items()
         if (_loss(lines=lines) == "forbidden")
         or not (_overrides(lines=lines))
-        or (any("acks-off" not in path for path in _overrides(lines=lines).values()))
+        or (
+            any(
+                "acks-off" not in path and not (path.endswith(_ACKS_NEUTRAL))
+                for path in _overrides(lines=lines).values()
+            )
+        )
     }
 
     assert twins

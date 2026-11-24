@@ -9,10 +9,11 @@
 # Each profile names its transport and the DFE services it starts, with the config
 # file each mounts (config_path, relative to config/). Keys and defaults: docs/profiles.md.
 
-active_profile: single-kafka
+active_profile: single
 
+# slim is the core data path over gRPC. single runs every per-source app over Kafka
 profiles:
-  slim-grpc:
+  slim:
     transport: grpc
     clickhouse: true
     core: true
@@ -24,33 +25,7 @@ profiles:
       dfe-receiver:
         config_path: receiver/grpc.yaml
 
-  slim-kafka:
-    transport: kafka
-    clickhouse: true
-    core: true
-    hyperdx: true
-    kafbat: true
-    otel: true
-    services:
-      dfe-loader:
-        config_path: loader/kafka.yaml
-      dfe-receiver:
-        config_path: receiver/kafka.yaml
-
-  # The engine runs per-source apps on Kafka only, none here
-  single-grpc:
-    transport: grpc
-    clickhouse: true
-    core: true
-    hyperdx: true
-    otel: true
-    services:
-      dfe-loader:
-        config_path: loader/grpc.yaml
-      dfe-receiver:
-        config_path: receiver/grpc.yaml
-
-  single-kafka:
+  single:
     transport: kafka
     clickhouse: true
     core: true

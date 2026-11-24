@@ -10,7 +10,7 @@ Copyright: (c) 2026 HYPERI PTY LIMITED
 
 # The Kafka broker
 
-The `*-kafka` profiles run one broker, Redpanda by default or Apache Kafka with `KAFKA_BACKEND=apache`. The `*-grpc` profiles run none. Every broker variable is in [configuration.md](configuration.md#kafka).
+`single` runs one broker, Redpanda by default or Apache Kafka with `KAFKA_BACKEND=apache`. `slim` runs none. Every broker variable is in [configuration.md](configuration.md#kafka).
 
 The two backends are mutually exclusive and share the `kafka` network alias and the same host port, so nothing downstream knows which one runs. Every config addresses `kafka:9092` and dfe-engine creates the bootstrap topic set over the Kafka protocol on both. The host listener is `19092` (`KAFKA_PLAINTEXT_HOST_PORT`) on `DFE_BIND_HOST`.
 

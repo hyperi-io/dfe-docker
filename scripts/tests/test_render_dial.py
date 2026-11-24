@@ -21,7 +21,7 @@ import render_dial
 
 _DIAL = """\
 platform: docker-vm
-profile: slim-grpc
+profile: slim
 retention:
   default_ttl_days: 30
 """
@@ -46,7 +46,7 @@ def test_the_retention_lands_in_the_engine_env_and_the_rest_in_dotenv(
 
     assert render_dial.main() == 0
     assert engine_env.read_text(encoding="utf-8") == f"{_TTL_KEY}=30\n"
-    assert dotenv.read_text(encoding="utf-8") == "DFE_PROFILE=slim-grpc\n"
+    assert dotenv.read_text(encoding="utf-8") == "DFE_PROFILE=slim\n"
 
 
 def test_a_retention_with_no_engine_env_refuses_before_writing_anything(
@@ -72,9 +72,7 @@ def test_a_dial_without_platform_docker_vm_is_refused(
     dial: Path, dotenv: Path, first_line: str, message: str
 ) -> None:
     dotenv.write_text("# DFE_PROFILE=\n", encoding="utf-8", newline="\n")
-    dial.write_text(
-        f"{first_line}\nprofile: slim-grpc\n", encoding="utf-8", newline="\n"
-    )
+    dial.write_text(f"{first_line}\nprofile: slim\n", encoding="utf-8", newline="\n")
 
     with pytest.raises(SystemExit, match=re.escape(message)):
         render_dial.main()

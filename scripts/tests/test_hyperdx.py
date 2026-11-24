@@ -155,7 +155,7 @@ def test_the_operator_toggle_moves_the_engine_with_the_containers(
     """
     exports = _exports(
         monkeypatch=monkeypatch,
-        profile="slim-kafka",
+        profile="single",
         tmp_path=tmp_path,
         DFE_HYPERDX_ENABLED="false",
     )
@@ -169,7 +169,7 @@ def test_hyperdx_does_not_start_without_core(
 ) -> None:
     exports = _exports(
         monkeypatch=monkeypatch,
-        profile="single-kafka",
+        profile="single",
         tmp_path=tmp_path,
         DFE_CORE_ENABLED="false",
         DFE_HYPERDX_ENABLED="true",
@@ -185,7 +185,7 @@ def test_an_external_hyperdx_is_the_one_the_engine_is_given(
     external = "http://observability.example.test:8000"
     exports = _exports(
         monkeypatch=monkeypatch,
-        profile="single-kafka",
+        profile="single",
         tmp_path=tmp_path,
         DFE_HYPERDX_BASE_URL=external,
     )

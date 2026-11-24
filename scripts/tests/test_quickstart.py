@@ -55,37 +55,37 @@ class DemoRefusalCase(TypedDict):
 
 CHOOSE_PROFILE_CASES = [
     ChooseProfileCase(
-        dotenv="single-grpc",
-        environ="slim-kafka",
-        expected=("slim-grpc", "make line"),
-        explicit="slim-grpc",
+        dotenv="single",
+        environ="slim",
+        expected=("slim", "make line"),
+        explicit="slim",
         pinned=False,
     ),
     ChooseProfileCase(
-        dotenv="single-grpc",
-        environ="slim-kafka",
-        expected=("single-grpc", ".env"),
+        dotenv="single",
+        environ="slim",
+        expected=("single", ".env"),
         explicit="",
         pinned=False,
     ),
     ChooseProfileCase(
         dotenv="",
-        environ="slim-kafka",
-        expected=("slim-kafka", "environment"),
+        environ="slim",
+        expected=("slim", "environment"),
         explicit="",
         pinned=False,
     ),
     ChooseProfileCase(
         dotenv="",
         environ="",
-        expected=("single-kafka", "default"),
+        expected=("single", "default"),
         explicit=" ",
         pinned=False,
     ),
     ChooseProfileCase(
         dotenv="",
         environ="",
-        expected=("slim-grpc", "active_profile"),
+        expected=("slim", "active_profile"),
         explicit="",
         pinned=True,
     ),
@@ -107,21 +107,16 @@ CHOOSE_STACK_CASES = [
     ),
 ]
 REFUSAL_CASES = [
-    RefusalCase(message="", name="single-kafka", running=""),
+    RefusalCase(message="", name="single", running=""),
     RefusalCase(
-        message="profile 'single-grpc' runs no 'dfe-transform-elastic'.*PROFILE=single-kafka",
-        name="single-grpc",
+        message="profile 'slim' runs no 'dfe-transform-elastic'.*PROFILE=single",
+        name="slim",
         running="",
     ),
     RefusalCase(
-        message="profile 'slim-grpc' runs no 'dfe-transform-elastic'.*PROFILE=single-kafka",
-        name="slim-grpc",
-        running="",
-    ),
-    RefusalCase(
-        message="stack running here is profile 'slim-kafka'.*make down",
-        name="slim-kafka",
-        running="slim-kafka",
+        message="stack running here is profile 'slim'.*make down",
+        name="slim",
+        running="slim",
     ),
 ]
 DEMO_CONTAINER = "dfe-demo-syslog-stream"
@@ -146,8 +141,8 @@ class TestChooseProfile:
     @pytest.mark.parametrize("case", CHOOSE_PROFILE_CASES)
     def test_matches_expected(self, case: ChooseProfileCase) -> None:
         chosen = quickstart._choose_profile(
-            active="slim-grpc",
-            default="single-kafka",
+            active="slim",
+            default="single",
             dotenv=case["dotenv"],
             environ=case["environ"],
             explicit=case["explicit"],
@@ -175,7 +170,7 @@ class TestChoiceLine:
                 "",
                 "",
                 "default",
-                "make up: profile 'slim-grpc' (make line), stack '2.2.1' (default). Override with: make up PROFILE=",
+                "make up: profile 'slim' (make line), stack '2.2.1' (default). Override with: make up PROFILE=",
                 "--profile",
                 id="make",
             ),
@@ -183,7 +178,7 @@ class TestChoiceLine:
                 "",
                 "image default",
                 "make line",
-                "make up: profile 'slim-grpc' (make line), stack '2.2.1' (make line).",
+                "make up: profile 'slim' (make line), stack '2.2.1' (make line).",
                 "image default",
                 id="make-ignores-version-from",
             ),
@@ -191,7 +186,7 @@ class TestChoiceLine:
                 "init",
                 "",
                 "default",
-                "init: profile 'slim-grpc' (given), stack '2.2.1' (default). Override with: init --profile",
+                "init: profile 'slim' (given), stack '2.2.1' (default). Override with: init --profile",
                 "make",
                 id="image",
             ),
@@ -199,7 +194,7 @@ class TestChoiceLine:
                 "init",
                 "given",
                 "make line",
-                "init: profile 'slim-grpc' (given), stack '2.2.1' (given).",
+                "init: profile 'slim' (given), stack '2.2.1' (given).",
                 "make",
                 id="image-stack-given",
             ),
@@ -207,7 +202,7 @@ class TestChoiceLine:
                 "init",
                 "image default",
                 "make line",
-                "init: profile 'slim-grpc' (given), stack '2.2.1' (image default).",
+                "init: profile 'slim' (given), stack '2.2.1' (image default).",
                 "make",
                 id="image-stack-baked",
             ),
@@ -222,7 +217,7 @@ class TestChoiceLine:
 
         line = quickstart._choice_line(
             args=args,
-            name="slim-grpc",
+            name="slim",
             profile_from="make line",
             stack_from=stack_from,
             version="2.2.1",
@@ -291,10 +286,10 @@ class TestCommittedProfiles:
 
 class TestSetLive:
     def test_the_profile_line_is_replaced_not_appended(self) -> None:
-        text = "A=1\n# DFE_PROFILE=\nDFE_PROFILE=slim-kafka\nB=2\n"
+        text = "A=1\n# DFE_PROFILE=\nDFE_PROFILE=slim\nB=2\n"
 
-        out = init._set_live(key="DFE_PROFILE", text=text, value="single-kafka")
+        out = init._set_live(key="DFE_PROFILE", text=text, value="single")
 
-        assert out.splitlines().count("DFE_PROFILE=single-kafka") == 1
-        assert "slim-kafka" not in out
+        assert out.splitlines().count("DFE_PROFILE=single") == 1
+        assert "DFE_PROFILE=slim" not in out
         assert out.startswith("A=1\n") and out.rstrip().endswith("B=2")

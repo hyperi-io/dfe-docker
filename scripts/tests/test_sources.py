@@ -288,10 +288,7 @@ CREATE_REQUEST_CASES = [
     ),
 ]
 ENABLED_APPS_CASES = [
-    EnabledAppsCase(expected=[], profile="slim-grpc"),
-    EnabledAppsCase(expected=[], profile="slim-kafka"),
-    # dfe-engine runs a per-source app for a source on Kafka only
-    EnabledAppsCase(expected=[], profile="single-grpc"),
+    EnabledAppsCase(expected=[], profile="slim"),
     EnabledAppsCase(
         expected=[
             "dfe-fetcher",
@@ -299,21 +296,10 @@ ENABLED_APPS_CASES = [
             "dfe-transform-vector",
             "dfe-transform-vrl",
         ],
-        profile="single-kafka",
+        profile="single",
     ),
 ]
 ENGINE_ENVIRONMENT_CASES = [
-    EngineEnvironmentCase(
-        expected={
-            **_ENGINE_PATHS,
-            "DFE_ENGINE_KAFKA_BOOTSTRAP_SERVERS": "",
-            "DFE_ENGINE_PROFILE": "docker-single",
-            "DFE_ENGINE_TRANSPORT_BUS_PRESENT": "false",
-            "DFE_ENGINE_TRANSPORT_DEFAULT": "direct",
-        },
-        profile="single-grpc",
-        transport="grpc",
-    ),
     EngineEnvironmentCase(
         expected={
             **_ENGINE_PATHS,
@@ -322,7 +308,7 @@ ENGINE_ENVIRONMENT_CASES = [
             "DFE_ENGINE_TRANSPORT_BUS_PRESENT": "true",
             "DFE_ENGINE_TRANSPORT_DEFAULT": "bus",
         },
-        profile="single-kafka",
+        profile="single",
         transport="kafka",
     ),
     EngineEnvironmentCase(
@@ -333,7 +319,7 @@ ENGINE_ENVIRONMENT_CASES = [
             "DFE_ENGINE_TRANSPORT_BUS_PRESENT": "false",
             "DFE_ENGINE_TRANSPORT_DEFAULT": "direct",
         },
-        profile="slim-grpc",
+        profile="slim",
         transport="grpc",
     ),
 ]
@@ -899,20 +885,20 @@ class TestEnabledApps:
 
     def test_refuses_a_key_the_resolver_refuses(self) -> None:
         text = (
-            "profiles:\n  single-grpc:\n    transport: grpc\n"
+            "profiles:\n  slim:\n    transport: grpc\n"
             "    transform_elastic_enabled: yes\n"
         )
 
         with pytest.raises(resolve_profile.ProfileError, match="must be true or false"):
-            _sources.enabled_apps(profile_name="single-grpc", text=text)
+            _sources.enabled_apps(profile_name="slim", text=text)
 
     def test_a_profile_with_the_core_footprint_off_runs_none(self) -> None:
         text = (
-            "profiles:\n  single-kafka:\n    transport: kafka\n    core: false\n"
+            "profiles:\n  single:\n    transport: kafka\n    core: false\n"
             "    transform_vrl_enabled: true\n"
         )
 
-        assert _sources.enabled_apps(profile_name="single-kafka", text=text) == []
+        assert _sources.enabled_apps(profile_name="single", text=text) == []
 
 
 class TestEngineBaseVolumes:
@@ -958,7 +944,7 @@ class TestEngineEnvironment:
         declared = set(_engine_service()["environment"])
 
         environment = _sources.engine_environment(
-            profile_name="single-kafka", transport="kafka"
+            profile_name="single", transport="kafka"
         )
 
         assert set(environment) <= declared

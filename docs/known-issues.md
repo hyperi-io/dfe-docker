@@ -28,7 +28,7 @@ KAFKA_BACKEND=apache make -e dev  # -e flips the precedence
 
 ...or edit `.env`, which is the durable answer.
 
-`make up` and `make demo` go further: they read `PROFILE=` and `VERSION=` from the make line alone, so `PROFILE=slim-grpc make up` starts whatever profile `.env` names and a `PROFILE` exported in your shell never moves the stack. Write `make up PROFILE=slim-grpc` instead.
+`make up` and `make demo` go further: they read `PROFILE=` and `VERSION=` from the make line alone, so `PROFILE=slim make up` starts whatever profile `.env` names and a `PROFILE` exported in your shell never moves the stack. Write `make up PROFILE=slim` instead.
 
 ## A `_load` topic changes what the loader reads
 

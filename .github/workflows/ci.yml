@@ -184,7 +184,7 @@ jobs:
             echo "::error::make or python is still on PATH"
             exit 1
           fi
-          for profile in slim-grpc slim-kafka single-grpc single-kafka; do
+          for profile in slim single; do
             mkdir "$WORK/$profile"
             cd "$WORK/$profile"
             docker run --rm -v "${PWD}:/dfe" "$IMAGE" init --profile "$profile"

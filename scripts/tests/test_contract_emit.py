@@ -287,7 +287,7 @@ def test_a_profile_without_core_hands_the_engine_no_contract_directory(
 ) -> None:
     """With core off nothing is rendered, so no app's contract is read either."""
     monkeypatch.setitem(os.environ, "DFE_CORE_ENABLED", "false")
-    values = _resolved("slim-kafka", tmp_path, monkeypatch)
+    values = _resolved("single", tmp_path, monkeypatch)
 
     assert values[resolve_profile.ENGINE_CONTRACT_DIR_VAR] == ""
 

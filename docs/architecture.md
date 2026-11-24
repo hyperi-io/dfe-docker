@@ -138,10 +138,10 @@ flowchart TB
 ## How data flows
 
 1. Push clients send to dfe-receiver over HTTP, Vector, Beats, OTLP, HEC, syslog or flow. dfe-fetcher pulls from REST APIs, databases and files. It idles until a fetcher source exists.
-2. On a `*-kafka` profile both produce to a `*_land` topic named after the event's `_source`. The name carries through character for character, so `filebeat-vector` gives `filebeat-vector_land` and a table that needs backticks in SQL.
+2. On `single` both produce to a `*_land` topic named after the event's `_source`. The name carries through character for character, so `filebeat-vector` gives `filebeat-vector_land` and a table that needs backticks in SQL.
 3. A source with a transform gets its own instance. It reads `<source>_land` and writes `<source>_load`. From then on the loader reads `_load` instead. Transforms run on Kafka profiles alone.
 4. dfe-loader auto-discovers every topic ending in `_land` or `_load` and inserts into ClickHouse. dfe-archiver writes each source's landing topic to its archive, so archiving needs a Kafka profile.
-5. On a `*-grpc` profile there is no broker and the receiver dials `dfe-loader:6000` directly.
+5. On `slim` there is no broker and the receiver dials `dfe-loader:6000` directly.
 6. The DFE console sends every change through dfe-engine. The engine creates each table and topic and renders each app's config.
 
 Create a source before you send it data. A loader that meets rows for a table it has no schema for buffers them, then dead-letters them.
@@ -170,13 +170,13 @@ Create a source before you send it data. A loader that meets rows for a table it
 |---|---|---|
 | Docker with Compose | always | one Linux host |
 | Registry | always | the registry the stack pins, at the digests the Kubernetes path runs |
-| Broker | on `*-kafka` profiles | Redpanda or Apache Kafka with `KAFKA_BACKEND=apache` ([broker](broker.md)) |
+| Broker | on `single` | Redpanda or Apache Kafka with `KAFKA_BACKEND=apache` ([broker](broker.md)) |
 | Object storage | for an archive past local disk | S3, MinIO, GCS, Azure Blob |
 | OIDC provider | with the `auth` profile | any, through oauth2-proxy ([auth profile](auth-profile.md)) |
 
 ## Deployment variants
 
-A profile is `<tier>-<transport>`: `slim-grpc`, `slim-kafka`, `single-grpc` or `single-kafka` ([profiles](profiles.md)). `slim` is the core data path: receiver, loader, engine, console and Search. `single-kafka` adds the per-source apps and one archiver. There is no `scale`, because Compose can't scale out.
+There are two profiles ([profiles](profiles.md)). `slim` is the core data path over gRPC: receiver, loader, engine, console and Search. `single` runs Kafka and adds the per-source apps and one archiver. There is no `scale`, because Compose can't scale out.
 
 A profile declares its footprint through the `clickhouse`, `core`, `kafbat`, `hyperdx`, `otel` and `auth` keys, each overridable by its `.env` flag. Each footprint is a Compose profile:
 

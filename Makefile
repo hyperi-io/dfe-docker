@@ -505,12 +505,12 @@ ci: env-files storage-dirs  ## Pull and start infra and registry DFE images. Pri
 	@$(MAKE) --no-print-directory post || { echo "post: SELF TEST FAILED -- the stack is up, but it did not prove it moves data. Run 'make post' for detail."; exit 1; }
 
 # `make up` is a clone's one command: scripts/quickstart.py makes .env, picks the profile and pins the newest published stack, then the sub-make starts it. A sub-make because .tmp/profile.mk is resolved when make parses, before any recipe could write the profile into .env. PROFILE= and VERSION= count only from the make line, so a PROFILE in the shell's environment never moves the stack
-DEFAULT_PROFILE := single-kafka
+DEFAULT_PROFILE := single
 QUICKSTART_ARGS = --default-profile '$(DEFAULT_PROFILE)' --profile '$(if $(filter command line,$(origin PROFILE)),$(PROFILE))' --version '$(if $(filter command line,$(origin VERSION)),$(VERSION))'
 
 # The operator-facing name for the registry start and the one the engine prints when it tells someone how to apply a rotated password. It is `ci` with the quickstart before it and the hand-over after it
 .PHONY: up
-up: ## Start the stack from the pinned registry images (PROFILE=slim-grpc and VERSION=X.Y.Z override the defaults), then print the access summary (password on a TTY only) and write access-summary.md
+up: ## Start the stack from the pinned registry images (PROFILE=slim and VERSION=X.Y.Z override the defaults), then print the access summary (password on a TTY only) and write access-summary.md
 	@python3 scripts/quickstart.py prepare up $(QUICKSTART_ARGS)
 	@$(MAKE) --no-print-directory ci
 	@python3 scripts/creds.py --write
@@ -832,3 +832,6 @@ clean: demo-stop ## Stop and remove all containers and volumes across every prof
 help: ## Show this help
 	@grep -hE '^[a-zA-Z0-9_-]+:.*?## .*$$' $(MAKEFILE_LIST) | \
     	awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[36m%-15s\033[0m %s\n", $$1, $$2}'
+	@printf '\nProfiles (PROFILE=<name>), working set and sum of container limits:\n'
+	@printf '  \033[36m%-15s\033[0m %s\n' 'slim' 'gRPC, core data path. 2.1 GiB working set, 11 GiB of limits'
+	@printf '  \033[36m%-15s\033[0m %s\n' 'single' 'Kafka, every per-source app. 2.5 GiB working set, 15.8 GiB of limits'

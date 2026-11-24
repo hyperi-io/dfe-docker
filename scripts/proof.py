@@ -19,7 +19,7 @@ Three steps, in order:
    case in ``SOURCE_CASES``, from fresh dfe-infra, dfe-engine and transform
    checkouts and a throwaway Playwright environment built from dfe-infra's
    ``scripts/acceptance/requirements.txt``. It needs a profile that runs
-   dfe-transform-vrl and dfe-transform-vector per source (single-*) and
+   dfe-transform-vrl and dfe-transform-vector per source (single) and
    fails at once on one that does not.
 
 Everything it creates lives in one temporary directory that is deleted at the end: the checkouts, the virtualenv and, after a pass, every screenshot. A failed run first moves its screenshots to .tmp/proof-shots/<UTC time>/ in the checkout and names that path in the RESULT line. Only the newest SHOTS_KEEP_RUNS runs are kept. Nothing else accumulates between runs, so a host can run this on a timer indefinitely.
@@ -95,7 +95,7 @@ DEFAULT_INFRA_REPO = "https://github.com/hyperi-io/dfe-infra.git"
 DEFAULT_ENGINE_REPO = "https://github.com/hyperi-io/dfe-engine.git"
 DEFAULT_TRANSFORM_VRL_REPO = "https://github.com/hyperi-io/dfe-transform-vrl.git"
 DEFAULT_TRANSFORM_VECTOR_REPO = "https://github.com/hyperi-io/dfe-transform-vector.git"
-# The app each case routes its source through, run per source only on a profile that sets its `*_enabled` key (slim-grpc does not)
+# The app each case routes its source through, run per source only on a profile that sets its `*_enabled` key (slim does not)
 SOURCE_CASE_APPS = {"filebeat": "dfe-transform-vrl", "vector": "dfe-transform-vector"}
 # Each pushed case proves one transform's data path, so a pin of either app is proven on its stack version
 SOURCE_CASES = tuple(SOURCE_CASE_APPS)
@@ -316,7 +316,7 @@ def source_profile_problem(*, env: dict[str, str]) -> str | None:
     return (
         f"the profile runs no per-source {', '.join(missing)}, so the engine's "
         f"instance of it is never declared and the cases would wait out their reporting timeouts. "
-        f"Run a profile that sets {keys}, such as DFE_PROFILE=single-kafka in .env"
+        f"Run a profile that sets {keys}, such as DFE_PROFILE=single in .env"
     )
 
 

@@ -9,7 +9,7 @@
 #  Copyright: (c) 2026 HYPERI PTY LIMITED
 #
 #  Usage:
-#    make up PROFILE=slim-grpc DFE_GNMIC_ENABLED=true DFE_GNMIC_CONFIG=../tests/gnmi/gnmic-emulator.yaml
+#    make up PROFILE=slim DFE_GNMIC_ENABLED=true DFE_GNMIC_CONFIG=../tests/gnmi/gnmic-emulator.yaml
 #    make test-gnmi
 #    make test-gnmi GNMI_ARGS=--keep
 

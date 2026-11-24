@@ -116,12 +116,9 @@ PER_SOURCE_APPS_REFUSAL_CASES = [
     ),
 ]
 RESOLVED_EXPORT_CASES = [
-    ResolvedExportCase(expected="", profile="slim-grpc"),
-    ResolvedExportCase(expected="", profile="slim-kafka"),
-    # dfe-engine runs a per-source app for a source on Kafka only
-    ResolvedExportCase(expected="", profile="single-grpc"),
+    ResolvedExportCase(expected="", profile="slim"),
     ResolvedExportCase(
-        expected=f"{FETCHER} {ELASTIC} {VECTOR} {VRL}", profile="single-kafka"
+        expected=f"{FETCHER} {ELASTIC} {VECTOR} {VRL}", profile="single"
     ),
 ]
 
@@ -154,7 +151,7 @@ class TestInstanceServices:
         services = resolve_profile._instance_services(
             enabled=case["enabled"],
             local=[],
-            profile="single-kafka",
+            profile="single",
             renders=case["renders"],
         )
 
@@ -171,13 +168,13 @@ class TestInstanceServices:
         services = resolve_profile._instance_services(
             enabled=enabled,
             local=[],
-            profile="single-kafka",
+            profile="single",
             renders=True,
         )
 
         assert services == [f"{enabled[0]}-aws-cloudtrail"]
         error = capsys.readouterr().err
-        assert ":single-kafka - WARNING: dfe-engine declared instances" in error
+        assert ":single - WARNING: dfe-engine declared instances" in error
         assert f"- {app} (sources okta-audit, okta-system): set {key}: true" in error
         fragment = instances.COMPOSE_INSTANCES_FILE.read_text(encoding="utf-8")
         assert f"  {app}-okta-audit:" not in fragment
@@ -191,7 +188,7 @@ class TestInstanceServices:
         services = resolve_profile._instance_services(
             enabled=[],
             local=[],
-            profile="slim-grpc",
+            profile="slim",
             renders=True,
         )
 
@@ -206,7 +203,7 @@ class TestInstanceServices:
             resolve_profile._instance_services(
                 enabled=[FETCHER],
                 local=[],
-                profile="single-kafka",
+                profile="single",
                 renders=True,
             )
 
@@ -217,7 +214,7 @@ class TestInstanceServices:
         resolve_profile._instance_services(
             enabled=[FETCHER, VRL],
             local=["dfe-engine", VRL],
-            profile="single-kafka",
+            profile="single",
             renders=True,
         )
 
@@ -231,7 +228,7 @@ class TestPerSourceApps:
     def test_matches_expected(self, case: PerSourceAppsCase) -> None:
         apps = resolve_profile.per_source_apps(
             profile=case["declared"],
-            profile_name="single-kafka",
+            profile_name="single",
             renders=case["renders"],
         )
 
@@ -241,7 +238,7 @@ class TestPerSourceApps:
     def test_refuses(self, case: PerSourceAppsRefusalCase) -> None:
         with pytest.raises(resolve_profile.ProfileError, match=case["message"]):
             resolve_profile.per_source_apps(
-                profile=case["declared"], profile_name="single-kafka", renders=True
+                profile=case["declared"], profile_name="single", renders=True
             )
 
 
@@ -261,10 +258,10 @@ class TestResolveProfile:
     ) -> None:
         _index(app=FETCHER, names=["aws-cloudtrail"])
 
-        values = _resolve(monkeypatch=monkeypatch, profile="slim-grpc")
+        values = _resolve(monkeypatch=monkeypatch, profile="slim")
 
         error = capsys.readouterr().err
-        assert ":slim-grpc - WARNING: dfe-engine declared instances of apps" in error
+        assert ":slim - WARNING: dfe-engine declared instances of apps" in error
         assert "Set the key on the profile to run them, or delete those sources" in (
             error
         )
@@ -283,7 +280,7 @@ class TestResolveProfile:
         _index(app=ELASTIC, names=["demo-syslog"])
         _index(app=VRL, names=["cisco-ios"])
         monkeypatch.delenv("DFE_CORE_ENABLED", raising=False)
-        monkeypatch.setenv("DFE_PROFILE", "single-kafka")
+        monkeypatch.setenv("DFE_PROFILE", "single")
 
         assert resolve_profile.main(argv=["--local-per-source"]) == 0
 
@@ -302,7 +299,7 @@ class TestResolveProfile:
             data=overlay_text(components=["dfe-engine", VRL]), encoding="utf-8"
         )
         monkeypatch.delenv("DFE_CORE_ENABLED", raising=False)
-        monkeypatch.setenv("DFE_PROFILE", "single-kafka")
+        monkeypatch.setenv("DFE_PROFILE", "single")
 
         assert resolve_profile.main(argv=["--local-overlay", str(recorded)]) == 0
 
@@ -316,7 +313,7 @@ class TestResolveProfile:
     ) -> None:
         _index(app=ELASTIC, names=["demo-syslog"])
         monkeypatch.delenv("DFE_CORE_ENABLED", raising=False)
-        monkeypatch.setenv("DFE_PROFILE", "single-kafka")
+        monkeypatch.setenv("DFE_PROFILE", "single")
 
         absent = tmp_path / "docker-compose.local.yml"
         assert resolve_profile.main(argv=["--local-overlay", str(absent)]) == 0
@@ -328,10 +325,10 @@ class TestResolveProfile:
     def test_refuses_a_per_source_app_as_a_service(
         self, monkeypatch: pytest.MonkeyPatch, app: str, key: str
     ) -> None:
-        monkeypatch.setenv("DFE_PROFILE", "single-kafka")
+        monkeypatch.setenv("DFE_PROFILE", "single")
         data = {
             "profiles": {
-                "single-kafka": {
+                "single": {
                     "services": {app: {"config_path": "loader/kafka.yaml"}},
                     "transport": "kafka",
                 }

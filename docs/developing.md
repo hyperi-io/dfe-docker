@@ -33,7 +33,7 @@ exist, and how a profile decides which of them run.
 
 ```bash
 make up                    # init, pin the newest stable stack, start, self test, print the login
-make up PROFILE=slim-grpc VERSION=X.Y.Z   # a profile and a stack of your choosing
+make up PROFILE=slim VERSION=X.Y.Z   # a profile and a stack of your choosing
 ```
 
 `make up` runs `scripts/quickstart.py`, which makes `.env` when it is missing, writes `PROFILE=` to it as `DFE_PROFILE` and pins `VERSION=` (the newest published stable stack when none is given and the `.env` holds no pins). `DEFAULT_PROFILE` in the Makefile is the profile when none is set. These are its steps and each works on its own and `make help` lists every target:
@@ -208,7 +208,7 @@ stack manifest.
 `service_profiles.yaml` decides which DFE services run and which config each mounts. `active_profile` is the default and `DFE_PROFILE` overrides it for one invocation. Which profile runs what is in [profiles.md](profiles.md).
 
 ```bash
-DFE_PROFILE=single-kafka make dev     # override the profile
+DFE_PROFILE=single make dev     # override the profile
 KAFKA_BACKEND=apache make dev         # Apache Kafka instead of Redpanda
 DFE_CORE_ENABLED=false make dev       # skip engine, UI, proxy and dfe-hyperdx
 DFE_CLICKHOUSE_ENABLED=false make dev # no warehouse container (external instance)
@@ -230,7 +230,7 @@ A name in `SERVICES` that is not part of the resolved stack is a hard error, not
 
 `make down` tears down every profile, not just the active one: `docker compose -f docker-compose.yml --profile "*" down --remove-orphans`, keeping volumes. `make dev` and `make ci` run it first, so `make dev SERVICES="dfe-loader"` stops everything else.
 
-A key set in `.env` beats the same variable in your shell through make, so `DFE_PROFILE=single-kafka make dev` uses the `.env` value. [known-issues.md](known-issues.md#env-shadows-command-line-environment-variables-through-make) has the ways round it.
+A key set in `.env` beats the same variable in your shell through make, so `DFE_PROFILE=single make dev` uses the `.env` value. [known-issues.md](known-issues.md#env-shadows-command-line-environment-variables-through-make) has the ways round it.
 
 Compose `environment:` beats `env/<service>.env`. A key listed in a service's `environment:` block in `docker-compose.yml` wins over the same key in the per-service env file. `LOG_LEVEL` is forwarded by compose, so setting it in `env/receiver.env` does nothing, but a key compose does not forward reaches the container fine.
 

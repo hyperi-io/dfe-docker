@@ -215,27 +215,31 @@ PROFILE_ENV_VAR = "DFE_PROFILE"
 PROFILE_ACTIVE_YAML_FIELD = "active_profile"
 PROFILE_LIST_YAML_FIELD = "profiles"
 PROFILE_SERVICE_CONFIG_YAML_FIELD = "config_path"
-# Every retired profile name and the profile its refusal names instead: one that ran a fetcher, an archiver or a transform runs on single, the rest on slim
+# The transport each profile runs, which its `transport` key must agree with
+PROFILE_TRANSPORTS = {"slim": "grpc", "single": "kafka"}
+# Every retired profile name and the profile its refusal names instead. A name that ran a per-source app or an archiver moves to single, the rest of the gRPC ones to slim, and every Kafka one to single because slim has no broker
 RETIRED_PROFILES = {
-    "grpc-fetcher": "single-grpc",
-    "grpc-full": "single-grpc",
-    "grpc-minimal": "slim-grpc",
-    "grpc-receiver": "slim-grpc",
-    "grpc-receiver-transform-vrl": "single-grpc",
-    "kafka-elastic-cisco-ios": "single-kafka",
-    "kafka-fetcher": "single-kafka",
-    "kafka-filebeat": "single-kafka",
-    "kafka-filebeat-vector": "single-kafka",
-    "kafka-full": "single-kafka",
-    "kafka-full-transform-elastic": "single-kafka",
-    "kafka-full-transform-vrl": "single-kafka",
-    "kafka-minimal": "slim-kafka",
-    "kafka-receiver": "slim-kafka",
-    "kafka-receiver-archiver": "single-kafka",
-    "kafka-receiver-transform-vector": "single-kafka",
-    "kafka-resilience": "single-kafka",
-    "single": "single-kafka",
-    "slim": "slim-grpc",
+    "grpc-fetcher": "single",
+    "grpc-full": "single",
+    "grpc-minimal": "slim",
+    "grpc-receiver": "slim",
+    "grpc-receiver-transform-vrl": "single",
+    "kafka-elastic-cisco-ios": "single",
+    "kafka-fetcher": "single",
+    "kafka-filebeat": "single",
+    "kafka-filebeat-vector": "single",
+    "kafka-full": "single",
+    "kafka-full-transform-elastic": "single",
+    "kafka-full-transform-vrl": "single",
+    "kafka-minimal": "single",
+    "kafka-receiver": "single",
+    "kafka-receiver-archiver": "single",
+    "kafka-receiver-transform-vector": "single",
+    "kafka-resilience": "single",
+    "single-grpc": "slim",
+    "single-kafka": "single",
+    "slim-grpc": "slim",
+    "slim-kafka": "single",
 }
 
 SERVICE_KAFKA_DEFAULT = "redpanda"
@@ -276,6 +280,19 @@ SERVICES = [
 ]
 
 TRANSPORT_TYPES = ["grpc", "kafka"]
+
+
+def _retired_message(*, name: str, replacement: str) -> str:
+    """Refuse a retired profile name, saying so where the replacement moves the stack to the other transport."""
+    parts = name.split("-")
+    old = next((part for part in (parts[0], parts[-1]) if part in TRANSPORT_TYPES), "")
+    new = PROFILE_TRANSPORTS[replacement]
+    moved = (
+        f", which runs on {new} where {name!r} ran on {old}"
+        if old not in ("", new)
+        else ""
+    )
+    return f"Profile {name!r} is retired. Set {PROFILE_ENV_VAR!r} or {PROFILE_ACTIVE_YAML_FIELD!r} to {replacement!r} instead{moved}"
 
 
 class ProfileError(Exception):
@@ -428,7 +445,7 @@ def _resolve_profile(
     replacement = RETIRED_PROFILES.get(active_profile)
     if replacement:
         raise ProfileError(
-            msg=f"Profile {active_profile!r} is retired. Set {PROFILE_ENV_VAR!r} or {PROFILE_ACTIVE_YAML_FIELD!r} to {replacement!r} instead"
+            msg=_retired_message(name=active_profile, replacement=replacement)
         )
     if (active_profile not in RENDERED_PROFILES) or (active_profile not in profiles):
         available_profiles = [
@@ -461,7 +478,7 @@ def _resolve_profile(
             header=active_profile,
             msg=f"Transport type {transport!r} unknown. Available transport types:\n{'\n'.join([f'- {transport_type}' for transport_type in TRANSPORT_TYPES])}",
         )
-    named_transport = active_profile.partition("-")[2]
+    named_transport = PROFILE_TRANSPORTS[active_profile]
     if transport != named_transport:
         raise ProfileError(
             header=active_profile,
@@ -613,7 +630,7 @@ def engine_tier(
             f"{ENGINE_CONTENT_DIR}/{ENGINE_CONTRACT_SUBDIR}" if renders else ""
         ),
         # docker-slim or docker-single, which the engine seeds its default app instances from and reports as its deployment profile
-        STACK_PROFILE_VAR: f"docker-{profile_name.partition('-')[0]}",
+        STACK_PROFILE_VAR: f"docker-{profile_name}",
         # The engine refuses a source on the other transport at save
         TRANSPORT_BUS_PRESENT_VAR: "true" if bus else "false",
         TRANSPORT_DEFAULT_VAR: "bus" if bus else "direct",
