@@ -52,7 +52,7 @@ GROUP BY MetricName, device
 `make test-gnmi` proves the path against openconfig's lemming device emulator. Start the stack on the emulator's config, then run it:
 
 ```bash
-make up PROFILE=slim-grpc DFE_GNMIC_ENABLED=true DFE_GNMIC_CONFIG=../tests/gnmi/gnmic-emulator.yaml
+make up PROFILE=slim DFE_GNMIC_ENABLED=true DFE_GNMIC_CONFIG=../tests/gnmi/gnmic-emulator.yaml
 make test-gnmi
 ```
 

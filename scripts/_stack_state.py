@@ -43,11 +43,8 @@ ONEOFF_LABEL = "com.docker.compose.oneoff"
 SUITE_PROJECT_SUFFIX = "-e2e"
 SUITE_CONTAINER_PREFIX = "e2e-"
 
-# The tier and transport dfe-engine runs with, the variable make exports each from and compose's default
-_ENGINE_SETTINGS = (
-    ("DFE_ENGINE_PROFILE", "DFE_STACK_PROFILE", "docker-slim"),
-    ("DFE_ENGINE_TRANSPORT_DEFAULT", "DFE_TRANSPORT_DEFAULT", "direct"),
-)
+# The tier dfe-engine runs with, which names the profile, the variable make exports it from and compose's default
+_ENGINE_SETTINGS = (("DFE_ENGINE_PROFILE", "DFE_STACK_PROFILE", "docker-slim"),)
 
 
 @dataclass(frozen=True, slots=True)
@@ -174,12 +171,8 @@ def _profile_flags(profiles: Iterable[str]) -> list[str]:
 
 
 def _profile_name(*, settings: Mapping[str, str]) -> str:
-    """The service profile a dfe-engine tier and transport belong to, such as single-grpc."""
-    tier = settings["DFE_ENGINE_PROFILE"].removeprefix("docker-")
-    transport = (
-        "kafka" if (settings["DFE_ENGINE_TRANSPORT_DEFAULT"] == "bus") else "grpc"
-    )
-    return f"{tier}-{transport}"
+    """The service profile a dfe-engine tier is, slim or single."""
+    return settings["DFE_ENGINE_PROFILE"].removeprefix("docker-")
 
 
 def still_defined(restore: Restore, model: Mapping) -> Restore:

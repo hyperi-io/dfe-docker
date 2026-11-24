@@ -105,23 +105,17 @@ global:
 
 tests:
   - name: simple-receiver-to-loader-grpc
-    profile: slim-grpc
-
-  - name: simple-receiver-to-loader-kafka
-    profile: slim-kafka
-    expected_topics:
-      - main_land
-      - simple_receiver_to_loader_kafka_land
+    profile: slim
 
   - name: simple-receiver-to-loader-kafka-with-archiver
-    profile: single-kafka
+    profile: single
     expected_topics:
       - main_land
       - simple_receiver_to_loader_kafka_with_archiver_land
 
   # The complete single-node stack: receiver, loader and archiver over Kafka, with the engine, UI and proxy in front. The HTTP checks assert the single-origin contract dfe-proxy exists for: UI and engine API on ONE origin. DFE_UI_URL is the console URL the suite resolves: localhost on DFE_UI_PORT or https at DFE_EXTERNAL_ORIGIN's host under console TLS
   - name: complete-single-node-stack
-    profile: single-kafka
+    profile: single
     otel: true
     expected_topics:
       - main_land
@@ -139,7 +133,7 @@ tests:
   # Failed root logins are the detection; a failure for another user, a root
   # success and an unrelated API event are the near misses it must leave alone.
   - name: rules-and-hunts
-    profile: slim-grpc
+    profile: slim
     config_overrides:
       dfe-receiver: tests/e2e/configs/receiver-e2e-org.yaml
     detection:
@@ -151,7 +145,7 @@ tests:
   # panel narrowed to root, Create Rule, then a hunt added and triggered from the
   # console's form. Each filter alone lets a near miss through.
   - name: search-rule-hunt
-    profile: slim-grpc
+    profile: slim
     config_overrides:
       dfe-receiver: tests/e2e/configs/receiver-e2e-org.yaml
     detection:
@@ -166,7 +160,7 @@ tests:
   # ClickHouse down under load on the core data path: dfe-loader has to hold or
   # refuse what it cannot write, and deliver it once ClickHouse is back.
   - name: clickhouse-outage
-    profile: slim-grpc
+    profile: slim
     outage:
       service: clickhouse
       seconds: 60
@@ -174,14 +168,14 @@ tests:
   # A direct gRPC destination pulled from under its sender and returned. Every
   # app upstream of the stopped one has to hold or refuse, never exit.
   - name: loader-outage-grpc
-    profile: slim-grpc
+    profile: slim
     outage:
       service: dfe-loader
       seconds: 60
 
   # The Kafka chain through the vrl transform dfe-engine starts for a source made through its API, with dfe-loader stopped under it. dfe-engine runs no transform for a source on direct gRPC
   - name: loader-outage-kafka-transform-vrl
-    profile: single-kafka
+    profile: single
     # The archiver commits only when it rolls a file, every 300s by default
     config_overrides:
       dfe-archiver: tests/e2e/configs/archiver-short-roll.yaml
@@ -200,7 +194,7 @@ tests:
 
   # The same chain with the transform instance itself stopped mid-chain
   - name: transform-vrl-outage-kafka
-    profile: single-kafka
+    profile: single
     # The archiver commits only when it rolls a file, every 300s by default
     config_overrides:
       dfe-archiver: tests/e2e/configs/archiver-short-roll.yaml
@@ -216,7 +210,7 @@ tests:
   # land, on the Kafka path and on the direct gRPC path. The load is dense enough
   # that the kill lands with records in flight; a kill that catches none fails.
   - name: loader-kill-kafka
-    profile: slim-kafka
+    profile: single
     expected_topics:
       - main_land
     outage:
@@ -227,7 +221,7 @@ tests:
       interval: 0.01
 
   - name: receiver-kill-kafka
-    profile: slim-kafka
+    profile: single
     expected_topics:
       - main_land
     outage:
@@ -238,7 +232,7 @@ tests:
       interval: 0.01
 
   - name: loader-kill-grpc
-    profile: slim-grpc
+    profile: slim
     outage:
       service: dfe-loader
       method: kill
@@ -250,7 +244,7 @@ tests:
       interval: 0.01
 
   - name: transform-vrl-kill-kafka
-    profile: single-kafka
+    profile: single
     # The archiver commits only when it rolls a file, every 300s by default
     config_overrides:
       dfe-archiver: tests/e2e/configs/archiver-short-roll.yaml
@@ -267,7 +261,7 @@ tests:
   # The kill lands on a hop holding what it took while its next hop was frozen.
   # The receiver dies with the loader paused, and with the broker paused.
   - name: receiver-kill-grpc-loader-paused
-    profile: slim-grpc
+    profile: slim
     outage:
       service: dfe-receiver
       method: kill
@@ -279,7 +273,7 @@ tests:
       interval: 0.01
 
   - name: receiver-kill-kafka-broker-paused
-    profile: slim-kafka
+    profile: single
     expected_topics:
       - main_land
     outage:
@@ -295,7 +289,7 @@ tests:
   # The same kills with acknowledgements off on every hop to ClickHouse. Each must
   # lose records.
   - name: loader-kill-grpc-acks-off
-    profile: slim-grpc
+    profile: slim
     config_overrides:
       dfe-loader: tests/e2e/configs/loader-grpc-acks-off.yaml
       dfe-receiver: tests/e2e/configs/receiver-grpc-acks-off.yaml
@@ -314,7 +308,7 @@ tests:
   # the receiver holds almost nothing in memory when it dies and loses nothing
   # reliably.
   - name: receiver-kill-grpc-loader-paused-acks-off
-    profile: slim-grpc
+    profile: slim
     config_overrides:
       dfe-loader: tests/e2e/configs/loader-grpc-acks-off.yaml
       dfe-receiver: tests/e2e/configs/receiver-grpc-acks-off.yaml
@@ -330,7 +324,7 @@ tests:
       loss: unreliable
 
   - name: receiver-kill-kafka-broker-paused-acks-off
-    profile: slim-kafka
+    profile: single
     expected_topics:
       - main_land
     config_overrides:
@@ -350,7 +344,7 @@ tests:
   # The kills as graceful stops: SIGTERM, a drain, then SIGKILL only if the stop
   # timeout runs out.
   - name: loader-sigterm-grpc
-    profile: slim-grpc
+    profile: slim
     outage:
       service: dfe-loader
       seconds: 20
@@ -361,7 +355,7 @@ tests:
       interval: 0.01
 
   - name: receiver-sigterm-grpc-loader-paused
-    profile: slim-grpc
+    profile: slim
     outage:
       known_issue: hyperi-io/dfe-receiver#278
       service: dfe-receiver
@@ -373,7 +367,7 @@ tests:
       interval: 0.01
 
   - name: receiver-sigterm-kafka-broker-paused
-    profile: slim-kafka
+    profile: single
     expected_topics:
       - main_land
     outage:
@@ -387,7 +381,7 @@ tests:
       interval: 0.01
 
   - name: loader-sigterm-kafka
-    profile: slim-kafka
+    profile: single
     expected_topics:
       - main_land
     outage:
@@ -397,7 +391,7 @@ tests:
       interval: 0.01
 
   - name: transform-vrl-sigterm-kafka
-    profile: single-kafka
+    profile: single
     # The archiver commits only when it rolls a file, every 300s by default
     config_overrides:
       dfe-archiver: tests/e2e/configs/archiver-short-roll.yaml
@@ -415,7 +409,7 @@ tests:
   # and every record on the spool at the signal must replay after the restart and
   # land.
   - name: receiver-kill-spillover-acks-off
-    profile: slim-grpc
+    profile: slim
     config_overrides:
       dfe-loader: tests/e2e/configs/loader-grpc-acks-off.yaml
       dfe-receiver: tests/e2e/configs/receiver-grpc-spillover-acks-off.yaml
@@ -435,7 +429,7 @@ tests:
   # With acknowledgements held, spillover opens no spool: the loader frozen past
   # the receiver's hold is answered 503 and nothing reaches the disk.
   - name: receiver-spillover-acks-on-builds-no-spool
-    profile: slim-grpc
+    profile: slim
     config_overrides:
       dfe-receiver: tests/e2e/configs/receiver-grpc-spillover.yaml
     outage:
@@ -453,7 +447,7 @@ tests:
   # land, and each refused one reaches the loader's file dead-letter queue or its
   # dropped count without holding up the records behind it.
   - name: loader-kill-grpc-poison
-    profile: slim-grpc
+    profile: slim
     config_overrides:
       dfe-loader: tests/e2e/configs/loader-grpc-dead-letters.yaml
     outage:
@@ -476,7 +470,7 @@ tests:
   # record has to be in an archived file once the archiver is back and stopped
   # cleanly: duplicates pass, gaps fail.
   - name: archiver-kill-mid-roll
-    profile: single-kafka
+    profile: single
     config_overrides: &archive-roll
       dfe-archiver: tests/e2e/configs/archiver-kafka-archive-roll.yaml
     expected_topics:
@@ -492,7 +486,7 @@ tests:
         path: /var/lib/dfe-archiver/archive
 
   - name: archiver-sigterm-mid-roll
-    profile: single-kafka
+    profile: single
     config_overrides: *archive-roll
     expected_topics:
       - main_land
@@ -507,7 +501,7 @@ tests:
 
   # The broker down under load with every Kafka app consuming, each transform included: the e2evector and e2eelastic records keep the vector and elastic instances' own topics moving, so their groups have to catch up too
   - name: kafka-outage
-    profile: single-kafka
+    profile: single
     # The archiver commits only when it rolls a file, every 300s by default
     config_overrides:
       dfe-archiver: tests/e2e/configs/archiver-short-roll.yaml

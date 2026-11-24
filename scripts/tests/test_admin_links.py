@@ -46,7 +46,7 @@ _KAFBAT = {
 }
 
 # A profile per transport. The matrix sets each footprint env var it varies and the env var wins over the profile's key
-_TRANSPORT_PROFILES = {"kafka": "slim-kafka", "grpc": "slim-grpc"}
+_TRANSPORT_PROFILES = {"kafka": "single", "grpc": "slim"}
 
 # Placeholders for the settings an armed auth profile refuses to resolve without.
 _AUTH_SETTINGS = {
@@ -202,10 +202,8 @@ def test_a_ui_is_listed_exactly_where_it_runs_and_is_published(
 @pytest.mark.parametrize(
     ("profile", "want"),
     [
-        ("slim-grpc", []),
-        ("slim-kafka", [_kafbat(url="http://localhost:8081")]),
-        ("single-grpc", []),
-        ("single-kafka", [_kafbat(url="http://localhost:8081")]),
+        ("slim", []),
+        ("single", [_kafbat(url="http://localhost:8081")]),
     ],
 )
 def test_every_profile_lists_what_its_footprint_runs(
@@ -225,7 +223,7 @@ def test_behind_the_auth_profile_the_link_takes_the_proxy_origin(
     links = _links(
         monkeypatch=monkeypatch,
         tmp_path=tmp_path,
-        profile="slim-kafka",
+        profile="single",
         DFE_HYPERDX_ENABLED="true",
         DFE_EXTERNAL_ORIGIN=_ORIGIN,
         DFE_OAUTH2_PROXY_EXTERNAL_ORIGIN=_PROXY_ORIGIN,
@@ -242,7 +240,7 @@ def test_a_moved_host_port_moves_the_link_and_not_the_probe(
     links = _links(
         monkeypatch=monkeypatch,
         tmp_path=tmp_path,
-        profile="single-kafka",
+        profile="single",
         KAFBAT_PORT="18081",
     )
 
@@ -255,7 +253,7 @@ def test_a_trailing_slash_on_the_origin_is_not_carried_into_the_url(
     links = _links(
         monkeypatch=monkeypatch,
         tmp_path=tmp_path,
-        profile="slim-kafka",
+        profile="single",
         DFE_EXTERNAL_ORIGIN=f"{_ORIGIN}/",
     )
 
@@ -272,7 +270,7 @@ def test_the_origin_is_read_from_dotenv_where_an_operator_sets_it(
         newline="\n",
     )
 
-    links = _links(monkeypatch=monkeypatch, profile="slim-kafka", tmp_path=tmp_path)
+    links = _links(monkeypatch=monkeypatch, profile="single", tmp_path=tmp_path)
 
     assert links == [_kafbat(url=f"{_ORIGIN}:18081")]
 
@@ -285,7 +283,7 @@ def test_an_unpublished_name_the_resolver_does_not_know_is_refused(
         _links(
             monkeypatch=monkeypatch,
             tmp_path=tmp_path,
-            profile="single-kafka",
+            profile="single",
             unpublished=("kafka-ui",),
         )
 
@@ -404,7 +402,7 @@ def _through_make(*, cwd: Path, **settings: str) -> tuple[str, str]:
 
 
 _SINGLE_ALL = {
-    "DFE_PROFILE": "single-kafka",
+    "DFE_PROFILE": "single",
     "DFE_BIND_SCOPE": "all",
     "DFE_EXTERNAL_ORIGIN": _ORIGIN,
 }
@@ -431,13 +429,13 @@ _KAFBAT_ON_ORIGIN = [_kafbat(url=f"{_ORIGIN}:8081")]
         ({**_SINGLE_ALL, **_AUTH_SETTINGS, "DFE_INFRA_UIS_EXTERNAL": "false"}, []),
     ],
     ids=[
-        "default-single-kafka",
-        "single-kafka-scope-all",
-        "single-kafka-infra-killed",
-        "single-kafka-kafbat-unpublished",
-        "single-kafka-hyperdx-unpublished",
-        "single-kafka-auth",
-        "single-kafka-auth-infra-killed",
+        "default-single",
+        "single-scope-all",
+        "single-infra-killed",
+        "single-kafbat-unpublished",
+        "single-hyperdx-unpublished",
+        "single-auth",
+        "single-auth-infra-killed",
     ],
 )
 def test_the_engine_receives_the_list_make_resolves_intact(

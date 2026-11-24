@@ -30,7 +30,7 @@ docker compose -f oci://ghcr.io/hyperi-io/dfe-docker:compose up -d
 docker compose -f oci://ghcr.io/hyperi-io/dfe-docker:compose run --rm secrets-init login
 ```
 
-That is the `single-kafka` stack, as Compose project `dfe`, from a compose file each release publishes beside the dfe-docker image (`:compose-<version>` keeps to one release). The file names no secret: the stack mints them at first start into a volume of its own, which `down -v` deletes. Point your browser to http://localhost:3000 and log in with the name and password the second command prints. The console makes you change the password at first login. Every port it publishes listens on 127.0.0.1 only. `docker compose -f oci://ghcr.io/hyperi-io/dfe-docker:compose down` stops it and keeps the data.
+That is the `single` stack, as Compose project `dfe`, from a compose file each release publishes beside the dfe-docker image (`:compose-<version>` keeps to one release). The file names no secret: the stack mints them at first start into a volume of its own, which `down -v` deletes. Point your browser to http://localhost:3000 and log in with the name and password the second command prints. The console makes you change the password at first login. Every port it publishes listens on 127.0.0.1 only. `docker compose -f oci://ghcr.io/hyperi-io/dfe-docker:compose down` stops it and keeps the data.
 
 To choose your own, see [Choosing the admin login](#choosing-the-admin-login).
 
@@ -50,7 +50,7 @@ docker run --rm -v "${PWD}:/dfe" ghcr.io/hyperi-io/dfe-docker init
 docker compose up -d
 ```
 
-`init` copies the compose files, config and templates in, writes `.env` and `env/` with fresh secrets, pins the newest published stack by digest and ends `.env` with what a plain `docker compose` needs. It sets up `single-kafka` and `--profile` picks another. On a Linux host the files belong to the folder's owner. `ghcr.io/hyperi-io/dfe-docker:<version>` installs the stack that release was cut against, every time.
+`init` copies the compose files, config and templates in, writes `.env` and `env/` with fresh secrets, pins the newest published stack by digest and ends `.env` with what a plain `docker compose` needs. It sets up `single` and `--profile` picks another. On a Linux host the files belong to the folder's owner. `ghcr.io/hyperi-io/dfe-docker:<version>` installs the stack that release was cut against, every time.
 
 The same image runs the rest, in the same folder:
 
@@ -86,8 +86,8 @@ The volume keeps the login, so a later `up` with neither variable set leaves it 
 ## Getting it running
 
 ```bash
-make up                          # single-kafka, newest published stable stack
-make up PROFILE=slim-grpc        # another profile
+make up                          # single, newest published stable stack
+make up PROFILE=slim             # the lighter gRPC profile
 make up VERSION=<stack version>  # an older stack
 ```
 
@@ -155,7 +155,7 @@ It will not appear instantly. The pipeline is asynchronous, Kafka most of all. A
 
 `make demo` streams Cisco ASA and FortiGate firewall logs into the running stack as raw syslog. dfe-transform-elastic works out which device sent each line, parses it and lands it in that device's own table. Palo Alto and Cisco IOS wait on [dfe-transform-elastic#133](https://github.com/hyperi-io/dfe-transform-elastic/issues/133).
 
-It needs a profile that runs dfe-transform-elastic per source, which is `single-kafka` (the default). On a clone with no stack running, `make demo` does the `make up` steps first. It rejects a profile without dfe-transform-elastic before it starts anything and never moves a running stack to another profile.
+It needs a profile that runs dfe-transform-elastic per source, which is `single` (the default). On a clone with no stack running, `make demo` does the `make up` steps first. It rejects a profile without dfe-transform-elastic before it starts anything and never moves a running stack to another profile.
 
 ```bash
 git clone https://github.com/hyperi-io/dfe-docker && cd dfe-docker

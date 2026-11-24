@@ -255,7 +255,7 @@ flowchart TB
 
 *Figure 2. L4 Detail -- One console origin. The ports in the boxes are container ports.* Up: [L2 Services -- DFE Compose stack](architecture.md).
 
-Two gRPC listeners share port 6000, and they aren't the same thing. A `*-grpc` profile runs both.
+Two gRPC listeners share port 6000, and they aren't the same thing. `slim` runs both.
 
 ```mermaid
 ---
@@ -336,7 +336,7 @@ flowchart TB
 | Container port | Host port | Owner | Protocol | Audience | Binds |
 |---|---|---|---|---|---|
 | 6000 | none, until `DFE_RECEIVER_GRPC_PORT` is set | dfe-receiver | Vector protocol, an ingest source that listens only once `config.grpc.enabled` is set through the engine | external clients | `DFE_INGRESS_BIND_HOST` (`0.0.0.0`) |
-| 6000 | none | dfe-loader | `scalo.transport.v1.Transport/Push`, internal transport | dfe-receiver, on a `*-grpc` profile | the compose network |
+| 6000 | none | dfe-loader | `scalo.transport.v1.Transport/Push`, internal transport | dfe-receiver, on `slim` | the compose network |
 
 Every Push listener in the suite answers on 6000 and dfe-engine compiles each sender's endpoint against that port. The receiver's listener is meant to be reachable from outside the stack. The loader's is not, so it publishes no host port.
 

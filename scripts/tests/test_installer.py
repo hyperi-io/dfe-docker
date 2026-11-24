@@ -41,7 +41,7 @@ _PLACEHOLDER = "0.0.0-placeholder"
 
 
 def test_the_block_goes_at_the_end_and_comes_out_whole() -> None:
-    settings = "DFE_PROFILE=slim-grpc\nCLICKHOUSE_PASSWORD=x\n"
+    settings = "DFE_PROFILE=slim\nCLICKHOUSE_PASSWORD=x\n"
 
     written = installer.with_block(lines=["COMPOSE_PROFILES=core"], text=settings)
     rewritten = installer.with_block(lines=["COMPOSE_PROFILES=dfe"], text=written)
@@ -109,12 +109,12 @@ def test_the_folder_reads_as_what_it_holds(
     assert installer.folder_state(target=tmp_path) == state
 
 
-@pytest.mark.parametrize("name", ["", "single-kafka", "slim-grpc"])
+@pytest.mark.parametrize("name", ["", "single", "slim"])
 def test_a_profile_the_tree_declares_is_taken(name: str) -> None:
     assert installer.profile_refusal(name=name, profiles=installer._profiles()) == ""
 
 
-@pytest.mark.parametrize("name", ["single", "kafka-full", "SINGLE-KAFKA", "x"])
+@pytest.mark.parametrize("name", ["single-kafka", "kafka-full", "SINGLE", "x"])
 def test_an_unknown_profile_is_refused_naming_every_valid_one(name: str) -> None:
     profiles = installer._profiles()
 
@@ -255,30 +255,15 @@ def tree(tmp_path: Path) -> Path:
     ("profile", "parked"),
     [
         pytest.param(
-            "single-kafka",
+            "single",
             # One fetcher for every source, transforms only as instances
             {"dfe-transform-elastic", "dfe-transform-vector", "dfe-transform-vrl"},
-            id="single-kafka",
+            id="single",
         ),
         pytest.param(
-            "slim-kafka",
-            {"dfe-archiver", "config-check-dfe-archiver", "dfe-fetcher"},
-            id="slim-kafka",
-        ),
-        pytest.param(
-            "single-grpc",
-            {
-                "dfe-archiver",
-                "config-check-dfe-archiver",
-                "dfe-fetcher",
-                "dfe-transform-vrl",
-            },
-            id="single-grpc",
-        ),
-        pytest.param(
-            "slim-grpc",
+            "slim",
             {"dfe-archiver", "dfe-fetcher", "dfe-transform-elastic"},
-            id="slim-grpc",
+            id="slim",
         ),
     ],
 )
@@ -295,15 +280,15 @@ def test_apply_leaves_a_plain_compose_starting_only_the_profile(
     overlay = (tree / installer.OVERLAY).read_text(encoding="utf-8")
     for service in parked:
         assert f"  {service}:\n" in overlay
-    if profile == "single-kafka":
+    if profile == "single":
         assert "  dfe-fetcher:\n" not in overlay
     assert "  dfe-receiver:\n" not in overlay
     assert "  dfe-loader:\n" not in overlay
 
 
 def test_a_second_apply_rewrites_the_block_in_place(tree: Path) -> None:
-    first = _apply(profile="single-kafka", root=tree)
-    second = _apply(profile="slim-grpc", root=tree)
+    first = _apply(profile="single", root=tree)
+    second = _apply(profile="slim", root=tree)
 
     assert first.returncode == 0, first.stderr
     assert second.returncode == 0, second.stderr
@@ -317,10 +302,10 @@ def test_apply_puts_env_back_when_make_refuses_the_settings(tree: Path) -> None:
         handle.write("DFE_BIND_SCOPE=all\n")
     before = (tree / ".env").read_text(encoding="utf-8")
 
-    result = _apply(profile="single-kafka", root=tree)
+    result = _apply(profile="single", root=tree)
 
     assert result.returncode == 1
     assert "DFE_EXTERNAL_ORIGIN" in result.stderr
     assert (tree / ".env").read_text(
         encoding="utf-8"
-    ) == before + "DFE_PROFILE=single-kafka\n"
+    ) == before + "DFE_PROFILE=single\n"

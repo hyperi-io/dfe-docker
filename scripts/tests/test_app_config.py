@@ -102,7 +102,7 @@ def test_a_profile_without_core_keeps_its_committed_config(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.setitem(os.environ, "DFE_CORE_ENABLED", "false")
-    values = _resolved("slim-kafka", tmp_path, monkeypatch)
+    values = _resolved("single", tmp_path, monkeypatch)
 
     assert values["DFE_ENGINE_APP_CONFIG_DIR"] == ""
     assert values["DFE_RECEIVER_CONFIG_FILE"] == ""
@@ -113,9 +113,9 @@ def test_a_profile_without_core_keeps_its_committed_config(
 def test_an_app_the_tier_does_not_run_is_given_no_rendered_path(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    # The slim profiles run no archiver, so a path into a directory the engine
+    # The slim profile runs no archiver, so a path into a directory the engine
     # renders nothing into would point the container at a file that never exists.
-    values = _resolved("slim-grpc", tmp_path, monkeypatch)
+    values = _resolved("slim", tmp_path, monkeypatch)
 
     assert values["DFE_ARCHIVER_CONFIG_FILE"] == ""
 

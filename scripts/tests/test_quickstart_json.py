@@ -210,7 +210,7 @@ def test_an_unknown_default_profile_is_refused() -> None:
         quickstart_json.quickstart(
             default="single",
             image="ghcr.io/hyperi-io/dfe-docker",
-            profiles={"slim-grpc": {"transport": "grpc"}},
+            profiles={"slim": {"transport": "grpc"}},
             stack_version="2.2.2",
             version="9.9.9",
         )

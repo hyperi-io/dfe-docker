@@ -16,7 +16,7 @@ Every test here injects uniquely marked events and reads the marker back out of 
 
 ```bash
 make test-e2e
-make test-e2e E2E_TESTS="simple-receiver-to-loader-grpc simple-receiver-to-loader-kafka"
+make test-e2e E2E_TESTS="simple-receiver-to-loader-grpc simple-receiver-to-loader-kafka-with-archiver"
 ```
 
 `tests/e2e/e2e-tests.yaml` is the definition. A `global:` block sets the data file (`tests/e2e/data/events.jsonl`), the mode (`ci` runs the registry images, `dev` builds local ones and chains the overlay that build writes) and `persistent_services`. Only ClickHouse survives between tests, so each test runs its own config against a fresh broker. The test stacks run as a compose project of their own, `<project>-e2e`, with `e2e-` before every container name, so no test reaches the volumes of the stack it found. Its engine writes custom keys and instance indexes under `.tmp/e2e/<run>/env` rather than `env/` and its apps read their custom keys from there. That project and its volumes are removed when the run ends and again when the next run starts, in case a killed run left them. Each entry under `tests:` names a `service_profiles.yaml` profile, optionally `expected_topics` (created and cleaned per run, then verified) and `config_overrides` keyed by service name.

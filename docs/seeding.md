@@ -16,7 +16,7 @@ Copyright: (c) 2026 HYPERI PTY LIMITED
 
 | Target | What it creates |
 |---|---|
-| `make sources` | `aws-cloudtrail`, `aws-guardduty` and `aws-securityhub` (polled by the one dfe-fetcher, which takes a single `aws` source until hyperi-io/dfe-fetcher#289, so the other two are skipped with the engine's reason) and `syslog`, which takes any record sent to the receiver with `_source: syslog`. Each lands in `dfe.<source>`. Sources a profile cannot run are skipped, so [`slim-grpc`](profiles.md#which-profile-runs-what) gets `syslog` alone |
+| `make sources` | `aws-cloudtrail`, `aws-guardduty` and `aws-securityhub` (polled by the one dfe-fetcher, which takes a single `aws` source until hyperi-io/dfe-fetcher#289, so the other two are skipped with the engine's reason) and `syslog`, which takes any record sent to the receiver with `_source: syslog`. Each lands in `dfe.<source>`. Sources a profile cannot run are skipped, so [`slim`](profiles.md#which-profile-runs-what) gets `syslog` alone |
 | `make rules` | `aws-guardduty-high-severity`, matching a GuardDuty finding rated 7 or above |
 | `make hunts` | The org, that rule and the hunt `aws-guardduty-high-severity` once `dfe.aws-guardduty` exists, running it every five minutes into `dfe.detection` |
 | `make events` | Two fake GuardDuty findings from `resources/seed/events/`, rated 8.0 and 2.0, so the hunt's next run detects the first and leaves the second |

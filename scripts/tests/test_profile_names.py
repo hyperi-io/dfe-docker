@@ -6,7 +6,7 @@
 #  License:      BUSL-1.1
 #  Copyright:    (c) 2026 HYPERI PTY LIMITED
 
-"""Every profile is `<tier>-<transport>` and dfe-engine is told the tier as `docker-<tier>`.
+"""There are two profiles, slim over gRPC and single over Kafka, and dfe-engine is told the name as `docker-<profile>`.
 
 A retired name is refused with the profile that replaces it, never resolved as an alias.
 """
@@ -69,7 +69,7 @@ ENGINE_TIER_CASES = [
             "DFE_TRANSPORT_BUS_PRESENT": "true",
             "DFE_TRANSPORT_DEFAULT": "bus",
         },
-        profile="single-kafka",
+        profile="single",
         renders=True,
     ),
     EngineTierCase(
@@ -78,11 +78,11 @@ ENGINE_TIER_CASES = [
             **_RENDERED_PATHS,
             "DFE_ENGINE_CONTRACT_DIR": "/app/content/contract",
             "DFE_KAFKA_BOOTSTRAP_SERVERS": "broker.example.invalid:9092",
-            "DFE_STACK_PROFILE": "docker-slim",
+            "DFE_STACK_PROFILE": "docker-single",
             "DFE_TRANSPORT_BUS_PRESENT": "true",
             "DFE_TRANSPORT_DEFAULT": "bus",
         },
-        profile="slim-kafka",
+        profile="single",
         renders=True,
     ),
     EngineTierCase(
@@ -93,11 +93,11 @@ ENGINE_TIER_CASES = [
             "DFE_ENGINE_APP_CONFIG_DIR": "",
             "DFE_ENGINE_CONTRACT_DIR": "",
             "DFE_KAFKA_BOOTSTRAP_SERVERS": "",
-            "DFE_STACK_PROFILE": "docker-single",
+            "DFE_STACK_PROFILE": "docker-slim",
             "DFE_TRANSPORT_BUS_PRESENT": "false",
             "DFE_TRANSPORT_DEFAULT": "direct",
         },
-        profile="single-grpc",
+        profile="slim",
         renders=False,
     ),
 ]
@@ -110,39 +110,40 @@ PROFILE_ENV_CASES = [
 ]
 RESOLVE_PROFILE_REFUSAL_CASES = [
     ResolveProfileRefusalCase(
-        message="to 'slim-grpc' instead", name="slim", transport="grpc"
+        message="to 'slim' instead", name="slim-grpc", transport="grpc"
     ),
     ResolveProfileRefusalCase(
-        message="to 'single-kafka' instead", name="single", transport="kafka"
+        message="to 'single' instead", name="single-kafka", transport="kafka"
     ),
     ResolveProfileRefusalCase(
-        message="to 'slim-kafka' instead", name="kafka-receiver", transport="kafka"
+        message="to 'slim' instead", name="single-grpc", transport="grpc"
     ),
     ResolveProfileRefusalCase(
-        message="to 'single-kafka' instead",
-        name="kafka-full-transform-vrl",
+        message="to 'single' instead, which runs on kafka where 'grpc-full' ran on grpc",
+        name="grpc-full",
+        transport="grpc",
+    ),
+    ResolveProfileRefusalCase(
+        message="to 'single' instead",
+        name="kafka-receiver",
         transport="kafka",
     ),
     ResolveProfileRefusalCase(
-        message="to 'slim-grpc' instead", name="grpc-minimal", transport="grpc"
+        message="to 'single' instead", name="slim-kafka", transport="kafka"
     ),
     ResolveProfileRefusalCase(
-        message="to 'single-grpc' instead",
-        name="grpc-receiver-transform-vrl",
-        transport="grpc",
+        message="to 'slim' instead", name="grpc-minimal", transport="grpc"
     ),
     ResolveProfileRefusalCase(
         message="Available profiles", name="scale", transport="kafka"
     ),
     ResolveProfileRefusalCase(
-        message="which says 'grpc'", name="slim-grpc", transport="kafka"
+        message="which says 'grpc'", name="slim", transport="kafka"
     ),
 ]
 STACK_PROFILE_CASES = [
-    StackProfileCase(expected="docker-slim", profile="slim-grpc"),
-    StackProfileCase(expected="docker-slim", profile="slim-kafka"),
-    StackProfileCase(expected="docker-single", profile="single-grpc"),
-    StackProfileCase(expected="docker-single", profile="single-kafka"),
+    StackProfileCase(expected="docker-slim", profile="slim"),
+    StackProfileCase(expected="docker-single", profile="single"),
 ]
 
 
@@ -168,7 +169,7 @@ class TestEngineTier:
             configured_broker=case["configured_broker"],
             profile_name=case["profile"],
             renders=case["renders"],
-            transport=case["profile"].partition("-")[2],
+            transport=resolve_profile.PROFILE_TRANSPORTS[case["profile"]],
         )
 
         assert tier == case["expected"]
@@ -182,7 +183,7 @@ class TestProfileEnv:
     def test_a_bare_compose_run_gets_the_profile_values(
         self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
     ) -> None:
-        _profile_mk(monkeypatch=monkeypatch, profile="slim-grpc", tmp_path=tmp_path)
+        _profile_mk(monkeypatch=monkeypatch, profile="slim", tmp_path=tmp_path)
 
         text = (tmp_path / ".tmp" / "profile.env").read_text(encoding="utf-8")
 
@@ -194,10 +195,8 @@ class TestResolveProfile:
     @pytest.mark.parametrize(
         ("profile", "expected"),
         [
-            ("slim-grpc", "file_only"),
-            ("single-grpc", "file_only"),
-            ("slim-kafka", ""),
-            ("single-kafka", ""),
+            ("slim", "file_only"),
+            ("single", ""),
         ],
     )
     def test_the_receiver_dlq_skips_kafka_where_there_is_no_broker(
@@ -216,14 +215,11 @@ class TestResolveProfile:
     @pytest.mark.parametrize(
         ("name", "replacement"), sorted(resolve_profile.RETIRED_PROFILES.items())
     )
-    def test_a_retired_name_is_replaced_by_a_profile_on_its_own_transport(
+    def test_a_retired_name_is_replaced_by_a_rendered_profile(
         self, name: str, replacement: str
     ) -> None:
-        transport = name.partition("-")[0]
-
         assert replacement in RENDERED_PROFILES
-        if transport in resolve_profile.TRANSPORT_TYPES:
-            assert replacement.endswith(f"-{transport}")
+        assert name not in RENDERED_PROFILES
 
     @pytest.mark.parametrize("case", RESOLVE_PROFILE_REFUSAL_CASES)
     def test_refuses(

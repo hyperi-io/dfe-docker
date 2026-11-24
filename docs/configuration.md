@@ -227,7 +227,7 @@ Compose maps them onto scalo's `version_check.enabled` and `version_check.send_i
 
 ### DFE Archiver
 
-Only `single-kafka` runs dfe-archiver, so archiving needs a Kafka profile ([profiles.md](profiles.md)).
+Only `single` runs dfe-archiver, so archiving needs a Kafka profile ([profiles.md](profiles.md)).
 
 | Variable                                         | Use                                                                                  | Default                                                             |
 |--------------------------------------------------|--------------------------------------------------------------------------------------|---------------------------------------------------------------------|
@@ -358,7 +358,7 @@ Compose sets these on the engine itself:
 | `DFE_ENGINE_SECRETS_PATH` | On the config volume, so the JWT key survives a recreate |
 | `DFE_ENGINE_STACK_IMAGES` | Every DFE app image the stack runs, by digest. The stack the console shows is the published one these match, with `DFE_STACK_VERSION` as the offline fallback |
 | `DFE_ENGINE_STACK_VERSION`, `DFE_ENGINE_UI_VERSION` | The certified stack and the console version, for the console footer. The second is the UI pin without its digest |
-| `DFE_ENGINE_TRANSPORT_BUS_PRESENT`, `DFE_ENGINE_TRANSPORT_DEFAULT` | From the profile. Their defaults are slim-grpc's |
+| `DFE_ENGINE_TRANSPORT_BUS_PRESENT`, `DFE_ENGINE_TRANSPORT_DEFAULT` | From the profile. Their defaults are slim's |
 
 The engine is the only writer of `dfe-app-config`, which every app mounts read-only, and each app's base config mounts under the instance overlay. It waits on the contracts, where a failed emit only warns, and on the broker because it creates the topics. Its 540 s `start_period` covers a dead engine's lease (2 x 180 s) plus table creation.
 

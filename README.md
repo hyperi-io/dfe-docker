@@ -40,8 +40,8 @@ From a clone, on a host with Docker Compose v2, make, git and Python 3:
 
 ```bash
 git clone https://github.com/hyperi-io/dfe-docker && cd dfe-docker
-make up                          # single-kafka, the newest published stable stack
-make up PROFILE=slim-grpc        # another profile
+make up                          # single, the newest published stable stack
+make up PROFILE=slim             # the lighter gRPC profile
 make up VERSION=<stack version>  # an older stack
 make demo                        # the same stack with the demo stream on it
 make down                        # stop everything, keep the data
@@ -51,7 +51,17 @@ make down                        # stop everything, keep the data
 
 ## Configuration
 
-A profile is `<tier>-<transport>`: `slim-grpc`, `slim-kafka`, `single-grpc` or `single-kafka`. `slim` is the core data path alone. `single-kafka` adds the per-source apps and the archiver and `single-grpc` runs the same services as `slim-grpc`, because the engine runs per-source apps on Kafka only. The engine still runs as `docker-single` there and as `docker-slim` on a `slim` profile. There is no `scale` tier, because Compose cannot scale out. `KAFKA_BACKEND=apache` swaps Redpanda, which is BSL, for Apache Kafka on the kafka profiles.
+There are two profiles. `slim` is the core data path over gRPC: receiver, loader, engine, console, HyperDX, ClickHouse and the self-monitoring collector. `single` runs Kafka and adds the archiver, Kafbat and the per-source apps. The engine runs as `docker-slim` or `docker-single` to match, as on Kubernetes. There is no `scale` tier, because Compose cannot scale out. `KAFKA_BACKEND=apache` swaps Redpanda, which is BSL, for Apache Kafka on `single`. The old `slim-grpc`, `single-kafka` and `kafka-*` names are refused with the profile that replaces them ([profiles](docs/profiles.md)).
+
+### Memory
+
+| Profile | Containers | Working set | Sum of container limits |
+|---|---:|---:|---:|
+| `slim` | 11 | 2.1 GiB | 11 GiB |
+| `single` | 15 | 2.2 GiB | 15.8 GiB |
+
+Measured on a Linux host with `docker stats`, as the peak of eight samples taken while the power-on self test ran, with no source bound. That is a light load, so ClickHouse and the broker grow under real ingest. Each source with a transform adds a container limited to 768 MiB. The limit sum is the most the containers may claim together and not what they use, so size a laptop from the working set plus the OS and your editor. Docker Desktop on Windows or Mac was not measured. Its VM memory (Settings, Resources) has to cover the working set.
+
 
 Each service reads its own `env/<service>.env`, created from `env.example/` by `make init`, which never overwrites a file and reports the keys an old `.env` is missing. Only the console and Search authenticate people, while the receiver's HTTP listener takes only bearer tokens once `make post` has made the ingest credential. The other ingest ports, Kafbat and the metrics ports ask for no login, so put the stack behind a VPN, a tunnel or a firewall before anyone you have not met can reach it or arm the `auth` profile. Every variable, the port map and the image list are in [docs/configuration.md](docs/configuration.md).
 

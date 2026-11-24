@@ -756,7 +756,7 @@ def _ensure_fetchers(
         names = ", ".join(repr(body["source"]) for body in fetchers)
         _print(
             msg=f"WARNING this profile runs no {FETCHER_SERVICE!r}, so fetcher "
-            f"source(s) {names} are skipped. single-kafka runs it"
+            f"source(s) {names} are skipped. single runs it"
         )
         return [], []
     kept = []
@@ -1934,7 +1934,7 @@ def refusal(*, per_source_apps: list[str], renders: bool) -> str:
         )
     if TRANSFORM_APP not in per_source_apps:
         return (
-            f"this profile runs no {TRANSFORM_APP!r}. Use single-kafka "
+            f"this profile runs no {TRANSFORM_APP!r}. Use single "
             f"(DFE_PROFILE in .env), which runs it per source"
         )
     return ""

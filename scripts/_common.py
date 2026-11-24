@@ -56,8 +56,8 @@ LOOPBACK_ORIGINS = frozenset(
     }
 )
 
-# Every service profile, each `<tier>-<transport>`. dfe-engine renders each one's app config and runs as `docker-<tier>`, the only tiers it knows
-RENDERED_PROFILES = ("slim-grpc", "slim-kafka", "single-grpc", "single-kafka")
+# Every service profile, named for the tier dfe-engine runs as (`docker-<profile>`) and rendering its app config. slim is gRPC and single is Kafka
+RENDERED_PROFILES = ("slim", "single")
 
 # What a Kafka dfe-loader subscribes to when its config names no topics and no topic_regex (dfe-loader src/kafka/transport.rs LANDING_TOPIC_INCLUDE)
 LOADER_DEFAULT_TOPIC_REGEX = "_(land|load)$"

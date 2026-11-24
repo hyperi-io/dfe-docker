@@ -247,11 +247,11 @@ def _refusal(*, apps: list[str], name: str, running: str) -> str:
         return (
             f"the stack running here is profile {running!r}, which runs no "
             f"{TRANSFORM_APP!r}. The demo needs it, so run `make down`, then "
-            "`make demo PROFILE=single-kafka`"
+            "`make demo PROFILE=single`"
         )
     return (
         f"profile {name!r} runs no {TRANSFORM_APP!r}, which the demo needs. Use "
-        "`make demo PROFILE=single-kafka`"
+        "`make demo PROFILE=single`"
     )
 
 

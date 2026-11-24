@@ -367,7 +367,7 @@ class TestContext:
 # ------------------------------------------------------------------------------
 # Test Case
 # - Represents a single test case with required parameters and defaults
-#   - profile: service_profiles.yaml profile name (e.g. slim-kafka)
+#   - profile: service_profiles.yaml profile name (slim or single)
 #   - compose_profiles: resolved compose profiles including infra (clickhouse, kafka backend profile, kafka-ui)
 #   - services: resolved {dfe-service: project-relative config path}
 #   - outage: what a test does to a service under load

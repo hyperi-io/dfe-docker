@@ -30,7 +30,7 @@ _COLLECTOR_CONFIG = CONFIG_DIR / "otel-collector" / "config.yaml"
 _COLLECTOR_SERVICE = "otel-collector"
 _ENGINE_SERVICE = "dfe-engine"
 
-# What single-kafka runs once it is up: every service but the one-shots, the dependencies its named services pull in included
+# What single runs once it is up: every service but the one-shots, the dependencies its named services pull in included
 _SINGLE_KAFKA_RUNNING = {
     "clickhouse",
     "dfe-archiver",
@@ -224,7 +224,7 @@ def test_resolve_writes_no_limits_without_the_usage_flag(
 ) -> None:
     # Only the goals that start services ask docker compose for the model
     exports = _usage_exports(
-        argv=[], monkeypatch=monkeypatch, profile="single-kafka", tmp_path=tmp_path
+        argv=[], monkeypatch=monkeypatch, profile="single", tmp_path=tmp_path
     )
 
     assert usage_cores.USAGE_LIMITS_VAR not in exports
@@ -237,7 +237,7 @@ def test_a_stack_with_no_collector_resolves_no_limits(
     monkeypatch.setenv(resolve_profile.OTEL_ENABLED_ENV_VAR, "false")
     written = tmp_path / ".tmp" / "profile.mk"
     monkeypatch.setattr(resolve_profile, "PROFILE_MK", written)
-    monkeypatch.setenv("DFE_PROFILE", "single-kafka")
+    monkeypatch.setenv("DFE_PROFILE", "single")
 
     assert resolve_profile.main(["--usage"]) == 0
 
@@ -252,7 +252,7 @@ def test_single_kafka_counts_every_long_running_service_it_starts(
     exports = _usage_exports(
         argv=["--usage"],
         monkeypatch=monkeypatch,
-        profile="single-kafka",
+        profile="single",
         tmp_path=tmp_path,
     )
 
