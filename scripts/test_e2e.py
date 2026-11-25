@@ -717,12 +717,15 @@ def is_shipped_config(*, path: str) -> bool:
 
 # ------------------------------------------------------------------------------
 # Missing Bind Sources
-# - The sources a compose volume list names that do not exist here, `src:dst[:mode]` entries with a relative source taken from the project directory
+# - The sources a compose volume list names that do not exist here, `src:dst[:mode]` entries with a relative source taken from the project directory. A source not starting with `.`, `/` or `~` is a named volume, which compose creates
 # ------------------------------------------------------------------------------
 def missing_bind_sources(*, volumes: Iterable[str]) -> list[Path]:
     missing = []
     for volume in volumes:
-        source = Path(volume.split(":", 1)[0])
+        name = volume.split(":", 1)[0]
+        if not name.startswith((".", "/", "~")):
+            continue
+        source = Path(name).expanduser()
         path = source if source.is_absolute() else PROJECT_DIR / source
         if not path.exists():
             missing.append(path)
@@ -770,8 +773,8 @@ def generate_compose_override(
         # The one-shot extends the service's compose entry, which this override does not reach
         check = f"  config-check-{svc_name}:\n{attach}"
         if config_command:
-            content += f"    command: {json.dumps(obj=['--config', config_command])}\n"
-            check += f"    command: {json.dumps(obj=['--config', config_command, 'config-check'])}\n"
+            content += f"    command: {json.dumps(obj=['--config', config_command], ensure_ascii=False)}\n"
+            check += f"    command: {json.dumps(obj=['--config', config_command, 'config-check'], ensure_ascii=False)}\n"
         content += check
     content += _sources.engine_override(
         environment=engine_environment,
@@ -781,7 +784,7 @@ def generate_compose_override(
     if shipped:
         content += "configs:\n"
         for config_name, text in sorted(shipped.items()):
-            content += f"  {config_name}:\n    content: {json.dumps(obj=text)}\n"
+            content += f"  {config_name}:\n    content: {json.dumps(obj=text, ensure_ascii=False)}\n"
 
     missing = missing_bind_sources(volumes=binds)
     if missing:

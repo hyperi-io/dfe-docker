@@ -78,6 +78,24 @@ def test_content_arrives_in_the_container_exactly_as_the_file_is_written(
     assert shipped.replace("$$", "$") == LOADER_TEXT
 
 
+def test_content_outside_ascii_is_written_as_characters_not_surrogate_escapes(
+    run_dir: Path,
+) -> None:
+    generated = run_dir / "loader-e2e-t.yaml"
+    generated.write_text("note: caf\u00e9 \U0001f600\n", encoding="utf-8")
+    written = test_e2e.generate_compose_override(
+        engine_environment={},
+        engine_volumes=[],
+        rendered_services=(),
+        services={"dfe-loader": str(generated)},
+    )
+
+    text = Path(written).read_text(encoding="utf-8")
+
+    assert "\\ud83d" not in text.lower()
+    assert "\U0001f600" in text
+
+
 def test_a_committed_config_stays_a_bind_mount_from_the_checkout(
     run_dir: Path,
 ) -> None:
@@ -113,6 +131,7 @@ def test_a_rendered_service_still_runs_the_file_the_engine_renders(
             1,
         ),
         (["./tests/e2e/configs/receiver-e2e-org.yaml:/etc/dfe/receiver.yaml:ro"], 0),
+        (["dlq-spool:/var/spool/dfe", "dfe-app-config:/etc/dfe/apps:ro"], 0),
         ([], 0),
     ],
 )
