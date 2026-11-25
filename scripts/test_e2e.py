@@ -116,6 +116,8 @@ RUN_ID = f"e2e-{datetime.now(timezone.utc).strftime('%Y%m%d%H%M%S')}"
 TMP_DIR = PROJECT_DIR / ".tmp" / "e2e" / RUN_ID
 # The test engine's custom keys and instance indexes, kept out of the found stack's env/
 SUITE_ENV_DIR = TMP_DIR / "env"
+# What the client reads of it: the engine writes on the daemon's side of that bind, so each read starts from a copy taken out of the engine container
+SUITE_ENV_MIRROR = TMP_DIR / "env-mirror"
 
 # ------------------------------------------------------------------------------
 # Config Related
@@ -717,7 +719,7 @@ def is_shipped_config(*, path: str) -> bool:
 
 # ------------------------------------------------------------------------------
 # Missing Bind Sources
-# - The sources a compose volume list names that do not exist here, `src:dst[:mode]` entries with a relative source taken from the project directory. A source not starting with `.`, `/` or `~` is a named volume, which compose creates
+# - Checks the override's own mounts only, never the base file's. The sources a compose volume list names that do not exist here, `src:dst[:mode]` entries with a relative source taken from the project directory. A source not starting with `.`, `/` or `~` is a named volume, which compose creates
 # ------------------------------------------------------------------------------
 def missing_bind_sources(*, volumes: Iterable[str]) -> list[Path]:
     missing = []
@@ -925,6 +927,48 @@ def compose_profile_flags(*, test: TestCase) -> list[str]:
 
 
 # ------------------------------------------------------------------------------
+# Pull Suite Env
+# - Replaces SUITE_ENV_MIRROR with the engine's /app/app-env, copied out through the daemon API so it works the same on a local and a remote DOCKER_HOST
+# - Raises SuiteEnvError when the engine has no container or the copy fails, so a file the engine wrote is never read as absent
+# ------------------------------------------------------------------------------
+class SuiteEnvError(RuntimeError):
+    pass
+
+
+def pull_suite_env() -> None:
+    container = container_id(SCHEMA_AUTHORITY_SERVICE)
+    if not container:
+        raise SuiteEnvError(
+            f"'{SCHEMA_AUTHORITY_SERVICE}' has no container to read its env files from"
+        )
+    rmtree(SUITE_ENV_MIRROR, ignore_errors=True)
+    SUITE_ENV_MIRROR.mkdir(parents=True)
+    result = run_cmd(
+        [
+            "docker",
+            "cp",
+            f"{container}:{_sources.APP_ENV_MOUNT}/.",
+            str(SUITE_ENV_MIRROR),
+        ],
+        capture=True,
+    )
+    if result.returncode != 0:
+        detail = (result.stderr or result.stdout or "").strip()
+        raise SuiteEnvError(
+            f"could not copy {_sources.APP_ENV_MOUNT} out of '{SCHEMA_AUTHORITY_SERVICE}': {detail}"
+        )
+
+
+# ------------------------------------------------------------------------------
+# Read Index
+# - The sources dfe-engine's instance index lists now, read from a fresh copy of what the engine wrote
+# ------------------------------------------------------------------------------
+def read_index(*, sources: Sequence[_sources.Source]) -> dict[str, list[str]]:
+    pull_suite_env()
+    return _sources.indexed(env_dir=SUITE_ENV_MIRROR, sources=sources)
+
+
+# ------------------------------------------------------------------------------
 # Stack Up
 # - Starts the Docker stack with the appropriate compose files and profile
 # - Returns the `-f` arguments it started the stack from, None on a failure
@@ -962,7 +1006,7 @@ def stack_up(mode, test, services):
             compose_text=(PROJECT_DIR / "docker-compose.yml").read_text(
                 encoding="utf-8"
             ),
-            env_dir=SUITE_ENV_DIR,
+            env_dir=SUITE_ENV_MIRROR,
         ),
         encoding="utf-8",
         newline="\n",
@@ -1062,6 +1106,12 @@ def stack_up(mode, test, services):
             "dfe-engine", DFE_ENGINE_HEALTH_URL, max_attempts=ENGINE_READY_ATTEMPTS
         )
     ):
+        return None
+
+    try:
+        pull_suite_env()
+    except SuiteEnvError as problem:
+        LOGGER.error(f"Apps cannot read the custom keys the engine wrote: {problem}")
         return None
 
     base_cmd = ["docker", "compose"] + compose_files + compose_profile_flags(test=test)
@@ -4323,14 +4373,16 @@ def await_index(*, ctx: TestContext, test: TestCase) -> dict[str, list[str]] | N
     def _complete(found: dict[str, list[str]]) -> bool:
         return not (_sources.unindexed(found=found, sources=test.sources))
 
-    found = poll_until(
-        done=_complete,
-        interval=SOURCE_POLL_SECONDS,
-        predicate=functools.partial(
-            _sources.indexed, env_dir=SUITE_ENV_DIR, sources=test.sources
-        ),
-        timeout=SOURCE_INDEX_TIMEOUT,
-    )
+    try:
+        found = poll_until(
+            done=_complete,
+            interval=SOURCE_POLL_SECONDS,
+            predicate=functools.partial(read_index, sources=test.sources),
+            timeout=SOURCE_INDEX_TIMEOUT,
+        )
+    except SuiteEnvError as problem:
+        mark_fail(ctx=ctx, label=f"[{test.name}] {problem}")
+        return None
     missing = _sources.unindexed(found=found, sources=test.sources)
     if not (missing):
         return found
@@ -4370,6 +4422,12 @@ def start_instances(
         mark_fail(ctx=ctx, label=f"[{test.name}] {'; '.join(plan.problems)}")
         return None
 
+    try:
+        pull_suite_env()
+    except SuiteEnvError as problem:
+        mark_fail(ctx=ctx, label=f"[{test.name}] {problem}")
+        return None
+
     fragment = TMP_DIR / f"docker-compose.{RUN_ID}.{test.name}.instances.yml"
     # `extends` reads the committed service, never the dev overlay, so an instance of an app the dev build made gets its local image here
     built = (
@@ -4379,7 +4437,7 @@ def start_instances(
     )
     images = local_image_services(components=sorted(set(found) & set(built)))
     instances.write(
-        env_dir=SUITE_ENV_DIR, images=images, instances=found, path=fragment
+        env_dir=SUITE_ENV_MIRROR, images=images, instances=found, path=fragment
     )
     if not (run.swapped):
         run.compose_file = os.environ.get("COMPOSE_FILE")
@@ -4593,14 +4651,16 @@ def remove_sources(*, ctx: TestContext, run: SourceRun, test: TestCase) -> None:
         status, _ = engine_call(method="GET", path=path, token=login.token)
         if status != 404:
             left.append(f"source {source.name!r} (DELETE {deleted}, then GET {status})")
-    listed = poll_until(
-        done=_gone,
-        interval=SOURCE_POLL_SECONDS,
-        predicate=functools.partial(
-            _sources.indexed, env_dir=SUITE_ENV_DIR, sources=run.made
-        ),
-        timeout=SOURCE_INDEX_TIMEOUT,
-    )
+    try:
+        listed = poll_until(
+            done=_gone,
+            interval=SOURCE_POLL_SECONDS,
+            predicate=functools.partial(read_index, sources=run.made),
+            timeout=SOURCE_INDEX_TIMEOUT,
+        )
+    except SuiteEnvError as problem:
+        mark_fail(ctx=ctx, label=f"[{test.name}] {problem}")
+        return
     for app, names in sorted(listed.items()):
         index = f"env/{app}{instances.INDEX_SUFFIX}"
         left += [f"{name!r} still listed in {index!r}" for name in names]
