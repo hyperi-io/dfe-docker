@@ -147,6 +147,9 @@ SERVICE_CONFIG_MOUNTS = {
 
 KNOWN_DFE_SERVICES = set(SERVICE_CONFIG_MOUNTS.keys())
 
+# Where a generated config lands in its container, beside the committed mounts
+SHIPPED_CONFIG_DIR = "/etc/dfe/e2e"
+
 # Extra compose files chained onto every `up`, e.g. one renaming the containers
 # so this stack can run beside another on the same daemon.
 EXTRA_COMPOSE_FILES_ENV_VAR = "DFE_E2E_COMPOSE_FILES"
@@ -701,9 +704,39 @@ def parse_compose_services():
 
 
 # ------------------------------------------------------------------------------
+# Shipped Config
+# - A config this run generated reaches its container as compose `configs:` content, which compose copies into the container through the daemon's API, so the daemon needs no path to the file. Mounting it by host path fails on a remote DOCKER_HOST, where the daemon creates an empty root-owned directory at the missing path
+# ------------------------------------------------------------------------------
+def shipped_config_target(*, service: str) -> str:
+    return f"{SHIPPED_CONFIG_DIR}/{Path(SERVICE_CONFIG_MOUNTS[service]).name}"
+
+
+def is_shipped_config(*, path: str) -> bool:
+    return (PROJECT_DIR / path).resolve().is_relative_to(TMP_DIR.resolve())
+
+
+# ------------------------------------------------------------------------------
+# Missing Bind Sources
+# - The sources a compose volume list names that do not exist here, `src:dst[:mode]` entries with a relative source taken from the project directory. A source not starting with `.`, `/` or `~` is a named volume, which compose creates
+# ------------------------------------------------------------------------------
+def missing_bind_sources(*, volumes: Iterable[str]) -> list[Path]:
+    missing = []
+    for volume in volumes:
+        name = volume.split(":", 1)[0]
+        if not name.startswith((".", "/", "~")):
+            continue
+        source = Path(name).expanduser()
+        path = source if source.is_absolute() else PROJECT_DIR / source
+        if not path.exists():
+            missing.append(path)
+    return missing
+
+
+# ------------------------------------------------------------------------------
 # Generate Compose Override
-# - Creates a temp docker-compose override file to mount test-specific configs
+# - Creates a temp docker-compose override file giving each service its test-specific config
 #   services: dict {dfe-service-name: project-relative config path}
+# - A committed config is bind-mounted from the checkout, a generated one is shipped as `configs:` content
 # ------------------------------------------------------------------------------
 def generate_compose_override(
     *,
@@ -716,22 +749,50 @@ def generate_compose_override(
     override_file = TMP_DIR / f"docker-compose.{RUN_ID}.e2e.yaml"
 
     content = "services:\n"
+    shipped = {}
+    binds = list(engine_volumes)
     for svc_name in sorted(services):
-        mount = SERVICE_CONFIG_MOUNTS[svc_name]
-        volumes = f"    volumes:\n      - ./{services[svc_name]}:{mount}:ro\n"
-        content += f"  {svc_name}:\n{volumes}"
-        # The one-shot extends the service's compose entry, which this override does not reach
-        check = f"  config-check-{svc_name}:\n{volumes}"
+        config_command = None
+        if is_shipped_config(path=services[svc_name]):
+            config_name = f"{svc_name}-e2e-config"
+            # Compose interpolates `$` in content, so each one is doubled to arrive as written
+            text = (PROJECT_DIR / services[svc_name]).read_text(encoding="utf-8")
+            shipped[config_name] = text.replace("$", "$$")
+            config_command = shipped_config_target(service=svc_name)
+            attach = (
+                f"    configs:\n      - source: {config_name}\n"
+                f"        target: {config_command}\n"
+            )
+        else:
+            mount = SERVICE_CONFIG_MOUNTS[svc_name]
+            binds.append(f"./{services[svc_name]}:{mount}:ro")
+            attach = f"    volumes:\n      - ./{services[svc_name]}:{mount}:ro\n"
         if svc_name in rendered_services:
-            rendered = _sources.rendered_config(service=svc_name)
-            content += f"    command: {json.dumps(obj=['--config', rendered])}\n"
-            check += f"    command: {json.dumps(obj=['--config', rendered, 'config-check'])}\n"
+            config_command = _sources.rendered_config(service=svc_name)
+        content += f"  {svc_name}:\n{attach}"
+        # The one-shot extends the service's compose entry, which this override does not reach
+        check = f"  config-check-{svc_name}:\n{attach}"
+        if config_command:
+            content += f"    command: {json.dumps(obj=['--config', config_command], ensure_ascii=False)}\n"
+            check += f"    command: {json.dumps(obj=['--config', config_command, 'config-check'], ensure_ascii=False)}\n"
         content += check
     content += _sources.engine_override(
         environment=engine_environment,
         service=SCHEMA_AUTHORITY_SERVICE,
         volumes=engine_volumes,
     )
+    if shipped:
+        content += "configs:\n"
+        for config_name, text in sorted(shipped.items()):
+            content += f"  {config_name}:\n    content: {json.dumps(obj=text, ensure_ascii=False)}\n"
+
+    missing = missing_bind_sources(volumes=binds)
+    if missing:
+        error(
+            f"Bind mount source missing: {', '.join(str(path) for path in missing)}. "
+            "A docker daemon creates an empty root-owned directory at a missing source, "
+            "and the service then fails with 'Is a directory'"
+        )
 
     override_file.write_text(content, encoding="utf-8", newline="\n")
     LOGGER.debug(f"Generated compose override: '{override_file}'")
@@ -1521,13 +1582,16 @@ def wait_for_stack(services):
 
 # ------------------------------------------------------------------------------
 # Verify Config Mounts
-# - Each DFE service's process runs `--config` on the file this test mounts for it or the one dfe-engine renders for a service that reads its render, read off `docker inspect`. The mount alone proves nothing: an inherited DFE_*_CONFIG_FILE runs the service on another file beside it.
+# - Each DFE service's process runs `--config` on the file this test mounts or ships for it, or the one dfe-engine renders for a service that reads its render, read off `docker inspect`. The mount alone proves nothing: an inherited DFE_*_CONFIG_FILE runs the service on another file beside it.
 # ------------------------------------------------------------------------------
-def verify_config_mounts(ctx, test):
+def verify_config_mounts(ctx, test, services):
     verified = True
     for service in sorted(test.services):
         want = SERVICE_CONFIG_MOUNTS[service]
         what = "the file this test mounts"
+        if is_shipped_config(path=services[service]):
+            want = shipped_config_target(service=service)
+            what = "the file this test ships"
         if service in test.rendered_services:
             want = _sources.rendered_config(service=service)
             what = "the file dfe-engine renders for it"
@@ -4832,7 +4896,7 @@ def run_test(ctx, mode, test, persistent_services):
 
     # A service on another config tests another path, so nothing after it counts.
     print()
-    if not (verify_config_mounts(ctx, test)):
+    if not (verify_config_mounts(ctx, test, effective_services)):
         dump_logs()
         stack_down(keep_services=persistent_services or None)
         return
