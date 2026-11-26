@@ -736,7 +736,7 @@ def earn_grant(
 ) -> tuple[dict[str, str] | None, int, typing.Any]:
     """Re-enter `password` for the engine, returning (header, status, body) with no header when it gave no grant.
 
-    `kind` and `target` name what is about to change, the bare name of an account, org or ingest credential. The password is the caller's own and is never logged.
+    `kind` and `target` name what is about to change, the bare name of an account, org or ingest credential. The password is the caller's own and is never logged. A refusal comes back as its code alone, because a validation error echoes the request and the request holds the password.
     """
     status, answer = _api_post_json(
         f"{base}/auth/reauth",
@@ -744,7 +744,10 @@ def earn_grant(
         token=token,
     )
     grant = answer.get("grant") if isinstance(answer, dict) else None
-    return ({REAUTH_HEADER: grant} if grant else None), status, answer
+    if grant:
+        return {REAUTH_HEADER: grant}, status, answer
+    code = answer.get("code") if isinstance(answer, dict) else None
+    return None, status, {"code": code}
 
 
 def with_grant(
