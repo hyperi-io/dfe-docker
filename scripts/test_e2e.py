@@ -336,6 +336,8 @@ SEARCH_SOURCE = "main"
 # The console holds every page behind its setup wizard until an organisation and
 # a user of the deployment's own exist.
 SETUP_FIRST_USER = "e2e-analyst"
+# The group every engine seeds for an analyst, which an engine that requires a group puts the first user in
+SETUP_FIRST_GROUP = "dfe-analysts"
 SHOTS_DIR_ENV_VAR = "DFE_E2E_SHOTS_DIR"
 HEADED_ENV_VAR = "DFE_E2E_HEADED"
 
@@ -3432,9 +3434,12 @@ def run_outage(ctx, test, services, ingest_url, ingest_service):
 # Engine Call
 # - One engine API request over the compose network, the way `make post` makes
 #   it, as (status, body) with status 0 and the reason when nothing answered
+# - `grant` is the (kind, name) of what a DELETE changes, for the re-auth grant an
+#   engine that guards it asks for
 # ------------------------------------------------------------------------------
 def engine_call(
     *,
+    grant: tuple[str, str] | None = None,
     headers: dict[str, str] | None = None,
     method: str,
     path: str,
@@ -3442,7 +3447,8 @@ def engine_call(
     timeout: int | None = None,
     token: str,
 ) -> tuple[int, typing.Any]:
-    url = f"{post._engine_base()}{path}"
+    base = post._engine_base()
+    url = f"{base}{path}"
     # Each helper keeps its own default when the caller names no timeout
     limit = {} if (timeout is None) else {"timeout": timeout}
     try:
@@ -3460,11 +3466,23 @@ def engine_call(
             return post.api_put_json(
                 payload=(payload) or ({}), token=token, url=url, **limit
             )
-        if method == "DELETE":
-            return (
-                post._api_delete(headers=headers, token=token, url=url, **limit),
-                "",
+        if method == "DELETE" and grant is not None:
+            kind, name = grant
+            return post.with_grant(
+                base=base,
+                kind=kind,
+                password=admin_session(token=token).password,
+                send=lambda extra: post._api_delete_json(
+                    url,
+                    headers={**(headers or {}), **(extra or {})},
+                    token=token,
+                    **limit,
+                ),
+                target=name,
+                token=token,
             )
+        if method == "DELETE":
+            return post._api_delete_json(url, headers=headers, token=token, **limit)
     except seed.ENGINE_FAULTS as error:
         return 0, str(error)
     raise ValueError(f"engine_call has no method {method!r}")
@@ -3795,8 +3813,9 @@ def remove_detection_objects(ctx, test, token, created):
         headers = (
             reauth_headers(token=token, account=name) if kind == "account" else None
         )
+        grant = ("org", name) if kind == "organisation" else None
         deleted, _ = engine_call(
-            headers=headers, method="DELETE", path=path, token=token
+            grant=grant, headers=headers, method="DELETE", path=path, token=token
         )
         status, _ = engine_call(method="GET", path=path, token=token)
         if status != 404:
@@ -3967,6 +3986,7 @@ def complete_setup(ctx, test, token, created):
         # A real account nobody signs in as: the password is minted and dropped.
         account = {
             "username": SETUP_FIRST_USER,
+            "groups": [SETUP_FIRST_GROUP],
             "password": secrets.token_urlsafe(24),
             "name": "E2E Analyst",
         }

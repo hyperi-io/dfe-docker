@@ -105,6 +105,7 @@ from _pipeline import (  # noqa: E402
     ch_query,
     escape_literal,
     http_delete,
+    http_delete_json,
     http_get,
     http_get_json,
     http_post,
@@ -702,6 +703,77 @@ def _api_delete(
         timeout=timeout,
         token=token,
     )[0]
+
+
+def _api_delete_json(
+    url: str,
+    token: str = "",
+    timeout: int = 10,
+    headers: dict[str, str] | None = None,
+) -> tuple[int, typing.Any]:
+    """DELETE a resource and return (status, decoded body), over whichever transport reaches it."""
+    if not (_over_network(url)):
+        return http_delete_json(url, token=token, timeout=timeout, headers=headers)
+    status, body = _exec_request(
+        headers=headers,
+        method="DELETE",
+        url=url,
+        payload=None,
+        timeout=timeout,
+        token=token,
+    )
+    return status, _decoded(body)
+
+
+# The header an engine reads a re-entered-password grant from, and the 403 code it
+# refuses a change with until one arrives.
+REAUTH_HEADER = "X-DFE-Reauth"
+REAUTH_REQUIRED = "reauth_required"
+
+
+def earn_grant(
+    *, base: str, kind: str, password: str, target: str, token: str
+) -> tuple[dict[str, str] | None, int, typing.Any]:
+    """Re-enter `password` for the engine, returning (header, status, body) with no header when it gave no grant.
+
+    `kind` and `target` name what is about to change, the bare name of an account, org or ingest credential. The password is the caller's own and is never logged.
+    """
+    status, answer = _api_post_json(
+        f"{base}/auth/reauth",
+        {"kind": kind, "password": password, "target": target},
+        token=token,
+    )
+    grant = answer.get("grant") if isinstance(answer, dict) else None
+    return ({REAUTH_HEADER: grant} if grant else None), status, answer
+
+
+def with_grant(
+    *,
+    base: str,
+    kind: str,
+    password: str,
+    send: typing.Callable[[dict[str, str] | None], tuple[int, typing.Any]],
+    target: str,
+    token: str,
+) -> tuple[int, typing.Any]:
+    """Make a guarded request, earning a re-auth grant and sending it once more only if the engine asks for one.
+
+    An engine that predates the grant for this kind never asks, so its request goes out once, as it always did. `send` takes the headers to add (None on the first try) and returns (status, body). When no grant can be earned, or the engine still refuses the retry, the refusal comes back for the caller to report.
+    """
+    status, answer = send(None)
+    asked = (
+        status == 403
+        and isinstance(answer, dict)
+        and answer.get("code") == REAUTH_REQUIRED
+    )
+    if not (asked and password):
+        return status, answer
+    headers, grant_status, grant_answer = earn_grant(
+        base=base, kind=kind, password=password, target=target, token=token
+    )
+    if headers is None:
+        return (grant_status, grant_answer) if grant_status >= 400 else (status, answer)
+    return send(headers)
 
 
 def _wait_ready(url: str) -> bool:
@@ -2192,10 +2264,34 @@ def _create_hunt(
     return "" if status == 201 else f"POST /hunts returned HTTP {status}: {body}"
 
 
-def _remove(url: str, *, kind: str, name: str, token: str, timeout: int = 10) -> bool:
-    """Delete one thing this run created, say so when it does not go, and return whether it went."""
+def _remove(
+    url: str,
+    *,
+    base: str = "",
+    grant_kind: str = "",
+    kind: str,
+    name: str,
+    token: str,
+    timeout: int = 10,
+) -> bool:
+    """Delete one thing this run created, say so when it does not go, and return whether it went.
+
+    A `grant_kind` (with `base`) is the re-auth grant an engine may want before it deletes that kind of thing.
+    """
     try:
-        status = _api_delete(url, token=token, timeout=timeout)
+        if grant_kind:
+            status, _ = with_grant(
+                base=base,
+                kind=grant_kind,
+                password=_console_credential()[1],
+                send=lambda headers: _api_delete_json(
+                    url, headers=headers, timeout=timeout, token=token
+                ),
+                target=name,
+                token=token,
+            )
+        else:
+            status = _api_delete(url, token=token, timeout=timeout)
     except (ApiUnreachable, OSError, subprocess.TimeoutExpired) as error:
         _print(msg=f"      note: {kind} {name!r} was not removed: {error}")
         return False
@@ -2329,6 +2425,8 @@ def _verify_hunt(*, database: str, ingest_url: str, marker: str, table: str) -> 
         if org.made:
             _remove(
                 f"{base}/orgs/{quote(org.name, safe='')}",
+                base=base,
+                grant_kind="org",
                 kind="organisation",
                 name=org.name,
                 token=token,
@@ -2765,6 +2863,23 @@ def _restart_receiver() -> None:
     )
 
 
+def _with_credential_grant(
+    *,
+    base: str,
+    send: typing.Callable[[dict[str, str] | None], tuple[int, typing.Any]],
+    token: str,
+) -> tuple[int, typing.Any]:
+    """Send an ingest-credential write, with the re-auth grant an engine that wants one asks for."""
+    return with_grant(
+        base=base,
+        kind="credential",
+        password=_console_credential()[1],
+        send=send,
+        target=INGEST_CREDENTIAL,
+        token=token,
+    )
+
+
 def ingest_token(*, base: str, ingest_url: str, token: str) -> str:
     """The token the scripts send receiver records with: the one `INGEST_TOKEN_FILE` records while the engine holds the credential, else a newly minted one the receiver has taken."""
     url = f"{base}/orgs/{quote(INGEST_ORG, safe='')}/ingest-credentials/{INGEST_CREDENTIAL}"
@@ -2773,18 +2888,28 @@ def ingest_token(*, base: str, ingest_url: str, token: str) -> str:
     if status == 200 and recorded:
         return recorded
     if status == 200:
-        status, answer = _api_post_json(payload={}, token=token, url=f"{url}/rotate")
+        status, answer = _with_credential_grant(
+            base=base,
+            send=lambda headers: _api_post_json(
+                headers=headers, payload={}, token=token, url=f"{url}/rotate"
+            ),
+            token=token,
+        )
     elif status == 404:
         _ensure_ingest_org(base=base, token=token)
-        status, answer = api_put_json(
-            headers={"If-None-Match": "*"},
-            payload={
-                "default_org": INGEST_ORG,
-                "listeners": ["http"],
-                "orgs": [INGEST_ORG],
-            },
+        status, answer = _with_credential_grant(
+            base=base,
+            send=lambda headers: api_put_json(
+                headers={"If-None-Match": "*", **(headers or {})},
+                payload={
+                    "default_org": INGEST_ORG,
+                    "listeners": ["http"],
+                    "orgs": [INGEST_ORG],
+                },
+                token=token,
+                url=url,
+            ),
             token=token,
-            url=url,
         )
     minted = answer.get("token") if isinstance(answer, dict) else None
     if (status not in (200, 201)) or (not (minted)):

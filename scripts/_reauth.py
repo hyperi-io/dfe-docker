@@ -11,15 +11,17 @@
 Internal support module, imported by the seed, demo and e2e scripts. The engine
 refuses a password session's POST or DELETE on /auth/accounts with 403
 `reauth_required` unless the request carries a grant for that one account name,
-earned by POST /auth/reauth with the session's own password.
+earned by POST /auth/reauth with the session's own password. `post.with_grant`
+is the same exchange for the other kinds an engine guards (an org delete, an
+ingest credential write): it asks only after a 403 `reauth_required`, so an
+engine that never asks is called as before.
 """
 
 from dataclasses import dataclass, field
 
 import post
 
-# The header the engine reads the grant from
-REAUTH_HEADER = "X-DFE-Reauth"
+REAUTH_HEADER = post.REAUTH_HEADER
 
 
 @dataclass(frozen=True, slots=True)
@@ -41,10 +43,11 @@ def account_grant(
     A refused grant is not raised here: the change itself then answers 403 and
     its caller reports that, with the engine's reason.
     """
-    _, answer = post._api_post_json(
-        f"{base}/auth/reauth",
-        {"kind": "account", "password": session.password, "target": account},
+    header, _, _ = post.earn_grant(
+        base=base,
+        kind="account",
+        password=session.password,
+        target=account,
         token=session.token,
     )
-    grant = answer.get("grant") if isinstance(answer, dict) else None
-    return {REAUTH_HEADER: grant} if grant else None
+    return header

@@ -635,13 +635,14 @@ def _counts(*, tables: list[str]) -> dict[str, int | None]:
 def _complete_setup(*, base: str, session: Session) -> None:
     """Make the organisation and the real user the engine's first-run setup asks for.
 
-    Without them every console page opens on the setup wizard. Nobody logs in as the analyst, so its password is random and never shown.
+    Without them every console page opens on the setup wizard. Nobody logs in as the analyst, so its password is random and never shown. An org's account holds only the org's own groups, and the engine makes `<org>-viewers` with the org.
     """
     org = _read_body(kind="orgs", path=ORGS_DIR / f"{DEMO_ORG}.yaml")
     _ensure(base=base, body=org, kind="orgs", name=DEMO_ORG, session=session)
     account = {
         "username": DEMO_ANALYST,
         "password": secrets.token_urlsafe(32),
+        "groups": [f"{DEMO_ORG}-viewers"],
         "name": "Demo analyst",
         "org": DEMO_ORG,
     }
