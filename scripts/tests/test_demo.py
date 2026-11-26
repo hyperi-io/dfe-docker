@@ -856,6 +856,7 @@ class TestCompleteSetup:
         assert ensured == [("orgs", org)]
         assert [p["username"] for p in posted] == [demo.DEMO_ANALYST]
         assert posted[0]["org"] == demo.DEMO_ORG
+        assert posted[0]["groups"] == [f"{demo.DEMO_ORG}-viewers"]
         assert sent == [{"X-DFE-Reauth": f"grant-for-{demo.DEMO_ANALYST}-pw"}]
         assert len(posted[0]["password"]) >= 32
 

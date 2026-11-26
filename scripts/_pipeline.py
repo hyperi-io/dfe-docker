@@ -269,6 +269,19 @@ def http_delete(
     )[0]
 
 
+def http_delete_json(
+    url: str,
+    token: str = "",
+    timeout: int = 10,
+    headers: dict[str, str] | None = None,
+) -> tuple[int, typing.Any]:
+    """DELETE a resource and return (status, decoded body), for callers that read the refusal's code."""
+    status, raw = _request(
+        headers=headers, method="DELETE", url=url, timeout=timeout, token=token
+    )
+    return status, _decoded(raw=raw)
+
+
 def ch_query(sql: str, *, debug: typing.Callable[[str], None] | None = None) -> str:
     """Run a query over ClickHouse's HTTP interface, returning '' on any failure.
 

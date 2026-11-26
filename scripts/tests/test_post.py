@@ -1025,6 +1025,15 @@ class _HuntStack:
             self.hunts.pop(name, None)
         return 204
 
+    def delete_json(
+        self,
+        url: str,
+        token: str = "",
+        timeout: int = 10,
+        headers: dict[str, str] | None = None,
+    ) -> tuple[int, object]:
+        return self.delete(url, token, timeout), ""
+
     def ingest(self, url: str, body: str, *args, **kwargs) -> int:
         self.sent.append(json.loads(body))
         return 200
@@ -1051,6 +1060,7 @@ def _hunt_stack(monkeypatch: pytest.MonkeyPatch, **kwargs) -> _HuntStack:
     monkeypatch.setattr(post, "_api_get_json", stack.get_json)
     monkeypatch.setattr(post, "_api_post_json", stack.post_json)
     monkeypatch.setattr(post, "_api_delete", stack.delete)
+    monkeypatch.setattr(post, "_api_delete_json", stack.delete_json)
     monkeypatch.setattr(post, "http_post", stack.ingest)
     monkeypatch.setattr(post, "ch_query", stack.query)
     monkeypatch.setattr(post, "ch_int", stack.count)
@@ -1881,13 +1891,34 @@ def test_a_subset_without_the_receiver_has_no_ingest_edge_to_wait_on(
 
 
 class _CredentialEngine:
-    """The engine's credential routes: GET answers `held`, a rotate or mint answers `minted` with `status`."""
+    """The engine's credential routes: GET answers `held`, a rotate or mint answers `minted` with `status`.
 
-    def __init__(self, *, held: int, minted: str = "minted", status: int = 201) -> None:
+    With `ask` it answers a write 403 `reauth_required` until the request carries the grant its re-auth route hands out, as an engine that guards ingest credentials does.
+    """
+
+    GRANT = {"X-DFE-Reauth": "grant-1"}
+
+    def __init__(
+        self,
+        *,
+        held: int,
+        ask: bool = False,
+        grant_status: int = 200,
+        minted: str = "minted",
+        status: int = 201,
+    ) -> None:
+        self.ask = ask
+        self.grant_status = grant_status
         self.held = held
         self.minted = minted
         self.status = status
         self.calls = []
+
+    def _guarded(self, headers: dict[str, str] | None) -> tuple[int, object] | None:
+        """The refusal an unguarded write meets, None once the grant is attached."""
+        if self.ask and not (self.GRANT.items() <= (headers or {}).items()):
+            return 403, {"code": "reauth_required"}
+        return None
 
     def get_json(
         self, *, timeout: int = 30, token: str = "", url: str
@@ -1897,11 +1928,20 @@ class _CredentialEngine:
         return self.held, {}
 
     def post_json(
-        self, *, payload: dict, timeout: int = 30, token: str = "", url: str
+        self,
+        url: str,
+        payload: dict,
+        token: str = "",
+        timeout: int = 30,
+        headers: dict[str, str] | None = None,
     ) -> tuple[int, object]:
-        """Answer a rotate with the minted token."""
-        self.calls.append(("post", url))
-        return 200, {"token": self.minted}
+        """Answer a re-auth with a grant, or a rotate with the minted token."""
+        self.calls.append(("post", url, payload, headers))
+        if url.endswith("/auth/reauth"):
+            if self.grant_status != 200:
+                return self.grant_status, {"code": "invalid_password"}
+            return 200, {"grant": self.GRANT["X-DFE-Reauth"], "expires_in": 600}
+        return self._guarded(headers) or (200, {"token": self.minted})
 
     def put_json(
         self,
@@ -1914,6 +1954,9 @@ class _CredentialEngine:
     ) -> tuple[int, object]:
         """Answer a mint with `status` and the minted token."""
         self.calls.append(("put", headers, payload))
+        guarded = self._guarded(headers)
+        if guarded:
+            return guarded
         return self.status, (
             {"token": self.minted} if self.status == 201 else {"code": "conflict"}
         )
@@ -2011,6 +2054,131 @@ class TestIngestToken:
             _REAL_INGEST_TOKEN(
                 base="http://engine.invalid", ingest_url="http://r.invalid", token="t"
             )
+
+
+class TestIngestTokenReauth:
+    """An engine that guards ingest-credential writes gets the caller's password once, only after it asks."""
+
+    @pytest.mark.parametrize(
+        ("held", "kinds"),
+        [
+            (200, ["get", "post", "post", "post"]),
+            (404, ["get", "put", "post", "put"]),
+        ],
+        ids=["rotate", "mint"],
+    )
+    def test_a_write_refused_for_a_grant_is_sent_again_with_it(
+        self, monkeypatch: pytest.MonkeyPatch, held: int, kinds: list[str]
+    ) -> None:
+        engine = _CredentialEngine(held=held, ask=True)
+        recorded = _credential_engine(
+            engine=engine, monkeypatch=monkeypatch, recorded=""
+        )
+        monkeypatch.setenv(post.ADMIN_PASSWORD_KEY, "pw")
+
+        token = _REAL_INGEST_TOKEN(
+            base="http://engine.invalid", ingest_url="http://r.invalid", token="t"
+        )
+
+        reauth = [call for call in engine.calls if "/auth/reauth" in str(call[1])]
+        assert (token, recorded, [call[0] for call in engine.calls]) == (
+            "minted",
+            ["minted"],
+            kinds,
+        )
+        assert [call[2] for call in reauth] == [
+            {"kind": "credential", "password": "pw", "target": post.INGEST_CREDENTIAL}
+        ]
+
+    @pytest.mark.parametrize(
+        ("password", "grant_status", "refusal"),
+        [
+            ("pw", 403, "HTTP 403: {'code': 'invalid_password'}"),
+            ("", 200, "HTTP 403: {'code': 'reauth_required'}"),
+        ],
+        ids=["wrong-password", "no-password"],
+    )
+    def test_a_grant_that_cannot_be_earned_fails_the_mint_with_the_refusal(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        password: str,
+        grant_status: int,
+        refusal: str,
+    ) -> None:
+        engine = _CredentialEngine(held=404, ask=True, grant_status=grant_status)
+        _credential_engine(engine=engine, monkeypatch=monkeypatch, recorded="")
+        monkeypatch.setenv(post.ADMIN_PASSWORD_KEY, password)
+
+        with pytest.raises(post.IngestCredentialError, match="was not minted") as err:
+            _REAL_INGEST_TOKEN(
+                base="http://engine.invalid", ingest_url="http://r.invalid", token="t"
+            )
+
+        assert refusal in str(err.value)
+        assert "pw" not in str(err.value)
+
+
+class TestRemoveOrganisation:
+    """An org delete the engine guards is sent again with the grant it asks for, and a refusal stays visible."""
+
+    @pytest.mark.parametrize(
+        ("answers", "expected", "note"),
+        [
+            ([(204, "")], True, ""),
+            ([(403, {"code": "reauth_required"}), (204, "")], True, ""),
+            ([(404, "")], True, ""),
+            (
+                [
+                    (403, {"code": "reauth_required"}),
+                    (403, {"code": "reauth_required"}),
+                ],
+                False,
+                "(HTTP 403)",
+            ),
+        ],
+        ids=["engine-never-asks", "asks-then-removed", "already-gone", "still-refused"],
+    )
+    def test_the_delete_follows_the_engines_answer(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        capsys: pytest.CaptureFixture[str],
+        answers: list[tuple[int, object]],
+        expected: bool,
+        note: str,
+    ) -> None:
+        seen: list[dict[str, str] | None] = []
+        replies = iter(answers)
+
+        def delete(
+            url: str,
+            token: str = "",
+            timeout: int = 10,
+            headers: dict[str, str] | None = None,
+        ) -> tuple[int, object]:
+            seen.append(headers)
+            return next(replies)
+
+        def reauth(
+            url: str, payload: dict, token: str = "", headers=None
+        ) -> tuple[int, object]:
+            return 200, {"grant": "g1", "expires_in": 600}
+
+        monkeypatch.setattr(post, "_api_delete_json", delete)
+        monkeypatch.setattr(post, "_api_post_json", reauth)
+        monkeypatch.setenv(post.ADMIN_PASSWORD_KEY, "pw")
+
+        removed = post._remove(
+            "http://engine.invalid/api/v1/orgs/e2e",
+            base="http://engine.invalid/api/v1",
+            grant_kind="org",
+            kind="organisation",
+            name="e2e",
+            token="t",
+        )
+
+        assert removed is expected
+        assert note in capsys.readouterr().err
+        assert seen == [None, *([{"X-DFE-Reauth": "g1"}] * (len(answers) - 1))]
 
 
 class TestIngestTokenFile:
