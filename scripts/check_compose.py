@@ -36,6 +36,7 @@ Paths checked:
 - registry: ``-f docker-compose.yml`` alone, the CI and production path.
 - dev: the same plus the overlay a ``make dev`` build of every component writes, the path ``make dev`` takes.
 - live-ui: dev plus the container-logs fragment and ``compose/live-ui.yml``, the path ``make dev LIVE_UI=1`` takes. Its Node image and source mount are hard-fail by design, so the placeholder injection covers those keys the same way it covers image pins.
+- live-engine: dev plus the container-logs fragment and ``compose/live-engine.yml``, the path ``make dev LIVE_ENGINE=1`` takes. Its source mount is hard-fail the same way.
 - local: the registry path plus the overlay ``make dev LOCAL=...`` generates,
   rendered here for one representative component so the generator's output is
   checked, not just its source.
@@ -104,6 +105,7 @@ import proxy_tls  # noqa: E402
 import resolve_profile  # noqa: E402
 from _common import (  # noqa: E402
     COMPOSE_FILE,
+    COMPOSE_LIVE_ENGINE_FILE,
     COMPOSE_LIVE_UI_FILE,
     COMPOSE_PART_FILES,
     CONFIG_CHECK_PREFIX,
@@ -501,8 +503,10 @@ def _check_env() -> tuple[dict[str, str], list[str]]:
     """
     env = {**_first_start_dotenv(), **os.environ}
     injected = []
-    # Discover across the live-ui overlay too, which declares its own hard-fail keys (DFE_SRC_ROOT, DFE_UI_NODE_IMAGE)
-    required = _required_compose_vars(files=(COMPOSE_FILE, COMPOSE_LIVE_UI_FILE))
+    # Discover across the live overlays too, which declare their own hard-fail keys (DFE_SRC_ROOT, DFE_UI_NODE_IMAGE)
+    required = _required_compose_vars(
+        files=(COMPOSE_FILE, COMPOSE_LIVE_ENGINE_FILE, COMPOSE_LIVE_UI_FILE)
+    )
     for name in sorted(required):
         if not (env.get(name, "").strip()):
             env[name] = (
@@ -951,19 +955,22 @@ def _render_dev_overlays() -> None:
 
 def _paths() -> list[tuple[str, list[str]]]:
     """Return the (label, compose file list) pairs we ship and therefore must check."""
+    live_engine = str(COMPOSE_LIVE_ENGINE_FILE.relative_to(REPO_ROOT))
     live_ui = str(COMPOSE_LIVE_UI_FILE.relative_to(REPO_ROOT))
-    if not (COMPOSE_LIVE_UI_FILE.is_file()):
-        # Not a skip: `make dev LIVE_UI=1` chains it, so an absence means that path is broken. Skipping would shrink the coverage while still printing "All compose paths resolve"
-        raise FileNotFoundError(
-            f"{live_ui!r} is missing: it is committed and used by `make dev`, so "
-            "that path cannot be checked"
-        )
+    for overlay in (COMPOSE_LIVE_ENGINE_FILE, COMPOSE_LIVE_UI_FILE):
+        if not (overlay.is_file()):
+            # Not a skip: `make dev` chains it, so an absence means that path is broken. Skipping would shrink the coverage while still printing "All compose paths resolve"
+            raise FileNotFoundError(
+                f"{str(overlay.relative_to(REPO_ROOT))!r} is missing: it is committed and used by `make dev`, so "
+                "that path cannot be checked"
+            )
     dev = [COMPOSE_FILE.name, str(_DEV_RENDER.relative_to(REPO_ROOT))]
     return [
         ("registry", [COMPOSE_FILE.name]),
         ("dev", dev),
         # With the container-logs fragment ahead of it, as `make dev` chains it, so the overlay's logging reset is rendered against the fluentd driver it undoes.
         ("live-ui", [*dev, _CONTAINER_LOGS_FRAGMENT, live_ui]),
+        ("live-engine", [*dev, _CONTAINER_LOGS_FRAGMENT, live_engine]),
         ("local", [COMPOSE_FILE.name, str(_LOCAL_RENDER.relative_to(REPO_ROOT))]),
     ]
 

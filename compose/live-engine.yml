@@ -1,0 +1,25 @@
+# Project:   dfe-docker
+# File:      compose/live-engine.yml
+# Purpose:   Run dfe-engine over your checkout's source, restarting on each change
+# Language:  YAML
+#
+# License:   BUSL-1.1
+# Copyright: (c) 2026 HYPERI PTY LIMITED
+
+services:
+  dfe-engine:
+    init: true
+    # The image installs the package editable from /app/src, so the checkout's copy is the one that runs.
+    entrypoint:
+      - watchfiles
+      - --target-type
+      - command
+      - --sigint-timeout
+      - "30"
+      - dfe-engine run
+      - /app/src/dfe_engine
+    environment:
+      # The source mounts read-only, so bytecode caches here or every restart recompiles it.
+      PYTHONPYCACHEPREFIX: /tmp/pycache
+    volumes:
+      - ${DFE_SRC_ROOT:?set it to the directory holding your dfe-engine checkout}/dfe-engine/src/dfe_engine:/app/src/dfe_engine:ro

@@ -1,12 +1,12 @@
 #  Project:      dfe-docker
 #  File:         scripts/tests/test_make_live_ui.py
-#  Purpose:      Assert what `LIVE_UI=1` changes in the Makefile, read off a dry run
+#  Purpose:      Assert what `LIVE_UI=1` and `LIVE_ENGINE=1` change in the Makefile, read off a dry run
 #  Language:     Python
 #
 #  License:      BUSL-1.1
 #  Copyright:    (c) 2026 HYPERI PTY LIMITED
 
-"""What `make dev LIVE_UI=1` builds, chains and reads, in a copy of the Makefile."""
+"""What `make dev LIVE_UI=1` and `LIVE_ENGINE=1` build, chain and read, in a copy of the Makefile."""
 
 import os
 import shlex
@@ -20,7 +20,9 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 
 _BUILD = ["python3", "scripts/build_dev_images.py"]
 _CONTAINER_LOGS = "compose/container-logs.yml"
+_LIVE_ENGINE = "compose/live-engine.yml"
 _LIVE_UI = "compose/live-ui.yml"
+_LIVE_MODES = [("LIVE_ENGINE", _LIVE_ENGINE), ("LIVE_UI", _LIVE_UI)]
 _NODE_IMAGE = "node:24-trixie-slim@sha256:0123456789abcdef"
 _PROBE = "probe-node-image"
 
@@ -76,6 +78,7 @@ def _make(
     dropped = (
         "COMPOSE_FILE",
         "DEV",
+        "LIVE_ENGINE",
         "LIVE_UI",
         "LOCAL",
         "MAKEFLAGS",
@@ -121,8 +124,12 @@ def checkout(tmp_path: Path) -> Path:
 
 @pytest.fixture
 def src_root(tmp_path: Path) -> Path:
-    """A DFE_SRC_ROOT whose dfe-ui Dockerfile declares the Node image, then re-declares it."""
+    """A DFE_SRC_ROOT holding a dfe-engine package and a dfe-ui Dockerfile that declares the Node image, then re-declares it."""
     root = tmp_path / "src"
+    (root / "dfe-engine" / "src" / "dfe_engine").mkdir(parents=True)
+    (root / "dfe-engine" / "src" / "dfe_engine" / "__init__.py").write_text(
+        data="", encoding="utf-8", newline="\n"
+    )
     (root / "dfe-ui").mkdir(parents=True)
     (root / "dfe-ui" / "Dockerfile").write_text(
         data=(
@@ -167,29 +174,32 @@ def test_live_ui_with_only_dfe_ui_to_start_builds_nothing(
     assert _build_targets(result=result) is None
 
 
-def test_live_ui_chains_its_overlay_after_the_container_logs_fragment(
-    checkout: Path,
+@pytest.mark.parametrize(("flag", "overlay"), _LIVE_MODES)
+def test_a_live_mode_chains_its_overlay_after_the_container_logs_fragment(
+    checkout: Path, flag: str, overlay: str
 ) -> None:
-    result = _make(args=["print-compose-file", "LIVE_UI=1"], cwd=checkout)
+    result = _make(args=["print-compose-file", f"{flag}=1"], cwd=checkout)
 
     assert result.returncode == 0, result.stderr
     chain = _chain(result=result)
-    assert chain.index(_LIVE_UI) > chain.index(_CONTAINER_LOGS)
+    assert chain.index(overlay) > chain.index(_CONTAINER_LOGS)
 
 
-def test_live_ui_off_chains_no_overlay(checkout: Path) -> None:
+def test_no_live_mode_chains_no_overlay(checkout: Path) -> None:
     result = _make(args=["print-compose-file"], cwd=checkout)
 
     assert result.returncode == 0, result.stderr
-    assert _LIVE_UI not in _chain(result=result)
+    chain = _chain(result=result)
+    assert (_LIVE_ENGINE in chain, _LIVE_UI in chain) == (False, False)
 
 
+@pytest.mark.parametrize(("flag", "overlay"), _LIVE_MODES)
 @pytest.mark.parametrize("local", ["", "dfe-engine"])
-def test_live_ui_rides_the_dev_path_pull_and_start(
-    checkout: Path, src_root: Path, local: str
+def test_a_live_mode_rides_the_dev_path_pull_and_start(
+    checkout: Path, src_root: Path, flag: str, overlay: str, local: str
 ) -> None:
     result = _make(
-        args=["-n", "dev", "LIVE_UI=1", f"LOCAL={local}", f"DFE_SRC_ROOT={src_root}"],
+        args=["-n", "dev", f"{flag}=1", f"LOCAL={local}", f"DFE_SRC_ROOT={src_root}"],
         cwd=checkout,
     )
 
@@ -201,17 +211,18 @@ def test_live_ui_rides_the_dev_path_pull_and_start(
     ]
     assert len(lines) == 2
     for tokens in lines:
-        assert _LIVE_UI in tokens
+        assert overlay in tokens
 
 
+@pytest.mark.parametrize(("flag", "overlay"), _LIVE_MODES)
 @pytest.mark.parametrize(
     "goal_args", [["ci"], ["up"], ["apply", "SERVICES=dfe-ui"]], ids=" ".join
 )
-def test_live_ui_never_reaches_a_registry_goal(
-    checkout: Path, src_root: Path, goal_args: list[str]
+def test_a_live_mode_never_reaches_a_registry_goal(
+    checkout: Path, src_root: Path, flag: str, overlay: str, goal_args: list[str]
 ) -> None:
     result = _make(
-        args=["-n", *goal_args, "LIVE_UI=1", f"DFE_SRC_ROOT={src_root}"],
+        args=["-n", *goal_args, f"{flag}=1", f"DFE_SRC_ROOT={src_root}"],
         cwd=checkout,
     )
 
@@ -219,7 +230,7 @@ def test_live_ui_never_reaches_a_registry_goal(
     lines = _compose_lines(result=result)
     assert lines
     for tokens in lines:
-        assert _LIVE_UI not in tokens
+        assert overlay not in tokens
 
 
 def test_live_ui_refuses_dfe_ui_in_local(checkout: Path, src_root: Path) -> None:
@@ -232,16 +243,23 @@ def test_live_ui_refuses_dfe_ui_in_local(checkout: Path, src_root: Path) -> None
     assert "Drop dfe-ui from LOCAL" in result.stderr
 
 
-def test_live_ui_refuses_a_missing_checkout_before_anything_runs(
-    checkout: Path, tmp_path: Path
+@pytest.mark.parametrize(
+    ("flag", "refusal"),
+    [
+        ("LIVE_ENGINE", "holds no dfe-engine checkout"),
+        ("LIVE_UI", "holds no dfe-ui/Dockerfile"),
+    ],
+)
+def test_a_live_mode_refuses_a_missing_checkout_before_anything_runs(
+    checkout: Path, tmp_path: Path, flag: str, refusal: str
 ) -> None:
     result = _make(
-        args=["-n", "dev", "LIVE_UI=1", f"DFE_SRC_ROOT={tmp_path / 'missing'}"],
+        args=["-n", "dev", f"{flag}=1", f"DFE_SRC_ROOT={tmp_path / 'missing'}"],
         cwd=checkout,
     )
 
     assert result.returncode != 0
-    assert "holds no dfe-ui/Dockerfile" in result.stderr
+    assert refusal in result.stderr
     assert _compose_lines(result=result) == []
 
 

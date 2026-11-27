@@ -13,7 +13,7 @@ Running DFE on a single host with Docker Compose: a first look, deploying and up
 - [Taking DFE for a first look](evaluating.md)
 - [Network device telemetry over gNMI](gnmi.md)
 - [Known issues](known-issues.md)
-- [Console edits without a rebuild](live-console.md)
+- [Console and engine edits without a rebuild](live-console.md)
 - [How the stack reports on itself](observability.md)
 - [Operating the DFE Compose stack](operating.md)
 - [Per-source apps and make apply](per-source-apps.md)

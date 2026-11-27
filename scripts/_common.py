@@ -159,6 +159,7 @@ COMPOSE_PART_FILES = (
     REPO_ROOT / "compose" / "oauth2-proxy.yml",
     COMPOSE_ONE_SHOTS_FILE,
 )
+COMPOSE_LIVE_ENGINE_FILE = REPO_ROOT / "compose" / "live-engine.yml"
 COMPOSE_LIVE_UI_FILE = REPO_ROOT / "compose" / "live-ui.yml"
 # Written by resolve_profile.py on every make run that needs the stack and included by the Makefile, so deleting .tmp/ costs nothing
 PROFILE_MK = REPO_ROOT / ".tmp" / "profile.mk"

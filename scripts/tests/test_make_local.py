@@ -94,6 +94,7 @@ def _make(*, args: list[str], cwd: Path) -> subprocess.CompletedProcess:
     dropped = (
         "COMPOSE_FILE",
         "DEV",
+        "LIVE_ENGINE",
         "LIVE_UI",
         "LOCAL",
         "MAKEFLAGS",
