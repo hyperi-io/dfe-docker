@@ -16,7 +16,7 @@ make dev LIVE_UI=1   # dfe-ui runs `next dev` over $DFE_SRC_ROOT/dfe-ui
 
 `LIVE_UI=1` layers `compose/live-ui.yml`, which runs dfe-ui as `next dev` over your checkout instead of building its image. It still sits behind dfe-proxy on `DFE_UI_PORT`, so login, the engine API and the dfe-hyperdx embed work as they do on any stack. A saved edit reaches the browser through hot reload, which rides the websocket upgrade the proxy allows. `docker compose logs -f dfe-ui` shows the dev server's output.
 
-The first start installs dependencies into the checkout, a yarn cache under its gitignored `.yarn/` and later starts install from that cache in seconds. Each route compiles on its first hit. A background request warms the login page as the dev server starts, so a first visit after that compile stays inside dfe-proxy's 15s route timeout.
+The first start installs dependencies into the checkout, a yarn cache under its gitignored `.yarn/` and later starts install from that cache in seconds. Each route compiles on its first hit after every start, because each start clears Turbopack's dev cache in `apps/dfe-core-ui/.next/dev`. A cache built from older source makes the console reload in a loop. A background request warms the login page as the dev server starts, so a first visit after that compile stays inside dfe-proxy's 15s route timeout.
 
 
 Next.js only accepts hot-reload connections from `localhost` or the host it serves on. The console does not finish loading without one. Live mode serves on the hostname `DFE_EXTERNAL_ORIGIN` names, so the console works there and on `localhost`. An origin that is an IP address cannot be served on by name, so browse that stack by hostname or on `localhost` instead.
