@@ -67,8 +67,8 @@ ifneq (,$(filter-out $(BOOTSTRAP_GOALS),$(or $(MAKECMDGOALS),help)))
     # Empty until a build writes it, so no dev chain names a missing file
     $(if $(wildcard $(LOCAL_OVERLAY)),,$(file > $(LOCAL_OVERLAY),services: {}))
     # Expanded at use time, since UI_FLAGS is filled below. The pull runs before the build, so it names no overlay and every image resolves to its registry pin
-    DEV_PULL_FLAGS = -f docker-compose.yml $(STORAGE_FLAGS) $(UI_FLAGS) $(LIVE_UI_FLAGS)
-    DEV_FLAGS = -f docker-compose.yml -f $(LOCAL_OVERLAY) $(STORAGE_FLAGS) $(UI_FLAGS) $(LIVE_UI_FLAGS)
+    DEV_PULL_FLAGS = -f docker-compose.yml $(STORAGE_FLAGS) $(UI_FLAGS) $(LIVE_UI_FLAGS) $(LIVE_ENGINE_FLAGS)
+    DEV_FLAGS = -f docker-compose.yml -f $(LOCAL_OVERLAY) $(STORAGE_FLAGS) $(UI_FLAGS) $(LIVE_UI_FLAGS) $(LIVE_ENGINE_FLAGS)
     # `LIVE_UI=1` runs dfe-ui from the checkout, so there is no dfe-ui image to build.
     LIVE_UI_SKIP := $(if $(strip $(LIVE_UI)),dfe-ui)
     ifeq ($(strip $(LOCAL)),)
@@ -297,6 +297,17 @@ ifneq ($(strip $(LIVE_UI)),)
     endif
 endif
 
+# LIVE_ENGINE=1 runs dfe-engine over DFE_SRC_ROOT/dfe-engine's source on the same dev goals, restarting it on each change (docs/live-console.md). Its image still supplies the dependencies.
+ifneq ($(strip $(LIVE_ENGINE)),)
+    LIVE_ENGINE_CHAIN := :compose/live-engine.yml
+    LIVE_ENGINE_FLAGS := -f compose/live-engine.yml
+    ifneq (,$(filter $(LIVE_UI_GOALS),$(MAKECMDGOALS)))
+        ifeq ($(wildcard $(call origin_value,DFE_SRC_ROOT)/dfe-engine/src/dfe_engine/__init__.py),)
+            $(error LIVE_ENGINE=1 mounts DFE_SRC_ROOT/dfe-engine/src/dfe_engine, but DFE_SRC_ROOT='$(call origin_value,DFE_SRC_ROOT)' holds no dfe-engine checkout. Set DFE_SRC_ROOT to the directory holding it)
+        endif
+    endif
+endif
+
 # ---------------------------------------------------------------------------
 # Console TLS (opt-in): docs/configuration.md, "Console TLS (opt-in)".
 # scripts/proxy_tls.py does the subnet arithmetic make cannot.
@@ -368,8 +379,8 @@ certs: ## Mint a console TLS certificate for DFE_EXTERNAL_ORIGIN's host, localho
 	@python3 scripts/proxy_tls.py mint --cert-dir '$(DFE_PROXY_CERT_DIR)' --host '$(or $(call origin_host,DFE_EXTERNAL_ORIGIN),localhost)'
 
 # What every plain `docker compose` call this make run spawns reads. The targets that pass -f themselves ignore it
-ifneq ($(strip $(STORAGE_CHAIN))$(strip $(UI_CHAIN))$(strip $(LIVE_UI_CHAIN)),)
-    export COMPOSE_FILE := docker-compose.yml$(STORAGE_CHAIN)$(UI_CHAIN)$(LIVE_UI_CHAIN)
+ifneq ($(strip $(STORAGE_CHAIN))$(strip $(UI_CHAIN))$(strip $(LIVE_UI_CHAIN))$(strip $(LIVE_ENGINE_CHAIN)),)
+    export COMPOSE_FILE := docker-compose.yml$(STORAGE_CHAIN)$(UI_CHAIN)$(LIVE_UI_CHAIN)$(LIVE_ENGINE_CHAIN)
 endif
 
 # The gated infra UIs go to the resolver, so the engine's admin links name only
@@ -474,7 +485,7 @@ endif
 
 # `dev` and `dev-build` clone the public component repos over https with no token.
 .PHONY: dev
-dev: env-files dev-posture down storage-dirs ## Build local DFE images from source and start the dev stack (LOCAL="svc ..." builds only those; AUTH=real for a minted login; LIVE_UI=1 runs the console as `next dev` from DFE_SRC_ROOT/dfe-ui), then print the access summary. Clones the public component repos
+dev: env-files dev-posture down storage-dirs ## Build local DFE images from source and start the dev stack (LOCAL="svc ..." builds only those; AUTH=real for a minted login; LIVE_UI=1 runs the console as `next dev` from DFE_SRC_ROOT/dfe-ui and LIVE_ENGINE=1 the engine over DFE_SRC_ROOT/dfe-engine's source), then print the access summary. Clones the public component repos
 	python3 scripts/port_check.py -- $(DEV_FLAGS) $(PROFILE_FLAGS)
 	docker compose $(DEV_PULL_FLAGS) $(PROFILE_FLAGS) pull
 	$(if $(strip $(DEV_BUILD)),python3 scripts/build_dev_images.py $(DEV_OVERLAY_ARG) $(DEV_BUILD))
@@ -655,7 +666,7 @@ publish-compose: ## Write the stack and demo compose files a release publishes i
 	@python3 scripts/publish_compose.py --out-dir '$(PUBLISH_DIR)' --image '$(PUBLISH_IMAGE)' --stack '$(if $(filter command line,$(origin VERSION)),$(VERSION))'
 
 .PHONY: check-compose
-check-compose: ## Resolve compose on the registry, dev, LIVE_UI and LOCAL paths, both Kafka backends
+check-compose: ## Resolve compose on the registry, dev, LIVE_UI, LIVE_ENGINE and LOCAL paths, both Kafka backends
 	@python3 scripts/check_compose.py
 
 .PHONY: check-hardfail

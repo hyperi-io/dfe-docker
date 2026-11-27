@@ -201,7 +201,7 @@ Source comes via git, never an assumed directory layout:
 checkout only when `DFE_INFRA_DIR` names one, and otherwise pulls the signed OCI
 stack manifest.
 
-`make dev LIVE_UI=1` runs the console as `next dev` over your checkout, so an edit reaches the browser without a rebuild. [live-console.md](live-console.md) covers it.
+`make dev LIVE_UI=1` runs the console as `next dev` over your checkout, so an edit reaches the browser without a rebuild. `LIVE_ENGINE=1` does the same for the engine, restarting it on each change. [live-console.md](live-console.md) covers both.
 
 ## Picking a profile
 

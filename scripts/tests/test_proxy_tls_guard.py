@@ -18,9 +18,8 @@ import shutil
 import subprocess
 from pathlib import Path
 
-import pytest
-
 import proxy_tls
+import pytest
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 
@@ -149,6 +148,7 @@ def _make(
         "COMPOSE_FILE",
         "COMPOSE_PROJECT_NAME",
         "DEV",
+        "LIVE_ENGINE",
         "LIVE_UI",
         "LOCAL",
         "MAKEFLAGS",

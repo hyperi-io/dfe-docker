@@ -1,14 +1,14 @@
 <!--
 Project:   dfe-docker
 File:      docs/live-console.md
-Purpose:   Running dfe-ui as next dev over a checkout, inside a dev stack
+Purpose:   Running dfe-ui and dfe-engine over their checkouts, inside a dev stack
 Language:  Markdown
 
 License:   BUSL-1.1
 Copyright: (c) 2026 HYPERI PTY LIMITED
 -->
 
-# Console edits without a rebuild
+# Console and engine edits without a rebuild
 
 ```bash
 make dev LIVE_UI=1   # dfe-ui runs `next dev` over $DFE_SRC_ROOT/dfe-ui
@@ -30,5 +30,15 @@ The dev server answers its source-map and stack-frame endpoints without a login,
 The container runs as your user and writes `node_modules` and `.next` into the checkout, so stop any `next dev` you run there yourself first. Keys the stack does not set are filled from the checkout's `apps/dfe-core-ui` env files (`.env`, `.env.local` and `.env.development*`). The stack sets `NEXT_PUBLIC_API_URL` empty, as the production image does, so browser calls stay on the proxy's origin. `next dev` compiles routes in-process, so dfe-ui gets a 4G memory limit in place of the service tier's. `LOCAL` must not name dfe-ui alongside it.
 
 Live mode needs a Linux host: on macOS the container's install would swap the native modules your host's `node_modules` relies on. On a Mac, run `next dev` on the host against the stack's engine instead, on port 5173 since dfe-proxy holds 3000, as dfe-ui's [local development guide](https://github.com/hyperi-io/dfe-ui/blob/main/docs/local-development.md) describes.
+
+## The engine
+
+```bash
+make dev LIVE_ENGINE=1   # dfe-engine runs over $DFE_SRC_ROOT/dfe-engine/src
+```
+
+`LIVE_ENGINE=1` layers `compose/live-engine.yml`, which mounts the checkout's `src/dfe_engine` read-only over the package the engine image installs and runs `dfe-engine run` under `watchfiles`. A saved change restarts the engine, which serves again once its startup finishes, about 40 seconds on a dev stack. The image still supplies the dependencies, so a change to `pyproject.toml` or `uv.lock` needs a rebuild. `dfe-hunt-runner` and `dfe-dashboards` run the engine image too and keep the code it was built with.
+
+`make apply SERVICES=dfe-engine DEV=1 LIVE_ENGINE=1` recreates a running dev stack's engine in live mode, and the same command without `LIVE_ENGINE` puts it back on its image. `LIVE_UI=1 LIVE_ENGINE=1` runs both from checkouts under one `DFE_SRC_ROOT`.
 
 The rest of the dev loop is in [developing.md](developing.md).
