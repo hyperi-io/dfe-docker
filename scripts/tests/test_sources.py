@@ -842,7 +842,7 @@ class TestCreateRequest:
 
         assert body == {
             "display_name": f"E2E {name}",
-            "header": {"type": "common-header/timeseries", "version": "1.0.1"},
+            "header": {"type": "common-header/timeseries", "version": "1.0.4"},
             "match": {"field": "_source", "operator": "equals", "value": name},
             "schema": case["schema"],
             "source": name,
@@ -864,7 +864,7 @@ class TestCreateRequest:
 
         again = _sources.create_request(source=VRL)
 
-        assert again["header"]["version"] == "1.0.1"
+        assert again["header"]["version"] == "1.0.4"
         assert again["schema"]["meta_schema"] == "meta/syslog"
 
 
