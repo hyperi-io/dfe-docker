@@ -13,7 +13,7 @@ description: >-
 display_name: Cell KPIs
 header:
   type: common-header/timeseries
-  version: 1.0.1
+  version: 1.0.4
 # The field events/generate.py sets on every record, which the receiver routes on
 match:
   field: _dfe_demo_source

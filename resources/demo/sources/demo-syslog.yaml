@@ -11,7 +11,7 @@ description: Raw vendor syslog, each line detected and parsed by dfe-transform-e
 display_name: Demo syslog
 header:
   type: common-header/timeseries
-  version: 1.0.1
+  version: 1.0.4
 match:
   field: _source
   operator: equals
