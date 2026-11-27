@@ -75,7 +75,7 @@ SCHEMA_KEYS = frozenset(
     }
 )
 # The header and schema resources/seed/sources/syslog.yaml gives a receiver source
-SOURCE_HEADER = {"type": "common-header/timeseries", "version": "1.0.1"}
+SOURCE_HEADER = {"type": "common-header/timeseries", "version": "1.0.4"}
 SOURCE_KEYS = frozenset({"files", "name", "schema", "transform"})
 # The field the receiver labels a record by, which each source matches on its own name
 SOURCE_LABEL_FIELD = "_source"

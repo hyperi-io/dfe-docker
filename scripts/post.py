@@ -1452,7 +1452,7 @@ def _create_routed_source(*, base: str, name: str, token: str) -> tuple[bool, st
             "source": name,
             "display_name": "POST routing self test",
             "match": {"field": "_source", "operator": "equals", "value": name},
-            "header": {"type": "common-header/timeseries", "version": "1.0.1"},
+            "header": {"type": "common-header/timeseries", "version": "1.0.4"},
             "schema": {"meta_schema": "meta/syslog", "meta_schema_version": "1.0.0"},
         },
         token=token,

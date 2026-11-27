@@ -21,7 +21,7 @@ fetcher:
       - name: securityhub
 header:
   type: common-header/timeseries
-  version: 1.0.1
+  version: 1.0.4
 schema:
   meta_schema: meta/aws/securityhub
   meta_schema_version: 1.0.1

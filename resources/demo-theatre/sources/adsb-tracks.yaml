@@ -51,7 +51,7 @@ fetcher:
   topic: own
 header:
   type: common-header/timeseries
-  version: 1.0.1
+  version: 1.0.4
 schema:
   meta_schema: meta/syslog
   meta_schema_version: 1.0.0
