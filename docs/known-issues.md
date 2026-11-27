@@ -53,6 +53,7 @@ config:
     fontSize: 15px
     lineColor: "#64748B"
     primaryTextColor: "#0F172A"
+    nodeBorder: "#334155"
     clusterBorder: "#0072B2"
     edgeLabelBackground: "#FFFFFF"
   themeCSS: >-
@@ -72,6 +73,8 @@ config:
     span.edgeLabel{display:inline-block;background:#FFFFFF!important;color:#1E293B;border:1px solid #94A3B8;border-radius:999px;padding:2px 10px;font-size:12px;font-weight:500}
     span.edgeLabel p{background:transparent!important}
     .label-icon{width:20px;height:20px;vertical-align:-4px;margin-right:6px}
+    .icon-shape path[stroke-width="0"][fill="none"]{fill:#FFFFFF;stroke:#FFFFFF;stroke-width:12px;stroke-linejoin:round}
+    .icon-shape p{background:transparent!important;color:#0F172A}
     .ingest .label-icon{color:#0E8A7D}
     .xform .label-icon{color:#7B4FB0}
     .load .label-icon{color:#0072B2}
@@ -109,7 +112,7 @@ flowchart LR
   classDef part fill:#FFFFFF,stroke:#94A3B8,stroke-width:1.5px,color:#0F172A
 ```
 
-*Figure 1. L4 Detail - Loader topic choice. The orange end is the trap when no transform reads `main_land`.* Up: [L2 Services - DFE Compose stack](architecture.md#events-arrive-two-ways-and-leave-one).
+*Figure 1. L4 Detail - Loader topic choice. Reads main_load is the trap when no transform reads `main_land`.* Up: [L2 Services - DFE Compose stack](architecture.md#events-arrive-two-ways-and-leave-one).
 
 `config/loader/kafka.yaml` names no topics, so the loader auto-discovers every topic ending in `_land` or `_load` (its `routing.topic_suffixes` default). scalo drops `<base>_land` from the subscription whenever `<base>_load` exists. `dfe-engine` creates the bootstrap topic set `dfe-schemas` declares, which is `main_land` and the five DLQ topics, so `main_load` exists only once a transform first produces to it.
 

@@ -71,6 +71,7 @@ config:
     fontSize: 15px
     lineColor: "#64748B"
     primaryTextColor: "#0F172A"
+    nodeBorder: "#334155"
     clusterBorder: "#0072B2"
     edgeLabelBackground: "#FFFFFF"
   themeCSS: >-
@@ -90,6 +91,8 @@ config:
     span.edgeLabel{display:inline-block;background:#FFFFFF!important;color:#1E293B;border:1px solid #94A3B8;border-radius:999px;padding:2px 10px;font-size:12px;font-weight:500}
     span.edgeLabel p{background:transparent!important}
     .label-icon{width:20px;height:20px;vertical-align:-4px;margin-right:6px}
+    .icon-shape path[stroke-width="0"][fill="none"]{fill:#FFFFFF;stroke:#FFFFFF;stroke-width:12px;stroke-linejoin:round}
+    .icon-shape p{background:transparent!important;color:#0F172A}
     .ingest .label-icon{color:#0E8A7D}
     .xform .label-icon{color:#7B4FB0}
     .load .label-icon{color:#0072B2}
@@ -128,7 +131,7 @@ flowchart LR
   classDef part fill:#FFFFFF,stroke:#94A3B8,stroke-width:1.5px,color:#0F172A
 ```
 
-*Figure 1. L4 Detail - Loader and schema checks. Dotted arrows are where to look next.* Up: [L2 Services - DFE Compose stack](architecture.md#events-arrive-two-ways-and-leave-one).
+*Figure 1. L4 Detail - Loader and schema checks. The no arrows are where to look next.* Up: [L2 Services - DFE Compose stack](architecture.md#events-arrive-two-ways-and-leave-one).
 
 **Loader health first.** `curl -sf http://localhost:9091/readyz`. A loader that
 cannot reach ClickHouse is the single most common cause, and readiness is what
@@ -163,6 +166,7 @@ config:
     fontSize: 15px
     lineColor: "#64748B"
     primaryTextColor: "#0F172A"
+    nodeBorder: "#334155"
     clusterBorder: "#0072B2"
     edgeLabelBackground: "#FFFFFF"
   themeCSS: >-
@@ -182,6 +186,8 @@ config:
     span.edgeLabel{display:inline-block;background:#FFFFFF!important;color:#1E293B;border:1px solid #94A3B8;border-radius:999px;padding:2px 10px;font-size:12px;font-weight:500}
     span.edgeLabel p{background:transparent!important}
     .label-icon{width:20px;height:20px;vertical-align:-4px;margin-right:6px}
+    .icon-shape path[stroke-width="0"][fill="none"]{fill:#FFFFFF;stroke:#FFFFFF;stroke-width:12px;stroke-linejoin:round}
+    .icon-shape p{background:transparent!important;color:#0F172A}
     .ingest .label-icon{color:#0E8A7D}
     .xform .label-icon{color:#7B4FB0}
     .load .label-icon{color:#0072B2}
@@ -221,7 +227,7 @@ flowchart LR
   classDef part fill:#FFFFFF,stroke:#94A3B8,stroke-width:1.5px,color:#0F172A
 ```
 
-*Figure 2. L4 Detail - Topic and dead-letter checks. The orange end means events were accepted and not delivered.* Up: [L2 Services - DFE Compose stack](architecture.md#events-arrive-two-ways-and-leave-one).
+*Figure 2. L4 Detail - Topic and dead-letter checks. Read them is the end where events were accepted and not delivered.* Up: [L2 Services - DFE Compose stack](architecture.md#events-arrive-two-ways-and-leave-one).
 
 **Then the topic.** On a Kafka profile, do not check that the topic exists - check what the loader actually SUBSCRIBED to. Those are different questions and the gap between them is where this hides: the loader logs the topic set it resolved and a topic can exist, be produced to and still not be in it.
 
