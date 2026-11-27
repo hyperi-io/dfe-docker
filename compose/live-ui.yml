@@ -17,6 +17,8 @@ services:
       - -c
       - |
         set -e
+        # A stale Turbopack dev cache reloads the page in a loop
+        rm -rf apps/dfe-core-ui/.next/dev
         corepack yarn install --immutable
         (node -e "const warm = () => fetch('http://localhost:3000/login').catch(() => setTimeout(warm, 2000)); setTimeout(warm, 2000);" &)
         exec corepack yarn workspace dfe-core-ui dev --hostname ${DFE_UI_DEV_HOST:-0.0.0.0} --port 3000
