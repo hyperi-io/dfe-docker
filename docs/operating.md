@@ -120,7 +120,7 @@ flowchart TB
   style operator fill:none,stroke:#0072B2,stroke-width:1.5px,stroke-dasharray:6 4
 ```
 
-*Figure 1. L4 Detail - Who reaches which port. The loopback only arrows answer only on the box until `DFE_BIND_SCOPE=all` or `DFE_BIND_HOST=0.0.0.0` widens them.* Up: [dfe-docker documentation](README.md).
+*Figure 1. L4 Detail - Who reaches which port. The loopback only arrow to the web UIs opens with `DFE_BIND_SCOPE=all`, and the one to the operator ports with `DFE_BIND_HOST=0.0.0.0`.* Up: [dfe-docker documentation](README.md).
 
 Behind those ports, dfe-proxy sends `/api/v1/*` to the engine ([console origin](#console-origin-and-the-port-6000-listeners)) and dfe-hyperdx queries ClickHouse for the browser.
 
