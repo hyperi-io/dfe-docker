@@ -11,7 +11,7 @@ display_name: SSH connections denied by FortiGates
 cron: "*/5 * * * *"
 # A required label: the runner takes each detection's org from the matched row.
 customers:
-  - default
+  - demo
 rules:
   - demo-fortinet-ssh-denied
 global_source_table_name: dfe.fortinet

@@ -11,7 +11,7 @@ display_name: Failed sign-ins from known-bad networks
 cron: "*/5 * * * *"
 # A required label: the runner takes each detection's org from the matched row.
 customers:
-  - default
+  - demo
 rules:
   - demo-cyber-bad-network-sign-in
 global_source_table_name: dfe.okta

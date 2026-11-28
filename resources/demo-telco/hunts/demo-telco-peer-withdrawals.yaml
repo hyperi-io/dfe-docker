@@ -11,7 +11,7 @@ display_name: BGP peers withdrawing routes
 cron: "*/5 * * * *"
 # A required label: the runner takes each detection's org from the matched row.
 customers:
-  - default
+  - demo
 rules:
   - demo-telco-peer-withdrawals
 global_source_table_name: dfe.bgp-updates

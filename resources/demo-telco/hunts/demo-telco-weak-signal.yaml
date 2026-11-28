@@ -11,7 +11,7 @@ display_name: Cells with a very weak signal
 cron: "*/5 * * * *"
 # A required label: the runner takes each detection's org from the matched row.
 customers:
-  - default
+  - demo
 rules:
   - demo-telco-weak-signal
 global_source_table_name: dfe.ran-kpis

@@ -11,7 +11,7 @@ display_name: Ransomware behaviour on endpoints
 cron: "*/5 * * * *"
 # A required label: the runner takes each detection's org from the matched row.
 customers:
-  - default
+  - demo
 rules:
   - demo-cyber-ransomware
 global_source_table_name: dfe.crowdstrike

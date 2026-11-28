@@ -11,7 +11,7 @@ display_name: Anonymous links used on Microsoft 365 files
 cron: "*/5 * * * *"
 # A required label: the runner takes each detection's org from the matched row.
 customers:
-  - default
+  - demo
 rules:
   - demo-cyber-anonymous-link
 global_source_table_name: dfe.o365
