@@ -11,7 +11,7 @@ display_name: Failed logons on Cisco ASAs
 cron: "*/5 * * * *"
 # A required label: the runner takes each detection's org from the matched row.
 customers:
-  - default
+  - demo
 rules:
   - demo-asa-logon-failed
 global_source_table_name: dfe.cisco-asa

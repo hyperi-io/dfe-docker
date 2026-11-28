@@ -298,10 +298,11 @@ def _missing_table(*, body: dict) -> str:
     )
 
 
-def _name_your_org(*, base: str, token: str) -> None:
-    """Name the org resources/seed/organisation.yaml names as the deployment's own, unless the engine names one already."""
-    wanted = _read(path=YOUR_ORG_FILE)
-    name = wanted.get("name") if isinstance(wanted, dict) else None
+def _name_your_org(*, base: str, token: str, name: str = "") -> None:
+    """Name `name`, else the org resources/seed/organisation.yaml names, as the deployment's own, unless the engine names one already."""
+    if not name:
+        wanted = _read(path=YOUR_ORG_FILE)
+        name = wanted.get("name") if isinstance(wanted, dict) else None
     if (not (isinstance(name, str))) or (not (name)):
         raise SeedError(f"{YOUR_ORG_FILE.name!r} names no org")
     url = f"{base}{YOUR_ORG_ROUTE}"

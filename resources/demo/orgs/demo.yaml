@@ -1,6 +1,6 @@
 # Project:   dfe-docker
 # File:      resources/demo/orgs/demo.yaml
-# Purpose:   The org besides default that the engine's first-run setup asks for
+# Purpose:   The org the demo runs for, named as the deployment's own
 # Language:  YAML
 #
 # License:   BUSL-1.1

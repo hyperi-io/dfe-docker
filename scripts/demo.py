@@ -88,6 +88,7 @@ from seed import (  # noqa: E402
     KINDS,
     SeedError,
     _ensure,
+    _name_your_org,
     _objects,
     _row_count,
     _session,
@@ -633,12 +634,13 @@ def _counts(*, tables: list[str]) -> dict[str, int | None]:
 
 
 def _complete_setup(*, base: str, session: Session) -> None:
-    """Make the organisation and the real user the engine's first-run setup asks for.
+    """Make the organisation and the real user the engine's first-run setup asks for, and name the organisation as the deployment's own so a record naming no org takes its tenant id.
 
     Without them every console page opens on the setup wizard. Nobody logs in as the analyst, so its password is random and never shown. An org's account holds only the org's own groups, and the engine makes `<org>-viewers` with the org.
     """
     org = _read_body(kind="orgs", path=ORGS_DIR / f"{DEMO_ORG}.yaml")
     _ensure(base=base, body=org, kind="orgs", name=DEMO_ORG, session=session)
+    _name_your_org(base=base, name=DEMO_ORG, token=session.token)
     account = {
         "username": DEMO_ANALYST,
         "password": secrets.token_urlsafe(32),

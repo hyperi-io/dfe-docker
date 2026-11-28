@@ -11,7 +11,7 @@ display_name: Vessels silent for five minutes
 cron: "*/5 * * * *"
 # A required label: the runner takes each detection's org from the matched row.
 customers:
-  - default
+  - demo
 rules:
   - demo-theatre-vessel-silent
 global_source_table_name: dfe.ais-tracks

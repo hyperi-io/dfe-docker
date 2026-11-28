@@ -785,6 +785,7 @@ class TestCompleteSetup:
             return 422, {"code": "value_error", "detail": [{"input": payload}]}
 
         monkeypatch.setattr(demo, "_ensure", lambda **_: None)
+        monkeypatch.setattr(demo, "_name_your_org", lambda **_: None)
         monkeypatch.setattr(demo, "_api_post_json", refuse)
         monkeypatch.setattr(demo._reauth, "account_grant", lambda **_: None)
 
@@ -829,9 +830,13 @@ class TestCompleteSetup:
             return status, {}
 
         ensured = []
+        named = []
         posted = []
         sent = []
         monkeypatch.setattr(demo, "_ensure", ensure)
+        monkeypatch.setattr(
+            demo, "_name_your_org", lambda **kwargs: named.append(kwargs)
+        )
         monkeypatch.setattr(demo, "_api_post_json", post)
         monkeypatch.setattr(
             demo._reauth,
@@ -854,6 +859,7 @@ class TestCompleteSetup:
             "org_ids": [demo.DEMO_ORG],
         }
         assert ensured == [("orgs", org)]
+        assert named == [{"base": "http://engine", "name": demo.DEMO_ORG, "token": "t"}]
         assert [p["username"] for p in posted] == [demo.DEMO_ANALYST]
         assert posted[0]["org"] == demo.DEMO_ORG
         assert posted[0]["groups"] == [f"{demo.DEMO_ORG}-viewers"]

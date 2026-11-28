@@ -600,6 +600,11 @@ class TestNameYourOrg:
         assert home_engine.writes == [({"If-None-Match": "*"}, {"name": "acme"})]
         assert "named org 'acme' as your organisation" in capsys.readouterr().err
 
+    def test_names_the_org_it_is_given(self, home_engine: _HomeEngine) -> None:
+        seed._name_your_org(base="http://engine.invalid", token="token", name="demo")
+
+        assert home_engine.writes == [({"If-None-Match": "*"}, {"name": "demo"})]
+
     def test_leaves_an_org_already_named(self, home_engine: _HomeEngine) -> None:
         home_engine.held = "acme"
 
